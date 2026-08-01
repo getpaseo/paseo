@@ -11,14 +11,17 @@ import {
   type SheetHeader,
 } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
+import { FormTextInput } from "@/components/ui/form-field";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ScrollableCodeSurface, SurfaceCard } from "@/components/ui/scrollable-code-surface";
+import { Switch } from "@/components/ui/switch";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
@@ -27,8 +30,12 @@ import { compareMatchScores, scoreTextFields } from "@/utils/score-match";
 import type { AgentModelDefinition, AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { ProviderProfileModel } from "@getpaseo/protocol/provider-config";
 import {
+  buildSubagentPolicyModels,
+  getNextSubagentAllowedModels,
+  isSubagentModelAllowed,
   resolveProviderDiscoveredModels,
   type ProviderDiscoveredModelsCache,
+  type SubagentPolicyModel,
 } from "./provider-diagnostic-models";
 
 interface ProviderDiagnosticSheetProps {
@@ -37,6 +44,8 @@ interface ProviderDiagnosticSheetProps {
   onClose: () => void;
   serverId: string;
 }
+
+const EMPTY_SUBAGENT_MODEL_GUIDANCE: Record<string, string> = {};
 
 function rankModels<T>(items: T[], query: string, fields: (item: T) => string[]): T[] {
   if (!query.trim()) return items;
@@ -117,6 +126,147 @@ function CustomModelRow({
       >
         <Trash2 size={theme.iconSize.sm} color={theme.colors.destructive} />
       </Pressable>
+    </View>
+  );
+}
+
+function SubagentPolicyRow({
+  model,
+  allowed,
+  guidance,
+  canDisable,
+  onAllowedChange,
+  onGuidanceCommit,
+}: {
+  model: SubagentPolicyModel;
+  allowed: boolean;
+  guidance: string;
+  canDisable: boolean;
+  onAllowedChange: (modelId: string, allowed: boolean) => void;
+  onGuidanceCommit: (modelId: string, guidance: string) => void;
+}) {
+  const { t } = useTranslation();
+  const guidanceRef = useRef(guidance);
+
+  useEffect(() => {
+    guidanceRef.current = guidance;
+  }, [guidance]);
+
+  const handleAllowedChange = useCallback(
+    (value: boolean) => onAllowedChange(model.id, value),
+    [model.id, onAllowedChange],
+  );
+  const handleGuidanceChange = useCallback((value: string) => {
+    guidanceRef.current = value;
+  }, []);
+  const handleGuidanceBlur = useCallback(() => {
+    onGuidanceCommit(model.id, guidanceRef.current);
+  }, [model.id, onGuidanceCommit]);
+
+  return (
+    <View style={sheetStyles.policyRow} testID={`subagent-policy-model-${model.id}`}>
+      <View style={sheetStyles.policyRowHeader}>
+        <View style={sheetStyles.policyModelDetails}>
+          <Text style={sheetStyles.modelTitle} numberOfLines={1}>
+            {model.label}
+          </Text>
+          <Text
+            style={sheetStyles.monoHint}
+            numberOfLines={1}
+            selectable
+            dataSet={CODE_SURFACE_DATASET}
+          >
+            {model.id}
+          </Text>
+          {!model.available ? (
+            <Text style={sheetStyles.unavailableHint}>
+              {t("settings.providers.models.policy.unavailable")}
+            </Text>
+          ) : null}
+        </View>
+        <Switch
+          value={allowed}
+          onValueChange={handleAllowedChange}
+          disabled={!allowed && !canDisable}
+          accessibilityLabel={t("settings.providers.models.policy.allowAccessibility", {
+            name: model.label,
+          })}
+          testID={`subagent-policy-allow-${model.id}`}
+        />
+      </View>
+      <View style={sheetStyles.guidanceField}>
+        <Text style={sheetStyles.guidanceLabel}>
+          {t("settings.providers.models.policy.whenToUse")}
+        </Text>
+        <FormTextInput
+          size="sm"
+          multiline
+          initialValue={guidance}
+          onChangeText={handleGuidanceChange}
+          onBlur={handleGuidanceBlur}
+          accessibilityLabel={t("settings.providers.models.policy.whenToUseAccessibility", {
+            name: model.label,
+          })}
+          testID={`subagent-policy-guidance-${model.id}`}
+        />
+      </View>
+    </View>
+  );
+}
+
+function SubagentModelPolicySection({
+  models,
+  availableModelIds,
+  allowedModels,
+  guidance,
+  onAllowedChange,
+  onGuidanceCommit,
+  onAllowAll,
+}: {
+  models: SubagentPolicyModel[];
+  availableModelIds: string[];
+  allowedModels?: string[];
+  guidance: Record<string, string>;
+  onAllowedChange: (modelId: string, allowed: boolean) => void;
+  onGuidanceCommit: (modelId: string, guidance: string) => void;
+  onAllowAll: () => void;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <View style={sheetStyles.section}>
+      <SectionHeader title={t("settings.providers.models.policy.title")} />
+      <View style={settingsStyles.card}>
+        {models.map((model) => {
+          const allowed = isSubagentModelAllowed(model.id, allowedModels);
+          return (
+            <SubagentPolicyRow
+              key={model.id}
+              model={model}
+              allowed={allowed}
+              guidance={guidance[model.id] ?? ""}
+              canDisable={
+                allowed &&
+                getNextSubagentAllowedModels({
+                  modelId: model.id,
+                  allowedModels,
+                  availableModelIds,
+                  allowed: false,
+                }) !== null
+              }
+              onAllowedChange={onAllowedChange}
+              onGuidanceCommit={onGuidanceCommit}
+            />
+          );
+        })}
+      </View>
+      {allowedModels?.length ? (
+        <View style={sheetStyles.policyActions}>
+          <Button variant="ghost" size="sm" onPress={onAllowAll}>
+            {t("settings.providers.models.policy.allowAll")}
+          </Button>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -403,9 +553,17 @@ interface ProviderModalBodyProps {
   searchActive: boolean;
   filteredDiscovered: AgentModelDefinition[];
   filteredCustom: ProviderProfileModel[];
+  filteredSubagentPolicyModels: SubagentPolicyModel[];
+  availableSubagentPolicyModelIds: string[];
+  showSubagentPolicy: boolean;
+  subagentAllowedModels?: string[];
+  subagentModelGuidance: Record<string, string>;
   deletingModelId: string | null;
   onRefresh: () => void;
   onDeleteCustom: (modelId: string) => void;
+  onSubagentAllowedChange: (modelId: string, allowed: boolean) => void;
+  onSubagentGuidanceCommit: (modelId: string, guidance: string) => void;
+  onSubagentAllowAll: () => void;
   theme: { iconSize: { md: number }; colors: { foregroundMuted: string } };
 }
 
@@ -478,60 +636,50 @@ function renderProviderSheetFooter({
   );
 }
 
-function ProviderModalBody(props: ProviderModalBodyProps) {
+function ProviderModelSections({
+  showSubagentPolicy,
+  filteredSubagentPolicyModels,
+  availableSubagentPolicyModelIds,
+  subagentAllowedModels,
+  subagentModelGuidance,
+  onSubagentAllowedChange,
+  onSubagentGuidanceCommit,
+  onSubagentAllowAll,
+  filteredDiscovered,
+  filteredCustom,
+  deletingModelId,
+  onDeleteCustom,
+}: Pick<
+  ProviderModalBodyProps,
+  | "showSubagentPolicy"
+  | "filteredSubagentPolicyModels"
+  | "availableSubagentPolicyModelIds"
+  | "subagentAllowedModels"
+  | "subagentModelGuidance"
+  | "onSubagentAllowedChange"
+  | "onSubagentGuidanceCommit"
+  | "onSubagentAllowAll"
+  | "filteredDiscovered"
+  | "filteredCustom"
+  | "deletingModelId"
+  | "onDeleteCustom"
+>) {
   const { t } = useTranslation();
-  const {
-    discoveredCount,
-    additionalCount,
-    providerSnapshotRefreshing,
-    providerErrorMessage,
-    modelsRefreshing,
-    searchActive,
-    filteredDiscovered,
-    filteredCustom,
-    deletingModelId,
-    onRefresh,
-    onDeleteCustom,
-    theme,
-  } = props;
+  const hasSubagentPolicyModels = showSubagentPolicy && filteredSubagentPolicyModels.length > 0;
 
-  if (discoveredCount === 0 && additionalCount === 0 && providerSnapshotRefreshing) {
-    return (
-      <View style={sheetStyles.emptyState}>
-        <LoadingSpinner size="small" color={theme.colors.foregroundMuted} />
-        <Text style={sheetStyles.mutedText}>{t("settings.providers.models.loading")}</Text>
-      </View>
-    );
-  }
-  if (discoveredCount === 0 && additionalCount === 0 && providerErrorMessage) {
-    return (
-      <View style={sheetStyles.emptyState}>
-        <AlertTriangle size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-        <Text style={sheetStyles.mutedText}>{providerErrorMessage}</Text>
-        <Button variant="default" size="sm" onPress={onRefresh} disabled={modelsRefreshing}>
-          {modelsRefreshing
-            ? t("settings.providers.models.retrying")
-            : t("settings.providers.models.retry")}
-        </Button>
-      </View>
-    );
-  }
-  if (filteredDiscovered.length === 0 && filteredCustom.length === 0 && searchActive) {
-    return (
-      <View style={sheetStyles.emptyState}>
-        <Text style={sheetStyles.mutedText}>{t("settings.providers.models.noSearchMatches")}</Text>
-      </View>
-    );
-  }
-  if (discoveredCount === 0 && additionalCount === 0) {
-    return (
-      <View style={sheetStyles.emptyState}>
-        <Text style={sheetStyles.mutedText}>{t("settings.providers.models.noneDetected")}</Text>
-      </View>
-    );
-  }
   return (
     <>
+      {hasSubagentPolicyModels ? (
+        <SubagentModelPolicySection
+          models={filteredSubagentPolicyModels}
+          availableModelIds={availableSubagentPolicyModelIds}
+          allowedModels={subagentAllowedModels}
+          guidance={subagentModelGuidance}
+          onAllowedChange={onSubagentAllowedChange}
+          onGuidanceCommit={onSubagentGuidanceCommit}
+          onAllowAll={onSubagentAllowAll}
+        />
+      ) : null}
       {filteredDiscovered.length > 0 ? (
         <View style={sheetStyles.section}>
           <SectionHeader
@@ -567,6 +715,78 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
   );
 }
 
+function ProviderModalBody(props: ProviderModalBodyProps) {
+  const { t } = useTranslation();
+  const {
+    discoveredCount,
+    additionalCount,
+    providerSnapshotRefreshing,
+    providerErrorMessage,
+    modelsRefreshing,
+    searchActive,
+    filteredDiscovered,
+    filteredCustom,
+    filteredSubagentPolicyModels,
+    showSubagentPolicy,
+    onRefresh,
+    theme,
+  } = props;
+
+  const hasSubagentPolicyModels = showSubagentPolicy && filteredSubagentPolicyModels.length > 0;
+
+  if (
+    discoveredCount === 0 &&
+    additionalCount === 0 &&
+    !hasSubagentPolicyModels &&
+    providerSnapshotRefreshing
+  ) {
+    return (
+      <View style={sheetStyles.emptyState}>
+        <LoadingSpinner size="small" color={theme.colors.foregroundMuted} />
+        <Text style={sheetStyles.mutedText}>{t("settings.providers.models.loading")}</Text>
+      </View>
+    );
+  }
+  if (
+    discoveredCount === 0 &&
+    additionalCount === 0 &&
+    !hasSubagentPolicyModels &&
+    providerErrorMessage
+  ) {
+    return (
+      <View style={sheetStyles.emptyState}>
+        <AlertTriangle size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+        <Text style={sheetStyles.mutedText}>{providerErrorMessage}</Text>
+        <Button variant="default" size="sm" onPress={onRefresh} disabled={modelsRefreshing}>
+          {modelsRefreshing
+            ? t("settings.providers.models.retrying")
+            : t("settings.providers.models.retry")}
+        </Button>
+      </View>
+    );
+  }
+  if (
+    filteredDiscovered.length === 0 &&
+    filteredCustom.length === 0 &&
+    !hasSubagentPolicyModels &&
+    searchActive
+  ) {
+    return (
+      <View style={sheetStyles.emptyState}>
+        <Text style={sheetStyles.mutedText}>{t("settings.providers.models.noSearchMatches")}</Text>
+      </View>
+    );
+  }
+  if (discoveredCount === 0 && additionalCount === 0 && !hasSubagentPolicyModels) {
+    return (
+      <View style={sheetStyles.emptyState}>
+        <Text style={sheetStyles.mutedText}>{t("settings.providers.models.noneDetected")}</Text>
+      </View>
+    );
+  }
+  return <ProviderModelSections {...props} />;
+}
+
 export function ProviderDiagnosticSheet({
   provider,
   visible,
@@ -576,6 +796,8 @@ export function ProviderDiagnosticSheet({
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
+  const supportsSubagentModelPolicy = useHostFeature(serverId, "subagentModelPolicy");
+  const toast = useToast();
   const { entries: snapshotEntries, refresh, isRefreshing } = useProvidersSnapshot(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
   const [query, setQuery] = useState("");
@@ -592,6 +814,10 @@ export function ProviderDiagnosticSheet({
     () => config?.providers?.[provider]?.additionalModels ?? [],
     [config?.providers, provider],
   );
+  const subagentPolicy = config?.providers?.[provider];
+  const subagentAllowedModels = subagentPolicy?.subagentAllowedModels;
+  const subagentModelGuidance =
+    subagentPolicy?.subagentModelGuidance ?? EMPTY_SUBAGENT_MODEL_GUIDANCE;
   const providerSnapshotRefreshing = providerEntry?.status === "loading";
   const providerErrorMessage =
     providerEntry?.status === "error"
@@ -639,6 +865,24 @@ export function ProviderDiagnosticSheet({
     () => rankModels(additionalModels, q, (m) => [m.label, m.id]),
     [additionalModels, q],
   );
+  const subagentPolicyModels = useMemo(
+    () =>
+      buildSubagentPolicyModels({
+        discoveredModels,
+        additionalModels,
+        allowedModels: subagentAllowedModels,
+        guidance: subagentModelGuidance,
+      }),
+    [additionalModels, discoveredModels, subagentAllowedModels, subagentModelGuidance],
+  );
+  const filteredSubagentPolicyModels = useMemo(
+    () => rankModels(subagentPolicyModels, q, (model) => [model.label, model.id]),
+    [q, subagentPolicyModels],
+  );
+  const availableSubagentPolicyModelIds = useMemo(
+    () => subagentPolicyModels.filter((model) => model.available).map((model) => model.id),
+    [subagentPolicyModels],
+  );
 
   const handleRefreshModels = useCallback(() => {
     void refresh([provider]);
@@ -666,6 +910,44 @@ export function ProviderDiagnosticSheet({
     },
     [additionalModels, patchConfig, provider, refresh],
   );
+  const handleSubagentAllowedChange = useCallback(
+    (modelId: string, allowed: boolean) => {
+      const nextAllowedModels = getNextSubagentAllowedModels({
+        modelId,
+        allowedModels: subagentAllowedModels,
+        availableModelIds: availableSubagentPolicyModelIds,
+        allowed,
+      });
+      if (!nextAllowedModels) return;
+
+      void patchConfig({
+        providers: { [provider]: { subagentAllowedModels: nextAllowedModels } },
+      }).catch(() => toast.error(t("settings.providers.models.policy.failedToSave")));
+    },
+    [availableSubagentPolicyModelIds, patchConfig, provider, subagentAllowedModels, t, toast],
+  );
+  const handleSubagentGuidanceCommit = useCallback(
+    (modelId: string, guidance: string) => {
+      const currentGuidance = subagentModelGuidance[modelId] ?? "";
+      if (guidance === currentGuidance) return;
+
+      const nextGuidance = { ...subagentModelGuidance };
+      if (guidance.trim()) {
+        nextGuidance[modelId] = guidance;
+      } else {
+        delete nextGuidance[modelId];
+      }
+      void patchConfig({
+        providers: { [provider]: { subagentModelGuidance: nextGuidance } },
+      }).catch(() => toast.error(t("settings.providers.models.policy.failedToSave")));
+    },
+    [patchConfig, provider, subagentModelGuidance, t, toast],
+  );
+  const handleSubagentAllowAll = useCallback(() => {
+    void patchConfig({
+      providers: { [provider]: { subagentAllowedModels: [] } },
+    }).catch(() => toast.error(t("settings.providers.models.policy.failedToSave")));
+  }, [patchConfig, provider, t, toast]);
 
   const sheetHeader = useMemo<SheetHeader>(
     () => ({
@@ -706,9 +988,17 @@ export function ProviderDiagnosticSheet({
           searchActive={Boolean(q)}
           filteredDiscovered={filteredDiscovered}
           filteredCustom={filteredCustom}
+          filteredSubagentPolicyModels={filteredSubagentPolicyModels}
+          availableSubagentPolicyModelIds={availableSubagentPolicyModelIds}
+          showSubagentPolicy={supportsSubagentModelPolicy}
+          subagentAllowedModels={subagentAllowedModels}
+          subagentModelGuidance={subagentModelGuidance}
           deletingModelId={deletingModelId}
           onRefresh={handleRefreshModels}
           onDeleteCustom={handleDeleteCustom}
+          onSubagentAllowedChange={handleSubagentAllowedChange}
+          onSubagentGuidanceCommit={handleSubagentGuidanceCommit}
+          onSubagentAllowAll={handleSubagentAllowAll}
           theme={theme}
         />
       </AdaptiveModalSheet>
@@ -801,6 +1091,39 @@ const sheetStyles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
+  },
+  policyRow: {
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    gap: theme.spacing[3],
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  policyRowHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+  },
+  policyModelDetails: {
+    flex: 1,
+    minWidth: 0,
+    gap: theme.spacing[1],
+  },
+  unavailableHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  guidanceField: {
+    gap: theme.spacing[1],
+  },
+  policyActions: {
+    alignItems: "flex-start",
+    paddingTop: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+  },
+  guidanceLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
   },
   modelTitle: {
     color: theme.colors.foreground,

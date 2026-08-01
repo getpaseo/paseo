@@ -2172,6 +2172,15 @@ export const fr: TranslationResources = {
         discovered: "Découvert",
         custom: "Modèles personnalisés",
         updated: "{{time}}mis à jour",
+        policy: {
+          title: "Politique de modèles des sous-agents",
+          unavailable: "Indisponible",
+          whenToUse: "Quand l'utiliser",
+          whenToUseAccessibility: "Quand utiliser {{name}}",
+          allowAccessibility: "Autoriser {{name}} pour les sous-agents",
+          allowAll: "Autoriser tous les modèles",
+          failedToSave: "Impossible d'enregistrer la politique de modèles des sous-agents",
+        },
       },
       diagnostic: {
         title: "Diagnostique",

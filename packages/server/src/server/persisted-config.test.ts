@@ -384,6 +384,28 @@ describe("provider overrides (new format)", () => {
     ]);
   });
 
+  test("subagent model policy fields accepted", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          zai: {
+            extends: "claude",
+            label: "ZAI",
+            subagentAllowedModels: [],
+            subagentModelGuidance: {
+              "zai-fast": "Use for focused tasks.",
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.zai?.subagentAllowedModels).toEqual([]);
+    expect(parsed.agents?.providers?.zai?.subagentModelGuidance).toEqual({
+      "zai-fast": "Use for focused tasks.",
+    });
+  });
+
   test("order field accepted", () => {
     const parsed = PersistedConfigSchema.parse({
       agents: {

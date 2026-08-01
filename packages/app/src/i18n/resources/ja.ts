@@ -2138,6 +2138,15 @@ export const ja: TranslationResources = {
         discovered: "検出済み",
         custom: "カスタムモデル",
         updated: "{{time}}に更新",
+        policy: {
+          title: "サブエージェントのモデルポリシー",
+          unavailable: "利用不可",
+          whenToUse: "使用する場面",
+          whenToUseAccessibility: "{{name}}を使用する場面",
+          allowAccessibility: "サブエージェントに{{name}}を許可",
+          allowAll: "すべてのモデルを許可",
+          failedToSave: "サブエージェントのモデルポリシーを保存できませんでした",
+        },
       },
       diagnostic: {
         title: "診断",

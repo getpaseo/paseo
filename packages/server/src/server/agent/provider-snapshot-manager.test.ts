@@ -484,6 +484,47 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("projects only configured available subagent models with guidance", async () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        codex: {
+          subagentAllowedModels: ["gpt-small", "stale-model"],
+          subagentModelGuidance: { "gpt-small": "Use for focused edits." },
+        },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: async () => true,
+          fetchCatalog: async () => ({
+            models: [
+              { provider: "codex", id: "gpt-default", label: "Default", isDefault: true },
+              { provider: "codex", id: "gpt-small", label: "Small" },
+            ],
+            modes: [],
+          }),
+        }),
+      },
+    });
+    try {
+      await expect(
+        manager.listSubagentModels({ provider: "codex", cwd: "/tmp/project", wait: true }),
+      ).resolves.toEqual([
+        {
+          provider: "codex",
+          id: "gpt-small",
+          label: "Small",
+          whenToUse: "Use for focused edits.",
+        },
+      ]);
+      await expect(
+        manager.resolveSubagentModel({ provider: "codex", cwd: "/tmp/project" }),
+      ).rejects.toThrow("not allowed");
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("getProviderDiagnostic returns the diagnostic from the injected client and appends snapshot models/status", async () => {
     const getDiagnostic = vi.fn(async () => ({ diagnostic: "codex is ready" }));
     const client = createExtraClient("codex", { getDiagnostic });

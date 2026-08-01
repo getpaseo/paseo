@@ -13,6 +13,9 @@ import { type BoundCreateAgentCommand, formatProviderModel } from "../agent/crea
 import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../worktree-session.js";
 import { ScheduleStore } from "./store.js";
+import type { StoredScheduleWithOrigin } from "./store.js";
+import type { ProviderSnapshotManager } from "../agent/provider-snapshot-manager.js";
+import type { AgentOrchestrationOrigin } from "../agent/subagent-model-policy.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
 import type {
   CreateScheduleInput,
@@ -226,6 +229,7 @@ export interface ScheduleServiceOptions {
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
   archiveWorkspace: (workspaceId: string) => Promise<void>;
+  providerSnapshotManager?: Pick<ProviderSnapshotManager, "resolveSubagentModel">;
   now?: () => Date;
   runner?: (schedule: StoredSchedule, runId: string) => Promise<ScheduleExecutionResult>;
 }
@@ -243,6 +247,7 @@ export class ScheduleService {
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
   private readonly archiveWorkspace: (workspaceId: string) => Promise<void>;
+  private readonly providerSnapshotManager?: Pick<ProviderSnapshotManager, "resolveSubagentModel">;
   private readonly now: () => Date;
   private readonly runner: (
     schedule: StoredSchedule,
@@ -260,6 +265,7 @@ export class ScheduleService {
     this.createDirectoryWorkspace = options.createDirectoryWorkspace;
     this.createPaseoWorktreeWorkspace = options.createPaseoWorktreeWorkspace;
     this.archiveWorkspace = options.archiveWorkspace;
+    this.providerSnapshotManager = options.providerSnapshotManager;
     this.now = options.now ?? (() => new Date());
     this.runner = options.runner ?? ((schedule, runId) => this.executeSchedule(schedule, runId));
   }
@@ -286,27 +292,33 @@ export class ScheduleService {
     }
   }
 
-  async create(input: CreateScheduleInput): Promise<StoredSchedule> {
+  async create(
+    input: CreateScheduleInput & { agentOrigin?: AgentOrchestrationOrigin },
+  ): Promise<StoredScheduleWithOrigin> {
     const prompt = normalizePrompt(input.prompt);
     validateScheduleCadence(input.cadence);
-    return this.createScheduleRecord(input, {
-      name: trimOptionalName(input.name),
-      prompt,
-      target: input.target,
-    });
+    const target = await this.resolveNewAgentTarget(input.target, input.agentOrigin);
+    return this.createScheduleRecord(
+      { ...input, target },
+      {
+        name: trimOptionalName(input.name),
+        prompt,
+        target,
+      },
+    );
   }
 
   private async createScheduleRecord(
-    input: CreateScheduleInput,
+    input: CreateScheduleInput & { agentOrigin?: AgentOrchestrationOrigin },
     fields: { name: string | null; prompt: string; target: ScheduleTarget },
-  ): Promise<StoredSchedule> {
+  ): Promise<StoredScheduleWithOrigin> {
     return this.store.create(this.buildScheduleRecord(input, fields));
   }
 
   private buildScheduleRecord(
-    input: CreateScheduleInput,
+    input: CreateScheduleInput & { agentOrigin?: AgentOrchestrationOrigin },
     fields: { name: string | null; prompt: string; target: ScheduleTarget },
-  ): Omit<StoredSchedule, "id"> {
+  ): Omit<StoredScheduleWithOrigin, "id"> {
     const now = this.now();
     const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
     const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
@@ -324,21 +336,25 @@ export class ScheduleService {
       expiresAt: input.expiresAt ?? null,
       maxRuns: normalizeMaxRuns(input.maxRuns),
       runs: [],
+      ...(input.agentOrigin ? { agentOrigin: input.agentOrigin } : {}),
     };
   }
 
   // Idempotent create for the MCP write path: repeating a create with the same
   // name and target (e.g. babysit-pr re-registering its heartbeat) refreshes the
   // existing non-completed schedule in place instead of minting a duplicate.
-  async createOrReplace(input: CreateScheduleInput): Promise<StoredSchedule> {
+  async createOrReplace(
+    input: CreateScheduleInput & { agentOrigin?: AgentOrchestrationOrigin },
+  ): Promise<StoredScheduleWithOrigin> {
     const name = trimOptionalName(input.name);
     const prompt = normalizePrompt(input.prompt);
     validateScheduleCadence(input.cadence);
+    const target = await this.resolveNewAgentTarget(input.target, input.agentOrigin);
     if (name === null) {
-      return this.createScheduleRecord(input, { name, prompt, target: input.target });
+      return this.createScheduleRecord({ ...input, target }, { name, prompt, target });
     }
 
-    const inputTarget = input.target;
+    const inputTarget = target;
     return this.store.upsertByNameAndTarget(name, inputTarget, {
       create: async () => {
         return this.buildScheduleRecord(input, { name, prompt, target: inputTarget });
@@ -348,12 +364,14 @@ export class ScheduleService {
         const cadence = mergeScheduleCadenceTimezone(current.cadence, input.cadence);
         const runOnCreate = input.runOnCreate ?? cadence.type === "every";
         const nextRunAt = runOnCreate ? now : computeNextRunAt(cadence, now);
+        const agentOrigin = input.agentOrigin ?? current.agentOrigin;
         return {
           ...current,
           name,
           prompt,
           cadence,
           target: inputTarget,
+          ...(agentOrigin ? { agentOrigin } : {}),
           status: "active",
           pausedAt: null,
           nextRunAt: nextRunAt.toISOString(),
@@ -365,11 +383,11 @@ export class ScheduleService {
     });
   }
 
-  async list(): Promise<StoredSchedule[]> {
+  async list(): Promise<StoredScheduleWithOrigin[]> {
     return this.store.list();
   }
 
-  async inspect(id: string): Promise<StoredSchedule> {
+  async inspect(id: string): Promise<StoredScheduleWithOrigin> {
     const schedule = await this.store.get(id);
     if (!schedule) {
       throw new Error(`Schedule not found: ${id}`);
@@ -422,10 +440,10 @@ export class ScheduleService {
     return requireSchedule(resumed, id);
   }
 
-  async update(input: UpdateScheduleInput): Promise<StoredSchedule> {
+  async update(input: UpdateScheduleInput): Promise<StoredScheduleWithOrigin> {
     const next = await this.store.update(input.id, async (schedule) => {
       const now = this.now();
-      let updated: StoredSchedule = schedule;
+      let updated: StoredScheduleWithOrigin = schedule;
 
       if (input.prompt !== undefined) {
         updated = { ...updated, prompt: normalizePrompt(input.prompt) };
@@ -451,6 +469,13 @@ export class ScheduleService {
         updated = {
           ...updated,
           target: patchedTarget,
+        };
+      }
+
+      if (updated.target.type === "new-agent") {
+        updated = {
+          ...updated,
+          target: await this.resolveNewAgentTarget(updated.target, updated.agentOrigin),
         };
       }
 
@@ -859,18 +884,19 @@ export class ScheduleService {
     if (!config) {
       throw new Error(`Schedule ${schedule.id} target changed during execution`);
     }
-    await this.assertNewAgentCwdDirectory(config.cwd);
+    const resolvedConfig = await this.resolvePolicyConfig(schedule, config);
+    await this.assertNewAgentCwdDirectory(resolvedConfig.cwd);
     let workspace: PersistedWorkspaceRecord | null = null;
     let agentId: string | null = null;
     try {
-      workspace = await this.createScheduleRunWorkspace(config, schedule.prompt);
+      workspace = await this.createScheduleRunWorkspace(resolvedConfig, schedule.prompt);
       await this.recordRunWorkspace({
         scheduleId: schedule.id,
         runId,
         workspaceId: workspace.workspaceId,
         agentId: null,
       });
-      const runConfig = { ...config, cwd: workspace.cwd };
+      const runConfig = { ...resolvedConfig, cwd: workspace.cwd };
       const created = await this.createAgent({
         kind: "mcp",
         provider: formatScheduleProviderModel(runConfig),
@@ -958,6 +984,31 @@ export class ScheduleService {
         return (await this.createPaseoWorktreeWorkspace({ cwd: config.cwd, firstAgentContext }))
           .workspace;
     }
+  }
+
+  private async resolvePolicyConfig(
+    schedule: StoredScheduleWithOrigin,
+    config: Extract<ScheduleTarget, { type: "new-agent" }>["config"],
+  ): Promise<Extract<ScheduleTarget, { type: "new-agent" }>["config"]> {
+    if (!schedule.agentOrigin || !this.providerSnapshotManager?.resolveSubagentModel) return config;
+    const model = await this.providerSnapshotManager.resolveSubagentModel({
+      provider: config.provider,
+      requestedModel: config.model,
+      cwd: config.cwd,
+    });
+    return model ? { ...config, model } : config;
+  }
+
+  private async resolveNewAgentTarget(
+    target: ScheduleTarget,
+    agentOrigin: AgentOrchestrationOrigin | undefined,
+  ): Promise<ScheduleTarget> {
+    if (target.type !== "new-agent" || !agentOrigin) return target;
+    const config = await this.resolvePolicyConfig(
+      { agentOrigin } as StoredScheduleWithOrigin,
+      target.config,
+    );
+    return { ...target, config };
   }
 
   private async assertNewAgentCwdDirectory(cwd: string): Promise<void> {

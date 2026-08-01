@@ -37,6 +37,7 @@ import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { CreatePaseoWorktreeWorkflowFn } from "../../worktree-session.js";
 import type { ScheduleService } from "../../schedule/service.js";
+import type { LoopService } from "../../loop-service.js";
 import {
   ScheduleRunSchema,
   ScheduleSummarySchema,
@@ -97,6 +98,7 @@ export interface PaseoToolHostDependencies {
   terminalManager?: TerminalManager | null;
   getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
+  loopService?: LoopService | null;
   providerSnapshotManager: ProviderSnapshotManager;
   github?: ForgeService;
   workspaceGitService?: Pick<
@@ -542,6 +544,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     terminalManager,
     workspaceScripts,
     scheduleService,
+    loopService,
     providerSnapshotManager,
     callerAgentId,
     resolveSpeakHandler,
@@ -985,6 +988,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .min(1, "initialPrompt is required")
       .describe("Required first task to run immediately after creation."),
   };
+  const agentCreateAgentFields = {
+    ...commonCreateAgentFields,
+    provider: ProviderOrProviderModelInputSchema.describe(
+      "Provider, optionally with a model ID. Omit the model to use the provider default.",
+    ),
+  };
   const legacyCreateAgentPlacementFields = {
     relationship: AgentRelationshipInputSchema.describe(
       "Whether the created agent is a subagent under you or a detached root agent.",
@@ -1005,6 +1014,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
   const agentToAgentInputSchema = {
     ...canonicalCreateAgentFields,
+    provider: agentCreateAgentFields.provider,
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1031,7 +1041,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       ),
   };
   const legacyAgentToAgentInputSchema = {
-    ...commonCreateAgentFields,
+    ...agentCreateAgentFields,
     ...legacyCreateAgentPlacementFields,
     notifyOnFinish: agentToAgentInputSchema.notifyOnFinish,
   };
@@ -2140,6 +2150,15 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
     },
     async ({ agentId, name, labels, settings }) => {
+      if (settings?.model !== undefined && callerAgentId) {
+        const target = agentManager.getAgent(agentId);
+        if (!target) throw new Error(`Agent ${agentId} not found`);
+        await providerSnapshotManager.resolveSubagentModel({
+          provider: target.provider,
+          requestedModel: settings.model ?? undefined,
+          cwd: target.cwd,
+        });
+      }
       if (settings?.modeId !== undefined) {
         await agentManager.setAgentMode(agentId, settings.modeId);
       }
@@ -2537,6 +2556,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           ...(timezone !== undefined ? { timezone } : {}),
         }),
         target: resolveNewAgentScheduleTarget({ provider, cwd, isolation }),
+        ...(callerAgentId ? { agentOrigin: { agentId: callerAgentId } } : {}),
         ...(name?.trim() ? { name: name.trim() } : {}),
         ...(maxRuns === undefined ? {} : { maxRuns }),
         ...(expiresAt === undefined ? {} : { expiresAt }),
@@ -2865,6 +2885,55 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   );
 
   registerTool(
+    "run_loop",
+    {
+      title: "Run loop",
+      description: "Run worker agents until verification passes or the loop reaches its limit.",
+      inputSchema: {
+        prompt: z.string().trim().min(1),
+        cwd: z.string().optional(),
+        provider: AgentProviderEnum.optional(),
+        model: z.string().trim().min(1).optional(),
+        verifyPrompt: z.string().trim().min(1).optional(),
+        verifyChecks: z.array(z.string().trim().min(1)).optional(),
+        maxIterations: z.number().int().positive().optional(),
+        maxTimeMs: z.number().int().positive().optional(),
+      },
+      outputSchema: {
+        id: z.string(),
+        status: z.string(),
+      },
+    },
+    async ({
+      prompt,
+      cwd,
+      provider,
+      model,
+      verifyPrompt,
+      verifyChecks,
+      maxIterations,
+      maxTimeMs,
+    }) => {
+      if (!loopService) throw new Error("Loop service is not configured");
+      const loop = await loopService.runLoop({
+        prompt,
+        cwd: resolveScopedCwd(cwd, { required: true }),
+        ...(provider ? { provider } : {}),
+        ...(model ? { model } : {}),
+        ...(verifyPrompt ? { verifyPrompt } : {}),
+        ...(verifyChecks ? { verifyChecks } : {}),
+        ...(maxIterations ? { maxIterations } : {}),
+        ...(maxTimeMs ? { maxTimeMs } : {}),
+        ...(callerAgentId ? { agentOrigin: { agentId: callerAgentId } } : {}),
+      });
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ id: loop.id, status: loop.status }),
+      };
+    },
+  );
+
+  registerTool(
     "list_providers",
     {
       title: "List providers",
@@ -2899,10 +2968,16 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
     },
     async ({ provider }) => {
-      const models = await providerSnapshotManager.listModels({
-        provider,
-        wait: true,
-      });
+      const models = callerAgentId
+        ? await providerSnapshotManager.listSubagentModels({
+            provider,
+            cwd: resolveCallerAgent()?.cwd,
+            wait: true,
+          })
+        : await providerSnapshotManager.listModels({
+            provider,
+            wait: true,
+          });
       return {
         content: [],
         structuredContent: ensureValidJson({

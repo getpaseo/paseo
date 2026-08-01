@@ -2116,6 +2116,15 @@ export const ar: TranslationResources = {
         discovered: "اكتشف",
         custom: "نماذج مخصصة",
         updated: "تم تحديث{{time}}",
+        policy: {
+          title: "سياسة نماذج الوكلاء الفرعيين",
+          unavailable: "غير متاح",
+          whenToUse: "متى يُستخدم",
+          whenToUseAccessibility: "متى يُستخدم {{name}}",
+          allowAccessibility: "السماح بـ {{name}} للوكلاء الفرعيين",
+          allowAll: "السماح بكل النماذج",
+          failedToSave: "فشل حفظ سياسة نماذج الوكلاء الفرعيين",
+        },
       },
       diagnostic: {
         title: "التشخيص",

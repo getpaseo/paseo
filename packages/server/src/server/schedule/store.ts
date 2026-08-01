@@ -7,15 +7,26 @@ import {
   type StoredSchedule,
 } from "@getpaseo/protocol/schedule/types";
 import { writeJsonFileAtomic } from "../atomic-file.js";
+import { z } from "zod";
+import type { AgentOrchestrationOrigin } from "../agent/subagent-model-policy.js";
+
+const StoredScheduleWithOriginSchema = StoredScheduleSchema.extend({
+  agentOrigin: z.object({ agentId: z.string().min(1) }).optional(),
+});
+export type StoredScheduleWithOrigin = StoredSchedule & { agentOrigin?: AgentOrchestrationOrigin };
 
 function generateScheduleId(): string {
   return randomBytes(4).toString("hex");
 }
 
-type ScheduleUpdater = (schedule: StoredSchedule) => StoredSchedule | Promise<StoredSchedule>;
+type ScheduleUpdater = (
+  schedule: StoredScheduleWithOrigin,
+) => StoredScheduleWithOrigin | Promise<StoredScheduleWithOrigin>;
 
 interface ScheduleNameTargetUpsert {
-  create: () => Omit<StoredSchedule, "id"> | Promise<Omit<StoredSchedule, "id">>;
+  create: () =>
+    | Omit<StoredScheduleWithOrigin, "id">
+    | Promise<Omit<StoredScheduleWithOrigin, "id">>;
   update: ScheduleUpdater;
 }
 
@@ -101,7 +112,7 @@ export class ScheduleStore {
     await mkdir(this.dir, { recursive: true });
   }
 
-  async list(): Promise<StoredSchedule[]> {
+  async list(): Promise<StoredScheduleWithOrigin[]> {
     await this.ensureDir();
     const entries = await readdir(this.dir, { withFileTypes: true });
     const schedules = await Promise.all(
@@ -109,17 +120,17 @@ export class ScheduleStore {
         .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
         .map(async (entry) => {
           const content = await readFile(join(this.dir, entry.name), "utf-8");
-          return StoredScheduleSchema.parse(JSON.parse(content));
+          return StoredScheduleWithOriginSchema.parse(JSON.parse(content));
         }),
     );
     return schedules.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
-  async get(id: string): Promise<StoredSchedule | null> {
+  async get(id: string): Promise<StoredScheduleWithOrigin | null> {
     await this.ensureDir();
     try {
       const content = await readFile(this.filePath(id), "utf-8");
-      return StoredScheduleSchema.parse(JSON.parse(content));
+      return StoredScheduleWithOriginSchema.parse(JSON.parse(content));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return null;
@@ -128,13 +139,13 @@ export class ScheduleStore {
     }
   }
 
-  async create(schedule: Omit<StoredSchedule, "id">): Promise<StoredSchedule> {
-    const created = StoredScheduleSchema.parse({ ...schedule, id: generateScheduleId() });
+  async create(schedule: Omit<StoredScheduleWithOrigin, "id">): Promise<StoredScheduleWithOrigin> {
+    const created = StoredScheduleWithOriginSchema.parse({ ...schedule, id: generateScheduleId() });
     await this.write(created);
     return created;
   }
 
-  async update(id: string, updater: ScheduleUpdater): Promise<StoredSchedule | null> {
+  async update(id: string, updater: ScheduleUpdater): Promise<StoredScheduleWithOrigin | null> {
     return this.serializeScheduleMutation(id, async () => {
       const current = await this.get(id);
       if (!current) {
@@ -147,7 +158,7 @@ export class ScheduleStore {
       if (next.id !== id) {
         throw new Error(`Schedule update cannot change id: ${id}`);
       }
-      const updated = StoredScheduleSchema.parse(next);
+      const updated = StoredScheduleWithOriginSchema.parse(next);
       await this.write(updated);
       return updated;
     });
@@ -157,7 +168,7 @@ export class ScheduleStore {
     name: string,
     target: ScheduleTarget,
     options: ScheduleNameTargetUpsert,
-  ): Promise<StoredSchedule> {
+  ): Promise<StoredScheduleWithOrigin> {
     const identity = nameTargetIdentityKey(name, target);
     return this.serializeIdentityMutation(identity, async () => {
       while (true) {
@@ -165,7 +176,7 @@ export class ScheduleStore {
           matchesNameAndTarget(schedule, name, target),
         );
         if (!existing) {
-          const created = StoredScheduleSchema.parse({
+          const created = StoredScheduleWithOriginSchema.parse({
             ...(await options.create()),
             id: generateScheduleId(),
           });
@@ -184,7 +195,7 @@ export class ScheduleStore {
     });
   }
 
-  private async write(schedule: StoredSchedule): Promise<void> {
+  private async write(schedule: StoredScheduleWithOrigin): Promise<void> {
     await this.ensureDir();
     await writeJsonFileAtomic(this.filePath(schedule.id), schedule);
   }
@@ -232,7 +243,7 @@ export class ScheduleStore {
     name: string,
     target: ScheduleTarget,
     updater: ScheduleUpdater,
-  ): Promise<StoredSchedule | null> {
+  ): Promise<StoredScheduleWithOrigin | null> {
     return this.serializeScheduleMutation(id, async () => {
       const current = await this.get(id);
       if (!current || !matchesNameAndTarget(current, name, target)) {
@@ -242,7 +253,7 @@ export class ScheduleStore {
       if (next.id !== id) {
         throw new Error(`Schedule update cannot change id: ${id}`);
       }
-      const updated = StoredScheduleSchema.parse(next);
+      const updated = StoredScheduleWithOriginSchema.parse(next);
       if (!matchesNameAndTarget(updated, name, target)) {
         throw new Error("Updated schedule does not match requested identity");
       }

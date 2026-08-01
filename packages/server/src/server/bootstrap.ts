@@ -510,6 +510,12 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
       if (override.additionalModels) {
         providerConfig.additionalModels = override.additionalModels;
       }
+      if (override.subagentAllowedModels !== undefined) {
+        providerConfig.subagentAllowedModels = override.subagentAllowedModels;
+      }
+      if (override.subagentModelGuidance !== undefined) {
+        providerConfig.subagentModelGuidance = override.subagentModelGuidance;
+      }
       return [providerId, providerConfig];
     }),
   );
@@ -1139,6 +1145,7 @@ export async function createPaseoDaemon(
     agentManager,
     createAgent,
     ensureWorkspaceForCreate: ensureWorkspaceForCreateAndBroadcastExternal,
+    providerSnapshotManager,
   });
   await loopService.initialize();
   logger.info({ elapsed: elapsed() }, "Loop service initialized");
@@ -1209,6 +1216,7 @@ export async function createPaseoDaemon(
     createDirectoryWorkspace: createScheduleLocalWorkspaceExternal,
     createPaseoWorktreeWorkspace: createSchedulePaseoWorktreeExternal,
     archiveWorkspace: archiveScheduleWorkspaceExternal,
+    providerSnapshotManager,
   });
   await scheduleService.start();
   agentManager.setAgentArchivedCallback(async (agentId) => {
@@ -1238,6 +1246,7 @@ export async function createPaseoDaemon(
     terminalManager,
     getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
     scheduleService,
+    loopService,
     providerSnapshotManager,
     github,
     workspaceGitService,

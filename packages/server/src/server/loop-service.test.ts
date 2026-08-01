@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { beforeEach, afterEach, describe, expect, test } from "vitest";
+import { beforeEach, afterEach, describe, expect, test, vi } from "vitest";
 import type {
   AgentCapabilityFlags,
   AgentClient,
@@ -64,6 +64,7 @@ interface TestLoopServiceOptions {
   agentStorage: AgentStorage;
   logger: ReturnType<typeof createTestLogger>;
   providerSnapshotManager?: Pick<ProviderSnapshotManager, "resolveCreateConfig">;
+  subagentModelResolver?: Pick<ProviderSnapshotManager, "resolveSubagentModel">;
   ensureWorkspaceForCreate?: (
     cwd: string,
     firstAgentContext?: { prompt: string },
@@ -90,6 +91,9 @@ function createLoopService(options: TestLoopServiceOptions): LoopService {
         },
         input,
       ),
+    ...(options.subagentModelResolver
+      ? { providerSnapshotManager: options.subagentModelResolver }
+      : {}),
   });
 }
 
@@ -444,6 +448,37 @@ describe("LoopService", () => {
       provider: "claude",
       model: "sonnet",
     });
+  });
+
+  test("rejects an agent-created loop before persisting a disallowed model", async () => {
+    const manager = new AgentManager({ registry: storage, logger });
+    const resolveSubagentModel = vi.fn(async () => {
+      throw new Error("Model 'codex/blocked' is not allowed for agent-created work");
+    });
+    const service = createLoopService({
+      paseoHome,
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+      subagentModelResolver: { resolveSubagentModel },
+    });
+
+    await expect(
+      service.runLoop({
+        prompt: "Use the blocked model",
+        cwd: workspaceDir,
+        provider: "codex",
+        model: "blocked",
+        verifyPrompt: "Verify the task.",
+        agentOrigin: { agentId: "parent-agent" },
+      }),
+    ).rejects.toThrow("not allowed");
+    expect(resolveSubagentModel).toHaveBeenCalledWith({
+      provider: "codex",
+      requestedModel: "blocked",
+      cwd: workspaceDir,
+    });
+    await expect(service.listLoops()).resolves.toEqual([]);
   });
 
   test("loop worker and verifier agents share one registry workspace across iterations", async () => {

@@ -2089,6 +2089,15 @@ export const zhCN: TranslationResources = {
         discovered: "已发现",
         custom: "自定义 Models",
         updated: "已更新 {{time}}",
+        policy: {
+          title: "子代理模型策略",
+          unavailable: "不可用",
+          whenToUse: "何时使用",
+          whenToUseAccessibility: "何时使用 {{name}}",
+          allowAccessibility: "允许子代理使用 {{name}}",
+          allowAll: "允许所有模型",
+          failedToSave: "保存子代理模型策略失败",
+        },
       },
       diagnostic: {
         title: "诊断",

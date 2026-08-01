@@ -39,6 +39,7 @@ export const AgentSelectOptionSchema = z
     id: z.string(),
     label: z.string().nullish(),
     description: z.string().nullish(),
+    whenToUse: z.string().nullish(),
     isDefault: z.boolean().nullish(),
     metadata: z.record(z.string(), z.unknown()).nullish(),
   })

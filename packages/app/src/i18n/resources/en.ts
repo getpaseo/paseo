@@ -2128,6 +2128,15 @@ export const en = {
         discovered: "Discovered",
         custom: "Custom models",
         updated: "Updated {{time}}",
+        policy: {
+          title: "Subagent model policy",
+          unavailable: "Unavailable",
+          whenToUse: "When To Use",
+          whenToUseAccessibility: "When to use {{name}}",
+          allowAccessibility: "Allow {{name}} for subagents",
+          allowAll: "Allow all models",
+          failedToSave: "Failed to save subagent model policy",
+        },
       },
       diagnostic: {
         title: "Diagnostic",

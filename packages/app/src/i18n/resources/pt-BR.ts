@@ -2153,6 +2153,15 @@ export const ptBR: TranslationResources = {
         discovered: "Descobertos",
         custom: "Modelos personalizados",
         updated: "Atualizado {{time}}",
+        policy: {
+          title: "Política de modelos de subagentes",
+          unavailable: "Indisponível",
+          whenToUse: "Quando usar",
+          whenToUseAccessibility: "Quando usar {{name}}",
+          allowAccessibility: "Permitir {{name}} para subagentes",
+          allowAll: "Permitir todos os modelos",
+          failedToSave: "Falha ao salvar a política de modelos de subagentes",
+        },
       },
       diagnostic: {
         title: "Diagnóstico",

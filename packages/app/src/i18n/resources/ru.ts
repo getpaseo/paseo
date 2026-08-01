@@ -2156,6 +2156,15 @@ export const ru: TranslationResources = {
         discovered: "Обнаруженный",
         custom: "Пользовательские модели",
         updated: "Обновлен{{time}}",
+        policy: {
+          title: "Политика моделей субагентов",
+          unavailable: "Недоступно",
+          whenToUse: "Когда использовать",
+          whenToUseAccessibility: "Когда использовать {{name}}",
+          allowAccessibility: "Разрешить {{name}} для субагентов",
+          allowAll: "Разрешить все модели",
+          failedToSave: "Не удалось сохранить политику моделей субагентов",
+        },
       },
       diagnostic: {
         title: "Диагностика",

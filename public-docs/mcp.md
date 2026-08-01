@@ -31,18 +31,18 @@ MCP does not expose an agent-detach tool. Detaching is a manual user action in t
 
 ### Agents
 
-| Tool                 | Function                                                                                |
-| -------------------- | --------------------------------------------------------------------------------------- |
-| `create_agent`       | Create an agent, optionally placing it in an existing workspace with `workspaceId`.     |
-| `send_agent_prompt`  | Send a task to a running agent.                                                         |
-| `get_agent_status`   | Return the latest snapshot for an agent.                                                |
-| `list_agents`        | List recent agents as compact metadata.                                                 |
-| `cancel_agent`       | Abort an agent's current run but keep the agent alive.                                  |
-| `archive_agent`      | Soft-delete an agent and remove it from the active list.                                |
-| `kill_agent`         | Terminate an agent session permanently.                                                 |
-| `update_agent`       | Update an agent name, labels, or runtime settings such as mode/model/thinking/features. |
-| `get_agent_activity` | Return recent agent timeline entries as a curated summary.                              |
-| `set_agent_mode`     | Switch an agent's session mode.                                                         |
+| Tool                 | Function                                                                                                                                     |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create_agent`       | Create an agent, optionally placing it in an existing workspace with `workspaceId`. Agent callers can select only models their host permits. |
+| `send_agent_prompt`  | Send a task to a running agent.                                                                                                              |
+| `get_agent_status`   | Return the latest snapshot for an agent.                                                                                                     |
+| `list_agents`        | List recent agents as compact metadata.                                                                                                      |
+| `cancel_agent`       | Abort an agent's current run but keep the agent alive.                                                                                       |
+| `archive_agent`      | Soft-delete an agent and remove it from the active list.                                                                                     |
+| `kill_agent`         | Terminate an agent session permanently.                                                                                                      |
+| `update_agent`       | Update an agent name, labels, or runtime settings such as mode/model/thinking/features. Agent callers can select only permitted models.      |
+| `get_agent_activity` | Return recent agent timeline entries as a curated summary.                                                                                   |
+| `set_agent_mode`     | Switch an agent's session mode.                                                                                                              |
 
 ### Workspaces
 
@@ -81,29 +81,30 @@ See [Git worktrees](/docs/worktrees#scripts-and-services) for `paseo.json` confi
 
 Both use the same cron engine, but they have deliberately different interfaces.
 
-| Tool                | Function                                                                     |
-| ------------------- | ---------------------------------------------------------------------------- |
-| `create_schedule`   | Create a cron schedule that starts a new agent for each run.                 |
-| `list_schedules`    | List new-agent schedules managed by the daemon.                              |
-| `inspect_schedule`  | Inspect a schedule and its run history.                                      |
-| `pause_schedule`    | Pause an active schedule.                                                    |
-| `resume_schedule`   | Resume a paused schedule.                                                    |
-| `update_schedule`   | Change a schedule's cron, prompt, agent settings, limits, or other settings. |
-| `schedule_logs`     | Return recent runs and output for a schedule.                                |
-| `run_schedule_once` | Start one new-agent schedule run without changing its cron.                  |
-| `delete_schedule`   | Delete a new-agent schedule permanently.                                     |
-| `create_heartbeat`  | Send a recurring cron-backed prompt into the current agent.                  |
-| `delete_heartbeat`  | Delete one of the current agent's heartbeats.                                |
+| Tool                | Function                                                                                                                 |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `create_schedule`   | Create a cron schedule that starts a new agent for each run. Agent-created schedules keep the caller's model policy.     |
+| `list_schedules`    | List new-agent schedules managed by the daemon.                                                                          |
+| `inspect_schedule`  | Inspect a schedule and its run history.                                                                                  |
+| `pause_schedule`    | Pause an active schedule.                                                                                                |
+| `resume_schedule`   | Resume a paused schedule.                                                                                                |
+| `update_schedule`   | Change a schedule's cron, prompt, agent settings, limits, or other settings.                                             |
+| `schedule_logs`     | Return recent runs and output for a schedule.                                                                            |
+| `run_schedule_once` | Start one new-agent schedule run without changing its cron.                                                              |
+| `run_loop`          | Run worker agents until verification passes or the loop reaches its limit. Agent-created loops keep the caller's policy. |
+| `delete_schedule`   | Delete a new-agent schedule permanently.                                                                                 |
+| `create_heartbeat`  | Send a recurring cron-backed prompt into the current agent.                                                              |
+| `delete_heartbeat`  | Delete one of the current agent's heartbeats.                                                                            |
 
 MCP heartbeats are ephemeral: create or delete them. To change one, delete it and create a replacement. Pause, resume, update, inspect, logs, and run-once apply to new-agent schedules only.
 
 ### Providers
 
-| Tool               | Function                                                          |
-| ------------------ | ----------------------------------------------------------------- |
-| `list_providers`   | List configured agent providers, availability, and modes.         |
-| `list_models`      | List models for an agent provider.                                |
-| `inspect_provider` | Inspect compact provider capabilities and draft feature settings. |
+| Tool               | Function                                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `list_providers`   | List configured agent providers, availability, and modes.                                                    |
+| `list_models`      | List models for an agent provider. Agent callers receive permitted models and optional `whenToUse` guidance. |
+| `inspect_provider` | Inspect compact provider capabilities and draft feature settings.                                            |
 
 ### Permissions
 

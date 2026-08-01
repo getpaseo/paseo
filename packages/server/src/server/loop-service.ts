@@ -26,6 +26,8 @@ import {
   createStringCommandShellEnvOverlay,
 } from "../utils/string-command-shell.js";
 import { execCommand } from "../utils/spawn.js";
+import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import type { AgentOrchestrationOrigin } from "./agent/subagent-model-policy.js";
 
 const LOOP_ID_LENGTH = 8;
 const DEFAULT_LOOP_PROVIDER: AgentProvider = "claude";
@@ -107,6 +109,7 @@ const LoopRecordSchema = z.object({
   activeIteration: z.number().int().positive().nullable(),
   activeWorkerAgentId: z.string().nullable(),
   activeVerifierAgentId: z.string().nullable(),
+  agentOrigin: z.object({ agentId: z.string().min(1) }).optional(),
 });
 
 const StoredLoopsSchema = z.array(LoopRecordSchema);
@@ -136,6 +139,7 @@ export interface LoopRunOptions {
   sleepMs?: number;
   maxIterations?: number;
   maxTimeMs?: number;
+  agentOrigin?: AgentOrchestrationOrigin;
 }
 
 export interface LoopListItem {
@@ -357,6 +361,7 @@ export class LoopService {
       logger: Logger;
       createAgent: BoundCreateAgentCommand;
       ensureWorkspaceForCreate: EnsureWorkspaceForCreate;
+      providerSnapshotManager?: Pick<ProviderSnapshotManager, "resolveSubagentModel">;
     },
   ) {
     this.storePath = path.join(options.paseoHome, "loops", "loops.json");
@@ -427,6 +432,19 @@ export class LoopService {
     }
     const cwd = path.resolve(input.cwd);
     await assertLoopCwdDirectory(cwd);
+    if (input.agentOrigin && this.options.providerSnapshotManager) {
+      const provider = input.provider ?? DEFAULT_LOOP_PROVIDER;
+      await this.options.providerSnapshotManager.resolveSubagentModel({
+        provider: input.workerProvider ?? provider,
+        requestedModel: input.workerModel ?? input.model,
+        cwd,
+      });
+      await this.options.providerSnapshotManager.resolveSubagentModel({
+        provider: input.verifierProvider ?? provider,
+        requestedModel: input.verifierModel ?? input.model,
+        cwd,
+      });
+    }
 
     const createdAt = nowIso();
     const record = LoopRecordSchema.parse({
@@ -460,6 +478,7 @@ export class LoopService {
       activeIteration: null,
       activeWorkerAgentId: null,
       activeVerifierAgentId: null,
+      ...(input.agentOrigin ? { agentOrigin: input.agentOrigin } : {}),
     });
 
     this.loops.set(record.id, record);
@@ -715,7 +734,7 @@ export class LoopService {
     }
     const created = await this.options.createAgent({
       kind: "mcp",
-      provider: this.formatWorkerProviderModel(loop),
+      provider: await this.formatWorkerProviderModel(loop),
       cwd: loop.cwd,
       workspaceId,
       title: buildWorkerTitle(loop, iteration.index),
@@ -840,7 +859,7 @@ export class LoopService {
     });
     const created = await this.options.createAgent({
       kind: "mcp",
-      provider: this.formatVerifierProviderModel(loop),
+      provider: await this.formatVerifierProviderModel(loop),
       cwd: loop.cwd,
       workspaceId: await context.workspaceId,
       title: buildVerifierTitle(loop, iteration.index),
@@ -934,18 +953,31 @@ export class LoopService {
     }
   }
 
-  private formatWorkerProviderModel(loop: LoopRecord): string {
-    return formatProviderModel(
-      loop.workerProvider ?? loop.provider,
-      loop.workerModel ?? loop.model,
-    );
+  private async formatWorkerProviderModel(loop: LoopRecord): Promise<string> {
+    const provider = loop.workerProvider ?? loop.provider;
+    const requestedModel = loop.workerModel ?? loop.model ?? undefined;
+    const model = await this.resolvePolicyModel(loop, provider, requestedModel);
+    return formatProviderModel(provider, model ?? requestedModel);
   }
 
-  private formatVerifierProviderModel(loop: LoopRecord): string {
-    return formatProviderModel(
-      loop.verifierProvider ?? loop.provider,
-      loop.verifierModel ?? loop.model,
-    );
+  private async formatVerifierProviderModel(loop: LoopRecord): Promise<string> {
+    const provider = loop.verifierProvider ?? loop.provider;
+    const requestedModel = loop.verifierModel ?? loop.model ?? undefined;
+    const model = await this.resolvePolicyModel(loop, provider, requestedModel);
+    return formatProviderModel(provider, model ?? requestedModel);
+  }
+
+  private async resolvePolicyModel(
+    loop: LoopRecord,
+    provider: AgentProvider,
+    requestedModel: string | undefined,
+  ): Promise<string | undefined> {
+    if (!loop.agentOrigin || !this.options.providerSnapshotManager) return undefined;
+    return this.options.providerSnapshotManager.resolveSubagentModel({
+      provider,
+      requestedModel,
+      cwd: loop.cwd,
+    });
   }
 
   private resolveFinalText(timeline: AgentTimelineItem[], finalText: string): string {

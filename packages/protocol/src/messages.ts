@@ -105,6 +105,8 @@ const MutableDaemonProviderConfigSchema = z
   .object({
     enabled: z.boolean().optional(),
     additionalModels: z.array(MutableDaemonProviderModelSchema).optional(),
+    subagentAllowedModels: z.array(z.string()).optional(),
+    subagentModelGuidance: z.record(z.string(), z.string()).optional(),
   })
   .passthrough();
 
@@ -2862,6 +2864,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentForkContextCursor: z.boolean().optional(),
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
         providerSubagents: z.boolean().optional(),
+        // COMPAT(subagentModelPolicy): added in v0.2.6, remove gate after 2027-01-31.
+        subagentModelPolicy: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: z.boolean().optional(),
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.

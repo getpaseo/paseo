@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { AgentModelDefinition } from "@getpaseo/protocol/agent-types";
 import {
+  buildSubagentPolicyModels,
+  getNextSubagentAllowedModels,
+  isSubagentModelAllowed,
   resolveProviderDiscoveredModels,
   type ProviderDiscoveredModelsCache,
 } from "./provider-diagnostic-models";
@@ -65,5 +68,49 @@ describe("resolveProviderDiscoveredModels", () => {
     });
 
     expect(refreshing.models).toEqual([]);
+  });
+});
+
+describe("subagent model policy", () => {
+  it("includes available models and stale configured IDs", () => {
+    expect(
+      buildSubagentPolicyModels({
+        discoveredModels: [grokModel],
+        additionalModels: [{ id: "custom/model", label: "Custom model" }],
+        allowedModels: ["grok-build", "removed-model"],
+        guidance: { "guided-removed-model": "Use for migrations" },
+      }),
+    ).toEqual([
+      { id: "grok-build", label: "Grok Build", available: true },
+      { id: "custom/model", label: "Custom model", available: true },
+      { id: "removed-model", label: "removed-model", available: false },
+      { id: "guided-removed-model", label: "guided-removed-model", available: false },
+    ]);
+  });
+
+  it("treats missing and empty allowlists as unrestricted", () => {
+    expect(isSubagentModelAllowed("grok-build")).toBe(true);
+    expect(isSubagentModelAllowed("grok-build", [])).toBe(true);
+  });
+
+  it("materializes available IDs when restricting an unrestricted policy", () => {
+    expect(
+      getNextSubagentAllowedModels({
+        modelId: "grok-build",
+        availableModelIds: ["grok-build", "custom/model"],
+        allowed: false,
+      }),
+    ).toEqual(["custom/model"]);
+  });
+
+  it("never returns an empty allowlist", () => {
+    expect(
+      getNextSubagentAllowedModels({
+        modelId: "grok-build",
+        allowedModels: ["grok-build"],
+        availableModelIds: ["grok-build"],
+        allowed: false,
+      }),
+    ).toBeNull();
   });
 });

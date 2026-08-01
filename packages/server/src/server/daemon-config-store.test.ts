@@ -22,6 +22,8 @@ describe("applyMutableProviderConfigToOverrides", () => {
             enabled: false,
             description: "Gemini ACP",
             env: { GEMINI_AUTO_UPDATE: "0" },
+            subagentAllowedModels: [],
+            subagentModelGuidance: { "gemini-fast": "Use for focused tasks." },
           },
           claude: {
             additionalModels: [
@@ -40,6 +42,8 @@ describe("applyMutableProviderConfigToOverrides", () => {
         description: "Gemini ACP",
         command: ["gemini", "--acp"],
         env: { GEMINI_AUTO_UPDATE: "0" },
+        subagentAllowedModels: [],
+        subagentModelGuidance: { "gemini-fast": "Use for focused tasks." },
         enabled: false,
       },
       claude: {
@@ -513,6 +517,8 @@ describe("DaemonConfigStore", () => {
               label: "claude-custom",
             },
           ],
+          subagentAllowedModels: [],
+          subagentModelGuidance: { "claude-fast": "Use for focused tasks." },
         },
       },
     });
@@ -525,6 +531,8 @@ describe("DaemonConfigStore", () => {
           label: "claude-custom",
         },
       ],
+      subagentAllowedModels: [],
+      subagentModelGuidance: { "claude-fast": "Use for focused tasks." },
     });
   });
 

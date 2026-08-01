@@ -156,9 +156,11 @@ export interface ProviderSnapshotManagerSpies {
   listProviders: ReturnType<typeof vi.fn<[unknown], Promise<ProviderSnapshotEntry[]>>>;
   getProvider: ReturnType<typeof vi.fn<[unknown], Promise<ProviderSnapshotEntry>>>;
   listModels: ReturnType<typeof vi.fn<[unknown], Promise<AgentModelDefinition[]>>>;
+  listSubagentModels: ReturnType<typeof vi.fn<[unknown], Promise<AgentModelDefinition[]>>>;
   listModes: ReturnType<typeof vi.fn<[unknown], Promise<AgentMode[]>>>;
   resolveCreateConfig: ReturnType<typeof vi.fn<[unknown], Promise<ResolvedProviderCreateConfig>>>;
   resolveDefaultModel: ReturnType<typeof vi.fn<[unknown], Promise<string | undefined>>>;
+  resolveSubagentModel: ReturnType<typeof vi.fn<[unknown], Promise<string | undefined>>>;
   getProviderDiagnostic: ReturnType<
     typeof vi.fn<[AgentProvider], Promise<ProviderDiagnosticResult>>
   >;
@@ -191,12 +193,14 @@ export function createProviderSnapshotManagerStub(): {
     throw new Error("createProviderSnapshotManagerStub: getProvider not stubbed");
   });
   const listModels = vi.fn<[unknown], Promise<AgentModelDefinition[]>>(async () => []);
+  const listSubagentModels = vi.fn<[unknown], Promise<AgentModelDefinition[]>>(async () => []);
   const listModes = vi.fn<[unknown], Promise<AgentMode[]>>(async () => []);
   const resolveCreateConfig = vi.fn<[unknown], Promise<ResolvedProviderCreateConfig>>(async () => ({
     modeId: undefined,
     featureValues: undefined,
   }));
   const resolveDefaultModel = vi.fn<[unknown], Promise<string | undefined>>(async () => undefined);
+  const resolveSubagentModel = vi.fn<[unknown], Promise<string | undefined>>(async () => undefined);
   const getProviderDiagnostic = vi.fn<[AgentProvider], Promise<ProviderDiagnosticResult>>(
     async (provider) => ({ provider, diagnostic: "No diagnostic available for this provider." }),
   );
@@ -219,9 +223,11 @@ export function createProviderSnapshotManagerStub(): {
     listProviders,
     getProvider,
     listModels,
+    listSubagentModels,
     listModes,
     resolveCreateConfig,
     resolveDefaultModel,
+    resolveSubagentModel,
     getProviderDiagnostic,
     applyMutableProviderConfig,
     on,
@@ -244,9 +250,11 @@ export function createProviderSnapshotManagerStub(): {
     listProviders,
     getProvider,
     listModels,
+    listSubagentModels,
     listModes,
     resolveCreateConfig,
     resolveDefaultModel,
+    resolveSubagentModel,
     getProviderDiagnostic,
     applyMutableProviderConfig,
     destroy,

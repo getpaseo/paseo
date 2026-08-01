@@ -34,6 +34,12 @@ import {
   formatProviderDiagnosticError,
 } from "./providers/diagnostic-utils.js";
 import type { MutableDaemonConfig } from "../daemon-config-store.js";
+import {
+  projectSubagentModels,
+  readSubagentModelPolicy,
+  resolveSubagentModel as resolvePolicyModel,
+  type GuidedAgentModelDefinition,
+} from "./subagent-model-policy.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 60_000;
 const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 120_000;
@@ -139,6 +145,12 @@ interface ResolveDefaultModelOptions {
   provider: AgentProvider;
   requestedModel?: string | null;
   cwd?: string;
+}
+
+export interface ResolveSubagentModelOptions {
+  provider: AgentProvider;
+  requestedModel?: string;
+  cwd?: string | null;
 }
 
 export interface ProviderDiagnosticResult {
@@ -318,6 +330,33 @@ export class ProviderSnapshotManager {
   async listModels(input: ProviderSnapshotProviderOptions): Promise<AgentModelDefinition[]> {
     const entry = await this.getReadyProvider(input);
     return entry.models ?? [];
+  }
+
+  async listSubagentModels(
+    input: ProviderSnapshotProviderOptions,
+  ): Promise<GuidedAgentModelDefinition[]> {
+    const models = await this.listModels(input);
+    return projectSubagentModels({
+      provider: input.provider,
+      models,
+      policy: this.getSubagentModelPolicy(input.provider),
+    });
+  }
+
+  async resolveSubagentModel(input: ResolveSubagentModelOptions): Promise<string | undefined> {
+    const policy = this.getSubagentModelPolicy(input.provider);
+    if (!policy) return undefined;
+    const models = await this.listModels({
+      provider: input.provider,
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+      wait: true,
+    });
+    return resolvePolicyModel({
+      provider: input.provider,
+      requestedModel: input.requestedModel,
+      models,
+      policy,
+    });
   }
 
   async listModes(input: ProviderSnapshotProviderOptions): Promise<AgentMode[]> {
@@ -566,6 +605,10 @@ export class ProviderSnapshotManager {
   private getProviderSource(provider: AgentProvider): ProviderSnapshotEntry["source"] {
     const isBuiltin = BUILTIN_PROVIDER_IDS.includes(provider);
     return !isBuiltin && this.providerOverrides?.[provider]?.extends ? "custom" : "builtin";
+  }
+
+  private getSubagentModelPolicy(provider: AgentProvider) {
+    return readSubagentModelPolicy(this.providerOverrides?.[provider]);
   }
 
   private createLoadingEntries(): Map<AgentProvider, ProviderSnapshotEntry> {

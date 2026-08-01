@@ -2168,6 +2168,15 @@ export const es: TranslationResources = {
         discovered: "descubierto",
         custom: "Modelos personalizados",
         updated: "{{time}}actualizado",
+        policy: {
+          title: "Política de modelos de subagentes",
+          unavailable: "No disponible",
+          whenToUse: "Cuándo usarlo",
+          whenToUseAccessibility: "Cuándo usar {{name}}",
+          allowAccessibility: "Permitir {{name}} para subagentes",
+          allowAll: "Permitir todos los modelos",
+          failedToSave: "No se pudo guardar la política de modelos de subagentes",
+        },
       },
       diagnostic: {
         title: "Diagnóstico",

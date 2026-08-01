@@ -215,7 +215,7 @@ Single file, validated with `PersistedConfigSchema`.
     // ProviderOverrideSchema; legacy entries with `command: { mode, ... }` are migrated to the
     // current shape on load via `migrateProviderSettings`. Custom provider IDs must declare
     // `extends` (one of the built-ins or `"acp"`) and `label`. See `provider-launch-config.ts`.
-    providers: Record<providerId, ProviderOverride>,
+    providers: Record<providerId, ProviderOverride>, // includes per-provider subagent model policy
     metadataGeneration: {
       providers: [{ provider, model?, thinkingOptionId? }]
     }
@@ -235,6 +235,8 @@ Single file, validated with `PersistedConfigSchema`.
 All fields are optional with sensible defaults.
 
 `agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
+
+`agents.providers.<providerId>.subagentAllowedModels` is a host-local, provider-local list of model IDs that an agent may select for subagent work. Missing or empty means every model for that provider is allowed. `subagentModelGuidance` maps model IDs to selection advice. Both settings retain IDs that provider discovery no longer reports so Settings can show them as unavailable; stale IDs are not current catalog entries. See [custom-providers.md](custom-providers.md) for the provider override fields and [providers.md](providers.md) for tool behavior.
 
 Local speech model ids are intentionally narrow: STT uses `parakeet-tdt-0.6b-v2-int8`, TTS uses `kokoro-en-v0_19`, and turn detection uses the bundled Silero VAD model.
 

@@ -57,7 +57,7 @@ Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false`
 
 **`list_providers`** — compact provider availability and modes.
 
-**`list_models`** — full model list for one provider. Use only when you need model IDs or thinking options; the list can be large.
+**`list_models`** — full model list for one provider. Use only when you need model IDs or thinking options; the list can be large. In an agent-scoped session it already contains only permitted models and may include `whenToUse` selection advice. Use the returned IDs rather than guessing.
 
 **`inspect_provider`** — compact provider capability and feature inspection. Required: `provider`; pass `cwd` when you are not in an agent-scoped session. Optional: `settings` with draft `model`, `modeId`, `thinkingOptionId`, and `features`.
 
@@ -72,6 +72,10 @@ Only set feature IDs returned by `inspect_provider`. For Codex fast mode, look f
 **`delete_heartbeat`** stops it. MCP intentionally exposes no heartbeat update tool; delete and recreate when its task or cadence changes.
 
 Schedules have the full list/inspect/update/pause/resume/run-once/log/delete surface. Heartbeats deliberately do not.
+
+**`run_loop`** — run worker agents until verification passes or the loop reaches its limit. Agent-created loops use permitted models.
+
+Schedules and loops you create as an agent remain subagent work: choose `list_models` results for scheduled agents and loop worker/verifier roles. Heartbeats reuse your existing agent and do not select a model.
 
 ## Orchestration preferences
 

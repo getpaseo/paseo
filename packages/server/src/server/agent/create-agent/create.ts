@@ -42,7 +42,8 @@ export interface CreateAgentCommandDependencies {
   paseoHome?: string;
   worktreesRoot?: string;
   terminalManager?: TerminalManager | null;
-  providerSnapshotManager: Pick<ProviderSnapshotManager, "resolveCreateConfig">;
+  providerSnapshotManager: Pick<ProviderSnapshotManager, "resolveCreateConfig"> &
+    Partial<Pick<ProviderSnapshotManager, "resolveSubagentModel">>;
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
   ensureWorkspaceForCreate?: EnsureWorkspaceForCreate;
@@ -102,6 +103,7 @@ export interface CreateAgentFromMcpInput {
   }) => void;
   onWorktreeCreated?: (createdWorktree: CreatePaseoWorktreeWorkflowResult) => void;
   callerAgentId?: string;
+  enforceSubagentModelPolicy?: boolean;
   callerContext?: {
     lockedCwd?: string;
     allowCustomCwd?: boolean;
@@ -341,12 +343,24 @@ async function resolveMcpCreateAgent(
     resolvedCwd,
     parentAgent,
   });
+  const resolvedModel =
+    (input.callerAgentId || input.enforceSubagentModelPolicy) &&
+    dependencies.providerSnapshotManager.resolveSubagentModel
+      ? await dependencies.providerSnapshotManager.resolveSubagentModel({
+          provider,
+          requestedModel: resolvedProviderModel.model ?? input.config?.model,
+          cwd: intent.cwd,
+        })
+      : undefined;
 
   const trimmedPrompt = input.initialPrompt?.trim() ?? "";
   return {
     config: buildMcpSessionConfig({
       input,
-      resolvedProviderModel,
+      resolvedProviderModel: {
+        ...resolvedProviderModel,
+        model: resolvedModel ?? resolvedProviderModel.model,
+      },
       provider,
       resolvedCwd: intent.cwd,
       trimmedPrompt,
