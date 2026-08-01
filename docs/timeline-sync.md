@@ -98,10 +98,10 @@ reconciled with the authoritative tail and subsequent catch-up.
 
 Every daemon-derived live item carries its timeline epoch and sequence position. Bootstrap
 replacement keeps only positioned rows newer than the page it installs, while unresolved local
-user presentations identify themselves by having client identity without provider identity or a
-timeline position. This prevents a page from duplicating rows it already covers without coupling
-display continuity to the shorter-lived submission registry. Unreconciled local presentations are
-not persisted in the durable replica cache.
+user presentations identify themselves by having client identity without a timeline position. This
+prevents a page from duplicating rows it already covers without coupling display continuity to the
+shorter-lived submission registry. Unreconciled local presentations are not persisted in the durable
+replica cache.
 
 ## Selective and legacy delivery
 
@@ -173,18 +173,12 @@ second running state. Disconnect and replica removal remain destructive close bo
 comes only from turn liveness, never from submission records or whichever timeline rows happen to be
 mounted.
 
-The daemon records one canonical submitted user row with Paseo's `clientMessageId` as soon as the
-provider accepts the turn. A correlated provider echo enriches that same sequence with its provider
-`messageId`; it never appends a second source row. The row's identity and pagination position are
-therefore independent of provider notification timing. A late echo is streamed as a revision at the
-original sequence; clients apply it only to the already-covered row with the same client identity.
+The daemon records one canonical submitted user row at acceptance. Its wire `messageId` is the
+submission's `clientMessageId`, so the row is born with its final identity and remains immutable on
+the wire. A correlated provider echo records the provider's native identity internally without
+dispatching another timeline event. Rewind resolves the wire identity to that provider identity at
+the provider boundary. Daemon-handled prompts follow the same identity rule.
 
-Clients that understand these same-sequence updates advertise the
-`canonical_submitted_prompt_revisions` client capability. For older destinations, the daemon keeps
-the canonical row globally but withholds an identity-awaiting foreground prompt until provider identity
-arrives or the turn produces later output or a terminal. Finalization optionally adds provider
-identity, removes the internal delivery marker, and redispatches the same stored sequence. Timeline
-fetches hide only that trailing marked row; daemon-handled prompts are never marked.
 Content matching is limited to the dated compatibility path for daemon timelines created before
 that field existed. Canonical ingestion may match only an explicit unreconciled local candidate;
 the draft-create handoff is the one boundary that also permits the legacy canonical twin to have
