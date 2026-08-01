@@ -1,8 +1,18 @@
 import { beforeEach, afterEach, describe, expect, test } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, existsSync, realpathSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import path from "path";
-import { execFileSync, execSync, spawnSync } from "child_process";
+import { execFile, execFileSync, spawnSync } from "child_process";
+import { randomUUID } from "crypto";
+import { z } from "zod";
 
 import {
   createDaemonTestContext,
@@ -14,6 +24,11 @@ import {
   type CreateWorktreeOptions,
   type WorktreeConfig,
 } from "../../utils/worktree.js";
+import {
+  createGitHubService,
+  type GitHubCommandRunner,
+  type GitHubCommandRunnerOptions,
+} from "../../services/github-service.js";
 
 interface LegacyCreateWorktreeTestOptions {
   branchName: string;
@@ -50,6 +65,7 @@ const CODEX_TEST_THINKING_OPTION_ID = "low";
 const CHECKOUT_SHIP_LIVE_GITHUB_E2E = "PASEO_CHECKOUT_SHIP_LIVE_GITHUB_E2E";
 const GITHUB_HOST = "github.com";
 const GITHUB_CLI_TIMEOUT_MS = 15_000;
+const GIT_COMMAND_TIMEOUT_MS = 30_000;
 const GITHUB_AUTH_STATUS_ARGS = [
   "auth",
   "status",
@@ -59,6 +75,28 @@ const GITHUB_AUTH_STATUS_ARGS = [
   "--json",
   "hosts",
 ];
+const GitHubRepositoryOwnershipSchema = z.object({
+  id: z.number().int().positive(),
+  node_id: z.string().min(1),
+  full_name: z.string().min(1),
+  description: z.string(),
+});
+const GitHubDeleteRepositorySchema = z.object({
+  data: z.object({
+    deleteRepository: z.object({
+      clientMutationId: z.string(),
+    }),
+  }),
+});
+
+type GitHubRepositoryOwnership = z.infer<typeof GitHubRepositoryOwnershipSchema>;
+
+interface CreatedGitHubRepository {
+  id: number;
+  nodeId: string;
+  fullName: string;
+  marker: string;
+}
 
 interface GitHubCliAuthStatus {
   authenticated: boolean;
@@ -76,6 +114,27 @@ interface GitHubCliCommandResult {
   output: string;
 }
 
+interface GitHubRunnerAuditEntry {
+  args: string[];
+  cwd: string;
+  host: typeof GITHUB_HOST;
+  login: string;
+}
+
+interface GitHubProcessRequest {
+  args: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  timeout: number;
+}
+
+type GitHubProcessExecutor = (request: GitHubProcessRequest) => Promise<GitHubCliCommandResult>;
+
+interface GitCredentialLease {
+  socketPath: string;
+  close(): void;
+}
+
 type GitHubCliCommandRunner = (
   args: string[],
   identity: GitHubAuthIdentity,
@@ -84,6 +143,57 @@ type GitHubAuthIdentityReader = () => GitHubAuthIdentity;
 
 function tmpCwd(prefix: string): string {
   return realpathSync(mkdtempSync(path.join(tmpdir(), prefix)));
+}
+
+function scrubSecrets(value: string, secrets: readonly string[]): string {
+  return secrets.reduce((scrubbed, secret) => {
+    if (!secret) {
+      return scrubbed;
+    }
+    return scrubbed
+      .split(secret)
+      .join("[REDACTED]")
+      .split(encodeURIComponent(secret))
+      .join("[REDACTED]");
+  }, value);
+}
+
+function assertArgsContainNoSecrets(args: readonly string[], secrets: readonly string[]): void {
+  const serializedArgs = args.join("\0");
+  if (secrets.some((secret) => secret.length > 0 && serializedArgs.includes(secret))) {
+    throw new Error("Refusing to put an operation credential in subprocess arguments");
+  }
+}
+
+function createGitSyncOptions(cwd: string, input?: string) {
+  return {
+    cwd,
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GCM_INTERACTIVE: "Never",
+    },
+    input,
+    stdio: "pipe" as const,
+    timeout: GIT_COMMAND_TIMEOUT_MS,
+  };
+}
+
+function executeGit(
+  args: string[],
+  options: { cwd: string; input?: string; secrets?: readonly string[] },
+): string {
+  const secrets = options.secrets ?? [];
+  assertArgsContainNoSecrets(args, secrets);
+  try {
+    return execFileSync("git", args, createGitSyncOptions(options.cwd, options.input))
+      .toString()
+      .trim();
+  } catch (error) {
+    const sanitized = scrubSecrets(formatCommandError(error, "git"), secrets);
+    // eslint-disable-next-line preserve-caught-error -- the raw subprocess error may contain the operation credential
+    throw new Error(`git command failed: ${sanitized}`);
+  }
 }
 
 function createGitHubCliSyncOptions(
@@ -160,7 +270,15 @@ function getGitHubCliAuthStatus(): GitHubCliAuthStatus {
 }
 
 function executeGitHubCli(args: string[], token?: string): string {
-  return execFileSync("gh", args, createGitHubCliSyncOptions(token)).toString().trim();
+  const secrets = token === undefined ? [] : [token];
+  assertArgsContainNoSecrets(args, secrets);
+  try {
+    return execFileSync("gh", args, createGitHubCliSyncOptions(token)).toString().trim();
+  } catch (error) {
+    const sanitized = scrubSecrets(formatCommandError(error), secrets);
+    // eslint-disable-next-line preserve-caught-error -- the raw subprocess error may contain the operation credential
+    throw new Error(`GitHub CLI command failed: ${sanitized}`);
+  }
 }
 
 function readGitHubAuthIdentity(authStatus = getGitHubCliAuthStatus()): GitHubAuthIdentity {
@@ -221,25 +339,22 @@ const testWithExplicitLiveGitHubOptIn =
   process.env[CHECKOUT_SHIP_LIVE_GITHUB_E2E] === "1" ? test : test.skip;
 
 function initGitRepo(repoDir: string): void {
-  execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
-  execSync("git config user.email 'paseo-test@example.com'", {
-    cwd: repoDir,
-    stdio: "pipe",
-  });
-  execSync("git config user.name 'Paseo Test'", {
-    cwd: repoDir,
-    stdio: "pipe",
-  });
+  executeGit(["init", "-b", "main"], { cwd: repoDir });
+  executeGit(["config", "user.email", "paseo-test@example.com"], { cwd: repoDir });
+  executeGit(["config", "user.name", "Paseo Test"], { cwd: repoDir });
   writeFileSync(path.join(repoDir, "README.md"), "init\n");
-  execSync("git add README.md", { cwd: repoDir, stdio: "pipe" });
-  execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
+  executeGit(["add", "README.md"], { cwd: repoDir });
+  executeGit(["-c", "commit.gpgsign=false", "commit", "-m", "Initial commit"], {
     cwd: repoDir,
-    stdio: "pipe",
   });
 }
 
-function createPrivateRepo(repoName: string, identity: GitHubAuthIdentity): void {
-  executeGitHubCli(
+function createPrivateRepo(
+  repoName: string,
+  identity: GitHubAuthIdentity,
+): CreatedGitHubRepository {
+  const marker = `paseo-checkout-ship-e2e:${randomUUID()}`;
+  const output = executeGitHubCli(
     [
       "api",
       "--hostname",
@@ -251,12 +366,29 @@ function createPrivateRepo(repoName: string, identity: GitHubAuthIdentity): void
       `name=${repoName}`,
       "-f",
       "private=true",
+      "-f",
+      `description=${marker}`,
     ],
     identity.token,
   );
+  const created = GitHubRepositoryOwnershipSchema.parse(JSON.parse(output));
+  const expectedFullName = `${identity.login}/${repoName}`;
+
+  if (created.full_name !== expectedFullName || created.description !== marker) {
+    throw new Error(
+      `GitHub returned unexpected ownership facts for newly created repo ${expectedFullName}`,
+    );
+  }
+
+  return {
+    id: created.id,
+    nodeId: created.node_id,
+    fullName: created.full_name,
+    marker,
+  };
 }
 
-function formatCommandError(error: unknown): string {
+function formatCommandError(error: unknown, commandName = "GitHub CLI"): string {
   if (error && typeof error === "object") {
     const commandError = error as {
       code?: string;
@@ -265,7 +397,8 @@ function formatCommandError(error: unknown): string {
       message?: string;
     };
     if (commandError.code === "ETIMEDOUT") {
-      return `GitHub CLI command timed out after ${GITHUB_CLI_TIMEOUT_MS}ms`;
+      const timeoutMs = commandName === "git" ? GIT_COMMAND_TIMEOUT_MS : GITHUB_CLI_TIMEOUT_MS;
+      return `${commandName} command timed out after ${timeoutMs}ms`;
     }
     const output = [commandError.stderr, commandError.stdout]
       .map((value) => value?.toString().trim())
@@ -276,6 +409,147 @@ function formatCommandError(error: unknown): string {
   }
 
   return String(error);
+}
+
+function executeGitHubProcess(request: GitHubProcessRequest): Promise<GitHubCliCommandResult> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "gh",
+      request.args,
+      {
+        cwd: request.cwd,
+        env: request.env,
+        maxBuffer: 10 * 1024 * 1024,
+        timeout: request.timeout,
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(Object.assign(error, { stdout, stderr }));
+          return;
+        }
+        resolve({ succeeded: true, output: stdout.trim() });
+      },
+    );
+  });
+}
+
+function createPinnedGitHubRunner(
+  readIdentity: GitHubAuthIdentityReader,
+  audit: GitHubRunnerAuditEntry[],
+  executeProcess: GitHubProcessExecutor = executeGitHubProcess,
+): GitHubCommandRunner {
+  return async (args: string[], options: GitHubCommandRunnerOptions) => {
+    const identity = readIdentity();
+    assertArgsContainNoSecrets(args, [identity.token]);
+    audit.push({
+      args: [...args],
+      cwd: options.cwd,
+      host: GITHUB_HOST,
+      login: identity.login,
+    });
+
+    try {
+      const result = await executeProcess({
+        args: [...args],
+        cwd: options.cwd,
+        env: {
+          ...process.env,
+          ...options.envOverlay,
+          GH_HOST: GITHUB_HOST,
+          GH_TOKEN: identity.token,
+          GITHUB_TOKEN: identity.token,
+          GH_PROMPT_DISABLED: "1",
+        },
+        timeout: GITHUB_CLI_TIMEOUT_MS,
+      });
+      return {
+        stdout: scrubSecrets(result.output, [identity.token]),
+        stderr: "",
+      };
+    } catch (error) {
+      const sanitized = scrubSecrets(formatCommandError(error), [identity.token]);
+      // eslint-disable-next-line preserve-caught-error -- the raw subprocess error may contain the operation credential
+      throw new Error(`Bound GitHub CLI command failed: ${sanitized}`);
+    }
+  };
+}
+
+type GitExecutor = typeof executeGit;
+
+function createGitCredentialLease(
+  repoDir: string,
+  identity: GitHubAuthIdentity,
+  options: {
+    audit?: string[][];
+    credentialDir?: string;
+    execute?: GitExecutor;
+  } = {},
+): GitCredentialLease {
+  const execute = options.execute ?? executeGit;
+  const credentialDir = options.credentialDir ?? realpathSync(mkdtempSync("/tmp/pgh-"));
+  const socketPath = path.join(credentialDir, "cache.sock");
+  const hooksPath = path.join(credentialDir, "empty-hooks");
+  const askPassPath = path.join(credentialDir, "deny-askpass.sh");
+  mkdirSync(hooksPath, { recursive: true });
+  writeFileSync(askPassPath, "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+  const run = (args: string[], input?: string): string => {
+    options.audit?.push([...args]);
+    return execute(args, {
+      cwd: repoDir,
+      input,
+      secrets: [identity.token],
+    });
+  };
+
+  run(["config", "--local", "credential.helper", ""]);
+  run([
+    "config",
+    "--local",
+    "--add",
+    "credential.helper",
+    `cache --timeout=300 --socket=${socketPath}`,
+  ]);
+  run(["config", "--local", "core.hooksPath", hooksPath]);
+  run(["config", "--local", "core.askPass", askPassPath]);
+  run(["config", "--local", "credential.interactive", "never"]);
+  run(["config", "--local", `http.https://${GITHUB_HOST}/.extraHeader`, ""]);
+  run(
+    ["credential-cache", `--socket=${socketPath}`, "store"],
+    `protocol=https\nhost=${GITHUB_HOST}\nusername=x-access-token\npassword=${identity.token}\n\n`,
+  );
+
+  let closed = false;
+  return {
+    socketPath,
+    close(): void {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      const errors: unknown[] = [];
+      try {
+        run(
+          ["credential-cache", `--socket=${socketPath}`, "erase"],
+          `protocol=https\nhost=${GITHUB_HOST}\nusername=x-access-token\n\n`,
+        );
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        run(["credential-cache", `--socket=${socketPath}`, "exit"]);
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        rmSync(credentialDir, { recursive: true, force: true });
+      } catch (error) {
+        errors.push(error);
+      }
+      if (errors.length > 0) {
+        throw new AggregateError(errors, "Failed to close the run-owned Git credential cache");
+      }
+    },
+  };
 }
 
 function runGitHubCli(args: string[], identity: GitHubAuthIdentity): GitHubCliCommandResult {
@@ -300,12 +574,12 @@ function assertSameGitHubAuthIdentity(
 }
 
 function deleteRepoAndVerifyAbsent(
-  fullName: string | null,
+  createdRepo: CreatedGitHubRepository | null,
   expectedIdentity: GitHubAuthIdentity,
   runGitHubCommand: GitHubCliCommandRunner = runGitHubCli,
   readActiveIdentity: GitHubAuthIdentityReader = readGitHubAuthIdentity,
 ): void {
-  if (!fullName) {
+  if (!createdRepo) {
     return;
   }
 
@@ -314,25 +588,58 @@ function deleteRepoAndVerifyAbsent(
     identityBefore = readActiveIdentity();
   } catch (error) {
     throw new Error(
-      `Failed to start cleanup of temporary GitHub repo ${fullName}: the active ${GITHUB_HOST} identity could not be proved`,
+      `Failed to start cleanup of temporary GitHub repo ${createdRepo.fullName}: the active ${GITHUB_HOST} identity could not be proved`,
       { cause: error },
     );
   }
   assertSameGitHubAuthIdentity(expectedIdentity, identityBefore, "before");
 
-  const exactRepoEndpoint = `repos/${fullName}`;
+  const exactRepoEndpoint = `repos/${createdRepo.fullName}`;
   const accessResult = runGitHubCommand(
     ["api", "--hostname", GITHUB_HOST, exactRepoEndpoint],
     expectedIdentity,
   );
   if (!accessResult.succeeded) {
     throw new Error(
-      `Failed to start cleanup of temporary GitHub repo ${fullName}: the retained active identity could not read the exact repo before deletion: ${accessResult.output}`,
+      `Failed to start cleanup of temporary GitHub repo ${createdRepo.fullName}: the retained active identity could not read the exact repo before deletion: ${accessResult.output}`,
     );
   }
 
+  let ownership: GitHubRepositoryOwnership;
+  try {
+    ownership = GitHubRepositoryOwnershipSchema.parse(JSON.parse(accessResult.output));
+  } catch (error) {
+    throw new Error(
+      `Refusing to delete temporary GitHub repo ${createdRepo.fullName}: ownership readback was invalid`,
+      { cause: error },
+    );
+  }
+  if (
+    ownership.id !== createdRepo.id ||
+    ownership.node_id !== createdRepo.nodeId ||
+    ownership.full_name !== createdRepo.fullName ||
+    ownership.description !== createdRepo.marker
+  ) {
+    throw new Error(
+      `Refusing to delete temporary GitHub repo ${createdRepo.fullName}: immutable repository identity or run marker changed`,
+    );
+  }
+
+  const deleteMutation =
+    "mutation($repositoryId:ID!,$clientMutationId:String!){deleteRepository(input:{repositoryId:$repositoryId,clientMutationId:$clientMutationId}){clientMutationId}}";
   const deleteResult = runGitHubCommand(
-    ["api", "--hostname", GITHUB_HOST, "--method", "DELETE", exactRepoEndpoint],
+    [
+      "api",
+      "--hostname",
+      GITHUB_HOST,
+      "graphql",
+      "-f",
+      `query=${deleteMutation}`,
+      "-f",
+      `repositoryId=${createdRepo.nodeId}`,
+      "-f",
+      `clientMutationId=${createdRepo.marker}`,
+    ],
     expectedIdentity,
   );
   const readbackResult = runGitHubCommand(
@@ -345,27 +652,39 @@ function deleteRepoAndVerifyAbsent(
     identityAfter = readActiveIdentity();
   } catch (error) {
     throw new Error(
-      `Failed to prove cleanup of temporary GitHub repo ${fullName}: the active ${GITHUB_HOST} identity was unavailable after the exact-repository readback`,
+      `Failed to prove cleanup of temporary GitHub repo ${createdRepo.fullName}: the active ${GITHUB_HOST} identity was unavailable after the exact-repository readback`,
       { cause: error },
     );
   }
   assertSameGitHubAuthIdentity(expectedIdentity, identityAfter, "after");
 
-  const deleteSummary = deleteResult.succeeded
-    ? "the exact GitHub API delete reported success"
-    : `the exact GitHub API delete failed: ${deleteResult.output}`;
+  let deletionConfirmed = false;
+  let deleteSummary: string;
+  if (deleteResult.succeeded) {
+    try {
+      const parsed = GitHubDeleteRepositorySchema.parse(JSON.parse(deleteResult.output));
+      deletionConfirmed = parsed.data.deleteRepository.clientMutationId === createdRepo.marker;
+      deleteSummary = deletionConfirmed
+        ? "the immutable-ID GitHub delete returned the run marker"
+        : "the immutable-ID GitHub delete returned a different run marker";
+    } catch {
+      deleteSummary = "the immutable-ID GitHub delete returned invalid confirmation";
+    }
+  } else {
+    deleteSummary = `the immutable-ID GitHub delete failed: ${deleteResult.output}`;
+  }
   const exactRepoIsAbsent =
     !readbackResult.succeeded && /\bHTTP 404\b/i.test(readbackResult.output);
 
-  if (!deleteResult.succeeded) {
+  if (!deletionConfirmed) {
     throw new Error(
-      `Failed to clean up temporary GitHub repo ${fullName}: deletion did not succeed, so the readback cannot certify absence; ${deleteSummary}; readback: ${readbackResult.output}.`,
+      `Failed to clean up temporary GitHub repo ${createdRepo.fullName}: deletion was not confirmed for its immutable ID and run marker, so the readback cannot certify absence; ${deleteSummary}; readback: ${readbackResult.output}.`,
     );
   }
 
   if (readbackResult.succeeded) {
     throw new Error(
-      `Failed to clean up temporary GitHub repo ${fullName}: the exact repo remains readable after cleanup; ${deleteSummary}.`,
+      `Failed to clean up temporary GitHub repo ${createdRepo.fullName}: the exact repo remains readable after cleanup; ${deleteSummary}.`,
     );
   }
 
@@ -374,7 +693,7 @@ function deleteRepoAndVerifyAbsent(
   }
 
   throw new Error(
-    `Failed to verify cleanup of temporary GitHub repo ${fullName}: the exact repo could not be read back to confirm HTTP 404; ${deleteSummary}; readback failed: ${readbackResult.output}.`,
+    `Failed to verify cleanup of temporary GitHub repo ${createdRepo.fullName}: the exact repo could not be read back to confirm HTTP 404; ${deleteSummary}; readback failed: ${readbackResult.output}.`,
   );
 }
 
@@ -393,13 +712,38 @@ function throwCheckoutShipErrors(testError: unknown, repoCleanupError: unknown):
   }
 }
 
+function aggregateCleanupErrors(errors: unknown[]): unknown {
+  if (errors.length === 0) {
+    return undefined;
+  }
+  if (errors.length === 1) {
+    return errors[0];
+  }
+  return new AggregateError(errors, "Multiple checkout ship cleanup operations failed");
+}
+
 describe("checkout ship live GitHub mutation safety", () => {
   const fixtureToken = "fixture-token-not-a-secret";
   const fixtureIdentity: GitHubAuthIdentity = {
     login: "octocat",
     token: fixtureToken,
   };
+  const fixtureRepo: CreatedGitHubRepository = {
+    id: 12345,
+    nodeId: "R_fixtureNodeId",
+    fullName: "octocat/checkout-ship-test",
+    marker: "paseo-checkout-ship-e2e:fixture-run",
+  };
   const readFixtureIdentity = (): GitHubAuthIdentity => ({ ...fixtureIdentity });
+  const fixtureOwnershipOutput = JSON.stringify({
+    id: fixtureRepo.id,
+    node_id: fixtureRepo.nodeId,
+    full_name: fixtureRepo.fullName,
+    description: fixtureRepo.marker,
+  });
+  const fixtureDeleteOutput = JSON.stringify({
+    data: { deleteRepository: { clientMutationId: fixtureRepo.marker } },
+  });
 
   test("logged-in gh alone and missing auth or cleanup scope cannot enable mutation", () => {
     const fullyAuthorizedGh: GitHubCliAuthStatus = {
@@ -470,27 +814,87 @@ describe("checkout ship live GitHub mutation safety", () => {
     const options = createGitHubCliSyncOptions(fixtureToken, {
       GH_HOST: "github.example.com",
     });
+    const gitOptions = createGitSyncOptions("/tmp/fixture-repo");
 
     expect(options.env.GH_HOST).toBe(GITHUB_HOST);
     expect(options.env.GH_TOKEN).toBe(fixtureToken);
     expect(options.timeout).toBe(GITHUB_CLI_TIMEOUT_MS);
+    expect(gitOptions.env.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(gitOptions.timeout).toBe(GIT_COMMAND_TIMEOUT_MS);
+  });
+
+  test("operation credentials stay out of argv, errors, and audit logs", async () => {
+    const credentialDir = realpathSync(mkdtempSync("/tmp/pgh-test-"));
+    const gitCalls: Array<{ args: string[]; input?: string }> = [];
+    const fakeGit: GitExecutor = (args, options) => {
+      gitCalls.push({ args: [...args], input: options.input });
+      return "";
+    };
+    const lease = createGitCredentialLease("/tmp/fixture-repo", fixtureIdentity, {
+      credentialDir,
+      execute: fakeGit,
+    });
+    lease.close();
+
+    expect(gitCalls.some((call) => call.input?.includes(fixtureToken))).toBe(true);
+    expect(gitCalls.every((call) => !call.args.join("\0").includes(fixtureToken))).toBe(true);
+
+    let argvError: unknown;
+    try {
+      executeGit(["remote", "add", "origin", fixtureToken], {
+        cwd: "/tmp",
+        secrets: [fixtureToken],
+      });
+    } catch (error) {
+      argvError = error;
+    }
+    expect(argvError).toBeInstanceOf(Error);
+    expect((argvError as Error).message).not.toContain(fixtureToken);
+
+    const audit: GitHubRunnerAuditEntry[] = [];
+    const requests: GitHubProcessRequest[] = [];
+    const runner = createPinnedGitHubRunner(readFixtureIdentity, audit, async (request) => {
+      requests.push(request);
+      throw new Error(`simulated failure containing ${fixtureToken}`);
+    });
+    let runnerError: unknown;
+    try {
+      await runner(["api", "user"], {
+        cwd: "/tmp/fixture-repo",
+        envOverlay: {
+          GH_HOST: "github.example.com",
+          GH_TOKEN: "hostile-ambient-token",
+        },
+      });
+    } catch (error) {
+      runnerError = error;
+    }
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].env.GH_HOST).toBe(GITHUB_HOST);
+    expect(requests[0].env.GH_TOKEN).toBe(fixtureToken);
+    expect(requests[0].env.GITHUB_TOKEN).toBe(fixtureToken);
+    expect(requests[0].timeout).toBe(GITHUB_CLI_TIMEOUT_MS);
+    expect(requests[0].args.join("\0")).not.toContain(fixtureToken);
+    expect((runnerError as Error).message).not.toContain(fixtureToken);
+    expect(JSON.stringify(audit)).not.toContain(fixtureToken);
   });
 
   test("successful deletion plus same-identity 404 certifies exact-repo cleanup", () => {
     const calls: string[][] = [];
     const runGitHubCommand: GitHubCliCommandRunner = (args) => {
       calls.push(args);
-      if (args.includes("DELETE")) {
-        return { succeeded: true, output: "" };
+      if (args.includes("graphql")) {
+        return { succeeded: true, output: fixtureDeleteOutput };
       }
       return calls.length === 1
-        ? { succeeded: true, output: '{"full_name":"octocat/checkout-ship-test"}' }
+        ? { succeeded: true, output: fixtureOwnershipOutput }
         : { succeeded: false, output: "HTTP 404: Not Found" };
     };
 
     expect(() =>
       deleteRepoAndVerifyAbsent(
-        "octocat/checkout-ship-test",
+        fixtureRepo,
         fixtureIdentity,
         runGitHubCommand,
         readFixtureIdentity,
@@ -498,44 +902,101 @@ describe("checkout ship live GitHub mutation safety", () => {
     ).not.toThrow();
     expect(calls).toEqual([
       ["api", "--hostname", GITHUB_HOST, "repos/octocat/checkout-ship-test"],
-      ["api", "--hostname", GITHUB_HOST, "--method", "DELETE", "repos/octocat/checkout-ship-test"],
+      [
+        "api",
+        "--hostname",
+        GITHUB_HOST,
+        "graphql",
+        "-f",
+        expect.stringContaining("deleteRepository"),
+        "-f",
+        `repositoryId=${fixtureRepo.nodeId}`,
+        "-f",
+        `clientMutationId=${fixtureRepo.marker}`,
+      ],
       ["api", "--hostname", GITHUB_HOST, "repos/octocat/checkout-ship-test"],
     ]);
+  });
+
+  test("cleanup refuses a name collision or replacement with different immutable ownership", () => {
+    const calls: string[][] = [];
+    const runGitHubCommand: GitHubCliCommandRunner = (args) => {
+      calls.push(args);
+      return {
+        succeeded: true,
+        output: JSON.stringify({
+          id: fixtureRepo.id + 1,
+          node_id: "R_replacement",
+          full_name: fixtureRepo.fullName,
+          description: fixtureRepo.marker,
+        }),
+      };
+    };
+
+    expect(() =>
+      deleteRepoAndVerifyAbsent(
+        fixtureRepo,
+        fixtureIdentity,
+        runGitHubCommand,
+        readFixtureIdentity,
+      ),
+    ).toThrow("immutable repository identity or run marker changed");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toContain("graphql");
+  });
+
+  test("cleanup is not armed before a successful create returns immutable ownership", () => {
+    let identityRead = false;
+    let commandRun = false;
+    const runGitHubCommand: GitHubCliCommandRunner = () => {
+      commandRun = true;
+      return { succeeded: false, output: "must not run" };
+    };
+    const readActiveIdentity: GitHubAuthIdentityReader = () => {
+      identityRead = true;
+      return fixtureIdentity;
+    };
+
+    expect(() =>
+      deleteRepoAndVerifyAbsent(null, fixtureIdentity, runGitHubCommand, readActiveIdentity),
+    ).not.toThrow();
+    expect(identityRead).toBe(false);
+    expect(commandRun).toBe(false);
   });
 
   test("failed deletion plus 404 is surfaced instead of certifying cleanup", () => {
     let apiCalls = 0;
     const runGitHubCommand: GitHubCliCommandRunner = (args) => {
-      if (args.includes("DELETE")) {
+      if (args.includes("graphql")) {
         return { succeeded: false, output: "HTTP 403: delete_repo scope required" };
       }
       apiCalls += 1;
       return apiCalls === 1
-        ? { succeeded: true, output: '{"full_name":"octocat/checkout-ship-test"}' }
+        ? { succeeded: true, output: fixtureOwnershipOutput }
         : { succeeded: false, output: "HTTP 404: Not Found" };
     };
 
     expect(() =>
       deleteRepoAndVerifyAbsent(
-        "octocat/checkout-ship-test",
+        fixtureRepo,
         fixtureIdentity,
         runGitHubCommand,
         readFixtureIdentity,
       ),
     ).toThrow(
-      "Failed to clean up temporary GitHub repo octocat/checkout-ship-test: deletion did not succeed, so the readback cannot certify absence",
+      "Failed to clean up temporary GitHub repo octocat/checkout-ship-test: deletion was not confirmed for its immutable ID and run marker",
     );
   });
 
   test("404 with lost token access is an inconclusive hard cleanup failure", () => {
     let apiCalls = 0;
     const runGitHubCommand: GitHubCliCommandRunner = (args) => {
-      if (args.includes("DELETE")) {
-        return { succeeded: true, output: "" };
+      if (args.includes("graphql")) {
+        return { succeeded: true, output: fixtureDeleteOutput };
       }
       apiCalls += 1;
       return apiCalls === 1
-        ? { succeeded: true, output: '{"full_name":"octocat/checkout-ship-test"}' }
+        ? { succeeded: true, output: fixtureOwnershipOutput }
         : { succeeded: false, output: "HTTP 404: Not Found" };
     };
     let identityReads = 0;
@@ -548,12 +1009,7 @@ describe("checkout ship live GitHub mutation safety", () => {
     };
 
     expect(() =>
-      deleteRepoAndVerifyAbsent(
-        "octocat/checkout-ship-test",
-        fixtureIdentity,
-        runGitHubCommand,
-        readActiveIdentity,
-      ),
+      deleteRepoAndVerifyAbsent(fixtureRepo, fixtureIdentity, runGitHubCommand, readActiveIdentity),
     ).toThrow(
       "Failed to prove cleanup of temporary GitHub repo octocat/checkout-ship-test: the active github.com identity was unavailable after the exact-repository readback",
     );
@@ -563,19 +1019,19 @@ describe("checkout ship live GitHub mutation safety", () => {
     let apiCalls = 0;
     const timeoutOutput = formatCommandError({ code: "ETIMEDOUT" });
     const runGitHubCommand: GitHubCliCommandRunner = (args) => {
-      if (args.includes("DELETE")) {
+      if (args.includes("graphql")) {
         return { succeeded: false, output: timeoutOutput };
       }
       apiCalls += 1;
       return apiCalls === 1
-        ? { succeeded: true, output: '{"full_name":"octocat/checkout-ship-test"}' }
+        ? { succeeded: true, output: fixtureOwnershipOutput }
         : { succeeded: false, output: "HTTP 404: Not Found" };
     };
 
     expect(timeoutOutput).toContain(`${GITHUB_CLI_TIMEOUT_MS}ms`);
     expect(() =>
       deleteRepoAndVerifyAbsent(
-        "octocat/checkout-ship-test",
+        fixtureRepo,
         fixtureIdentity,
         runGitHubCommand,
         readFixtureIdentity,
@@ -583,9 +1039,15 @@ describe("checkout ship live GitHub mutation safety", () => {
     ).toThrow("GitHub CLI command timed out");
   });
 
-  test("test and cleanup failures are preserved in one AggregateError", () => {
+  test("test, agent, remote, credential, and filesystem failures are preserved", () => {
     const testError = new Error("test failed");
-    const cleanupError = new Error("cleanup failed");
+    const cleanupErrors = [
+      new Error("agent cleanup failed"),
+      new Error("remote cleanup failed"),
+      new Error("credential cleanup failed"),
+      new Error("filesystem cleanup failed"),
+    ];
+    const cleanupError = aggregateCleanupErrors(cleanupErrors);
 
     try {
       throwCheckoutShipErrors(testError, cleanupError);
@@ -593,18 +1055,34 @@ describe("checkout ship live GitHub mutation safety", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(AggregateError);
       expect((error as AggregateError).errors).toEqual([testError, cleanupError]);
+      expect(cleanupError).toBeInstanceOf(AggregateError);
+      expect((cleanupError as AggregateError).errors).toEqual(cleanupErrors);
     }
   });
 });
 
 describe("daemon checkout ship loop", () => {
   let ctx: DaemonTestContext;
+  let operationIdentity: GitHubAuthIdentity | null;
+  let githubAudit: GitHubRunnerAuditEntry[];
 
   beforeEach(async () => {
-    ctx = await createDaemonTestContext();
+    operationIdentity = null;
+    githubAudit = [];
+    const github = createGitHubService({
+      resolveRepoHost: async () => GITHUB_HOST,
+      runner: createPinnedGitHubRunner(() => {
+        if (!operationIdentity) {
+          throw new Error("No checkout ship operation credential is active");
+        }
+        return operationIdentity;
+      }, githubAudit),
+    });
+    ctx = await createDaemonTestContext({ github });
   });
 
   afterEach(async () => {
+    operationIdentity = null;
     await ctx.cleanup();
   }, 60000);
 
@@ -612,9 +1090,12 @@ describe("daemon checkout ship loop", () => {
     "runs the full checkout ship loop via checkout RPCs",
     async () => {
       const githubIdentity = assertCheckoutShipLiveGitHubMutationEnabled();
+      operationIdentity = githubIdentity;
 
       const repoDir = tmpCwd("checkout-ship-");
-      let repoFullName: string | null = null;
+      let createdRepo: CreatedGitHubRepository | null = null;
+      let credentialLease: GitCredentialLease | null = null;
+      const gitAudit: string[][] = [];
       let agentId: string | null = null;
       let testError: unknown;
       let repoCleanupError: unknown;
@@ -622,20 +1103,25 @@ describe("daemon checkout ship loop", () => {
       try {
         initGitRepo(repoDir);
 
-        const owner = githubIdentity.login;
         const repoName = createTempGithubRepoName("checkout-ship");
-        repoFullName = `${owner}/${repoName}`;
-        createPrivateRepo(repoName, githubIdentity);
+        createdRepo = createPrivateRepo(repoName, githubIdentity);
+        credentialLease = createGitCredentialLease(repoDir, githubIdentity, { audit: gitAudit });
 
-        const token = encodeURIComponent(githubIdentity.token);
-        execSync(
-          `git remote add origin https://x-access-token:${token}@github.com/${repoFullName}.git`,
-          {
-            cwd: repoDir,
-            stdio: "pipe",
-          },
+        const credentialFreeRemote = `https://${GITHUB_HOST}/${createdRepo.fullName}.git`;
+        executeGit(["remote", "add", "origin", credentialFreeRemote], {
+          cwd: repoDir,
+          secrets: [githubIdentity.token],
+        });
+        expect(executeGit(["remote", "get-url", "origin"], { cwd: repoDir })).toBe(
+          credentialFreeRemote,
         );
-        execSync("git push -u origin main", { cwd: repoDir, stdio: "pipe" });
+        expect(readFileSync(path.join(repoDir, ".git", "config"), "utf8")).not.toContain(
+          githubIdentity.token,
+        );
+        executeGit(["push", "-u", "origin", "main"], {
+          cwd: repoDir,
+          secrets: [githubIdentity.token],
+        });
 
         const worktree = await createLegacyWorktreeForTest({
           branchName: "ship-loop",
@@ -661,10 +1147,11 @@ describe("daemon checkout ship loop", () => {
         if (status.isGit) {
           expect(status.baseRef).toBe("main");
         }
+        expect(JSON.stringify(status)).not.toContain(githubIdentity.token);
 
-        execSync("git branch -m ship-loop-ready", {
+        executeGit(["branch", "-m", "ship-loop-ready"], {
           cwd: worktree.worktreePath,
-          stdio: "pipe",
+          secrets: [githubIdentity.token],
         });
 
         const updatedStatus = await ctx.client.getCheckoutStatus(worktree.worktreePath);
@@ -704,7 +1191,30 @@ describe("daemon checkout ship loop", () => {
           baseRef: "main",
         });
         expect(prCreate.error).toBeNull();
-        expect(prCreate.url).toContain(repoName);
+        expect(prCreate.number).not.toBeNull();
+        expect(prCreate.url).toBe(
+          `https://api.github.com/repos/${createdRepo.fullName}/pulls/${prCreate.number}`,
+        );
+        const ownershipReadback = GitHubRepositoryOwnershipSchema.parse(
+          JSON.parse(
+            executeGitHubCli(
+              ["api", "--hostname", GITHUB_HOST, `repos/${createdRepo.fullName}`],
+              githubIdentity.token,
+            ),
+          ),
+        );
+        expect(ownershipReadback).toEqual({
+          id: createdRepo.id,
+          node_id: createdRepo.nodeId,
+          full_name: createdRepo.fullName,
+          description: createdRepo.marker,
+        });
+        expect(
+          githubAudit.some((entry) => entry.args.includes(`repos/${createdRepo?.fullName}/pulls`)),
+        ).toBe(true);
+        expect(githubAudit.every((entry) => entry.host === GITHUB_HOST)).toBe(true);
+        expect(githubAudit.every((entry) => entry.login === githubIdentity.login)).toBe(true);
+        expect(JSON.stringify(githubAudit)).not.toContain(githubIdentity.token);
         const timelineAfterPr = ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
         expect(timelineAfterPr).toBe(timelineBeforePr);
 
@@ -763,24 +1273,68 @@ describe("daemon checkout ship loop", () => {
 
         const remainingAgents = await ctx.client.fetchAgents();
         expect(remainingAgents.entries.some((entry) => entry.agent.id === agent.id)).toBe(false);
+        expect(JSON.stringify({ statusAfterMerge, worktreeListAfter, gitAudit })).not.toContain(
+          githubIdentity.token,
+        );
+        agentId = null;
       } catch (error) {
         testError = error;
       } finally {
+        const cleanupErrors: unknown[] = [];
         if (agentId) {
-          await ctx.client.deleteAgent(agentId).catch(() => undefined);
+          try {
+            await ctx.client.deleteAgent(agentId);
+          } catch (error) {
+            cleanupErrors.push(error);
+          }
         }
         try {
-          deleteRepoAndVerifyAbsent(repoFullName, githubIdentity);
+          deleteRepoAndVerifyAbsent(createdRepo, githubIdentity);
         } catch (error) {
-          repoCleanupError = error;
+          cleanupErrors.push(error);
         }
-        rmSync(repoDir, { recursive: true, force: true });
+        try {
+          credentialLease?.close();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        try {
+          rmSync(repoDir, { recursive: true, force: true });
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        operationIdentity = null;
+        repoCleanupError = aggregateCleanupErrors(cleanupErrors);
       }
 
       throwCheckoutShipErrors(testError, repoCleanupError);
     },
     180000,
   );
+
+  test("credential-free GitHub remotes stay token-free in checkout protocol facts", async () => {
+    const repoDir = tmpCwd("checkout-ship-token-free-status-");
+    const sentinelToken = "sentinel-delete-repo-token";
+
+    try {
+      initGitRepo(repoDir);
+      const remote = `https://${GITHUB_HOST}/octocat/checkout-ship-token-free.git`;
+      executeGit(["remote", "add", "origin", remote], {
+        cwd: repoDir,
+        secrets: [sentinelToken],
+      });
+
+      const status = await ctx.client.getCheckoutStatus(repoDir);
+      expect(status.isGit).toBe(true);
+      expect(executeGit(["remote", "get-url", "origin"], { cwd: repoDir })).toBe(remote);
+      expect(readFileSync(path.join(repoDir, ".git", "config"), "utf8")).not.toContain(
+        sentinelToken,
+      );
+      expect(JSON.stringify({ status, githubAudit })).not.toContain(sentinelToken);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
 
   test("merge-from-base and push RPCs work with a local origin remote", async () => {
     const repoDir = tmpCwd("checkout-merge-from-base-");
@@ -790,9 +1344,9 @@ describe("daemon checkout ship loop", () => {
       initGitRepo(repoDir);
 
       const remoteDir = path.join(repoDir, "remote.git");
-      execSync(`git init --bare -b main ${remoteDir}`, { stdio: "pipe" });
-      execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir, stdio: "pipe" });
-      execSync("git push -u origin main", { cwd: repoDir, stdio: "pipe" });
+      executeGit(["init", "--bare", "-b", "main", remoteDir], { cwd: repoDir });
+      executeGit(["remote", "add", "origin", remoteDir], { cwd: repoDir });
+      executeGit(["push", "-u", "origin", "main"], { cwd: repoDir });
 
       const worktree = await createLegacyWorktreeForTest({
         branchName: "merge-from-base",
@@ -819,16 +1373,13 @@ describe("daemon checkout ship loop", () => {
       }
 
       // Advance local main, but leave the agent branch behind it.
-      execSync("git checkout main", { cwd: repoDir, stdio: "pipe" });
+      executeGit(["checkout", "main"], { cwd: repoDir });
       writeFileSync(path.join(repoDir, "base.txt"), "base update\n");
-      execSync("git add base.txt", { cwd: repoDir, stdio: "pipe" });
-      execSync("git -c commit.gpgsign=false commit -m 'base update'", {
+      executeGit(["add", "base.txt"], { cwd: repoDir });
+      executeGit(["-c", "commit.gpgsign=false", "commit", "-m", "base update"], {
         cwd: repoDir,
-        stdio: "pipe",
       });
-      const baseCommit = execSync("git rev-parse HEAD", { cwd: repoDir, stdio: "pipe" })
-        .toString()
-        .trim();
+      const baseCommit = executeGit(["rev-parse", "HEAD"], { cwd: repoDir });
 
       // Add a commit on the agent branch.
       writeFileSync(path.join(worktree.worktreePath, "feature.txt"), "feature\n");
@@ -847,9 +1398,8 @@ describe("daemon checkout ship loop", () => {
       expect(mergeFromBase.success).toBe(true);
 
       // Verify the agent branch now contains the base commit.
-      execSync(`git merge-base --is-ancestor ${baseCommit} HEAD`, {
+      executeGit(["merge-base", "--is-ancestor", baseCommit, "HEAD"], {
         cwd: worktree.worktreePath,
-        stdio: "pipe",
       });
 
       const pushResult = await ctx.client.checkoutPush(worktree.worktreePath);

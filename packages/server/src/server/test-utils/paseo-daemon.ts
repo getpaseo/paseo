@@ -12,6 +12,7 @@ import {
 import type { AgentClient, AgentProvider } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "./fake-agent-client.js";
 import type { PushNotificationSender } from "../push/notifications.js";
+import type { ForgeService } from "../../services/forge-service.js";
 
 interface TestPaseoDaemonOptions {
   daemonVersion?: string;
@@ -45,6 +46,7 @@ interface TestPaseoDaemonOptions {
   serviceProxy?: PaseoDaemonConfig["serviceProxy"];
   webUi?: PaseoDaemonConfig["webUi"];
   trustedProxies?: PaseoDaemonConfig["trustedProxies"];
+  github?: ForgeService;
 }
 
 export interface TestPaseoDaemon {
@@ -95,6 +97,7 @@ export async function createTestPaseoDaemon(
     const { config, paseoHomeRoot, paseoHome, staticDir } = await prepareTestDaemonConfig(options);
     const logger = options.logger ?? pino({ level: "silent" });
     const daemon = await createPaseoDaemon(config, logger, {
+      github: options.github,
       serverFeatureOverrides: {
         daemonStatusRpc: options.daemonStatusRpcCapability,
         relayConfig: options.relayConfigCapability,

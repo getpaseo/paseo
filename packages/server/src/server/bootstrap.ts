@@ -118,6 +118,7 @@ export async function fanOutReconciledWorkspaceUpdates(input: {
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { createGitHubService } from "../services/github-service.js";
+import type { ForgeService } from "../services/forge-service.js";
 import { createPaseoWorktree as createRegisteredPaseoWorktree } from "./paseo-worktree-service.js";
 import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import { createPaseoWorktreeWorkflow } from "./worktree-session.js";
@@ -449,6 +450,7 @@ export interface PaseoDaemonDependencies {
   hubRelationshipClock?: HubRelationshipClock;
   hubRelationshipRetryPolicy?: HubRelationshipRetryPolicy;
   createHubDaemonId?: () => string;
+  github?: ForgeService;
   serverFeatureOverrides?: {
     daemonStatusRpc?: boolean;
     relayConfig?: boolean;
@@ -789,7 +791,7 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     logger,
   });
-  const github = createGitHubService();
+  const github = dependencies.github ?? createGitHubService();
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger,
     paseoHome: config.paseoHome,
