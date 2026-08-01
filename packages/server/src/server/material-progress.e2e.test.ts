@@ -167,6 +167,65 @@ test("fetch agent does not inherit a previous stall after a new turn is accepted
   }
 });
 
+test("fetch agent does not inherit a previous stall when an accepted turn fails before a user row", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.2.5",
+  });
+  const cwd = mkdtempSync(path.join(tmpdir(), "paseo-material-progress-failed-boundary-"));
+
+  try {
+    await client.connect();
+    const created = await client.createAgent({
+      provider: "codex",
+      cwd,
+      title: "Failed continuation boundary probe",
+      modeId: "full-access",
+      model: "gpt-5.4-mini",
+    });
+    await daemon.daemon.agentManager.appendTimelineItem(created.id, {
+      type: "user_message",
+      text: "previous continuation",
+    });
+    await daemon.daemon.agentManager.appendTimelineItem(created.id, {
+      type: "compaction",
+      status: "completed",
+    });
+    await daemon.daemon.agentManager.appendTimelineItem(created.id, {
+      type: "compaction",
+      status: "completed",
+    });
+    expect(
+      (await client.fetchAgent({ agentId: created.id }))?.agent.materialProgress,
+    ).toMatchObject({ state: "stalled" });
+
+    // The fake provider emits turn_started followed by turn_failed, without a user_message row.
+    await client.sendMessage(created.id, "emit a turn failure");
+    await expect
+      .poll(async () => (await client.fetchAgent({ agentId: created.id }))?.agent.status ?? null, {
+        timeout: 10_000,
+        interval: 25,
+      })
+      .toBe("error");
+
+    const snapshot = await daemon.daemon.agentManager.getMaterialProgressSnapshot(created.id);
+    expect(snapshot.turnOutcome).toBe("failed");
+    expect(snapshot.continuationBoundarySeq).toBe(4);
+    expect((await client.fetchAgent({ agentId: created.id }))?.agent.materialProgress).toEqual({
+      state: "none",
+      completedCompactionsSinceMaterialProgress: 0,
+      lastMaterialProgressAt: null,
+      lastMaterialProgressKind: null,
+      reason: "No material progress has been recorded for the current continuation.",
+    });
+  } finally {
+    await client.close();
+    await daemon.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("fetch agent preserves material progress after archive discards the live timeline", async () => {
   const daemon = await createTestPaseoDaemon();
   const client = new DaemonClient({

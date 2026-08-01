@@ -50,6 +50,7 @@
         "fetch agent exposes a backward-compatible material progress signal",
         "fetch agent preserves material progress after the live worker is collected",
         "fetch agent does not inherit a previous stall after a new turn is accepted",
+        "fetch agent does not inherit a previous stall when an accepted turn fails before a user row",
         "fetch agent preserves material progress after archive discards the live timeline",
         "fetch agent restores material progress after daemon restart"
       ],
