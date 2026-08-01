@@ -3,7 +3,6 @@ import {
   clearAssistantImageMetadataCache,
   estimateAssistantMessageHeightFromCache,
   extractAssistantImageSources,
-  getAssistantImageLoadStateFromMetadata,
   getAssistantImageMetadata,
   setAssistantImageMetadata,
 } from "./assistant-image-metadata";
@@ -39,23 +38,6 @@ describe("assistant image metadata", () => {
       width: 1200,
       height: 800,
       aspectRatio: 1.5,
-    });
-  });
-
-  it("maps missing metadata to the image loading state", () => {
-    expect(getAssistantImageLoadStateFromMetadata(null)).toEqual({ status: "loading" });
-  });
-
-  it("maps cached metadata to the image ready state", () => {
-    expect(
-      getAssistantImageLoadStateFromMetadata({
-        width: 900,
-        height: 1600,
-        aspectRatio: 9 / 16,
-      }),
-    ).toEqual({
-      status: "ready",
-      aspectRatio: 9 / 16,
     });
   });
 

@@ -130,7 +130,7 @@ function createLifecycleDispatch(
       list: async () => options?.workspaces ?? [],
     },
     emit: () => undefined,
-    emitAgentRemove: () => undefined,
+    emitAgentRemove: async () => undefined,
     emitWorkspaceUpdatesForWorkspaceIds: async () => undefined,
     markWorkspaceArchiving: () => undefined,
     clearWorkspaceArchiving: () => undefined,

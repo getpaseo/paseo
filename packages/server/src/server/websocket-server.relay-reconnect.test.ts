@@ -923,7 +923,7 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
-  test("advertises stable project identity in initial server_info", async () => {
+  test("advertises current features in initial server_info", async () => {
     const server = createServer();
     const socket = new MockSocket();
 
@@ -934,6 +934,8 @@ describe("relay external socket reconnect behavior", () => {
     });
 
     expect(serverInfo.features?.stableProjectIdentity).toBe(true);
+    expect(serverInfo.features?.canonicalSubmittedPrompts).toBe(true);
+    expect(serverInfo.features?.agentTurnIdentity).toBeUndefined();
     await server.close();
   });
 

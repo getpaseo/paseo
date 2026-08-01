@@ -39,7 +39,7 @@ interface CreateAgentLifecycleDispatchDependencies {
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   workspaceRegistry: Pick<WorkspaceRegistry, "get" | "list" | "update" | "subscribeToMutations">;
   emit: (message: SessionOutboundMessage) => void;
-  emitAgentRemove: (agentId: string) => void;
+  emitAgentRemove: (agentId: string) => Promise<void>;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
@@ -384,7 +384,7 @@ export class CreateAgentLifecycleDispatch {
     await this.archiveWorktreePath(worktreePath, createdWorktree.workspace.workspaceId);
 
     if (options.agentId) {
-      this.dependencies.emitAgentRemove(options.agentId);
+      await this.dependencies.emitAgentRemove(options.agentId);
     }
   }
 

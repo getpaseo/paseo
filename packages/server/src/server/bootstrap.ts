@@ -1207,7 +1207,7 @@ export async function createPaseoDaemon(
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
     workspaceRegistry,
     emit: emitExternalSessionMessage,
-    emitAgentRemove: () => undefined,
+    emitAgentRemove: async () => undefined,
     emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
     markWorkspaceArchiving: markWorkspaceArchivingExternal,
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
