@@ -16,6 +16,7 @@ import type { WorkspaceGitRuntimeSnapshot } from "../workspace-git-service.js";
 import { createWorktree, type WorktreeConfig } from "../../utils/worktree.js";
 import type { ForgeService } from "../../../services/forge-service.js";
 import type { StoredAgentRecord } from "../agent/agent-storage.js";
+import { CreateAgentLifecycleDispatch } from "../agent/create-agent-lifecycle-dispatch.js";
 import { createPersistedWorkspaceRecord } from "../workspace-registry.js";
 
 const CWD = "/tmp/paseo/worktrees/repo/branch";
@@ -80,6 +81,7 @@ function createLogger(): Logger {
 
 function createHarness(overrides?: {
   autoArchiveAfterMerge?: boolean;
+  autoArchivedChangeRequestUrl?: string | null;
   getSnapshot?: () => Promise<WorkspaceGitRuntimeSnapshot | null>;
   isPaseoOwnedWorktreeCwd?: ArchiveIfSafeDependencies["isPaseoOwnedWorktreeCwd"];
   archiveByScope?: ArchiveIfSafeDependencies["archiveByScope"];
@@ -113,6 +115,9 @@ function createHarness(overrides?: {
     listActiveWorkspaces: vi.fn(async () => [
       { workspaceId: "ws-auto-archive", cwd: CWD, kind: "worktree" },
     ]),
+    getAutoArchivedChangeRequestUrl: vi.fn(
+      async () => overrides?.autoArchivedChangeRequestUrl ?? null,
+    ),
     archiveWorkspaceRecord: vi.fn(),
     markWorkspaceArchiving: vi.fn(),
     clearWorkspaceArchiving: vi.fn(),
@@ -356,6 +361,7 @@ function createRealOutcomeHarness(input: {
     },
     listActiveWorkspaces: async () =>
       active.filter((workspace) => !input.archivedWorkspaceIds.has(workspace.workspaceId)),
+    getAutoArchivedChangeRequestUrl: async () => null,
     archiveWorkspaceRecord: async (workspaceId: string) => {
       input.archivedWorkspaceIds.add(workspaceId);
       const existing = workspaceRecords.get(workspaceId);
@@ -593,6 +599,162 @@ describe("archiveIfSafe", () => {
       "Auto-archived worktree after PR merge",
     );
     expect(harness.inFlight.has(CWD)).toBe(false);
+  });
+
+  test("does not archive a merge event already consumed by this workspace", async () => {
+    const harness = createHarness({
+      autoArchivedChangeRequestUrl: "https://github.com/acme/repo/pull/123",
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+  });
+
+  test("keeps a restored merged workspace active while recovering one interrupted create archive", async () => {
+    const restoredWorkspaceId = "ws-restored-merged";
+    const interruptedWorkspaceId = "ws-interrupted-create";
+    const interruptedAgentId = "agent-interrupted-create";
+    const changeRequestUrl = "https://github.com/acme/repo/pull/123";
+    const now = new Date().toISOString();
+    const workspaceRecords = new Map([
+      [
+        restoredWorkspaceId,
+        createPersistedWorkspaceRecord({
+          workspaceId: restoredWorkspaceId,
+          projectId: "project-auto-archive",
+          cwd: CWD,
+          kind: "worktree",
+          displayName: "Restored merged workspace",
+          createdAt: now,
+          updatedAt: now,
+          autoArchivedChangeRequestUrl: changeRequestUrl,
+        }),
+      ],
+      [
+        interruptedWorkspaceId,
+        createPersistedWorkspaceRecord({
+          workspaceId: interruptedWorkspaceId,
+          projectId: "project-auto-archive",
+          cwd: "/tmp/paseo/worktrees/repo/interrupted-create",
+          kind: "worktree",
+          displayName: "Interrupted create",
+          createdAt: now,
+          updatedAt: now,
+        }),
+      ],
+    ]);
+    const workspaceRegistry = {
+      get: vi.fn(async (workspaceId: string) => workspaceRecords.get(workspaceId) ?? null),
+      list: vi.fn(async () => Array.from(workspaceRecords.values())),
+      update: vi.fn(async () => null),
+    };
+    const mergeArchiveHarness = createHarness();
+    mergeArchiveHarness.options.workspaceRegistry = workspaceRegistry;
+    mergeArchiveHarness.options.findWorkspaceIdForCwd = vi.fn(async () => restoredWorkspaceId);
+    mergeArchiveHarness.options.listActiveWorkspaces = vi.fn(async () => [
+      { workspaceId: restoredWorkspaceId, cwd: CWD, kind: "worktree" },
+    ]);
+    mergeArchiveHarness.options.getAutoArchivedChangeRequestUrl = vi.fn(
+      async (workspaceId) =>
+        workspaceRecords.get(workspaceId)?.autoArchivedChangeRequestUrl ?? null,
+    );
+
+    await runArchiveIfSafe(mergeArchiveHarness);
+
+    expect(mergeArchiveHarness.deps.archiveByScope).not.toHaveBeenCalled();
+    expect(workspaceRecords.get(restoredWorkspaceId)?.archivedAt).toBeNull();
+
+    const agentRecords = new Map<string, StoredAgentRecord>([
+      [
+        interruptedAgentId,
+        {
+          id: interruptedAgentId,
+          autoArchiveObligation: {
+            phase: "pending",
+            target: { kind: "workspace", workspaceId: interruptedWorkspaceId },
+          },
+        } as StoredAgentRecord,
+      ],
+    ]);
+    const archiveInterruptedWorkspace = vi.fn(async (workspaceId: string) => {
+      const workspace = workspaceRecords.get(workspaceId);
+      if (!workspace) throw new Error(`Unknown workspace: ${workspaceId}`);
+      workspaceRecords.set(workspaceId, {
+        ...workspace,
+        archivedAt: new Date().toISOString(),
+      });
+    });
+    const lifecycleDispatch = new CreateAgentLifecycleDispatch({
+      paseoHome: PASEO_HOME,
+      agentManager: {},
+      agentStorage: {
+        list: async () => Array.from(agentRecords.values()),
+        update: async (
+          agentId: string,
+          mutation: (record: StoredAgentRecord) => StoredAgentRecord,
+        ) => {
+          const next = mutation(agentRecords.get(agentId)!);
+          agentRecords.set(agentId, next);
+          return next;
+        },
+      },
+      github: {},
+      workspaceGitService: {},
+      archiveAgentForClose: async () => undefined,
+      archiveWorkspaceForClose: archiveInterruptedWorkspace,
+      drainWorkspaceLifecycleOperations: async () => undefined,
+      findWorkspaceIdForCwd: async () => null,
+      listActiveWorkspaces: async () => [],
+      archiveWorkspaceRecord: async () => undefined,
+      workspaceRegistry,
+      emit: () => undefined,
+      emitAgentRemove: () => undefined,
+      emitWorkspaceUpdatesForWorkspaceIds: async () => undefined,
+      markWorkspaceArchiving: () => undefined,
+      clearWorkspaceArchiving: () => undefined,
+      killTerminalsForWorkspace: async () => undefined,
+      logger: mergeArchiveHarness.log,
+    } as unknown as ConstructorParameters<typeof CreateAgentLifecycleDispatch>[0]);
+
+    await lifecycleDispatch.recoverPersistedAutoArchives();
+    await vi.waitFor(() =>
+      expect(agentRecords.get(interruptedAgentId)?.autoArchiveObligation).toBeUndefined(),
+    );
+    await lifecycleDispatch.recoverPersistedAutoArchives();
+
+    expect(archiveInterruptedWorkspace).toHaveBeenCalledOnce();
+    expect(workspaceRecords.get(interruptedWorkspaceId)?.archivedAt).not.toBeNull();
+    expect(workspaceRecords.get(restoredWorkspaceId)?.archivedAt).toBeNull();
+  });
+
+  test("archives a different merged change request", async () => {
+    const harness = createHarness({
+      autoArchivedChangeRequestUrl: "https://github.com/acme/repo/pull/122",
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).toHaveBeenCalledTimes(1);
+  });
+
+  test("records the consumed change request in the workspace archive mutation", async () => {
+    const harness = createHarness({
+      archiveByScope: async (dependencies) => {
+        await dependencies.archiveWorkspaceRecord("ws-auto-archive");
+        return {
+          archivedAgentIds: [],
+          archivedWorkspaceIds: ["ws-auto-archive"],
+          removedDirectory: false,
+        };
+      },
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.options.archiveWorkspaceRecord).toHaveBeenCalledWith("ws-auto-archive", {
+      autoArchivedChangeRequestUrl: "https://github.com/acme/repo/pull/123",
+    });
   });
 
   test("resolves the merged cwd to a single workspace and does not iterate siblings", async () => {

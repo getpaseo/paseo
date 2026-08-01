@@ -627,9 +627,11 @@ describe("WorkspaceReconciliationService", () => {
       baseBranch: null,
       isPaseoOwnedWorktree: false,
       mainRepoRoot: null,
+      cleanupPending: null,
       createdAt: timestamp,
       updatedAt: expect.any(String),
       archivedAt: expect.any(String),
+      autoArchivedChangeRequestUrl: null,
     });
     expect(projects.get("p1")).toEqual(project);
   });

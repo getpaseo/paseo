@@ -5,7 +5,10 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { afterEach, beforeEach, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
-import { createNoopWorkspaceGitService } from "../../test-utils/workspace-git-service-stub.js";
+import {
+  createNoGitWorkspaceRuntimeSnapshot,
+  createNoopWorkspaceGitService,
+} from "../../test-utils/workspace-git-service-stub.js";
 import {
   FileBackedProjectRegistry,
   FileBackedWorkspaceRegistry,
@@ -32,6 +35,7 @@ let tmpDir: string;
 let gitRoots: Set<string>;
 let gitBranches: Map<string, string | null>;
 let checkoutFailure: Error | null;
+let restoredMergedChangeRequestUrl: string | null;
 let workspaceRegistry: FileBackedWorkspaceRegistry;
 let projectRegistry: FileBackedProjectRegistry;
 let provisioning: WorkspaceProvisioningService;
@@ -39,6 +43,25 @@ let provisioning: WorkspaceProvisioningService;
 function gitService() {
   return createNoopWorkspaceGitService({
     peekSnapshot: () => null,
+    getSnapshot: async (cwd: string) => {
+      const snapshot = createNoGitWorkspaceRuntimeSnapshot(cwd);
+      if (!restoredMergedChangeRequestUrl) return snapshot;
+      return {
+        ...snapshot,
+        forge: {
+          ...snapshot.forge,
+          featuresEnabled: true,
+          pullRequest: {
+            url: restoredMergedChangeRequestUrl,
+            title: "Merged change request",
+            state: "merged",
+            baseRefName: "main",
+            headRefName: "workspace-archive-latch",
+            isMerged: true,
+          },
+        },
+      };
+    },
     getCheckout: async (cwd: string) => {
       if (checkoutFailure) throw checkoutFailure;
       let worktreeRoot: string | null = null;
@@ -68,6 +91,7 @@ beforeEach(async () => {
   gitRoots = new Set();
   gitBranches = new Map();
   checkoutFailure = null;
+  restoredMergedChangeRequestUrl = null;
   workspaceRegistry = new FileBackedWorkspaceRegistry(
     path.join(tmpDir, "projects", "workspaces.json"),
     logger,
@@ -339,6 +363,73 @@ test("ensureWorkspaceRecordUnarchived restores the owning archived project with 
   expect(unarchived.archivedAt).toBeNull();
   expect((await workspaceRegistry.get(created.workspaceId))?.archivedAt).toBeNull();
   expect((await projectRegistry.get(created.projectId))?.archivedAt).toBeNull();
+});
+
+test("ensureWorkspaceRecordUnarchived preserves the consumed auto-archive change request", async () => {
+  const repo = path.join(tmpDir, "repo");
+  const changeRequestUrl = "https://github.com/getpaseo/paseo/pull/2714";
+  gitRoots.add(repo);
+  const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  await workspaceRegistry.archive(created.workspaceId, ARCHIVED_AT, {
+    autoArchivedChangeRequestUrl: changeRequestUrl,
+  });
+  const archivedWorkspace = await workspaceRegistry.get(created.workspaceId);
+
+  const unarchived = await provisioning.ensureWorkspaceRecordUnarchived(archivedWorkspace!);
+
+  expect(unarchived).toMatchObject({
+    archivedAt: null,
+    autoArchivedChangeRequestUrl: changeRequestUrl,
+  });
+  expect(await workspaceRegistry.get(created.workspaceId)).toMatchObject({
+    archivedAt: null,
+    autoArchivedChangeRequestUrl: changeRequestUrl,
+  });
+});
+
+test("ensureWorkspaceRecordUnarchived acknowledges a merged change request for a legacy archive", async () => {
+  const repo = path.join(tmpDir, "repo");
+  const changeRequestUrl = "https://github.com/getpaseo/paseo/pull/2714";
+  gitRoots.add(repo);
+  const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  await workspaceRegistry.archive(created.workspaceId, ARCHIVED_AT);
+  const archivedWorkspace = await workspaceRegistry.get(created.workspaceId);
+  restoredMergedChangeRequestUrl = changeRequestUrl;
+
+  const unarchived = await provisioning.ensureWorkspaceRecordUnarchived(archivedWorkspace!);
+
+  expect(unarchived).toMatchObject({
+    archivedAt: null,
+    autoArchivedChangeRequestUrl: changeRequestUrl,
+  });
+  expect(await workspaceRegistry.get(created.workspaceId)).toMatchObject({
+    archivedAt: null,
+    autoArchivedChangeRequestUrl: changeRequestUrl,
+  });
+});
+
+test("ensureWorkspaceRecordUnarchived refreshes the latch for a different merged change request", async () => {
+  const repo = path.join(tmpDir, "repo");
+  const previousChangeRequestUrl = "https://github.com/getpaseo/paseo/pull/2713";
+  const currentChangeRequestUrl = "https://github.com/getpaseo/paseo/pull/2714";
+  gitRoots.add(repo);
+  const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  await workspaceRegistry.archive(created.workspaceId, ARCHIVED_AT, {
+    autoArchivedChangeRequestUrl: previousChangeRequestUrl,
+  });
+  const archivedWorkspace = await workspaceRegistry.get(created.workspaceId);
+  restoredMergedChangeRequestUrl = currentChangeRequestUrl;
+
+  const unarchived = await provisioning.ensureWorkspaceRecordUnarchived(archivedWorkspace!);
+
+  expect(unarchived).toMatchObject({
+    archivedAt: null,
+    autoArchivedChangeRequestUrl: currentChangeRequestUrl,
+  });
+  expect(await workspaceRegistry.get(created.workspaceId)).toMatchObject({
+    archivedAt: null,
+    autoArchivedChangeRequestUrl: currentChangeRequestUrl,
+  });
 });
 
 test("does not unarchive either record when checkout refresh fails", async () => {

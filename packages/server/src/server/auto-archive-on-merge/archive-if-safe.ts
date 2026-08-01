@@ -15,7 +15,7 @@ import type {
 } from "../workspace-git-service.js";
 import type { ForgeService } from "../../services/forge-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
-import type { WorkspaceRegistry } from "../workspace-registry.js";
+import type { WorkspaceArchiveContext, WorkspaceRegistry } from "../workspace-registry.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 
 export interface AutoArchiveArchiveOptions {
@@ -30,7 +30,8 @@ export interface AutoArchiveArchiveOptions {
   workspaceRegistry: Pick<WorkspaceRegistry, "get" | "list" | "update">;
   findWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
-  archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
+  getAutoArchivedChangeRequestUrl: (workspaceId: string) => Promise<string | null>;
+  archiveWorkspaceRecord: (workspaceId: string, context?: WorkspaceArchiveContext) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
@@ -113,6 +114,11 @@ export async function archiveIfSafe(input: {
         log.warn({ cwd }, "Auto-archive could not resolve a workspace for cwd; skipping");
         return;
       }
+      const autoArchivedChangeRequestUrl =
+        await options.getAutoArchivedChangeRequestUrl(workspaceId);
+      if (autoArchivedChangeRequestUrl === pullRequest.url) {
+        return;
+      }
 
       const activeWorkspace = (await options.listActiveWorkspaces()).find(
         (workspace) => workspace.workspaceId === workspaceId,
@@ -138,7 +144,10 @@ export async function archiveIfSafe(input: {
           agentStorage: options.agentStorage,
           findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
           listActiveWorkspaces: options.listActiveWorkspaces,
-          archiveWorkspaceRecord: options.archiveWorkspaceRecord,
+          archiveWorkspaceRecord: (workspaceIdToArchive) =>
+            options.archiveWorkspaceRecord(workspaceIdToArchive, {
+              autoArchivedChangeRequestUrl: pullRequest.url,
+            }),
           workspaceRegistry: options.workspaceRegistry,
           emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
           markWorkspaceArchiving: options.markWorkspaceArchiving,

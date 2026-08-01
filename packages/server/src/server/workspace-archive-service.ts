@@ -22,6 +22,7 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type {
   PersistedWorkspaceCleanupPending,
   PersistedWorkspaceRecord,
+  WorkspaceArchiveContext,
   WorkspaceRegistry,
 } from "./workspace-registry.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
@@ -1071,6 +1072,7 @@ export async function archivePersistedWorkspaceRecord(input: {
   workspaceId: string;
   workspaceRegistry: Pick<WorkspaceRegistry, "get" | "archive">;
   archivedAt?: string;
+  context?: WorkspaceArchiveContext;
 }): Promise<PersistedWorkspaceRecord | null> {
   const existingWorkspace = await input.workspaceRegistry.get(input.workspaceId);
   if (!existingWorkspace) {
@@ -1082,7 +1084,7 @@ export async function archivePersistedWorkspaceRecord(input: {
   }
 
   const archivedAt = input.archivedAt ?? new Date().toISOString();
-  await input.workspaceRegistry.archive(input.workspaceId, archivedAt);
+  await input.workspaceRegistry.archive(input.workspaceId, archivedAt, input.context);
 
   return existingWorkspace;
 }
