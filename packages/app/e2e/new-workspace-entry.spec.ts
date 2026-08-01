@@ -15,7 +15,7 @@ import { seedSavedSettingsHosts } from "./helpers/settings";
 import { getServerId } from "./helpers/server-id";
 import { projectEquivalenceViewKey } from "./helpers/project-view-key";
 import { clickArchiveWorkspaceMenuItem, expectWorkspaceAbsentFromSidebar } from "./helpers/sidebar";
-import { waitForNoProjectsInSidebar, waitForSidebarHydration } from "./helpers/workspace-ui";
+import { waitForSidebarHydration } from "./helpers/workspace-ui";
 
 // Model B entry points into the New Workspace screen. The surviving entries are
 // the global button (universal) and each project's per-row New workspace icon
@@ -112,7 +112,6 @@ test.describe("New workspace entry points", () => {
 
   test("a stale project route keeps the New Workspace controls enabled", async ({ page }) => {
     await gotoAppShell(page);
-    await waitForNoProjectsInSidebar(page);
     await openMissingProjectNewWorkspaceComposer(page, {
       serverId: getServerId(),
       projectId: "missing-project",

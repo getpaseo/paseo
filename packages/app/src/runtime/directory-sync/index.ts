@@ -81,13 +81,13 @@ export class DirectorySync {
   constructor(
     private readonly serverId: string,
     private readonly callbacks: {
-      drainQueuedAgentMessage: (agentId: string) => void;
+      onAgentStoppedRunning: (agentId: string) => void;
       markAgentLoading: () => void;
       markAgentReady: () => void;
       markAgentError: (error: string) => void;
     },
   ) {
-    this.agents = new AgentDirectoryReplica(serverId, callbacks.drainQueuedAgentMessage);
+    this.agents = new AgentDirectoryReplica(serverId, callbacks.onAgentStoppedRunning);
     this.workspaces = new WorkspaceDirectoryReplica(serverId);
   }
 
