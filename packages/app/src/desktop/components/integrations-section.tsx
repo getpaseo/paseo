@@ -1,10 +1,10 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ArrowUpRight, Terminal, Blocks, Check } from "lucide-react-native";
+import { ArrowUpRight, Terminal, Blocks, Check, Settings2 } from "lucide-react-native";
 import { settingsStyles } from "@/styles/settings";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,9 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import {
   shouldUseDesktopDaemon,
   type SkillOp,
-  type SkillsStatus,
+  type SkillsSnapshot,
 } from "@/desktop/daemon/desktop-daemon";
+import { SkillSelectionSheet } from "@/desktop/components/skill-selection-sheet";
 import { useCliInstall, useSkillsStatus } from "@/desktop/hooks/use-install-status";
 
 const CLI_DOCS_URL = "https://paseo.sh/docs/cli";
@@ -50,8 +51,14 @@ export function IntegrationsSection() {
     install: installSkills,
     update: updateSkills,
     uninstall: uninstallSkills,
+    saveSelection: saveSkillSelection,
     refresh: refreshSkillsStatus,
   } = useSkillsStatus();
+  const [isChoosingSkills, setIsChoosingSkills] = useState(false);
+  const skillMaintenanceOps = useMemo(
+    () => skillsStatus?.ops.filter((op) => op.kind !== "delete") ?? [],
+    [skillsStatus?.ops],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -74,18 +81,17 @@ export function IntegrationsSection() {
 
   const handleUpdateSkills = useCallback(async () => {
     if (isSkillsWorking) return;
-    const ops = skillsStatus?.ops ?? [];
     const confirmed = await confirmDialog({
       title: t("settings.integrations.skills.updateTitle"),
       message:
-        ops.length > 0
-          ? formatUpdateMessage(ops, t)
+        skillMaintenanceOps.length > 0
+          ? formatUpdateMessage(skillMaintenanceOps, t)
           : t("settings.integrations.skills.updateFallback"),
       confirmLabel: t("settings.integrations.actions.update"),
     });
     if (!confirmed) return;
     await updateSkills();
-  }, [isSkillsWorking, skillsStatus, t, updateSkills]);
+  }, [isSkillsWorking, skillMaintenanceOps, t, updateSkills]);
 
   const handleUninstallSkills = useCallback(async () => {
     if (isSkillsWorking) return;
@@ -99,6 +105,14 @@ export function IntegrationsSection() {
     await uninstallSkills();
   }, [isSkillsWorking, t, uninstallSkills]);
 
+  const handleOpenSkillSelection = useCallback(() => {
+    setIsChoosingSkills(true);
+  }, []);
+
+  const handleCloseSkillSelection = useCallback(() => {
+    setIsChoosingSkills(false);
+  }, []);
+
   const handleOpenCliDocs = useCallback(() => {
     void openExternalUrl(CLI_DOCS_URL);
   }, []);
@@ -109,6 +123,11 @@ export function IntegrationsSection() {
 
   const arrowIcon = useMemo(
     () => <ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
+    [theme.iconSize.sm, theme.colors.foregroundMuted],
+  );
+
+  const chooseSkillsIcon = useMemo(
+    () => <Settings2 size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
     [theme.iconSize.sm, theme.colors.foregroundMuted],
   );
 
@@ -146,7 +165,14 @@ export function IntegrationsSection() {
     return null;
   }
 
-  const skillsState = skillsStatus?.state ?? null;
+  const skillsState =
+    skillsStatus?.state === "drift" && skillMaintenanceOps.length === 0
+      ? "up-to-date"
+      : (skillsStatus?.state ?? null);
+  const hasSelectedSkills =
+    (skillsStatus?.selection.mode === "all" && skillsStatus.available.length > 0) ||
+    (skillsStatus?.selection.mode === "custom" &&
+      skillsStatus.selection.skills.some((name) => skillsStatus.available.includes(name)));
 
   return (
     <SettingsSection title={t("settings.integrations.title")} trailing={trailing}>
@@ -193,21 +219,43 @@ export function IntegrationsSection() {
                 : t("settings.integrations.skills.description")}
             </Text>
           </View>
-          <SkillsActions
-            state={skillsState}
-            isWorking={isSkillsWorking}
-            onInstall={handleInstallSkills}
-            onUpdate={handleUpdateSkills}
-            onUninstall={handleUninstallSkills}
-          />
+          <View style={styles.actionsRow}>
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={chooseSkillsIcon}
+              onPress={handleOpenSkillSelection}
+              disabled={skillsStatus === null || isSkillsWorking}
+              accessibilityLabel={t("settings.integrations.skills.choose")}
+            />
+            {hasSelectedSkills ? (
+              <SkillsActions
+                state={skillsState}
+                isWorking={isSkillsWorking}
+                onInstall={handleInstallSkills}
+                onUpdate={handleUpdateSkills}
+                onUninstall={handleUninstallSkills}
+              />
+            ) : null}
+          </View>
         </View>
       </View>
+      {skillsStatus ? (
+        <SkillSelectionSheet
+          visible={isChoosingSkills}
+          available={skillsStatus.available}
+          selection={skillsStatus.selection}
+          isSaving={isSkillsWorking}
+          onSave={saveSkillSelection}
+          onClose={handleCloseSkillSelection}
+        />
+      ) : null}
     </SettingsSection>
   );
 }
 
 interface SkillsActionsProps {
-  state: SkillsStatus["state"] | null;
+  state: SkillsSnapshot["state"] | null;
   isWorking: boolean;
   onInstall: () => void;
   onUpdate: () => void;

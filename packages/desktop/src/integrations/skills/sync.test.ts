@@ -195,6 +195,39 @@ describe("syncSkills", () => {
     );
   });
 
+  it.skipIf(process.platform === "win32")(
+    "rejects managed paths that would write through a symlink",
+    async () => {
+      await writeBundleSkill(sandbox.sourceDir, "paseo", {
+        "SKILL.md": "new skill",
+        "references/guide.md": "new guide",
+      });
+      const onDiskSkill = path.join(sandbox.agentsDir, "paseo");
+      const externalReferences = path.join(sandbox.root, "external-references");
+      await fs.mkdir(onDiskSkill, { recursive: true });
+      await fs.mkdir(externalReferences, { recursive: true });
+      await fs.writeFile(path.join(onDiskSkill, "SKILL.md"), "old skill");
+      await fs.writeFile(path.join(externalReferences, "guide.md"), "external guide");
+      await fs.symlink(externalReferences, path.join(onDiskSkill, "references"), "dir");
+
+      await expect(
+        syncSkills({
+          sourceDir: sandbox.sourceDir,
+          agentsDir: sandbox.agentsDir,
+          claudeDir: sandbox.claudeDir,
+          codexDir: sandbox.codexDir,
+          skillNames: ["paseo"],
+        }),
+      ).rejects.toThrow("Cannot sync through symbolic link");
+
+      expect(await fs.readFile(path.join(onDiskSkill, "SKILL.md"), "utf-8")).toBe("old skill");
+      expect(await fs.readFile(path.join(externalReferences, "guide.md"), "utf-8")).toBe(
+        "external guide",
+      );
+      expect((await fs.lstat(path.join(onDiskSkill, "references"))).isSymbolicLink()).toBe(true);
+    },
+  );
+
   it("reports zero changed files on a no-op resync", async () => {
     await writeBundleSkill(sandbox.sourceDir, "paseo", {
       "SKILL.md": "content",

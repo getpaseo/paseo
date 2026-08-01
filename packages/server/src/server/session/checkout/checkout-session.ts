@@ -576,7 +576,6 @@ export class CheckoutSession {
       // Branch is a git fact derived per-descriptor from each workspace's own
       // live git snapshot (id → cwd); the reconciliation pass re-persists the
       // `branch` field per workspace from its own cwd. No cwd → ids fan-out here.
-      // TODO(K10): PR-binding on branch rename is deferred — see plan K10.
 
       // Push a workspace_update immediately so the sidebar/header reflect
       // the new branch name without waiting for the background git watcher.

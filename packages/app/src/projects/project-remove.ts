@@ -8,7 +8,6 @@ interface ProjectRemoveHost {
 }
 
 export interface ProjectRemoveProject {
-  projectKey: string;
   hosts: readonly ProjectRemoveHost[];
 }
 

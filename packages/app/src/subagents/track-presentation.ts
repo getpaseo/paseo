@@ -18,13 +18,19 @@ export interface SubagentRowPresentationData {
 }
 
 export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowPresentationData {
-  const label = resolveRowLabel(row.title);
+  // The task distinguishes siblings in a fan-out, so it names the row when present. Providers
+  // own the compact secondary context because model, effort, and usage semantics differ.
+  const description = resolveRowLabel(row.description);
+  const title = resolveRowLabel(row.title);
+  const label = description ?? title;
+  const providerSubtitle = row.kind === "provider" ? resolveRowLabel(row.subtitle) : null;
+  const subtitle = providerSubtitle ?? (description ? title : null);
   const status = presentationStatus(row);
   return {
     key: `${row.kind}_subagent_${row.id}`,
     kind: "agent",
     label: label ?? "",
-    subtitle: "",
+    subtitle: subtitle ?? "",
     titleState: label ? "ready" : "loading",
     statusBucket: deriveSidebarStateBucket({
       status,
@@ -52,7 +58,7 @@ export function countFinishedSubagents(rows: readonly SubagentRow[]): number {
   return rows.filter((row) => row.kind === "provider" && row.status !== "running").length;
 }
 
-export function resolveRowLabel(title: SubagentRow["title"]): string | null {
+export function resolveRowLabel(title: string | null | undefined): string | null {
   if (typeof title !== "string") {
     return null;
   }

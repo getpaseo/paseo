@@ -94,7 +94,10 @@ vi.mock("react-native", () => {
     Pressable: passthrough,
     Image: ({ source }: { source?: { uri?: string } }) =>
       React.createElement("img", { src: source?.uri ?? "" }),
-    Platform: { OS: "web" },
+    Platform: {
+      OS: "web",
+      select: <T,>(options: { web?: T; default?: T }) => options.web ?? options.default,
+    },
   };
 });
 
@@ -201,8 +204,8 @@ vi.mock("@/hooks/use-projects", () => ({
   useProjects: () => projectsState.current,
 }));
 
-vi.mock("@/projects/project-icons", () => ({
-  useProjectIconDataByProjectKey: () => new Map(),
+vi.mock("@/projects/icons", () => ({
+  useProjectIcons: () => new Map(),
 }));
 
 import ProjectsScreen from "./projects-screen";
@@ -239,7 +242,7 @@ function project(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
     overrides.totalWorkspaceCount ?? hosts.reduce((sum, host) => sum + host.workspaceCount, 0);
   const onlineHostCount = overrides.onlineHostCount ?? hosts.filter((h) => h.isOnline).length;
   return {
-    projectKey: "remote:github.com/acme/app",
+    viewKey: "remote:github.com/acme/app",
     projectName: "acme/app",
     hosts,
     totalWorkspaceCount,
@@ -293,11 +296,9 @@ describe("ProjectsScreen", () => {
     vi.unstubAllGlobals();
   });
 
-  function render(
-    view: { kind: "projects" } | { kind: "project"; serverId: string; projectId: string },
-  ) {
+  function render(serverId = "host-a") {
     act(() => {
-      root?.render(<ProjectsScreen view={view} />);
+      root?.render(<ProjectsScreen serverId={serverId} />);
     });
   }
 
@@ -306,12 +307,12 @@ describe("ProjectsScreen", () => {
       projects: [
         project({
           projectName: "acme/app",
-          hosts: [hostEntry({ serverName: "alpha", workspaceCount: 5 })],
+          hosts: [hostEntry({ projectName: "acme/app", serverName: "alpha", workspaceCount: 5 })],
         }),
       ],
     });
 
-    render({ kind: "projects" });
+    render();
 
     const rows = container?.querySelectorAll('[data-testid^="project-row-"]') ?? [];
     expect(rows.length).toBe(1);
@@ -323,10 +324,10 @@ describe("ProjectsScreen", () => {
 
   it("navigates to the project detail route when the row is pressed", () => {
     setProjectsState({
-      projects: [project({ projectKey: "remote:github.com/acme/app" })],
+      projects: [project({ viewKey: "remote:github.com/acme/app" })],
     });
 
-    render({ kind: "projects" });
+    render();
 
     const row = findRow(container!, "remote:github.com/acme/app");
     act(() => {
@@ -334,15 +335,15 @@ describe("ProjectsScreen", () => {
     });
 
     expect(navigate).toHaveBeenCalledTimes(1);
-    expect(navigate).toHaveBeenCalledWith("/settings/projects/host-a/project-a");
+    expect(navigate).toHaveBeenCalledWith("/settings/hosts/host-a/projects/project-a");
   });
 
   it("does not render a kebab menu on the row", () => {
     setProjectsState({
-      projects: [project({ projectKey: "remote:github.com/acme/app" })],
+      projects: [project({ viewKey: "remote:github.com/acme/app" })],
     });
 
-    render({ kind: "projects" });
+    render();
 
     expect(
       container?.querySelector('[data-testid="project-row-menu-remote:github.com/acme/app"]'),
@@ -352,7 +353,7 @@ describe("ProjectsScreen", () => {
   it("renders a centered loading spinner before the first response", () => {
     setProjectsState({ isLoading: true, projects: [] });
 
-    render({ kind: "projects" });
+    render();
 
     expect(container?.querySelector('[data-testid="projects-loading-spinner"]')).not.toBeNull();
   });
@@ -360,7 +361,7 @@ describe("ProjectsScreen", () => {
   it("renders the empty state when there are no projects", () => {
     setProjectsState({ projects: [] });
 
-    render({ kind: "projects" });
+    render();
 
     expect(container?.textContent).toContain("No projects yet");
     expect(container?.textContent).not.toContain("Non-GitHub remote projects aren't supported yet");
@@ -372,37 +373,39 @@ describe("ProjectsScreen", () => {
       { serverId: "b", serverName: "beta", message: "unreachable" },
     ];
     setProjectsState({
-      projects: [project()],
+      projects: [project({ hosts: [hostEntry({ serverId: "a" })] })],
       hostErrors,
     });
 
-    render({ kind: "projects" });
+    render("a");
 
     const banner = container?.querySelector('[data-testid="projects-host-errors"]');
     expect(banner).not.toBeNull();
     expect(banner?.textContent).toContain("alpha");
-    expect(banner?.textContent).toContain("beta");
+    expect(banner?.textContent).not.toContain("beta");
     expect(container?.querySelector('[data-testid^="project-row-"]')).not.toBeNull();
   });
 
-  it("highlights the selected row when the active view targets a project", () => {
+  it("shows only projects belonging to the selected host", () => {
     setProjectsState({
       projects: [
-        project({ projectKey: "remote:github.com/acme/app" }),
         project({
-          projectKey: "remote:github.com/acme/other",
-          projectName: "acme/other",
-          githubUrl: "https://github.com/acme/other",
+          viewKey: "host-a-project",
+          projectName: "Host A",
+          hosts: [hostEntry({ serverId: "host-a", projectId: "project-a", projectName: "Host A" })],
+        }),
+        project({
+          viewKey: "host-b-project",
+          projectName: "Host B",
+          hosts: [hostEntry({ serverId: "host-b", projectId: "project-b", projectName: "Host B" })],
         }),
       ],
     });
 
-    render({ kind: "project", serverId: "host-a", projectId: "project-a" });
+    render("host-b");
 
-    const selected = findRow(container!, "remote:github.com/acme/app");
-    const other = findRow(container!, "remote:github.com/acme/other");
-    expect(selected.getAttribute("data-selected")).toBe("true");
-    expect(other.getAttribute("data-selected")).toBe("false");
+    expect(container?.textContent).not.toContain("Host A");
+    expect(container?.textContent).toContain("Host B");
   });
 
   it("does not include the word 'checkout' anywhere in the rendered tree", () => {
@@ -418,7 +421,7 @@ describe("ProjectsScreen", () => {
       hostErrors: [{ serverId: "x", serverName: "x", message: "down" }],
     });
 
-    render({ kind: "projects" });
+    render("a");
 
     const html = container?.innerHTML.toLowerCase() ?? "";
     expect(html).not.toContain("checkout");
