@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import parcelWatcher from "@parcel/watcher";
 import { LRUCache } from "lru-cache";
 import type pino from "pino";
@@ -39,6 +39,7 @@ import {
   type ForgeResolver,
 } from "../services/forge-resolver.js";
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
+import { createRealpathAwarePathMatcher, isRealpathInsideRoot } from "../utils/path.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { listPaseoWorktrees, type PaseoWorktreeInfo } from "../utils/worktree.js";
 import { READ_ONLY_GIT_ENV } from "./checkout-git-utils.js";
@@ -346,6 +347,7 @@ interface RepoGitTarget {
 
 interface WorkingTreeWatchTarget {
   cwd: string;
+  watchPath: string;
   repoRoot: string | null;
   subscription: parcelWatcher.AsyncSubscription | null;
   ignoredDirectories: Set<string>;
@@ -932,7 +934,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return target;
     }
 
-    const setup = this.createWorkingTreeWatchTarget(targetCwd, repoRoot).finally(() => {
+    const watchPath = repoRoot && createRealpathAwarePathMatcher(repoRoot)(cwd) ? cwd : targetCwd;
+    const setup = this.createWorkingTreeWatchTarget(targetCwd, watchPath, repoRoot).finally(() => {
       if (this.workingTreeWatchSetups.get(targetCwd) === setup) {
         this.workingTreeWatchSetups.delete(targetCwd);
       }
@@ -1101,11 +1104,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   private async createWorkingTreeWatchTarget(
     cwd: string,
+    watchPath: string,
     repoRoot: string | null,
   ): Promise<WorkingTreeWatchTarget> {
-    const ignoredDirectories = repoRoot ? await this.loadIgnoredDirs(cwd) : new Set<string>();
+    const ignoredDirectories = repoRoot ? await this.loadIgnoredDirs(watchPath) : new Set<string>();
     const target: WorkingTreeWatchTarget = {
       cwd,
+      watchPath,
       repoRoot,
       subscription: null,
       ignoredDirectories,
@@ -1129,10 +1134,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private async startWorkingTreeSubscription(target: WorkingTreeWatchTarget): Promise<void> {
-    const ignore = [join(target.cwd, ".git"), ...target.ignoredDirectories];
+    const ignore = [join(target.watchPath, ".git"), ...target.ignoredDirectories];
     try {
       const subscription = await this.deps.subscribe(
-        target.cwd,
+        target.watchPath,
         (error, events) => {
           if (error) {
             this.logger.warn(
@@ -1224,26 +1229,24 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target: WorkingTreeWatchTarget,
     events: parcelWatcher.Event[],
   ): boolean {
-    const gitDir = join(target.cwd, ".git");
+    const gitDir = join(target.watchPath, ".git");
+    const matchesWatchPath = createRealpathAwarePathMatcher(target.watchPath);
     return events.some((event) => {
-      if (this.isPathWithin(gitDir, event.path)) {
+      // Directory metadata changes at the watch root do not change Git state.
+      // FSEvents may emit these when every changed descendant was ignored.
+      if (matchesWatchPath(event.path)) {
+        return false;
+      }
+      if (isRealpathInsideRoot(gitDir, event.path)) {
         return false;
       }
       for (const ignoredDirectory of target.ignoredDirectories) {
-        if (this.isPathWithin(ignoredDirectory, event.path)) {
+        if (isRealpathInsideRoot(ignoredDirectory, event.path)) {
           return false;
         }
       }
       return true;
     });
-  }
-
-  private isPathWithin(rootPath: string, candidatePath: string): boolean {
-    const relativePath = relative(rootPath, candidatePath);
-    return (
-      relativePath === "" ||
-      (relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath))
-    );
   }
 
   private refreshWorkingTreeIgnoredDirectories(target: WorkingTreeWatchTarget): Promise<void> {
@@ -1273,7 +1276,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private async replaceWorkingTreeIgnoredDirectories(
     target: WorkingTreeWatchTarget,
   ): Promise<void> {
-    const ignoredDirectories = await this.loadIgnoredDirs(target.cwd);
+    const ignoredDirectories = await this.loadIgnoredDirs(target.watchPath);
     if (
       target.closed ||
       target.fallbackPollTimer ||
