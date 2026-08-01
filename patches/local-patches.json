@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "patches": [
+    {
+      "id": "paseo-v025-worktree-lifecycle",
+      "category": "stable-core-worktree-lifecycle",
+      "base": {
+        "tag": "v0.2.5",
+        "commit": "6fc491e6220fba6543bbbe4bf1b1f58cfe59228b"
+      },
+      "candidate": {
+        "branch": "review-v025-worktree-lifecycle-upstream",
+        "baseCommit": "6fc491e6220fba6543bbbe4bf1b1f58cfe59228b",
+        "receipt": "patches/receipts/paseo-v025-worktree-lifecycle.json"
+      },
+      "sources": [
+        "packages/protocol/src/messages.ts",
+        "packages/server/src/server/agent/create-agent-lifecycle-dispatch.ts",
+        "packages/server/src/server/agent/create-agent/create.ts",
+        "packages/server/src/server/agent/tools/paseo-tools.ts",
+        "packages/server/src/server/bootstrap.ts",
+        "packages/server/src/server/session.ts",
+        "packages/server/src/server/workspace-archive-service.ts",
+        "packages/server/src/server/workspace-lifecycle-coordinator.ts",
+        "packages/server/src/server/workspace-registry.ts",
+        "packages/server/src/server/worktree-bootstrap.ts",
+        "packages/server/src/server/worktree-session.ts",
+        "packages/server/src/server/worktree/commands.ts",
+        "packages/server/src/utils/worktree-metadata.ts",
+        "packages/server/src/utils/worktree-setup-output.ts",
+        "packages/server/src/utils/worktree.ts"
+      ],
+      "tests": [
+        "packages/server/src/server/agent/create-agent-lifecycle-dispatch.test.ts",
+        "packages/server/src/server/agent/create-agent/create.test.ts",
+        "packages/server/src/server/agent/mcp-server.test.ts",
+        "packages/server/src/server/session.workspace-git-watch.test.ts",
+        "packages/server/src/server/session.workspaces.test.ts",
+        "packages/server/src/server/workspace-archive-service.test.ts",
+        "packages/server/src/server/worktree-bootstrap.test.ts",
+        "packages/server/src/server/worktree-session.test.ts",
+        "packages/server/src/utils/worktree-setup-output.test.ts",
+        "packages/server/src/utils/worktree.posix.test.ts"
+      ],
+      "testCases": [
+        "setup reservations prevent archive from outrunning worktree creation",
+        "existing-workspace agent and terminal attachment are fenced against archive",
+        "MCP worktree creation releases setup reservations on every pre-agent failure",
+        "archive failures propagate through command, websocket, MCP, and normal session surfaces",
+        "normal archive responses require the persisted archived timestamp",
+        "failed physical cleanup remains retryable after the workspace record is archived",
+        "replacement worktree incarnations archive independently of stale cleanup intents",
+        "auto-archive retries after transient failure and cancellation observes rejection",
+        "setup output is bounded while preserving the final diagnostic tail"
+      ],
+      "verification": {
+        "receipt": "patches/receipts/paseo-v025-worktree-lifecycle.json",
+        "completedAt": "2026-08-01T00:34:00Z",
+        "commands": [
+          "npm run build --workspace packages/protocol",
+          "cd packages/server && npx vitest run src/server/agent/create-agent-lifecycle-dispatch.test.ts src/server/agent/create-agent/create.test.ts src/server/agent/mcp-server.test.ts src/server/session.workspace-git-watch.test.ts src/server/session.workspaces.test.ts",
+          "cd packages/server && npx vitest run src/server/workspace-archive-service.test.ts src/server/worktree-bootstrap.test.ts src/server/worktree-session.test.ts src/utils/worktree-setup-output.test.ts src/utils/worktree.posix.test.ts",
+          "npm test --workspace packages/protocol",
+          "npm run build --workspace packages/server",
+          "npm run typecheck --workspace packages/server",
+          "npm run typecheck --workspace packages/protocol",
+          "npm run lint -- --deny-warnings",
+          "npx oxfmt --check <manifest sources and tests>",
+          "git diff --check",
+          "jq -e '.schemaVersion == 1 and (.patches | length == 1) and .patches[0].id == \"paseo-v025-worktree-lifecycle\"' patches/local-patches.json"
+        ],
+        "result": {
+          "focusedServerTests": "359 passed, 5 skipped",
+          "protocolTests": "468 passed",
+          "serverBuild": "passed",
+          "serverAndProtocolTypechecks": "passed",
+          "lint": "0 warnings, 0 errors",
+          "formatDiffAndManifest": "passed"
+        }
+      },
+      "upstreamable": true,
+      "upstreamCondition": "Submit independently while worktree setup, ownership attachment, archive, cleanup retry, and auto-archive are not coordinated by one durable lifecycle boundary.",
+      "dropCondition": "Remove when the latest stable release provides equivalent setup and ownership fencing, explicit archive failure propagation, incarnation-safe retryable cleanup, bounded setup output, and retryable observable auto-archive semantics.",
+      "deployedReceipt": null,
+      "deployedAt": null
+    }
+  ]
+}
