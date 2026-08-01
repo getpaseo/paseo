@@ -35,7 +35,7 @@ export async function runCreateCommand(
 export async function runCreateCommandWithDeps(
   options: WorktreeCreateOptions,
   _command: Command,
-  deps: { connectToDaemon: typeof connectToDaemon },
+  deps: { connectToDaemon: typeof connectToDaemon; cwd?: string },
 ): Promise<SingleResult<WorktreeCreateResult>> {
   let client: DaemonClient;
   try {
@@ -50,7 +50,7 @@ export async function runCreateCommandWithDeps(
   }
 
   try {
-    const identity = resolveWorktreeRepositoryIdentity(options, client);
+    const identity = resolveWorktreeRepositoryIdentity(options, client, deps.cwd);
     const request = buildCreateWorktreeRequest(options, identity);
     const response = await client.createPaseoWorktree(request);
 

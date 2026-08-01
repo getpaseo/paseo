@@ -70,7 +70,7 @@ describe("runArchiveCommand", () => {
 
     const result = await runArchiveCommandWithDeps(
       "feature",
-      {},
+      { repoRoot: "/repo" },
       {
         connectToDaemon: async () => fakeClient,
       },
@@ -79,7 +79,7 @@ describe("runArchiveCommand", () => {
     expect(archiveCalls).toHaveLength(1);
     expect(archiveCalls[0]?.input.scope).toBe("worktree");
     expect(archiveCalls[0]?.input.worktreePath).toBe(worktreePath);
-    expect(archiveCalls[0]?.input.repoRoot).toBe(process.cwd());
+    expect(archiveCalls[0]?.input.repoRoot).toBe("/repo");
     expect(result).toEqual({
       type: "single",
       data: {
@@ -122,7 +122,7 @@ describe("runArchiveCommand", () => {
 
     await runArchiveCommandWithDeps(
       "feature-x",
-      {},
+      { repoRoot: "/repo" },
       {
         connectToDaemon: async () => fakeClient,
       },
@@ -131,7 +131,7 @@ describe("runArchiveCommand", () => {
     expect(archiveCalls).toHaveLength(1);
     expect(archiveCalls[0]?.input.scope).toBe("worktree");
     expect(archiveCalls[0]?.input.worktreePath).toBe(worktreePath);
-    expect(archiveCalls[0]?.input.repoRoot).toBe(process.cwd());
+    expect(archiveCalls[0]?.input.repoRoot).toBe("/repo");
   });
 
   it("throws a CommandError when the worktree is not found", async () => {

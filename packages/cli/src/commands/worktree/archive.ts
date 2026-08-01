@@ -49,7 +49,7 @@ export async function runArchiveCommand(
 export async function runArchiveCommandWithDeps(
   nameArg: string,
   options: WorktreeArchiveOptions,
-  deps: { connectToDaemon: typeof connectToDaemon },
+  deps: { connectToDaemon: typeof connectToDaemon; cwd?: string },
 ): Promise<WorktreeArchiveCommandResult> {
   // Validate arguments
   if (!nameArg || nameArg.trim().length === 0) {
@@ -76,7 +76,7 @@ export async function runArchiveCommandWithDeps(
   }
 
   try {
-    const identity = resolveWorktreeRepositoryIdentity(options, client);
+    const identity = resolveWorktreeRepositoryIdentity(options, client, deps.cwd);
     // Get the list of worktrees first to resolve the name
     const listResponse = await client.getPaseoWorktreeList(identity);
 

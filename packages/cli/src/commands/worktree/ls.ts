@@ -70,7 +70,7 @@ export async function runLsCommand(
 export async function runLsCommandWithDeps(
   options: WorktreeLsOptions,
   _command: Command,
-  deps: { connectToDaemon: typeof connectToDaemon },
+  deps: { connectToDaemon: typeof connectToDaemon; cwd?: string },
 ): Promise<WorktreeLsResult> {
   let client: DaemonClient;
   try {
@@ -90,7 +90,7 @@ export async function runLsCommandWithDeps(
     const agents = agentsPayload.entries.map((entry) => entry.agent);
 
     // Get worktree list from daemon
-    const identity = resolveWorktreeRepositoryIdentity(options, client);
+    const identity = resolveWorktreeRepositoryIdentity(options, client, deps.cwd);
     const response = await client.getPaseoWorktreeList(identity);
 
     await client.close();
