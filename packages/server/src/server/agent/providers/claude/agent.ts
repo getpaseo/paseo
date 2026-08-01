@@ -378,6 +378,8 @@ interface ClaudeAgentClientOptions {
   resolveBinary?: () => Promise<string>;
   resolveVersion?: () => Promise<string>;
   configDir?: string;
+  /** Effective user id of this process. Injected so tests need no root runner. */
+  getUid?: () => number | undefined;
 }
 
 interface ClaudeAgentSessionOptions {
@@ -390,6 +392,7 @@ interface ClaudeAgentSessionOptions {
   logger: Logger;
   queryFactory?: ClaudeQueryFactory;
   resolveBinary: () => Promise<string>;
+  getUid: () => number | undefined;
 }
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -902,6 +905,44 @@ function detectIneligibleAutoModeTransport(env: NodeJS.ProcessEnv): "Bedrock" | 
     return "Vertex";
   }
   return null;
+}
+
+// Claude Code exits immediately when a root process asks for the permission-skip
+// capability, unless it was told the machine is a deliberate sandbox. Mirror that gate
+// so a root-run daemon does not lose every session, including the ones that never
+// intended to bypass anything.
+//
+// This reads the daemon's uid, while Claude Code reads its own. They differ when a
+// `command` override wraps the CLI in something that changes user (gosu, su, sudo), so a
+// deprivileging wrapper loses Bypass it could have had, and a privilege-raising one still
+// hits the raw CLI error. Detecting the wrapper's effective uid is the upgrade path.
+function isRootOutsideSandbox(uid: number | undefined, env: NodeJS.ProcessEnv): boolean {
+  return uid === 0 && env.IS_SANDBOX !== "1" && !env.CLAUDE_CODE_BUBBLEWRAP;
+}
+
+function assertClaudeBypassEligible(
+  mode: PermissionMode,
+  uid: number | undefined,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (mode !== "bypassPermissions" || !isRootOutsideSandbox(uid, env)) {
+    return;
+  }
+  throw new Error(
+    "Claude Bypass mode cannot be used while Paseo runs as root. Run the daemon as a non-root user.",
+  );
+}
+
+function claudeModesFor(uid: number | undefined, env: NodeJS.ProcessEnv): AgentMode[] {
+  return DEFAULT_MODES.filter((mode) => {
+    if (mode.id === "auto") {
+      return detectIneligibleAutoModeTransport(env) === null;
+    }
+    if (mode.id === "bypassPermissions") {
+      return !isRootOutsideSandbox(uid, env);
+    }
+    return true;
+  });
 }
 
 function assertClaudeAutoModeEligible(mode: PermissionMode, env: NodeJS.ProcessEnv): void {
@@ -1455,6 +1496,7 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: () => Promise<string>;
   private readonly configDir?: string;
+  private readonly getUid: () => number | undefined;
 
   constructor(options: ClaudeAgentClientOptions) {
     this.defaults = options.defaults;
@@ -1465,6 +1507,7 @@ export class ClaudeAgentClient implements AgentClient {
     this.resolveVersion =
       options.resolveVersion ?? (() => resolveClaudeCodeVersion(this.runtimeSettings));
     this.configDir = options.configDir;
+    this.getUid = options.getUid ?? (() => process.getuid?.());
   }
 
   async createSession(
@@ -1482,6 +1525,7 @@ export class ClaudeAgentClient implements AgentClient {
       logger: this.logger,
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
+      getUid: this.getUid,
     });
   }
 
@@ -1510,6 +1554,7 @@ export class ClaudeAgentClient implements AgentClient {
       logger: this.logger,
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
+      getUid: this.getUid,
     });
   }
 
@@ -1526,11 +1571,10 @@ export class ClaudeAgentClient implements AgentClient {
       this.configDir,
       claudeCodeVersion,
     );
-    const modes = detectIneligibleAutoModeTransport(
+    const modes = claudeModesFor(
+      this.getUid(),
       createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings }),
-    )
-      ? DEFAULT_MODES.filter((mode) => mode.id !== "auto")
-      : DEFAULT_MODES;
+    );
     return {
       models,
       modes,
@@ -1979,6 +2023,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly logger: Logger;
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
+  private readonly getUid: () => number | undefined;
   private query: Query | null = null;
   private childProcess: ChildProcess | null = null;
   private input: AsyncMessageInput<SDKUserMessage> | null = null;
@@ -1986,7 +2031,6 @@ class ClaudeAgentSession implements AgentSession {
   private persistence: AgentPersistenceHandle | null;
   private currentMode: PermissionMode;
   private planResumeMode: PermissionMode | null = null;
-  private availableModes: AgentMode[] = DEFAULT_MODES;
   private toolUseCache = new Map<string, ToolUseCacheEntry>();
   private toolUseIndexToId = new Map<number, string>();
   private toolUseInputBuffers = new Map<string, string>();
@@ -2042,6 +2086,7 @@ class ClaudeAgentSession implements AgentSession {
     this.logger = options.logger.child({ agentId: this.agentId });
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
+    this.getUid = options.getUid;
     this.contextUsage = new ClaudeContextUsageState(
       findClaudeModel(this.config.model)?.contextWindowMaxTokens,
     );
@@ -2254,7 +2299,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async getAvailableModes(): Promise<AgentMode[]> {
-    return this.availableModes;
+    return claudeModesFor(this.getUid(), this.buildSdkEnv(this.config.extra?.claude));
   }
 
   async getCurrentMode(): Promise<string | null> {
@@ -2271,7 +2316,9 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const normalized = isPermissionMode(modeId) ? modeId : "default";
-    assertClaudeAutoModeEligible(normalized, this.buildSdkEnv(this.config.extra?.claude));
+    const modeEnv = this.buildSdkEnv(this.config.extra?.claude);
+    assertClaudeAutoModeEligible(normalized, modeEnv);
+    assertClaudeBypassEligible(normalized, this.getUid(), modeEnv);
     const previousMode = this.currentMode;
     const activeQuery = await this.ensureQuery();
     await activeQuery.setPermissionMode(normalized);
@@ -3052,6 +3099,7 @@ class ClaudeAgentSession implements AgentSession {
     const settingsOptions = this.buildSettingsOptions(extraClaudeOptions, { ultracode });
     const sdkEnv = this.buildSdkEnv(extraClaudeOptions);
     assertClaudeAutoModeEligible(this.currentMode, sdkEnv);
+    assertClaudeBypassEligible(this.currentMode, this.getUid(), sdkEnv);
 
     const claudeBinary = await this.resolveBinary();
     this.logger.debug(
@@ -3074,11 +3122,6 @@ class ClaudeAgentSession implements AgentSession {
     const base: ClaudeOptions = {
       cwd: this.config.cwd,
       includePartialMessages: true,
-      permissionMode: this.currentMode,
-      // Dynamic mode switching can recreate the underlying Claude query. Keep the
-      // bypass launch capability available so later setPermissionMode("bypassPermissions")
-      // calls do not fail after a model/thinking/rewind-driven restart.
-      allowDangerouslySkipPermissions: true,
       agents: this.defaults?.agents,
       canUseTool: this.handlePermissionRequest,
       pathToClaudeCodeExecutable: claudeBinary,
@@ -3105,6 +3148,13 @@ class ClaudeAgentSession implements AgentSession {
       ...settingsOptions,
       // Provider subagent panes render the child's nested transcript.
       forwardSubagentText: true,
+      // Pinned after the spreads: extra.claude is an arbitrary record off the wire, and
+      // both keys decide whether Claude Code will start at all. The session owns the mode
+      // through setMode, and the bypass launch capability stays available so a later
+      // setPermissionMode("bypassPermissions") survives a model/thinking/rewind restart —
+      // except as root, where Claude Code refuses to boot with it.
+      permissionMode: this.currentMode,
+      allowDangerouslySkipPermissions: !isRootOutsideSandbox(this.getUid(), sdkEnv),
       // Merged rather than assigned above: extraClaudeOptions is spread after the base, so any
       // user-configured hooks would otherwise replace these wholesale and silently stop effort
       // from being observed.
@@ -4200,7 +4250,6 @@ class ClaudeAgentSession implements AgentSession {
       threadStartedSessionId = newSessionId;
       notice = this.createClaudeSessionChangedNotice(existingSessionId, newSessionId);
     }
-    this.availableModes = DEFAULT_MODES;
     this.currentMode = message.permissionMode;
     if (this.currentMode !== "plan") {
       this.planResumeMode = this.currentMode;
