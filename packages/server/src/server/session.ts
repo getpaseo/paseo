@@ -6558,6 +6558,7 @@ export class Session {
           agentId,
           prompt,
           messageId: msg.messageId,
+          steer: msg.steer === true,
           logger: this.sessionLogger,
         });
       } catch (error) {

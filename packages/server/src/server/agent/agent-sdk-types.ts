@@ -178,6 +178,10 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  // COMPAT(supportsNativeFork): added in v0.2.916
+  supportsNativeFork?: boolean;
+  // COMPAT(supportsSteer): added in v0.2.916
+  supportsSteer?: boolean;
 }
 
 export interface AgentPersistenceHandle {
@@ -642,6 +646,12 @@ export interface AgentSession {
   ): Promise<AgentPermissionResult | void>;
   describePersistence(): AgentPersistenceHandle | null;
   interrupt(): Promise<void>;
+  /**
+   * Inject user input into the active turn without canceling it.
+   * Providers that support native mid-turn inject (e.g. Codex `turn/steer`)
+   * implement this. Callers must only invoke it while a turn is running.
+   */
+  steer?(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<void>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;

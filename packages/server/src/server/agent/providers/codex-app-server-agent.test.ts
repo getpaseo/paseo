@@ -61,11 +61,13 @@ interface CodexSessionTestAccess {
 
 interface CodexClientLike {
   request: (method: string, ...rest: unknown[]) => Promise<unknown>;
+  dispose?: () => Promise<void> | void;
 }
 
 type CodexTestSession = AgentSession & {
   connected: boolean;
   currentThreadId: string | null;
+  currentTurnId: string | null;
   activeForegroundTurnId: string | null;
   client: CodexClientLike | null;
 };
@@ -2976,6 +2978,67 @@ describe("Codex app-server provider", () => {
     );
 
     await session.close();
+  });
+
+  test("steers an active Codex turn via turn/steer without starting a new turn", async () => {
+    const session = createSession();
+    const requests: Array<{ method: string; params: unknown }> = [];
+    session.client = {
+      request: async (method, params) => {
+        requests.push({ method, params });
+        if (method === "turn/steer") {
+          const expectedTurnId =
+            typeof (params as { expectedTurnId?: unknown })?.expectedTurnId === "string"
+              ? (params as { expectedTurnId: string }).expectedTurnId
+              : "unknown";
+          return { turnId: expectedTurnId };
+        }
+        return {};
+      },
+      dispose: async () => {},
+    };
+
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "active-turn" },
+    });
+
+    await session.steer("focus on failing tests", { clientMessageId: "msg-steer-1" });
+
+    expect(requests).toContainEqual({
+      method: "turn/steer",
+      params: {
+        threadId: "test-thread",
+        expectedTurnId: "active-turn",
+        clientUserMessageId: "msg-steer-1",
+        input: [{ type: "text", text: "focus on failing tests", text_elements: [] }],
+      },
+    });
+    expect(requests.some((entry) => entry.method === "turn/start")).toBe(false);
+    expect(requests.some((entry) => entry.method === "turn/interrupt")).toBe(false);
+
+    await session.close();
+  });
+
+  test("rejects steer until Codex identifies the accepted turn", async () => {
+    const session = createSession();
+    session.client = {
+      request: async () => ({}),
+      dispose: async () => {},
+    };
+    session.currentThreadId = "test-thread";
+    session.currentTurnId = null;
+
+    await expect(session.steer("too early")).rejects.toThrow(
+      "Cannot steer Codex before turn/started identifies the active turn",
+    );
+
+    await session.close();
+  });
+
+  test("advertises supportsSteer for app-server sessions", () => {
+    const session = createSession();
+    expect(session.capabilities.supportsSteer).toBe(true);
   });
 
   test("interrupts an autonomous Codex turn identified by live notifications", async () => {

@@ -8,7 +8,7 @@ export const APP_SETTINGS_KEY = "@paseo:app-settings";
 export const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 
-export type SendBehavior = "interrupt" | "queue";
+export type SendBehavior = "interrupt" | "queue" | "steer";
 export type ReleaseChannel = "stable" | "beta";
 export type ServiceUrlBehavior = "ask" | "in-app" | "external";
 export type WorkspaceTitleSource = "title" | "branch";
@@ -231,6 +231,13 @@ function parseToolCallDetailLevel(stored: StoredAppSettings): ToolCallDetailLeve
   return null;
 }
 
+function parseSendBehavior(value: unknown): SendBehavior | null {
+  if (value === "interrupt" || value === "queue" || value === "steer") {
+    return value;
+  }
+  return null;
+}
+
 function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
   if (typeof stored.theme === "string" && VALID_THEMES.has(stored.theme)) {
@@ -240,8 +247,9 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   if (language !== null) {
     result.language = language;
   }
-  if (stored.sendBehavior === "interrupt" || stored.sendBehavior === "queue") {
-    result.sendBehavior = stored.sendBehavior;
+  const sendBehavior = parseSendBehavior(stored.sendBehavior);
+  if (sendBehavior !== null) {
+    result.sendBehavior = sendBehavior;
   }
   if (
     typeof stored.serviceUrlBehavior === "string" &&

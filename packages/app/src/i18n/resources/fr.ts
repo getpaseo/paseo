@@ -81,7 +81,7 @@ export const fr: TranslationResources = {
       interruptAgent: "Agent d'interruption",
       queueMessage: "Message de file d'attente",
       steer: "Orienter",
-      steerHint: "Interrompt le tour en cours avec ce message",
+      steerHint: "Réoriente le tour en cours avec ce message",
       sendAndInterrupt: "Envoyer et interrompre",
       sendMessage: "Envoyer un message",
       queue: "File d'attente",
@@ -113,6 +113,7 @@ export const fr: TranslationResources = {
       dropFilesHere: "Drop files here",
       editQueuedMessage: "Modifier le message en file d'attente",
       sendQueuedMessageNow: "Envoyer le message en file d'attente maintenant",
+      steerQueuedMessage: "Steer with queued message",
       openImage: "Ouvrir la pièce jointe de l'image",
       removeImage: "Supprimer l'image jointe",
       removeFile: "Remove file attachment",
@@ -1712,10 +1713,13 @@ export const fr: TranslationResources = {
             "Lorsque l'agent est en cours d'exécution, Entrée interrompt. Commande/Ctrl+Entrée met en file d'attente.",
           queue:
             "Lorsque l'agent est en cours d'exécution, Entrée met en file d'attente. Commande/Ctrl+Entrée envoie.",
+          steer:
+            "When the agent is running, Enter steers the current turn. Command/Ctrl+Enter queues. Falls back to interrupt if steer is unavailable.",
         },
         options: {
           interrupt: "Interrompre",
           queue: "File d'attente",
+          steer: "Steer",
         },
       },
       serviceUrls: {

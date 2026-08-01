@@ -285,7 +285,8 @@ const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindBoth: true,
   // COMPAT(supportsNativeFork): added in v0.2.916
   supportsNativeFork: true,
-  // COMPAT(supportsSteer): added in v0.2.916 — interrupt active turn + submit next message.
+  // COMPAT(supportsSteer): added in v0.2.916 — native streaming-input inject
+  // (Claude Code typeahead / mid-run queue). Hard cancel remains interrupt().
   supportsSteer: true,
 };
 
@@ -2213,6 +2214,44 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     await this.interruptActiveTurn();
+  }
+
+  /**
+   * Inject a user message into the live streaming session without interrupting
+   * the active turn. Claude Agent SDK queues mid-run user messages on the open
+   * prompt stream (Claude Code typeahead semantics), then processes them after
+   * the current generation yields / completes.
+   */
+  async steer(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<void> {
+    if (this.closed) {
+      throw new Error("Claude session is closed");
+    }
+    if (!this.input) {
+      throw new Error("Cannot steer Claude before a streaming session is active");
+    }
+
+    const sdkMessage = this.toSdkUserMessage(prompt);
+    const sdkUserMessageId =
+      typeof sdkMessage.uuid === "string" && sdkMessage.uuid.length > 0 ? sdkMessage.uuid : null;
+    this.rememberRewindUserAnchor(sdkUserMessageId);
+
+    this.startQueryPump();
+    this.input.push(sdkMessage);
+
+    const turnId =
+      this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? this.createTurnId("foreground");
+    this.logger.info(
+      {
+        agentId: this.agentId,
+        sessionId: this.claudeSessionId,
+        turnId,
+        hasClientMessageId: Boolean(options?.clientMessageId),
+      },
+      "Steering Claude streaming session",
+    );
+    setTimeout(() => {
+      this.emitSubmittedUserMessage(sdkMessage, turnId, options?.clientMessageId);
+    }, 0);
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
