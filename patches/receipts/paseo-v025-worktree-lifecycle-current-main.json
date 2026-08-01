@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "patchId": "paseo-v025-worktree-lifecycle",
+  "stableCandidate": {
+    "baseCommit": "6fc491e6220fba6543bbbe4bf1b1f58cfe59228b",
+    "headCommit": "bfdb6ed4a8668e05826effd3f8b1a18dbf74c9b2",
+    "verificationCommit": "e2937e792969038b1b701e79abfbfe017bb635da",
+    "verificationTree": "af3297ff70ecb52c78ce0d305a622162049cc4a8"
+  },
+  "currentMainIntegration": {
+    "upstreamMainCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
+    "mergeCommit": "e5e5d607ea8e14dd874c3db4ce095634a9da7092",
+    "mergeTree": "529add05cfc1424c287d576f27d8194f37503c35",
+    "firstParent": "bfdb6ed4a8668e05826effd3f8b1a18dbf74c9b2",
+    "secondParent": "70ed70d36e2eabd3876a22931954319ec202c902"
+  },
+  "verification": {
+    "commit": "e5e5d607ea8e14dd874c3db4ce095634a9da7092",
+    "completedAt": "2026-08-01T00:39:55Z",
+    "commands": [
+      "npm run build --workspace packages/protocol",
+      "cd packages/server && npx vitest run src/server/agent/create-agent-lifecycle-dispatch.test.ts src/server/agent/create-agent/create.test.ts src/server/agent/mcp-server.test.ts src/server/session.workspace-git-watch.test.ts src/server/session.workspaces.test.ts",
+      "cd packages/server && npx vitest run src/server/workspace-archive-service.test.ts src/server/worktree-bootstrap.test.ts src/server/worktree-session.test.ts src/utils/worktree-setup-output.test.ts src/utils/worktree.posix.test.ts src/utils/checkout-git.test.ts src/utils/checkout-git.commits.test.ts src/server/worktree-branch-name-generator.test.ts",
+      "npm test --workspace packages/protocol",
+      "npm run build --workspace packages/server",
+      "npm run typecheck --workspace packages/server",
+      "npm run typecheck --workspace packages/protocol",
+      "npm run lint -- --deny-warnings",
+      "npx oxfmt --check <lifecycle sources, tests, manifests, and conflict resolution>",
+      "git diff --cached --check -- packages/server/src/utils/worktree-metadata.ts"
+    ],
+    "result": {
+      "focusedAndBroadServerTests": "526 passed, 6 skipped",
+      "protocolTests": "470 passed",
+      "serverBuild": "passed",
+      "serverAndProtocolTypechecks": "passed",
+      "lint": "0 warnings, 0 errors",
+      "lifecycleFormatAndConflictDiff": "passed"
+    }
+  }
+}
