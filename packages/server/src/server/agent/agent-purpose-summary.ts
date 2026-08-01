@@ -28,7 +28,7 @@ interface SummaryCadenceState {
 
 type SummaryAgentManager = Pick<
   AgentManager,
-  "fetchTimeline" | "getAgent" | "setAgentSummary" | "subscribe"
+  "fetchTimeline" | "getAgent" | "listAgents" | "setAgentSummary" | "subscribe"
 >;
 
 interface SummaryTranscript {
@@ -89,6 +89,11 @@ export class AgentPurposeSummaryService {
     if (this.unsubscribe || this.disposed) {
       return;
     }
+    for (const agent of this.agentManager.listAgents()) {
+      if (agent.summary && !agent.internal) {
+        this.initializeCadenceState(agent);
+      }
+    }
     this.unsubscribe = this.agentManager.subscribe((event) => this.handleAgentEvent(event), {
       replayState: false,
     });
@@ -114,8 +119,11 @@ export class AgentPurposeSummaryService {
       return;
     }
 
-    const state = this.getCadenceState(agent);
-    state.completedTurns += 1;
+    const existingState = this.cadenceByAgentId.get(agent.id);
+    const state = existingState ?? this.initializeCadenceState(agent);
+    if (existingState) {
+      state.completedTurns += 1;
+    }
     if (!this.shouldGenerate(agent, state)) {
       return;
     }
@@ -145,18 +153,19 @@ export class AgentPurposeSummaryService {
     this.scheduled.add(timer);
   }
 
-  private getCadenceState(agent: ManagedAgent): SummaryCadenceState {
-    const existing = this.cadenceByAgentId.get(agent.id);
-    if (existing) {
-      return existing;
-    }
+  private initializeCadenceState(agent: ManagedAgent): SummaryCadenceState {
     const state: SummaryCadenceState = {
-      completedTurns: 0,
+      completedTurns: this.countCompletedTurnsSinceSummary(agent),
       inFlight: false,
       lastAttemptAt: agent.summaryUpdatedAt?.getTime() ?? 0,
     };
     this.cadenceByAgentId.set(agent.id, state);
     return state;
+  }
+
+  private countCompletedTurnsSinceSummary(agent: ManagedAgent): number {
+    return this.getTimelineRowsSinceSummary(agent).filter((row) => row.item.type === "user_message")
+      .length;
   }
 
   private shouldGenerate(agent: ManagedAgent, state: SummaryCadenceState): boolean {
@@ -227,14 +236,7 @@ export class AgentPurposeSummaryService {
 
   private buildTranscript(agent: ManagedAgent): SummaryTranscript | null {
     const snapshot = this.agentManager.fetchTimeline(agent.id, { limit: 0 });
-    const previousCursor = agent.summaryCursor;
-    const summaryUpdatedAt = agent.summaryUpdatedAt?.getTime() ?? null;
-    const rows = snapshot.rows.filter((row) => {
-      if (previousCursor) {
-        return previousCursor.epoch === snapshot.epoch ? row.seq > previousCursor.seq : true;
-      }
-      return summaryUpdatedAt === null || Date.parse(row.timestamp) > summaryUpdatedAt;
-    });
+    const rows = this.filterTimelineRowsSinceSummary(agent, snapshot);
     const items = rows.map((row) => row.item).filter(isSummaryConversationItem);
 
     const bounded = boundTranscriptItems(items);
@@ -250,6 +252,30 @@ export class AgentPurposeSummaryService {
         seq: snapshot.window.maxSeq,
       },
     };
+  }
+
+  private getTimelineRowsSinceSummary(agent: ManagedAgent) {
+    const snapshot = this.agentManager.fetchTimeline(
+      agent.id,
+      agent.summaryCursor
+        ? { direction: "after", cursor: agent.summaryCursor, limit: 0 }
+        : { limit: 0 },
+    );
+    return this.filterTimelineRowsSinceSummary(agent, snapshot);
+  }
+
+  private filterTimelineRowsSinceSummary(
+    agent: ManagedAgent,
+    snapshot: ReturnType<SummaryAgentManager["fetchTimeline"]>,
+  ) {
+    const previousCursor = agent.summaryCursor;
+    const summaryUpdatedAt = agent.summaryUpdatedAt?.getTime() ?? null;
+    return snapshot.rows.filter((row) => {
+      if (previousCursor) {
+        return previousCursor.epoch === snapshot.epoch ? row.seq > previousCursor.seq : true;
+      }
+      return summaryUpdatedAt === null || Date.parse(row.timestamp) > summaryUpdatedAt;
+    });
   }
 }
 

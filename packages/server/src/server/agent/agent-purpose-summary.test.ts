@@ -95,6 +95,65 @@ describe("AgentPurposeSummaryService", () => {
     harness.service.dispose();
   });
 
+  it("restores completed-turn cadence from the persisted summary cursor after restart", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness({
+      summary: "Initial purpose.",
+      summaryUpdatedAt: new Date("2026-07-30T12:00:00.000Z"),
+      summaryCursor: { epoch: "epoch-1", seq: 2 },
+      minTurnsBetweenGenerations: 3,
+      minIntervalMs: 0,
+      timelineRows: [
+        row(1, "2026-07-30T11:59:00.000Z", {
+          type: "user_message",
+          text: "Work already covered by the summary.",
+        }),
+        row(2, "2026-07-30T12:00:00.000Z", {
+          type: "assistant_message",
+          text: "Finished the summarized work.",
+        }),
+        row(3, "2026-07-30T12:01:00.000Z", {
+          type: "user_message",
+          text: "First turn after the summary.",
+        }),
+        row(4, "2026-07-30T12:02:00.000Z", {
+          type: "assistant_message",
+          text: "Finished the first follow-up.",
+        }),
+        row(5, "2026-07-30T12:03:00.000Z", {
+          type: "user_message",
+          text: "Second turn after the summary.",
+        }),
+        row(6, "2026-07-30T12:04:00.000Z", {
+          type: "assistant_message",
+          text: "Finished the second follow-up.",
+        }),
+      ],
+    });
+
+    harness.appendRow(
+      row(7, "2026-07-30T12:05:00.000Z", {
+        type: "user_message",
+        text: "Third turn after the summary.",
+      }),
+    );
+    harness.appendRow(
+      row(8, "2026-07-30T12:06:00.000Z", {
+        type: "assistant_message",
+        text: "Finished the third follow-up.",
+      }),
+    );
+    harness.emit(turnCompletedEvent());
+    await vi.runAllTimersAsync();
+
+    expect(harness.generationRequests).toHaveLength(1);
+    expect(harness.generationRequests[0]?.prompt).not.toContain(
+      "Work already covered by the summary.",
+    );
+    expect(harness.generationRequests[0]?.prompt).toContain("Third turn after the summary.");
+    harness.service.dispose();
+  });
+
   it("uses only messages newer than the persisted summary timestamp", async () => {
     vi.useFakeTimers();
     const summaryUpdatedAt = new Date("2026-07-30T12:05:00.000Z");
@@ -185,6 +244,7 @@ function createHarness(
   input: {
     summary?: string | null;
     summaryUpdatedAt?: Date;
+    summaryCursor?: { epoch: string; seq: number };
     timelineRows?: AgentTimelineRow[];
     minTurnsBetweenGenerations?: number;
     minIntervalMs?: number;
@@ -207,6 +267,7 @@ function createHarness(
     internal: false,
     summary: input.summary ?? null,
     summaryUpdatedAt: input.summaryUpdatedAt,
+    summaryCursor: input.summaryCursor,
   } as unknown as ManagedAgent;
 
   const agentManager = {
@@ -219,8 +280,22 @@ function createHarness(
     getAgent(agentId: string) {
       return agentId === AGENT_ID ? agent : null;
     },
-    fetchTimeline() {
+    listAgents() {
+      return [agent];
+    },
+    fetchTimeline(
+      _agentId: string,
+      options?: {
+        direction?: "tail" | "before" | "after";
+        cursor?: { epoch: string; seq: number };
+      },
+    ) {
       const maxSeq = timelineRows.at(-1)?.seq ?? 0;
+      const cursor = options?.cursor;
+      const selectedRows =
+        options?.direction === "after" && cursor?.epoch === "epoch-1"
+          ? timelineRows.filter((entry) => entry.seq > cursor.seq)
+          : timelineRows;
       return {
         epoch: "epoch-1",
         direction: "tail" as const,
@@ -234,7 +309,7 @@ function createHarness(
         },
         hasOlder: false,
         hasNewer: false,
-        rows: timelineRows.map((entry) => ({ ...entry })),
+        rows: selectedRows,
       };
     },
     async setAgentSummary(
