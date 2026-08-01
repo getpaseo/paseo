@@ -264,6 +264,54 @@ function resolveSubscriptionId(
   return uuidv4();
 }
 
+function createBackgroundTaskOutputSubscriptions() {
+  const subscriptions = new Map<
+    string,
+    {
+      parentAgentId: string;
+      taskId: string;
+      cursor: number;
+      timer: ReturnType<typeof setInterval> | null;
+    }
+  >();
+  const keyOf = (input: { parentAgentId: string; taskId: string }) =>
+    `${input.parentAgentId}\0${input.taskId}`;
+  return {
+    upsert(input: { parentAgentId: string; taskId: string }) {
+      const key = keyOf(input);
+      const existing = subscriptions.get(key);
+      if (existing) return existing;
+      const entry = {
+        parentAgentId: input.parentAgentId,
+        taskId: input.taskId,
+        cursor: 0,
+        timer: null as ReturnType<typeof setInterval> | null,
+      };
+      subscriptions.set(key, entry);
+      return entry;
+    },
+    get(input: { parentAgentId: string; taskId: string }) {
+      return subscriptions.get(keyOf(input)) ?? null;
+    },
+    setCursor(input: { parentAgentId: string; taskId: string }, cursor: number) {
+      const entry = subscriptions.get(keyOf(input));
+      if (entry) entry.cursor = cursor;
+    },
+    remove(input: { parentAgentId: string; taskId: string }) {
+      const key = keyOf(input);
+      const entry = subscriptions.get(key);
+      if (entry?.timer) clearInterval(entry.timer);
+      subscriptions.delete(key);
+    },
+    clearAll() {
+      for (const entry of subscriptions.values()) {
+        if (entry.timer) clearInterval(entry.timer);
+      }
+      subscriptions.clear();
+    },
+  };
+}
+
 function isAppVersionAtLeast(appVersion: string | null, minVersion: string): boolean {
   if (!appVersion) return false;
   // Strip prerelease suffix: "0.1.45-beta.4" -> "0.1.45"
@@ -641,6 +689,7 @@ export class Session {
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
+  private readonly backgroundTaskOutputSubscriptions = createBackgroundTaskOutputSubscriptions();
 
   constructor(options: SessionOptions) {
     const {
@@ -1564,6 +1613,31 @@ export class Session {
           return;
         }
 
+        if (event.type === "background_tasks") {
+          this.emit({
+            type: "agent.background_tasks.update",
+            payload: {
+              parentAgentId: event.parentAgentId,
+              tasks: event.tasks.map((task) => ({
+                taskId: task.taskId,
+                parentAgentId: task.parentAgentId,
+                type: task.type,
+                description: task.description,
+                command: task.command,
+                status: task.status,
+                outputFile: task.outputFile,
+                lastSummary: task.lastSummary,
+                updatedAt: task.updatedAt,
+              })),
+            },
+          });
+          return;
+        }
+
+        if (event.type !== "agent_stream") {
+          return;
+        }
+
         if (
           this.voiceSession.isActiveForAgent(event.agentId) &&
           event.event.type === "permission_requested" &&
@@ -1876,6 +1950,16 @@ export class Session {
         return this.handleProviderSubagentListRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
         return this.handleProviderSubagentTimelineRequest(msg);
+      case "agent.background_tasks.list.request":
+        return this.handleBackgroundTasksListRequest(msg);
+      case "agent.background_tasks.stop.request":
+        return this.handleBackgroundTasksStopRequest(msg);
+      case "agent.background_tasks.output.get.request":
+        return this.handleBackgroundTasksOutputGetRequest(msg);
+      case "agent.background_tasks.output.subscribe.request":
+        return this.handleBackgroundTasksOutputSubscribeRequest(msg);
+      case "agent.background_tasks.output.unsubscribe.request":
+        return this.handleBackgroundTasksOutputUnsubscribeRequest(msg);
       case "agent.timeline.set_subscription.request": {
         const agentIds = [...new Set(msg.agentIds)].sort();
         if (
@@ -6244,6 +6328,220 @@ export class Session {
     }
   }
 
+  private async handleBackgroundTasksListRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.background_tasks.list.request" }>,
+  ): Promise<void> {
+    try {
+      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      this.emit({
+        type: "agent.background_tasks.list.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          tasks: this.agentManager.listBackgroundTasks(msg.parentAgentId),
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.background_tasks.list.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          tasks: [],
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleBackgroundTasksStopRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.background_tasks.stop.request" }>,
+  ): Promise<void> {
+    try {
+      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      await this.agentManager.stopBackgroundTask(msg.parentAgentId, msg.taskId);
+      this.emit({
+        type: "agent.background_tasks.stop.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          taskId: msg.taskId,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.background_tasks.stop.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          taskId: msg.taskId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleBackgroundTasksOutputGetRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.background_tasks.output.get.request" }>,
+  ): Promise<void> {
+    try {
+      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      const output = await this.agentManager.readBackgroundTaskOutput({
+        parentAgentId: msg.parentAgentId,
+        taskId: msg.taskId,
+        cursor: msg.cursor,
+        maxBytes: msg.maxBytes,
+      });
+      this.emit({
+        type: "agent.background_tasks.output.get.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          taskId: msg.taskId,
+          text: output.text,
+          nextCursor: output.nextCursor,
+          eof: output.eof,
+          error: output.error,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.background_tasks.output.get.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          taskId: msg.taskId,
+          text: "",
+          nextCursor: msg.cursor ?? 0,
+          eof: true,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleBackgroundTasksOutputSubscribeRequest(
+    msg: Extract<
+      SessionInboundMessage,
+      { type: "agent.background_tasks.output.subscribe.request" }
+    >,
+  ): Promise<void> {
+    try {
+      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      this.backgroundTaskOutputSubscriptions.upsert({
+        parentAgentId: msg.parentAgentId,
+        taskId: msg.taskId,
+      });
+      this.emit({
+        type: "agent.background_tasks.output.subscribe.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          taskId: msg.taskId,
+          error: null,
+        },
+      });
+      void this.pollBackgroundTaskOutputSubscription({
+        parentAgentId: msg.parentAgentId,
+        taskId: msg.taskId,
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.background_tasks.output.subscribe.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          taskId: msg.taskId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleBackgroundTasksOutputUnsubscribeRequest(
+    msg: Extract<
+      SessionInboundMessage,
+      { type: "agent.background_tasks.output.unsubscribe.request" }
+    >,
+  ): Promise<void> {
+    this.backgroundTaskOutputSubscriptions.remove({
+      parentAgentId: msg.parentAgentId,
+      taskId: msg.taskId,
+    });
+    this.emit({
+      type: "agent.background_tasks.output.unsubscribe.response",
+      payload: {
+        requestId: msg.requestId,
+        parentAgentId: msg.parentAgentId,
+        taskId: msg.taskId,
+        error: null,
+      },
+    });
+  }
+
+  private pollBackgroundTaskOutputSubscription(input: {
+    parentAgentId: string;
+    taskId: string;
+  }): void {
+    const entry = this.backgroundTaskOutputSubscriptions.get(input);
+    if (!entry || entry.timer) return;
+    const tick = async () => {
+      const current = this.backgroundTaskOutputSubscriptions.get(input);
+      if (!current) return;
+      try {
+        const output = await this.agentManager.readBackgroundTaskOutput({
+          parentAgentId: input.parentAgentId,
+          taskId: input.taskId,
+          cursor: current.cursor,
+          maxBytes: 64_000,
+        });
+        if (output.text.length > 0 || output.eof) {
+          this.backgroundTaskOutputSubscriptions.setCursor(input, output.nextCursor);
+          this.emit({
+            type: "agent.background_tasks.output.update",
+            payload: {
+              parentAgentId: input.parentAgentId,
+              taskId: input.taskId,
+              text: output.text,
+              nextCursor: output.nextCursor,
+              eof: output.eof,
+            },
+          });
+        }
+        if (output.eof) {
+          this.backgroundTaskOutputSubscriptions.remove(input);
+        }
+      } catch (error) {
+        this.sessionLogger.warn(
+          { err: error, parentAgentId: input.parentAgentId, taskId: input.taskId },
+          "Failed to poll background task output",
+        );
+      }
+    };
+    void tick();
+    entry.timer = setInterval(() => {
+      void tick();
+    }, 1000);
+  }
+
   private async handleProviderSubagentListRequest(
     msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.list.request" }>,
   ): Promise<void> {
@@ -6681,6 +6979,7 @@ export class Session {
   public async cleanup(): Promise<void> {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
+    this.backgroundTaskOutputSubscriptions.clearAll();
 
     if (this.unsubscribeAgentEvents) {
       this.unsubscribeAgentEvents();

@@ -73,6 +73,8 @@ import {
   type ProviderSubagentDescriptor,
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
+import { applyBackgroundTaskInputEvent } from "./providers/claude/background-tasks.js";
+import { BackgroundTaskStore, type BackgroundTaskDescriptor } from "./background-tasks/store.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -178,6 +180,11 @@ export type {
 export type AgentManagerEvent =
   | { type: "agent_state"; agent: ManagedAgent }
   | { type: "provider_subagent"; event: ProviderSubagentStoreEvent }
+  | {
+      type: "background_tasks";
+      parentAgentId: string;
+      tasks: BackgroundTaskDescriptor[];
+    }
   | {
       type: "agent_stream";
       agentId: string;
@@ -607,6 +614,7 @@ export class AgentManager {
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly providerSubagents = new ProviderSubagentStore();
+  private readonly backgroundTaskStore = new BackgroundTaskStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
@@ -1044,6 +1052,80 @@ export class AgentManager {
     return this.providerSubagents.fetchTimeline(parentAgentId, subagentId, options);
   }
 
+  listBackgroundTasks(parentAgentId: string): BackgroundTaskDescriptor[] {
+    this.requirePublicAgent(parentAgentId);
+    return this.backgroundTaskStore.list(parentAgentId);
+  }
+
+  getBackgroundTask(parentAgentId: string, taskId: string): BackgroundTaskDescriptor | null {
+    this.requirePublicAgent(parentAgentId);
+    return this.backgroundTaskStore.get(parentAgentId, taskId);
+  }
+
+  async stopBackgroundTask(parentAgentId: string, taskId: string): Promise<void> {
+    const agent = this.requireSessionAgent(parentAgentId);
+    if (agent.internal) {
+      throw new Error(`Unknown agent '${agent.id}'`);
+    }
+    if (typeof agent.session.stopBackgroundTask !== "function") {
+      throw new Error("Background task stop is not supported for this agent");
+    }
+    await agent.session.stopBackgroundTask(taskId);
+  }
+
+  async readBackgroundTaskOutput(input: {
+    parentAgentId: string;
+    taskId: string;
+    cursor?: number;
+    maxBytes?: number;
+  }): Promise<{ text: string; nextCursor: number; eof: boolean; error: string | null }> {
+    this.requirePublicAgent(input.parentAgentId);
+    const task = this.backgroundTaskStore.get(input.parentAgentId, input.taskId);
+    if (!task?.outputFile) {
+      return {
+        text: "",
+        nextCursor: input.cursor ?? 0,
+        eof: true,
+        error: task ? "No live log available" : "Background task not found",
+      };
+    }
+    const agent = this.agents.get(input.parentAgentId);
+    if (agent?.session && typeof agent.session.readBackgroundTaskOutput === "function") {
+      return agent.session.readBackgroundTaskOutput({
+        outputFile: task.outputFile,
+        cursor: input.cursor,
+        maxBytes: input.maxBytes,
+      });
+    }
+    const { promises } = await import("node:fs");
+    const cursor = Math.max(0, input.cursor ?? 0);
+    const maxBytes = Math.min(Math.max(1, input.maxBytes ?? 64_000), 256_000);
+    try {
+      const handle = await promises.open(task.outputFile, "r");
+      try {
+        const fileStat = await handle.stat();
+        if (cursor >= fileStat.size) {
+          return { text: "", nextCursor: fileStat.size, eof: true, error: null };
+        }
+        const length = Math.min(maxBytes, fileStat.size - cursor);
+        const buffer = Buffer.alloc(length);
+        const { bytesRead } = await handle.read(buffer, 0, length, cursor);
+        const nextCursor = cursor + bytesRead;
+        return {
+          text: buffer.subarray(0, bytesRead).toString("utf8"),
+          nextCursor,
+          eof: nextCursor >= fileStat.size,
+          error: null,
+        };
+      } finally {
+        await handle.close();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { text: "", nextCursor: cursor, eof: true, error: message };
+    }
+  }
+
   createAgent(
     config: AgentSessionConfig,
     agentId: string | undefined,
@@ -1307,6 +1389,8 @@ export class AgentManager {
         for (const event of this.providerSubagents.deleteParent(agentId)) {
           this.dispatch({ type: "provider_subagent", event });
         }
+        this.backgroundTaskStore.deleteParent(agentId);
+        this.dispatch({ type: "background_tasks", parentAgentId: agentId, tasks: [] });
       }
 
       // Preserve existing labels and timeline during reload.
@@ -3037,6 +3121,8 @@ export class AgentManager {
     for (const event of this.providerSubagents.deleteParent(agentId)) {
       this.dispatch({ type: "provider_subagent", event });
     }
+    this.backgroundTaskStore.deleteParent(agentId);
+    this.dispatch({ type: "background_tasks", parentAgentId: agentId, tasks: [] });
   }
 
   private emitClosedAgent(agent: ManagedAgentClosed, options?: { persist?: boolean }): void {
@@ -3134,6 +3220,22 @@ export class AgentManager {
     if (event.type === "provider_subagent") {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
       this.dispatch({ type: "provider_subagent", event: update });
+      return;
+    }
+    if (event.type === "background_tasks") {
+      const result = applyBackgroundTaskInputEvent(
+        this.backgroundTaskStore,
+        agent.id,
+        event.event,
+        new Date().toISOString(),
+      );
+      if (result.changed) {
+        this.dispatch({
+          type: "background_tasks",
+          parentAgentId: agent.id,
+          tasks: result.tasks,
+        });
+      }
       return;
     }
     const turnId = getAgentStreamEventTurnId(event);
@@ -3313,6 +3415,10 @@ export class AgentManager {
       if (broadcast) {
         this.dispatch({ type: "provider_subagent", event });
       }
+    }
+    this.backgroundTaskStore.deleteParent(agent.id);
+    if (broadcast) {
+      this.dispatch({ type: "background_tasks", parentAgentId: agent.id, tasks: [] });
     }
     for (const event of providerSubagentEvents) {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
