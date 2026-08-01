@@ -4001,6 +4001,112 @@ test("a successor generation preserves a writer replaying behind the prior gener
   }
 });
 
+test("a successor hydration preserves material progress opened by a replayed running state", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hydration-progress-successor-"));
+  const agentId = "00000000-0000-4000-8000-000000000164";
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const epochs = ["initial-progress-epoch", "first-progress-epoch", "successor-progress-epoch"];
+  const durableTimelineStore = new FileAgentTimelineStore(join(workdir, "timelines"), logger, {
+    epochFactory: () => epochs.shift() ?? "unexpected-progress-epoch",
+  });
+  let session: TestAgentSession | null = null;
+  let historyGeneration = 0;
+
+  class SuccessorProgressHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyGeneration += 1;
+      yield* [];
+    }
+  }
+
+  class SuccessorProgressHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new SuccessorProgressHistorySession(config);
+      return session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new SuccessorProgressHistoryClient() },
+    registry: storage,
+    durableTimelineStore,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const turnId = "accepted-live-turn";
+    let successorHydration: Promise<void> | null = null;
+    manager.subscribe(
+      (event) => {
+        if (
+          successorHydration === null &&
+          event.type === "agent_state" &&
+          event.agent.lifecycle === "running"
+        ) {
+          successorHydration = manager.hydrateTimelineFromProvider(created.id, { force: true });
+        }
+      },
+      { agentId: created.id, replayState: false },
+    );
+
+    const firstHydration = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    session!.pushEvent({ type: "turn_started", provider: "codex", turnId });
+    session!.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId,
+      item: {
+        type: "tool_call",
+        callId: "write-replayed-behind-successor",
+        name: "write",
+        status: "completed",
+        error: null,
+        detail: { type: "write", filePath: "proof.txt", content: "durable successor proof" },
+      },
+    });
+    session!.pushEvent({
+      type: "usage_updated",
+      provider: "codex",
+      turnId,
+      usage: { inputTokens: 1 },
+    });
+
+    await firstHydration;
+    await successorHydration;
+    await manager.flush();
+
+    expect(historyGeneration).toBe(2);
+    expect(manager.getMaterialProgress(created.id)).toMatchObject({
+      state: "progressing",
+      timelineEpoch: "successor-progress-epoch",
+      continuationBoundarySeq: 1,
+      observedThroughSeq: 1,
+      lastMaterialProgressKind: "write",
+    });
+    await expect(durableTimelineStore.getCommittedRows(agentId)).resolves.toMatchObject([
+      {
+        seq: 1,
+        turnId,
+        item: { type: "tool_call", callId: "write-replayed-behind-successor" },
+      },
+    ]);
+    expect((await storage.get(agentId))?.materialProgress).toMatchObject({
+      timelineEpoch: "successor-progress-epoch",
+      continuationBoundarySeq: 1,
+      acceptedTurnId: turnId,
+      observedThroughSeq: 1,
+      lastMaterialProgressKind: "write",
+    });
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("reloadAgentSession preserves current title when config title is unset", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-title-"));
   const storagePath = join(workdir, "agents");

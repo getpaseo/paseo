@@ -2318,6 +2318,41 @@ export class AgentManager {
         });
   }
 
+  private materialProgressAfterTimelineReplacement(
+    agent: ActiveManagedAgent,
+    replacementRows: readonly AgentTimelineRow[],
+    timelineEpoch: string,
+  ): MaterialProgressCheckpoint {
+    // A replacement normally invalidates the prior checkpoint. The exception is a still-active
+    // accepted turn whose rows can be re-evaluated against the replacement before buffered writes
+    // resume; rewinds and settled/unavailable checkpoints deliberately take the reset path.
+    const checkpoint = agent.materialProgress;
+    const currentTimelineEpoch = this.timelineStore.getEpoch(agent.id);
+    const nextSeq = (replacementRows.at(-1)?.seq ?? 0) + 1;
+    const acceptedTurnId = checkpoint.acceptedTurnId;
+    if (
+      acceptedTurnId === null ||
+      checkpoint.continuationBoundarySeq === null ||
+      checkpoint.turnOutcome !== null ||
+      checkpoint.unavailableReason !== undefined ||
+      checkpoint.timelineEpoch !== currentTimelineEpoch ||
+      agent.activeTurnId !== acceptedTurnId
+    ) {
+      return createMaterialProgressCheckpoint({ timelineEpoch, nextSeq });
+    }
+
+    const firstAcceptedTurnRow = replacementRows.find((row) => row.turnId === acceptedTurnId);
+    let rebound = openMaterialProgressContinuation({
+      timelineEpoch,
+      boundarySeq: firstAcceptedTurnRow?.seq ?? nextSeq,
+      turnId: acceptedTurnId,
+    });
+    for (const row of replacementRows) {
+      rebound = advanceMaterialProgressCheckpoint(rebound, row, timelineEpoch);
+    }
+    return rebound;
+  }
+
   private applyActiveTurnTerminal(
     agent: ActiveManagedAgent,
     turnId?: string,
@@ -3584,6 +3619,11 @@ export class AgentManager {
       await this.markHistoryHydrationUnprimed(agent);
       throw error;
     }
+    const materialProgress = this.materialProgressAfterTimelineReplacement(
+      agent,
+      replacementRows,
+      epoch,
+    );
     this.timelineStore.initialize(agent.id, {
       epoch,
       rows: replacementRows,
@@ -3593,7 +3633,7 @@ export class AgentManager {
     activeHydration.carriedLiveTimelineRows = carriedRows;
     activeHydration.nextUncapturedTimelineSeq = (replacementRows.at(-1)?.seq ?? 0) + 1;
     activeHydration.lastProviderHistoryItems = historyRows.map((row) => structuredClone(row.item));
-    this.resetMaterialProgress(agent);
+    agent.materialProgress = materialProgress;
     agent.historyPrimed = true;
 
     this.replaceProviderSubagentHistory(
@@ -3725,6 +3765,12 @@ export class AgentManager {
       throw error;
     }
 
+    const materialProgress = this.materialProgressAfterTimelineReplacement(
+      agent,
+      replacementRows,
+      epoch,
+    );
+
     this.timelineStore.initialize(agent.id, {
       epoch,
       rows: replacementRows,
@@ -3732,7 +3778,7 @@ export class AgentManager {
       timestamp: new Date().toISOString(),
     });
     activeHydration.nextUncapturedTimelineSeq = (replacementRows.at(-1)?.seq ?? 0) + 1;
-    this.resetMaterialProgress(agent);
+    agent.materialProgress = materialProgress;
     agent.historyPrimed = true;
     await this.persistSnapshot(agent);
 
