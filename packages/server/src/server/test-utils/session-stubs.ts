@@ -53,6 +53,7 @@ export function createAgentLifecycleDispatchStub(): SessionOptions["createAgentL
       cancel: async () => {},
     }),
     cleanupCreatedWorktreeAfterFailedAgentCreate: async () => {},
+    recoverPendingAgentCreation: async () => {},
   });
 }
 

@@ -355,7 +355,10 @@ async function resolveSessionCreateAgent(
       runOptions,
       setupContinuation,
       background: true,
-      promptFailure: "throw",
+      // Agent publication is already durable before the first prompt is
+      // dispatched. Keep a prompt-start failure separate from creation truth so
+      // callers do not retry and create a duplicate agent/worktree.
+      promptFailure: "return-error",
       promptLogger: dependencies.logger.child({
         clientMessageId: resolveClientMessageId(input.clientMessageId),
       }),
@@ -540,7 +543,11 @@ async function sendInitialPrompt(
       throw error;
     }
     if (resolved.promptFailure === "return-error") {
-      return { started: false, liveSnapshot: snapshot, error };
+      return {
+        started: false,
+        liveSnapshot: dependencies.agentManager.getAgent(snapshot.id) ?? snapshot,
+        error,
+      };
     }
     dependencies.logger.error({ err: error, agentId: snapshot.id }, "Failed to run initial prompt");
     return { started: false, liveSnapshot: snapshot };

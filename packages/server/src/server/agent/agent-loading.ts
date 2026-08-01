@@ -22,6 +22,7 @@ export type AgentLoaderManager = Pick<
   AgentManager,
   | "createAgent"
   | "getAgent"
+  | "getAgentInitializationState"
   | "getRegisteredProviderIds"
   | "hydrateTimelineFromProvider"
   | "resumeAgentFromPersistence"
@@ -63,28 +64,26 @@ export async function ensureAgentLoaded(
   agentId: string,
   deps: EnsureAgentLoadedDeps,
 ): Promise<ManagedAgent> {
-  await deps.agentManager.waitForAgentClose?.(agentId);
+  while (true) {
+    await deps.agentManager.waitForAgentClose?.(agentId);
 
-  const inflight = pendingAgentInitializations.get(agentId);
-  if (inflight) {
-    inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return inflight.promise;
-  }
+    const inflight = pendingAgentInitializations.get(agentId);
+    if (inflight) {
+      inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
+      return inflight.promise;
+    }
 
-  const existing = deps.agentManager.getAgent(agentId);
-  if (existing) {
-    return existing;
-  }
-
-  // A close may have started after the first barrier observed no in-flight
-  // work. Once the live lookup is empty, this second barrier closes that gap
-  // before storage-backed resume begins.
-  await deps.agentManager.waitForAgentClose?.(agentId);
-
-  const laterInflight = pendingAgentInitializations.get(agentId);
-  if (laterInflight) {
-    laterInflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return laterInflight.promise;
+    // The close barrier and the runtime lookup cannot be made atomic across an
+    // await. Re-read both pieces of state synchronously so a close that starts
+    // in that gap is joined on the next pass instead of returning its runtime.
+    const initializationState = deps.agentManager.getAgentInitializationState(agentId);
+    if (initializationState.closeInFlight) {
+      continue;
+    }
+    if (initializationState.agent) {
+      return initializationState.agent;
+    }
+    break;
   }
 
   const pendingOptions = {

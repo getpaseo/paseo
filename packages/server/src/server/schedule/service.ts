@@ -199,6 +199,7 @@ type ScheduleAgentManager = Pick<
   AgentManager,
   | "createAgent"
   | "getAgent"
+  | "getAgentInitializationState"
   | "getRegisteredProviderIds"
   | "hasInFlightRun"
   | "hydrateTimelineFromProvider"

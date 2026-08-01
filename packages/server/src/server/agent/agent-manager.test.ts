@@ -248,6 +248,7 @@ class HeldReloadCloseClient extends TestAgentClient {
   private readonly closeAllowed = deferred<void>();
   originalSessionClosed = false;
   replacementSessionClosed = false;
+  resumeCount = 0;
 
   override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
     const signalCloseStarted = () => this.closeStarted.resolve();
@@ -268,6 +269,7 @@ class HeldReloadCloseClient extends TestAgentClient {
     _handle: AgentPersistenceHandle,
     config?: Partial<AgentSessionConfig>,
   ): Promise<AgentSession> {
+    this.resumeCount += 1;
     const recordReplacementClosed = () => {
       this.replacementSessionClosed = true;
     };
@@ -7911,6 +7913,58 @@ test("load waits for an in-flight explicit close and creates one resumed runtime
   } finally {
     closeAllowed.resolve();
     await manager.closeAgent("00000000-0000-4000-8000-000000000216").catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("load joins a close that starts after its barrier but before runtime lookup", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-close-start-gap-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new HeldReloadCloseClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const agentId = "00000000-0000-4000-8000-000000000218";
+  let closeTask: Promise<void> | null = null;
+
+  try {
+    await manager.createAgent({ provider: "codex", cwd: workdir }, agentId, {
+      workspaceId: undefined,
+    });
+    const waitForAgentClose = manager.waitForAgentClose.bind(manager);
+    vi.spyOn(manager, "waitForAgentClose")
+      .mockImplementation(async (id) => waitForAgentClose(id))
+      .mockImplementationOnce(async () => {
+        queueMicrotask(() => {
+          closeTask = manager.closeAgent(agentId);
+        });
+      });
+
+    let loadSettled = false;
+    const load = ensureAgentLoaded(agentId, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    }).then((agent) => {
+      loadSettled = true;
+      return agent;
+    });
+
+    await client.waitForCloseToStart();
+    await Promise.resolve();
+    expect(loadSettled).toBe(false);
+    expect(client.resumeCount).toBe(0);
+
+    client.finishClosing();
+    const resumed = await load;
+    await closeTask;
+
+    expect(resumed).toMatchObject({ id: agentId, lifecycle: "idle" });
+    expect(client.originalSessionClosed).toBe(true);
+    expect(client.resumeCount).toBe(1);
+  } finally {
+    client.finishClosing();
+    await closeTask?.catch(() => undefined);
+    await manager.closeAgent(agentId).catch(() => undefined);
     await storage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }

@@ -161,7 +161,9 @@ test("startup removes a side-effect-free pending creation reservation", async ()
   expect(pendingCreations.size).toBe(0);
 });
 
-test("startup leaves persisted agent cleanup to its durable obligation", async () => {
+test("startup adopts a published agent without cleaning its pending worktree", async () => {
+  const worktreePath = mkdtempSync(join(tmpdir(), "paseo-published-agent-worktree-"));
+  mkdirSync(join(worktreePath, ".git"));
   const agentId = "agent-pending-now-persisted";
   const pendingCreations = new Map<string, PendingAgentCreation>([
     [
@@ -169,13 +171,7 @@ test("startup leaves persisted agent cleanup to its durable obligation", async (
       {
         agentId,
         createdAt: "2025-01-01T00:00:00.000Z",
-        cleanupTarget: {
-          kind: "worktree",
-          targetPath: "/tmp/persisted-agent-worktree",
-          worktreeIncarnationId: PENDING_WORKTREE_INCARNATION_ID,
-          directoryIdentity: { device: "7", inode: "42" },
-          metadataBaseRefName: "main",
-        },
+        cleanupTarget: pendingWorktreeTarget(worktreePath),
       },
     ],
   ]);
@@ -184,7 +180,10 @@ test("startup leaves persisted agent cleanup to its durable obligation", async (
       agentId,
       {
         id: agentId,
-        autoArchiveObligation: { phase: "armed", target: { kind: "agent" } },
+        autoArchiveObligation: {
+          phase: "armed",
+          target: { kind: "workspace", workspaceId: "ws-published-agent" },
+        },
       } as StoredAgentRecord,
     ],
   ]);
@@ -199,10 +198,19 @@ test("startup leaves persisted agent cleanup to its durable obligation", async (
     "archiveWorktreePath",
   );
 
-  await dispatch.recoverPendingAgentCreations();
+  try {
+    await dispatch.recoverPendingAgentCreations();
 
-  expect(archiveWorktreePath).not.toHaveBeenCalled();
-  expect(pendingCreations.size).toBe(0);
+    expect(archiveWorktreePath).not.toHaveBeenCalled();
+    expect(pendingCreations.size).toBe(0);
+    expect(existsSync(worktreePath)).toBe(true);
+    expect(records.get(agentId)?.autoArchiveObligation).toEqual({
+      phase: "armed",
+      target: { kind: "workspace", workspaceId: "ws-published-agent" },
+    });
+  } finally {
+    rmSync(worktreePath, { recursive: true, force: true });
+  }
 });
 
 test("startup removes an exact pre-git worktree reservation without archiving", async () => {

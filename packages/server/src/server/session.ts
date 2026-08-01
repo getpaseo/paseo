@@ -3109,7 +3109,7 @@ export class Session {
                 : { kind: "agent" },
             }
           : undefined;
-      const { snapshot, liveSnapshot } = await createAgentCommand(
+      const { snapshot, liveSnapshot, initialPromptError } = await createAgentCommand(
         {
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
@@ -3167,18 +3167,8 @@ export class Session {
           { currentSelection: this.getFocusedAgentSelectionForCwd(resolvedIntent.config.cwd) },
         );
       }
-      if (requestId) {
-        const agentPayload = await this.buildAgentPayload(liveSnapshot);
-        this.emit({
-          type: "status",
-          payload: {
-            status: "agent_created",
-            agentId: liveSnapshot.id,
-            requestId,
-            agent: agentPayload,
-          },
-        });
-      }
+      await this.emitAgentCreatedStatus(requestId, liveSnapshot);
+      this.reportInitialPromptStartFailure(snapshot.id, initialPromptError);
 
       this.sessionLogger.info(
         { agentId: snapshot.id, provider: snapshot.provider },
@@ -3213,6 +3203,41 @@ export class Session {
         },
       });
     }
+  }
+
+  private async emitAgentCreatedStatus(
+    requestId: string | undefined,
+    liveSnapshot: ManagedAgent,
+  ): Promise<void> {
+    if (!requestId) return;
+    const agentPayload = await this.buildAgentPayload(liveSnapshot);
+    this.emit({
+      type: "status",
+      payload: {
+        status: "agent_created",
+        agentId: liveSnapshot.id,
+        requestId,
+        agent: agentPayload,
+      },
+    });
+  }
+
+  private reportInitialPromptStartFailure(agentId: string, error: unknown | null): void {
+    if (!error) return;
+    const promptError = error instanceof Error ? error.message : String(error);
+    this.sessionLogger.warn(
+      { err: error, agentId },
+      "Agent created but initial prompt start was not confirmed",
+    );
+    this.emit({
+      type: "activity_log",
+      payload: {
+        id: uuidv4(),
+        timestamp: new Date(),
+        type: "error",
+        content: `Agent ${agentId} was created, but its initial prompt start was not confirmed: ${promptError}`,
+      },
+    });
   }
 
   private async reservePendingAgentCreation(

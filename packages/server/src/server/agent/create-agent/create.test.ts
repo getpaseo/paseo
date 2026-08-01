@@ -136,6 +136,65 @@ test("session create persists and arms auto-archive before starting the initial 
   expect(order).toEqual(["persisted", "armed", "prompt"]);
 });
 
+test("session create reports a durable agent when initial prompt start is not confirmed", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000401";
+  const promptStartTimeout = new Error("initial prompt start timed out");
+  const snapshot = {
+    id: agentId,
+    provider: "codex",
+    cwd: "/tmp/paseo-create-test",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const liveSnapshot = { ...snapshot, lifecycle: "running" as const };
+  const removePendingAgentCreation = vi.fn(async () => undefined);
+  const onCreated = vi.fn();
+
+  const result = await createAgentCommand(
+    {
+      agentManager: {
+        createAgent: vi.fn(async () => snapshot),
+        getAgent: vi.fn(() => liveSnapshot),
+        tryRunOutOfBand: vi.fn(() => false),
+        hasInFlightRun: vi.fn(() => false),
+        streamAgent: vi.fn(() => (async function* noop() {})()),
+        waitForAgentRunStart: vi.fn(async () => {
+          throw promptStartTimeout;
+        }),
+      } as unknown as AgentManager,
+      agentStorage: {
+        removePendingAgentCreation,
+      } as unknown as AgentStorage,
+      logger,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+    },
+    {
+      kind: "session",
+      agentId,
+      config: { provider: "codex", cwd: "/tmp/paseo-create-test" },
+      workspaceId: "ws-create-test",
+      initialPrompt: "start the work",
+      labels: {},
+      provisionalTitle: null,
+      firstAgentContext: {},
+      autoArchiveObligation: { phase: "armed", target: { kind: "agent" } },
+      onCreated,
+      buildSessionConfig: async (config) => ({ sessionConfig: config }),
+    },
+  );
+
+  expect(result).toMatchObject({
+    snapshot,
+    liveSnapshot,
+    initialPromptStarted: false,
+    initialPromptError: promptStartTimeout,
+  });
+  expect(removePendingAgentCreation).toHaveBeenCalledWith(agentId);
+  expect(onCreated).toHaveBeenCalledWith({
+    agentId,
+    autoArchiveObligation: { phase: "armed", target: { kind: "agent" } },
+  });
+});
+
 test("legacy worktree create keeps its journal through durable agent registration", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "create-agent-journal-test-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

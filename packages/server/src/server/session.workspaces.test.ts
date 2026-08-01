@@ -552,6 +552,7 @@ function createSessionForWorkspaceTests(
     terminalManager?: TerminalManager | null;
     agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
     agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
+    createAgentLifecycleDispatch?: SessionOptions["createAgentLifecycleDispatch"];
     projectRegistry?: SessionOptions["projectRegistry"];
     workspaceRegistry?: SessionOptions["workspaceRegistry"];
     github?: ForgeService;
@@ -672,7 +673,8 @@ function createSessionForWorkspaceTests(
         upsert: async () => {},
         ...options.agentStorage,
       }),
-      createAgentLifecycleDispatch: createAgentLifecycleDispatchStub(),
+      createAgentLifecycleDispatch:
+        options.createAgentLifecycleDispatch ?? createAgentLifecycleDispatchStub(),
       projectRegistry: options.projectRegistry ?? {
         initialize: async () => {},
         existsOnDisk: async () => true,
@@ -875,6 +877,100 @@ test("client heartbeat clears attention for the focused terminal", async () => {
     focusedTerminalId: "terminal-1",
     appVisible: true,
   });
+});
+
+test("create_agent_request returns the published agent when first-prompt start times out", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000550";
+  const updatedAt = "2026-08-01T12:00:00.000Z";
+  const snapshot = makeManagedAgent({
+    id: agentId,
+    cwd: REPO_CWD,
+    workspaceId: "ws-repo-running",
+    lifecycle: "idle",
+    updatedAt,
+  }) as unknown as ManagedAgent;
+  const stored = makeStoredAgent({ id: agentId, cwd: REPO_CWD, updatedAt });
+  stored.workspaceId = "ws-repo-running";
+  stored.lastStatus = "idle";
+  stored.autoArchiveObligation = { phase: "armed", target: { kind: "agent" } };
+  const promptStartTimeout = new Error("initial prompt start timed out");
+  const emitted: SessionOutboundMessage[] = [];
+  const beginPendingAgentCreation = vi.fn(async () => ({
+    agentId,
+    createdAt: updatedAt,
+    cleanupTarget: { kind: "agent" as const },
+  }));
+  const removePendingAgentCreation = vi.fn(async () => undefined);
+  const registerAutoArchive = vi.fn(() => ({
+    settled: Promise.resolve("cancelled" as const),
+    cancel: async () => undefined,
+  }));
+  const lifecycleDispatch = createAgentLifecycleDispatchStub();
+  lifecycleDispatch.registerAutoArchive = registerAutoArchive;
+  const streamAgent = vi.fn(() => (async function* noEvents() {})());
+
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    createAgentLifecycleDispatch: lifecycleDispatch,
+    agentManager: {
+      allocateAgentId: () => agentId,
+      createAgent: vi.fn(async (_config, requestedAgentId, options) => {
+        expect(requestedAgentId).toBe(agentId);
+        expect(options.autoArchiveObligation).toEqual({
+          phase: "armed",
+          target: { kind: "agent" },
+        });
+        return snapshot;
+      }),
+      getAgent: () => snapshot,
+      tryRunOutOfBand: () => false,
+      hasInFlightRun: () => false,
+      streamAgent,
+      waitForAgentRunStart: vi.fn(async () => {
+        throw promptStartTimeout;
+      }),
+    },
+    agentStorage: {
+      beginPendingAgentCreation,
+      removePendingAgentCreation,
+      get: async (requestedAgentId: string) => (requestedAgentId === agentId ? stored : null),
+    },
+  });
+
+  await session.handleMessage({
+    type: "create_agent_request",
+    requestId: "req-create-prompt-timeout",
+    workspaceId: "ws-repo-running",
+    config: { provider: "codex", cwd: REPO_CWD },
+    initialPrompt: "start the assigned work",
+    autoArchive: true,
+    attachments: [],
+  });
+
+  const statuses = filterByType(emitted, "status").map((message) => message.payload);
+  expect(statuses).toEqual([
+    expect.objectContaining({
+      status: "agent_created",
+      requestId: "req-create-prompt-timeout",
+      agentId,
+      agent: expect.objectContaining({ id: agentId }),
+    }),
+  ]);
+  expect(filterByType(emitted, "activity_log")).toContainEqual(
+    expect.objectContaining({
+      payload: expect.objectContaining({
+        type: "error",
+        content: expect.stringContaining("initial prompt start was not confirmed"),
+      }),
+    }),
+  );
+  expect(beginPendingAgentCreation).toHaveBeenCalledWith(agentId);
+  expect(removePendingAgentCreation).toHaveBeenCalledWith(agentId);
+  expect(registerAutoArchive).toHaveBeenCalledWith({
+    agentId,
+    obligation: { phase: "armed", target: { kind: "agent" } },
+  });
+  expect(streamAgent).toHaveBeenCalledWith(agentId, "start the assigned work", undefined);
 });
 
 test("create_agent_request keeps requested child cwd when grouped under an existing parent workspace", async () => {

@@ -1001,6 +1001,17 @@ export class AgentManager {
     return agent ? { ...agent } : null;
   }
 
+  getAgentInitializationState(id: string): {
+    agent: ManagedAgent | null;
+    closeInFlight: boolean;
+  } {
+    const closeInFlight = this.inFlightAgentCloses.has(id);
+    return {
+      agent: closeInFlight ? null : this.getAgent(id),
+      closeInFlight,
+    };
+  }
+
   async waitForAgentClose(agentId: string): Promise<void> {
     await this.inFlightAgentCloses?.get(agentId)?.catch(() => undefined);
   }
