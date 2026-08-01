@@ -55,6 +55,12 @@ interface KimiCredentialRecord {
   filePath: string | null;
 }
 
+interface SaveRefreshedCredentialsOptions {
+  filePath: string;
+  refreshTokenUsed: string;
+  refreshed: KimiTokenRefresh;
+}
+
 interface KimiQuotaProviderOptions {
   logger: Logger;
   fetch?: ProviderApiFetch;
@@ -130,10 +136,11 @@ export class KimiQuotaProvider implements ProviderUsageFetcher {
         : res;
     if (retried.status !== 401) return retried;
 
-    const refreshed = await this.refreshToken(latest?.refresh_token ?? credentials.refresh_token);
+    const refreshTokenUsed = latest?.refresh_token ?? credentials.refresh_token;
+    const refreshed = await this.refreshToken(refreshTokenUsed);
     if (!refreshed) return retried;
 
-    await this.saveRefreshedCredentials(filePath, refreshed);
+    await this.saveRefreshedCredentials({ filePath, refreshTokenUsed, refreshed });
     return this.callUsageApi(refreshed.access_token);
   }
 
@@ -165,12 +172,18 @@ export class KimiQuotaProvider implements ProviderUsageFetcher {
     return parsed.success ? parsed.data : null;
   }
 
-  private async saveRefreshedCredentials(
-    filePath: string,
-    refreshed: KimiTokenRefresh,
-  ): Promise<void> {
+  private async saveRefreshedCredentials(options: SaveRefreshedCredentialsOptions): Promise<void> {
+    const { filePath, refreshTokenUsed, refreshed } = options;
     const existing = await this.readCredentialFile(filePath);
     if (!existing) return;
+
+    // The Kimi CLI owns this file too. If its refresh token no longer matches the one we
+    // just spent, the CLI rotated the credentials while our refresh was in flight and its
+    // copy is newer than ours — writing our merge would strand the CLI on dead tokens.
+    if (existing.refresh_token !== refreshTokenUsed) {
+      this.logger.debug("Kimi credentials rotated during refresh; keeping the file on disk");
+      return;
+    }
 
     const expiresIn = refreshed.expires_in ?? existing.expires_in;
     const merged: KimiAuth = {

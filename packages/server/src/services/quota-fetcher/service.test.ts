@@ -1022,6 +1022,35 @@ describe("real provider usage fetchers", () => {
     expect(usageCalls).toBe(2);
   });
 
+  it("keeps Kimi credentials rotated by the CLI during the refresh", async () => {
+    const kimiHome = join(homeDir, ".kimi-code");
+    writeKimiCredentials(kimiHome, "at_kimi_expired");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.kimi.com/coding/v1/usages", () => new Response(null, { status: 401 })],
+        [
+          "https://auth.kimi.com/api/oauth/token",
+          () => {
+            writeKimiCredentials(kimiHome, "at_kimi_cli", { refresh_token: "rt_kimi_cli" });
+            return jsonResponse({
+              access_token: "at_kimi_fresh",
+              refresh_token: "rt_kimi_rotated",
+              expires_in: 900,
+            });
+          },
+        ],
+      ]),
+    );
+
+    await service({ kimiHomeDir: homeDir }).listUsage();
+    const persisted = JSON.parse(readFileSync(kimiCredentialPath(kimiHome), "utf8"));
+
+    expect(persisted).toMatchObject({
+      access_token: "at_kimi_cli",
+      refresh_token: "rt_kimi_cli",
+    });
+  });
+
   it("does not recreate a Kimi credential file deleted during the refresh", async () => {
     const credentialPath = kimiCredentialPath(join(homeDir, ".kimi-code"));
     writeKimiCredentials(join(homeDir, ".kimi-code"), "at_kimi_expired");
