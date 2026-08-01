@@ -98,8 +98,8 @@
       },
       "currentMainIntegration": {
         "upstreamMainCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
-        "verifiedHeadCommit": "48b53ce71d850f065a22fb1a66cca4f6d4ec66ab",
-        "verifiedHeadTree": "335c1308797ad77810ecccd4cb0f73708b7c6979",
+        "verifiedHeadCommit": "4bc441a334c61c17fd15f6e5936d1a4f6ce8b915",
+        "verifiedHeadTree": "1cf3144fc288f9dc398bc3954846a4e6bd85004f",
         "receipt": "patches/receipts/paseo-v025-worktree-lifecycle-current-main.json"
       },
       "upstreamable": true,
