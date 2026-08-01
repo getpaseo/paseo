@@ -21,7 +21,7 @@ import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useWorkspaceFocusRestoration } from "@/workspace/focus";
 import { useHostFeature } from "@/runtime/host-features";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, useHostRuntimeConnectionStatus } from "@/runtime/host-runtime";
 import { clientReviewKeyToWireKey } from "@/ui-state/keys";
 import {
   handleUiStateUpdatedForReview,
@@ -138,6 +138,8 @@ export function useInlineReviewController(input: { reviewDraftKey: string }): In
     return match?.[1] ?? null;
   }, [input.reviewDraftKey]);
   const supportsUiState = useHostFeature(hostServerId, "uiState");
+  const connectionStatus = useHostRuntimeConnectionStatus(hostServerId ?? "");
+  const isHostOnline = connectionStatus === "online";
   const wireKey = useMemo(
     () => clientReviewKeyToWireKey(input.reviewDraftKey),
     [input.reviewDraftKey],
@@ -164,7 +166,7 @@ export function useInlineReviewController(input: { reviewDraftKey: string }): In
   }, [input.reviewDraftKey]);
 
   useEffect(() => {
-    if (!supportsUiState || !hostServerId || !wireKey) {
+    if (!supportsUiState || !isHostOnline || !hostServerId || !wireKey) {
       return;
     }
     const client = getHostRuntimeStore().getClient(hostServerId);
@@ -191,7 +193,7 @@ export function useInlineReviewController(input: { reviewDraftKey: string }): In
       cancelled = true;
       unsubscribe();
     };
-  }, [hostServerId, input.reviewDraftKey, supportsUiState, wireKey]);
+  }, [hostServerId, input.reviewDraftKey, isHostOnline, supportsUiState, wireKey]);
 
   const handleStartComment = useCallback((target: ReviewableDiffTarget) => {
     setEditor({ target, commentId: null, body: "" });
