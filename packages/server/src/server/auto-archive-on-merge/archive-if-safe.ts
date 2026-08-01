@@ -16,7 +16,7 @@ import type {
 import type { ForgeService } from "../../services/forge-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
-import type { WorkspaceArchiveContext } from "../workspace-registry.js";
+import type { WorkspaceArchiveContext, WorkspaceRegistry } from "../workspace-registry.js";
 
 export interface AutoArchiveArchiveOptions {
   paseoHome: string;
@@ -29,6 +29,7 @@ export interface AutoArchiveArchiveOptions {
   terminalManager: TerminalManager;
   findWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
+  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "list" | "update">;
   getAutoArchivedChangeRequestUrl: (workspaceId: string) => Promise<string | null>;
   archiveWorkspaceRecord: (workspaceId: string, context?: WorkspaceArchiveContext) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
@@ -129,8 +130,10 @@ export async function archiveIfSafe(input: {
           agentStorage: options.agentStorage,
           findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
           listActiveWorkspaces: options.listActiveWorkspaces,
-          archiveWorkspaceRecord: (workspaceIdToArchive) =>
+          workspaceRegistry: options.workspaceRegistry,
+          archiveWorkspaceRecord: (workspaceIdToArchive, context) =>
             options.archiveWorkspaceRecord(workspaceIdToArchive, {
+              ...context,
               autoArchivedChangeRequestUrl: pullRequest.url,
             }),
           emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,

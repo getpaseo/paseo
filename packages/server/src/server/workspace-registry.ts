@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { resolve } from "node:path";
 
 import type { Logger } from "pino";
 import { z } from "zod";
@@ -38,6 +39,19 @@ const PersistedProjectRecordSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
+});
+
+const PersistedWorkspaceCleanupReceiptSchema = z.object({
+  workspaceId: z.string(),
+  backingPath: z.string(),
+  teardownCwds: z.array(z.string()),
+  mainRepoRoot: z.string().nullable(),
+  paseoWorktreesRoot: z.string().nullable(),
+  directoryIdentity: z.string().nullable(),
+  createdAt: z.string(),
+  lastAttemptAt: z.string().nullable(),
+  attemptCount: z.number().int().nonnegative(),
+  lastError: z.string().nullable(),
 });
 
 const PersistedWorkspaceRecordSchema = z.object({
@@ -92,10 +106,19 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // Owns post-archive filesystem cleanup until the original directory is gone.
+  cleanupPending: PersistedWorkspaceCleanupReceiptSchema.nullable().default(null),
 });
 
 export type PersistedProjectRecord = z.infer<typeof PersistedProjectRecordSchema>;
+export type PersistedWorkspaceCleanupReceipt = z.infer<
+  typeof PersistedWorkspaceCleanupReceiptSchema
+>;
 export type PersistedWorkspaceRecord = z.infer<typeof PersistedWorkspaceRecordSchema>;
+
+export function workspaceCleanupReceiptToken(receipt: PersistedWorkspaceCleanupReceipt): string {
+  return `${resolve(receipt.backingPath)}\0${receipt.directoryIdentity ?? "missing"}\0${receipt.workspaceId}\0${receipt.createdAt}`;
+}
 
 export interface WorkspaceMutation {
   kind: "upsert" | "archive" | "remove";
@@ -110,6 +133,7 @@ export interface WorkspaceMutationContext {
 
 export interface WorkspaceArchiveContext {
   autoArchivedChangeRequestUrl?: string;
+  cleanupPending?: PersistedWorkspaceCleanupReceipt;
 }
 
 export interface ProjectMutation {
@@ -345,7 +369,7 @@ export class FileBackedProjectRegistry
   }): Promise<PersistedProjectRecord> {
     const previous = this.allocationQueue;
     let release!: () => void;
-    this.allocationQueue = new Promise<void>((resolve) => (release = resolve));
+    this.allocationQueue = new Promise<void>((resolvePromise) => (release = resolvePromise));
     await previous;
     try {
       const active = (await this.list())
@@ -498,6 +522,7 @@ export class FileBackedWorkspaceRegistry
       ...(context?.autoArchivedChangeRequestUrl
         ? { autoArchivedChangeRequestUrl: context.autoArchivedChangeRequestUrl }
         : {}),
+      ...(context?.cleanupPending ? { cleanupPending: context.cleanupPending } : {}),
     }));
     if (!workspace) return;
     await this.notifyMutation({ kind: "archive", workspaceId, workspace });
@@ -556,6 +581,7 @@ export function createPersistedWorkspaceRecord(input: {
   archivedAt?: string | null;
   autoArchivedChangeRequestUrl?: string | null;
   pinnedAt?: string | null;
+  cleanupPending?: PersistedWorkspaceCleanupReceipt | null;
 }): PersistedWorkspaceRecord {
   return PersistedWorkspaceRecordSchema.parse({
     ...input,
@@ -568,6 +594,7 @@ export function createPersistedWorkspaceRecord(input: {
     archivedAt: input.archivedAt ?? null,
     autoArchivedChangeRequestUrl: input.autoArchivedChangeRequestUrl ?? null,
     pinnedAt: input.pinnedAt ?? null,
+    cleanupPending: input.cleanupPending ?? null,
   });
 }
 

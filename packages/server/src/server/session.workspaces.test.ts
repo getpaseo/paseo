@@ -72,6 +72,7 @@ import {
   createPersistedWorkspaceRecord,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
+  type WorkspaceArchiveContext,
   type WorkspaceMutation,
 } from "./workspace-registry.js";
 
@@ -5701,8 +5702,17 @@ test("archive_workspace_request archives a worktree-kind workspace and removes t
   };
   session.workspaceRegistry.get = async () => workspace;
   session.workspaceRegistry.list = async () => [workspace];
-  session.workspaceRegistry.archive = async (_id: string, archivedAt: string) => {
+  session.workspaceRegistry.archive = async (
+    _id: string,
+    archivedAt: string,
+    context?: WorkspaceArchiveContext,
+  ) => {
     workspace.archivedAt = archivedAt;
+    workspace.cleanupPending = context?.cleanupPending ?? null;
+  };
+  session.workspaceRegistry.update = async (_id, updater) => {
+    Object.assign(workspace, updater(workspace));
+    return workspace;
   };
   session.projectRegistry.list = async () => [project];
 

@@ -1,3 +1,4 @@
+import { promises as fs } from "node:fs";
 import { basename, resolve } from "node:path";
 import type { Logger } from "pino";
 import {
@@ -11,11 +12,13 @@ import {
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
   type WorkspaceRegistry,
+  workspaceCleanupReceiptToken,
 } from "../../workspace-registry.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { deriveProjectKey } from "../../project-key.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../../../utils/path.js";
+import { withWorkspaceCleanupLock } from "../../workspace-cleanup-lock.js";
 
 export interface ResolveOrCreateWorkspaceIdInput {
   createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
@@ -189,22 +192,43 @@ export function createWorkspaceProvisioningService(deps: {
     context?: { expectsInitialAgent?: boolean },
   ): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
-    const checkout = await workspaceGitService.getCheckout(normalizedCwd);
-    const project = projectId
-      ? await refreshProjectKind(await requireActiveProject(projectId), normalizedCwd, checkout)
-      : // COMPAT(workspaceCreateMissingProjectId): added in v0.1.107, remove after 2027-01-15.
-        await findOrCreateProjectForDirectory(normalizedCwd);
-    const timestamp = new Date().toISOString();
-    const workspace = createPersistedWorkspaceRecord({
-      workspaceId: generateWorkspaceId(),
-      projectId: project.projectId,
-      ...initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout }),
-      title: title?.trim() || null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
+    const initialCheckout = await workspaceGitService.getCheckout(normalizedCwd);
+    const initialPlacement = initialWorkspacePlacement({
+      source: "checkout",
+      cwd: normalizedCwd,
+      checkout: initialCheckout,
     });
-    await workspaceRegistry.upsert(workspace, context);
-    return workspace;
+    const backingPath = initialPlacement.worktreeRoot ?? normalizedCwd;
+    const initialIdentity = await readDirectoryIdentity(backingPath);
+    return withWorkspaceCleanupLock(backingPath, async () => {
+      const checkout = await workspaceGitService.getCheckout(normalizedCwd);
+      const placement = initialWorkspacePlacement({
+        source: "checkout",
+        cwd: normalizedCwd,
+        checkout,
+      });
+      const currentBackingPath = placement.worktreeRoot ?? normalizedCwd;
+      if (!areEquivalentPaths(backingPath, currentBackingPath)) {
+        throw new Error(`Workspace backing changed during creation: ${normalizedCwd}`);
+      }
+      await assertDirectoryIdentityUnchanged(backingPath, initialIdentity);
+      const project = projectId
+        ? await refreshProjectKind(await requireActiveProject(projectId), normalizedCwd, checkout)
+        : // COMPAT(workspaceCreateMissingProjectId): added in v0.1.107, remove after 2027-01-15.
+          await findOrCreateProjectForDirectory(normalizedCwd);
+      await assertDirectoryIdentityUnchanged(backingPath, initialIdentity);
+      const timestamp = new Date().toISOString();
+      const workspace = createPersistedWorkspaceRecord({
+        workspaceId: generateWorkspaceId(),
+        projectId: project.projectId,
+        ...placement,
+        title: title?.trim() || null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await workspaceRegistry.upsert(workspace, context);
+      return workspace;
+    });
   }
 
   async function createWorkspaceForWorktree(
@@ -214,31 +238,36 @@ export function createWorkspaceProvisioningService(deps: {
     const repoRoot = resolve(input.repoRoot);
     const cwd = resolve(input.cwd);
     const worktreeRoot = resolve(input.worktreeRoot);
-    const project = await resolveSourceProjectForWorktree({
-      sourceCwd,
-      projectId: input.projectId,
-      repoRoot,
+    const initialIdentity = await readDirectoryIdentity(worktreeRoot);
+    return withWorkspaceCleanupLock(worktreeRoot, async () => {
+      await assertDirectoryIdentityUnchanged(worktreeRoot, initialIdentity);
+      const project = await resolveSourceProjectForWorktree({
+        sourceCwd,
+        projectId: input.projectId,
+        repoRoot,
+      });
+      await assertDirectoryIdentityUnchanged(worktreeRoot, initialIdentity);
+      const timestamp = new Date().toISOString();
+      const workspace = createPersistedWorkspaceRecord({
+        workspaceId: generateWorkspaceId(),
+        projectId: project.projectId,
+        ...initialWorkspacePlacement({
+          source: "created_worktree",
+          cwd,
+          worktreeRoot,
+          branch: input.branch,
+          baseBranch: input.baseBranch,
+          mainRepoRoot: repoRoot,
+        }),
+        title: input.title,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await workspaceRegistry.upsert(workspace, {
+        expectsInitialAgent: input.expectsInitialAgent,
+      });
+      return workspace;
     });
-    const timestamp = new Date().toISOString();
-    const workspace = createPersistedWorkspaceRecord({
-      workspaceId: generateWorkspaceId(),
-      projectId: project.projectId,
-      ...initialWorkspacePlacement({
-        source: "created_worktree",
-        cwd,
-        worktreeRoot,
-        branch: input.branch,
-        baseBranch: input.baseBranch,
-        mainRepoRoot: repoRoot,
-      }),
-      title: input.title,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    });
-    await workspaceRegistry.upsert(workspace, {
-      expectsInitialAgent: input.expectsInitialAgent,
-    });
-    return workspace;
   }
 
   async function resolveSourceProjectForWorktree(input: {
@@ -342,6 +371,79 @@ export function createWorkspaceProvisioningService(deps: {
   async function ensureWorkspaceRecordUnarchived(
     workspace: PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord> {
+    if (workspace.cleanupPending) {
+      const selectedReceipt = workspace.cleanupPending;
+      if (
+        workspace.kind === "worktree" &&
+        !areEquivalentPaths(selectedReceipt.backingPath, workspace.worktreeRoot ?? workspace.cwd)
+      ) {
+        throw new Error(`Workspace cleanup moved before restoration: ${workspace.workspaceId}`);
+      }
+      return withWorkspaceCleanupLock(selectedReceipt.backingPath, async () => {
+        const current = await workspaceRegistry.get(workspace.workspaceId);
+        if (!current) {
+          throw new Error(`Unknown workspace: ${workspace.workspaceId}`);
+        }
+        await assertCleanupDirectoryStillRestorable(selectedReceipt);
+        if (
+          !current.cleanupPending ||
+          workspaceCleanupReceiptToken(current.cleanupPending) !==
+            workspaceCleanupReceiptToken(selectedReceipt)
+        ) {
+          throw new Error(
+            `Workspace cleanup state changed before restoration: ${workspace.workspaceId}`,
+          );
+        }
+        return ensureWorkspaceRecordUnarchivedLocked(current);
+      });
+    }
+    return ensureWorkspaceRecordUnarchivedLocked(workspace);
+  }
+
+  async function assertCleanupDirectoryStillRestorable(
+    receipt: PersistedWorkspaceRecord["cleanupPending"],
+  ): Promise<void> {
+    if (!receipt) return;
+    try {
+      const stats = await fs.stat(receipt.backingPath);
+      if (
+        receipt.directoryIdentity === null ||
+        `${stats.dev}:${stats.ino}` !== receipt.directoryIdentity
+      ) {
+        throw new Error(`Workspace cleanup path was replaced: ${receipt.backingPath}`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(`Workspace cleanup completed before restoration: ${receipt.workspaceId}`, {
+          cause: error,
+        });
+      }
+      throw error;
+    }
+  }
+
+  async function readDirectoryIdentity(directoryPath: string): Promise<string | null> {
+    try {
+      const stats = await fs.stat(directoryPath);
+      return `${stats.dev}:${stats.ino}`;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+  }
+
+  async function assertDirectoryIdentityUnchanged(
+    directoryPath: string,
+    expectedIdentity: string | null,
+  ): Promise<void> {
+    if ((await readDirectoryIdentity(directoryPath)) !== expectedIdentity) {
+      throw new Error(`Workspace backing changed during creation: ${directoryPath}`);
+    }
+  }
+
+  async function ensureWorkspaceRecordUnarchivedLocked(
+    workspace: PersistedWorkspaceRecord,
+  ): Promise<PersistedWorkspaceRecord> {
     const project = await projectRegistry.get(workspace.projectId);
     if (!project) throw new Error(`Unknown project: ${workspace.projectId}`);
     const timestamp = new Date().toISOString();
@@ -362,6 +464,7 @@ export function createWorkspaceProvisioningService(deps: {
         ...(placementUpdate?.workspace ?? workspace),
         archivedAt: null,
         autoArchivedChangeRequestUrl,
+        cleanupPending: null,
         updatedAt: timestamp,
       };
     }

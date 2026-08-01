@@ -18,12 +18,14 @@ type ArchiveWorkspacePayload = Awaited<ReturnType<DaemonClient["archiveWorkspace
 
 function archivePayload(input: {
   workspaceId: string;
+  cleanupPending?: boolean;
   error?: string | null;
 }): ArchiveWorkspacePayload {
   return {
     requestId: "request",
     workspaceId: input.workspaceId,
     archivedAt: null,
+    cleanupPending: input.cleanupPending,
     error: input.error ?? null,
   };
 }
@@ -143,6 +145,19 @@ describe("archiveWorkspaceOptimistically", () => {
         workspaceId: archived.id,
       }),
     ).toBe(false);
+  });
+
+  it("reports when the archive completed with deferred local cleanup", async () => {
+    const archived = workspace();
+    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [archived]);
+    const client = createClient(
+      vi.fn(async () => archivePayload({ workspaceId: archived.id, cleanupPending: true })),
+    );
+
+    await expect(archiveWorkspaceOptimistically({ client, workspace: target() })).resolves.toBe(
+      true,
+    );
+    expect(storedWorkspace(archived.id)).toBeUndefined();
   });
 });
 

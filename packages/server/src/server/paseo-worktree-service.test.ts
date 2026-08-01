@@ -24,6 +24,7 @@ import { createWorktree, getPaseoWorktreesRoot } from "../utils/worktree.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../utils/path.js";
 import { deriveProjectKey } from "./project-key.js";
+import { withWorkspaceCleanupLock } from "./workspace-cleanup-lock.js";
 
 const cleanupPaths: string[] = [];
 
@@ -85,6 +86,40 @@ test("creates a worktree and registers it in the source workspace project withou
     updatedAt: expect.any(String),
   });
   expect(events).toEqual([`workspace:${result.workspace.workspaceId}`]);
+});
+
+test("waits for cleanup of the worktree root before creating and registering a worktree", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const deps = createDeps();
+  const paseoHome = path.join(tempDir, ".paseo");
+  const worktreesRoot = await getPaseoWorktreesRoot(repoDir, paseoHome);
+  const lockStarted = Promise.withResolvers<void>();
+  const releaseLock = Promise.withResolvers<void>();
+  const heldLock = withWorkspaceCleanupLock(worktreesRoot, async () => {
+    lockStarted.resolve();
+    await releaseLock.promise;
+  });
+  await lockStarted.promise;
+
+  const creation = createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "wait-for-cleanup",
+      runSetup: false,
+      paseoHome,
+    },
+    deps,
+  );
+  await Promise.resolve();
+  expect(deps.workspaces.size).toBe(0);
+  expect(existsSync(path.join(worktreesRoot, "wait-for-cleanup"))).toBe(false);
+
+  releaseLock.resolve();
+  await heldLock;
+  const created = await creation;
+  expect(existsSync(created.worktree.worktreePath)).toBe(true);
+  expect(deps.workspaces.get(created.workspace.workspaceId)).toEqual(created.workspace);
 });
 
 test("refreshes a source project that became Git while creating a worktree", async () => {

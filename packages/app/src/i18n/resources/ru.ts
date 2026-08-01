@@ -1005,6 +1005,7 @@ export const ru: TranslationResources = {
         hostDisconnected: "Host не подключен",
         hideFailed: "Не удалось скрыть рабочую область.",
         archiveFailed: "Не удалось заархивировать рабочее пространство.",
+        cleanupPending: "Рабочее пространство архивировано; локальная очистка продолжится в фоне",
       },
     },
   },

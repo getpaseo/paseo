@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
-import { copyFile, rm, stat } from "fs/promises";
+import { copyFile, rename, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
 import { createHash } from "node:crypto";
@@ -413,7 +413,7 @@ export function processCarriageReturns(text: string): string {
 
 async function execSetupCommand(
   command: string,
-  options: { cwd: string; env: NodeJS.ProcessEnv },
+  options: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal },
 ): Promise<WorktreeSetupCommandResult> {
   const startedAt = Date.now();
   const shellInvocation = buildStringCommandShellInvocation({ command });
@@ -421,6 +421,7 @@ async function execSetupCommand(
     const { stdout, stderr } = await execFileAsync(shellInvocation.shell, shellInvocation.args, {
       cwd: options.cwd,
       env: options.env,
+      signal: options.signal,
     });
     return {
       command,
@@ -732,6 +733,7 @@ export async function runWorktreeTeardownCommands(options: {
   teardownCwd?: string;
   branchName?: string;
   repoRootPath?: string;
+  signal?: AbortSignal;
 }): Promise<WorktreeTeardownCommandResult[]> {
   const teardownCwd = options.teardownCwd ?? options.worktreePath;
   if (getRealpathAwareRelativePath(options.worktreePath, teardownCwd) === null) {
@@ -767,6 +769,7 @@ export async function runWorktreeTeardownCommands(options: {
     const result = await execSetupCommand(cmd, {
       cwd: teardownCwd,
       env: teardownEnv,
+      signal: options.signal,
     });
     results.push(result);
 
@@ -1084,6 +1087,19 @@ export interface DeletePaseoWorktreeOptions {
   worktreesRoot?: string;
   paseoHome?: string;
   worktreesBaseRoot?: string;
+  expectedDirectoryIdentity?: string | null;
+  signal?: AbortSignal;
+}
+
+export class WorktreeCleanupRelocatedError extends Error {
+  constructor(
+    readonly remainingPath: string,
+    readonly directoryIdentity: string,
+    cause: unknown,
+  ) {
+    super(`Worktree cleanup remains at ${remainingPath}`, { cause });
+    this.name = "WorktreeCleanupRelocatedError";
+  }
 }
 
 export async function deletePaseoWorktree({
@@ -1094,22 +1110,20 @@ export async function deletePaseoWorktree({
   worktreesRoot,
   paseoHome,
   worktreesBaseRoot,
+  expectedDirectoryIdentity,
+  signal,
 }: DeletePaseoWorktreeOptions): Promise<void> {
+  signal?.throwIfAborted();
   if (!worktreePath && !worktreeSlug) {
     throw new Error("worktreePath or worktreeSlug is required");
   }
 
-  // Resolve the worktrees-root. With a repo cwd we hash it the normal way; if
-  // git has forgotten about the worktree we expect the caller to hand us the
-  // path-derived worktreesRoot from the ownership check.
-  let resolvedWorktreesRoot: string;
-  if (worktreesRoot) {
-    resolvedWorktreesRoot = worktreesRoot;
-  } else if (cwd) {
-    resolvedWorktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome, worktreesBaseRoot);
-  } else {
-    throw new Error("cwd or worktreesRoot is required to delete a Paseo worktree");
-  }
+  const resolvedWorktreesRoot = await resolveDeletionWorktreesRoot({
+    cwd,
+    worktreesRoot,
+    paseoHome,
+    worktreesBaseRoot,
+  });
 
   const requestedPath = worktreePath ?? join(resolvedWorktreesRoot, worktreeSlug!);
   const resolvedRequested = normalizePathForOwnership(requestedPath);
@@ -1128,37 +1142,207 @@ export async function deletePaseoWorktree({
     throw new Error("Refusing to delete non-Paseo worktree");
   }
 
-  if (await pathExists(resolvedWorktree)) {
+  const existingQuarantine =
+    expectedDirectoryIdentity === undefined || expectedDirectoryIdentity === null
+      ? null
+      : await readExistingCleanupQuarantine(resolvedWorktree, expectedDirectoryIdentity);
+  const initialIdentity = await readDirectoryIdentity(resolvedWorktree);
+  if (!existingQuarantine) {
+    assertExpectedCleanupIdentity(resolvedWorktree, initialIdentity, expectedDirectoryIdentity);
+  }
+  if (!existingQuarantine && initialIdentity !== null) {
     for (const teardownCwd of teardownCwds ?? [resolvedWorktree]) {
       await runWorktreeTeardownCommands({
         worktreePath: resolvedWorktree,
         teardownCwd,
+        signal,
       });
     }
   }
 
-  if (cwd) {
-    try {
-      await runGitCommand(["worktree", "remove", resolvedWorktree, "--force"], {
-        cwd,
-        timeout: 120_000,
-      });
-    } catch {
-      // `git worktree remove` fails if the admin dir is already gone (e.g. a
-      // prior archive attempt removed it before the working tree could be
-      // fully cleaned up), or if the repo root has moved. Fall through to the
-      // rm retry loop below so the operation stays idempotent.
-    }
+  signal?.throwIfAborted();
+  const quarantined =
+    existingQuarantine ??
+    (await quarantineDirectory({
+      directoryPath: resolvedWorktree,
+      expectedIdentity: expectedDirectoryIdentity ?? initialIdentity,
+    }));
+  await removeQuarantinedWorktree({ cwd, resolvedWorktree, quarantined, signal });
+}
+
+async function resolveDeletionWorktreesRoot(input: {
+  cwd: string | null;
+  worktreesRoot?: string;
+  paseoHome?: string;
+  worktreesBaseRoot?: string;
+}): Promise<string> {
+  if (input.worktreesRoot) return input.worktreesRoot;
+  if (input.cwd) {
+    return getPaseoWorktreesRoot(input.cwd, input.paseoHome, input.worktreesBaseRoot);
   }
+  throw new Error("cwd or worktreesRoot is required to delete a Paseo worktree");
+}
 
-  await removeDirectoryWithRetries(resolvedWorktree);
+function assertExpectedCleanupIdentity(
+  worktreePath: string,
+  actualIdentity: string | null,
+  expectedIdentity: string | null | undefined,
+): void {
+  const missingPathWasReplaced = expectedIdentity === null && actualIdentity !== null;
+  const directoryWasReplaced =
+    expectedIdentity !== undefined &&
+    expectedIdentity !== null &&
+    actualIdentity !== null &&
+    actualIdentity !== expectedIdentity;
+  if (missingPathWasReplaced || directoryWasReplaced) {
+    throw new Error(`Cleanup path identity changed for ${worktreePath}`);
+  }
+}
 
-  if (cwd) {
-    try {
-      await runGitCommand(["worktree", "prune"], { cwd, timeout: 30_000 });
-    } catch {
-      // not critical; git will prune lazily
+async function removeQuarantinedWorktree(input: {
+  cwd: string | null;
+  resolvedWorktree: string;
+  quarantined: QuarantinedDirectory | null;
+  signal?: AbortSignal;
+}): Promise<void> {
+  try {
+    input.signal?.throwIfAborted();
+    if (input.cwd) {
+      try {
+        await runGitCommand(["worktree", "prune", "--expire=now"], {
+          cwd: input.cwd,
+          timeout: 30_000,
+          signal: input.signal,
+        });
+      } catch {
+        input.signal?.throwIfAborted();
+        // The missing worktree admin entry is harmless; Git also prunes it lazily.
+      }
     }
+
+    if (input.quarantined) {
+      await removeDirectoryWithRetries(
+        input.quarantined.path,
+        input.quarantined.identity,
+        input.signal,
+      );
+    }
+  } catch (error) {
+    if (
+      input.quarantined &&
+      !(await restoreQuarantinedDirectory(input.quarantined.path, input.resolvedWorktree))
+    ) {
+      throw new WorktreeCleanupRelocatedError(
+        input.quarantined.path,
+        input.quarantined.identity,
+        error,
+      );
+    }
+    throw error;
+  }
+}
+
+interface QuarantinedDirectory {
+  path: string;
+  identity: string;
+}
+
+async function quarantineDirectory(input: {
+  directoryPath: string;
+  expectedIdentity: string | null;
+}): Promise<QuarantinedDirectory | null> {
+  const identity = await readDirectoryIdentity(input.directoryPath);
+  if (identity === null) {
+    if (input.expectedIdentity === null) return null;
+    return readExistingCleanupQuarantine(input.directoryPath, input.expectedIdentity);
+  }
+  if (identity !== input.expectedIdentity) {
+    throw new Error(`Cleanup path identity changed for ${input.directoryPath}`);
+  }
+  const quarantinePath = getPaseoWorktreeCleanupQuarantinePath(input.directoryPath, identity);
+  if ((await readDirectoryIdentity(quarantinePath)) !== null) {
+    throw new Error(`Cleanup quarantine path already exists: ${quarantinePath}`);
+  }
+  await rename(input.directoryPath, quarantinePath);
+  try {
+    if ((await readDirectoryIdentity(quarantinePath)) !== identity) {
+      throw new Error(`Cleanup path identity changed for ${input.directoryPath}`);
+    }
+  } catch (error) {
+    await restoreQuarantinedDirectory(quarantinePath, input.directoryPath);
+    throw error;
+  }
+  return { path: quarantinePath, identity };
+}
+
+export function getPaseoWorktreeCleanupQuarantinePath(
+  directoryPath: string,
+  directoryIdentity: string,
+): string {
+  const identityHash = createHash("sha256").update(directoryIdentity).digest("hex").slice(0, 16);
+  return join(dirname(directoryPath), `.paseo-cleanup-${basename(directoryPath)}-${identityHash}`);
+}
+
+async function readExistingCleanupQuarantine(
+  directoryPath: string,
+  expectedIdentity: string,
+): Promise<QuarantinedDirectory | null> {
+  const quarantinePath = getPaseoWorktreeCleanupQuarantinePath(directoryPath, expectedIdentity);
+  const quarantineIdentity = await readDirectoryIdentity(quarantinePath);
+  if (quarantineIdentity === null) return null;
+  if (quarantineIdentity !== expectedIdentity) {
+    throw new Error(`Cleanup path identity changed for ${quarantinePath}`);
+  }
+  return { path: quarantinePath, identity: quarantineIdentity };
+}
+
+export async function hasPaseoWorktreeCleanupQuarantine(
+  directoryPath: string,
+  expectedIdentity: string,
+): Promise<boolean> {
+  try {
+    return (await readExistingCleanupQuarantine(directoryPath, expectedIdentity)) !== null;
+  } catch {
+    return false;
+  }
+}
+
+async function restoreQuarantinedDirectory(
+  quarantinePath: string,
+  originalPath: string,
+): Promise<boolean> {
+  if ((await readDirectoryIdentity(quarantinePath)) === null) return true;
+  if ((await readDirectoryIdentity(originalPath)) !== null) return false;
+  try {
+    await rename(quarantinePath, originalPath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return (await readDirectoryIdentity(quarantinePath)) === null;
+    }
+    return false;
+  }
+}
+
+async function assertDirectoryIdentity(
+  directoryPath: string,
+  expectedDirectoryIdentity: string | null | undefined,
+): Promise<boolean> {
+  const identity = await readDirectoryIdentity(directoryPath);
+  if (identity === null) return false;
+  if (expectedDirectoryIdentity !== undefined && identity !== expectedDirectoryIdentity) {
+    throw new Error(`Cleanup path identity changed for ${directoryPath}`);
+  }
+  return true;
+}
+
+async function readDirectoryIdentity(directoryPath: string): Promise<string | null> {
+  try {
+    const stats = await stat(directoryPath);
+    return `${stats.dev}:${stats.ino}`;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
   }
 }
 
@@ -1195,18 +1379,26 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-async function removeDirectoryWithRetries(path: string): Promise<void> {
-  if (!(await pathExists(path))) {
+async function removeDirectoryWithRetries(
+  path: string,
+  expectedDirectoryIdentity: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!(await assertDirectoryIdentity(path, expectedDirectoryIdentity))) {
     return;
   }
 
   const delaysMs = [0, 100, 300, 700, 1500];
   let lastError: unknown = null;
   for (const delay of delaysMs) {
+    signal?.throwIfAborted();
     if (delay > 0) {
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, delay));
+      await waitForRemovalRetry(delay, signal);
     }
     try {
+      if (!(await assertDirectoryIdentity(path, expectedDirectoryIdentity))) {
+        return;
+      }
       await rm(path, { recursive: true, force: true });
       if (!(await pathExists(path))) {
         return;
@@ -1222,6 +1414,25 @@ async function removeDirectoryWithRetries(path: string): Promise<void> {
       ? lastError
       : new Error(`Failed to remove worktree directory: ${path}`);
   }
+}
+
+async function waitForRemovalRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, delayMs));
+    return;
+  }
+  signal.throwIfAborted();
+  await new Promise<void>((resolvePromise, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolvePromise();
+    }, delayMs);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /**

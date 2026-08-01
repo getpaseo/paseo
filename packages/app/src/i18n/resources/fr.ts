@@ -1013,6 +1013,7 @@ export const fr: TranslationResources = {
         hostDisconnected: "Hostn'est pas connecté",
         hideFailed: "Échec du masquage de l'espace de travail",
         archiveFailed: "Échec de l'archivage de l'espace de travail",
+        cleanupPending: "Espace de travail archivé ; le nettoyage local continuera en arrière-plan",
       },
     },
   },

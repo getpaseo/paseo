@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 
 import { beforeEach, afterEach, describe, expect, test } from "vitest";
 
@@ -447,6 +447,78 @@ describe("workspace registries", () => {
       archivedAt: "2026-03-02T00:00:00.000Z",
       autoArchivedChangeRequestUrl: "https://github.com/acme/repo/pull/123",
     });
+  });
+
+  test("persists archive cleanup ownership across registry reloads", async () => {
+    await workspaceRegistry.initialize();
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "workspace-cleanup-pending",
+        projectId: "project-one",
+        cwd: "/tmp/worktree",
+        kind: "worktree",
+        displayName: "feature",
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      }),
+    );
+    await workspaceRegistry.archive("workspace-cleanup-pending", "2026-08-01T00:00:01.000Z", {
+      cleanupPending: {
+        workspaceId: "workspace-cleanup-pending",
+        backingPath: "/tmp/worktree",
+        teardownCwds: ["/tmp/worktree/packages/app"],
+        mainRepoRoot: "/tmp/repo",
+        paseoWorktreesRoot: "/tmp/paseo/worktrees/repo",
+        directoryIdentity: "1:42",
+        createdAt: "2026-08-01T00:00:01.000Z",
+        lastAttemptAt: null,
+        attemptCount: 0,
+        lastError: null,
+      },
+    });
+
+    const reloaded = new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "workspaces.json"),
+      logger,
+    );
+    await reloaded.initialize();
+
+    expect((await reloaded.get("workspace-cleanup-pending"))?.cleanupPending).toEqual({
+      workspaceId: "workspace-cleanup-pending",
+      backingPath: "/tmp/worktree",
+      teardownCwds: ["/tmp/worktree/packages/app"],
+      mainRepoRoot: "/tmp/repo",
+      paseoWorktreesRoot: "/tmp/paseo/worktrees/repo",
+      directoryIdentity: "1:42",
+      createdAt: "2026-08-01T00:00:01.000Z",
+      lastAttemptAt: null,
+      attemptCount: 0,
+      lastError: null,
+    });
+  });
+
+  test("loads legacy workspace records without cleanup ownership", async () => {
+    const registryPath = path.join(tmpDir, "projects", "workspaces.json");
+    mkdirSync(path.dirname(registryPath), { recursive: true });
+    writeFileSync(
+      registryPath,
+      JSON.stringify([
+        {
+          workspaceId: "workspace-legacy",
+          projectId: "project-one",
+          cwd: "/tmp/repo",
+          kind: "local_checkout",
+          displayName: "main",
+          createdAt: "2026-03-01T00:00:00.000Z",
+          updatedAt: "2026-03-01T00:00:00.000Z",
+          archivedAt: null,
+        },
+      ]),
+    );
+
+    await workspaceRegistry.initialize();
+
+    expect((await workspaceRegistry.get("workspace-legacy"))?.cleanupPending).toBeNull();
   });
 
   test("composes concurrent workspace field updates without losing either change", async () => {

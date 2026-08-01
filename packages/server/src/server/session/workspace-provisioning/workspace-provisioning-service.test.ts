@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync } from "node:fs";
+import { promises as fs } from "node:fs";
 
 import { afterEach, beforeEach, expect, test } from "vitest";
 
@@ -16,6 +17,7 @@ import {
   createPersistedWorkspaceRecord,
   type WorkspaceRegistry,
 } from "../../workspace-registry.js";
+import { withWorkspaceCleanupLock } from "../../workspace-cleanup-lock.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import {
   createWorkspaceProvisioningService,
@@ -212,14 +214,212 @@ test("persists manual worktree ownership separately from its workspace kind", as
 
 test("re-opening an archived workspace by its exact path unarchives it and keeps the id", async () => {
   const repo = path.join(tmpDir, "repo");
+  mkdirSync(repo, { recursive: true });
+  const repoStats = await fs.stat(repo);
   gitRoots.add(repo);
   const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
-  await workspaceRegistry.archive(created.workspaceId, ARCHIVED_AT);
+  await workspaceRegistry.archive(created.workspaceId, ARCHIVED_AT, {
+    cleanupPending: {
+      workspaceId: created.workspaceId,
+      backingPath: repo,
+      teardownCwds: [repo],
+      mainRepoRoot: repo,
+      paseoWorktreesRoot: null,
+      directoryIdentity: `${repoStats.dev}:${repoStats.ino}`,
+      createdAt: ARCHIVED_AT,
+      lastAttemptAt: null,
+      attemptCount: 0,
+      lastError: null,
+    },
+  });
 
   const reopened = await provisioning.findOrCreateWorkspaceForDirectory(repo);
 
   expect(reopened.workspaceId).toBe(created.workspaceId);
   expect(reopened.archivedAt).toBeNull();
+  expect(reopened.cleanupPending).toBeNull();
+});
+
+test("does not restore a workspace after its locked cleanup removes the directory", async () => {
+  const repo = path.join(tmpDir, "cleanup-race");
+  mkdirSync(repo, { recursive: true });
+  const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  const stats = await fs.stat(repo);
+  await workspaceRegistry.archive(created.workspaceId, ARCHIVED_AT, {
+    cleanupPending: {
+      workspaceId: created.workspaceId,
+      backingPath: repo,
+      teardownCwds: [repo],
+      mainRepoRoot: repo,
+      paseoWorktreesRoot: null,
+      directoryIdentity: `${stats.dev}:${stats.ino}`,
+      createdAt: ARCHIVED_AT,
+      lastAttemptAt: null,
+      attemptCount: 0,
+      lastError: null,
+    },
+  });
+  const archived = await workspaceRegistry.get(created.workspaceId);
+  expect(archived?.cleanupPending).not.toBeNull();
+
+  let releaseCleanup = (): void => undefined;
+  const cleanupCanFinish = new Promise<void>((resolve) => {
+    releaseCleanup = resolve;
+  });
+  const cleanupStarted = Promise.withResolvers<void>();
+  const cleanup = withWorkspaceCleanupLock(repo, async () => {
+    cleanupStarted.resolve();
+    await cleanupCanFinish;
+    rmSync(repo, { recursive: true, force: true });
+    await workspaceRegistry.update(created.workspaceId, (workspace) => ({
+      ...workspace,
+      cleanupPending: null,
+    }));
+  });
+  await cleanupStarted.promise;
+  const restoration = provisioning.ensureWorkspaceRecordUnarchived(archived!);
+
+  releaseCleanup();
+  await cleanup;
+  await expect(restoration).rejects.toThrow("cleanup completed before restoration");
+  expect((await workspaceRegistry.get(created.workspaceId))?.archivedAt).toBe(ARCHIVED_AT);
+});
+
+test("does not restore a replacement when cleanup recorded a missing directory", async () => {
+  const repo = path.join(tmpDir, "missing-cleanup-replacement");
+  mkdirSync(repo, { recursive: true });
+  const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  await workspaceRegistry.archive(created.workspaceId, ARCHIVED_AT, {
+    cleanupPending: {
+      workspaceId: created.workspaceId,
+      backingPath: repo,
+      teardownCwds: [repo],
+      mainRepoRoot: repo,
+      paseoWorktreesRoot: null,
+      directoryIdentity: null,
+      createdAt: ARCHIVED_AT,
+      lastAttemptAt: null,
+      attemptCount: 0,
+      lastError: null,
+    },
+  });
+  const archived = await workspaceRegistry.get(created.workspaceId);
+
+  await expect(provisioning.ensureWorkspaceRecordUnarchived(archived!)).rejects.toThrow(
+    "cleanup path was replaced",
+  );
+  expect((await workspaceRegistry.get(created.workspaceId))?.archivedAt).toBe(ARCHIVED_AT);
+});
+
+test("does not create a workspace when its backing directory changes while waiting for cleanup", async () => {
+  const repo = path.join(tmpDir, "creation-race");
+  mkdirSync(repo, { recursive: true });
+  gitRoots.add(repo);
+  const cleanupStarted = Promise.withResolvers<void>();
+  const cleanupCanFinish = Promise.withResolvers<void>();
+  const cleanup = withWorkspaceCleanupLock(repo, async () => {
+    cleanupStarted.resolve();
+    await cleanupCanFinish.promise;
+  });
+  await cleanupStarted.promise;
+
+  const creation = provisioning.createWorkspaceForDirectory(repo);
+  await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  renameSync(repo, `${repo}-original`);
+  mkdirSync(repo, { recursive: true });
+  cleanupCanFinish.resolve();
+  await cleanup;
+
+  await expect(creation).rejects.toThrow("Workspace backing changed during creation");
+  expect(await workspaceRegistry.list()).toHaveLength(0);
+});
+
+test("does not restore a stale cleanup receipt generation after waiting for the lock", async () => {
+  const repo = path.join(tmpDir, "restoration-generation-race");
+  mkdirSync(repo, { recursive: true });
+  const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  const stats = await fs.stat(repo);
+  await workspaceRegistry.archive(created.workspaceId, ARCHIVED_AT, {
+    cleanupPending: {
+      workspaceId: created.workspaceId,
+      backingPath: repo,
+      teardownCwds: [repo],
+      mainRepoRoot: repo,
+      paseoWorktreesRoot: null,
+      directoryIdentity: `${stats.dev}:${stats.ino}`,
+      createdAt: ARCHIVED_AT,
+      lastAttemptAt: null,
+      attemptCount: 0,
+      lastError: null,
+    },
+  });
+  const archived = await workspaceRegistry.get(created.workspaceId);
+  const cleanupStarted = Promise.withResolvers<void>();
+  const cleanupCanFinish = Promise.withResolvers<void>();
+  const cleanup = withWorkspaceCleanupLock(repo, async () => {
+    cleanupStarted.resolve();
+    await cleanupCanFinish.promise;
+  });
+  await cleanupStarted.promise;
+
+  const restoration = provisioning.ensureWorkspaceRecordUnarchived(archived!);
+  await workspaceRegistry.update(created.workspaceId, (workspace) => ({
+    ...workspace,
+    cleanupPending: workspace.cleanupPending
+      ? { ...workspace.cleanupPending, createdAt: "2026-01-01T00:00:01.000Z" }
+      : null,
+  }));
+  cleanupCanFinish.resolve();
+  await cleanup;
+
+  await expect(restoration).rejects.toThrow("cleanup state changed before restoration");
+  expect((await workspaceRegistry.get(created.workspaceId))?.archivedAt).toBe(ARCHIVED_AT);
+});
+
+test("does not clear cleanup ownership after the backing directory moves", async () => {
+  const repo = path.join(tmpDir, "repo");
+  const relocatedPath = path.join(tmpDir, ".paseo-cleanup-repo");
+  mkdirSync(relocatedPath, { recursive: true });
+  const relocatedStats = await fs.stat(relocatedPath);
+  const workspaceId = "ws-relocated-cleanup";
+  await workspaceRegistry.upsert(
+    createPersistedWorkspaceRecord({
+      workspaceId,
+      projectId: "project-relocated-cleanup",
+      cwd: repo,
+      kind: "worktree",
+      displayName: "repo",
+      branch: "feature",
+      worktreeRoot: repo,
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: tmpDir,
+      createdAt: ARCHIVED_AT,
+      updatedAt: ARCHIVED_AT,
+      archivedAt: ARCHIVED_AT,
+    }),
+  );
+  await workspaceRegistry.archive(workspaceId, ARCHIVED_AT, {
+    cleanupPending: {
+      workspaceId,
+      backingPath: relocatedPath,
+      teardownCwds: [relocatedPath],
+      mainRepoRoot: repo,
+      paseoWorktreesRoot: path.dirname(repo),
+      directoryIdentity: `${relocatedStats.dev}:${relocatedStats.ino}`,
+      createdAt: ARCHIVED_AT,
+      lastAttemptAt: ARCHIVED_AT,
+      attemptCount: 1,
+      lastError: "remove failed",
+    },
+  });
+  const archived = await workspaceRegistry.get(workspaceId);
+
+  await expect(provisioning.ensureWorkspaceRecordUnarchived(archived!)).rejects.toThrow(
+    "Workspace cleanup moved before restoration",
+  );
+  expect((await workspaceRegistry.get(workspaceId))?.cleanupPending?.backingPath).toBe(
+    relocatedPath,
+  );
 });
 
 test("reopening archived exact-root records restores the fresh Git project", async () => {

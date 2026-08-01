@@ -1,14 +1,16 @@
 import { basename } from "node:path";
 
-import { createRealpathAwarePathMatcher } from "../../../utils/path.js";
+import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../../../utils/path.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
 import {
   createWorktree,
+  getPaseoWorktreesRoot,
   isPaseoOwnedWorktreeCwd,
   mapWorkspaceCwdToWorktree,
   rollbackCreatedPaseoWorktree,
 } from "../../../utils/worktree.js";
 import { WorktreeRequestError, toWorktreeRequestError } from "../../worktree-errors.js";
+import { withWorkspaceCleanupLock } from "../../workspace-cleanup-lock.js";
 import {
   resolveWorkspaceDisplayName,
   type PersistedProjectRecord,
@@ -34,6 +36,7 @@ export type WorkspaceRecoveryState =
         | "project_not_found"
         | "project_directory_missing"
         | "workspace_directory_missing"
+        | "workspace_directory_replaced"
         | "worktree_branch_missing";
       message: string;
     };
@@ -97,16 +100,45 @@ export function createWorkspaceRecoveryService(deps: {
       };
     }
 
-    if (await deps.isDirectory(workspace.cwd)) {
-      return createRecoveryPlan({ action: "unarchive", workspace });
-    }
-
     if (workspace.kind !== "worktree") {
+      if (await deps.isDirectory(workspace.cwd)) {
+        return createRecoveryPlan({ action: "unarchive", workspace });
+      }
       return {
         kind: "unavailable",
         workspaceId,
         reason: "workspace_directory_missing",
         message: "The archived workspace directory no longer exists and cannot be recreated.",
+      };
+    }
+    const expectedWorktreePath = workspace.worktreeRoot ?? workspace.cwd;
+    const workspaceDirectoryExists = await deps.isDirectory(workspace.cwd);
+    const cleanupRecovery = resolveCleanupRecovery(
+      workspace,
+      expectedWorktreePath,
+      workspaceDirectoryExists,
+    );
+    if (cleanupRecovery) return cleanupRecovery;
+    if (workspaceDirectoryExists) {
+      const ownership = await isPaseoOwnedWorktreeCwd(workspace.cwd, {
+        paseoHome: deps.paseoHome,
+        worktreesRoot: deps.worktreesRoot,
+      });
+      const sourceRepoRoot = workspace.mainRepoRoot ?? project.rootPath;
+      if (
+        ownership.allowed &&
+        ownership.worktreePath &&
+        ownership.repoRoot &&
+        areEquivalentPaths(ownership.worktreePath, expectedWorktreePath) &&
+        areEquivalentPaths(ownership.repoRoot, sourceRepoRoot)
+      ) {
+        return createRecoveryPlan({ action: "unarchive", workspace });
+      }
+      return {
+        kind: "unavailable",
+        workspaceId,
+        reason: "workspace_directory_replaced",
+        message: "The archived worktree path is occupied by a different directory.",
       };
     }
     if (!workspace.branch) {
@@ -147,9 +179,18 @@ export function createWorkspaceRecoveryService(deps: {
     }
 
     if (resolved.kind === "restore") {
-      await recreateArchivedWorktree(resolved.workspace, resolved.sourceRepoRoot);
+      const worktreesRoot = await getPaseoWorktreesRoot(
+        resolved.sourceRepoRoot,
+        deps.paseoHome,
+        deps.worktreesRoot,
+      );
+      await withWorkspaceCleanupLock(worktreesRoot, async () => {
+        await recreateArchivedWorktree(resolved.workspace, resolved.sourceRepoRoot);
+        await deps.unarchiveWorkspace(resolved.workspace);
+      });
+    } else {
+      await deps.unarchiveWorkspace(resolved.workspace);
     }
-    await deps.unarchiveWorkspace(resolved.workspace);
     return { workspaceId, action: resolved.kind };
   }
 
@@ -232,6 +273,32 @@ export function createWorkspaceRecoveryService(deps: {
   }
 
   return { inspect, restore };
+}
+
+function resolveCleanupRecovery(
+  workspace: PersistedWorkspaceRecord,
+  expectedWorktreePath: string,
+  workspaceDirectoryExists: boolean,
+): UnavailableRecoveryState | RecoveryPlan | null {
+  const receipt = workspace.cleanupPending;
+  if (!receipt) return null;
+  if (!areEquivalentPaths(receipt.backingPath, expectedWorktreePath)) {
+    return {
+      kind: "unavailable",
+      workspaceId: workspace.workspaceId,
+      reason: "workspace_directory_replaced",
+      message: "Workspace cleanup moved to a different path and must finish before restoration.",
+    };
+  }
+  if (workspaceDirectoryExists) {
+    return createRecoveryPlan({ action: "unarchive", workspace });
+  }
+  return {
+    kind: "unavailable",
+    workspaceId: workspace.workspaceId,
+    reason: "workspace_directory_replaced",
+    message: "Workspace cleanup must finish before this worktree can be restored.",
+  };
 }
 
 function createRecoveryPlan(

@@ -71,4 +71,21 @@ describe("GitCommandRuntimeMetricsWindow", () => {
       queueWaitMs: { count: 1, p50Ms: 35, p95Ms: 35, maxMs: 35 },
     });
   });
+
+  test("removes a canceled command from the pending set", () => {
+    const { metrics, advance } = createMetricsWindow(1);
+    const command = metrics.submit("status");
+    advance(25);
+
+    metrics.cancel(command);
+
+    expect(metrics.snapshotAndReset()).toMatchObject({
+      pending: 0,
+      oldestPendingMs: 0,
+      submitted: 1,
+      started: 0,
+      completed: 1,
+      failed: 1,
+    });
+  });
 });

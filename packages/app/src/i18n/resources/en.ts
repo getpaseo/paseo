@@ -993,6 +993,7 @@ export const en = {
         hostDisconnected: "Host is not connected",
         hideFailed: "Failed to hide workspace",
         archiveFailed: "Failed to archive workspace",
+        cleanupPending: "Workspace archived; local cleanup will continue in the background",
       },
     },
   },

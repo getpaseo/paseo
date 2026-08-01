@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { describe, expect, test } from "vitest";
 import {
+  ArchiveWorkspaceResponseMessageSchema,
   RecentProviderSessionDescriptorPayloadSchema,
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
@@ -10,6 +11,31 @@ import {
 } from "./messages.js";
 
 describe("workspace message schemas", () => {
+  test("parses archive responses with and without cleanup status", () => {
+    const legacy = ArchiveWorkspaceResponseMessageSchema.parse({
+      type: "archive_workspace_response",
+      payload: {
+        requestId: "req-archive-legacy",
+        workspaceId: "workspace-1",
+        archivedAt: "2026-08-01T00:00:00.000Z",
+        error: null,
+      },
+    });
+    const current = ArchiveWorkspaceResponseMessageSchema.parse({
+      type: "archive_workspace_response",
+      payload: {
+        requestId: "req-archive-current",
+        workspaceId: "workspace-1",
+        archivedAt: "2026-08-01T00:00:00.000Z",
+        cleanupPending: true,
+        error: null,
+      },
+    });
+
+    expect(legacy.payload.cleanupPending).toBeUndefined();
+    expect(current.payload.cleanupPending).toBe(true);
+  });
+
   test("parses fetch_workspaces_request", () => {
     const parsed = SessionInboundMessageSchema.parse({
       type: "fetch_workspaces_request",

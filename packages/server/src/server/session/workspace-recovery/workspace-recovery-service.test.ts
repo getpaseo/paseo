@@ -13,7 +13,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, test } from "vitest";
 
-import { createWorktree } from "../../../utils/worktree.js";
+import { createWorktree, getPaseoWorktreesRoot } from "../../../utils/worktree.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
@@ -21,6 +21,7 @@ import {
   type PersistedWorkspaceRecord,
 } from "../../workspace-registry.js";
 import { createWorkspaceRecoveryService } from "./workspace-recovery-service.js";
+import { withWorkspaceCleanupLock } from "../../workspace-cleanup-lock.js";
 
 const NOW = "2026-07-11T10:12:30.752Z";
 const tempDirectories: string[] = [];
@@ -129,6 +130,64 @@ describe("workspace recovery", () => {
     });
   });
 
+  test("does not restore a worktree whose cleanup ownership moved to quarantine", async () => {
+    const workspace = createWorkspace({
+      cleanupPending: {
+        workspaceId: "wks_15a1b5630ebaab33",
+        backingPath: "/worktrees/hash/.paseo-cleanup-worktree",
+        teardownCwds: ["/worktrees/hash/.paseo-cleanup-worktree"],
+        mainRepoRoot: "/repo",
+        paseoWorktreesRoot: "/worktrees/hash",
+        directoryIdentity: "1:99",
+        createdAt: NOW,
+        lastAttemptAt: NOW,
+        attemptCount: 1,
+        lastError: "remove failed",
+      },
+    });
+    const { service, unarchived } = createHarness({
+      workspace,
+      directories: [workspace.cwd, "/repo"],
+    });
+
+    await expect(service.inspect(workspace.workspaceId)).resolves.toEqual({
+      kind: "unavailable",
+      workspaceId: workspace.workspaceId,
+      reason: "workspace_directory_replaced",
+      message: "Workspace cleanup moved to a different path and must finish before restoration.",
+    });
+    expect(unarchived).toEqual([]);
+  });
+
+  test("does not recreate a missing worktree while cleanup still owns its path", async () => {
+    const workspace = createWorkspace({
+      cleanupPending: {
+        workspaceId: "wks_15a1b5630ebaab33",
+        backingPath: "/worktrees/trigger-1525443412986298439",
+        teardownCwds: [],
+        mainRepoRoot: "/repo",
+        paseoWorktreesRoot: "/worktrees",
+        directoryIdentity: "1:99",
+        createdAt: NOW,
+        lastAttemptAt: NOW,
+        attemptCount: 1,
+        lastError: "remove interrupted",
+      },
+    });
+    const { service, unarchived } = createHarness({ workspace });
+
+    await expect(service.inspect(workspace.workspaceId)).resolves.toEqual({
+      kind: "unavailable",
+      workspaceId: workspace.workspaceId,
+      reason: "workspace_directory_replaced",
+      message: "Workspace cleanup must finish before this worktree can be restored.",
+    });
+    await expect(service.restore(workspace.workspaceId)).rejects.toThrow(
+      "Workspace cleanup must finish before this worktree can be restored.",
+    );
+    expect(unarchived).toEqual([]);
+  });
+
   test("uses the persisted source repository instead of the owning project to restore an exact subdirectory", async () => {
     const { tempDir, repoDir } = createGitRepository();
     const branch = "feature/mixed-project";
@@ -182,7 +241,22 @@ describe("workspace recovery", () => {
       },
     });
 
-    await expect(service.restore(workspace.workspaceId)).resolves.toEqual({
+    const paseoWorktreesRoot = await getPaseoWorktreesRoot(repoDir, paseoHome, worktreesRoot);
+    const lockStarted = Promise.withResolvers<void>();
+    const releaseLock = Promise.withResolvers<void>();
+    const heldLock = withWorkspaceCleanupLock(paseoWorktreesRoot, async () => {
+      lockStarted.resolve();
+      await releaseLock.promise;
+    });
+    await lockStarted.promise;
+    const restoration = service.restore(workspace.workspaceId);
+    await Promise.resolve();
+    expect(existsSync(worktreeRoot)).toBe(false);
+    expect(unarchived).toEqual([]);
+
+    releaseLock.resolve();
+    await heldLock;
+    await expect(restoration).resolves.toEqual({
       workspaceId: workspace.workspaceId,
       action: "restore",
     });

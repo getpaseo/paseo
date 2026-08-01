@@ -15,6 +15,7 @@ import {
   rollbackCreatedPaseoWorktree,
   seedPaseoConfigFile,
   validateBranchSlug,
+  getPaseoWorktreesRoot,
   type WorktreeConfig,
 } from "../utils/worktree.js";
 import { getCurrentBranch, localBranchExists, renameCurrentBranch } from "../utils/checkout-git.js";
@@ -28,6 +29,8 @@ import type { WorktreeCreationIntent } from "./resolve-worktree-creation-intent.
 import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
 import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
+import { withWorkspaceCleanupLock } from "./workspace-cleanup-lock.js";
+import { resolveWorktreeRepoRoot } from "./worktree-core.js";
 
 export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
   projectId?: string;
@@ -65,6 +68,18 @@ export async function createPaseoWorktree(
   deps: CreatePaseoWorktreeDeps,
 ): Promise<CreatePaseoWorktreeResult> {
   const workspaceCwdPlan = await planWorkspaceCwdForWorktree(input.cwd, deps.workspaceGitService);
+  const repoRoot = await resolveWorktreeRepoRoot(input, deps.workspaceGitService);
+  const worktreesRoot = await getPaseoWorktreesRoot(repoRoot, input.paseoHome, input.worktreesRoot);
+  return withWorkspaceCleanupLock(worktreesRoot, () =>
+    createPaseoWorktreeUnderLock(input, deps, workspaceCwdPlan),
+  );
+}
+
+async function createPaseoWorktreeUnderLock(
+  input: CreatePaseoWorktreeInput,
+  deps: CreatePaseoWorktreeDeps,
+  workspaceCwdPlan: Awaited<ReturnType<typeof planWorkspaceCwdForWorktree>>,
+): Promise<CreatePaseoWorktreeResult> {
   const createdWorktree = await createWorktreeCore(input, deps);
   try {
     maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });

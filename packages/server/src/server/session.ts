@@ -130,6 +130,7 @@ import {
   type ProjectMutation,
   type ProjectRegistry,
   type WorkspaceMutation,
+  type WorkspaceArchiveContext,
   type WorkspaceRegistry,
 } from "./workspace-registry.js";
 import { wrapSpokenInput } from "./voice-config.js";
@@ -917,7 +918,9 @@ export class Session {
       archiveAgentForClose: (agentId) => this.archiveAgentForClose(agentId),
       findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
       listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-      archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+      workspaceRegistry: this.workspaceRegistry,
+      archiveWorkspaceRecord: (workspaceId, context) =>
+        this.archiveWorkspaceRecord(workspaceId, context),
       emit: (message) => this.emit(message),
       emitAgentRemove: (agentId) => this.agentUpdates.removeAgent(agentId),
       emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
@@ -3873,7 +3876,9 @@ export class Session {
         agentStorage: this.agentStorage,
         findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
         listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-        archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+        workspaceRegistry: this.workspaceRegistry,
+        archiveWorkspaceRecord: (workspaceId, context) =>
+          this.archiveWorkspaceRecord(workspaceId, context),
         emit: (message) => this.emit(message),
         emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
           this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
@@ -4623,12 +4628,17 @@ export class Session {
       }));
   }
 
-  private async archiveWorkspaceRecord(workspaceId: string, archivedAt?: string): Promise<void> {
+  private async archiveWorkspaceRecord(
+    workspaceId: string,
+    context?: WorkspaceArchiveContext,
+    archivedAt?: string,
+  ): Promise<void> {
     const archiveTimestamp = archivedAt ?? new Date().toISOString();
     const existingWorkspace = await archivePersistedWorkspaceRecord({
       workspaceId,
       archivedAt: archiveTimestamp,
       workspaceRegistry: this.workspaceRegistry,
+      context,
     });
     if (!existingWorkspace) {
       this.workspaceGitObserver.removeForWorkspaceId(workspaceId);
@@ -5808,11 +5818,14 @@ export class Session {
   ): Promise<void> {
     try {
       const existing = await requireActiveWorkspaceForArchive(
-        { listActiveWorkspaces: () => this.listActiveWorkspaceRefs() },
+        {
+          listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
+          workspaceRegistry: this.workspaceRegistry,
+        },
         request.workspaceId,
       );
 
-      await archiveByScope(
+      const result = await archiveByScope(
         {
           paseoHome: this.paseoHome,
           paseoWorktreesBaseRoot: this.worktreesRoot,
@@ -5822,7 +5835,9 @@ export class Session {
           agentStorage: this.agentStorage,
           findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
           listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-          archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+          workspaceRegistry: this.workspaceRegistry,
+          archiveWorkspaceRecord: (workspaceId, context) =>
+            this.archiveWorkspaceRecord(workspaceId, context),
           emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
             this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
           markWorkspaceArchiving: (workspaceIds, archivingAt) =>
@@ -5846,6 +5861,7 @@ export class Session {
           requestId: request.requestId,
           workspaceId: request.workspaceId,
           archivedAt,
+          cleanupPending: result.cleanupPending,
           error: null,
         },
       });

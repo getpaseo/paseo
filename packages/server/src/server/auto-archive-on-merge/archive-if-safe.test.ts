@@ -16,6 +16,11 @@ import type { WorkspaceGitRuntimeSnapshot } from "../workspace-git-service.js";
 import { createWorktree, type WorktreeConfig } from "../../utils/worktree.js";
 import type { ForgeService } from "../../../services/forge-service.js";
 import type { StoredAgentRecord } from "../agent/agent-storage.js";
+import {
+  createPersistedWorkspaceRecord,
+  type PersistedWorkspaceRecord,
+  type WorkspaceArchiveContext,
+} from "../workspace-registry.js";
 
 const CWD = "/tmp/paseo/worktrees/repo/branch";
 const PASEO_HOME = "/tmp/paseo";
@@ -263,6 +268,24 @@ function createRealOutcomeHarness(input: {
   archivedWorkspaceIds: Set<string>;
 }) {
   const active = [...input.activeWorkspaces];
+  const workspaceRecords = new Map<string, PersistedWorkspaceRecord>(
+    active.map((workspace) => [
+      workspace.workspaceId,
+      createPersistedWorkspaceRecord({
+        workspaceId: workspace.workspaceId,
+        projectId: "project-auto-archive",
+        cwd: workspace.cwd,
+        kind: workspace.kind,
+        displayName: path.basename(workspace.cwd),
+        branch: "feature",
+        worktreeRoot: workspace.worktreeRoot ?? input.worktreePath,
+        isPaseoOwnedWorktree: workspace.isPaseoOwnedWorktree ?? true,
+        mainRepoRoot: workspace.mainRepoRoot ?? input.repoDir,
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      }),
+    ]),
+  );
   const logger = pino({ level: "silent" });
   vi.spyOn(logger, "info").mockImplementation(() => undefined);
   vi.spyOn(logger, "warn").mockImplementation(() => undefined);
@@ -320,12 +343,33 @@ function createRealOutcomeHarness(input: {
     },
     listActiveWorkspaces: async () =>
       active.filter((workspace) => !input.archivedWorkspaceIds.has(workspace.workspaceId)),
+    workspaceRegistry: {
+      get: async (workspaceId) => workspaceRecords.get(workspaceId) ?? null,
+      list: async () => Array.from(workspaceRecords.values()),
+      update: async (workspaceId, updater) => {
+        const current = workspaceRecords.get(workspaceId);
+        if (!current) return null;
+        const next = updater(current);
+        workspaceRecords.set(workspaceId, next);
+        return next;
+      },
+    },
     getAutoArchivedChangeRequestUrl: async () => null,
-    archiveWorkspaceRecord: async (workspaceId: string) => {
+    archiveWorkspaceRecord: async (workspaceId: string, context?: WorkspaceArchiveContext) => {
       input.archivedWorkspaceIds.add(workspaceId);
       const index = active.findIndex((workspace) => workspace.workspaceId === workspaceId);
       if (index !== -1) {
         active.splice(index, 1);
+      }
+      const current = workspaceRecords.get(workspaceId);
+      if (current) {
+        workspaceRecords.set(workspaceId, {
+          ...current,
+          archivedAt: "2026-08-01T00:00:01.000Z",
+          cleanupPending: context?.cleanupPending ?? null,
+          autoArchivedChangeRequestUrl:
+            context?.autoArchivedChangeRequestUrl ?? current.autoArchivedChangeRequestUrl,
+        });
       }
     },
     markWorkspaceArchiving: () => {},

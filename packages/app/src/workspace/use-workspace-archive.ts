@@ -61,7 +61,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     onSetHiding?.(true);
     try {
       onArchiveStarted();
-      await archiveWorkspaceOptimistically({
+      const cleanupPending = await archiveWorkspaceOptimistically({
         client,
         workspace: {
           serverId,
@@ -69,6 +69,9 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
         },
       });
       purgeArchivedWorkspaceState({ serverId, workspaceId });
+      if (cleanupPending) {
+        toast.show(t("sidebar.workspace.toasts.cleanupPending"), { variant: "warning" });
+      }
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t("sidebar.workspace.toasts.archiveFailed"),

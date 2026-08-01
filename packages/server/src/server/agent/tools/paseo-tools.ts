@@ -107,7 +107,7 @@ export interface PaseoToolHostDependencies {
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
-  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "list" | "upsert">;
+  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "list" | "update" | "upsert">;
   projectRegistry?: Pick<ProjectRegistry, "get" | "list">;
   createDirectoryWorkspace?: (
     cwd: string,
@@ -1363,8 +1363,14 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       if (!options.listActiveWorkspaces) {
         throw new Error("Active workspace lister is required to archive workspaces");
       }
+      if (!options.workspaceRegistry) {
+        throw new Error("Workspace registry is required to archive workspaces");
+      }
       const workspace = await requireActiveWorkspaceForArchive(
-        { listActiveWorkspaces: options.listActiveWorkspaces },
+        {
+          listActiveWorkspaces: options.listActiveWorkspaces,
+          workspaceRegistry: options.workspaceRegistry,
+        },
         workspaceId,
       );
       const result = await archiveByScope(
@@ -3148,6 +3154,9 @@ function archiveWorktreeDependencies(
   if (!options.listActiveWorkspaces) {
     throw new Error("Active workspace lister is required to archive worktrees");
   }
+  if (!options.workspaceRegistry) {
+    throw new Error("Workspace registry is required to archive worktrees");
+  }
   if (!options.emitWorkspaceUpdatesForWorkspaceIds) {
     throw new Error("Workspace update emitter is required to archive worktrees");
   }
@@ -3166,6 +3175,7 @@ function archiveWorktreeDependencies(
     agentStorage: context.agentStorage,
     findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
     listActiveWorkspaces: options.listActiveWorkspaces,
+    workspaceRegistry: options.workspaceRegistry,
     archiveWorkspaceRecord: options.archiveWorkspaceRecord,
     emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
     markWorkspaceArchiving: options.markWorkspaceArchiving,

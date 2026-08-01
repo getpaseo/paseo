@@ -365,6 +365,34 @@ function isRunning(child) {
   return child.exitCode === null && child.signalCode === null;
 }
 
+function isProcessRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+async function waitForProcessExit({
+  pid,
+  label,
+  timeoutMs = EXIT_TIMEOUT_MS,
+  processIsRunning = isProcessRunning,
+}) {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    if (!processIsRunning(pid)) {
+      return;
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error(`${label} PID ${pid} remained running after ${timeoutMs}ms`);
+    }
+    await delay(Math.min(100, remaining));
+  }
+}
+
 function terminateChild(child, signal = "SIGTERM") {
   if (!isRunning(child)) {
     return;
@@ -654,6 +682,7 @@ async function smokeColdCliDaemonStart({ appPath }) {
   const port = await reserveLocalTcpPort();
   const listen = `127.0.0.1:${port}`;
   const env = createDefaultDaemonEnv();
+  let daemonPid = null;
 
   try {
     console.log("Packaged desktop smoke: cold-starting daemon through bundled CLI shim");
@@ -678,6 +707,7 @@ async function smokeColdCliDaemonStart({ appPath }) {
     if (!pidInfo || typeof pidInfo.pid !== "number") {
       throw new Error(`Cold CLI daemon wrote invalid pid file: ${JSON.stringify(pidInfo)}`);
     }
+    daemonPid = pidInfo.pid;
 
     if (process.platform === "darwin") {
       assertDarwinProcessDoesNotUseMainAppExecutable({
@@ -695,17 +725,24 @@ async function smokeColdCliDaemonStart({ appPath }) {
       }
     }
   } finally {
-    if (fs.existsSync(pidPath)) {
-      await runCliShimCommand({
-        appPath,
-        env,
-        args: ["daemon", "stop", "--home", home, "--force"],
-        label: "Bundled CLI shim cold daemon stop",
-      }).catch((error) => {
-        console.warn(`Packaged desktop smoke: failed to stop cold CLI daemon: ${error}`);
-      });
+    try {
+      if (fs.existsSync(pidPath)) {
+        await stopCliDaemonAndVerify({
+          appPath,
+          env,
+          daemonPid,
+          stopDaemon: ({ appPath: targetAppPath, env: targetEnv }) =>
+            runCliShimCommand({
+              appPath: targetAppPath,
+              env: targetEnv,
+              args: ["daemon", "stop", "--home", home, "--force"],
+              label: "Bundled CLI shim cold daemon stop",
+            }),
+        });
+      }
+    } finally {
+      await removeTempDir(home);
     }
-    await removeTempDir(home);
   }
 }
 
@@ -802,6 +839,19 @@ async function stopCliDaemon({ appPath, env }) {
   });
 }
 
+async function stopCliDaemonAndVerify({
+  appPath,
+  env,
+  daemonPid,
+  stopDaemon = stopCliDaemon,
+  waitForDaemonExit = waitForProcessExit,
+}) {
+  await stopDaemon({ appPath, env });
+  if (daemonPid !== null) {
+    await waitForDaemonExit({ pid: daemonPid, label: "Isolated daemon" });
+  }
+}
+
 async function smokePackagedDesktopApp({ appPath }) {
   const executablePath = getExecutablePath(appPath);
   assertExecutable(executablePath, "Packaged app executable");
@@ -846,13 +896,14 @@ async function smokePackagedDesktopApp({ appPath }) {
   let browser = null;
   let page = null;
   let daemonStopped = false;
+  let daemonPid = null;
 
   const stopDaemonForCleanup = async () => {
     if (daemonStopped) {
       return;
     }
 
-    await stopCliDaemon({ appPath, env });
+    await stopCliDaemonAndVerify({ appPath, env, daemonPid });
     daemonStopped = true;
   };
 
@@ -878,12 +929,19 @@ async function smokePackagedDesktopApp({ appPath }) {
       userData,
       deadline,
     });
+    daemonPid = status.pid;
     console.log("Packaged desktop smoke: renderer-started desktop daemon reported running");
     await smokeCliShim({ appPath, env });
     await smokeCliTerminal({ appPath, env });
-    await stopDaemonForCleanup();
+    await browser.close();
+    browser = null;
+    if (!(await waitForChildExit(child))) {
+      throw new Error("Packaged app did not exit after its browser closed");
+    }
+    await waitForProcessExit({ pid: status.pid, label: "Renderer-started isolated daemon" });
+    daemonStopped = true;
     console.log(
-      `Packaged desktop smoke passed: real renderer and preload loaded; renderer-started desktop daemon pid ${status.pid}, listen ${status.listen}; CLI shim daemon status and terminal smoke succeeded`,
+      `Packaged desktop smoke passed: real renderer and preload loaded; packaged app quit stopped renderer-started desktop daemon pid ${status.pid}, listen ${status.listen}; CLI shim daemon status and terminal smoke succeeded`,
     );
   } catch (error) {
     await writeFailureArtifacts({ page, stdout, stderr, userData, daemonHome, error }).catch(
@@ -894,7 +952,12 @@ async function smokePackagedDesktopApp({ appPath }) {
     if (!daemonStopped) {
       try {
         await stopDaemonForCleanup();
-      } catch {}
+      } catch (cleanupError) {
+        throw new Error(
+          `Packaged desktop smoke failed (${error}) and its isolated daemon cleanup also failed: ${cleanupError}`,
+          { cause: cleanupError },
+        );
+      }
     }
     throw error;
   } finally {
@@ -914,6 +977,8 @@ async function smokePackagedDesktopApp({ appPath }) {
 
 module.exports = {
   smokePackagedDesktopApp,
+  stopCliDaemonAndVerify,
+  waitForProcessExit,
 };
 
 if (require.main === module) {

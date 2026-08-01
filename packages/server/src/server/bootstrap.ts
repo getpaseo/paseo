@@ -138,9 +138,11 @@ import type { PaseoToolRuntimeContext } from "./agent/tools/types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
+import { WorkspaceCleanupRetryService } from "./workspace-cleanup-retry-service.js";
 import {
   FileBackedProjectRegistry,
   FileBackedWorkspaceRegistry,
+  type PersistedWorkspaceCleanupReceipt,
   type WorkspaceArchiveContext,
 } from "./workspace-registry.js";
 import { FileBackedChatService } from "./chat/chat-service.js";
@@ -991,6 +993,7 @@ export async function createPaseoDaemon(
     logger,
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     listActiveWorkspaces: listActiveWorkspacesExternal,
+    workspaceRegistry,
     getAutoArchivedChangeRequestUrl: async (workspaceId) =>
       (await workspaceRegistry.get(workspaceId))?.autoArchivedChangeRequestUrl ?? null,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
@@ -1061,7 +1064,12 @@ export async function createPaseoDaemon(
   };
   const createAgent = (input: Parameters<typeof createAgentCommand>[1]) =>
     createAgentCommand(createAgentCommandDependencies, input);
-  const archiveWorkspaceByIdExternal = (workspaceId: string, requestId: string) =>
+  const archiveWorkspaceByIdExternal = (
+    workspaceId: string,
+    requestId: string,
+    cleanupReceipt?: PersistedWorkspaceCleanupReceipt,
+    signal?: AbortSignal,
+  ) =>
     archiveByScope(
       {
         paseoHome: config.paseoHome,
@@ -1072,6 +1080,7 @@ export async function createPaseoDaemon(
         agentStorage,
         findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
         listActiveWorkspaces: listActiveWorkspacesExternal,
+        workspaceRegistry,
         archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
         emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
         markWorkspaceArchiving: markWorkspaceArchivingExternal,
@@ -1080,8 +1089,26 @@ export async function createPaseoDaemon(
           killTerminalsForWorkspace({ terminalManager, sessionLogger: logger }, workspaceIdToKill),
         sessionLogger: logger,
       },
-      { scope: { kind: "workspace", workspaceId }, requestId },
+      {
+        scope: cleanupReceipt
+          ? { kind: "cleanup", workspaceId, receipt: cleanupReceipt }
+          : { kind: "workspace", workspaceId },
+        requestId,
+        signal,
+      },
     );
+  const workspaceCleanupRetry = new WorkspaceCleanupRetryService({
+    workspaceRegistry,
+    retryWorkspaceCleanup: async ({ workspaceId, receipt }, signal) => {
+      await archiveWorkspaceByIdExternal(
+        workspaceId,
+        `cleanup-retry:${workspaceId}`,
+        receipt,
+        signal,
+      );
+    },
+    logger,
+  });
   const hubAgentLifecycle = new CreateAgentLifecycleDispatch({
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
@@ -1094,6 +1121,7 @@ export async function createPaseoDaemon(
       archiveAgentCommand({ agentManager, agentStorage, logger }, agentId),
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     listActiveWorkspaces: listActiveWorkspacesExternal,
+    workspaceRegistry,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
     emit: emitExternalSessionMessage,
     emitAgentRemove: async () => undefined,
@@ -1180,6 +1208,7 @@ export async function createPaseoDaemon(
         agentStorage,
         findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
         listActiveWorkspaces: listActiveWorkspacesExternal,
+        workspaceRegistry,
         archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
         emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
         markWorkspaceArchiving: markWorkspaceArchivingExternal,
@@ -1599,7 +1628,9 @@ export async function createPaseoDaemon(
       // model loading doesn't block the server from accepting connections.
       speechService.start();
       scriptHealthMonitor.start();
+      workspaceCleanupRetry.start();
     } catch (error) {
+      await workspaceCleanupRetry.stop().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
       if (mainStarted) {
         httpServer.closeAllConnections();
@@ -1610,6 +1641,7 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
+    await workspaceCleanupRetry.stop();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();

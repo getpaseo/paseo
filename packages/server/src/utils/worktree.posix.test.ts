@@ -1,6 +1,6 @@
 // POSIX-only: git worktree and teardown shell fixtures
 /* eslint-disable max-nested-callbacks */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   BranchAlreadyCheckedOutError,
   createWorktree as createWorktreePrimitive,
@@ -34,6 +34,7 @@ import {
   writeFileSync,
   readFileSync,
   chmodSync,
+  statSync,
 } from "fs";
 import { delimiter, dirname, join } from "path";
 import { tmpdir } from "os";
@@ -1333,6 +1334,84 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
 
       expect(existsSync(created.worktreePath)).toBe(true);
       expect(existsSync(join(repoDir, "teardown-start.log"))).toBe(true);
+    });
+
+    it("does not remove a worktree whose directory identity changed", async () => {
+      const created = await createLegacyWorktreeForTest({
+        branchName: "identity-fence-branch",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "identity-fence-test",
+        paseoHome,
+      });
+      const stats = statSync(created.worktreePath);
+
+      await expect(
+        deletePaseoWorktree({
+          cwd: repoDir,
+          worktreePath: created.worktreePath,
+          paseoHome,
+          expectedDirectoryIdentity: `${stats.dev}:${stats.ino + 1}`,
+        }),
+      ).rejects.toThrow("Cleanup path identity changed");
+
+      expect(existsSync(created.worktreePath)).toBe(true);
+    });
+
+    it("preserves a replacement path and retries cleanup from quarantine", async () => {
+      const created = await createLegacyWorktreeForTest({
+        branchName: "quarantine-replacement-branch",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "quarantine-replacement-test",
+        paseoHome,
+      });
+      const abortError = new Error("cleanup stopped after quarantine");
+      const abortController = new AbortController();
+      let cancellationChecks = 0;
+      vi.spyOn(abortController.signal, "throwIfAborted").mockImplementation(() => {
+        cancellationChecks += 1;
+        if (cancellationChecks !== 3) return;
+        mkdirSync(created.worktreePath, { recursive: true });
+        writeFileSync(join(created.worktreePath, "replacement.txt"), "keep");
+        throw abortError;
+      });
+
+      let cleanupError: unknown;
+      try {
+        await deletePaseoWorktree({
+          cwd: repoDir,
+          worktreePath: created.worktreePath,
+          teardownCwds: [],
+          paseoHome,
+          signal: abortController.signal,
+        });
+      } catch (error) {
+        cleanupError = error;
+      }
+
+      expect(cleanupError).toMatchObject({
+        name: "WorktreeCleanupRelocatedError",
+        directoryIdentity: expect.any(String),
+        remainingPath: expect.stringContaining(".paseo-cleanup-quarantine-replacement-test-"),
+      });
+      expect(readFileSync(join(created.worktreePath, "replacement.txt"), "utf8")).toBe("keep");
+      const relocated = cleanupError as {
+        directoryIdentity: string;
+        remainingPath: string;
+      };
+      expect(existsSync(relocated.remainingPath)).toBe(true);
+
+      await deletePaseoWorktree({
+        cwd: repoDir,
+        worktreePath: created.worktreePath,
+        teardownCwds: [],
+        paseoHome,
+        expectedDirectoryIdentity: relocated.directoryIdentity,
+      });
+
+      expect(readFileSync(join(created.worktreePath, "replacement.txt"), "utf8")).toBe("keep");
+      expect(existsSync(relocated.remainingPath)).toBe(false);
     });
   });
 });

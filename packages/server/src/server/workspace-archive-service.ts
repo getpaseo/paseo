@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { promises as fs } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 import type { Logger } from "pino";
 
@@ -8,17 +9,21 @@ import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { ForgeService } from "../services/forge-service.js";
 import {
   deletePaseoWorktree,
+  hasPaseoWorktreeCleanupQuarantine,
   isPaseoOwnedWorktreeCwd,
   runWorktreeTeardownCommands,
-  WorktreeTeardownError,
+  WorktreeCleanupRelocatedError,
 } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type {
   PersistedWorkspaceRecord,
+  PersistedWorkspaceCleanupReceipt,
   WorkspaceArchiveContext,
   WorkspaceRegistry,
 } from "./workspace-registry.js";
+import { workspaceCleanupReceiptToken } from "./workspace-registry.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
+import { withWorkspaceCleanupLock } from "./workspace-cleanup-lock.js";
 
 export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
@@ -42,12 +47,16 @@ export interface ArchiveDependencies {
   // break a same-cwd tie in favor of the worktree-kind record when archiving by
   // path (no explicit workspaceId).
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
-  archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
+  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "list" | "update">;
+  archiveWorkspaceRecord: (workspaceId: string, context?: WorkspaceArchiveContext) => Promise<void>;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
   killTerminalsForWorkspace: (workspaceId: string) => Promise<void>;
   sessionLogger?: Logger;
+  deleteWorktree?: typeof deletePaseoWorktree;
+  runTeardownCommands?: typeof runWorktreeTeardownCommands;
+  now?: () => Date;
 }
 
 export interface KillTerminalsForWorkspaceDependencies {
@@ -58,30 +67,42 @@ export interface KillTerminalsForWorkspaceDependencies {
 
 export type ArchiveScope =
   | { kind: "workspace"; workspaceId: string }
-  | { kind: "worktree"; targetPath: string };
+  | { kind: "worktree"; targetPath: string }
+  | {
+      kind: "cleanup";
+      workspaceId: string;
+      receipt: PersistedWorkspaceCleanupReceipt;
+    };
 
 export interface ArchiveResult {
   archivedAgentIds: string[];
   archivedWorkspaceIds: string[];
   removedDirectory: boolean;
+  cleanupPending: boolean;
 }
 
 export interface ArchiveByScopeRequest {
   scope: ArchiveScope;
   requestId: string;
+  signal?: AbortSignal;
 }
 
 export async function requireActiveWorkspaceForArchive(
-  dependencies: Pick<ArchiveDependencies, "listActiveWorkspaces">,
+  dependencies: Pick<ArchiveDependencies, "listActiveWorkspaces" | "workspaceRegistry">,
   workspaceId: string,
 ): Promise<ActiveWorkspaceRef> {
   const workspace = (await dependencies.listActiveWorkspaces()).find(
     (candidate) => candidate.workspaceId === workspaceId,
   );
-  if (!workspace) {
+  if (workspace) {
+    return workspace;
+  }
+
+  const persisted = await dependencies.workspaceRegistry.get(workspaceId);
+  if (!persisted?.archivedAt || !persisted.cleanupPending) {
     throw new Error(`Workspace not found: ${workspaceId}`);
   }
-  return workspace;
+  return persisted;
 }
 
 interface BackingDirectory {
@@ -95,6 +116,8 @@ interface ArchiveTarget {
   backing: BackingDirectory | null;
   teardownTargets: Array<{ workspaceId: string | null; cwd: string }>;
   workspaceIds: string[];
+  cleanupWorkspaceIds: string[];
+  selectedCleanupReceipt: { workspaceId: string; token: string } | null;
 }
 
 export async function resolveWorkspaceIdAtPath(
@@ -119,6 +142,21 @@ export async function archiveByScope(
   request: ArchiveByScopeRequest,
 ): Promise<ArchiveResult> {
   const target = await resolveArchiveTarget(dependencies, request.scope);
+  if (target.backing?.isPaseoOwnedWorktree) {
+    return withWorkspaceCleanupLock(dirname(target.backing.path), () =>
+      withWorkspaceCleanupLock(target.backing!.path, () =>
+        archiveResolvedTarget(dependencies, request, target),
+      ),
+    );
+  }
+  return archiveResolvedTarget(dependencies, request, target);
+}
+
+async function archiveResolvedTarget(
+  dependencies: ArchiveDependencies,
+  request: ArchiveByScopeRequest,
+  target: ArchiveTarget,
+): Promise<ArchiveResult> {
   const targetWorkspaceIds = target.workspaceIds;
 
   if (targetWorkspaceIds.length > 0) {
@@ -134,7 +172,7 @@ export async function archiveByScope(
 
     const { archivedAgents, archivedWorkspaceIds } = await archiveTargetRecords(
       dependencies,
-      targetWorkspaceIds,
+      target,
       request.requestId,
     );
 
@@ -165,6 +203,7 @@ export async function archiveByScope(
       archivedAgentIds: Array.from(archivedAgents),
       archivedWorkspaceIds,
       removedDirectory,
+      cleanupPending: await hasPendingCleanup(dependencies, target.cleanupWorkspaceIds),
     };
   } finally {
     if (targetWorkspaceIds.length > 0) {
@@ -180,20 +219,81 @@ async function resolveArchiveTarget(
 ): Promise<ArchiveTarget> {
   const activeWorkspaces = await dependencies.listActiveWorkspaces();
 
+  if (scope.kind === "cleanup") {
+    const persisted = await dependencies.workspaceRegistry.get(scope.workspaceId);
+    if (
+      !persisted?.archivedAt ||
+      !persisted.cleanupPending ||
+      workspaceCleanupReceiptToken(persisted.cleanupPending) !==
+        workspaceCleanupReceiptToken(scope.receipt)
+    ) {
+      return {
+        backing: null,
+        teardownTargets: [],
+        workspaceIds: [],
+        cleanupWorkspaceIds: [],
+        selectedCleanupReceipt: null,
+      };
+    }
+    const receipt = persisted.cleanupPending;
+    return {
+      backing: {
+        path: receipt.backingPath,
+        isPaseoOwnedWorktree: true,
+        mainRepoRoot: receipt.mainRepoRoot,
+        paseoWorktreesRoot: receipt.paseoWorktreesRoot,
+      },
+      teardownTargets: receipt.teardownCwds.map((cwd) => ({ workspaceId: null, cwd })),
+      workspaceIds: [],
+      cleanupWorkspaceIds: [scope.workspaceId],
+      selectedCleanupReceipt: {
+        workspaceId: scope.workspaceId,
+        token: workspaceCleanupReceiptToken(receipt),
+      },
+    };
+  }
+
   if (scope.kind === "workspace") {
     const workspaceId = scope.workspaceId;
     const record = activeWorkspaces.find((workspace) => workspace.workspaceId === workspaceId);
     if (!record) {
+      const persisted = await dependencies.workspaceRegistry.get(workspaceId);
+      if (persisted?.archivedAt && persisted.cleanupPending) {
+        const receipt = persisted.cleanupPending;
+        return {
+          backing: {
+            path: receipt.backingPath,
+            isPaseoOwnedWorktree: true,
+            mainRepoRoot: receipt.mainRepoRoot,
+            paseoWorktreesRoot: receipt.paseoWorktreesRoot,
+          },
+          teardownTargets: receipt.teardownCwds.map((cwd) => ({ workspaceId: null, cwd })),
+          workspaceIds: [],
+          cleanupWorkspaceIds: [workspaceId],
+          selectedCleanupReceipt: {
+            workspaceId,
+            token: workspaceCleanupReceiptToken(receipt),
+          },
+        };
+      }
       dependencies.sessionLogger?.warn(
         { workspaceId },
         "Workspace not found for archive-by-scope; skipping",
       );
-      return { backing: null, teardownTargets: [], workspaceIds: [] };
+      return {
+        backing: null,
+        teardownTargets: [],
+        workspaceIds: [],
+        cleanupWorkspaceIds: [],
+        selectedCleanupReceipt: null,
+      };
     }
     return {
       backing: await resolveWorkspaceBackingDirectory(record, dependencies),
       teardownTargets: [{ workspaceId, cwd: record.cwd }],
       workspaceIds: [workspaceId],
+      cleanupWorkspaceIds: [workspaceId],
+      selectedCleanupReceipt: null,
     };
   }
 
@@ -223,6 +323,8 @@ async function resolveArchiveTarget(
           }))
         : [{ workspaceId: null, cwd: scope.targetPath }],
     workspaceIds: targetWorkspaces.map((workspace) => workspace.workspaceId),
+    cleanupWorkspaceIds: targetWorkspaces.map((workspace) => workspace.workspaceId),
+    selectedCleanupReceipt: null,
   };
 }
 
@@ -275,16 +377,21 @@ async function resolveBackingDirectory(
 
 async function archiveTargetRecords(
   dependencies: ArchiveDependencies,
-  targetWorkspaceIds: string[],
+  target: ArchiveTarget,
   requestId: string,
 ): Promise<{ archivedAgents: Set<string>; archivedWorkspaceIds: string[] }> {
   const archivedAgents = new Set<string>();
   const archivedWorkspaceIds: string[] = [];
+  const cleanupReceipts = await createCleanupReceipts(dependencies, target);
 
   const results = await Promise.allSettled(
-    targetWorkspaceIds.map(async (workspaceId) => {
+    target.workspaceIds.map(async (workspaceId) => {
       const agents = await archiveWorkspaceContents(dependencies, workspaceId);
-      await dependencies.archiveWorkspaceRecord(workspaceId);
+      const cleanupPending = cleanupReceipts.get(workspaceId);
+      await dependencies.archiveWorkspaceRecord(
+        workspaceId,
+        cleanupPending ? { cleanupPending } : undefined,
+      );
       return { workspaceId, agents };
     }),
   );
@@ -308,7 +415,7 @@ async function archiveTargetRecords(
 
 async function maybeRemoveDirectory(
   dependencies: ArchiveDependencies,
-  request: Pick<ArchiveByScopeRequest, "requestId">,
+  request: Pick<ArchiveByScopeRequest, "requestId" | "signal">,
   target: ArchiveTarget,
   archivedWorkspaceIds: string[],
 ): Promise<boolean> {
@@ -316,37 +423,96 @@ async function maybeRemoveDirectory(
   if (!backing?.isPaseoOwnedWorktree) {
     return false;
   }
+  if (!(await selectedCleanupReceiptIsCurrent(dependencies, target.selectedCleanupReceipt))) {
+    return false;
+  }
+
+  const cleanupWorkspaceIds = await matchingCleanupWorkspaceIds(
+    dependencies,
+    target.cleanupWorkspaceIds,
+  );
+  if (target.cleanupWorkspaceIds.length > 0 && cleanupWorkspaceIds.length === 0) {
+    return false;
+  }
+  await updateCleanupReceipts(dependencies, cleanupWorkspaceIds, (receipt) => ({
+    ...receipt,
+    lastAttemptAt: nowIso(dependencies),
+    attemptCount: receipt.attemptCount + 1,
+    lastError: null,
+  }));
+
+  const receiptIdentity =
+    cleanupWorkspaceIds.length === 0
+      ? undefined
+      : await expectedDirectoryIdentity(dependencies, cleanupWorkspaceIds);
+  const initialIdentity = await validateCleanupDirectoryIdentity(
+    dependencies,
+    request,
+    cleanupWorkspaceIds,
+    backing.path,
+    receiptIdentity,
+  );
+  if (initialIdentity.status === "changed" || initialIdentity.status === "released") {
+    return false;
+  }
+  const expectedIdentity =
+    initialIdentity.status === "matched" || initialIdentity.status === "quarantined"
+      ? initialIdentity.identity
+      : receiptIdentity;
 
   const archivedWorkspaceIdSet = new Set(archivedWorkspaceIds);
-  const teardownCwds = uniqueFilesystemPaths(
-    target.teardownTargets
-      .filter(
-        (teardownTarget) =>
-          teardownTarget.workspaceId === null ||
-          archivedWorkspaceIdSet.has(teardownTarget.workspaceId),
-      )
-      .map((teardownTarget) => teardownTarget.cwd),
-  );
+  const teardownCwds =
+    cleanupWorkspaceIds.length > 0
+      ? await cleanupTeardownCwds(dependencies, cleanupWorkspaceIds)
+      : uniqueFilesystemPaths(
+          target.teardownTargets
+            .filter(
+              (teardownTarget) =>
+                teardownTarget.workspaceId === null ||
+                archivedWorkspaceIdSet.has(teardownTarget.workspaceId),
+            )
+            .map((teardownTarget) => teardownTarget.cwd),
+        );
 
-  try {
-    for (const teardownCwd of teardownCwds) {
-      await runWorktreeTeardownCommands({
-        worktreePath: backing.path,
-        teardownCwd,
-        repoRootPath: backing.mainRepoRoot ?? undefined,
-      });
-    }
-  } catch (error) {
-    if (error instanceof WorktreeTeardownError) {
+  if (initialIdentity.status === "matched") {
+    try {
+      for (const teardownCwd of teardownCwds) {
+        await (dependencies.runTeardownCommands ?? runWorktreeTeardownCommands)({
+          worktreePath: backing.path,
+          teardownCwd,
+          repoRootPath: backing.mainRepoRoot ?? undefined,
+          signal: request.signal,
+        });
+        await completeCleanupTeardown(dependencies, cleanupWorkspaceIds, teardownCwd);
+      }
+    } catch (error) {
+      await recordCleanupFailure(dependencies, cleanupWorkspaceIds, errorMessage(error));
       dependencies.sessionLogger?.warn(
         { err: error, targetPath: backing.path, requestId: request.requestId },
-        "Worktree teardown failed during archive; workspace already archived",
+        "Worktree teardown failed during archive; cleanup remains pending",
       );
       return false;
     }
-    throw error;
   }
 
+  return removeDirectoryUnderLock(
+    dependencies,
+    request,
+    backing,
+    archivedWorkspaceIds,
+    cleanupWorkspaceIds,
+    expectedIdentity,
+  );
+}
+
+async function removeDirectoryUnderLock(
+  dependencies: ArchiveDependencies,
+  request: Pick<ArchiveByScopeRequest, "requestId" | "signal">,
+  backing: BackingDirectory,
+  archivedWorkspaceIds: string[],
+  cleanupWorkspaceIds: string[],
+  expectedIdentity: string | null | undefined,
+): Promise<boolean> {
   const remainingActive = await dependencies.listActiveWorkspaces();
   if (
     !(await isDirectoryUnreferenced(
@@ -356,30 +522,287 @@ async function maybeRemoveDirectory(
       dependencies,
     ))
   ) {
+    await clearCleanupReceipts(dependencies, cleanupWorkspaceIds);
+    return false;
+  }
+
+  const identityAtRemoval = await validateCleanupDirectoryIdentity(
+    dependencies,
+    request,
+    cleanupWorkspaceIds,
+    backing.path,
+    expectedIdentity,
+  );
+  if (identityAtRemoval.status === "changed" || identityAtRemoval.status === "released") {
     return false;
   }
 
   try {
-    await deletePaseoWorktree({
+    await (dependencies.deleteWorktree ?? deletePaseoWorktree)({
       cwd: backing.mainRepoRoot,
       worktreePath: backing.path,
       teardownCwds: [],
       worktreesRoot: backing.paseoWorktreesRoot ?? undefined,
       paseoHome: dependencies.paseoHome,
       worktreesBaseRoot: dependencies.paseoWorktreesBaseRoot,
+      expectedDirectoryIdentity: expectedIdentity,
+      signal: request.signal,
     });
     dependencies.github.invalidate({ cwd: backing.path });
+    await clearCleanupReceipts(dependencies, cleanupWorkspaceIds);
     return true;
   } catch (error) {
-    if (error instanceof WorktreeTeardownError) {
-      dependencies.sessionLogger?.warn(
-        { err: error, targetPath: backing.path, requestId: request.requestId },
-        "Worktree disk removal failed during archive; workspace already archived",
-      );
-      return false;
+    if (error instanceof WorktreeCleanupRelocatedError) {
+      await updateCleanupReceipts(dependencies, cleanupWorkspaceIds, (receipt) => ({
+        ...receipt,
+        backingPath: error.remainingPath,
+        directoryIdentity: error.directoryIdentity,
+      }));
+    }
+    await recordCleanupFailure(dependencies, cleanupWorkspaceIds, errorMessage(error));
+    dependencies.sessionLogger?.warn(
+      { err: error, targetPath: backing.path, requestId: request.requestId },
+      "Worktree disk removal failed during archive; cleanup remains pending",
+    );
+    return false;
+  }
+}
+
+async function createCleanupReceipts(
+  dependencies: ArchiveDependencies,
+  target: ArchiveTarget,
+): Promise<Map<string, PersistedWorkspaceCleanupReceipt>> {
+  const receipts = new Map<string, PersistedWorkspaceCleanupReceipt>();
+  const backing = target.backing;
+  if (!backing?.isPaseoOwnedWorktree || target.workspaceIds.length === 0) {
+    return receipts;
+  }
+
+  const directoryIdentity = await readDirectoryIdentity(backing.path);
+  const createdAt = nowIso(dependencies);
+  for (const workspaceId of target.workspaceIds) {
+    const teardownCwds = uniqueFilesystemPaths(
+      target.teardownTargets
+        .filter((entry) => entry.workspaceId === null || entry.workspaceId === workspaceId)
+        .map((entry) => entry.cwd),
+    );
+    receipts.set(workspaceId, {
+      workspaceId,
+      backingPath: backing.path,
+      teardownCwds,
+      mainRepoRoot: backing.mainRepoRoot,
+      paseoWorktreesRoot: backing.paseoWorktreesRoot,
+      directoryIdentity,
+      createdAt,
+      lastAttemptAt: null,
+      attemptCount: 0,
+      lastError: null,
+    });
+  }
+  return receipts;
+}
+
+async function readDirectoryIdentity(directoryPath: string): Promise<string | null> {
+  try {
+    const stats = await fs.stat(directoryPath);
+    return `${stats.dev}:${stats.ino}`;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
     }
     throw error;
   }
+}
+
+type CleanupDirectoryIdentityValidation =
+  | { status: "matched"; identity: string }
+  | { status: "quarantined"; identity: string }
+  | { status: "missing" }
+  | { status: "changed" }
+  | { status: "released" };
+
+async function validateCleanupDirectoryIdentity(
+  dependencies: ArchiveDependencies,
+  request: Pick<ArchiveByScopeRequest, "requestId">,
+  cleanupWorkspaceIds: string[],
+  directoryPath: string,
+  expectedIdentity: string | null | undefined,
+): Promise<CleanupDirectoryIdentityValidation> {
+  if (
+    cleanupWorkspaceIds.length > 0 &&
+    !(await cleanupOwnershipRemainsArchived(dependencies, cleanupWorkspaceIds))
+  ) {
+    return { status: "released" };
+  }
+  const currentIdentity = await readDirectoryIdentity(directoryPath);
+  if (currentIdentity === null) {
+    return { status: "missing" };
+  }
+  if (expectedIdentity !== undefined && currentIdentity !== expectedIdentity) {
+    if (
+      expectedIdentity !== null &&
+      (await hasPaseoWorktreeCleanupQuarantine(directoryPath, expectedIdentity))
+    ) {
+      return { status: "quarantined", identity: expectedIdentity };
+    }
+    await recordCleanupFailure(
+      dependencies,
+      cleanupWorkspaceIds,
+      `Cleanup path identity changed for ${directoryPath}`,
+    );
+    dependencies.sessionLogger?.warn(
+      { targetPath: directoryPath, requestId: request.requestId },
+      "Refusing to remove a replaced worktree directory during archive cleanup",
+    );
+    return { status: "changed" };
+  }
+  return { status: "matched", identity: currentIdentity };
+}
+
+async function cleanupOwnershipRemainsArchived(
+  dependencies: ArchiveDependencies,
+  workspaceIds: string[],
+): Promise<boolean> {
+  const workspaces = await Promise.all(
+    workspaceIds.map((workspaceId) => dependencies.workspaceRegistry.get(workspaceId)),
+  );
+  return workspaces.every((workspace) =>
+    Boolean(workspace?.archivedAt && workspace.cleanupPending),
+  );
+}
+
+async function matchingCleanupWorkspaceIds(
+  dependencies: ArchiveDependencies,
+  workspaceIds: string[],
+): Promise<string[]> {
+  const seeds = (
+    await Promise.all(
+      workspaceIds.map((workspaceId) => dependencies.workspaceRegistry.get(workspaceId)),
+    )
+  ).filter((workspace): workspace is PersistedWorkspaceRecord => workspace !== null);
+  const keys = new Set(
+    seeds.flatMap((workspace) =>
+      workspace.cleanupPending ? [cleanupReceiptKey(workspace.cleanupPending)] : [],
+    ),
+  );
+  if (keys.size === 0) {
+    return [];
+  }
+  return (await dependencies.workspaceRegistry.list())
+    .filter(
+      (workspace) =>
+        workspace.cleanupPending && keys.has(cleanupReceiptKey(workspace.cleanupPending)),
+    )
+    .map((workspace) => workspace.workspaceId);
+}
+
+function cleanupReceiptKey(receipt: PersistedWorkspaceCleanupReceipt): string {
+  return `${resolve(receipt.backingPath)}\0${receipt.directoryIdentity ?? "missing"}`;
+}
+
+async function selectedCleanupReceiptIsCurrent(
+  dependencies: ArchiveDependencies,
+  selected: ArchiveTarget["selectedCleanupReceipt"],
+): Promise<boolean> {
+  if (!selected) return true;
+  const workspace = await dependencies.workspaceRegistry.get(selected.workspaceId);
+  return Boolean(
+    workspace?.archivedAt &&
+    workspace.cleanupPending &&
+    workspaceCleanupReceiptToken(workspace.cleanupPending) === selected.token,
+  );
+}
+
+async function expectedDirectoryIdentity(
+  dependencies: ArchiveDependencies,
+  workspaceIds: string[],
+): Promise<string | null> {
+  for (const workspaceId of workspaceIds) {
+    const workspace = await dependencies.workspaceRegistry.get(workspaceId);
+    if (workspace?.cleanupPending) {
+      return workspace.cleanupPending.directoryIdentity;
+    }
+  }
+  return null;
+}
+
+async function cleanupTeardownCwds(
+  dependencies: ArchiveDependencies,
+  workspaceIds: string[],
+): Promise<string[]> {
+  const workspaces = await Promise.all(
+    workspaceIds.map((workspaceId) => dependencies.workspaceRegistry.get(workspaceId)),
+  );
+  return uniqueFilesystemPaths(
+    workspaces.flatMap((workspace) => workspace?.cleanupPending?.teardownCwds ?? []),
+  );
+}
+
+async function completeCleanupTeardown(
+  dependencies: ArchiveDependencies,
+  workspaceIds: string[],
+  completedCwd: string,
+): Promise<void> {
+  await updateCleanupReceipts(dependencies, workspaceIds, (receipt) => ({
+    ...receipt,
+    teardownCwds: receipt.teardownCwds.filter(
+      (cwd) => !createRealpathAwarePathMatcher(completedCwd)(cwd),
+    ),
+  }));
+}
+
+async function updateCleanupReceipts(
+  dependencies: ArchiveDependencies,
+  workspaceIds: string[],
+  updater: (receipt: PersistedWorkspaceCleanupReceipt) => PersistedWorkspaceCleanupReceipt | null,
+): Promise<void> {
+  await Promise.all(
+    workspaceIds.map((workspaceId) =>
+      dependencies.workspaceRegistry.update(workspaceId, (workspace) => ({
+        ...workspace,
+        cleanupPending: workspace.cleanupPending ? updater(workspace.cleanupPending) : null,
+      })),
+    ),
+  );
+}
+
+async function clearCleanupReceipts(
+  dependencies: ArchiveDependencies,
+  workspaceIds: string[],
+): Promise<void> {
+  await updateCleanupReceipts(dependencies, workspaceIds, () => null);
+}
+
+async function recordCleanupFailure(
+  dependencies: ArchiveDependencies,
+  workspaceIds: string[],
+  message: string,
+): Promise<void> {
+  await updateCleanupReceipts(dependencies, workspaceIds, (receipt) => ({
+    ...receipt,
+    lastError: message,
+  }));
+}
+
+async function hasPendingCleanup(
+  dependencies: ArchiveDependencies,
+  workspaceIds: string[],
+): Promise<boolean> {
+  return (
+    await Promise.all(
+      workspaceIds.map((workspaceId) => dependencies.workspaceRegistry.get(workspaceId)),
+    )
+  ).some(
+    (workspace) => workspace?.cleanupPending !== null && workspace?.cleanupPending !== undefined,
+  );
+}
+
+function nowIso(dependencies: Pick<ArchiveDependencies, "now">): string {
+  return (dependencies.now?.() ?? new Date()).toISOString();
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function uniqueFilesystemPaths(paths: string[]): string[] {

@@ -994,6 +994,8 @@ export const ja: TranslationResources = {
         hostDisconnected: "ホストが接続されていません",
         hideFailed: "ワークスペースの非表示に失敗しました",
         archiveFailed: "ワークスペースのアーカイブに失敗しました",
+        cleanupPending:
+          "ワークスペースをアーカイブしました。ローカルのクリーンアップはバックグラウンドで続行されます",
       },
     },
   },

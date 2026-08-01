@@ -1014,6 +1014,8 @@ export const es: TranslationResources = {
         hostDisconnected: "Hostno está conectado",
         hideFailed: "No se pudo ocultar el espacio de trabajo",
         archiveFailed: "No se pudo archivar el espacio de trabajo",
+        cleanupPending:
+          "Espacio de trabajo archivado; la limpieza local continuará en segundo plano",
       },
     },
   },

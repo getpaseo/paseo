@@ -972,6 +972,7 @@ export const zhCN: TranslationResources = {
         hostDisconnected: "Host 未连接",
         hideFailed: "隐藏 workspace 失败",
         archiveFailed: "归档工作区失败",
+        cleanupPending: "工作区已归档；本地清理将在后台继续",
       },
     },
   },

@@ -5,6 +5,7 @@ interface FakeSpawnBehavior {
   delayMs?: number;
   emitError?: Error;
   exitCode?: number | null;
+  holdKillClose?: boolean;
   stderrData?: Buffer | string;
   stdoutData?: Buffer | string;
 }
@@ -47,6 +48,7 @@ class FakeChildProcess extends EventEmitter {
   private readonly behavior: FakeSpawnBehavior;
   private readonly timers: NodeJS.Timeout[] = [];
   private closed = false;
+  private pendingKillSignal: NodeJS.Signals | null = null;
 
   public constructor(behavior: FakeSpawnBehavior) {
     super();
@@ -69,6 +71,10 @@ class FakeChildProcess extends EventEmitter {
     this.killed = true;
     this.killSignals.push(signal);
     this.clearTimers();
+    if (this.behavior.holdKillClose) {
+      this.pendingKillSignal = signal;
+      return true;
+    }
     this.schedule(() => {
       this.finishClose({
         exitCode: null,
@@ -76,6 +82,13 @@ class FakeChildProcess extends EventEmitter {
       });
     }, 0);
     return true;
+  }
+
+  public releaseKillClose(): void {
+    const signal = this.pendingKillSignal;
+    if (!signal) return;
+    this.pendingKillSignal = null;
+    this.finishClose({ exitCode: null, signal });
   }
 
   public dispose(): void {
@@ -227,6 +240,82 @@ describe("runGitCommand", () => {
     ).resolves.toMatchObject({
       exitCode: 0,
       truncated: false,
+    });
+  });
+
+  it("kills an in-flight command when its signal is aborted", async () => {
+    const { runGitCommand } = await loadRunGitCommand(1);
+    const abortController = new AbortController();
+    const abortReason = new Error("cleanup stopped");
+    enqueueSpawnBehaviors({ delayMs: 5_000 }, { delayMs: 0, stdoutData: "next" });
+
+    const command = runGitCommand(["worktree", "prune"], {
+      cwd: process.cwd(),
+      signal: abortController.signal,
+    });
+    await vi.waitFor(() => expect(fakeSpawnController.processes).toHaveLength(1));
+    abortController.abort(abortReason);
+
+    await expect(command).rejects.toBe(abortReason);
+    expect(fakeSpawnController.processes[0]?.killSignals).toEqual(["SIGKILL"]);
+    await expect(runGitCommand(["status"], { cwd: process.cwd() })).resolves.toMatchObject({
+      exitCode: 0,
+      stdout: "next",
+    });
+  });
+
+  it("waits for an aborted process to close before reporting cancellation", async () => {
+    const { runGitCommand } = await loadRunGitCommand(1);
+    const abortController = new AbortController();
+    const abortReason = new Error("cleanup stopped");
+    enqueueSpawnBehaviors({ delayMs: 5_000, holdKillClose: true });
+
+    const command = runGitCommand(["worktree", "prune"], {
+      cwd: process.cwd(),
+      signal: abortController.signal,
+    });
+    await vi.waitFor(() => expect(fakeSpawnController.processes).toHaveLength(1));
+    let outcome = "pending";
+    void command.then(
+      () => (outcome = "resolved"),
+      () => (outcome = "rejected"),
+    );
+    abortController.abort(abortReason);
+
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+    expect(outcome).toBe("pending");
+    expect(fakeSpawnController.processes[0]?.killSignals).toEqual(["SIGKILL"]);
+
+    fakeSpawnController.processes[0]?.releaseKillClose();
+    await expect(command).rejects.toBe(abortReason);
+  });
+
+  it("removes an aborted queued command from runtime metrics without spawning it", async () => {
+    const { runGitCommand, snapshotGitCommandRuntimeMetrics } = await loadRunGitCommand(1);
+    const abortController = new AbortController();
+    enqueueSpawnBehaviors({ delayMs: 25 });
+
+    const active = runGitCommand(["status"], { cwd: process.cwd() });
+    let activeSettled = false;
+    void active.finally(() => {
+      activeSettled = true;
+    });
+    const queued = runGitCommand(["rev-parse", "HEAD"], {
+      cwd: process.cwd(),
+      signal: abortController.signal,
+    });
+    abortController.abort(new Error("queued cleanup stopped"));
+
+    await expect(queued).rejects.toThrow("queued cleanup stopped");
+    expect(activeSettled).toBe(false);
+    await active;
+    expect(fakeSpawnController.processes).toHaveLength(1);
+    expect(snapshotGitCommandRuntimeMetrics()).toMatchObject({
+      pending: 0,
+      submitted: 2,
+      started: 1,
+      completed: 2,
+      failed: 1,
     });
   });
 

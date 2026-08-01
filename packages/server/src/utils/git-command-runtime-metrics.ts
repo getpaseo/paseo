@@ -73,6 +73,14 @@ export class GitCommandRuntimeMetricsWindow {
     this.queueWaitSamples.push(Math.max(0, now - metric.queuedAtMs));
   }
 
+  cancel(metric: GitCommandRuntimeMetric): void {
+    if (!this.pendingCommands.delete(metric)) {
+      return;
+    }
+    this.completedCount += 1;
+    this.failedCount += 1;
+  }
+
   finish(metric: GitCommandRuntimeMetric, outcome: { success: boolean; timedOut: boolean }): void {
     if (metric.startedAtMs === null) {
       return;

@@ -3558,6 +3558,7 @@ export const ArchiveWorkspaceResponseMessageSchema = z.object({
     requestId: z.string(),
     workspaceId: z.string(),
     archivedAt: z.string().nullable(),
+    cleanupPending: z.boolean().optional(),
     error: z.string().nullable(),
   }),
 });

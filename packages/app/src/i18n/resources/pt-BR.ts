@@ -1005,6 +1005,7 @@ export const ptBR: TranslationResources = {
         hostDisconnected: "Host não está conectado",
         hideFailed: "Falha ao ocultar workspace",
         archiveFailed: "Falha ao arquivar workspace",
+        cleanupPending: "Workspace arquivado; a limpeza local continuará em segundo plano",
       },
     },
   },

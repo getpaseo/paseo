@@ -983,6 +983,7 @@ export const ar: TranslationResources = {
         hostDisconnected: "Host غير متصل",
         hideFailed: "فشل في إخفاء مساحة العمل",
         archiveFailed: "فشل في أرشفة مساحة العمل",
+        cleanupPending: "تمت أرشفة مساحة العمل؛ ستستمر عملية التنظيف المحلية في الخلفية",
       },
     },
   },
