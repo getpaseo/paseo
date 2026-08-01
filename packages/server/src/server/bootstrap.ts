@@ -539,29 +539,32 @@ function createManagedProcessLedgerReconciliation(
       return;
     }
 
-    cancelRetry = scheduleRetry(() => {
-      if (disposed) {
-        return;
-      }
-      cancelRetry = null;
-      runReconcile();
-    });
+    try {
+      cancelRetry = scheduleRetry(() => {
+        if (disposed) {
+          return;
+        }
+        cancelRetry = null;
+        runReconcile();
+      });
+    } catch (error) {
+      logger.warn({ err: error }, "Failed to schedule managed helper process reconciliation");
+    }
   };
 
-  const runReconcile = (): Promise<void> => {
-    if (disposed) {
-      return Promise.resolve();
-    }
-
-    const current = reconcile();
+  const trackReconciliation = (current: Promise<void>): Promise<void> => {
     inFlight = current;
-    void current.finally(() => {
+    const clear = () => {
       if (inFlight === current) {
         inFlight = null;
       }
-    });
+    };
+    void current.then(clear, clear);
     return current;
   };
+
+  const runReconcile = (): Promise<void> =>
+    disposed ? Promise.resolve() : trackReconciliation(reconcile());
 
   return {
     start() {
@@ -569,31 +572,31 @@ function createManagedProcessLedgerReconciliation(
         return;
       }
       started = true;
-      const current = initialRecords.then((records) => {
-        if (disposed) {
-          return;
-        }
-        unresolvedRecordIds = new Set(records.map((record) => record.id));
-        if (disposed || unresolvedRecordIds.size === 0) {
-          return;
-        }
-        return reconcile();
-      });
-      inFlight = current;
-      void current.finally(() => {
-        if (inFlight === current) {
-          inFlight = null;
-        }
-      });
+      void trackReconciliation(
+        initialRecords.then((records) => {
+          if (disposed) {
+            return;
+          }
+          unresolvedRecordIds = new Set(records.map((record) => record.id));
+          if (disposed || unresolvedRecordIds.size === 0) {
+            return;
+          }
+          return reconcile();
+        }),
+      );
     },
     async stop() {
       if (!disposed) {
         disposed = true;
         abortController.abort();
-        cancelRetry?.();
+        try {
+          cancelRetry?.();
+        } catch (error) {
+          logger.warn({ err: error }, "Failed to cancel managed helper process reconciliation");
+        }
         cancelRetry = null;
       }
-      await (inFlight ?? initialRecords);
+      await Promise.allSettled([inFlight ?? initialRecords]);
     },
   };
 }

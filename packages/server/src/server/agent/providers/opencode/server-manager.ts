@@ -109,6 +109,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private retiredServers = new Set<OpenCodeServerGeneration>();
   private terminationPromises = new WeakMap<OpenCodeServerGeneration, Promise<void>>();
   private cleanupRetryTimers = new WeakMap<OpenCodeServerGeneration, NodeJS.Timeout>();
+  private cleanupRetriesDisabled = new WeakSet<OpenCodeServerGeneration>();
   private pendingStarts = new Set<Promise<OpenCodeServerGeneration>>();
   private shutdownPromise: Promise<void> | null = null;
   private startPromise: Promise<OpenCodeServerGeneration> | null = null;
@@ -573,12 +574,20 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   private async shutdownOnce(): Promise<void> {
-    const pendingResults = await Promise.allSettled(Array.from(this.pendingStarts));
     const servers = new Set<OpenCodeServerGeneration>([
       ...(this.currentServer ? [this.currentServer] : []),
       ...this.retiredServers,
-      ...pendingResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : [])),
     ]);
+    for (const server of servers) {
+      this.disableCleanupRetry(server);
+    }
+    const pendingResults = await Promise.allSettled(Array.from(this.pendingStarts));
+    for (const result of pendingResults) {
+      if (result.status === "fulfilled") {
+        servers.add(result.value);
+        this.disableCleanupRetry(result.value);
+      }
+    }
     await Promise.all(Array.from(servers, (server) => this.killServer(server)));
     this.currentServer = null;
     this.retiredServers.clear();
@@ -718,12 +727,24 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     if (this.cleanupRetryTimers.has(server)) {
       return;
     }
+    if (this.cleanupRetriesDisabled.has(server)) {
+      return;
+    }
     const timer = setTimeout(() => {
       this.cleanupRetryTimers.delete(server);
       void this.killServer(server);
     }, OPENCODE_SERVER_CLEANUP_RETRY_DELAY_MS);
     timer.unref();
     this.cleanupRetryTimers.set(server, timer);
+  }
+
+  private disableCleanupRetry(server: OpenCodeServerGeneration): void {
+    this.cleanupRetriesDisabled.add(server);
+    const retryTimer = this.cleanupRetryTimers.get(server);
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      this.cleanupRetryTimers.delete(server);
+    }
   }
 
   private finishServerCleanup(server: OpenCodeServerGeneration): void {

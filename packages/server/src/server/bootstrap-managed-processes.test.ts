@@ -2,8 +2,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import pino from "pino";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
+import { HubRelationshipController } from "./hub/relationship-controller.js";
 import type {
   ManagedProcessRecord,
   ManagedProcessRecordInput,
@@ -19,6 +20,7 @@ let tempRoot: string | null = null;
 let staticDir: string | null = null;
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all([
     tempRoot ? rm(tempRoot, { recursive: true, force: true }) : Promise.resolve(),
     staticDir ? rm(staticDir, { recursive: true, force: true }) : Promise.resolve(),
@@ -228,11 +230,50 @@ describe("daemon managed process bootstrap", () => {
       await replacement.stop().catch(() => undefined);
     }
   });
+
+  test("contains managed-process retry scheduler failures", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-managed-bootstrap-"));
+    staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const paseoHome = path.join(tempRoot, ".paseo");
+    const managedProcesses = new FakeManagedProcesses([createManagedProcessRecord("leftover")]);
+    vi.spyOn(managedProcesses, "reapStale").mockRejectedValue(new Error("reaping failed"));
+    const scheduleRetry = vi.fn(() => {
+      throw new Error("retry scheduler unavailable");
+    });
+    const daemon = await createBootstrapTestDaemon(paseoHome, managedProcesses, scheduleRetry);
+
+    await vi.waitFor(() => expect(scheduleRetry).toHaveBeenCalledOnce());
+    await expect(daemon.stop()).resolves.toBeUndefined();
+  });
+
+  test("continues later teardown when managed-process retry cancellation fails", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-managed-bootstrap-"));
+    staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const paseoHome = path.join(tempRoot, ".paseo");
+    const cleanupError = { id: "leftover", message: "cleanup failed" };
+    const managedProcesses = new FakeManagedProcesses(
+      [createManagedProcessRecord("leftover")],
+      [createReapResult([cleanupError])],
+    );
+    const cancelRetry = vi.fn(() => {
+      throw new Error("retry cancellation failed");
+    });
+    const scheduleRetry = vi.fn(() => cancelRetry);
+    const hubStop = vi.spyOn(HubRelationshipController.prototype, "stop");
+    const daemon = await createBootstrapTestDaemon(paseoHome, managedProcesses, scheduleRetry);
+
+    await vi.waitFor(() => expect(scheduleRetry).toHaveBeenCalledOnce());
+    await expect(daemon.stop()).resolves.toBeUndefined();
+
+    expect(cancelRetry).toHaveBeenCalledOnce();
+    expect(hubStop).toHaveBeenCalledOnce();
+  });
 });
 
 async function createBootstrapTestDaemon(
   paseoHome: string,
   managedProcesses: ManagedProcessRegistry,
+  scheduleManagedProcessReapRetry?: (callback: () => void) => () => void,
 ) {
   if (!staticDir) {
     throw new Error("Static directory is not initialized");
@@ -253,6 +294,7 @@ async function createBootstrapTestDaemon(
       managedProcesses,
     } as PaseoDaemonConfig,
     pino({ level: "silent" }),
+    scheduleManagedProcessReapRetry ? { scheduleManagedProcessReapRetry } : undefined,
   );
 }
 
