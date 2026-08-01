@@ -798,6 +798,16 @@ function isPiRequestAbortError(error: unknown): boolean {
   return /\brequest was aborted\b|\babort(ed)?\b/i.test(toDiagnosticErrorMessage(error));
 }
 
+/**
+ * OMP rejects a `prompt` RPC while a turn is streaming with AgentBusyError
+ * ("Agent is already processing. Use steer() or followUp()…"). Reachable
+ * when the runtime started a turn on its own — e.g. an interrupted steer's
+ * post-abort drain — and the daemon hadn't observed it yet.
+ */
+function isPiAgentBusyError(error: unknown): boolean {
+  return /\bagent is already processing\b/i.test(toDiagnosticErrorMessage(error));
+}
+
 function resolveThinkingOptionId(
   cachedThinkingOptionId: string | null,
   sessionThinkingLevel: PiThinkingLevel,
@@ -1228,6 +1238,19 @@ export class PiRpcAgentSession implements AgentSession {
   private pendingCombinedAskUserResponse: PendingCombinedAskUserResponse | null = null;
   private activeTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
+  /**
+   * User messages submitted to the native process (turn prompts and
+   * mid-turn steers) awaiting their PASEO_SUBMITTED_USER_ENTRY marker. The
+   * marker carries no client identity, so correlation rides on submission
+   * order — see takePendingSubmittedUserMessage. Entries outlive turn
+   * boundaries on purpose: a steer queued but not yet drained when the turn
+   * is interrupted still produces its marker when a later turn drains it.
+   */
+  private readonly pendingSubmittedUserMessages: Array<{
+    text: string;
+    clientMessageId: string | null;
+  }> = [];
+  private activeTurnSubmittedEntry: { text: string; clientMessageId: string | null } | null = null;
   private activeAssistantMessageId: string | null = null;
   private activeTurnStarted = false;
   private activeNoTurnPromptText: string | null = null;
@@ -1302,6 +1325,9 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnId = turnId;
     this.lastInterruptedTurnId = null;
     this.activeClientMessageId = options?.clientMessageId ?? null;
+    const submittedEntry = { text: payload.text, clientMessageId: this.activeClientMessageId };
+    this.pendingSubmittedUserMessages.push(submittedEntry);
+    this.activeTurnSubmittedEntry = submittedEntry;
     this.activeAssistantMessageId = null;
     this.activeTurnStarted = false;
     this.activePromptRequestId = null;
@@ -1331,6 +1357,37 @@ export class PiRpcAgentSession implements AgentSession {
         if (this.activeTurnId !== turnId) {
           return;
         }
+        if (isPiAgentBusyError(error) && this.state.steeringMode != null) {
+          // The runtime started a turn of its own first (e.g. an interrupted
+          // steer's post-abort drain). Deliver into that turn instead of
+          // failing: keep the submitted entry queued — its marker arrives in
+          // the busy turn — and close this turn out as canceled.
+          const steered = await this.runtimeSession.steer(payload.text, payload.images).then(
+            () => true,
+            () => false,
+          );
+          if (steered) {
+            if (this.activeTurnId !== turnId) {
+              return;
+            }
+            this.activeTurnId = null;
+            this.activeClientMessageId = null;
+            this.activeTurnStarted = false;
+            this.activeAssistantMessageId = null;
+            this.activeTurnSubmittedEntry = null;
+            this.clearNoTurnBuffers();
+            this.emit({
+              type: "turn_canceled",
+              provider: this.provider,
+              turnId,
+              reason: "Runtime was already streaming; message steered into the active turn",
+            });
+            return;
+          }
+          // Steer delivery failed too; fall through to the failure path.
+        }
+        this.removePendingSubmittedUserMessage(submittedEntry);
+        this.activeTurnSubmittedEntry = null;
         this.activeTurnId = null;
         this.activeClientMessageId = null;
         this.activeTurnStarted = false;
@@ -1355,6 +1412,80 @@ export class PiRpcAgentSession implements AgentSession {
     })();
 
     return { turnId };
+  }
+
+  /**
+   * Deliver a user message into the active turn via the runtime's `steer`
+   * RPC instead of interrupting it. The turn keeps its identity and events;
+   * the steered message surfaces through the normal submitted-entry marker
+   * flow. Returns false when no turn is active so the caller can fall back
+   * to startTurn / replace semantics.
+   */
+  async steerActiveTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<boolean> {
+    if (!this.activeTurnId || this.closed) {
+      return false;
+    }
+    // Older Pi binaries lack steering queues (no `steer` RPC, no steeringMode
+    // in get_state); decline so the caller keeps replace semantics instead of
+    // risking an unanswered request.
+    if (this.state.steeringMode == null) {
+      return false;
+    }
+    const payload = convertPromptInput(prompt, { model: this.state.model });
+    // Slash commands must keep the prompt RPC path: the steer channel only
+    // rejects extension commands — builtins would be injected as literal
+    // text and never execute. Gate on the flattened payload so structured
+    // prompts (attachments) can't smuggle a command past the manager.
+    if (payload.text.trimStart().startsWith("/")) {
+      return false;
+    }
+    const entry = { text: payload.text, clientMessageId: options?.clientMessageId ?? null };
+    // Push before awaiting: the steer response and the submitted-entry
+    // marker can arrive in the same stdout chunk, and buffered frames are
+    // dispatched before the awaiting continuation runs.
+    this.pendingSubmittedUserMessages.push(entry);
+    try {
+      await this.runtimeSession.steer(payload.text, payload.images);
+    } catch (error) {
+      this.removePendingSubmittedUserMessage(entry);
+      throw error;
+    }
+    return true;
+  }
+
+  private removePendingSubmittedUserMessage(entry: {
+    text: string;
+    clientMessageId: string | null;
+  }): void {
+    const index = this.pendingSubmittedUserMessages.indexOf(entry);
+    if (index >= 0) {
+      this.pendingSubmittedUserMessages.splice(index, 1);
+    }
+  }
+
+  private takePendingSubmittedUserMessage():
+    | {
+        text: string;
+        clientMessageId: string | null;
+      }
+    | undefined {
+    // Markers arrive in the order entries enter the native session tree. A
+    // turn's first marker always belongs to the prompt that started it: the
+    // runtime persists the prompt before draining any queued steer, even a
+    // steer left over from an interrupted turn. Later markers map to pending
+    // steers in submission order (leftover steers drain before steers queued
+    // in this turn). Matching by text instead would swap correlations when a
+    // resent message repeats the interrupted steer's text verbatim.
+    const turnEntry = this.activeTurnSubmittedEntry;
+    if (turnEntry) {
+      const index = this.pendingSubmittedUserMessages.indexOf(turnEntry);
+      if (index >= 0) {
+        this.pendingSubmittedUserMessages.splice(index, 1);
+        this.activeTurnSubmittedEntry = null;
+        return turnEntry;
+      }
+    }
+    return this.pendingSubmittedUserMessages.shift();
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -1616,6 +1747,12 @@ export class PiRpcAgentSession implements AgentSession {
     if (this.activeTurnId !== turnId || this.activeTurnStarted) {
       return;
     }
+    // Local-only prompts never produce a submitted-entry marker; drop the
+    // pending entry so it can't misalign a later marker's correlation.
+    if (this.activeTurnSubmittedEntry) {
+      this.removePendingSubmittedUserMessage(this.activeTurnSubmittedEntry);
+      this.activeTurnSubmittedEntry = null;
+    }
     this.emitBufferedNoTurnOutputs(turnId);
     this.completeTurn(turnId, []);
   }
@@ -1640,6 +1777,11 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
 
+    // Same local-only case as completeNoTurnPrompt.
+    if (this.activeTurnSubmittedEntry) {
+      this.removePendingSubmittedUserMessage(this.activeTurnSubmittedEntry);
+      this.activeTurnSubmittedEntry = null;
+    }
     this.emitBufferedNoTurnOutputs(turnId);
     this.completeTurn(turnId, []);
   }
@@ -1869,6 +2011,8 @@ export class PiRpcAgentSession implements AgentSession {
     if (!entry) {
       return true;
     }
+    const submitted = this.takePendingSubmittedUserMessage();
+    const clientMessageId = submitted ? submitted.clientMessageId : this.activeClientMessageId;
     this.emit({
       type: "timeline",
       provider: this.provider,
@@ -1877,7 +2021,7 @@ export class PiRpcAgentSession implements AgentSession {
         type: "user_message",
         text: entry.text,
         messageId: entry.id,
-        ...(this.activeClientMessageId ? { clientMessageId: this.activeClientMessageId } : {}),
+        ...(clientMessageId ? { clientMessageId } : {}),
       },
     });
     return true;
@@ -2042,6 +2186,8 @@ export class PiRpcAgentSession implements AgentSession {
 
   private handleProcessExit(error: string): void {
     this.rejectAllExtensionResults(new Error(error));
+    this.pendingSubmittedUserMessages.splice(0, this.pendingSubmittedUserMessages.length);
+    this.activeTurnSubmittedEntry = null;
     if (!this.activeTurnId) {
       return;
     }
@@ -2307,6 +2453,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
     this.activeTurnStarted = false;
+    this.activeTurnSubmittedEntry = null;
     this.clearNoTurnBuffers();
     const errorMessage = latestPiErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {

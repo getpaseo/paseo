@@ -2085,6 +2085,35 @@ export class AgentManager {
     }
   }
 
+  /**
+   * Try to deliver a user message into the in-flight turn without
+   * interrupting it. Only providers whose session implements
+   * `steerActiveTurn` participate; every other case returns false so the
+   * caller keeps interrupt-and-replace semantics.
+   */
+  async trySteerActiveTurn(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<boolean> {
+    if (!this.hasInFlightRun(agentId)) {
+      return false;
+    }
+    const session = this.agents.get(agentId)?.session;
+    if (!session?.steerActiveTurn) {
+      return false;
+    }
+    try {
+      return await session.steerActiveTurn(prompt, options);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId },
+        "Failed to steer the active turn; falling back to run replacement",
+      );
+      return false;
+    }
+  }
+
   async replaceAgentRun(
     agentId: string,
     prompt: AgentPromptInput,

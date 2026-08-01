@@ -88,6 +88,9 @@ export interface PiSessionState {
   thinkingLevel: PiThinkingLevel;
   isStreaming: boolean;
   isCompacting: boolean;
+  /** Present on runtimes with steering queues (OMP); absent on older Pi binaries. */
+  steeringMode?: "all" | "one-at-a-time";
+  followUpMode?: "all" | "one-at-a-time";
   autoCompactionEnabled?: boolean;
   sessionFile?: string;
   sessionId: string;
@@ -128,6 +131,7 @@ export interface PiRpcSlashCommand {
 
 export type PiRpcCommand =
   | { id?: string; type: "prompt"; message: string; images?: PiImageContent[] }
+  | { id?: string; type: "steer"; message: string; images?: PiImageContent[] }
   | { id?: string; type: "compact"; customInstructions?: string }
   | { id?: string; type: "set_auto_compaction"; enabled: boolean }
   | { id?: string; type: "abort" }

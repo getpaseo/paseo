@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 
-import type { AgentPromptInput, AgentRunOptions } from "./agent-sdk-types.js";
+import type { AgentPromptInput, AgentRunOptions, AgentStreamEvent } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
@@ -10,12 +10,51 @@ export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "
 
 export type AgentRunController = Pick<
   AgentManager,
-  "getAgent" | "tryRunOutOfBand" | "hasInFlightRun" | "replaceAgentRun" | "streamAgent"
+  | "getAgent"
+  | "tryRunOutOfBand"
+  | "hasInFlightRun"
+  | "replaceAgentRun"
+  | "streamAgent"
+  | "trySteerActiveTurn"
 >;
 
 export interface StartAgentRunOptions {
   replaceRunning?: boolean;
+  /**
+   * When the target has an in-flight run, deliver the prompt into that turn
+   * (provider steering) instead of interrupting it. Falls back to replace
+   * semantics when the provider can't steer. Only meaningful with
+   * `replaceRunning`.
+   */
+  steerRunning?: boolean;
   runOptions?: AgentRunOptions;
+}
+
+/**
+ * Resolve the run stream for a prompt. Returns null when the prompt was
+ * steered into the in-flight turn — no new stream exists in that case.
+ */
+async function openRunStream(
+  agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  logger: Logger,
+  options?: StartAgentRunOptions,
+): Promise<AsyncGenerator<AgentStreamEvent> | null> {
+  const runOptions = options?.runOptions;
+  const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
+  if (
+    shouldReplace &&
+    options?.steerRunning &&
+    (await agentManager.trySteerActiveTurn(agentId, prompt, runOptions))
+  ) {
+    logger.trace({ agentId }, "agent.session.start_stream.steered_active_turn");
+    return null;
+  }
+  if (shouldReplace) {
+    return agentManager.replaceAgentRun(agentId, prompt, runOptions);
+  }
+  return agentManager.streamAgent(agentId, prompt, runOptions);
 }
 
 export async function startAgentRun(
@@ -44,17 +83,18 @@ export async function startAgentRun(
   if (agentManager.tryRunOutOfBand(agentId, prompt)) {
     return { outOfBand: true };
   }
-  const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
-  const runOptions = options?.runOptions;
-  const iterator = shouldReplace
-    ? await agentManager.replaceAgentRun(agentId, prompt, runOptions)
-    : agentManager.streamAgent(agentId, prompt, runOptions);
+  const iterator = await openRunStream(agentManager, agentId, prompt, logger, options);
+  if (!iterator) {
+    // Delivered into the in-flight turn via provider steering; the active
+    // run's stream carries the rest of the events.
+    return { outOfBand: false };
+  }
   logger.trace(
     {
       agentId,
       provider: snapshot?.provider,
       providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
-      shouldReplace,
+      replaceRunning: Boolean(options?.replaceRunning),
     },
     "agent.session.start_stream.iterator_returned",
   );
@@ -203,6 +243,7 @@ export async function sendPromptToAgent(
 
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,
+    steerRunning: true,
     runOptions,
   });
 }
