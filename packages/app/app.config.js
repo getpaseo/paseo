@@ -239,6 +239,7 @@ export default {
     },
     plugins: [
       "expo-router",
+      "expo-local-authentication",
       "@config-plugins/react-native-pdf",
       ...buildProfile.cameraPlugins,
       [

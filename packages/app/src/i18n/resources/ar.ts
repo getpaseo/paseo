@@ -2383,5 +2383,8 @@ export const ar: TranslationResources = {
     unlockMenu: "إلغاء قفل الشاشة",
     lockedA11y: "قفل التفاعل مفعّل. ألغِ القفل للتفاعل.",
     lockedToast: "ألغِ القفل للتحكم في هذا الوكيل",
+    authPrompt: "Unlock Paseo",
+    unlockFailed: "Couldn't unlock. Try again.",
+    navigationBlocked: "Unlock to navigate",
   },
 };

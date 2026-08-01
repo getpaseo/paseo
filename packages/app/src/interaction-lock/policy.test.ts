@@ -11,10 +11,11 @@ describe("resolveComposerInteractionPolicy", () => {
       canStartVoice: true,
       canRespondToPermissions: true,
       canMutateAgent: true,
+      canNavigate: true,
     });
   });
 
-  it("blocks mutating actions when locked", () => {
+  it("blocks mutating and navigation actions when locked", () => {
     expect(resolveComposerInteractionPolicy({ locked: true })).toEqual({
       canEdit: false,
       canSend: false,
@@ -23,6 +24,7 @@ describe("resolveComposerInteractionPolicy", () => {
       canStartVoice: false,
       canRespondToPermissions: false,
       canMutateAgent: false,
+      canNavigate: false,
     });
   });
 });

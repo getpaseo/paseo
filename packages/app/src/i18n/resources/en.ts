@@ -2398,6 +2398,9 @@ export const en = {
     unlockMenu: "Unlock screen",
     lockedA11y: "Interaction lock on. Unlock to interact.",
     lockedToast: "Unlock to control this agent",
+    authPrompt: "Unlock Paseo",
+    unlockFailed: "Couldn't unlock. Try again.",
+    navigationBlocked: "Unlock to navigate",
   },
 } as const;
 

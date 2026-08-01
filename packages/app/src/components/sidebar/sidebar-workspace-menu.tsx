@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -23,7 +23,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
-import { useInteractionLocked, useInteractionLockStore } from "@/stores/interaction-lock-store";
+import { useToast } from "@/contexts/toast-context";
+import { lockInteractionScreen, unlockInteractionScreen } from "@/interaction-lock/actions";
+import { useInteractionLocked } from "@/stores/interaction-lock-store";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
@@ -93,8 +95,23 @@ export function SidebarWorkspaceMenu({
   openInFileManagerPath,
 }: SidebarWorkspaceMenuProps) {
   const { t } = useTranslation();
+  const toast = useToast();
   const interactionLocked = useInteractionLocked();
-  const toggleInteractionLock = useInteractionLockStore((state) => state.toggle);
+  const handleToggleInteractionLock = useCallback(() => {
+    if (interactionLocked) {
+      void unlockInteractionScreen({
+        promptMessage: t("interactionLock.authPrompt"),
+        cancelLabel: t("common.actions.cancel"),
+      }).then((result) => {
+        if (result.status === "failed") {
+          toast.error(t("interactionLock.unlockFailed"));
+        }
+        return undefined;
+      });
+      return;
+    }
+    lockInteractionScreen();
+  }, [interactionLocked, t, toast]);
   const archiveTrailing = useMemo(
     () => (archiveShortcutKeys && !isNative ? <Shortcut chord={archiveShortcutKeys} /> : null),
     [archiveShortcutKeys],
@@ -160,7 +177,7 @@ export function SidebarWorkspaceMenu({
         <DropdownMenuItem
           testID={`sidebar-workspace-menu-interaction-lock-${workspaceKey}`}
           leading={interactionLocked ? unlockLeadingIcon : lockLeadingIcon}
-          onSelect={toggleInteractionLock}
+          onSelect={handleToggleInteractionLock}
         >
           {interactionLocked ? t("interactionLock.unlockMenu") : t("interactionLock.lock")}
         </DropdownMenuItem>
