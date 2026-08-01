@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { forkPaseoHomeMetadata, resolvePaseoHomePath } from "./paseo-home-fork";
@@ -109,7 +109,7 @@ process.exit(result.status ?? 1);
   return binDir;
 }
 
-async function applyMetadataFork(targetHome: string): Promise<void> {
+async function applyMetadataFork(targetHome: string, providerIds: string[]): Promise<void> {
   const sourceHome = resolveOptionalHome(process.env.E2E_FORK_PASEO_HOME_FROM);
   if (!sourceHome) return;
   const result = await forkPaseoHomeMetadata({ sourceHome, targetHome });
@@ -117,9 +117,32 @@ async function applyMetadataFork(targetHome: string): Promise<void> {
   process.env.E2E_FORK_TARGET_PASEO_HOME = result.targetHome;
   process.env.E2E_FORK_COPIED_FILES = String(result.copiedFiles);
   process.env.E2E_FORK_COPIED_BYTES = String(result.copiedBytes);
+
+  if (providerIds.length === 0) return;
+
+  const sourceConfig = JSON.parse(
+    await readFile(path.join(result.sourceHome, "config.json"), "utf8"),
+  );
+  const sourceProviders = sourceConfig.agents?.providers ?? {};
+  const providers = Object.fromEntries(
+    providerIds.map((providerId: string) => {
+      const provider = sourceProviders[providerId];
+      if (!provider) {
+        throw new Error(`E2E provider '${providerId}' is not configured in ${result.sourceHome}`);
+      }
+      return [providerId, provider];
+    }),
+  );
+  await writeFile(
+    path.join(targetHome, "config.json"),
+    `${JSON.stringify({ version: 1, agents: { providers } }, null, 2)}\n`,
+  );
 }
 
-export async function startE2EWorker(workerIndex: number): Promise<E2EWorker> {
+export async function startE2EWorker(
+  workerIndex: number,
+  options: { forkProviders?: string[] } = {},
+): Promise<E2EWorker> {
   const requestedRoot = resolveOptionalHome(process.env.E2E_PASEO_HOME);
   const paseoHome = requestedRoot
     ? path.join(requestedRoot, `worker-${workerIndex}`)
@@ -130,7 +153,7 @@ export async function startE2EWorker(workerIndex: number): Promise<E2EWorker> {
   const serverId = `srv_e2e_worker_${workerIndex}`;
 
   try {
-    await applyMetadataFork(paseoHome);
+    await applyMetadataFork(paseoHome, options.forkProviders ?? []);
     const daemon = await startIsolatedHostDaemon(serverId, {
       paseoHome,
       preserveHome,
