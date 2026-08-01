@@ -76,6 +76,9 @@ test.describe("real provider subagent timelines", () => {
         const panel = page.getByTestId("provider-subagent-panel");
         await expect(panel).toBeVisible({ timeout: 30_000 });
         await expect(
+          panel.getByTestId("user-message").filter({ hasText: scenario.sentinel }),
+        ).toBeVisible({ timeout: 30_000 });
+        await expect(
           panel.getByTestId("assistant-message").filter({ hasText: scenario.sentinel }),
         ).toBeVisible({ timeout: 30_000 });
         await expect(
