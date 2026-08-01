@@ -21,7 +21,7 @@ import {
 const logger = createTestLogger();
 
 class ProcessExitCodexClient extends CodexAppServerAgentClient implements AgentClient {
-  constructor(private readonly appServer: FakeCodexAppServer) {
+  constructor(private readonly appServers: FakeCodexAppServer[]) {
     super(logger);
   }
 
@@ -33,7 +33,13 @@ class ProcessExitCodexClient extends CodexAppServerAgentClient implements AgentC
       config,
       null,
       logger,
-      async () => this.appServer.child,
+      async () => {
+        const appServer = this.appServers.shift();
+        if (!appServer) {
+          throw new Error("No fake Codex app-server available");
+        }
+        return appServer.child;
+      },
       {},
       false,
       false,
@@ -49,7 +55,7 @@ test("unexpected Codex app-server exit fails the active run and agent", async ()
   const workdir = mkdtempSync(join(tmpdir(), "codex-process-exit-"));
   const appServer = createFakeCodexAppServer();
   const manager = new AgentManager({
-    clients: { codex: new ProcessExitCodexClient(appServer) },
+    clients: { codex: new ProcessExitCodexClient([appServer]) },
     logger,
   });
   const events: AgentManagerEvent[] = [];
@@ -105,7 +111,7 @@ test("intentional agent close stays clean while a Codex turn is active", async (
   const workdir = mkdtempSync(join(tmpdir(), "codex-process-close-"));
   const appServer = createFakeCodexAppServer();
   const manager = new AgentManager({
-    clients: { codex: new ProcessExitCodexClient(appServer) },
+    clients: { codex: new ProcessExitCodexClient([appServer]) },
     logger,
   });
   const events: AgentManagerEvent[] = [];
@@ -144,6 +150,54 @@ test("intentional agent close stays clean while a Codex turn is active", async (
       }),
     );
   } finally {
+    unsubscribe();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("idle Codex app-server exit reconnects without publishing a failed turn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-process-idle-exit-"));
+  const exitedAppServer = createFakeCodexAppServer();
+  const replacementAppServer = createFakeCodexAppServer();
+  const manager = new AgentManager({
+    clients: {
+      codex: new ProcessExitCodexClient([exitedAppServer, replacementAppServer]),
+    },
+    logger,
+  });
+  const events: AgentManagerEvent[] = [];
+  const unsubscribe = manager.subscribe((event) => events.push(event), { replayState: false });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, modeId: "auto", model: "gpt-5.4" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    agentId = agent.id;
+
+    exitedAppServer.child.emit("exit", 17, null);
+
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    expect(
+      events.filter((event) => event.type === "agent_stream" && event.event.type === "turn_failed"),
+    ).toHaveLength(0);
+
+    const run = manager.runAgent(agent.id, "continue after reconnect");
+    const turnStart = await replacementAppServer.waitForTurnStart();
+    replacementAppServer.startsTurn({
+      threadId: String(turnStart.threadId),
+      turnId: "native-turn-2",
+    });
+    replacementAppServer.completeTurn({ threadId: String(turnStart.threadId) });
+
+    await expect(run).resolves.toMatchObject({ sessionId: "thread-1" });
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+  } finally {
+    if (agentId && manager.getAgent(agentId)) {
+      await manager.closeAgent(agentId);
+    }
     unsubscribe();
     rmSync(workdir, { recursive: true, force: true });
   }

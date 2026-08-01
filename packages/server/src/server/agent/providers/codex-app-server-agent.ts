@@ -3276,11 +3276,13 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private handleUnexpectedTermination(error: Error): void {
     this.connected = false;
-    this.emitEvent({
-      type: "turn_failed",
-      provider: CODEX_PROVIDER,
-      error: error.message,
-    });
+    if (this.activeForegroundTurnId) {
+      this.emitEvent({
+        type: "turn_failed",
+        provider: CODEX_PROVIDER,
+        error: error.message,
+      });
+    }
     this.activeForegroundTurnId = null;
     this.activeClientMessageId = null;
     this.currentTurnId = null;
