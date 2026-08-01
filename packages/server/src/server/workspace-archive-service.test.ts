@@ -1243,6 +1243,7 @@ describe("archiveByScope", () => {
     });
 
     await service.start();
+    await vi.waitFor(() => expect(existsSync(worktree.worktreePath)).toBe(false));
     await service.stop();
 
     expect(readFileSync(path.join(repoDir, "retry-root.log"), "utf8")).toBe("root");

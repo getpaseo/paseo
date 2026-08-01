@@ -38,6 +38,7 @@ export class WorkspaceCleanupRetryService {
   private stopped = false;
   private consecutiveFailedCycles = 0;
   private wakeRequested = false;
+  private nextTargetDirectoryPath: string | null = null;
 
   constructor(private readonly options: WorkspaceCleanupRetryServiceOptions) {
     this.logger = options.logger.child({ module: "workspace-cleanup-retry-service" });
@@ -57,7 +58,7 @@ export class WorkspaceCleanupRetryService {
           this.requestWake();
         }
       }) ?? null;
-    await this.runCycle();
+    this.schedule(0);
   }
 
   async stop(): Promise<void> {
@@ -70,7 +71,6 @@ export class WorkspaceCleanupRetryService {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    await this.activeCycle;
   }
 
   private requestWake(): void {
@@ -128,8 +128,13 @@ export class WorkspaceCleanupRetryService {
       return;
     }
 
+    const rotatedTargets = rotateCleanupTargets(targets, this.nextTargetDirectoryPath);
+    const batch = rotatedTargets.slice(0, this.maxTargetsPerCycle);
+    const nextTarget = rotatedTargets[batch.length] ?? null;
+    this.nextTargetDirectoryPath = nextTarget?.directoryPath ?? null;
+
     let failed = false;
-    for (const target of targets.slice(0, this.maxTargetsPerCycle)) {
+    for (const target of batch) {
       try {
         await this.options.retryWorktreeCleanup(target.directoryPath);
       } catch (error) {
@@ -145,11 +150,21 @@ export class WorkspaceCleanupRetryService {
         );
       }
     }
-    if (targets.length > this.maxTargetsPerCycle) {
+    if (!failed && nextTarget) {
       this.wakeRequested = true;
     }
     this.consecutiveFailedCycles = failed ? this.consecutiveFailedCycles + 1 : 0;
   }
+}
+
+function rotateCleanupTargets(
+  targets: readonly WorkspaceCleanupRetryTarget[],
+  nextDirectoryPath: string | null,
+): WorkspaceCleanupRetryTarget[] {
+  if (!nextDirectoryPath) return [...targets];
+  const index = targets.findIndex((target) => target.directoryPath === nextDirectoryPath);
+  if (index <= 0) return [...targets];
+  return [...targets.slice(index), ...targets.slice(0, index)];
 }
 
 export function findWorkspaceCleanupRetryTargets(

@@ -81,7 +81,7 @@ test("groups archived cleanup by directory and requires one verified incarnation
   ]);
 });
 
-test("bounds each retry cycle and cancels the scheduled backoff on stop", async () => {
+test("rotates bounded batches and preserves backoff after a failed target", async () => {
   vi.useFakeTimers();
   const workspaces = [
     pendingWorkspace({
@@ -95,8 +95,10 @@ test("bounds each retry cycle and cancels the scheduled backoff on stop", async 
       incarnationId: "inc-second",
     }),
   ];
-  const retryWorktreeCleanup = vi.fn(async () => {
-    throw new Error("still busy");
+  const attempts: string[] = [];
+  const retryWorktreeCleanup = vi.fn(async (targetPath: string) => {
+    attempts.push(targetPath);
+    if (targetPath === "/worktrees/first") throw new Error("still busy");
   });
   const service = new WorkspaceCleanupRetryService({
     workspaceRegistry: {
@@ -112,9 +114,43 @@ test("bounds each retry cycle and cancels the scheduled backoff on stop", async 
   });
 
   await service.start();
-  expect(retryWorktreeCleanup).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersToNextTimerAsync();
+  expect(attempts).toEqual(["/worktrees/first"]);
+
+  await vi.advanceTimersByTimeAsync(9);
+  expect(attempts).toEqual(["/worktrees/first"]);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(attempts).toContain("/worktrees/second");
+
+  await vi.advanceTimersToNextTimerAsync();
+  expect(attempts.filter((path) => path === "/worktrees/first")).toHaveLength(2);
 
   await service.stop();
   await vi.advanceTimersByTimeAsync(1_000);
+  expect(retryWorktreeCleanup).toHaveBeenCalledTimes(attempts.length);
+});
+
+test("hung cleanup does not block startup or shutdown", async () => {
+  vi.useFakeTimers();
+  const never = new Promise<void>(() => undefined);
+  const retryWorktreeCleanup = vi.fn(() => never);
+  const service = new WorkspaceCleanupRetryService({
+    workspaceRegistry: {
+      list: async () => [
+        pendingWorkspace({
+          workspaceId: "ws-hung",
+          directoryPath: "/worktrees/hung",
+          incarnationId: "inc-hung",
+        }),
+      ],
+      subscribeToMutations: () => () => undefined,
+    },
+    retryWorktreeCleanup,
+    logger: createTestLogger(),
+  });
+
+  await expect(service.start()).resolves.toBeUndefined();
+  await vi.advanceTimersToNextTimerAsync();
   expect(retryWorktreeCleanup).toHaveBeenCalledTimes(1);
+  await expect(service.stop()).resolves.toBeUndefined();
 });
