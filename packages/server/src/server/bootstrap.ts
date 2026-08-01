@@ -182,6 +182,7 @@ import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import {
   createManagedProcessRegistry,
   createSystemManagedProcessTable,
+  type ManagedProcessRecord,
   type ManagedProcessRegistry,
 } from "./managed-processes/managed-processes.js";
 import { terminateWithTreeKill } from "../utils/tree-kill.js";
@@ -476,17 +477,20 @@ function scheduleManagedProcessReapRetry(callback: () => void): () => void {
 
 function reconcileManagedProcessLedger(
   managedProcesses: ManagedProcessRegistry,
+  initialRecords: Promise<ManagedProcessRecord[]>,
   logger: Logger,
   scheduleRetry: (callback: () => void) => () => void,
 ): () => void {
   let disposed = false;
   let cancelRetry: (() => void) | null = null;
+  let unresolvedRecordIds = new Set<string>();
 
   const reconcile = async () => {
     let retry = false;
     try {
-      const reapResult = await managedProcesses.reapStale();
-      retry = reapResult.errors.length > 0;
+      const reapResult = await managedProcesses.reapStale({ recordIds: unresolvedRecordIds });
+      unresolvedRecordIds = new Set(reapResult.errors.map((error) => error.id));
+      retry = unresolvedRecordIds.size > 0;
       if (reapResult.checked > 0 || retry) {
         logger.info(reapResult, "Managed helper process ledger reconciled");
       }
@@ -503,7 +507,13 @@ function reconcileManagedProcessLedger(
     }
   };
 
-  void reconcile();
+  void initialRecords.then((records) => {
+    unresolvedRecordIds = new Set(records.map((record) => record.id));
+    if (unresolvedRecordIds.size === 0) {
+      return Promise.resolve();
+    }
+    return reconcile();
+  });
   return () => {
     disposed = true;
     cancelRetry?.();
@@ -579,6 +589,10 @@ export async function createPaseoDaemon(
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
   const managedProcesses = createBootstrapManagedProcessRegistry(config, logger);
+  const initialManagedProcessRecords = managedProcesses.list().catch((error) => {
+    logger.warn({ err: error }, "Failed to capture managed helper process bootstrap ledger");
+    return [];
+  });
   let relayTransport: RelayTransportController | null = null;
 
   const staticDir = config.staticDir;
@@ -1630,6 +1644,7 @@ export async function createPaseoDaemon(
   // whose stop path can dispose it. Reaping remains background, best-effort work.
   const disposeManagedProcessReconciliation = reconcileManagedProcessLedger(
     managedProcesses,
+    initialManagedProcessRecords,
     logger,
     dependencies.scheduleManagedProcessReapRetry ?? scheduleManagedProcessReapRetry,
   );

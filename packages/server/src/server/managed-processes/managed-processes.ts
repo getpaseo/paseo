@@ -121,6 +121,10 @@ export interface ManagedProcessReapResult {
   errors: Array<{ id: string; message: string }>;
 }
 
+export interface ManagedProcessReapOptions {
+  recordIds?: ReadonlySet<string>;
+}
+
 export interface ManagedProcessRegistry {
   record(
     input: ManagedProcessRecordInput,
@@ -130,7 +134,7 @@ export interface ManagedProcessRegistry {
   confirmExecTransition(id: string): Promise<void>;
   remove(id: string): Promise<void>;
   list(): Promise<ManagedProcessRecord[]>;
-  reapStale(): Promise<ManagedProcessReapResult>;
+  reapStale(options?: ManagedProcessReapOptions): Promise<ManagedProcessReapResult>;
 }
 
 interface ManagedProcessRegistryOptions {
@@ -438,7 +442,7 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
     return entries.map((entry) => entry.record);
   }
 
-  async reapStale(): Promise<ManagedProcessReapResult> {
+  async reapStale(options: ManagedProcessReapOptions = {}): Promise<ManagedProcessReapResult> {
     const result: ManagedProcessReapResult = {
       checked: 0,
       dead: 0,
@@ -448,7 +452,11 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
       errors: [],
     };
 
-    for (const entry of await this.readEntries()) {
+    const entries = await this.readEntries();
+    for (const entry of entries) {
+      if (options.recordIds && !options.recordIds.has(entry.record.id)) {
+        continue;
+      }
       result.checked += 1;
       try {
         const inspection = await this.processTable.inspect(entry.record.pid);
