@@ -47,6 +47,7 @@ interface TestPaseoDaemonOptions {
   webUi?: PaseoDaemonConfig["webUi"];
   trustedProxies?: PaseoDaemonConfig["trustedProxies"];
   github?: ForgeService;
+  onDaemonCreated?: (daemon: TestPaseoDaemon) => void;
 }
 
 export interface TestPaseoDaemon {
@@ -103,33 +104,39 @@ export async function createTestPaseoDaemon(
         relayConfig: options.relayConfigCapability,
       },
     });
+    const close = async (): Promise<void> => {
+      await daemon.stop().catch(() => undefined);
+      await daemon.agentManager.flush().catch(() => undefined);
+      if (options.cleanup ?? true) {
+        await new Promise((r) => setTimeout(r, 50));
+        await Promise.all([
+          rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
+          rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
+        ]);
+      }
+    };
+    const handle: TestPaseoDaemon = {
+      config,
+      daemon,
+      get port() {
+        const listenTarget = daemon.getListenTarget();
+        if (!listenTarget || listenTarget.type !== "tcp") {
+          throw new Error("Test daemon did not expose a bound TCP listen target");
+        }
+        return listenTarget.port;
+      },
+      paseoHome,
+      staticDir,
+      close,
+    };
     try {
+      options.onDaemonCreated?.(handle);
       await startDaemonWithTimeout(daemon, TEST_DAEMON_START_TIMEOUT_MS);
       const listenTarget = daemon.getListenTarget();
       if (!listenTarget || listenTarget.type !== "tcp") {
         throw new Error("Test daemon did not expose a bound TCP listen target");
       }
-
-      const close = async (): Promise<void> => {
-        await daemon.stop().catch(() => undefined);
-        await daemon.agentManager.flush().catch(() => undefined);
-        if (options.cleanup ?? true) {
-          await new Promise((r) => setTimeout(r, 50));
-          await Promise.all([
-            rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
-            rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
-          ]);
-        }
-      };
-
-      return {
-        config,
-        daemon,
-        port: listenTarget.port,
-        paseoHome,
-        staticDir,
-        close,
-      };
+      return handle;
     } catch (error) {
       lastError = error;
       await daemon.stop().catch(() => undefined);

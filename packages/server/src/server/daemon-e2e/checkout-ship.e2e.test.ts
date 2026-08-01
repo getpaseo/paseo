@@ -21,6 +21,7 @@ import {
   createTempGithubRepoName,
   DaemonClient,
   type DaemonTestContext,
+  type TestPaseoDaemon,
 } from "../test-utils/index.js";
 import {
   createWorktree as createWorktreePrimitive,
@@ -73,6 +74,11 @@ const CREDENTIAL_CACHE_OPERATION_TIMEOUT_MS = 2_000;
 const CREDENTIAL_CACHE_TTL_SECONDS = 300;
 const REPOSITORY_CREATE_SETTLEMENT_TIMEOUT_MS = 30_000;
 const REPOSITORY_CREATE_SETTLEMENT_POLL_MS = 500;
+const LIVE_TEST_TIMEOUT_MS = 900_000;
+const LIVE_CLEANUP_RESERVE_MS = 300_000;
+const LIVE_OPERATION_SETTLEMENT_TIMEOUT_MS = GIT_COMMAND_TIMEOUT_MS;
+const LIVE_OPERATION_TIMEOUT_MS =
+  LIVE_TEST_TIMEOUT_MS - LIVE_CLEANUP_RESERVE_MS - LIVE_OPERATION_SETTLEMENT_TIMEOUT_MS;
 const GITHUB_AUTH_STATUS_ARGS = [
   "auth",
   "status",
@@ -219,19 +225,34 @@ function createTokenFreeChildEnvironment(
   baseEnvironment: NodeJS.ProcessEnv,
   secrets: readonly string[],
 ): NodeJS.ProcessEnv {
-  const blockedKeys = new Set([
-    "GH_TOKEN",
-    "GITHUB_TOKEN",
-    "GH_ENTERPRISE_TOKEN",
-    "GITHUB_ENTERPRISE_TOKEN",
-    "GIT_CURL_VERBOSE",
-    "GIT_TRACE",
-    "GIT_TRACE_CURL",
-    "GIT_TRACE_PACKET",
+  const allowedKeys = new Set([
+    "ALL_PROXY",
+    "ComSpec",
+    "GH_CONFIG_DIR",
+    "HOME",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LOGNAME",
+    "NO_PROXY",
+    "PATH",
+    "PATHEXT",
+    "SHELL",
+    "SSL_CERT_DIR",
+    "SSL_CERT_FILE",
+    "SystemRoot",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "USER",
+    "WINDIR",
+    "XDG_CONFIG_HOME",
   ]);
   return Object.fromEntries(
     Object.entries(baseEnvironment).filter(([key, value]) => {
-      if (blockedKeys.has(key) || key.startsWith("GIT_TRACE")) {
+      if (!allowedKeys.has(key)) {
         return false;
       }
       return !secrets.some(
@@ -1322,46 +1343,53 @@ interface DaemonContextCloseResult {
   error: unknown;
 }
 
-async function closeDaemonContextForCredentialBoundary(
-  ctx: DaemonTestContext,
+interface CredentialBoundaryClient {
+  close(): Promise<void>;
+}
+
+async function closeDaemonForCredentialBoundary(
+  daemon: TestPaseoDaemon,
+  client: CredentialBoundaryClient | null,
 ): Promise<DaemonContextCloseResult> {
   const errors: unknown[] = [];
   let stopped = false;
   let flushed = false;
-  try {
-    await ctx.client.close();
-  } catch (error) {
-    errors.push(error);
+  if (client) {
+    try {
+      await client.close();
+    } catch (error) {
+      errors.push(error);
+    }
   }
   try {
-    await ctx.daemon.daemon.stop();
+    await daemon.daemon.stop();
     stopped = true;
   } catch (error) {
     errors.push(error);
   }
   if (stopped) {
     try {
-      await ctx.daemon.daemon.agentManager.flush();
+      await daemon.daemon.agentManager.flush();
       flushed = true;
     } catch (error) {
       errors.push(error);
     }
   }
   try {
-    await ctx.daemon.close();
+    await daemon.close();
   } catch (error) {
     errors.push(error);
   }
   if (!stopped) {
     try {
-      await ctx.daemon.daemon.stop();
+      await daemon.daemon.stop();
       stopped = true;
     } catch (error) {
       errors.push(error);
     }
     if (stopped) {
       try {
-        await ctx.daemon.daemon.agentManager.flush();
+        await daemon.daemon.agentManager.flush();
         flushed = true;
       } catch (error) {
         errors.push(error);
@@ -1370,7 +1398,7 @@ async function closeDaemonContextForCredentialBoundary(
   }
   if (stopped && !flushed) {
     try {
-      await ctx.daemon.daemon.agentManager.flush();
+      await daemon.daemon.agentManager.flush();
       flushed = true;
     } catch (error) {
       errors.push(error);
@@ -1379,9 +1407,263 @@ async function closeDaemonContextForCredentialBoundary(
   return { stopped, flushed, error: aggregateCleanupErrors(errors) };
 }
 
-function valueContainsCredential(value: unknown, owner: GitHubCredentialOwner): boolean {
+async function closeDaemonContextForCredentialBoundary(
+  ctx: DaemonTestContext,
+): Promise<DaemonContextCloseResult> {
+  return closeDaemonForCredentialBoundary(ctx.daemon, ctx.client);
+}
+
+interface DaemonContextConstructionOptions {
+  createDaemon(onDaemonCreated: (daemon: TestPaseoDaemon) => void): Promise<TestPaseoDaemon>;
+  createClient(url: string): DaemonClient;
+  containsCredential(value: unknown): boolean;
+  retainPartialContext(daemon: TestPaseoDaemon | null, client: DaemonClient | null): void;
+  restoreEnvironment(): void;
+}
+
+async function constructDaemonContextForCredentialBoundary(
+  options: DaemonContextConstructionOptions,
+): Promise<DaemonTestContext> {
+  let daemon: TestPaseoDaemon | null = null;
+  let client: DaemonClient | null = null;
+  try {
+    daemon = await options.createDaemon((createdDaemon) => {
+      daemon = createdDaemon;
+      options.retainPartialContext(createdDaemon, null);
+    });
+    options.retainPartialContext(daemon, null);
+    client = options.createClient(`ws://127.0.0.1:${daemon.port}/ws`);
+    options.retainPartialContext(daemon, client);
+    const ctx: DaemonTestContext = {
+      daemon,
+      client,
+      cleanup: async () => {
+        await client.close();
+        await daemon.close();
+      },
+    };
+    await client.connect();
+    await client.fetchAgents({ subscribe: { subscriptionId: "test" } });
+    return ctx;
+  } catch (error) {
+    const closeResult = daemon
+      ? await closeDaemonForCredentialBoundary(daemon, client)
+      : { stopped: true, flushed: true, error: undefined };
+    const credentialLeak = options.containsCredential({
+      constructionError: error,
+      finalConstructionCleanupError: closeResult.error,
+    });
+    if (closeResult.stopped && closeResult.flushed) {
+      options.retainPartialContext(null, null);
+      options.restoreEnvironment();
+    }
+    if (credentialLeak) {
+      // eslint-disable-next-line preserve-caught-error -- construction errors may contain the operation credential
+      throw new Error("The checkout ship operation credential reached a construction surface");
+    }
+    throwCheckoutShipErrors(error, closeResult.error);
+    throw error;
+  }
+}
+
+interface TeardownAttemptResult {
+  complete: boolean;
+  error: unknown;
+}
+
+interface CheckoutShipLiveCleanupState {
+  agentId: string | null;
+  createdRepo: CreatedGitHubRepository | null;
+  credentialLease: GitCredentialLease | null;
+  operationError: unknown;
+  repoCreateAttempted: boolean;
+  repoDirRemoved: boolean;
+}
+
+function createJoinedTeardown(
+  runAttempt: () => Promise<TeardownAttemptResult>,
+): () => Promise<TeardownAttemptResult> {
+  let completedResult: TeardownAttemptResult | null = null;
+  let inFlight: Promise<TeardownAttemptResult> | null = null;
+  return () => {
+    if (completedResult) {
+      return Promise.resolve(completedResult);
+    }
+    if (inFlight) {
+      return inFlight;
+    }
+    const attempt = runAttempt().then((result) => {
+      if (result.complete) {
+        completedResult = result;
+      }
+      return result;
+    });
+    inFlight = attempt.finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
+  };
+}
+
+class CheckoutShipOperationDeadlineError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Checkout ship live operation exceeded its ${timeoutMs}ms cleanup-reserved deadline`);
+    this.name = "CheckoutShipOperationDeadlineError";
+  }
+}
+
+interface CleanupReservedOperationOptions {
+  operation(signal: AbortSignal): Promise<void>;
+  cancel(): Promise<void>;
+  cleanup(): Promise<TeardownAttemptResult>;
+  recordOperationError(error: unknown): void;
+  operationTimeoutMs: number;
+  settlementTimeoutMs: number;
+  now?: () => number;
+}
+
+interface CleanupReservedOperationResult {
+  operationError: unknown;
+  teardown: TeardownAttemptResult;
+}
+
+async function runOperationWithCleanupReserve(
+  options: CleanupReservedOperationOptions,
+): Promise<CleanupReservedOperationResult> {
+  const controller = new AbortController();
+  const now = options.now ?? Date.now;
+  const operationStartedAt = now();
+  let operationPromise: Promise<void>;
+  try {
+    operationPromise = options.operation(controller.signal);
+  } catch (error) {
+    operationPromise = Promise.reject(error);
+  }
+  const operation = operationPromise.then(
+    () => ({ error: undefined }),
+    (error: unknown) => ({ error }),
+  );
+  const operationTimeRemaining = Math.max(
+    0,
+    options.operationTimeoutMs - (now() - operationStartedAt),
+  );
+  let first: { kind: "operation"; outcome: { error: unknown } } | { kind: "deadline" };
+  if (operationTimeRemaining === 0) {
+    first = { kind: "deadline" };
+  } else {
+    let deadlineHandle: NodeJS.Timeout | undefined;
+    const deadline = new Promise<"deadline">((resolve) => {
+      deadlineHandle = setTimeout(() => resolve("deadline"), operationTimeRemaining);
+    });
+    first = await Promise.race([
+      operation.then((outcome) => ({ kind: "operation" as const, outcome })),
+      deadline.then(() => ({ kind: "deadline" as const })),
+    ]);
+    clearTimeout(deadlineHandle);
+  }
+
+  let operationError: unknown;
+  if (first.kind === "operation") {
+    operationError = first.outcome.error;
+  } else {
+    operationError = new CheckoutShipOperationDeadlineError(options.operationTimeoutMs);
+    controller.abort(operationError);
+    const cancellation = Promise.resolve()
+      .then(() => options.cancel())
+      .then(
+        () => ({ error: undefined }),
+        (error: unknown) => ({ error }),
+      );
+    let settlementHandle: NodeJS.Timeout | undefined;
+    const settlement = await Promise.race([
+      Promise.all([operation, cancellation]).then(([operationOutcome, cancellationOutcome]) => ({
+        kind: "settled" as const,
+        operationOutcome,
+        cancellationOutcome,
+      })),
+      new Promise<{ kind: "settlement-timeout" }>((resolve) => {
+        settlementHandle = setTimeout(
+          () => resolve({ kind: "settlement-timeout" }),
+          options.settlementTimeoutMs,
+        );
+      }),
+    ]);
+    clearTimeout(settlementHandle);
+    if (settlement.kind === "settled") {
+      const errors = [
+        operationError,
+        ...(settlement.operationOutcome.error === undefined ||
+        settlement.operationOutcome.error === operationError
+          ? []
+          : [settlement.operationOutcome.error]),
+        ...(settlement.cancellationOutcome.error === undefined
+          ? []
+          : [settlement.cancellationOutcome.error]),
+      ];
+      if (errors.length > 1) {
+        operationError = new AggregateError(
+          errors,
+          "Checkout ship operation deadline cancellation failed",
+        );
+      }
+    }
+  }
+
+  options.recordOperationError(operationError);
+  return { operationError, teardown: await options.cleanup() };
+}
+
+function textContainsCredential(value: string, owner: GitHubCredentialOwner): boolean {
+  return owner.scrub(value) !== value;
+}
+
+function binaryContainsCredential(
+  value: Buffer | Uint8Array,
+  owner: GitHubCredentialOwner,
+): boolean {
+  const bytes = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  const text = bytes.toString("utf8");
+  return [text, encodeURIComponent(text), bytes.toString("base64")].some((representation) =>
+    textContainsCredential(representation, owner),
+  );
+}
+
+function valueContainsCredential(
+  value: unknown,
+  owner: GitHubCredentialOwner,
+  seen = new Set<object>(),
+): boolean {
+  if (typeof value === "string") {
+    return textContainsCredential(value, owner);
+  }
+  if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
+    return binaryContainsCredential(value, owner);
+  }
+  if (typeof value === "object" && value !== null) {
+    if (seen.has(value)) {
+      return false;
+    }
+    seen.add(value);
+    const errorValues =
+      value instanceof Error ? [value.name, value.message, value.stack, value.cause] : [];
+    const aggregateValues = value instanceof AggregateError ? value.errors : [];
+    if (
+      [...errorValues, ...aggregateValues, ...Object.values(value)].some((entry) =>
+        valueContainsCredential(entry, owner, seen),
+      )
+    ) {
+      return true;
+    }
+  }
+  const serializationSeen = new Set<object>();
   const serialized =
     JSON.stringify(value, (_key, currentValue) => {
+      if (typeof currentValue === "object" && currentValue !== null) {
+        if (serializationSeen.has(currentValue)) {
+          return "[Circular]";
+        }
+        serializationSeen.add(currentValue);
+      }
       if (currentValue instanceof AggregateError) {
         return {
           ...currentValue,
@@ -1562,30 +1844,44 @@ describe("checkout ship live GitHub mutation safety", () => {
         spawnSync(process.execPath, ["-e", "process.stdout.write('ok')"], { env });
       });
     `;
+    const outerEnvironment = createTokenFreeChildEnvironment(
+      {
+        ...process.env,
+        GH_TOKEN: fixtureToken,
+        OUTER_TOKEN_ALIAS: `prefix-${fixtureToken}`,
+      },
+      [fixtureToken],
+    );
+    outerEnvironment.NODE_DEBUG = "child_process";
     const result = spawnSync(process.execPath, ["-e", script], {
-      env: { ...process.env, NODE_DEBUG: "child_process" },
+      env: outerEnvironment,
       input: fixtureToken,
       encoding: "utf8",
     });
 
+    expect(outerEnvironment.OUTER_TOKEN_ALIAS).toBeUndefined();
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("CHILD_PROCESS");
     expect(result.stderr).not.toContain(fixtureToken);
   });
 
-  test("live process sanitization removes trace controls and credential aliases until restored", () => {
+  test("live process sanitization allowlists child-safe values until exact restoration", () => {
     const credentialAliasKey = `TOKEN_${fixtureToken}`;
     const previousTraceRedact = process.env.GIT_TRACE_REDACT;
+    const previousUnrelatedAmbient = process.env.UNRELATED_AMBIENT;
     process.env.GIT_TRACE_REDACT = "0";
+    process.env.UNRELATED_AMBIENT = "must-not-reach-daemon-children";
     process.env[credentialAliasKey] = "alias";
 
     const restore = sanitizeProcessEnvironmentForCredential(fixtureOwner);
     try {
       expect(process.env.GIT_TRACE_REDACT).toBeUndefined();
+      expect(process.env.UNRELATED_AMBIENT).toBeUndefined();
       expect(process.env[credentialAliasKey]).toBeUndefined();
       restore();
 
       expect(process.env.GIT_TRACE_REDACT).toBe("0");
+      expect(process.env.UNRELATED_AMBIENT).toBe("must-not-reach-daemon-children");
       expect(process.env[credentialAliasKey]).toBe("alias");
     } finally {
       restore();
@@ -1594,6 +1890,11 @@ describe("checkout ship live GitHub mutation safety", () => {
         delete process.env.GIT_TRACE_REDACT;
       } else {
         process.env.GIT_TRACE_REDACT = previousTraceRedact;
+      }
+      if (previousUnrelatedAmbient === undefined) {
+        delete process.env.UNRELATED_AMBIENT;
+      } else {
+        process.env.UNRELATED_AMBIENT = previousUnrelatedAmbient;
       }
     }
   });
@@ -1637,6 +1938,132 @@ describe("checkout ship live GitHub mutation safety", () => {
 
     expect((runnerError as Error).message).not.toContain(fixtureToken);
     expect(JSON.stringify(audit)).not.toContain(fixtureToken);
+  });
+
+  test("Buffer and Uint8Array error output cannot evade credential scanning", () => {
+    const stdoutError = Object.assign(new Error("command failed"), {
+      stdout: Buffer.from(fixtureToken),
+    });
+    const stderrError = Object.assign(new Error("command failed"), {
+      stderr: new Uint8Array(
+        Buffer.from(Buffer.from(`x-access-token:${fixtureToken}`).toString("base64")),
+      ),
+    });
+
+    expect(valueContainsCredential(stdoutError, fixtureOwner)).toBe(true);
+    expect(valueContainsCredential(stderrError, fixtureOwner)).toBe(true);
+  });
+
+  test("daemon factory rejection scans and closes its partial handle before exact restoration", async () => {
+    const previousAlias = process.env.CONSTRUCTION_TOKEN_ALIAS;
+    process.env.CONSTRUCTION_TOKEN_ALIAS = fixtureToken;
+    const expectedEnvironment = { ...process.env };
+    const restore = sanitizeProcessEnvironmentForCredential(fixtureOwner);
+    const events: string[] = [];
+    const constructionLogs: string[] = [];
+    const daemon = {
+      port: 12345,
+      daemon: {
+        async stop() {
+          events.push("stop");
+          constructionLogs.push(`shutdown log containing ${fixtureToken}`);
+        },
+        agentManager: {
+          async flush() {
+            events.push("flush");
+          },
+        },
+      },
+      async close() {
+        events.push("daemon-close");
+      },
+    } as unknown as TestPaseoDaemon;
+
+    try {
+      let constructionError: unknown;
+      try {
+        await constructDaemonContextForCredentialBoundary({
+          async createDaemon(onDaemonCreated) {
+            onDaemonCreated(daemon);
+            throw new Error("simulated daemon startup failure");
+          },
+          createClient(): DaemonClient {
+            throw new Error("client construction must not run");
+          },
+          containsCredential(value) {
+            events.push("scan");
+            return valueContainsCredential({ constructionLogs, value }, fixtureOwner);
+          },
+          retainPartialContext() {},
+          restoreEnvironment() {
+            events.push("restore");
+            restore();
+          },
+        });
+      } catch (error) {
+        constructionError = error;
+      }
+      expect(constructionError).toBeInstanceOf(Error);
+      expect((constructionError as Error).message).toBe(
+        "The checkout ship operation credential reached a construction surface",
+      );
+      expect((constructionError as Error).message).not.toContain(fixtureToken);
+      expect(events).toEqual(["stop", "flush", "daemon-close", "scan", "restore"]);
+      expect({ ...process.env }).toEqual(expectedEnvironment);
+    } finally {
+      restore();
+      if (previousAlias === undefined) {
+        delete process.env.CONSTRUCTION_TOKEN_ALIAS;
+      } else {
+        process.env.CONSTRUCTION_TOKEN_ALIAS = previousAlias;
+      }
+    }
+  });
+
+  test("operation deadline reserves cleanup and joins concurrent teardown callers", async () => {
+    const events: string[] = [];
+    let now = 0;
+    let finishCleanup: (() => void) | null = null;
+    let announceCleanup: (() => void) | null = null;
+    const cleanupStarted = new Promise<void>((resolve) => {
+      announceCleanup = resolve;
+    });
+    const cleanupCanFinish = new Promise<void>((resolve) => {
+      finishCleanup = resolve;
+    });
+    const teardown = createJoinedTeardown(async () => {
+      events.push("cleanup");
+      announceCleanup?.();
+      await cleanupCanFinish;
+      return { complete: true, error: undefined };
+    });
+
+    const run = runOperationWithCleanupReserve({
+      operation: () => {
+        now = 10;
+        return new Promise<void>(() => undefined);
+      },
+      async cancel() {
+        events.push("cancel");
+        await new Promise<void>(() => undefined);
+      },
+      cleanup: teardown,
+      recordOperationError() {},
+      operationTimeoutMs: 10,
+      settlementTimeoutMs: 0,
+      now: () => now,
+    });
+    await cleanupStarted;
+    const joined = teardown();
+    finishCleanup?.();
+    const [result, joinedResult] = await Promise.all([run, joined]);
+
+    expect(
+      LIVE_OPERATION_TIMEOUT_MS + LIVE_OPERATION_SETTLEMENT_TIMEOUT_MS + LIVE_CLEANUP_RESERVE_MS,
+    ).toBe(LIVE_TEST_TIMEOUT_MS);
+    expect(result.operationError).toBeInstanceOf(CheckoutShipOperationDeadlineError);
+    expect(result.teardown).toBe(joinedResult);
+    expect(events).toEqual(["cancel", "cleanup"]);
   });
 
   test("in-process operator implements the checkout PR command surface", async () => {
@@ -1854,6 +2281,35 @@ describe("checkout ship live GitHub mutation safety", () => {
     expect(events).toEqual(["client-close", "stop-1", "test-daemon-close", "stop-2", "flush"]);
   });
 
+  test("credential scan includes final shutdown retry logs and errors", async () => {
+    const daemonLogs: string[] = [];
+    let stopCalls = 0;
+    const closeContext = {
+      client: { async close() {} },
+      daemon: {
+        daemon: {
+          async stop() {
+            stopCalls += 1;
+            if (stopCalls === 1) {
+              throw new Error("simulated initial stop failure");
+            }
+            daemonLogs.push(`final shutdown retry: ${fixtureToken}`);
+          },
+          agentManager: { async flush() {} },
+        },
+        async close() {},
+      },
+    } as unknown as DaemonTestContext;
+
+    const result = await closeDaemonContextForCredentialBoundary(closeContext);
+
+    expect(result.stopped).toBe(true);
+    expect(result.flushed).toBe(true);
+    expect(
+      valueContainsCredential({ daemonLogs, finalCleanupError: result.error }, fixtureOwner),
+    ).toBe(true);
+  });
+
   test("successful deletion plus same-credential 404 certifies exact-repo cleanup", async () => {
     const calls: string[][] = [];
     const runGitHubCommand: GitHubCliCommandRunner = async (args) => {
@@ -2024,6 +2480,10 @@ describe("daemon checkout ship loop", () => {
   let contextInitialized: boolean;
   let boundLiveOwner: GitHubCredentialOwner | null;
   let restoreProcessEnvironment: (() => void) | null;
+  let partialDaemon: TestPaseoDaemon | null;
+  let partialClient: DaemonClient | null;
+  let liveTeardown: (() => Promise<TeardownAttemptResult>) | null;
+  let liveTeardownReported: boolean;
 
   beforeEach(async () => {
     operationOwner = null;
@@ -2033,55 +2493,97 @@ describe("daemon checkout ship loop", () => {
     contextInitialized = false;
     boundLiveOwner = null;
     restoreProcessEnvironment = null;
+    partialDaemon = null;
+    partialClient = null;
+    liveTeardown = null;
+    liveTeardownReported = false;
     if (process.env[CHECKOUT_SHIP_LIVE_GITHUB_E2E] === "1") {
       boundLiveOwner = await assertCheckoutShipLiveGitHubMutationEnabled();
       restoreProcessEnvironment = sanitizeProcessEnvironmentForCredential(boundLiveOwner);
       operationOwner = boundLiveOwner;
     }
-    const github = createGitHubService({
-      resolveRepoHost: async () => GITHUB_HOST,
-      runner: createPinnedGitHubRunner(() => {
-        if (!operationOwner) {
-          throw new Error("No checkout ship operation credential is active");
-        }
-        return operationOwner;
-      }, githubAudit),
-    });
-    const logger = pino(
-      { level: "trace" },
-      {
-        write(message: string) {
-          daemonLogs.push(message);
-        },
-      },
-    );
-    const daemon = await createTestPaseoDaemon({ github, logger });
-    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
-    ctx = {
-      daemon,
-      client,
-      cleanup: async () => {
-        await client.close();
-        await daemon.close();
-      },
-    };
-    contextInitialized = true;
+    let constructionBoundaryStarted = false;
     try {
-      await client.connect();
-      await client.fetchAgents({ subscribe: { subscriptionId: "test" } });
+      const github = createGitHubService({
+        resolveRepoHost: async () => GITHUB_HOST,
+        runner: createPinnedGitHubRunner(() => {
+          if (!operationOwner) {
+            throw new Error("No checkout ship operation credential is active");
+          }
+          return operationOwner;
+        }, githubAudit),
+      });
+      const logger = pino(
+        { level: "trace" },
+        {
+          write(message: string) {
+            daemonLogs.push(message);
+          },
+        },
+      );
+      constructionBoundaryStarted = true;
+      ctx = await constructDaemonContextForCredentialBoundary({
+        createDaemon: (onDaemonCreated) =>
+          createTestPaseoDaemon({ github, logger, onDaemonCreated }),
+        createClient: (url) => new DaemonClient({ url }),
+        containsCredential(value) {
+          return (
+            boundLiveOwner !== null &&
+            valueContainsCredential({ daemonLogs, githubAudit, value }, boundLiveOwner)
+          );
+        },
+        retainPartialContext(daemon, client) {
+          partialDaemon = daemon;
+          partialClient = client;
+        },
+        restoreEnvironment() {
+          restoreProcessEnvironment?.();
+          restoreProcessEnvironment = null;
+        },
+      });
+      partialDaemon = null;
+      partialClient = null;
+      contextInitialized = true;
     } catch (error) {
-      const closeResult = await closeDaemonContextForCredentialBoundary(ctx);
-      contextClosed = closeResult.stopped && closeResult.flushed;
-      if (contextClosed) {
+      if (!constructionBoundaryStarted) {
         restoreProcessEnvironment?.();
         restoreProcessEnvironment = null;
       }
-      throwCheckoutShipErrors(error, closeResult.error);
+      throw error;
     }
   });
 
   afterEach(async () => {
     if (!contextInitialized) {
+      if (partialDaemon) {
+        const result = await closeDaemonForCredentialBoundary(partialDaemon, partialClient);
+        contextClosed = result.stopped && result.flushed;
+        const credentialLeak =
+          boundLiveOwner &&
+          valueContainsCredential(
+            { daemonLogs, githubAudit, finalConstructionCleanupError: result.error },
+            boundLiveOwner,
+          );
+        if (contextClosed) {
+          restoreProcessEnvironment?.();
+          restoreProcessEnvironment = null;
+          partialDaemon = null;
+          partialClient = null;
+        }
+        if (credentialLeak) {
+          throw new Error("The checkout ship operation credential reached a construction surface");
+        }
+        if (result.error) {
+          throw result.error;
+        }
+      }
+      return;
+    }
+    if (liveTeardown) {
+      const result = await liveTeardown();
+      if (result.error && (!liveTeardownReported || !result.complete)) {
+        throw result.error;
+      }
       return;
     }
     let teardownError: unknown;
@@ -2105,7 +2607,7 @@ describe("daemon checkout ship loop", () => {
     if (teardownError) {
       throw teardownError;
     }
-  }, 60000);
+  }, LIVE_CLEANUP_RESERVE_MS);
 
   testWithExplicitLiveGitHubOptIn(
     "runs the full checkout ship loop via checkout RPCs",
@@ -2121,278 +2623,330 @@ describe("daemon checkout ship loop", () => {
         marker: `paseo-checkout-ship-e2e:${randomUUID()}`,
       };
       operationOwner = githubOwner;
-      let createdRepo: CreatedGitHubRepository | null = null;
-      let repoCreateAttempted = false;
-      let credentialLease: GitCredentialLease | null = null;
       const gitAudit: string[][] = [];
-      let agentId: string | null = null;
-      let testError: unknown;
-      let repoCleanupError: unknown;
       const observedProtocolValues: unknown[] = [];
+      const cleanupErrors: unknown[] = [];
+      const cleanupState: CheckoutShipLiveCleanupState = {
+        agentId: null,
+        createdRepo: null,
+        credentialLease: null,
+        operationError: undefined,
+        repoCreateAttempted: false,
+        repoDirRemoved: false,
+      };
 
-      try {
-        initGitRepo(repoDir, githubOwner);
-
-        repoCreateAttempted = true;
-        createdRepo = await createPrivateRepo(intendedRepo, githubOwner);
-        credentialLease = await createGitCredentialLease(repoDir, githubOwner, { audit: gitAudit });
-
-        const credentialFreeRemote = `https://${GITHUB_HOST}/${createdRepo.fullName}.git`;
-        executeGit(["remote", "add", "origin", credentialFreeRemote], {
-          cwd: repoDir,
-          owner: githubOwner,
-        });
-        expect(
-          executeGit(["remote", "get-url", "origin"], { cwd: repoDir, owner: githubOwner }),
-        ).toBe(credentialFreeRemote);
-        expect(
-          valueContainsCredential(
-            readFileSync(path.join(repoDir, ".git", "config"), "utf8"),
-            githubOwner,
-          ),
-        ).toBe(false);
-        executeGit(["push", "-u", "origin", "main"], {
-          cwd: repoDir,
-          owner: githubOwner,
-        });
-
-        const worktree = await createLegacyWorktreeForTest({
-          branchName: "ship-loop",
-          cwd: repoDir,
-          baseBranch: "main",
-          worktreeSlug: "ship-loop",
-          paseoHome: ctx.daemon.paseoHome,
-        });
-
-        const agent = await ctx.client.createAgent({
-          provider: "codex",
-          model: CODEX_TEST_MODEL,
-          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-          cwd: worktree.worktreePath,
-          title: "Checkout Ship Loop",
-        });
-        agentId = agent.id;
-
-        const status = await ctx.client.getCheckoutStatus(worktree.worktreePath);
-        observedProtocolValues.push(status);
-        expect(status.isGit).toBe(true);
-        expect(status.isPaseoOwnedWorktree).toBe(true);
-        if (status.isGit) {
-          expect(realpathSync(status.repoRoot)).toBe(realpathSync(worktree.worktreePath));
-          expect(status.baseRef).toBe("main");
-        }
-        expect(valueContainsCredential(status, githubOwner)).toBe(false);
-
-        executeGit(["branch", "-m", "ship-loop-ready"], {
-          cwd: worktree.worktreePath,
-          owner: githubOwner,
-        });
-
-        const updatedStatus = await ctx.client.getCheckoutStatus(worktree.worktreePath);
-        observedProtocolValues.push(updatedStatus);
-        expect(updatedStatus.currentBranch).toBe("ship-loop-ready");
-
-        const readmePath = path.join(worktree.worktreePath, "README.md");
-        writeFileSync(readmePath, "init\nship loop update\n");
-
-        const diffUncommitted = await ctx.client.getCheckoutDiff(worktree.worktreePath, {
-          mode: "uncommitted",
-        });
-        observedProtocolValues.push(diffUncommitted);
-        expect(diffUncommitted.error).toBeNull();
-        expect(diffUncommitted.files.length).toBeGreaterThan(0);
-
-        const timelineBeforeCommit = ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
-        const commitResult = await ctx.client.checkoutCommit(worktree.worktreePath, {
-          addAll: true,
-        });
-        observedProtocolValues.push(commitResult);
-        expect(commitResult.error).toBeNull();
-        expect(commitResult.success).toBe(true);
-        const timelineAfterCommit = ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
-        expect(timelineAfterCommit).toBe(timelineBeforeCommit);
-
-        const diffAfterCommit = await ctx.client.getCheckoutDiff(worktree.worktreePath, {
-          mode: "uncommitted",
-        });
-        observedProtocolValues.push(diffAfterCommit);
-        expect(diffAfterCommit.files.length).toBe(0);
-
-        const baseDiff = await ctx.client.getCheckoutDiff(worktree.worktreePath, {
-          mode: "base",
-          baseRef: "main",
-        });
-        observedProtocolValues.push(baseDiff);
-        expect(baseDiff.files.length).toBeGreaterThan(0);
-
-        const timelineBeforePr = ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
-        const prCreate = await ctx.client.checkoutPrCreate(worktree.worktreePath, {
-          baseRef: "main",
-        });
-        observedProtocolValues.push(prCreate);
-        expect(prCreate.error).toBeNull();
-        expect(prCreate.number).not.toBeNull();
-        expect(prCreate.url).toBe(
-          `https://api.github.com/repos/${createdRepo.fullName}/pulls/${prCreate.number}`,
-        );
-        const ownershipReadback = GitHubRepositoryOwnershipSchema.parse(
-          await githubOwner.request({
-            method: "GET",
-            endpoint: `repos/${createdRepo.fullName}`,
-          }),
-        );
-        observedProtocolValues.push(ownershipReadback);
-        expect(ownershipReadback).toEqual({
-          id: createdRepo.id,
-          node_id: createdRepo.nodeId,
-          full_name: createdRepo.fullName,
-          description: createdRepo.marker,
-        });
-        expect(
-          githubAudit.some((entry) => entry.args.includes(`repos/${createdRepo?.fullName}/pulls`)),
-        ).toBe(true);
-        expect(githubAudit.every((entry) => entry.host === GITHUB_HOST)).toBe(true);
-        expect(githubAudit.every((entry) => entry.login === githubOwner.login)).toBe(true);
-        expect(valueContainsCredential(githubAudit, githubOwner)).toBe(false);
-        const timelineAfterPr = ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
-        expect(timelineAfterPr).toBe(timelineBeforePr);
-
-        const mergeablePrNumber = await pollForMergeReadyPullRequest(
-          ctx,
-          worktree.worktreePath,
-          observedProtocolValues,
-        );
-        expect(mergeablePrNumber).toBe(prCreate.number);
-        const headCommit = executeGit(["rev-parse", "HEAD"], {
-          cwd: worktree.worktreePath,
-          owner: githubOwner,
-        });
-
-        const mergeResult = await ctx.client.checkoutPrMerge(worktree.worktreePath, {
-          method: "merge",
-        });
-        observedProtocolValues.push(mergeResult);
-        expect(mergeResult.error).toBeNull();
-        expect(mergeResult.success).toBe(true);
-
-        if (prCreate.number === null) {
-          throw new Error("checkoutPrCreate returned success without a PR number");
-        }
-        const remotePullRequest = GitHubPullRequestSchema.parse(
-          await githubOwner.request({
-            method: "GET",
-            endpoint: `repos/${createdRepo.fullName}/pulls/${prCreate.number}`,
-          }),
-        );
-        observedProtocolValues.push(remotePullRequest);
-        expect(remotePullRequest.number).toBe(prCreate.number);
-        expect(remotePullRequest.state).toBe("closed");
-        expect(remotePullRequest.merged_at).toEqual(expect.any(String));
-        expect(remotePullRequest.merge_commit_sha).toEqual(expect.any(String));
-        executeGit(["fetch", "origin", "main"], { cwd: repoDir, owner: githubOwner });
-        executeGit(["merge-base", "--is-ancestor", headCommit, "FETCH_HEAD"], {
-          cwd: repoDir,
-          owner: githubOwner,
-        });
-
-        const worktreeList = await ctx.client.getPaseoWorktreeList({
-          cwd: repoDir,
-        });
-        observedProtocolValues.push(worktreeList);
-        expect(worktreeList.error).toBeNull();
-        expect(
-          worktreeList.worktrees.some(
-            (entry) =>
-              entry.worktreePath === worktree.worktreePath &&
-              entry.branchName === "ship-loop-ready",
-          ),
-        ).toBe(true);
-
-        const archiveResult = await ctx.client.archivePaseoWorktree({
-          worktreePath: worktree.worktreePath,
-        });
-        observedProtocolValues.push(archiveResult);
-        expect(archiveResult.error).toBeNull();
-        expect(archiveResult.success).toBe(true);
-
-        // Archiving removes the agent from the active list but leaves the
-        // worktree on disk — disk deletion is a separate, explicit step.
-        const worktreeListAfter = await ctx.client.getPaseoWorktreeList({
-          cwd: repoDir,
-        });
-        observedProtocolValues.push(worktreeListAfter);
-        expect(
-          worktreeListAfter.worktrees.some((entry) => entry.worktreePath === worktree.worktreePath),
-        ).toBe(true);
-        expect(existsSync(worktree.worktreePath)).toBe(true);
-
-        const remainingAgents = await ctx.client.fetchAgents();
-        observedProtocolValues.push(remainingAgents);
-        expect(remainingAgents.entries.some((entry) => entry.agent.id === agent.id)).toBe(false);
-        expect(
-          valueContainsCredential({ remotePullRequest, worktreeListAfter, gitAudit }, githubOwner),
-        ).toBe(false);
-        agentId = null;
-      } catch (error) {
-        testError = error;
-      } finally {
-        const cleanupErrors: unknown[] = [];
-        if (agentId) {
+      liveTeardown = createJoinedTeardown(async () => {
+        const attemptErrors: unknown[] = [];
+        if (cleanupState.agentId) {
           try {
-            await ctx.client.deleteAgent(agentId);
+            await ctx.client.deleteAgent(cleanupState.agentId);
+            cleanupState.agentId = null;
           } catch (error) {
-            cleanupErrors.push(error);
+            attemptErrors.push(error);
           }
         }
-        if (repoCreateAttempted) {
+        if (cleanupState.repoCreateAttempted) {
           try {
-            createdRepo = await recoverCreatedRepoForCleanup(
-              createdRepo,
+            cleanupState.createdRepo = await recoverCreatedRepoForCleanup(
+              cleanupState.createdRepo,
               intendedRepo,
               githubOwner,
             );
-            await deleteRepoAndVerifyAbsent(createdRepo, githubOwner);
+            await deleteRepoAndVerifyAbsent(cleanupState.createdRepo, githubOwner);
+            cleanupState.repoCreateAttempted = false;
+            cleanupState.createdRepo = null;
           } catch (error) {
-            cleanupErrors.push(error);
+            attemptErrors.push(error);
           }
         }
-        try {
-          await credentialLease?.close();
-        } catch (error) {
-          cleanupErrors.push(error);
+        if (cleanupState.credentialLease) {
+          try {
+            await cleanupState.credentialLease.close();
+            cleanupState.credentialLease = null;
+          } catch (error) {
+            attemptErrors.push(error);
+          }
         }
-        try {
-          rmSync(repoDir, { recursive: true, force: true });
-        } catch (error) {
-          cleanupErrors.push(error);
+        if (!cleanupState.repoDirRemoved) {
+          try {
+            rmSync(repoDir, { recursive: true, force: true });
+            cleanupState.repoDirRemoved = true;
+          } catch (error) {
+            attemptErrors.push(error);
+          }
         }
         const contextCloseResult = await closeDaemonContextForCredentialBoundary(ctx);
         contextClosed = contextCloseResult.stopped && contextCloseResult.flushed;
         if (contextCloseResult.error) {
-          cleanupErrors.push(contextCloseResult.error);
+          attemptErrors.push(contextCloseResult.error);
         }
+        cleanupErrors.push(...attemptErrors);
         operationOwner = null;
-        repoCleanupError = aggregateCleanupErrors(cleanupErrors);
-      }
 
-      if (
-        valueContainsCredential(
-          {
-            daemonLogs,
-            githubAudit,
-            gitAudit,
+        if (
+          valueContainsCredential(
+            {
+              daemonLogs,
+              githubAudit,
+              gitAudit,
+              observedProtocolValues,
+              operationError: cleanupState.operationError,
+              finalCleanupErrors: cleanupErrors,
+            },
+            githubOwner,
+          )
+        ) {
+          cleanupErrors.push(
+            new Error("The checkout ship operation credential reached an observable surface"),
+          );
+        }
+
+        if (contextClosed) {
+          restoreProcessEnvironment?.();
+          restoreProcessEnvironment = null;
+        }
+        return {
+          complete: contextClosed,
+          error: aggregateCleanupErrors(cleanupErrors),
+        };
+      });
+
+      const reservedOperation = await runOperationWithCleanupReserve({
+        operation: async (signal) => {
+          initGitRepo(repoDir, githubOwner);
+          signal.throwIfAborted();
+
+          cleanupState.credentialLease = await createGitCredentialLease(repoDir, githubOwner, {
+            audit: gitAudit,
+          });
+          signal.throwIfAborted();
+          cleanupState.repoCreateAttempted = true;
+          cleanupState.createdRepo = await createPrivateRepo(intendedRepo, githubOwner);
+          signal.throwIfAborted();
+          const createdRepo = cleanupState.createdRepo;
+
+          const credentialFreeRemote = `https://${GITHUB_HOST}/${createdRepo.fullName}.git`;
+          executeGit(["remote", "add", "origin", credentialFreeRemote], {
+            cwd: repoDir,
+            owner: githubOwner,
+          });
+          expect(
+            executeGit(["remote", "get-url", "origin"], { cwd: repoDir, owner: githubOwner }),
+          ).toBe(credentialFreeRemote);
+          expect(
+            valueContainsCredential(
+              readFileSync(path.join(repoDir, ".git", "config"), "utf8"),
+              githubOwner,
+            ),
+          ).toBe(false);
+          executeGit(["push", "-u", "origin", "main"], {
+            cwd: repoDir,
+            owner: githubOwner,
+          });
+
+          const worktree = await createLegacyWorktreeForTest({
+            branchName: "ship-loop",
+            cwd: repoDir,
+            baseBranch: "main",
+            worktreeSlug: "ship-loop",
+            paseoHome: ctx.daemon.paseoHome,
+          });
+
+          const agent = await ctx.client.createAgent({
+            provider: "codex",
+            model: CODEX_TEST_MODEL,
+            thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+            cwd: worktree.worktreePath,
+            title: "Checkout Ship Loop",
+          });
+          cleanupState.agentId = agent.id;
+          signal.throwIfAborted();
+
+          const status = await ctx.client.getCheckoutStatus(worktree.worktreePath);
+          observedProtocolValues.push(status);
+          expect(status.isGit).toBe(true);
+          expect(status.isPaseoOwnedWorktree).toBe(true);
+          if (status.isGit) {
+            expect(realpathSync(status.repoRoot)).toBe(realpathSync(worktree.worktreePath));
+            expect(status.baseRef).toBe("main");
+          }
+          expect(valueContainsCredential(status, githubOwner)).toBe(false);
+
+          executeGit(["branch", "-m", "ship-loop-ready"], {
+            cwd: worktree.worktreePath,
+            owner: githubOwner,
+          });
+
+          const updatedStatus = await ctx.client.getCheckoutStatus(worktree.worktreePath);
+          observedProtocolValues.push(updatedStatus);
+          expect(updatedStatus.currentBranch).toBe("ship-loop-ready");
+
+          const readmePath = path.join(worktree.worktreePath, "README.md");
+          writeFileSync(readmePath, "init\nship loop update\n");
+
+          const diffUncommitted = await ctx.client.getCheckoutDiff(worktree.worktreePath, {
+            mode: "uncommitted",
+          });
+          observedProtocolValues.push(diffUncommitted);
+          expect(diffUncommitted.error).toBeNull();
+          expect(diffUncommitted.files.length).toBeGreaterThan(0);
+
+          const timelineBeforeCommit = ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
+          const commitResult = await ctx.client.checkoutCommit(worktree.worktreePath, {
+            addAll: true,
+          });
+          observedProtocolValues.push(commitResult);
+          expect(commitResult.error).toBeNull();
+          expect(commitResult.success).toBe(true);
+          const timelineAfterCommit = ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
+          expect(timelineAfterCommit).toBe(timelineBeforeCommit);
+
+          const diffAfterCommit = await ctx.client.getCheckoutDiff(worktree.worktreePath, {
+            mode: "uncommitted",
+          });
+          observedProtocolValues.push(diffAfterCommit);
+          expect(diffAfterCommit.files.length).toBe(0);
+
+          const baseDiff = await ctx.client.getCheckoutDiff(worktree.worktreePath, {
+            mode: "base",
+            baseRef: "main",
+          });
+          observedProtocolValues.push(baseDiff);
+          expect(baseDiff.files.length).toBeGreaterThan(0);
+
+          const timelineBeforePr = ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
+          const prCreate = await ctx.client.checkoutPrCreate(worktree.worktreePath, {
+            baseRef: "main",
+          });
+          signal.throwIfAborted();
+          observedProtocolValues.push(prCreate);
+          expect(prCreate.error).toBeNull();
+          expect(prCreate.number).not.toBeNull();
+          expect(prCreate.url).toBe(
+            `https://api.github.com/repos/${createdRepo.fullName}/pulls/${prCreate.number}`,
+          );
+          const ownershipReadback = GitHubRepositoryOwnershipSchema.parse(
+            await githubOwner.request({
+              method: "GET",
+              endpoint: `repos/${createdRepo.fullName}`,
+            }),
+          );
+          observedProtocolValues.push(ownershipReadback);
+          expect(ownershipReadback).toEqual({
+            id: createdRepo.id,
+            node_id: createdRepo.nodeId,
+            full_name: createdRepo.fullName,
+            description: createdRepo.marker,
+          });
+          expect(
+            githubAudit.some((entry) =>
+              entry.args.includes(`repos/${createdRepo?.fullName}/pulls`),
+            ),
+          ).toBe(true);
+          expect(githubAudit.every((entry) => entry.host === GITHUB_HOST)).toBe(true);
+          expect(githubAudit.every((entry) => entry.login === githubOwner.login)).toBe(true);
+          expect(valueContainsCredential(githubAudit, githubOwner)).toBe(false);
+          const timelineAfterPr = ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
+          expect(timelineAfterPr).toBe(timelineBeforePr);
+
+          const mergeablePrNumber = await pollForMergeReadyPullRequest(
+            ctx,
+            worktree.worktreePath,
             observedProtocolValues,
-            testError,
-            repoCleanupError,
-          },
-          githubOwner,
-        )
-      ) {
-        throw new Error("The checkout ship operation credential reached an observable surface");
-      }
-      throwCheckoutShipErrors(testError, repoCleanupError);
+          );
+          signal.throwIfAborted();
+          expect(mergeablePrNumber).toBe(prCreate.number);
+          const headCommit = executeGit(["rev-parse", "HEAD"], {
+            cwd: worktree.worktreePath,
+            owner: githubOwner,
+          });
+
+          const mergeResult = await ctx.client.checkoutPrMerge(worktree.worktreePath, {
+            method: "merge",
+          });
+          signal.throwIfAborted();
+          observedProtocolValues.push(mergeResult);
+          expect(mergeResult.error).toBeNull();
+          expect(mergeResult.success).toBe(true);
+
+          if (prCreate.number === null) {
+            throw new Error("checkoutPrCreate returned success without a PR number");
+          }
+          const remotePullRequest = GitHubPullRequestSchema.parse(
+            await githubOwner.request({
+              method: "GET",
+              endpoint: `repos/${createdRepo.fullName}/pulls/${prCreate.number}`,
+            }),
+          );
+          observedProtocolValues.push(remotePullRequest);
+          expect(remotePullRequest.number).toBe(prCreate.number);
+          expect(remotePullRequest.state).toBe("closed");
+          expect(remotePullRequest.merged_at).toEqual(expect.any(String));
+          expect(remotePullRequest.merge_commit_sha).toEqual(expect.any(String));
+          executeGit(["fetch", "origin", "main"], { cwd: repoDir, owner: githubOwner });
+          executeGit(["merge-base", "--is-ancestor", headCommit, "FETCH_HEAD"], {
+            cwd: repoDir,
+            owner: githubOwner,
+          });
+
+          const worktreeList = await ctx.client.getPaseoWorktreeList({
+            cwd: repoDir,
+          });
+          observedProtocolValues.push(worktreeList);
+          expect(worktreeList.error).toBeNull();
+          expect(
+            worktreeList.worktrees.some(
+              (entry) =>
+                entry.worktreePath === worktree.worktreePath &&
+                entry.branchName === "ship-loop-ready",
+            ),
+          ).toBe(true);
+
+          const archiveResult = await ctx.client.archivePaseoWorktree({
+            worktreePath: worktree.worktreePath,
+          });
+          observedProtocolValues.push(archiveResult);
+          expect(archiveResult.error).toBeNull();
+          expect(archiveResult.success).toBe(true);
+
+          // Archiving removes the agent from the active list but leaves the
+          // worktree on disk — disk deletion is a separate, explicit step.
+          const worktreeListAfter = await ctx.client.getPaseoWorktreeList({
+            cwd: repoDir,
+          });
+          observedProtocolValues.push(worktreeListAfter);
+          expect(
+            worktreeListAfter.worktrees.some(
+              (entry) => entry.worktreePath === worktree.worktreePath,
+            ),
+          ).toBe(true);
+          expect(existsSync(worktree.worktreePath)).toBe(true);
+
+          const remainingAgents = await ctx.client.fetchAgents();
+          observedProtocolValues.push(remainingAgents);
+          expect(remainingAgents.entries.some((entry) => entry.agent.id === agent.id)).toBe(false);
+          expect(
+            valueContainsCredential(
+              { remotePullRequest, worktreeListAfter, gitAudit },
+              githubOwner,
+            ),
+          ).toBe(false);
+          cleanupState.agentId = null;
+        },
+        async cancel() {
+          await ctx.client.close();
+        },
+        cleanup: liveTeardown,
+        recordOperationError(error) {
+          cleanupState.operationError = error;
+        },
+        operationTimeoutMs: LIVE_OPERATION_TIMEOUT_MS,
+        settlementTimeoutMs: LIVE_OPERATION_SETTLEMENT_TIMEOUT_MS,
+      });
+      liveTeardownReported = reservedOperation.teardown.complete;
+      throwCheckoutShipErrors(reservedOperation.operationError, reservedOperation.teardown.error);
     },
-    900000,
+    LIVE_TEST_TIMEOUT_MS,
   );
 
   test("credential-free GitHub remotes stay token-free in checkout protocol facts", async () => {
