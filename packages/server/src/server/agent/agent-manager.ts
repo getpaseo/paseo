@@ -2052,6 +2052,40 @@ export class AgentManager {
   }
 
   /**
+   * Inject a prompt into the active turn without canceling it.
+   * Returns true when the provider accepted a native steer. Returns false when
+   * the session has no `steer` implementation (caller should fall back to
+   * interrupt+replace). Throws when steer is attempted without an active turn
+   * or the provider rejects the inject.
+   */
+  async steerAgent(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<boolean> {
+    const agent = this.requireSessionAgent(agentId);
+    const steer = agent.session.steer?.bind(agent.session);
+    if (!steer) {
+      return false;
+    }
+    if (!this.hasInFlightRun(agentId) && agent.lifecycle !== "running") {
+      throw new Error("Steer is only available while the agent is running");
+    }
+    this.logger.trace(
+      {
+        agentId,
+        provider: agent.provider,
+        sessionId: agent.persistence?.sessionId ?? undefined,
+        turnId: agent.activeForegroundTurnId ?? undefined,
+      },
+      "agent.manager.steer",
+    );
+    await steer(prompt, options);
+    this.touchUpdatedAt(agent);
+    return true;
+  }
+
+  /**
    * Try to run a prompt out-of-band — i.e. without allocating a foreground turn
    * and without canceling any active turn. Returns true when the session
    * accepted the prompt as a side-effect command (e.g. /goal pause). Events

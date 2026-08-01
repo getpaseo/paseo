@@ -170,6 +170,7 @@ describe("composer send behavior", () => {
       calls,
       handleSendMessage: () => calls.push("send"),
       handleQueueMessage: () => calls.push("queue"),
+      handleSteerMessage: () => calls.push("steer"),
       onQueue: () => undefined,
     };
   }
@@ -179,45 +180,122 @@ describe("composer send behavior", () => {
     runDefaultSendAction({
       defaultSendBehavior: "interrupt",
       isAgentRunning: true,
+      canSteer: false,
       onQueue: defaultAction.onQueue,
       handleSendMessage: defaultAction.handleSendMessage,
       handleQueueMessage: defaultAction.handleQueueMessage,
+      handleSteerMessage: defaultAction.handleSteerMessage,
     });
 
     const alternateAction = actions();
     runAlternateSendAction({
       defaultSendBehavior: "interrupt",
       isAgentRunning: true,
+      canSteer: false,
       onQueue: alternateAction.onQueue,
       handleSendMessage: alternateAction.handleSendMessage,
       handleQueueMessage: alternateAction.handleQueueMessage,
+      handleSteerMessage: alternateAction.handleSteerMessage,
     });
 
     expect(defaultAction.calls).toEqual(["send"]);
     expect(alternateAction.calls).toEqual(["queue"]);
   });
 
-  it("uses Enter to queue and Mod+Enter to submit when queue is selected", () => {
+  it("uses Enter to queue and Mod+Enter to steer when queue is selected and steer is available", () => {
     const defaultAction = actions();
     runDefaultSendAction({
       defaultSendBehavior: "queue",
       isAgentRunning: true,
+      canSteer: true,
       onQueue: defaultAction.onQueue,
       handleSendMessage: defaultAction.handleSendMessage,
       handleQueueMessage: defaultAction.handleQueueMessage,
+      handleSteerMessage: defaultAction.handleSteerMessage,
     });
 
     const alternateAction = actions();
     runAlternateSendAction({
       defaultSendBehavior: "queue",
       isAgentRunning: true,
+      canSteer: true,
       onQueue: alternateAction.onQueue,
       handleSendMessage: alternateAction.handleSendMessage,
       handleQueueMessage: alternateAction.handleQueueMessage,
+      handleSteerMessage: alternateAction.handleSteerMessage,
+    });
+
+    expect(defaultAction.calls).toEqual(["queue"]);
+    expect(alternateAction.calls).toEqual(["steer"]);
+  });
+
+  it("uses Enter to queue and Mod+Enter to submit when queue is selected and steer is unavailable", () => {
+    const defaultAction = actions();
+    runDefaultSendAction({
+      defaultSendBehavior: "queue",
+      isAgentRunning: true,
+      canSteer: false,
+      onQueue: defaultAction.onQueue,
+      handleSendMessage: defaultAction.handleSendMessage,
+      handleQueueMessage: defaultAction.handleQueueMessage,
+      handleSteerMessage: defaultAction.handleSteerMessage,
+    });
+
+    const alternateAction = actions();
+    runAlternateSendAction({
+      defaultSendBehavior: "queue",
+      isAgentRunning: true,
+      canSteer: false,
+      onQueue: alternateAction.onQueue,
+      handleSendMessage: alternateAction.handleSendMessage,
+      handleQueueMessage: alternateAction.handleQueueMessage,
+      handleSteerMessage: alternateAction.handleSteerMessage,
     });
 
     expect(defaultAction.calls).toEqual(["queue"]);
     expect(alternateAction.calls).toEqual(["send"]);
+  });
+
+  it("uses Enter to steer and Mod+Enter to queue when steer is selected and available", () => {
+    const defaultAction = actions();
+    runDefaultSendAction({
+      defaultSendBehavior: "steer",
+      isAgentRunning: true,
+      canSteer: true,
+      onQueue: defaultAction.onQueue,
+      handleSendMessage: defaultAction.handleSendMessage,
+      handleQueueMessage: defaultAction.handleQueueMessage,
+      handleSteerMessage: defaultAction.handleSteerMessage,
+    });
+
+    const alternateAction = actions();
+    runAlternateSendAction({
+      defaultSendBehavior: "steer",
+      isAgentRunning: true,
+      canSteer: true,
+      onQueue: alternateAction.onQueue,
+      handleSendMessage: alternateAction.handleSendMessage,
+      handleQueueMessage: alternateAction.handleQueueMessage,
+      handleSteerMessage: alternateAction.handleSteerMessage,
+    });
+
+    expect(defaultAction.calls).toEqual(["steer"]);
+    expect(alternateAction.calls).toEqual(["queue"]);
+  });
+
+  it("falls back to interrupt send when steer is selected but unsupported", () => {
+    const defaultAction = actions();
+    runDefaultSendAction({
+      defaultSendBehavior: "steer",
+      isAgentRunning: true,
+      canSteer: false,
+      onQueue: defaultAction.onQueue,
+      handleSendMessage: defaultAction.handleSendMessage,
+      handleQueueMessage: defaultAction.handleQueueMessage,
+      handleSteerMessage: defaultAction.handleSteerMessage,
+    });
+
+    expect(defaultAction.calls).toEqual(["send"]);
   });
 });
 

@@ -79,7 +79,7 @@ export const es: TranslationResources = {
       interruptAgent: "agente de interrupción",
       queueMessage: "mensaje de cola",
       steer: "Dirigir",
-      steerHint: "Interrumpe el turno actual con este mensaje",
+      steerHint: "Redirige el turno actual con este mensaje",
       sendAndInterrupt: "Enviar e interrumpir",
       sendMessage: "enviar mensaje",
       queue: "Cola",
@@ -111,6 +111,7 @@ export const es: TranslationResources = {
       dropFilesHere: "Drop files here",
       editQueuedMessage: "Editar mensaje en cola",
       sendQueuedMessageNow: "Enviar mensaje en cola ahora",
+      steerQueuedMessage: "Steer with queued message",
       openImage: "Abrir imagen adjunta",
       removeImage: "Quitar imagen adjunta",
       removeFile: "Remove file attachment",
@@ -1767,10 +1768,13 @@ export const es: TranslationResources = {
             "Cuando el agente se está ejecutando, Enter interrumpe. Command/Ctrl+Enter pone en cola.",
           queue:
             "Cuando el agente se está ejecutando, Enter pone en cola. Command/Ctrl+Enter envía.",
+          steer:
+            "When the agent is running, Enter steers the current turn. Command/Ctrl+Enter queues. Falls back to interrupt if steer is unavailable.",
         },
         options: {
           interrupt: "Interrumpir",
           queue: "Cola",
+          steer: "Steer",
         },
       },
       serviceUrls: {

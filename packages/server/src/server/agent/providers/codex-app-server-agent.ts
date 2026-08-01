@@ -211,6 +211,8 @@ const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  // COMPAT(supportsSteer): added in v0.2.916 — native app-server turn/steer.
+  supportsSteer: true,
 };
 
 const CODEX_MODES: AgentMode[] = [
@@ -4291,6 +4293,40 @@ export class CodexAppServerAgentSession implements AgentSession {
       },
       INTERRUPT_TIMEOUT_MS,
     );
+  }
+
+  /**
+   * Inject user input into the active Codex turn via app-server `turn/steer`.
+   * Does not cancel the turn and does not start a new one.
+   */
+  async steer(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<void> {
+    if (!this.client || !this.currentThreadId) {
+      throw new Error("Cannot steer Codex before the active thread is initialized");
+    }
+    if (!this.currentTurnId) {
+      throw new Error("Cannot steer Codex before turn/started identifies the active turn");
+    }
+    const input = await this.buildUserInput(prompt);
+    const params: Record<string, unknown> = {
+      threadId: this.currentThreadId,
+      expectedTurnId: this.currentTurnId,
+      input,
+    };
+    if (options?.clientMessageId) {
+      params.clientUserMessageId = options.clientMessageId;
+      // Correlate the next userMessage item Codex emits for this inject.
+      this.activeClientMessageId = options.clientMessageId;
+    }
+    this.logger.info(
+      {
+        threadId: this.currentThreadId,
+        turnId: this.currentTurnId,
+        hasClientMessageId: Boolean(options?.clientMessageId),
+        inputCount: input.length,
+      },
+      "Steering Codex app-server turn",
+    );
+    await this.client.request("turn/steer", params, TURN_START_TIMEOUT_MS);
   }
 
   async close(): Promise<void> {

@@ -10,21 +10,90 @@ export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "
 
 export type AgentRunController = Pick<
   AgentManager,
-  "getAgent" | "tryRunOutOfBand" | "hasInFlightRun" | "replaceAgentRun" | "streamAgent"
+  | "getAgent"
+  | "tryRunOutOfBand"
+  | "hasInFlightRun"
+  | "replaceAgentRun"
+  | "streamAgent"
+  | "steerAgent"
 >;
 
 export interface StartAgentRunOptions {
   replaceRunning?: boolean;
+  /**
+   * Prefer native mid-turn inject when the provider implements `session.steer`
+   * (Claude streaming input, Codex `turn/steer`, OMP runtime steer). Falls back
+   * to interrupt+replace when the session has no native steer method.
+   */
+  steer?: boolean;
   runOptions?: AgentRunOptions;
 }
 
-export async function startAgentRun(
+function logAgentRunContext(
+  logger: Logger,
+  agentManager: Pick<AgentRunController, "getAgent">,
+  agentId: string,
+  message: string,
+  extra?: Record<string, unknown>,
+): void {
+  const snapshot = agentManager.getAgent(agentId);
+  logger.trace(
+    {
+      agentId,
+      provider: snapshot?.provider,
+      providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
+      ...extra,
+    },
+    message,
+  );
+}
+
+async function tryNativeSteer(
   agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  runOptions: AgentRunOptions | undefined,
+  logger: Logger,
+): Promise<boolean> {
+  const steered = await agentManager.steerAgent(agentId, prompt, runOptions);
+  if (!steered) {
+    // Session has no native `steer` method: fall through to interrupt + replace.
+    return false;
+  }
+  logAgentRunContext(logger, agentManager, agentId, "agent.session.start_stream.steered");
+  // Native steer leaves the existing foreground turn running — no new
+  // iterator to drain, and waitForAgentRunStart should see an active run.
+  return true;
+}
+
+function drainAgentRunIterator(
+  iterator: AsyncIterable<unknown>,
+  agentManager: Pick<AgentRunController, "getAgent">,
+  agentId: string,
+  logger: Logger,
+): void {
+  void (async () => {
+    try {
+      for await (const _ of iterator) {
+        // Events are broadcast via AgentManager subscribers.
+      }
+      logAgentRunContext(logger, agentManager, agentId, "agent.session.iterator.drained");
+    } catch (error) {
+      logAgentRunContext(logger, agentManager, agentId, "agent.session.iterator.error", {
+        err: error,
+      });
+      logger.error({ err: error, agentId }, "Agent stream failed");
+    }
+  })();
+}
+
+function logStartAgentRunRequest(
+  agentManager: Pick<AgentRunController, "getAgent">,
   agentId: string,
   prompt: AgentPromptInput,
   logger: Logger,
   options?: StartAgentRunOptions,
-): Promise<{ outOfBand: boolean }> {
+): void {
   const snapshot = agentManager.getAgent(agentId);
   logger.trace(
     {
@@ -35,55 +104,63 @@ export async function startAgentRun(
       promptType: typeof prompt === "string" ? "string" : "structured",
       hasRunOptions: Boolean(options?.runOptions),
       replaceRunning: Boolean(options?.replaceRunning),
+      steer: Boolean(options?.steer),
     },
     "agent.session.start_stream.request",
   );
+}
+
+async function openAgentRunIterator(
+  agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  runOptions: AgentRunOptions | undefined,
+  shouldReplace: boolean,
+  logger: Logger,
+): Promise<AsyncIterable<unknown>> {
+  const iterator = shouldReplace
+    ? await agentManager.replaceAgentRun(agentId, prompt, runOptions)
+    : agentManager.streamAgent(agentId, prompt, runOptions);
+  logAgentRunContext(
+    logger,
+    agentManager,
+    agentId,
+    "agent.session.start_stream.iterator_returned",
+    { shouldReplace },
+  );
+  return iterator;
+}
+
+export async function startAgentRun(
+  agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  logger: Logger,
+  options?: StartAgentRunOptions,
+): Promise<{ outOfBand: boolean }> {
+  logStartAgentRunRequest(agentManager, agentId, prompt, logger, options);
   // Out-of-band commands (e.g. /goal pause) must run WITHOUT canceling an
   // in-flight turn — replaceAgentRun would interrupt the running turn. The
   // intercept lives at this layer so it covers every prompt entrypoint.
   if (agentManager.tryRunOutOfBand(agentId, prompt)) {
     return { outOfBand: true };
   }
-  const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
   const runOptions = options?.runOptions;
-  const iterator = shouldReplace
-    ? await agentManager.replaceAgentRun(agentId, prompt, runOptions)
-    : agentManager.streamAgent(agentId, prompt, runOptions);
-  logger.trace(
-    {
-      agentId,
-      provider: snapshot?.provider,
-      providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
-      shouldReplace,
-    },
-    "agent.session.start_stream.iterator_returned",
+  if (options?.steer && (await tryNativeSteer(agentManager, agentId, prompt, runOptions, logger))) {
+    return { outOfBand: true };
+  }
+  const shouldReplace = Boolean(
+    (options?.replaceRunning || options?.steer) && agentManager.hasInFlightRun(agentId),
   );
-  void (async () => {
-    try {
-      for await (const _ of iterator) {
-        // Events are broadcast via AgentManager subscribers.
-      }
-      logger.trace(
-        {
-          agentId,
-          provider: snapshot?.provider,
-          providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
-        },
-        "agent.session.iterator.drained",
-      );
-    } catch (error) {
-      logger.trace(
-        {
-          agentId,
-          provider: snapshot?.provider,
-          providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
-          err: error,
-        },
-        "agent.session.iterator.error",
-      );
-      logger.error({ err: error, agentId }, "Agent stream failed");
-    }
-  })();
+  const iterator = await openAgentRunIterator(
+    agentManager,
+    agentId,
+    prompt,
+    runOptions,
+    shouldReplace,
+    logger,
+  );
+  drainAgentRunIterator(iterator, agentManager, agentId, logger);
   return { outOfBand: false };
 }
 
@@ -129,6 +206,11 @@ export interface SendPromptToAgentParams {
   runOptions?: AgentRunOptions;
   /** Optional mode to set on the agent before the run starts. */
   sessionMode?: string;
+  /**
+   * Prefer native mid-turn inject when available; otherwise interrupt+replace.
+   * Callers must capability-gate before setting this.
+   */
+  steer?: boolean;
   /**
    * Default true. When false, archived agents are skipped instead of being
    * unarchived. Use false for system-injected prompts (chat mentions,
@@ -203,6 +285,7 @@ export async function sendPromptToAgent(
 
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,
+    steer: params.steer === true,
     runOptions,
   });
 }

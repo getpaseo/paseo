@@ -23,6 +23,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useShallow } from "zustand/shallow";
 import {
   ArrowUp,
+  CornerDownLeft,
   Square,
   Pencil,
   AudioLines,
@@ -350,13 +351,24 @@ interface RenderQueueTrackArgs {
   queuedMessages: readonly QueuedMessage[];
   handleEditQueuedMessage: (id: string) => void;
   handleSendQueuedNow: (id: string) => Promise<void>;
+  handleSteerQueuedNow: (id: string) => Promise<void>;
+  canSteerQueued: boolean;
   editLabel: string;
   sendNowLabel: string;
+  steerLabel: string;
 }
 
 function renderQueueTrack(args: RenderQueueTrackArgs): ReactElement | null {
-  const { queuedMessages, handleEditQueuedMessage, handleSendQueuedNow, editLabel, sendNowLabel } =
-    args;
+  const {
+    queuedMessages,
+    handleEditQueuedMessage,
+    handleSendQueuedNow,
+    handleSteerQueuedNow,
+    canSteerQueued,
+    editLabel,
+    sendNowLabel,
+    steerLabel,
+  } = args;
   if (queuedMessages.length === 0) return null;
   return (
     <View style={styles.queueTrack}>
@@ -366,8 +378,10 @@ function renderQueueTrack(args: RenderQueueTrackArgs): ReactElement | null {
           item={item}
           onEdit={handleEditQueuedMessage}
           onSendNow={handleSendQueuedNow}
+          onSteer={canSteerQueued ? handleSteerQueuedNow : undefined}
           editLabel={editLabel}
           sendNowLabel={sendNowLabel}
+          steerLabel={steerLabel}
         />
       ))}
     </View>
@@ -562,16 +576,20 @@ interface QueuedMessageRowProps {
   item: QueuedMessage;
   onEdit: (id: string) => void;
   onSendNow: (id: string) => void;
+  onSteer?: (id: string) => void;
   editLabel: string;
   sendNowLabel: string;
+  steerLabel: string;
 }
 
 function QueuedMessageRow({
   item,
   onEdit,
   onSendNow,
+  onSteer,
   editLabel,
   sendNowLabel,
+  steerLabel,
 }: QueuedMessageRowProps) {
   const handleEdit = useCallback(() => {
     onEdit(item.id);
@@ -579,6 +597,10 @@ function QueuedMessageRow({
   const handleSendNow = useCallback(() => {
     onSendNow(item.id);
   }, [onSendNow, item.id]);
+  const handleSteer = useCallback(() => {
+    onSteer?.(item.id);
+  }, [onSteer, item.id]);
+  const primaryIsSteer = typeof onSteer === "function";
   return (
     <View style={styles.queueItem}>
       <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
@@ -593,14 +615,27 @@ function QueuedMessageRow({
         >
           <ThemedPencil size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
         </Pressable>
-        <Pressable
-          onPress={handleSendNow}
-          style={[styles.queueActionButton, styles.queueSendButton]}
-          accessibilityLabel={sendNowLabel}
-          accessibilityRole="button"
-        >
-          <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
-        </Pressable>
+        {primaryIsSteer ? (
+          <Pressable
+            onPress={handleSteer}
+            style={[styles.queueActionButton, styles.queueSteerButton]}
+            accessibilityLabel={steerLabel}
+            accessibilityRole="button"
+            testID="composer-queue-steer-button"
+          >
+            <ThemedCornerDownLeft size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
+            <Text style={styles.queueSteerLabel}>{steerLabel}</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={handleSendNow}
+            style={[styles.queueActionButton, styles.queueSendButton]}
+            accessibilityLabel={sendNowLabel}
+            accessibilityRole="button"
+          >
+            <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
+          </Pressable>
+        )}
       </View>
     </View>
   );
@@ -1474,7 +1509,12 @@ export function Composer({
       if (blurOnSubmit) {
         messageInputRef.current?.blur();
       }
-      void sendMessageWithContent(payload.text, outgoingAttachments, payload.forceSend);
+      void sendMessageWithContent(
+        payload.text,
+        outgoingAttachments,
+        payload.forceSend,
+        payload.steer,
+      );
     },
     [
       attachments,
@@ -1722,6 +1762,25 @@ export function Composer({
       }
     },
     [agentId, queueWriter, submitMessage, t],
+  );
+
+  const handleSteerQueuedNow = useCallback(
+    async (id: string) => {
+      if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
+      if (interactionLocked || !agentState.supportsSteer) return;
+      const result = await sendQueuedComposerMessageNow({
+        agentId,
+        messageId: id,
+        queue: queueWriter,
+        submitMessage: ({ text, attachments: queuedAttachments }) =>
+          submitMessage(text, queuedAttachments, { steer: true }),
+        failedToSendMessage: t("composer.errors.failedToSend"),
+      });
+      if (result.status === "failed") {
+        setSendError(result.errorMessage);
+      }
+    },
+    [agentId, agentState.supportsSteer, interactionLocked, queueWriter, submitMessage, t],
   );
 
   const handleQueue = useCallback(
@@ -2098,10 +2157,22 @@ export function Composer({
         queuedMessages,
         handleEditQueuedMessage,
         handleSendQueuedNow,
+        handleSteerQueuedNow,
+        canSteerQueued: isAgentRunning && !interactionLocked && agentState.supportsSteer,
         editLabel: t("composer.attachments.editQueuedMessage"),
         sendNowLabel: t("composer.attachments.sendQueuedMessageNow"),
+        steerLabel: t("composer.input.steer"),
       }),
-    [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
+    [
+      agentState.supportsSteer,
+      handleEditQueuedMessage,
+      handleSendQueuedNow,
+      handleSteerQueuedNow,
+      interactionLocked,
+      isAgentRunning,
+      queuedMessages,
+      t,
+    ],
   );
 
   const messageInputContainerRef = useRef<View>(null);
@@ -2357,6 +2428,19 @@ const styles = StyleSheet.create((theme: Theme) => ({
   queueSendButton: {
     backgroundColor: theme.colors.accent,
   },
+  queueSteerButton: {
+    width: "auto",
+    minWidth: 32,
+    paddingHorizontal: theme.spacing[2],
+    gap: theme.spacing[1],
+    flexDirection: "row",
+    backgroundColor: theme.colors.accent,
+  },
+  queueSteerLabel: {
+    color: theme.colors.accentForeground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+  },
   sendErrorText: {
     color: theme.colors.palette.red[500],
     fontSize: theme.fontSize.sm,
@@ -2365,6 +2449,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
 
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedArrowUp = withUnistyles(ArrowUp);
+const ThemedCornerDownLeft = withUnistyles(CornerDownLeft);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedAudioLines = withUnistyles(AudioLines);

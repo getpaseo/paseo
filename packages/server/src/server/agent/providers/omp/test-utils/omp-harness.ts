@@ -455,6 +455,14 @@ export class OmpHarness {
     await promptStarted;
   }
 
+  async steer(message: string, options?: { clientMessageId?: string }): Promise<void> {
+    await this.requireSession().steer(message, options);
+  }
+
+  supportsSteer(): boolean {
+    return this.requireSession().capabilities.supportsSteer === true;
+  }
+
   async interrupt(): Promise<void> {
     await this.requireSession().interrupt();
   }

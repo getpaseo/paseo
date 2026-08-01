@@ -79,7 +79,7 @@ export const ar: TranslationResources = {
       interruptAgent: "عامل المقاطعة",
       queueMessage: "رسالة قائمة الانتظار",
       steer: "توجيه",
-      steerHint: "يقاطع الدور الحالي بهذه الرسالة",
+      steerHint: "يعيد توجيه الدور الحالي بهذه الرسالة",
       sendAndInterrupt: "إرسال ومقاطعة",
       sendMessage: "أرسل رسالة",
       queue: "طابور",
@@ -111,6 +111,7 @@ export const ar: TranslationResources = {
       dropFilesHere: "Drop files here",
       editQueuedMessage: "تحرير الرسالة في قائمة الانتظار",
       sendQueuedMessageNow: "إرسال رسالة في قائمة الانتظار الآن",
+      steerQueuedMessage: "Steer with queued message",
       openImage: "فتح مرفق الصورة",
       removeImage: "إزالة مرفق الصورة",
       removeFile: "Remove file attachment",
@@ -1721,10 +1722,13 @@ export const ar: TranslationResources = {
           interrupt:
             "عند تشغيل الوكيل، يوقف Enter التشغيل. Command/Ctrl+Enter يضيف إلى قائمة الانتظار.",
           queue: "عند تشغيل الوكيل، يضيف Enter إلى قائمة الانتظار. Command/Ctrl+Enter يرسل.",
+          steer:
+            "When the agent is running, Enter steers the current turn. Command/Ctrl+Enter queues. Falls back to interrupt if steer is unavailable.",
         },
         options: {
           interrupt: "مقاطعة",
           queue: "طابور",
+          steer: "Steer",
         },
       },
       serviceUrls: {

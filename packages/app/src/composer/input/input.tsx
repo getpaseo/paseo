@@ -127,13 +127,14 @@ export interface MessageInputProps {
   /** When true and there's sendable content, calls onQueue instead of onSubmit */
   isAgentRunning?: boolean;
   /** Controls what the default send action (Enter, send button, dictation) does
-   *  when the agent is running. "interrupt" sends immediately, "queue" queues. */
-  defaultSendBehavior?: "interrupt" | "queue";
+   *  when the agent is running. "interrupt" force-sends, "queue" queues, "steer"
+   *  redirects the active turn when supported (else falls back to interrupt). */
+  defaultSendBehavior?: "interrupt" | "queue" | "steer";
   /** Callback for queue button when agent is running */
   onQueue?: (payload: MessagePayload) => void;
-  /** Explicit mid-turn redirect (interrupt + send). */
+  /** Explicit mid-turn redirect (native inject when supported). Used by default/alternate send. */
   onSteer?: (payload: MessagePayload) => void;
-  /** When true, show the Steer control while agent is running. */
+  /** Provider supports mid-turn steer for the active agent. */
   canSteer?: boolean;
   /** Optional handler used when submit button is in loading state. */
   onSubmitLoadingPress?: () => void;
@@ -784,9 +785,11 @@ function SendButtonTooltip({
 
 interface DictationTranscriptContext {
   value: string;
-  defaultSendBehavior: "interrupt" | "queue";
+  defaultSendBehavior: "interrupt" | "queue" | "steer";
   isAgentRunning: boolean;
+  canSteer: boolean;
   onQueue: ((payload: MessagePayload) => void) | undefined;
+  onSteer: ((payload: MessagePayload) => void) | undefined;
   onSubmit: (payload: MessagePayload) => void;
   onChangeText: (text: string) => void;
   attachments: ComposerAttachment[];
@@ -806,6 +809,12 @@ function applyDictationTranscript(text: string, ctx: DictationTranscriptContext)
 
   if (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning && ctx.onQueue) {
     ctx.onQueue({ text: nextValue, attachments: ctx.attachments, cwd: ctx.cwd });
+    ctx.onChangeText("");
+    return;
+  }
+
+  if (ctx.defaultSendBehavior === "steer" && ctx.isAgentRunning && ctx.canSteer && ctx.onSteer) {
+    ctx.onSteer({ text: nextValue, attachments: ctx.attachments, cwd: ctx.cwd });
     ctx.onChangeText("");
     return;
   }
@@ -1040,7 +1049,7 @@ interface SendButtonStateInput {
   isSubmitDisabled: boolean;
   isSubmitLoading: boolean;
   onSubmitLoadingPress: (() => void) | undefined;
-  defaultSendBehavior: "interrupt" | "queue";
+  defaultSendBehavior: "interrupt" | "queue" | "steer";
   isAgentRunning: boolean;
 }
 
@@ -1089,7 +1098,7 @@ interface ResolvedMessageInputProps {
   voiceServerId: string | undefined;
   voiceAgentId: string | undefined;
   isAgentRunning: boolean;
-  defaultSendBehavior: "interrupt" | "queue";
+  defaultSendBehavior: "interrupt" | "queue" | "steer";
   onQueue: ((payload: MessagePayload) => void) | undefined;
   onSteer: ((payload: MessagePayload) => void) | undefined;
   canSteer: boolean;
@@ -1275,7 +1284,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           value: valueRef.current,
           defaultSendBehavior,
           isAgentRunning,
+          canSteer,
           onQueue,
+          onSteer,
           onSubmit,
           onChangeText,
           attachments,
@@ -1283,7 +1294,17 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           autoSend,
         });
       },
-      [onChangeText, onSubmit, onQueue, attachments, cwd, isAgentRunning, defaultSendBehavior],
+      [
+        onChangeText,
+        onSubmit,
+        onQueue,
+        onSteer,
+        attachments,
+        canSteer,
+        cwd,
+        isAgentRunning,
+        defaultSendBehavior,
+      ],
     );
 
     const handleDictationError = useCallback(
@@ -1512,21 +1533,41 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       runDefaultSendAction({
         defaultSendBehavior,
         isAgentRunning,
+        canSteer,
         onQueue,
         handleSendMessage,
         handleQueueMessage,
+        handleSteerMessage,
       });
-    }, [defaultSendBehavior, isAgentRunning, onQueue, handleQueueMessage, handleSendMessage]);
+    }, [
+      canSteer,
+      defaultSendBehavior,
+      isAgentRunning,
+      onQueue,
+      handleQueueMessage,
+      handleSendMessage,
+      handleSteerMessage,
+    ]);
 
     const handleAlternateSendAction = useCallback(() => {
       runAlternateSendAction({
         defaultSendBehavior,
         isAgentRunning,
+        canSteer,
         onQueue,
         handleSendMessage,
         handleQueueMessage,
+        handleSteerMessage,
       });
-    }, [defaultSendBehavior, isAgentRunning, handleSendMessage, handleQueueMessage, onQueue]);
+    }, [
+      canSteer,
+      defaultSendBehavior,
+      isAgentRunning,
+      handleSendMessage,
+      handleQueueMessage,
+      handleSteerMessage,
+      onQueue,
+    ]);
 
     const getWebTextArea = useCallback(
       (): TextAreaHandle | null => getWebTextAreaImpl(textInputRef.current),
@@ -1811,26 +1852,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
                 dictationToggleKeys={dictationToggleKeys}
               />
               {rightContent}
-              {canSteer ? (
-                <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-                  <TooltipTrigger
-                    onPress={handleSteerMessage}
-                    disabled={disabled || isSubmitLoading}
-                    accessibilityLabel={t("composer.input.steer")}
-                    accessibilityRole="button"
-                    testID="composer-steer-button"
-                    style={[
-                      styles.attachButton,
-                      (disabled || isSubmitLoading) && styles.buttonDisabled,
-                    ]}
-                  >
-                    <Text style={styles.tooltipText}>{t("composer.input.steer")}</Text>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" align="center" offset={8}>
-                    <Text style={styles.tooltipText}>{t("composer.input.steerHint")}</Text>
-                  </TooltipContent>
-                </Tooltip>
-              ) : null}
               <SendButtonTooltip
                 shouldShow={shouldShowSendButton}
                 canPressLoadingButton={canPressLoadingButton}

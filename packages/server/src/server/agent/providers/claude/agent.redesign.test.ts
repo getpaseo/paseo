@@ -409,6 +409,79 @@ test("logs redacted query summary and never leaks sentinel secrets", async () =>
   }
 });
 
+test("steer injects into the open streaming input without interrupting", async () => {
+  const session = await createSession();
+  const pushed: unknown[] = [];
+  const interrupt = vi.fn(async () => undefined);
+  const timeline: AgentStreamEvent[] = [];
+  session.subscribe((event) => timeline.push(event));
+
+  const internal: {
+    query: {
+      interrupt: () => Promise<void>;
+      return?: () => Promise<void>;
+      close?: () => void;
+    } | null;
+    input: { push: (item: unknown) => void; end: () => void } | null;
+    queryPumpPromise: Promise<void> | null;
+    activeForegroundTurnId: string | null;
+    closed: boolean;
+  } = asInternals(session);
+
+  internal.query = {
+    interrupt,
+    return: vi.fn(async () => undefined),
+    close: vi.fn(() => undefined),
+  };
+  internal.input = {
+    push: (item) => {
+      pushed.push(item);
+    },
+    end: vi.fn(() => undefined),
+  };
+  internal.queryPumpPromise = Promise.resolve();
+  internal.activeForegroundTurnId = "foreground-turn-1";
+  internal.closed = false;
+
+  try {
+    await session.steer?.("focus on failing tests", { clientMessageId: "msg-steer-1" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(pushed).toHaveLength(1);
+    const message = pushed[0] as {
+      type?: string;
+      uuid?: string;
+      message?: { content?: Array<{ type?: string; text?: string }> };
+    };
+    expect(message.type).toBe("user");
+    expect(message.message?.content?.[0]).toEqual({
+      type: "text",
+      text: "focus on failing tests",
+    });
+    expect(typeof message.uuid).toBe("string");
+    expect(timeline.some((event) => event.type === "timeline")).toBe(true);
+  } finally {
+    await session.close();
+  }
+});
+
+test("steer rejects when the streaming session is not active", async () => {
+  const session = await createSession();
+  const internal: {
+    input: { push: (item: unknown) => void; end: () => void } | null;
+  } = asInternals(session);
+  internal.input = null;
+
+  try {
+    await expect(session.steer?.("too early")).rejects.toThrow(
+      "Cannot steer Claude before a streaming session is active",
+    );
+  } finally {
+    await session.close();
+  }
+});
+
 test("interruptActiveTurn only interrupts the active query without info logs", async () => {
   const spy = createSpyLogger();
   const session = await createSessionWithLogger(spy.logger);

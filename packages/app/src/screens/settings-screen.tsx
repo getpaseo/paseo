@@ -224,7 +224,19 @@ function getSendBehaviorOptions(t: TFunction) {
   return [
     { value: "interrupt" as const, label: t("settings.general.defaultSend.options.interrupt") },
     { value: "queue" as const, label: t("settings.general.defaultSend.options.queue") },
+    { value: "steer" as const, label: t("settings.general.defaultSend.options.steer") },
   ];
+}
+
+function getSendBehaviorDescriptionKey(
+  behavior: SendBehavior,
+):
+  | "settings.general.defaultSend.descriptions.interrupt"
+  | "settings.general.defaultSend.descriptions.queue"
+  | "settings.general.defaultSend.descriptions.steer" {
+  if (behavior === "queue") return "settings.general.defaultSend.descriptions.queue";
+  if (behavior === "steer") return "settings.general.defaultSend.descriptions.steer";
+  return "settings.general.defaultSend.descriptions.interrupt";
 }
 
 function getServiceUrlBehaviorLabel(t: TFunction, value: ServiceUrlBehavior): string {
@@ -314,10 +326,7 @@ function GeneralSection({
   const { t, i18n } = useTranslation();
   const activeLocale = getActiveLocale(i18n.language);
   const sendBehaviorOptions = useMemo(() => getSendBehaviorOptions(t), [t]);
-  const sendBehaviorDescriptionKey =
-    settings.sendBehavior === "interrupt"
-      ? "settings.general.defaultSend.descriptions.interrupt"
-      : "settings.general.defaultSend.descriptions.queue";
+  const sendBehaviorDescriptionKey = getSendBehaviorDescriptionKey(settings.sendBehavior);
   const selectedLanguageOption = LANGUAGE_OPTIONS.find(
     (option) => option.value === settings.language,
   );
