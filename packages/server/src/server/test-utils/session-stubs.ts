@@ -92,7 +92,10 @@ export function asGitHubService(stub: {
 export function asWorkspaceGitService(stub: {
   [K in keyof SessionOptions["workspaceGitService"]]?: unknown;
 }): SessionOptions["workspaceGitService"] {
-  return createStub<SessionOptions["workspaceGitService"]>(stub);
+  return createStub<SessionOptions["workspaceGitService"]>({
+    isSnapshotStale: () => false,
+    ...stub,
+  });
 }
 
 export function asServiceProxy(stub: {

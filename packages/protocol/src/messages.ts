@@ -3106,6 +3106,7 @@ const WorkspaceGitRuntimePayloadSchema = z
       .optional(),
     aheadOfOrigin: z.number().nullable().optional(),
     behindOfOrigin: z.number().nullable().optional(),
+    isStale: z.boolean().optional(),
   })
   .optional()
   .nullable();
@@ -3150,6 +3151,7 @@ const WorkspaceGitHubRuntimePayloadSchema = z
       .nullable()
       .optional(),
     refreshedAt: z.string().nullable().optional(),
+    isStale: z.boolean().optional(),
   })
   .optional()
   .nullable();

@@ -51,6 +51,10 @@ const FORGE_PR_STATUS_POLL_FAST_INTERVAL_MS = 20_000;
 const FORGE_PR_STATUS_POLL_SLOW_INTERVAL_MS = 120_000;
 const FORGE_PR_STATUS_POLL_ERROR_BACKOFF_CAP_MS = 300_000;
 const WORKING_TREE_WATCH_FALLBACK_REFRESH_MS = 5_000;
+// Bound whole workspace pipelines below the lower-level git command pool (8 by default),
+// leaving event-loop and subprocess headroom for daemon health/control requests.
+export const WORKSPACE_GIT_REFRESH_CONCURRENCY = 4;
+export const WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY = 2;
 // Auxiliary reads may reuse cached values within this window; snapshots do not expire on read.
 const WORKSPACE_GIT_AUXILIARY_READ_TTL_MS = 15_000;
 // Non-forced refresh triggers share this minimum gap to absorb watcher/self-heal bursts; force bypasses it.
@@ -130,6 +134,8 @@ export interface WorkspaceGitService {
 
   onSnapshotUpdated(listener: WorkspaceGitSnapshotUpdatedListener): WorkspaceGitSubscription;
   peekSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null;
+  /** True when a cached snapshot is known to predate queued, running, or failed refresh work. */
+  isSnapshotStale?(cwd: string): boolean;
   getCheckout(cwd: string): Promise<ProjectCheckoutLitePayload>;
   getSnapshot(
     cwd: string,
@@ -188,6 +194,10 @@ export interface WorkspaceGitServiceMetrics {
   workingTreeWatchSetupInFlightCount: number;
   workspaceRefreshInFlightCount: number;
   workspaceRefreshQueuedCount: number;
+  workspaceRefreshAdmissionActiveCount: number;
+  workspaceRefreshAdmissionPendingCount: number;
+  workspaceObservationSetupAdmissionActiveCount: number;
+  workspaceObservationSetupAdmissionPendingCount: number;
   fetchInFlightCount: number;
   snapshotUpdatedListenerCount: number;
 }
@@ -322,6 +332,7 @@ interface WorkspaceGitTarget {
   repoGitRoot: string | null;
   observationSetupPromise: Promise<void> | null;
   observationSetupComplete: boolean;
+  snapshotStale: boolean;
   closed: boolean;
 }
 
@@ -391,6 +402,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly worktreesRoot: string | undefined;
   private readonly deps: WorkspaceGitServiceDependencies;
   private readonly forgeResolver: ForgeResolver;
+  private readonly workspaceRefreshLimit = pLimit(WORKSPACE_GIT_REFRESH_CONCURRENCY);
+  private readonly workspaceObservationSetupLimit = pLimit(
+    WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
+  );
   private readonly snapshotUpdatedListeners = new Set<WorkspaceGitSnapshotUpdatedListener>();
   private readonly workspaceTargets = new Map<string, WorkspaceGitTarget>();
   private readonly repoTargets = new Map<string, RepoGitTarget>();
@@ -451,8 +466,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     if (!target.latestSnapshot) {
       this.scheduleInitialWorkspaceRefresh(target);
+    } else {
+      this.scheduleWorkspaceObservationSetup(target);
     }
-    this.scheduleWorkspaceObservationSetup(target);
 
     return {
       unsubscribe: () => {
@@ -512,6 +528,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       workingTreeWatchSetupInFlightCount: this.workingTreeWatchSetups.size,
       workspaceRefreshInFlightCount,
       workspaceRefreshQueuedCount,
+      workspaceRefreshAdmissionActiveCount: this.workspaceRefreshLimit.activeCount,
+      workspaceRefreshAdmissionPendingCount: this.workspaceRefreshLimit.pendingCount,
+      workspaceObservationSetupAdmissionActiveCount:
+        this.workspaceObservationSetupLimit.activeCount,
+      workspaceObservationSetupAdmissionPendingCount:
+        this.workspaceObservationSetupLimit.pendingCount,
       fetchInFlightCount,
       snapshotUpdatedListenerCount: this.snapshotUpdatedListeners.size,
     };
@@ -561,6 +583,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   peekSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null {
     cwd = resolve(cwd);
     return this.workspaceTargets.get(cwd)?.latestSnapshot ?? null;
+  }
+
+  isSnapshotStale(cwd: string): boolean {
+    cwd = resolve(cwd);
+    return this.workspaceTargets.get(cwd)?.snapshotStale ?? false;
   }
 
   getCheckoutDiff(
@@ -907,6 +934,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       repoGitRoot: null,
       observationSetupPromise: null,
       observationSetupComplete: false,
+      snapshotStale: false,
       closed: false,
     };
 
@@ -937,8 +965,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
 
-    target.observationSetupPromise = Promise.resolve()
-      .then(() => this.setupWorkspaceObservation(target))
+    target.observationSetupPromise = this.workspaceObservationSetupLimit(async () => {
+      if (!this.isActiveObservedWorkspaceTarget(target)) {
+        return;
+      }
+      await this.setupWorkspaceObservation(target);
+    })
       .catch((error) => {
         this.logger.warn(
           { err: error, cwd: target.cwd },
@@ -1200,6 +1232,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     const request = this.buildScheduledRefreshRequest(options);
+    if (target.latestSnapshot) {
+      target.snapshotStale = true;
+    }
     target.pendingDebounceRequest = this.mergeRefreshRequests(
       target.pendingDebounceRequest,
       request,
@@ -1676,7 +1711,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return Promise.resolve(target.latestSnapshot);
     }
 
-    const promise = this.runWorkspaceRefreshLoop(target, request).finally(() => {
+    if (target.latestSnapshot) {
+      target.snapshotStale = true;
+    }
+    const promise = this.workspaceRefreshLimit(async () => {
+      if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
+        return target.latestSnapshot ?? buildNotGitSnapshot(target.cwd);
+      }
+      return this.runWorkspaceRefreshLoop(target, request);
+    }).finally(() => {
       const state = target.refreshState;
       if (state.status === "in-flight" && state.promise === promise) {
         target.refreshState = { status: "idle" };
@@ -1762,12 +1805,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     while (true) {
       snapshot = await this.refreshSnapshot(target, request);
+      const state = target.refreshState;
+      target.snapshotStale = state.status === "in-flight" && state.queued !== null;
       this.rememberSnapshot(target, snapshot, {
         notify: request.notify,
         forceEmit: request.force,
       });
+      this.scheduleWorkspaceObservationSetup(target);
 
-      const state = target.refreshState;
       if (state.status !== "in-flight" || !state.queued) {
         break;
       }

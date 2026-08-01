@@ -496,7 +496,9 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
     await flushPromises();
 
-    expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
+    });
     expect(service.peekSnapshot(REPO_CWD)).toBeNull();
 
     checkoutStatusDeferred.resolve(createCheckoutStatus(REPO_CWD));

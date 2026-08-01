@@ -10,6 +10,8 @@ import type {
   PullRequestStatusResult,
 } from "../utils/checkout-git.js";
 import {
+  WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
+  WORKSPACE_GIT_REFRESH_CONCURRENCY,
   WorkspaceGitServiceImpl,
   type WorkspaceGitRuntimeSnapshot,
 } from "./workspace-git-service.js";
@@ -501,6 +503,126 @@ describe("WorkspaceGitServiceImpl", () => {
     await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(createSnapshot(REPO_CWD));
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
+
+    service.dispose();
+  });
+
+  test("bounds and coalesces refresh admission across 120 workspace subscriptions", async () => {
+    const workspaceCount = 120;
+    const factsGate = createDeferred<void>();
+    let activeFactsReads = 0;
+    let maxActiveFactsReads = 0;
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => {
+      activeFactsReads += 1;
+      maxActiveFactsReads = Math.max(maxActiveFactsReads, activeFactsReads);
+      await factsGate.promise;
+      activeFactsReads -= 1;
+      return createCheckoutSnapshotFacts(cwd);
+    });
+    const service = createService({ getCheckoutSnapshotFacts });
+    const cwds = Array.from({ length: workspaceCount }, (_, index) => `/tmp/repo-${index}`);
+    const subscriptions = cwds.map((cwd) => service.registerWorkspace({ cwd }, vi.fn()));
+
+    await flushPromises();
+
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(WORKSPACE_GIT_REFRESH_CONCURRENCY);
+    expect(maxActiveFactsReads).toBe(WORKSPACE_GIT_REFRESH_CONCURRENCY);
+    expect(service.getMetrics()).toMatchObject({
+      workspaceTargetCount: workspaceCount,
+      workspaceRefreshInFlightCount: workspaceCount,
+      workspaceRefreshQueuedCount: 0,
+      workspaceRefreshAdmissionActiveCount: WORKSPACE_GIT_REFRESH_CONCURRENCY,
+      workspaceRefreshAdmissionPendingCount: workspaceCount - WORKSPACE_GIT_REFRESH_CONCURRENCY,
+      workspaceObservationSetupAdmissionActiveCount: 0,
+      workspaceObservationSetupAdmissionPendingCount: 0,
+    });
+
+    for (const cwd of cwds) {
+      for (let repeat = 0; repeat < 5; repeat += 1) {
+        service.scheduleRefreshForCwd(cwd);
+      }
+    }
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+
+    expect(service.getMetrics()).toMatchObject({
+      workspaceRefreshInFlightCount: workspaceCount,
+      workspaceRefreshQueuedCount: 0,
+      workspaceRefreshAdmissionActiveCount: WORKSPACE_GIT_REFRESH_CONCURRENCY,
+      workspaceRefreshAdmissionPendingCount: workspaceCount - WORKSPACE_GIT_REFRESH_CONCURRENCY,
+    });
+
+    await vi.advanceTimersByTimeAsync(59_000);
+    await flushPromises();
+    expect(service.getMetrics()).toMatchObject({
+      workspaceRefreshAdmissionActiveCount: WORKSPACE_GIT_REFRESH_CONCURRENCY,
+      workspaceRefreshAdmissionPendingCount: workspaceCount - WORKSPACE_GIT_REFRESH_CONCURRENCY,
+      workspaceObservationSetupAdmissionActiveCount: WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
+      workspaceObservationSetupAdmissionPendingCount:
+        workspaceCount - WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
+    });
+
+    const forcedCwd = cwds[cwds.length - 1];
+    const forcedRefresh = service.getSnapshot(forcedCwd, {
+      force: true,
+      reason: "test-force-during-refresh-backlog",
+    });
+    expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(1);
+
+    factsGate.resolve();
+    await forcedRefresh;
+    expect(getCheckoutSnapshotFacts.mock.calls.filter(([cwd]) => cwd === forcedCwd)).toHaveLength(
+      2,
+    );
+
+    await vi.waitFor(() => {
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(121);
+    });
+    expect(maxActiveFactsReads).toBeLessThanOrEqual(
+      WORKSPACE_GIT_REFRESH_CONCURRENCY + WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
+    );
+
+    for (const subscription of subscriptions) {
+      subscription.unsubscribe();
+    }
+    service.dispose();
+  });
+
+  test("marks cached facts stale during blocked and failed refresh work", async () => {
+    const refreshGate = createDeferred<CheckoutStatusGit>();
+    const getCheckoutStatus = vi
+      .fn<(cwd: string) => Promise<CheckoutStatusGit>>()
+      .mockImplementationOnce(async (cwd) => createCheckoutStatus(cwd))
+      .mockImplementationOnce(async () => refreshGate.promise);
+    const service = createService({ getCheckoutStatus });
+
+    await service.getSnapshot(REPO_CWD);
+    expect(service.isSnapshotStale(REPO_CWD)).toBe(false);
+
+    const forcedRefresh = service.getSnapshot(REPO_CWD, {
+      force: true,
+      reason: "test-blocked-stale-snapshot",
+    });
+    await flushPromises();
+
+    expect(service.peekSnapshot(REPO_CWD)).toEqual(createSnapshot(REPO_CWD));
+    expect(service.isSnapshotStale(REPO_CWD)).toBe(true);
+
+    refreshGate.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "fresh-branch" }));
+    await forcedRefresh;
+
+    expect(service.isSnapshotStale(REPO_CWD)).toBe(false);
+    expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("fresh-branch");
+
+    getCheckoutStatus.mockRejectedValueOnce(new Error("git refresh failed"));
+    await expect(
+      service.getSnapshot(REPO_CWD, {
+        force: true,
+        reason: "test-failed-stale-snapshot",
+      }),
+    ).rejects.toThrow("git refresh failed");
+    expect(service.isSnapshotStale(REPO_CWD)).toBe(true);
+    expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("fresh-branch");
 
     service.dispose();
   });

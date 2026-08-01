@@ -6667,6 +6667,7 @@ test("fetch_workspaces_response reads runtime fields from passive workspace git 
   const peekSnapshotRuntimeFetch = vi.fn(() => runtimeSnapshot);
   const workspaceGitService = createNoopWorkspaceGitService();
   workspaceGitService.peekSnapshot = peekSnapshotRuntimeFetch;
+  workspaceGitService.isSnapshotStale = vi.fn(() => true);
   workspaceGitService.registerWorkspace = vi.fn(() => ({
     unsubscribe: () => {},
   }));
@@ -6735,6 +6736,7 @@ test("fetch_workspaces_response reads runtime fields from passive workspace git 
         aheadBehind: { ahead: 3, behind: 1 },
         aheadOfOrigin: 3,
         behindOfOrigin: 1,
+        isStale: true,
       },
       githubRuntime: {
         featuresEnabled: true,
@@ -6747,6 +6749,7 @@ test("fetch_workspaces_response reads runtime fields from passive workspace git 
           isMerged: false,
         },
         error: null,
+        isStale: true,
       },
     }),
   ]);
@@ -6811,6 +6814,63 @@ test("fetch_workspaces_response emits before cold registration-triggered git wor
 
   expect(emitted.find((message) => message.type === "fetch_workspaces_response")).toBeDefined();
   expect(events[0]).toBe("response");
+});
+
+test("fetch_workspaces_response serves 120 cached snapshots while git refreshes are blocked", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const blockedRefresh = deferred<WorkspaceGitRuntimeSnapshot>();
+  const workspaceGitService = createNoopWorkspaceGitService({
+    peekSnapshot: (cwd) => createWorkspaceRuntimeSnapshot(cwd),
+    isSnapshotStale: () => true,
+  });
+  const refreshReads = vi.fn(() => blockedRefresh.promise);
+  workspaceGitService.registerWorkspace = vi.fn(({ cwd }: { cwd: string }) => {
+    void refreshReads(cwd);
+    return { unsubscribe: () => {} };
+  });
+  const session = asTestSession(createSessionForWorkspaceTests({ workspaceGitService }));
+  const project = createPersistedProjectRecord({
+    projectId: "proj-blocked-inventory",
+    rootPath: "/tmp/blocked-inventory",
+    kind: "git",
+    displayName: "blocked-inventory",
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+  });
+  const workspaces = Array.from({ length: 120 }, (_, index) =>
+    createPersistedWorkspaceRecord({
+      workspaceId: `ws-blocked-inventory-${index}`,
+      projectId: project.projectId,
+      cwd: `/tmp/blocked-inventory/worktree-${index}`,
+      kind: "worktree",
+      displayName: `worktree-${index}`,
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-01T00:00:00.000Z",
+    }),
+  );
+
+  session.emit = (message) => {
+    if (isSessionOutboundMessage(message)) emitted.push(message);
+  };
+  session.listAgentPayloads = async () => [];
+  session.projectRegistry.list = async () => [project];
+  session.workspaceRegistry.list = async () => workspaces;
+
+  await expect(
+    session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "req-blocked-workspace-inventory",
+      subscribe: {},
+    }),
+  ).resolves.toBeUndefined();
+
+  const response = findByType(emitted, "fetch_workspaces_response");
+  expect(response?.payload.entries).toHaveLength(120);
+  expect(response?.payload.entries[0]).toMatchObject({
+    gitRuntime: { isStale: true },
+    githubRuntime: { isStale: true },
+  });
+  expect(refreshReads).toHaveBeenCalledTimes(120);
 });
 
 test("workspace_update includes updated runtime fields", async () => {

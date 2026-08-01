@@ -846,6 +846,7 @@ describe("workspace message schemas", () => {
               },
               aheadOfOrigin: 2,
               behindOfOrigin: 1,
+              isStale: true,
             },
             githubRuntime: {
               featuresEnabled: true,
@@ -859,6 +860,7 @@ describe("workspace message schemas", () => {
               },
               error: null,
               refreshedAt: "2026-04-12T00:00:00.000Z",
+              isStale: true,
             },
           },
         ],
@@ -875,8 +877,10 @@ describe("workspace message schemas", () => {
       currentBranch: "main",
       isDirty: true,
       aheadOfOrigin: 2,
+      isStale: true,
     });
     expect(parsed.payload.entries[0]?.githubRuntime?.pullRequest?.title).toBe("Runtime payloads");
+    expect(parsed.payload.entries[0]?.githubRuntime?.isStale).toBe(true);
   });
 
   test("older workspace parsers ignore additive runtime fields", () => {
@@ -907,12 +911,14 @@ describe("workspace message schemas", () => {
               },
               aheadOfOrigin: 0,
               behindOfOrigin: 0,
+              isStale: true,
             },
             githubRuntime: {
               featuresEnabled: true,
               pullRequest: null,
               error: null,
               refreshedAt: "2026-04-12T00:00:00.000Z",
+              isStale: true,
             },
           },
         ],
