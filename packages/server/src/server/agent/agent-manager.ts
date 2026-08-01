@@ -431,6 +431,7 @@ type AgentLabelPatch = Record<string, string | null>;
 interface AgentReplacementRegistration {
   agent: LiveManagedAgent;
   preservePendingRun: boolean;
+  installed: boolean;
 }
 
 interface WriteLabelsResult {
@@ -1299,21 +1300,29 @@ export class AgentManager {
 
       // Preserve existing labels and timeline during reload.
       handedToRegistration = true;
-      const replacement = await this.registerReplacementSession(agentId, existing, () =>
-        this.registerSession(session, storedConfig, agentId, {
-          labels: existing.labels,
-          workspaceId: existing.workspaceId,
-          owner: existing.owner,
-          createdAt: existing.createdAt,
-          updatedAt: existing.updatedAt,
-          lastUserMessageAt: existing.lastUserMessageAt,
-          historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
-          lastUsage: preservedLastUsage,
-          lastError: preservedLastError,
-          attention: preservedAttention,
-          replaceExisting: { agent: existing, preservePendingRun },
-          registrationSignal: resumeOptions?.signal,
-        }),
+      const replacementRegistration: AgentReplacementRegistration = {
+        agent: existing,
+        preservePendingRun,
+        installed: false,
+      };
+      const replacement = await this.registerReplacementSession(
+        existing,
+        replacementRegistration,
+        () =>
+          this.registerSession(session, storedConfig, agentId, {
+            labels: existing.labels,
+            workspaceId: existing.workspaceId,
+            owner: existing.owner,
+            createdAt: existing.createdAt,
+            updatedAt: existing.updatedAt,
+            lastUserMessageAt: existing.lastUserMessageAt,
+            historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
+            lastUsage: preservedLastUsage,
+            lastError: preservedLastError,
+            attention: preservedAttention,
+            replaceExisting: replacementRegistration,
+            registrationSignal: resumeOptions?.signal,
+          }),
       );
       resumeOptions?.signal?.throwIfAborted();
       this.assertAcceptingAgentRegistrations();
@@ -1326,18 +1335,15 @@ export class AgentManager {
   }
 
   private async registerReplacementSession(
-    agentId: string,
     existing: LiveManagedAgent,
+    replacementRegistration: AgentReplacementRegistration,
     register: () => Promise<ManagedAgent>,
   ): Promise<ManagedAgent> {
-    let replacedExisting = false;
     try {
-      const replacement = await register();
-      replacedExisting = true;
-      return replacement;
+      return await register();
     } finally {
-      if (replacedExisting || this.agents.get(agentId) !== existing) {
-        await this.closeReloadedSession(existing.session, agentId);
+      if (replacementRegistration.installed) {
+        await this.closeReloadedSession(existing.session, existing.id);
       }
     }
   }
@@ -3056,12 +3062,16 @@ export class AgentManager {
     agent: LiveManagedAgent,
     replacement?: AgentReplacementRegistration,
   ): void {
+    this.assertSessionRegistrationSlot(agentId, replacement);
     if (replacement) {
       this.prepareAgentForClosure(replacement.agent, "agent reloaded", {
         preservePendingRun: replacement.preservePendingRun,
       });
     }
     this.agents.set(agentId, agent);
+    if (replacement) {
+      replacement.installed = true;
+    }
   }
 
   private async cleanupFailedSessionRegistration(params: {

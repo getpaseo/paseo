@@ -939,6 +939,96 @@ test("reload closes both sessions when the closed snapshot cannot be persisted",
   }
 });
 
+test("close during reload registration prevents replacement resurrection", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-close-before-commit-"));
+  const readStarted = deferred<void>();
+  const readAllowed = deferred<void>();
+
+  class HeldRegistrationStorage extends AgentStorage {
+    holdNextRead = false;
+
+    override async get(agentId: string): Promise<StoredAgentRecord | null> {
+      if (this.holdNextRead) {
+        this.holdNextRead = false;
+        readStarted.resolve();
+        await readAllowed.promise;
+      }
+      return super.get(agentId);
+    }
+  }
+
+  class ReloadClient extends TestAgentClient {
+    originalSessionCloseCount = 0;
+    replacementSessionClosed = false;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const recordOriginalClosed = () => {
+        this.originalSessionCloseCount += 1;
+      };
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          recordOriginalClosed();
+        }
+      })(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      const recordReplacementClosed = () => {
+        this.replacementSessionClosed = true;
+      };
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          recordReplacementClosed();
+        }
+      })({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+
+  const storage = new HeldRegistrationStorage(join(workdir, "agents"), logger);
+  const client = new ReloadClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await storage.flush();
+    storage.holdNextRead = true;
+
+    const reload = manager.reloadAgentSession(agent.id);
+    await readStarted.promise;
+    await manager.closeAgent(agent.id);
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect(await storage.get(agent.id)).toMatchObject({ lastStatus: "closed" });
+    readAllowed.resolve();
+
+    await expect(reload).rejects.toThrow(
+      `Agent ${agent.id} was removed before replacement registration`,
+    );
+    expect(client.originalSessionCloseCount).toBe(1);
+    expect(client.replacementSessionClosed).toBe(true);
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect(await storage.get(agent.id)).toMatchObject({ lastStatus: "closed" });
+  } finally {
+    readAllowed.resolve();
+    if (agentId && manager.getAgent(agentId)) {
+      await manager.closeAgent(agentId);
+    }
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("normalizeConfig injects the provider default model when omitted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
@@ -1729,8 +1819,9 @@ test("Stop during the OpenCode recovery handoff retains the replacement agent", 
     }
   }
 
+  const client = new HandoffClient();
   const manager = new AgentManager({
-    clients: { opencode: new HandoffClient() },
+    clients: { opencode: client },
     registry: storage,
     logger,
     rescueTimeouts: { reloadSessionCloseMs: 1_000 },
@@ -1761,6 +1852,12 @@ test("Stop during the OpenCode recovery handoff retains the replacement agent", 
     });
     expect(manager.getAgent(agent.id)).toMatchObject({ lifecycle: "idle" });
     expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    await expect(manager.runAgent(agent.id, "follow up after Stop")).resolves.toEqual(
+      expect.objectContaining({
+        sessionId: client.replacement.id,
+        canceled: false,
+      }),
+    );
   } finally {
     closeAllowed.resolve();
     await manager.flush();

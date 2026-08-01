@@ -2631,7 +2631,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
-  test.each(["Stop", "close"] as const)(
+  test.each(["Stop", "shutdown"] as const)(
     "%s during slash command discovery prevents command submission",
     async (control) => {
       const commandListStarted = createTestDeferred<void>();
