@@ -76,9 +76,10 @@ import {
 import {
   advanceMaterialProgressCheckpoint,
   createMaterialProgressCheckpoint,
+  invalidateMaterialProgressCheckpoint,
   materialProgressPayload,
   openMaterialProgressContinuation,
-  rebindMaterialProgressCheckpoint,
+  restoreMaterialProgressCheckpoint,
   settleMaterialProgressContinuation,
   type MaterialProgressCheckpoint,
   type MaterialProgressTurnOutcome,
@@ -110,12 +111,12 @@ function submittedPromptText(prompt: AgentPromptInput): string {
     .trim();
 }
 
-function restoreMaterialProgressCheckpoint(
+function restoreAgentMaterialProgressCheckpoint(
   checkpoint: MaterialProgressCheckpoint | undefined,
   timeline: { epoch: string; nextSeq: number },
 ): MaterialProgressCheckpoint {
   if (checkpoint) {
-    return rebindMaterialProgressCheckpoint(checkpoint, {
+    return restoreMaterialProgressCheckpoint(checkpoint, {
       timelineEpoch: timeline.epoch,
       nextSeq: timeline.nextSeq,
     });
@@ -2243,12 +2244,18 @@ export class AgentManager {
     });
   }
 
-  private resetMaterialProgress(agent: ActiveManagedAgent): void {
+  private resetMaterialProgress(agent: ActiveManagedAgent, unavailableReason?: string): void {
     const timeline = this.timelineStore.fetch(agent.id, { direction: "tail", limit: 1 });
-    agent.materialProgress = createMaterialProgressCheckpoint({
-      timelineEpoch: timeline.epoch,
-      nextSeq: timeline.window.nextSeq,
-    });
+    agent.materialProgress = unavailableReason
+      ? invalidateMaterialProgressCheckpoint({
+          timelineEpoch: timeline.epoch,
+          nextSeq: timeline.window.nextSeq,
+          reason: unavailableReason,
+        })
+      : createMaterialProgressCheckpoint({
+          timelineEpoch: timeline.epoch,
+          nextSeq: timeline.window.nextSeq,
+        });
   }
 
   private applyActiveTurnTerminal(
@@ -2576,6 +2583,12 @@ export class AgentManager {
         "agent.rewind.start",
       );
       await invokeRewindCapability(agent.session, { messageId: providerMessageId, mode });
+      this.resetMaterialProgress(
+        agent,
+        "Material progress is unavailable because the provider session was rewound.",
+      );
+      await this.persistSnapshot(agent);
+      this.emitState(agent, { persist: false });
       if (mode !== "files") {
         await this.hydrateTimelineFromProvider(agentId, { force: true, broadcast: true });
       }
@@ -3015,7 +3028,7 @@ export class AgentManager {
   }): ActiveManagedAgent {
     const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
     const timeline = this.timelineStore.fetch(resolvedAgentId, { direction: "tail", limit: 1 });
-    const materialProgress = restoreMaterialProgressCheckpoint(options?.materialProgress, {
+    const materialProgress = restoreAgentMaterialProgressCheckpoint(options?.materialProgress, {
       epoch: timeline.epoch,
       nextSeq: timeline.window.nextSeq,
     });

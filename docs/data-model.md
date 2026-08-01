@@ -141,9 +141,11 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 
 This checkpoint is an observational read model; it does not change lifecycle or control whether an
 agent continues. An accepted provider turn opens a new continuation boundary. Rejected starts that
-never return a turn id leave the preceding accepted outcome intact. Timeline replacement creates a
-new epoch and an empty checkpoint; ordinary reload can rebind a valid persisted cursor and catch up
-all later rows incrementally.
+never return a turn id leave the preceding accepted outcome intact. A checkpoint is restored only
+when its timeline epoch is unchanged; sequence bounds alone cannot prove continuity across a process
+restart or timeline replacement. A changed epoch starts an empty checkpoint, even when the new
+timeline is equally long or longer. After a successful provider rewind, the empty checkpoint is
+persisted before any fallible history refresh; a rejected provider rewind preserves the checkpoint.
 
 | Field                                       | Type                                                                                     | Description                                                                                        |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |

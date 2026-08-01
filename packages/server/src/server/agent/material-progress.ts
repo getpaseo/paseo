@@ -208,7 +208,7 @@ export function createMaterialProgressCheckpoint(input: {
   });
 }
 
-export function rebindMaterialProgressCheckpoint(
+export function restoreMaterialProgressCheckpoint(
   checkpoint: MaterialProgressCheckpoint,
   input: { timelineEpoch: string; nextSeq: number },
 ): MaterialProgressCheckpoint {
@@ -216,14 +216,31 @@ export function rebindMaterialProgressCheckpoint(
   const boundaryIsValid =
     checkpoint.continuationBoundarySeq === null ||
     checkpoint.continuationBoundarySeq <= input.nextSeq;
-  if (!boundaryIsValid || checkpoint.observedThroughSeq > lastSeq) {
+  // Sequence bounds are not a continuity identity: replacement timelines can
+  // have the same length or be longer. Only an unchanged epoch proves that the
+  // checkpoint still describes these rows.
+  const continuityIsProven = checkpoint.timelineEpoch === input.timelineEpoch;
+  if (!continuityIsProven || !boundaryIsValid || checkpoint.observedThroughSeq > lastSeq) {
     return emptyCheckpoint({
       timelineEpoch: input.timelineEpoch,
       observedThroughSeq: lastSeq,
-      unavailableReason: "Persisted material progress did not match the restored timeline.",
+      unavailableReason:
+        "Persisted material progress could not be proven to match the restored timeline.",
     });
   }
-  return { ...checkpoint, timelineEpoch: input.timelineEpoch };
+  return checkpoint;
+}
+
+export function invalidateMaterialProgressCheckpoint(input: {
+  timelineEpoch: string;
+  nextSeq: number;
+  reason: string;
+}): MaterialProgressCheckpoint {
+  return emptyCheckpoint({
+    timelineEpoch: input.timelineEpoch,
+    observedThroughSeq: Math.max(0, input.nextSeq - 1),
+    unavailableReason: input.reason,
+  });
 }
 
 export function openMaterialProgressContinuation(input: {

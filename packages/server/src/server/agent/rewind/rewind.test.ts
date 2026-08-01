@@ -1,8 +1,18 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { AgentManager } from "../agent-manager.js";
-import type { AgentClient, AgentSession, AgentSessionConfig } from "../agent-sdk-types.js";
+import type {
+  AgentClient,
+  AgentSession,
+  AgentSessionConfig,
+  AgentStreamEvent,
+  FetchCatalogOptions,
+} from "../agent-sdk-types.js";
+import { AgentStorage } from "../agent-storage.js";
 import { FakeRewindSession, REWIND_TEST_CAPABILITIES } from "./test-rewind-session.js";
 
 class FakeRewindClient implements AgentClient {
@@ -49,10 +59,18 @@ class RewindHistoryGate {
   }
 }
 
-async function createRewindHarness(options: { historyGate?: RewindHistoryGate } = {}) {
-  const session = new FakeRewindSession(options.historyGate?.wait.bind(options.historyGate));
+async function createRewindHarness(
+  options: {
+    historyGate?: RewindHistoryGate;
+    session?: FakeRewindSession;
+    storage?: AgentStorage;
+  } = {},
+) {
+  const session =
+    options.session ?? new FakeRewindSession(options.historyGate?.wait.bind(options.historyGate));
   const manager = new AgentManager({
     clients: { claude: new FakeRewindClient(session) },
+    registry: options.storage,
     logger: createTestLogger(),
     idFactory: () => "00000000-0000-4000-8000-000000000901",
   });
@@ -65,6 +83,47 @@ async function createRewindHarness(options: { historyGate?: RewindHistoryGate } 
     { workspaceId: undefined },
   );
   return { manager, session, agentId: agent.id };
+}
+
+async function createPersistedRewindHarness(session = new FakeRewindSession()) {
+  const root = mkdtempSync(join(tmpdir(), "material-progress-rewind-"));
+  const storage = new AgentStorage(join(root, "agents"), createTestLogger());
+  const harness = await createRewindHarness({ session, storage });
+  return {
+    ...harness,
+    storage,
+    async cleanup() {
+      await harness.manager.flush().catch(() => undefined);
+      await storage.flush().catch(() => undefined);
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+async function seedMaterialProgress(
+  manager: AgentManager,
+  session: FakeRewindSession,
+  agentId: string,
+): Promise<void> {
+  const run = manager.streamAgent(agentId, "produce durable progress");
+  await run.next();
+  await manager.appendTimelineItem(agentId, {
+    type: "tool_call",
+    callId: "write-before-rewind",
+    name: "write",
+    status: "completed",
+    error: null,
+    detail: { type: "write", filePath: "proof.txt", content: "durable proof" },
+  });
+  await session.interrupt();
+  for await (const _event of run) {
+    // Drain the canceled turn so its terminal state is persisted.
+  }
+  await manager.flush();
+  expect(manager.getMaterialProgress(agentId)).toMatchObject({
+    state: "progressing",
+    lastMaterialProgressKind: "write",
+  });
 }
 
 describe("AgentManager rewind", () => {
@@ -87,6 +146,97 @@ describe("AgentManager rewind", () => {
 
     expect(session.recordedRewinds).toEqual([{ mode: "files", messageId: "message-1" }]);
     expect(session.historyReadCount).toBe(0);
+  });
+
+  test("invalidates and persists material progress after a successful files rewind", async () => {
+    const { manager, session, storage, agentId, cleanup } = await createPersistedRewindHarness();
+
+    try {
+      await seedMaterialProgress(manager, session, agentId);
+
+      await manager.rewind(agentId, "message-1", "files");
+
+      expect(session.recordedRewinds).toEqual([{ mode: "files", messageId: "message-1" }]);
+      expect(session.historyReadCount).toBe(0);
+      expect(manager.getMaterialProgress(agentId)).toMatchObject({
+        state: "none",
+        continuationBoundarySeq: null,
+        lastMaterialProgressKind: null,
+        reason: "Material progress is unavailable because the provider session was rewound.",
+      });
+      expect((await storage.get(agentId))?.materialProgress).toMatchObject({
+        continuationBoundarySeq: null,
+        lastMaterialProgressKind: null,
+        unavailableReason:
+          "Material progress is unavailable because the provider session was rewound.",
+      });
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("persists invalidation before conversation history rehydration can fail", async () => {
+    class FailingHistorySession extends FakeRewindSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        yield* super.streamHistory();
+        throw new Error("history unavailable after successful rewind");
+      }
+    }
+
+    const session = new FailingHistorySession();
+    const { manager, storage, agentId, cleanup } = await createPersistedRewindHarness(session);
+
+    try {
+      await seedMaterialProgress(manager, session, agentId);
+
+      await expect(manager.rewind(agentId, "message-1", "conversation")).rejects.toThrow(
+        "history unavailable after successful rewind",
+      );
+
+      expect(session.recordedRewinds).toEqual([{ mode: "conversation", messageId: "message-1" }]);
+      expect(session.historyReadCount).toBe(1);
+      expect(manager.getMaterialProgress(agentId)).toMatchObject({
+        state: "none",
+        continuationBoundarySeq: null,
+        lastMaterialProgressKind: null,
+        reason: "Material progress is unavailable because the provider session was rewound.",
+      });
+      expect((await storage.get(agentId))?.materialProgress).toMatchObject({
+        continuationBoundarySeq: null,
+        lastMaterialProgressKind: null,
+        unavailableReason:
+          "Material progress is unavailable because the provider session was rewound.",
+      });
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("preserves material progress when the provider rewind fails", async () => {
+    class RejectingProviderRewindSession extends FakeRewindSession {
+      override async revertFiles(): Promise<void> {
+        throw new Error("provider rewind rejected");
+      }
+    }
+
+    const session = new RejectingProviderRewindSession();
+    const { manager, storage, agentId, cleanup } = await createPersistedRewindHarness(session);
+
+    try {
+      await seedMaterialProgress(manager, session, agentId);
+      const beforePayload = manager.getMaterialProgress(agentId);
+      const beforeStored = structuredClone((await storage.get(agentId))?.materialProgress);
+
+      await expect(manager.rewind(agentId, "message-1", "files")).rejects.toThrow(
+        "provider rewind rejected",
+      );
+
+      expect(session.recordedRewinds).toEqual([]);
+      expect(manager.getMaterialProgress(agentId)).toEqual(beforePayload);
+      expect((await storage.get(agentId))?.materialProgress).toEqual(beforeStored);
+    } finally {
+      await cleanup();
+    }
   });
 
   test("aborts an in-flight turn before rewinding", async () => {

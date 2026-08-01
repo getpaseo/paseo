@@ -5,7 +5,7 @@ import {
   advanceMaterialProgressCheckpoint,
   materialProgressPayload,
   openMaterialProgressContinuation,
-  rebindMaterialProgressCheckpoint,
+  restoreMaterialProgressCheckpoint,
   settleMaterialProgressContinuation,
 } from "./material-progress.js";
 
@@ -153,26 +153,80 @@ describe("material progress checkpoint", () => {
     ).toMatchObject({ state: "progressing", lastMaterialProgressKind: "assistant_result" });
   });
 
-  it("binds restored state to the current epoch and rejects impossible cursors", () => {
+  it("restores state only when the exact timeline epoch and cursor remain valid", () => {
     const checkpoint = applyRows([row(1, { type: "compaction", status: "completed" })]);
-    const rebound = rebindMaterialProgressCheckpoint(checkpoint, {
-      timelineEpoch: "epoch-2",
+    const restored = restoreMaterialProgressCheckpoint(checkpoint, {
+      timelineEpoch: "epoch-1",
       nextSeq: 2,
     });
-    expect(materialProgressPayload(rebound)).toMatchObject({
+    expect(materialProgressPayload(restored)).toMatchObject({
       state: "warning",
-      timelineEpoch: "epoch-2",
+      timelineEpoch: "epoch-1",
       continuationBoundarySeq: 1,
     });
 
-    const invalid = rebindMaterialProgressCheckpoint(checkpoint, {
-      timelineEpoch: "epoch-reset",
+    const invalid = restoreMaterialProgressCheckpoint(checkpoint, {
+      timelineEpoch: "epoch-1",
       nextSeq: 1,
     });
     expect(materialProgressPayload(invalid)).toMatchObject({
       state: "none",
-      timelineEpoch: "epoch-reset",
+      timelineEpoch: "epoch-1",
       continuationBoundarySeq: null,
+    });
+  });
+
+  it("invalidates old evidence and compactions after an equal-length epoch replacement", () => {
+    const checkpoint = applyRows([
+      row(1, {
+        type: "tool_call",
+        callId: "read-before-equal-replacement",
+        name: "read",
+        status: "completed",
+        error: null,
+        detail: { type: "read", filePath: "old.txt", content: "old evidence" },
+      }),
+      row(2, { type: "compaction", status: "completed" }),
+    ]);
+
+    const replacement = restoreMaterialProgressCheckpoint(checkpoint, {
+      timelineEpoch: "epoch-equal-replacement",
+      nextSeq: 3,
+    });
+    expect(materialProgressPayload(replacement)).toMatchObject({
+      state: "none",
+      timelineEpoch: "epoch-equal-replacement",
+      continuationBoundarySeq: null,
+      observedThroughSeq: 2,
+      completedCompactionsSinceMaterialProgress: 0,
+      lastMaterialProgressKind: null,
+    });
+  });
+
+  it("invalidates old evidence and compactions after a longer epoch replacement", () => {
+    const checkpoint = applyRows([
+      row(1, {
+        type: "tool_call",
+        callId: "write-before-longer-replacement",
+        name: "write",
+        status: "completed",
+        error: null,
+        detail: { type: "write", filePath: "old.txt", content: "old result" },
+      }),
+      row(2, { type: "compaction", status: "completed" }),
+    ]);
+
+    const replacement = restoreMaterialProgressCheckpoint(checkpoint, {
+      timelineEpoch: "epoch-longer-replacement",
+      nextSeq: 10_002,
+    });
+    expect(materialProgressPayload(replacement)).toMatchObject({
+      state: "none",
+      timelineEpoch: "epoch-longer-replacement",
+      continuationBoundarySeq: null,
+      observedThroughSeq: 10_001,
+      completedCompactionsSinceMaterialProgress: 0,
+      lastMaterialProgressKind: null,
     });
   });
 
