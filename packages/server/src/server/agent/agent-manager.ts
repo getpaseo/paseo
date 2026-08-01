@@ -73,6 +73,16 @@ import {
   type ProviderSubagentDescriptor,
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
+import {
+  advanceMaterialProgressCheckpoint,
+  createMaterialProgressCheckpoint,
+  materialProgressPayload,
+  openMaterialProgressContinuation,
+  rebindMaterialProgressCheckpoint,
+  settleMaterialProgressContinuation,
+  type MaterialProgressCheckpoint,
+  type MaterialProgressTurnOutcome,
+} from "./material-progress.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -98,6 +108,22 @@ function submittedPromptText(prompt: AgentPromptInput): string {
     .flatMap((block) => (block.type === "text" && !("mimeType" in block) ? [block.text] : []))
     .join("\n")
     .trim();
+}
+
+function restoreMaterialProgressCheckpoint(
+  checkpoint: MaterialProgressCheckpoint | undefined,
+  timeline: { epoch: string; nextSeq: number },
+): MaterialProgressCheckpoint {
+  if (checkpoint) {
+    return rebindMaterialProgressCheckpoint(checkpoint, {
+      timelineEpoch: timeline.epoch,
+      nextSeq: timeline.nextSeq,
+    });
+  }
+  return createMaterialProgressCheckpoint({
+    timelineEpoch: timeline.epoch,
+    nextSeq: timeline.nextSeq,
+  });
 }
 
 export class AgentManagerShuttingDownError extends Error {
@@ -343,6 +369,7 @@ interface ManagedAgentBase {
   lastUserMessageAt: Date | null;
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
+  materialProgress: MaterialProgressCheckpoint;
   lastUsage?: AgentUsage;
   lastError?: string;
   attention: AttentionState;
@@ -1017,6 +1044,10 @@ export class AgentManager {
     return this.timelineStore.getRows(id);
   }
 
+  getMaterialProgress(id: string) {
+    return materialProgressPayload(this.requireAgent(id).materialProgress);
+  }
+
   fetchTimeline(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     this.requireAgent(id);
     return this.timelineStore.fetch(id, options);
@@ -1107,6 +1138,7 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      materialProgress?: MaterialProgressCheckpoint;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1126,6 +1158,7 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      materialProgress?: MaterialProgressCheckpoint;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1270,6 +1303,7 @@ export class AgentManager {
     const preservedHistoryPrimed = existing.historyPrimed;
     const preservedLastUsage = existing.lastUsage;
     const preservedLastError = existing.lastError;
+    const preservedMaterialProgress = existing.materialProgress;
     const preservedAttention = existing.attention;
     const handle = existing.persistence;
     const provider = handle?.provider ?? existing.provider;
@@ -1321,6 +1355,7 @@ export class AgentManager {
         historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
+        materialProgress: rehydrateFromDisk ? undefined : preservedMaterialProgress,
         attention: preservedAttention,
       });
     } finally {
@@ -1579,6 +1614,9 @@ export class AgentManager {
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         lastUsage: undefined,
         lastError: record.lastError ?? undefined,
+        materialProgress:
+          record.materialProgress ??
+          createMaterialProgressCheckpoint({ timelineEpoch: "stored", nextSeq: 1 }),
         attention: { requiresAttention: false },
         internal: record.internal,
         labels: record.labels,
@@ -2060,6 +2098,7 @@ export class AgentManager {
       pendingRun.turnId = turnId;
       agent.activeForegroundTurnId = turnId;
       this.openActiveTurn(agent, turnId, turnStartedAt);
+      this.openMaterialProgressContinuation(agent, turnId);
       agent.lifecycle = "running";
       this.touchUpdatedAt(agent);
       // AgentManager owns the accepted-turn boundary. Publish liveness before the canonical
@@ -2182,6 +2221,34 @@ export class AgentManager {
   private openActiveTurn(agent: ActiveManagedAgent, turnId: string, startedAt: Date): void {
     agent.activeTurnId = turnId;
     agent.activeTurnStartedAt = startedAt;
+  }
+
+  private openMaterialProgressContinuation(agent: ActiveManagedAgent, turnId: string): void {
+    const timeline = this.timelineStore.fetch(agent.id, { direction: "tail", limit: 1 });
+    agent.materialProgress = openMaterialProgressContinuation({
+      timelineEpoch: timeline.epoch,
+      boundarySeq: timeline.window.nextSeq,
+      turnId,
+    });
+  }
+
+  private settleMaterialProgress(
+    agent: ActiveManagedAgent,
+    turnId: string,
+    outcome: MaterialProgressTurnOutcome,
+  ): void {
+    agent.materialProgress = settleMaterialProgressContinuation(agent.materialProgress, {
+      turnId,
+      outcome,
+    });
+  }
+
+  private resetMaterialProgress(agent: ActiveManagedAgent): void {
+    const timeline = this.timelineStore.fetch(agent.id, { direction: "tail", limit: 1 });
+    agent.materialProgress = createMaterialProgressCheckpoint({
+      timelineEpoch: timeline.epoch,
+      nextSeq: timeline.window.nextSeq,
+    });
   }
 
   private applyActiveTurnTerminal(
@@ -2796,6 +2863,7 @@ export class AgentManager {
       historyPrimed?: boolean;
       lastUsage?: AgentUsage;
       lastError?: string;
+      materialProgress?: MaterialProgressCheckpoint;
       attention?: AttentionState;
       initialTitle?: string | null;
       publishWhenReady?: boolean;
@@ -2835,6 +2903,7 @@ export class AgentManager {
       this.assertAcceptingAgentRegistrations();
       this.agents.set(resolvedAgentId, managed);
       registered = true;
+      await this.catchUpMaterialProgress(managed);
       // Initialize previousStatus to track transitions
       this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
       await this.refreshRuntimeInfo(managed, { emit: false });
@@ -2936,6 +3005,7 @@ export class AgentManager {
           historyPrimed?: boolean;
           lastUsage?: AgentUsage;
           lastError?: string;
+          materialProgress?: MaterialProgressCheckpoint;
           attention?: AttentionState;
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
@@ -2944,6 +3014,11 @@ export class AgentManager {
       | undefined;
   }): ActiveManagedAgent {
     const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
+    const timeline = this.timelineStore.fetch(resolvedAgentId, { direction: "tail", limit: 1 });
+    const materialProgress = restoreMaterialProgressCheckpoint(options?.materialProgress, {
+      epoch: timeline.epoch,
+      nextSeq: timeline.window.nextSeq,
+    });
     return {
       id: resolvedAgentId,
       provider: config.provider,
@@ -2966,6 +3041,7 @@ export class AgentManager {
       activeForegroundTurnId: null,
       activeTurnId: null,
       activeTurnStartedAt: null,
+      materialProgress,
       foregroundTurnWaiters: new Set<ForegroundTurnWaiter>(),
       finalizedForegroundTurnIds: new Set<string>(),
       unsubscribeSession: null,
@@ -2981,6 +3057,18 @@ export class AgentManager {
       internal: config.internal ?? false,
       labels: options?.labels ?? {},
     } as ActiveManagedAgent;
+  }
+
+  private async catchUpMaterialProgress(agent: ActiveManagedAgent): Promise<void> {
+    const rows = await this.getTimelineRows(agent.id);
+    const timelineEpoch = this.timelineStore.getEpoch(agent.id);
+    for (const row of rows.toSorted((left, right) => left.seq - right.seq)) {
+      agent.materialProgress = advanceMaterialProgressCheckpoint(
+        agent.materialProgress,
+        row,
+        timelineEpoch,
+      );
+    }
   }
 
   private async loadCommittedTimelineSeed(
@@ -3307,6 +3395,7 @@ export class AgentManager {
     await this.deleteCommittedTimeline(agent.id);
     this.timelineStore.delete(agent.id);
     this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
+    this.resetMaterialProgress(agent);
     agent.historyPrimed = true;
 
     for (const event of this.providerSubagents.deleteParent(agent.id)) {
@@ -3727,6 +3816,9 @@ export class AgentManager {
       "agent.manager.turn.completed",
     );
     if (terminalDisposition === "stale") return;
+    if (terminalDisposition === "closed_current" && eventTurnId) {
+      this.settleMaterialProgress(agent, eventTurnId, "completed");
+    }
     if (event.usage) {
       agent.lastUsage = { ...agent.lastUsage, ...event.usage };
     }
@@ -3771,6 +3863,9 @@ export class AgentManager {
       "handleStreamEvent: turn_failed",
     );
     if (terminalDisposition === "stale") return;
+    if (terminalDisposition === "closed_current" && eventTurnId) {
+      this.settleMaterialProgress(agent, eventTurnId, "failed");
+    }
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
       agent.lifecycle = "error";
     }
@@ -3813,6 +3908,9 @@ export class AgentManager {
       "agent.manager.turn.canceled",
     );
     if (terminalDisposition === "stale") return;
+    if (terminalDisposition === "closed_current" && eventTurnId) {
+      this.settleMaterialProgress(agent, eventTurnId, "canceled");
+    }
     if (!isForegroundEvent && !agent.activeForegroundTurnId && !agent.pendingReplacement) {
       agent.lifecycle = "idle";
     }
@@ -3854,6 +3952,7 @@ export class AgentManager {
     this.runs.trackAutonomousRun(agent.id, eventTurnId ?? null);
     if (eventTurnId) {
       this.openActiveTurn(agent, eventTurnId, new Date());
+      this.openMaterialProgressContinuation(agent, eventTurnId);
     }
     agent.lifecycle = "running";
     this.emitState(agent);
@@ -4041,6 +4140,14 @@ export class AgentManager {
   ): AgentTimelineRow {
     item = limitAgentTimelineItemContent(item);
     const row = this.timelineStore.append(agentId, item, options);
+    const agent = this.agents.get(agentId);
+    if (agent) {
+      agent.materialProgress = advanceMaterialProgressCheckpoint(
+        agent.materialProgress,
+        row,
+        this.timelineStore.getEpoch(agentId),
+      );
+    }
     this.enqueueDurableTimelineAppend(agentId, row);
     return row;
   }

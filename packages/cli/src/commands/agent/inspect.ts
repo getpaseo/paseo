@@ -11,7 +11,7 @@ export function addInspectOptions(cmd: Command): Command {
 }
 
 /** Agent inspect data for display (matches CLI spec format) */
-interface AgentInspect {
+export interface AgentInspect {
   Id: string;
   Name: string;
   Provider: string;
@@ -46,10 +46,11 @@ interface AgentInspect {
   }>;
   Worktree: string | null;
   ParentAgentId: string | null;
+  MaterialProgress: AgentSnapshotPayload["materialProgress"] | null;
 }
 
 /** Key-value row for table display */
-interface InspectRow {
+export interface InspectRow {
   key: string;
   value: string;
 }
@@ -126,7 +127,7 @@ function buildCapabilities(snapshot: AgentSnapshotPayload): AgentInspect["Capabi
 }
 
 /** Convert agent snapshot to inspection data */
-function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
+export function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
   return {
     Id: snapshot.id,
     Name: snapshot.title ?? "-",
@@ -151,11 +152,12 @@ function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
     })),
     Worktree: snapshot.labels?.["paseo.worktree"] ?? null,
     ParentAgentId: snapshot.labels?.[PARENT_AGENT_ID_LABEL] ?? null,
+    MaterialProgress: snapshot.materialProgress ?? null,
   };
 }
 
 /** Convert agent to key-value rows for table display */
-function toInspectRows(agent: AgentInspect): InspectRow[] {
+export function toInspectRows(agent: AgentInspect): InspectRow[] {
   const rows: InspectRow[] = [
     { key: "Id", value: agent.Id },
     { key: "Name", value: agent.Name },
@@ -202,6 +204,12 @@ function toInspectRows(agent: AgentInspect): InspectRow[] {
 
   rows.push({ key: "Worktree", value: agent.Worktree ?? "null" });
   rows.push({ key: "ParentAgentId", value: agent.ParentAgentId ?? "null" });
+  rows.push({
+    key: "MaterialProgress",
+    value: agent.MaterialProgress
+      ? `${agent.MaterialProgress.state}: ${agent.MaterialProgress.reason}`
+      : "unavailable",
+  });
 
   return rows;
 }

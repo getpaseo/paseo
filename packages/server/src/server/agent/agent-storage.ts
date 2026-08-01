@@ -9,6 +9,7 @@ import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
+import { MaterialProgressCheckpointSchema } from "./material-progress.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
@@ -60,6 +61,7 @@ const STORED_AGENT_SCHEMA = z.object({
   features: z.array(AgentFeatureSchema).optional(),
   persistence: PERSISTENCE_HANDLE_SCHEMA,
   lastError: z.string().nullable().optional(),
+  materialProgress: MaterialProgressCheckpointSchema.optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
@@ -128,13 +130,20 @@ export class AgentStorage {
   }
 
   private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
-    const agentId = record.id;
-    const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
+    return this.queueRecordMutation(record.id, () => record);
+  }
+
+  private queueRecordMutation(
+    agentId: string,
+    buildRecord: (existing: StoredAgentRecord | null) => StoredAgentRecord,
+  ): Promise<void> {
+    const prev = (this.pendingWrites.get(agentId) ?? Promise.resolve()).catch(() => undefined);
     const next = prev.then(async () => {
       if (this.deleting.has(agentId)) {
         return undefined;
       }
 
+      const record = buildRecord(this.cache.get(agentId) ?? null);
       await this.writeRecord(record);
       return undefined;
     });
@@ -207,35 +216,35 @@ export class AgentStorage {
     options?: { title?: string | null; internal?: boolean },
   ): Promise<void> {
     await this.load();
-    await this.waitForPendingWrite(agent.id);
-    const existing = (await this.get(agent.id)) ?? null;
     const hasTitleOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
     const hasInternalOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
-    const record = toStoredAgentRecord(agent, {
-      title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
-      createdAt: existing?.createdAt,
-      internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
-    });
+    await this.queueRecordMutation(agent.id, (existing) => {
+      const record = toStoredAgentRecord(agent, {
+        title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
+        createdAt: existing?.createdAt,
+        internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
+      });
 
-    // Preserve soft-delete/archive status across snapshot flushes.
-    // `archivedAt` is not part of the ManagedAgent snapshot, so a naive projection
-    // would wipe it during normal persistence (including on daemon restart).
-    if (existing && existing.archivedAt !== undefined) {
-      record.archivedAt = existing.archivedAt;
-    }
-    await this.upsert(record);
+      // Preserve soft-delete/archive status across snapshot flushes.
+      // `archivedAt` is not part of the ManagedAgent snapshot, so a naive projection
+      // would wipe it during normal persistence (including on daemon restart).
+      if (existing && existing.archivedAt !== undefined) {
+        record.archivedAt = existing.archivedAt;
+      }
+      return record;
+    });
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
     await this.load();
-    await this.waitForPendingWrite(agentId);
-    const record = await this.get(agentId);
-    if (!record) {
-      throw new Error(`Agent ${agentId} not found`);
-    }
-    await this.upsert({ ...record, title });
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) {
+        throw new Error(`Agent ${agentId} not found`);
+      }
+      return { ...existing, title };
+    });
   }
 
   async flush(): Promise<void> {
@@ -385,10 +394,6 @@ export class AgentStorage {
       this.daemonAgentIdsByExecution.delete(key);
     }
     this.daemonExecutionKeysByAgentId.delete(agentId);
-  }
-
-  private async waitForPendingWrite(agentId: string): Promise<void> {
-    await (this.pendingWrites.get(agentId) ?? Promise.resolve()).catch(() => undefined);
   }
 }
 

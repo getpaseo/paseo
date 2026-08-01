@@ -97,6 +97,7 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `features`           | `AgentFeature[]?`                        | Provider-reported features (toggles/selects)                                                                                                                                                                                                                                                                                                                                        |
 | `persistence`        | `PersistenceHandle?`                     | Handle for resuming sessions                                                                                                                                                                                                                                                                                                                                                        |
 | `lastError`          | `string?` (nullable)                     | Last error message, if any                                                                                                                                                                                                                                                                                                                                                          |
+| `materialProgress`   | `MaterialProgressCheckpoint?`            | Incremental material-progress accumulator for the current accepted continuation. It is bound to a timeline epoch and sequence boundary so timeline replacement cannot reuse a stale result. Legacy records may omit it.                                                                                                                                                             |
 | `requiresAttention`  | `boolean?`                               | Whether the agent needs user attention                                                                                                                                                                                                                                                                                                                                              |
 | `attentionReason`    | `"finished" \| "error" \| "permission"?` | Why attention is needed                                                                                                                                                                                                                                                                                                                                                             |
 | `attentionTimestamp` | `string?` (ISO 8601)                     | When attention was flagged                                                                                                                                                                                                                                                                                                                                                          |
@@ -135,6 +136,30 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `sessionId`    | `string`               | Session ID for resumption                                             |
 | `nativeHandle` | `any?`                 | Provider-specific handle (Codex thread ID, Claude resume token, etc.) |
 | `metadata`     | `Record<string, any>?` | Extra metadata                                                        |
+
+### Nested: MaterialProgressCheckpoint
+
+This checkpoint is an observational read model; it does not change lifecycle or control whether an
+agent continues. An accepted provider turn opens a new continuation boundary. Rejected starts that
+never return a turn id leave the preceding accepted outcome intact. Timeline replacement creates a
+new epoch and an empty checkpoint; ordinary reload can rebind a valid persisted cursor and catch up
+all later rows incrementally.
+
+| Field                                       | Type                                                                                     | Description                                                                                        |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `timelineEpoch`                             | `string`                                                                                 | Epoch of the authoritative timeline the checkpoint describes                                       |
+| `continuationBoundarySeq`                   | `number?`                                                                                | First sequence in the current accepted continuation; `null` when no accepted continuation is known |
+| `acceptedTurnId`                            | `string?`                                                                                | Provider turn identity that opened the boundary                                                    |
+| `turnOutcome`                               | `"completed" \| "failed" \| "canceled"?`                                                 | Terminal outcome for the accepted turn, when known                                                 |
+| `observedThroughSeq`                        | `number`                                                                                 | Highest contiguous authoritative row incorporated                                                  |
+| `completedCompactionsSinceMaterialProgress` | `number`                                                                                 | Completed compactions since the last distinct material event                                       |
+| `lastMaterialProgressAt`                    | `string?` (ISO 8601)                                                                     | Timestamp of the last distinct material event                                                      |
+| `lastMaterialProgressKind`                  | `"edit" \| "write" \| "evidence" \| "verification" \| "decision" \| "assistant_result"?` | Class of the last distinct material event                                                          |
+| `seenMaterialProgressFingerprints`          | `string[]`                                                                               | Digests used to prevent repeated identical evidence from resetting the counter                     |
+| `trailingAssistantFingerprint`              | `string?`                                                                                | Digest of the trailing assistant output pending terminal settlement                                |
+| `trailingAssistantHasConcreteText`          | `boolean`                                                                                | Whether the pending assistant output contains concrete text                                        |
+| `trailingAssistantAt`                       | `string?` (ISO 8601)                                                                     | Timestamp of the pending assistant output                                                          |
+| `unavailableReason`                         | `string?`                                                                                | Why the checkpoint was cleared instead of reusing an unprovable cursor                             |
 
 ### Nested: AgentFeature (discriminated union on `type`)
 

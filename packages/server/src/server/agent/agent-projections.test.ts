@@ -15,6 +15,7 @@ import type {
   AgentPersistenceHandle,
   AgentSessionConfig,
 } from "./agent-sdk-types.js";
+import { createMaterialProgressCheckpoint } from "./material-progress.js";
 
 type ManagedAgentOverrides = Omit<Partial<ManagedAgent>, "config" | "pendingPermissions"> & {
   config?: Partial<AgentSessionConfig>;
@@ -84,6 +85,9 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     foregroundTurnWaiters: new Set(),
     unsubscribeSession: null,
     timeline: [],
+    materialProgress:
+      restOverrides.materialProgress ??
+      createMaterialProgressCheckpoint({ timelineEpoch: "epoch-1", nextSeq: 1 }),
     runtimeInfo: {
       provider: "claude",
       sessionId: "session-123",

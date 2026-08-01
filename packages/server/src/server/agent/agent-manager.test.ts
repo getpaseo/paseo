@@ -2880,6 +2880,77 @@ test("reloadAgentSession preserves timeline and does not force history replay", 
   expect(afterHydrate).toEqual(beforeReload);
 });
 
+test("ordinary reload preserves material progress while disk rehydration mints a clean epoch", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-reload-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class ReloadProgressSession extends TestAgentSession {
+    async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item: { type: "assistant_message", text: "provider history after rewind" },
+      };
+    }
+  }
+
+  class ReloadProgressClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new ReloadProgressSession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new ReloadProgressSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ReloadProgressClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000133",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.runAgent(snapshot.id, "accepted continuation");
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "tool_call",
+      callId: "write-before-reload",
+      name: "write",
+      status: "completed",
+      error: null,
+      detail: { type: "write", filePath: "proof.txt", content: "durable proof" },
+    });
+    const beforeReload = manager.getMaterialProgress(snapshot.id);
+    expect(beforeReload).toMatchObject({ state: "progressing", lastMaterialProgressKind: "write" });
+
+    await manager.reloadAgentSession(snapshot.id);
+    expect(manager.getMaterialProgress(snapshot.id)).toEqual(beforeReload);
+
+    await manager.reloadAgentSession(snapshot.id, undefined, { rehydrateFromDisk: true });
+    const afterRehydrate = manager.getMaterialProgress(snapshot.id);
+    expect(afterRehydrate).toMatchObject({
+      state: "none",
+      continuationBoundarySeq: null,
+      lastMaterialProgressKind: null,
+    });
+    expect(afterRehydrate.timelineEpoch).not.toBe(beforeReload.timelineEpoch);
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("reloadAgentSession clears provider children before rehydrating from disk", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-reload-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -6174,6 +6245,108 @@ test("streamAgent clears pending run when startTurn fails before a turn id exist
       canceled: false,
     }),
   );
+});
+
+test("a pre-accept start failure preserves the prior accepted continuation progress", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-rejection-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class MaterialThenRejectSession extends TestAgentSession {
+    private attempt = 0;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      this.attempt += 1;
+      if (this.attempt === 2) {
+        throw new Error("rejected before provider turn acceptance");
+      }
+      const turnId = "accepted-material-turn";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: {
+            type: "tool_call",
+            callId: "write-proof",
+            name: "write",
+            status: "completed",
+            error: null,
+            detail: { type: "write", filePath: "proof.txt", content: "material result" },
+          },
+        });
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+  }
+
+  class MaterialThenRejectClient implements AgentClient {
+    readonly provider = "codex" as const;
+    readonly capabilities = TEST_CAPABILITIES;
+    readonly session = new MaterialThenRejectSession({ provider: "codex", cwd: workdir });
+
+    async isAvailable(): Promise<boolean> {
+      return true;
+    }
+
+    async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+
+    async resumeSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new MaterialThenRejectClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000132",
+  });
+
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Material progress rejection" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await manager.runAgent(agent.id, "accepted turn");
+    const accepted = manager.getMaterialProgress(agent.id);
+    expect(accepted).toMatchObject({
+      state: "progressing",
+      continuationBoundarySeq: 1,
+      observedThroughSeq: 1,
+      lastMaterialProgressKind: "write",
+    });
+
+    await expect(manager.runAgent(agent.id, "rejected turn")).rejects.toThrow(
+      "rejected before provider turn acceptance",
+    );
+    const afterRejection = manager.getMaterialProgress(agent.id);
+    expect(afterRejection).toMatchObject({
+      state: accepted.state,
+      timelineEpoch: accepted.timelineEpoch,
+      continuationBoundarySeq: accepted.continuationBoundarySeq,
+      completedCompactionsSinceMaterialProgress: accepted.completedCompactionsSinceMaterialProgress,
+      lastMaterialProgressAt: accepted.lastMaterialProgressAt,
+      lastMaterialProgressKind: accepted.lastMaterialProgressKind,
+    });
+    expect(afterRejection.observedThroughSeq).toBe(accepted.observedThroughSeq! + 1);
+
+    await manager.flush();
+    expect((await storage.get(agent.id))?.materialProgress).toMatchObject({
+      timelineEpoch: afterRejection.timelineEpoch,
+      continuationBoundarySeq: afterRejection.continuationBoundarySeq,
+      observedThroughSeq: afterRejection.observedThroughSeq,
+      lastMaterialProgressKind: "write",
+    });
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("archiveAgent persists archivedAt and updatedAt before emitting closed state", async () => {
