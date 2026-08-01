@@ -132,6 +132,7 @@ export interface PaseoToolHostDependencies {
   paseoHome?: string;
   worktreesRoot?: string;
   lifecycleCoordinator?: WorkspaceLifecycleCoordinator;
+  runLifecycleMutation?: <T>(operation: () => Promise<T>) => Promise<T>;
   /**
    * ID of the agent that is using this tool catalog.
    * Used for cwd/mode inheritance when agents spawn child agents.
@@ -147,6 +148,32 @@ export interface PaseoToolHostDependencies {
   voiceOnly?: boolean;
   logger: Logger;
 }
+
+const LIFECYCLE_MUTATION_TOOL_NAMES = new Set([
+  "create_workspace",
+  "archive_workspace",
+  "create_agent",
+  "cancel_agent",
+  "archive_agent",
+  "kill_agent",
+  "update_agent",
+  "rename_workspace",
+  "start_workspace_script",
+  "stop_workspace_script",
+  "create_terminal",
+  "kill_terminal",
+  "send_terminal_keys",
+  "create_schedule",
+  "create_heartbeat",
+  "delete_heartbeat",
+  "pause_schedule",
+  "resume_schedule",
+  "delete_schedule",
+  "update_schedule",
+  "run_schedule_once",
+  "set_agent_mode",
+  "respond_to_permission",
+]);
 
 async function requireActiveWorkspaceForOwnership(
   options: Pick<PaseoToolHostDependencies, "listActiveWorkspaces" | "workspaceRegistry">,
@@ -615,7 +642,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       if (!tool) {
         throw new Error(`Paseo tool not found: ${name}`);
       }
-      return tool.handler(await parseToolInput(tool, input), context);
+      const operation = async () => tool.handler(await parseToolInput(tool, input), context);
+      return options.runLifecycleMutation && LIFECYCLE_MUTATION_TOOL_NAMES.has(name)
+        ? options.runLifecycleMutation(operation)
+        : operation();
     },
   });
 

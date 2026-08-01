@@ -1393,6 +1393,7 @@ export async function createPaseoDaemon(
   );
   logger.info({ elapsed: elapsed() }, "Preparing voice and MCP runtime");
 
+  const lifecycleMutationIngress = new LifecycleMutationIngress();
   const createAgentToolHostDependencies = (
     runtime: PaseoToolRuntimeContext,
   ): PaseoToolHostDependencies => ({
@@ -1445,6 +1446,7 @@ export async function createPaseoDaemon(
     browserToolsBroker,
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
+    runLifecycleMutation: (operation) => lifecycleMutationIngress.run(operation),
     callerAgentId: runtime.callerAgentId,
     enableVoiceTools: runtime.enableVoiceTools,
     voiceOnly: runtime.voiceOnly,
@@ -1458,7 +1460,6 @@ export async function createPaseoDaemon(
   agentManager.setPaseoToolsEnabled(config.mcpInjectIntoAgents !== false);
 
   const mcpEnabled = config.mcpEnabled ?? true;
-  const agentMcpMutationIngress = new LifecycleMutationIngress();
   let agentMcpBaseUrl: string | null = null;
   if (mcpEnabled) {
     const agentMcpRoute = "/mcp/agents";
@@ -1568,18 +1569,7 @@ export async function createPaseoDaemon(
     };
 
     const handleAgentMcpRequest: express.RequestHandler = (req, res) => {
-      void agentMcpMutationIngress
-        .run(() => runAgentMcpRequest(req, res))
-        .catch((error) => {
-          if (error instanceof LifecycleMutationIngressClosedError && !res.headersSent) {
-            res.status(503).json({ error: "Daemon is shutting down" });
-            return;
-          }
-          logger.error({ err: error }, "Failed to dispatch Agent MCP request");
-          if (!res.headersSent) {
-            res.status(500).json({ error: "Internal MCP server error" });
-          }
-        });
+      void runAgentMcpRequest(req, res);
     };
 
     app.post(agentMcpRoute, handleAgentMcpRequest);
@@ -1816,7 +1806,7 @@ export async function createPaseoDaemon(
     await attempt("lifecycle mutation ingress", async () => {
       await Promise.all([
         wsServer?.prepareForShutdown(),
-        agentMcpMutationIngress.closeAndDrain(),
+        lifecycleMutationIngress.closeAndDrain(),
         scheduleService.stop(),
       ]);
     });

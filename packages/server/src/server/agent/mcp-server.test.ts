@@ -2597,6 +2597,7 @@ describe("create_agent MCP tool", () => {
     const paseoHome = join(tempDir, ".paseo");
     const broadcasts: string[] = [];
     const setupContinuations: Array<"workspace" | "agent" | undefined> = [];
+    const runLifecycleMutation = vi.fn(async <T>(operation: () => Promise<T>) => operation());
 
     try {
       execFileSync("git", ["init", repoDir], { stdio: "pipe" });
@@ -2633,6 +2634,7 @@ describe("create_agent MCP tool", () => {
           WorkspaceGitService,
           "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
         >,
+        runLifecycleMutation,
         logger,
       });
       const tool = registeredTool(server, "create_workspace");
@@ -2649,6 +2651,7 @@ describe("create_agent MCP tool", () => {
       expect(response.structuredContent.workspaceId).toBe(broadcasts[0]);
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
       expect(setupContinuations).toEqual([undefined]);
+      expect(runLifecycleMutation).toHaveBeenCalledOnce();
       expect(broadcasts).toHaveLength(1);
       expect(broadcasts[0]).toMatch(/^wks_[0-9a-f]{16}$/);
     } finally {

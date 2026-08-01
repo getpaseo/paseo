@@ -595,18 +595,20 @@ describe("paseo daemon bootstrap", () => {
       await heldAgentClose.started;
       const closureWorktrees = listGitWorktreePaths(repoDir);
 
-      await expect(
-        mcpClient.callTool({
-          name: "create_workspace",
-          args: {
-            isolation: "worktree",
-            path: repoDir,
-            worktreeSlug: "mcp-rejected-after-shutdown",
-            branchName: "feature/mcp-rejected-after-shutdown",
-            baseBranch: "main",
-          },
-        }),
-      ).rejects.toThrow();
+      const lateCreate = await mcpClient.callTool({
+        name: "create_workspace",
+        args: {
+          isolation: "worktree",
+          path: repoDir,
+          worktreeSlug: "mcp-rejected-after-shutdown",
+          branchName: "feature/mcp-rejected-after-shutdown",
+          baseBranch: "main",
+        },
+      });
+      expect(lateCreate).toMatchObject({
+        isError: true,
+        content: [expect.objectContaining({ text: "Lifecycle mutation ingress is closed" })],
+      });
       expect(listGitWorktreePaths(repoDir)).toEqual(closureWorktrees);
       await expect(daemonHandle.daemon.agentStorage.listPendingAgentCreations()).resolves.toEqual(
         [],
