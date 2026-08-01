@@ -90,6 +90,11 @@ async function expectWorktreePresentInList(repoDir: string, worktreePath: string
 }
 
 async function expectWorktreeListEmpty(repoDir: string): Promise<void> {
+  const listed = await ctx.client.getPaseoWorktreeList({ repoRoot: repoDir });
+  expect(listed.worktrees).toEqual([]);
+}
+
+async function expectWorktreeListEventuallyEmpty(repoDir: string): Promise<void> {
   await expect
     .poll(
       async () => {
@@ -161,7 +166,7 @@ test("create_agent_request creates a worktree and auto-archives both after the f
   // last-reference worktree directory is gone.
   await expectAgentAbsentFromActiveList(created.id);
   await expect.poll(() => existsSync(created.cwd), { timeout: 10000, interval: 100 }).toBe(false);
-  await expectWorktreeListEmpty(repoDir);
+  await expectWorktreeListEventuallyEmpty(repoDir);
 }, 30000);
 
 test("create_agent_request auto-archives a nested workspace from an existing Paseo worktree", async () => {

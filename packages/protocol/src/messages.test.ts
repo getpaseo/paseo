@@ -400,6 +400,22 @@ describe("file explorer request compatibility", () => {
 });
 
 describe("paseo worktree archive request compatibility", () => {
+  test("branch-only repository archive identity parses without a worktree path", () => {
+    const parsed = PaseoWorktreeArchiveRequestSchema.parse({
+      type: "paseo_worktree_archive_request",
+      projectId: "prj-repo",
+      branchName: "feature/archive-me",
+      requestId: "req-branch-only",
+    });
+
+    expect(parsed).toMatchObject({
+      projectId: "prj-repo",
+      branchName: "feature/archive-me",
+      scope: "workspace",
+    });
+    expect(parsed.worktreePath).toBeUndefined();
+  });
+
   test("omitted scope defaults to workspace", () => {
     const parsed = PaseoWorktreeArchiveRequestSchema.parse({
       type: "paseo_worktree_archive_request",

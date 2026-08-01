@@ -35,6 +35,7 @@ import type { TerminalSession } from "../terminal/terminal.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import {
   createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
@@ -501,6 +502,46 @@ describe("handlePaseoWorktreeListRequest", () => {
 });
 
 describe("resolveRepositoryWorktreePath", () => {
+  test("resolves a branch-only archive from the authoritative repository worktree list", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const worktreePath = path.join(tempDir, "branch-only-worktree");
+    const listWorktrees = vi.fn(async () => [
+      {
+        path: worktreePath,
+        branchName: "feature/archive-me",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    try {
+      await expect(
+        resolveRepositoryWorktreePath({ listWorktrees }, repoDir, undefined, "feature/archive-me"),
+      ).resolves.toBe(worktreePath);
+      expect(listWorktrees).toHaveBeenCalledWith(repoDir, {
+        force: true,
+        reason: "archive-worktree-membership",
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a branch-only archive when the branch match is not unique", async () => {
+    await expect(
+      resolveRepositoryWorktreePath(
+        {
+          listWorktrees: vi.fn(async () => [
+            { path: "/worktree/one", branchName: "duplicate", createdAt: "2026-01-01" },
+            { path: "/worktree/two", branchName: "duplicate", createdAt: "2026-01-01" },
+          ]),
+        },
+        "/repo",
+        undefined,
+        "duplicate",
+      ),
+    ).rejects.toThrow("does not uniquely identify");
+  });
+
   test("rejects a worktree path from another repository", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const otherPath = path.join(tempDir, "other-repository-worktree");
@@ -1974,6 +2015,150 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
     for (const target of cleanupPaths.splice(0)) {
       rmSync(target, { recursive: true, force: true });
     }
+  });
+
+  test("retries cleanup after Git forgets an archived Paseo worktree", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+    const paseoHome = path.join(tempDir, ".paseo");
+    const created = await createLegacyWorktreeForTest({
+      branchName: "partial-archive-retry",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "partial-archive-retry",
+      runSetup: false,
+      paseoHome,
+    });
+    const gitFile = readFileSync(path.join(created.worktreePath, ".git"), "utf8").trim();
+    rmSync(gitFile.slice("gitdir: ".length), { recursive: true, force: true });
+
+    const archivedWorkspace = createPersistedWorkspaceRecord({
+      workspaceId: "ws-partial-archive-retry",
+      projectId: "prj-worktree-test",
+      cwd: created.worktreePath,
+      kind: "worktree",
+      displayName: "partial-archive-retry",
+      branch: "partial-archive-retry",
+      worktreeRoot: created.worktreePath,
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: repoDir,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: "2026-01-02T00:00:00.000Z",
+    });
+    const emitted: SessionOutboundMessage[] = [];
+
+    await handlePaseoWorktreeArchiveRequest(
+      {
+        paseoHome,
+        github: createGitHubServiceStub(),
+        workspaceGitService: {
+          getSnapshot: vi.fn(async () => null),
+          invalidateWorktreeList: vi.fn(),
+          listWorktrees: vi.fn(async () => []),
+        },
+        projectRegistry: createProjectRegistryForRoot(repoDir),
+        workspaceRegistry: createWorkspaceRegistryForRecords([archivedWorkspace]),
+        agentManager: {
+          listAgents: () => [],
+          archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
+          archiveSnapshot: vi.fn(async () => {
+            throw new Error("not expected for empty agent list");
+          }),
+        },
+        agentStorage: createAgentStorageStub(),
+        findWorkspaceIdForCwd: vi.fn(async () => null),
+        listActiveWorkspaces: vi.fn(async () => []),
+        archiveWorkspaceRecord: vi.fn(async () => {}),
+        emit: (message) => emitted.push(message),
+        emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => {}),
+        markWorkspaceArchiving: vi.fn(),
+        clearWorkspaceArchiving: vi.fn(),
+        killTerminalsForWorkspace: vi.fn(async () => {}),
+        sessionLogger: createLogger(),
+      },
+      {
+        type: "paseo_worktree_archive_request",
+        requestId: "req-partial-archive-retry",
+        repoRoot: repoDir,
+        worktreePath: created.worktreePath,
+        branchName: "partial-archive-retry",
+        scope: "worktree",
+      },
+    );
+
+    expect(existsSync(created.worktreePath)).toBe(false);
+    expect(
+      emitted.find((message) => message.type === "paseo_worktree_archive_response"),
+    ).toMatchObject({ payload: { success: true, error: null } });
+  });
+
+  test("rejects a forgotten Paseo path associated only with another project", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktreePath = path.join(paseoHome, "worktrees", "project-hash", "other-project");
+    mkdirSync(worktreePath, { recursive: true });
+    const otherProjectWorkspace = createPersistedWorkspaceRecord({
+      workspaceId: "ws-other-project",
+      projectId: "prj-other",
+      cwd: worktreePath,
+      kind: "worktree",
+      displayName: "other-project",
+      worktreeRoot: worktreePath,
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: repoDir,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: "2026-01-02T00:00:00.000Z",
+    });
+    const emitted: SessionOutboundMessage[] = [];
+
+    await handlePaseoWorktreeArchiveRequest(
+      {
+        paseoHome,
+        github: createGitHubServiceStub(),
+        workspaceGitService: {
+          getSnapshot: vi.fn(async () => null),
+          invalidateWorktreeList: vi.fn(),
+          listWorktrees: vi.fn(async () => []),
+        },
+        projectRegistry: createProjectRegistryForRoot(repoDir),
+        workspaceRegistry: createWorkspaceRegistryForRecords([otherProjectWorkspace]),
+        agentManager: {
+          listAgents: () => [],
+          archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
+          archiveSnapshot: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
+        },
+        agentStorage: createAgentStorageStub(),
+        findWorkspaceIdForCwd: vi.fn(async () => null),
+        listActiveWorkspaces: vi.fn(async () => []),
+        archiveWorkspaceRecord: vi.fn(async () => {}),
+        emit: (message) => emitted.push(message),
+        emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => {}),
+        markWorkspaceArchiving: vi.fn(),
+        clearWorkspaceArchiving: vi.fn(),
+        killTerminalsForWorkspace: vi.fn(async () => {}),
+        sessionLogger: createLogger(),
+      },
+      {
+        type: "paseo_worktree_archive_request",
+        requestId: "req-other-project-retry",
+        repoRoot: repoDir,
+        worktreePath,
+        scope: "worktree",
+      },
+    );
+
+    expect(existsSync(worktreePath)).toBe(true);
+    expect(
+      emitted.find((message) => message.type === "paseo_worktree_archive_response"),
+    ).toMatchObject({
+      payload: {
+        success: false,
+        error: { message: "worktreePath is not a worktree for the selected repository" },
+      },
+    });
   });
 
   test("archives every active workspace on the directory and removes it", async () => {

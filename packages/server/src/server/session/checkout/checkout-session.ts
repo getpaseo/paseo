@@ -465,6 +465,7 @@ export class CheckoutSession {
 
     try {
       (await this.resolveForgeService(resolvedCwd))?.service.invalidate({ cwd: resolvedCwd });
+      this.workspaceGitService.invalidateRepositoryFacts(resolvedCwd);
       await this.workspaceGitService.getSnapshot(resolvedCwd, {
         force: true,
         includeForge: true,

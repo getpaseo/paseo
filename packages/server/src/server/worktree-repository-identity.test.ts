@@ -192,4 +192,78 @@ describe("resolveWorktreeRepositoryIdentity", () => {
     });
     expect(listWorktrees).not.toHaveBeenCalledWith(unrelatedPath, expect.anything());
   });
+
+  test("resolves a legacy cwd to the deepest containing registered project", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "worktree-repository-identity-"));
+    cleanupPaths.push(tempDir);
+    const repoRoot = join(tempDir, "repo");
+    const nestedRoot = join(repoRoot, "packages", "app");
+    const requestedCwd = join(nestedRoot, "src");
+    mkdirSync(requestedCwd, { recursive: true });
+    const projects = createProjectRegistryForProjects([
+      createPersistedProjectRecord({
+        projectId: "prj_outer",
+        rootPath: repoRoot,
+        kind: "git",
+        displayName: "repo",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+      createPersistedProjectRecord({
+        projectId: "prj_nested",
+        rootPath: nestedRoot,
+        kind: "non_git",
+        displayName: "app",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ]);
+    const listWorktrees = vi.fn(async () => []);
+
+    await expect(
+      resolveWorktreeRepositoryIdentity({ cwd: requestedCwd }, projects, {
+        workspaceRegistry: { list: async () => [] },
+        workspaceGitService: { listWorktrees },
+      }),
+    ).resolves.toEqual({
+      projectId: "prj_nested",
+      repoRoot: realpathSync.native(nestedRoot),
+    });
+    expect(listWorktrees).not.toHaveBeenCalled();
+  });
+
+  test("rejects equal-depth canonical project matches for a legacy cwd", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "worktree-repository-identity-"));
+    cleanupPaths.push(tempDir);
+    const repoRoot = join(tempDir, "repo");
+    const repoAlias = join(tempDir, "repo-alias");
+    const requestedCwd = join(repoRoot, "packages", "app");
+    mkdirSync(requestedCwd, { recursive: true });
+    symlinkSync(repoRoot, repoAlias);
+    const projects = createProjectRegistryForProjects([
+      createPersistedProjectRecord({
+        projectId: "prj_repo",
+        rootPath: repoRoot,
+        kind: "git",
+        displayName: "repo",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+      createPersistedProjectRecord({
+        projectId: "prj_alias",
+        rootPath: repoAlias,
+        kind: "git",
+        displayName: "repo alias",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ]);
+
+    await expect(
+      resolveWorktreeRepositoryIdentity({ cwd: requestedCwd }, projects, {
+        workspaceRegistry: { list: async () => [] },
+        workspaceGitService: { listWorktrees: vi.fn(async () => []) },
+      }),
+    ).rejects.toThrow("multiple equally deep active daemon projects");
+  });
 });

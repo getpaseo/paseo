@@ -137,6 +137,24 @@ async function resolveLegacyWorktreeRepositoryIdentity(
     throw new Error("Legacy path identifies multiple active daemon projects");
   }
 
+  const containingProjectMatches = projects.filter(({ repoRoot }) =>
+    requestedPath.startsWith(repoRoot.endsWith(sep) ? repoRoot : `${repoRoot}${sep}`),
+  );
+  const deepestRootLength = Math.max(
+    0,
+    ...containingProjectMatches.map(({ repoRoot }) => repoRoot.length),
+  );
+  const deepestProjectMatches = containingProjectMatches.filter(
+    ({ repoRoot }) => repoRoot.length === deepestRootLength,
+  );
+  if (deepestProjectMatches.length === 1) {
+    const match = deepestProjectMatches[0]!;
+    return { projectId: match.project.projectId, repoRoot: match.repoRoot };
+  }
+  if (deepestProjectMatches.length > 1) {
+    throw new Error("Legacy path identifies multiple equally deep active daemon projects");
+  }
+
   const projectsById = new Map(projects.map((entry) => [entry.project.projectId, entry]));
   const workspaceProjectIds = new Set(
     (await dependencies.workspaceRegistry.list())

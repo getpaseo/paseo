@@ -1,6 +1,5 @@
 import type { Command } from "commander";
-import { homedir } from "node:os";
-import { basename, join, sep } from "node:path";
+import { basename } from "node:path";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
@@ -26,19 +25,6 @@ function shortenPath(path: string): string {
 /** Extract worktree name from path */
 function extractWorktreeName(path: string): string {
   return basename(path);
-}
-
-export function resolvePaseoHomePath(): string {
-  return process.env.PASEO_HOME ?? join(homedir(), ".paseo");
-}
-
-export function resolvePaseoWorktreesDir(): string {
-  return join(resolvePaseoHomePath(), "worktrees");
-}
-
-function isAgentInManagedWorktree(agentCwd: string): boolean {
-  const worktreesDir = resolvePaseoWorktreesDir();
-  return agentCwd === worktreesDir || agentCwd.startsWith(worktreesDir + sep);
 }
 
 /** Schema for worktree ls output */
@@ -87,8 +73,6 @@ export async function runLsCommandWithDeps(
 
   try {
     const agentsPayload = await client.fetchAgents({ filter: { includeArchived: true } });
-    const agents = agentsPayload.entries.map((entry) => entry.agent);
-
     // Get worktree list from daemon
     const identity = await resolveWorktreeRepositoryIdentity(options, client, deps.cwd);
     const response = await client.getPaseoWorktreeList(identity);
@@ -105,9 +89,10 @@ export async function runLsCommandWithDeps(
 
     // Build a map of worktree paths to agent IDs
     const worktreeAgentMap = new Map<string, string>();
-    for (const agent of agents) {
-      if (isAgentInManagedWorktree(agent.cwd)) {
-        worktreeAgentMap.set(agent.cwd, agent.id.slice(0, 7));
+    for (const entry of agentsPayload.entries) {
+      const worktreeRoot = entry.project.checkout.worktreeRoot;
+      if (worktreeRoot) {
+        worktreeAgentMap.set(worktreeRoot, entry.agent.id.slice(0, 7));
       }
     }
 

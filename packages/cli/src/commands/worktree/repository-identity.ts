@@ -37,8 +37,17 @@ export async function resolveWorktreeRepositoryIdentity(
 
   const daemonHostname = client.getLastServerInfoMessage()?.hostname;
   if (client.isLocalDaemonConnection() && daemonHostname === hostname()) {
-    const registeredProject = selectRegisteredProject(cwd, (await client.listProjects()).projects);
-    if (registeredProject) return { projectId: registeredProject.projectId };
+    const projects = (await client.listProjects()).projects;
+    const mainPath = resolveLocalGitMainPath(cwd);
+    const registeredProject =
+      selectRegisteredProject(cwd, projects) ??
+      (mainPath ? selectRegisteredProjectByCanonicalPath(mainPath, projects) : null);
+    if (registeredProject) {
+      return {
+        projectId: registeredProject.projectId,
+        repoRoot: registeredProject.projectRootPath,
+      };
+    }
     return { repoRoot: resolveLocalGitTopLevel(cwd) ?? cwd };
   }
   throw commandError(
@@ -58,6 +67,13 @@ function selectRegisteredProject(
     return null;
   }
 
+  return selectRegisteredProjectByCanonicalPath(canonicalCwd, projects);
+}
+
+function selectRegisteredProjectByCanonicalPath(
+  canonicalCwd: string,
+  projects: Array<{ projectId: string; projectRootPath: string }>,
+): { projectId: string; projectRootPath: string } | null {
   return (
     projects
       .map((project) => {
@@ -82,8 +98,42 @@ function selectRegisteredProject(
 }
 
 function resolveLocalGitTopLevel(cwd: string): string | null {
+  return resolveGitPath(cwd, ["rev-parse", "--show-toplevel"]);
+}
+
+function resolveLocalGitMainPath(cwd: string): string | null {
+  const worktreeRoot = resolveLocalGitTopLevel(cwd);
+  const commonDir = resolveGitPath(cwd, [
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-common-dir",
+  ]);
+  if (!worktreeRoot || !commonDir || path.basename(commonDir) !== ".git") return null;
+
+  let canonicalCwd: string;
+  let canonicalWorktreeRoot: string;
+  let canonicalCommonDir: string;
   try {
-    const output = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+    canonicalCwd = realpathSync.native(cwd);
+    canonicalWorktreeRoot = realpathSync.native(worktreeRoot);
+    canonicalCommonDir = realpathSync.native(commonDir);
+  } catch {
+    return null;
+  }
+  const relativePath = path.relative(canonicalWorktreeRoot, canonicalCwd);
+  if (
+    relativePath.startsWith(`..${path.sep}`) ||
+    relativePath === ".." ||
+    path.isAbsolute(relativePath)
+  ) {
+    return null;
+  }
+  return path.join(path.dirname(canonicalCommonDir), relativePath);
+}
+
+function resolveGitPath(cwd: string, args: string[]): string | null {
+  try {
+    const output = execFileSync("git", args, {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],

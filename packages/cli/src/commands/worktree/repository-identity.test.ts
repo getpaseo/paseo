@@ -108,7 +108,10 @@ describe("resolveWorktreeRepositoryIdentity", () => {
       subprojectRoot,
     );
 
-    expect(identity).toEqual({ projectId: "prj_service" });
+    expect(identity).toEqual({
+      projectId: "prj_service",
+      repoRoot: realpathSync.native(subprojectRoot),
+    });
   });
 
   test("selects the deepest registered project containing the caller cwd", async () => {
@@ -128,7 +131,63 @@ describe("resolveWorktreeRepositoryIdentity", () => {
       nested,
     );
 
-    expect(identity).toEqual({ projectId: "prj_service" });
+    expect(identity).toEqual({
+      projectId: "prj_service",
+      repoRoot: realpathSync.native(subprojectRoot),
+    });
+  });
+
+  test("resolves a linked worktree through its registered main repository", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
+    cleanupPaths.push(tempDir);
+    const repoRoot = createGitRepository(tempDir, "repo");
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot });
+    execFileSync("git", ["config", "user.name", "Test User"], { cwd: repoRoot });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "initial"], { cwd: repoRoot });
+    const worktreeRoot = join(tempDir, "linked-worktree");
+    execFileSync("git", ["worktree", "add", "-b", "feature", worktreeRoot], { cwd: repoRoot });
+
+    const identity = await resolveWorktreeRepositoryIdentity(
+      {},
+      createLocalClient([{ projectId: "prj_repo", projectRootPath: repoRoot }]),
+      worktreeRoot,
+    );
+
+    expect(identity).toEqual({
+      projectId: "prj_repo",
+      repoRoot: realpathSync.native(repoRoot),
+    });
+  });
+
+  test("preserves a registered monorepo subproject from a linked worktree", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
+    cleanupPaths.push(tempDir);
+    const repoRoot = createGitRepository(tempDir, "repo");
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot });
+    execFileSync("git", ["config", "user.name", "Test User"], { cwd: repoRoot });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "initial"], { cwd: repoRoot });
+    const sourceProjectRoot = join(repoRoot, "packages", "service");
+    mkdirSync(sourceProjectRoot, { recursive: true });
+    const worktreeRoot = join(tempDir, "linked-worktree");
+    execFileSync("git", ["worktree", "add", "-b", "nested-feature", worktreeRoot], {
+      cwd: repoRoot,
+    });
+    const linkedProjectCwd = join(worktreeRoot, "packages", "service", "src");
+    mkdirSync(linkedProjectCwd, { recursive: true });
+
+    const identity = await resolveWorktreeRepositoryIdentity(
+      {},
+      createLocalClient([
+        { projectId: "prj_repo", projectRootPath: repoRoot },
+        { projectId: "prj_service", projectRootPath: sourceProjectRoot },
+      ]),
+      linkedProjectCwd,
+    );
+
+    expect(identity).toEqual({
+      projectId: "prj_service",
+      repoRoot: realpathSync.native(sourceProjectRoot),
+    });
   });
 
   test("selects the innermost Git root when repositories are nested", async () => {

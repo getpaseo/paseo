@@ -289,6 +289,39 @@ test("project-ID-only worktree commands require repository-identity support", as
   expect(mock.sent).toEqual([]);
 });
 
+test("a new CLI identity carries the repository path fallback to an old daemon", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "worktree_repository_fallback_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+
+  const listPromise = client.getPaseoWorktreeList(
+    { projectId: "prj_repo", repoRoot: "/repo" },
+    "req-project-fallback",
+  );
+  expect(parseSentFrame(mock.sent[0])).toMatchObject({
+    type: "paseo_worktree_list_request",
+    projectId: "prj_repo",
+    repoRoot: "/repo",
+    cwd: "/repo",
+    requestId: "req-project-fallback",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "paseo_worktree_list_response",
+      payload: { worktrees: [], error: null, requestId: "req-project-fallback" },
+    }),
+  );
+  await listPromise;
+});
+
 test("worktree commands retain legacy path fields for an old daemon", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({

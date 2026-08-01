@@ -28,9 +28,10 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type { CheckoutExistingBranchResult } from "../utils/checkout-git.js";
-import { expandTilde } from "../utils/path.js";
+import { createRealpathAwarePathMatcher, expandTilde } from "../utils/path.js";
 import {
   getWorktreeSetupCommands,
+  isPaseoOwnedWorktreeCwd,
   resolveWorktreeRuntimeEnv,
   runWorktreeSetupCommands,
   slugify,
@@ -490,6 +491,13 @@ export async function handlePaseoWorktreeArchiveRequest(
       repository.repoRoot,
       msg.worktreePath,
       msg.branchName,
+      {
+        projectId: repository.projectId,
+        workspaceRegistry: dependencies.workspaceRegistry,
+        paseoHome: dependencies.paseoHome,
+        worktreesRoot: dependencies.paseoWorktreesBaseRoot,
+        branchName: msg.branchName,
+      },
     );
     const result = await archiveCommand(dependencies, {
       requestId,
@@ -623,26 +631,53 @@ export async function handleCreatePaseoWorktreeRequest(
   }
 }
 
+interface PartialArchiveRetryContext {
+  projectId: string;
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
+  paseoHome?: string;
+  worktreesRoot?: string;
+  branchName?: string;
+}
+
 export async function resolveRepositoryWorktreePath(
   workspaceGitService: Pick<WorkspaceGitService, "listWorktrees">,
   repoRoot: string,
   worktreePath: string | undefined,
   branchName: string | undefined,
+  retryContext?: PartialArchiveRetryContext,
 ): Promise<string> {
+  const worktrees = await workspaceGitService.listWorktrees(repoRoot, {
+    force: true,
+    reason: "archive-worktree-membership",
+  });
+
   if (!worktreePath) {
-    throw new Error("worktreePath is required for a repository-scoped archive");
+    if (!branchName) {
+      throw new Error("worktreePath or branchName is required for a repository-scoped archive");
+    }
+    const branchMatches = worktrees.filter((worktree) => worktree.branchName === branchName);
+    if (branchMatches.length !== 1) {
+      throw new Error(
+        "branchName does not uniquely identify a worktree for the selected repository",
+      );
+    }
+    return branchMatches[0]!.path;
   }
+
   const canonicalTarget = canonicalizeExistingRoot(worktreePath);
   if (!canonicalTarget) {
     throw new Error("worktreePath must be an existing absolute path on the daemon host");
   }
-  const matchingWorktrees = (
-    await workspaceGitService.listWorktrees(repoRoot, {
-      force: true,
-      reason: "archive-worktree-membership",
-    })
-  ).filter((worktree) => canonicalizeExistingRoot(worktree.path) === canonicalTarget);
-  if (matchingWorktrees.length !== 1) {
+  const matchingWorktrees = worktrees.filter(
+    (worktree) => canonicalizeExistingRoot(worktree.path) === canonicalTarget,
+  );
+  if (matchingWorktrees.length > 1) {
+    throw new Error("worktreePath is not a worktree for the selected repository");
+  }
+  if (matchingWorktrees.length === 0) {
+    if (retryContext && (await resolvePartialArchiveRetryPath(canonicalTarget, retryContext))) {
+      return canonicalTarget;
+    }
     throw new Error("worktreePath is not a worktree for the selected repository");
   }
   const worktree = matchingWorktrees[0]!;
@@ -650,6 +685,33 @@ export async function resolveRepositoryWorktreePath(
     throw new Error("worktreePath and branchName do not identify the same worktree");
   }
   return worktree.path;
+}
+
+async function resolvePartialArchiveRetryPath(
+  canonicalTarget: string,
+  context: PartialArchiveRetryContext,
+): Promise<boolean> {
+  const ownership = await isPaseoOwnedWorktreeCwd(canonicalTarget, {
+    paseoHome: context.paseoHome,
+    worktreesRoot: context.worktreesRoot,
+  });
+  if (
+    !ownership.allowed ||
+    !ownership.worktreePath ||
+    !createRealpathAwarePathMatcher(canonicalTarget)(ownership.worktreePath)
+  ) {
+    return false;
+  }
+
+  const matchesTarget = createRealpathAwarePathMatcher(canonicalTarget);
+  return (await context.workspaceRegistry.list()).some(
+    (workspace) =>
+      workspace.projectId === context.projectId &&
+      (!context.branchName || workspace.branch === context.branchName) &&
+      [workspace.worktreeRoot, workspace.cwd]
+        .filter((candidate): candidate is string => candidate !== null)
+        .some(matchesTarget),
+  );
 }
 
 export async function createPaseoWorktreeWorkflow(
