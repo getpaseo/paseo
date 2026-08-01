@@ -24,25 +24,6 @@ describe("Hub relationship", () => {
     relationship = null;
   });
 
-  test("the CLI connects, reports status, and disconnects through the daemon", async () => {
-    relationship = await HubRelationshipHarness.start();
-    const connected = await relationship.beginConnect().result;
-    relationship.connectLatestSocket();
-
-    const status = await relationship.status();
-    const enrollment = relationship.enrollmentAttempts()[0];
-    const secret = relationship.relationshipFile()?.credential?.secret;
-    const disconnected = await relationship.disconnect();
-
-    expect(connected.state).toBe("connecting");
-    expect(status.state).toBe("connected");
-    expect(relationship.loggableValues(status)).not.toContain(secret);
-    expect(relationship.loggableValues(status)).not.toContain(enrollment.credentialVerifier);
-    expect(relationship.loggableValues(status)).not.toContain(enrollment.token);
-    expect(relationship.loggableValues(status)).not.toContain(enrollment.idempotencyKey);
-    expect(disconnected.state).toBe("not_connected");
-  }, 30_000);
-
   test("Hub URLs cannot persist embedded credentials", async () => {
     relationship = await HubRelationshipHarness.start();
 

@@ -967,7 +967,7 @@ export class AgentManager {
   async listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
     const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     const client = this.requireClient(normalizedConfig.provider);
-    if (!normalizedConfig.model) {
+    if (!normalizedConfig.model && !client.listFeatures) {
       return [];
     }
     const available = await client.isAvailable();

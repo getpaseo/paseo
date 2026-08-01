@@ -141,6 +141,12 @@ export function normalizeBaseRefName(input: string): string {
   if (!trimmed) {
     throw new Error("Base branch is required");
   }
+  if (trimmed.startsWith("refs/heads/")) {
+    return trimmed.slice("refs/heads/".length);
+  }
+  if (trimmed.startsWith("refs/remotes/origin/")) {
+    return trimmed.slice("refs/remotes/origin/".length);
+  }
   if (trimmed.startsWith("origin/")) {
     return trimmed.slice("origin/".length);
   }
