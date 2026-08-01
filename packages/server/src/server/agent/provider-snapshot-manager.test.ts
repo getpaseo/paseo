@@ -18,6 +18,7 @@ import {
   resolveSnapshotCwd,
 } from "./provider-snapshot-manager.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
+import { createShutdownDeadline } from "../../utils/shutdown-deadline.js";
 
 const TEST_CAPABILITIES = {
   supportsStreaming: false,
@@ -1534,8 +1535,10 @@ describe("ProviderSnapshotManager lifecycle", () => {
       await vi.advanceTimersByTimeAsync(1);
       await refresh;
 
-      const shutdownAndLaterCleanup = manager.shutdown().then(laterCleanup);
-      await vi.advanceTimersByTimeAsync(14_999);
+      const shutdownAndLaterCleanup = manager
+        .shutdown(createShutdownDeadline(8_000, () => Date.now()))
+        .then(laterCleanup);
+      await vi.advanceTimersByTimeAsync(2_499);
       expect(shutdown).not.toHaveBeenCalled();
       expect(laterCleanup).not.toHaveBeenCalled();
 
@@ -1593,8 +1596,10 @@ describe("ProviderSnapshotManager lifecycle", () => {
       await vi.advanceTimersByTimeAsync(1);
       await refresh;
 
-      const shutdownAndLaterCleanup = manager.shutdown().then(laterCleanup);
-      await vi.advanceTimersByTimeAsync(14_999);
+      const shutdownAndLaterCleanup = manager
+        .shutdown(createShutdownDeadline(8_000, () => Date.now()))
+        .then(laterCleanup);
+      await vi.advanceTimersByTimeAsync(2_499);
       expect(shutdown).not.toHaveBeenCalled();
       expect(laterCleanup).not.toHaveBeenCalled();
 
@@ -1609,6 +1614,70 @@ describe("ProviderSnapshotManager lifecycle", () => {
         status: "unavailable",
         error: "Provider runtime has shut down",
       });
+    } finally {
+      manager.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  test("stages noncooperative provider-load and client cleanup inside one eight-second budget", async () => {
+    vi.useFakeTimers();
+    const availabilityEntered = createDeferred<void>();
+    const clientShutdownEntered = createDeferred<void>();
+    const shutdown = vi.fn(async () => {
+      clientShutdownEntered.resolve();
+      return await new Promise<void>(() => {});
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: 1,
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => {
+            availabilityEntered.resolve();
+            return await new Promise<boolean>(() => {});
+          }),
+          shutdown,
+        }),
+      },
+    });
+
+    try {
+      const refresh = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await availabilityEntered.promise;
+      await vi.advanceTimersByTimeAsync(1);
+      await refresh;
+
+      let shutdownSettled = false;
+      const managerShutdown = manager
+        .shutdown(createShutdownDeadline(8_000, () => Date.now()))
+        .then(() => {
+          shutdownSettled = true;
+          return undefined;
+        });
+      await vi.advanceTimersByTimeAsync(2_499);
+      expect(shutdown).not.toHaveBeenCalled();
+      expect(shutdownSettled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await clientShutdownEntered.promise;
+      expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(shutdownSettled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(5_499);
+      expect(shutdownSettled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await managerShutdown;
+      expect(shutdownSettled).toBe(true);
     } finally {
       manager.destroy();
       vi.useRealTimers();

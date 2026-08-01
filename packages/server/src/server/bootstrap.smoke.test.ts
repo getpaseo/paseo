@@ -14,7 +14,12 @@ import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import { isPlatform } from "../test-utils/platform.js";
+import {
+  DAEMON_GRACEFUL_SHUTDOWN_BUDGET_MS,
+  DAEMON_WORKER_FORCE_EXIT_TIMEOUT_MS,
+} from "../utils/shutdown-deadline.js";
 import { findFreePort } from "./service-proxy.js";
+import { CodexAppServerAgentClient } from "./agent/providers/codex-app-server-agent.js";
 import type {
   HubEnrollment,
   HubEnrollmentResult,
@@ -341,6 +346,84 @@ describe("paseo daemon bootstrap", () => {
       await shutdown.finish();
     }
   });
+
+  test("signals provider shutdown before a noncooperative admitted registration and stops within budget", async () => {
+    expect(DAEMON_GRACEFUL_SHUTDOWN_BUDGET_MS).toBeLessThan(DAEMON_WORKER_FORCE_EXIT_TIMEOUT_MS);
+    const siblingStarted = Promise.withResolvers<void>();
+    const providerShutdownDelivered = Promise.withResolvers<void>();
+    const fastFailure = new Error("startup sibling rejected first");
+    const client = new CodexAppServerAgentClient(pino({ level: "silent" }));
+    const clientInternals = client as unknown as {
+      activeSessionStartups: Set<Promise<unknown>>;
+      resolveGoalsEnabled: (signal?: AbortSignal) => Promise<boolean>;
+      resolveAutoReviewEnabled: (signal?: AbortSignal) => Promise<boolean>;
+    };
+    client.isAvailable = async () => true;
+    clientInternals.resolveGoalsEnabled = async () => {
+      throw fastFailure;
+    };
+    clientInternals.resolveAutoReviewEnabled = async () => {
+      siblingStarted.resolve();
+      return await new Promise<boolean>(() => {});
+    };
+    const shutdownProvider = client.shutdown.bind(client);
+    client.shutdown = async () => {
+      providerShutdownDelivered.resolve();
+      await shutdownProvider();
+    };
+    const daemonHandle = await createTestPaseoDaemon({
+      agentClients: { codex: client },
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+        omp: { enabled: false },
+      },
+      cleanup: false,
+      shutdownBudgetMs: 500,
+    });
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-shutdown-budget-agent-"));
+    const creation = daemonHandle.daemon.agentManager.createAgent(
+      {
+        provider: "codex",
+        cwd: agentCwd,
+        model: "test-model",
+        modeId: "default",
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    void creation.catch(() => undefined);
+    let stopping: Promise<void> | null = null;
+
+    try {
+      await siblingStarted.promise;
+      expect(clientInternals.activeSessionStartups.size).toBe(1);
+      const startedAt = performance.now();
+      stopping = daemonHandle.daemon.stop();
+
+      await expect(
+        Promise.race([
+          providerShutdownDelivered.promise.then(() => true),
+          new Promise<false>((resolve) => setTimeout(() => resolve(false), 50)),
+        ]),
+      ).resolves.toBe(true);
+      await stopping;
+
+      expect(performance.now() - startedAt).toBeLessThan(1_000);
+      await client.shutdown();
+      expect(clientInternals.activeSessionStartups.size).toBe(0);
+    } finally {
+      stopping ??= daemonHandle.daemon.stop();
+      await stopping.catch(() => undefined);
+      await Promise.all([
+        rm(path.dirname(daemonHandle.paseoHome), { recursive: true, force: true }),
+        rm(daemonHandle.staticDir, { recursive: true, force: true }),
+        rm(agentCwd, { recursive: true, force: true }),
+      ]);
+    }
+  }, 10_000);
 
   test("standalone listener exposes services only", async () => {
     const standalonePort = await findFreePort();

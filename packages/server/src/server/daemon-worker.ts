@@ -6,6 +6,7 @@ import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
 import type { DaemonLifecycleIntent } from "./bootstrap.js";
 import { getProcessDiagnostics } from "./process-diagnostics.js";
+import { DAEMON_WORKER_FORCE_EXIT_TIMEOUT_MS } from "../utils/shutdown-deadline.js";
 
 process.title = "Paseo Daemon";
 
@@ -145,10 +146,10 @@ async function main() {
         const forceExit = setTimeout(() => {
           logger.warn(
             { signal, reason, ...getProcessDiagnostics() },
-            "Forcing shutdown - HTTP server didn't close in time",
+            "Forcing shutdown - graceful shutdown exceeded the worker deadline",
           );
           process.exit(1);
-        }, 10000);
+        }, DAEMON_WORKER_FORCE_EXIT_TIMEOUT_MS);
 
         try {
           if (!daemon) {

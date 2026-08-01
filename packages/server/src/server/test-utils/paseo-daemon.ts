@@ -45,6 +45,7 @@ interface TestPaseoDaemonOptions {
   serviceProxy?: PaseoDaemonConfig["serviceProxy"];
   webUi?: PaseoDaemonConfig["webUi"];
   trustedProxies?: PaseoDaemonConfig["trustedProxies"];
+  shutdownBudgetMs?: number;
 }
 
 export interface TestPaseoDaemon {
@@ -99,6 +100,7 @@ export async function createTestPaseoDaemon(
         daemonStatusRpc: options.daemonStatusRpcCapability,
         relayConfig: options.relayConfigCapability,
       },
+      shutdownBudgetMs: options.shutdownBudgetMs,
     });
     try {
       await startDaemonWithTimeout(daemon, TEST_DAEMON_START_TIMEOUT_MS);

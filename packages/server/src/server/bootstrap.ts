@@ -188,6 +188,12 @@ import {
   type ManagedProcessRegistry,
 } from "./managed-processes/managed-processes.js";
 import { terminateWithTreeKill } from "../utils/tree-kill.js";
+import {
+  createShutdownDeadline,
+  DAEMON_GRACEFUL_SHUTDOWN_BUDGET_MS,
+  settleBeforeShutdownDeadline,
+  type ShutdownDeadline,
+} from "../utils/shutdown-deadline.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
 import {
   createRequireBearerMiddleware,
@@ -457,6 +463,7 @@ export interface PaseoDaemonDependencies {
     daemonStatusRpc?: boolean;
     relayConfig?: boolean;
   };
+  shutdownBudgetMs?: number;
 }
 
 function createBootstrapManagedProcessRegistry(
@@ -1610,25 +1617,43 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
-    await hubRelationships.stop();
-    workspaceReconciliation.dispose();
-    scriptHealthMonitor.stop();
-    // Freeze both ingress and registration before taking the agent closure snapshot.
+    const requestedShutdownBudgetMs = dependencies.shutdownBudgetMs;
+    const shutdownBudgetMs =
+      typeof requestedShutdownBudgetMs === "number" &&
+      Number.isFinite(requestedShutdownBudgetMs) &&
+      requestedShutdownBudgetMs > 0
+        ? Math.min(requestedShutdownBudgetMs, DAEMON_GRACEFUL_SHUTDOWN_BUDGET_MS)
+        : DAEMON_GRACEFUL_SHUTDOWN_BUDGET_MS;
+    const shutdownDeadline = createShutdownDeadline(shutdownBudgetMs);
+
+    // Freeze ingress and registration, then signal provider-owned work before
+    // awaiting any cleanup. A noncooperative registration must not prevent its
+    // provider from receiving shutdown while the worker's outer timer is live.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();
-    await closeAllAgents(logger, agentManager);
-    await agentManager.flushForShutdown().catch(() => undefined);
-    detachAgentStoragePersistence();
-    await agentStorage.flush().catch(() => undefined);
-    await providerSnapshotManager.shutdown();
+    const providerShutdown = providerSnapshotManager.shutdown(shutdownDeadline);
+
+    workspaceReconciliation.dispose();
+    scriptHealthMonitor.stop();
     terminalManager.killAll();
     speechService.stop();
-    await scheduleService.stop().catch(() => undefined);
-    await relayRuntime?.stop().catch(() => undefined);
-    if (wsServer) {
-      await wsServer.close();
-    }
-    await serviceProxy.stopStandalone();
+
+    await settleShutdownTasks(logger, shutdownDeadline, {
+      hub_relationships: hubRelationships.stop(),
+      agent_closes: closeAllAgents(logger, agentManager),
+      agent_manager_flush: agentManager.flushForShutdown(),
+      provider_runtime: providerShutdown,
+      schedules: scheduleService.stop(),
+      relay: relayRuntime?.stop() ?? Promise.resolve(),
+    });
+
+    detachAgentStoragePersistence();
+    await settleShutdownTasks(logger, shutdownDeadline, {
+      agent_storage: agentStorage.flush(),
+      websocket_server: wsServer?.close() ?? Promise.resolve(),
+      service_proxy: serviceProxy.stopStandalone(),
+    });
+
     // Force-drop remaining sockets so httpServer.close() resolves promptly.
     // We've already closed wsServer (which sent ws-layer close frames) and
     // stopped every other service, so anything still attached is a TCP
@@ -1637,8 +1662,10 @@ export async function createPaseoDaemon(
     // sockets in CLOSE_WAIT). closeIdleConnections() does not catch
     // upgraded sockets, so we use closeAllConnections() here.
     httpServer.closeAllConnections();
-    await new Promise<void>((resolve) => {
-      httpServer.close(() => resolve());
+    await settleShutdownTasks(logger, shutdownDeadline, {
+      http_server: new Promise<void>((resolve) => {
+        httpServer.close(() => resolve());
+      }),
     });
     // Clean up socket files
     if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
@@ -1668,6 +1695,23 @@ async function closeAllAgents(logger: Logger, agentManager: AgentManager): Promi
         await agentManager.closeAgent(agent.id);
       } catch (err) {
         logger.error({ err, agentId: agent.id }, "Failed to close agent");
+      }
+    }),
+  );
+}
+
+async function settleShutdownTasks(
+  logger: Logger,
+  deadline: ShutdownDeadline,
+  tasks: Record<string, Promise<unknown>>,
+): Promise<void> {
+  await Promise.all(
+    Object.entries(tasks).map(async ([task, operation]) => {
+      const result = await settleBeforeShutdownDeadline(operation, deadline);
+      if (result.status === "failed") {
+        logger.warn({ err: result.error, task }, "Daemon shutdown task failed");
+      } else if (result.status === "timed_out") {
+        logger.warn({ task }, "Daemon shutdown task exceeded the shared graceful deadline");
       }
     }),
   );

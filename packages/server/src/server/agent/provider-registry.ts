@@ -1,5 +1,6 @@
 import type { Logger } from "pino";
 
+import { DAEMON_GRACEFUL_SHUTDOWN_BUDGET_MS } from "../../utils/shutdown-deadline.js";
 import type {
   AgentClient,
   AgentCreateConfigUnattendedInput,
@@ -115,7 +116,7 @@ interface ResolvedProvider {
   createBaseClient: (logger: Logger) => AgentClient;
 }
 
-const PROVIDER_CLIENT_SHUTDOWN_TIMEOUT_MS = 15_000;
+const PROVIDER_CLIENT_SHUTDOWN_TIMEOUT_MS = DAEMON_GRACEFUL_SHUTDOWN_BUDGET_MS;
 
 export interface ProviderClientShutdownReceipt {
   provider: AgentProvider;

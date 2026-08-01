@@ -6,6 +6,14 @@ import type { Logger } from "pino";
 
 import { expandTilde } from "../../utils/path.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
+import {
+  capShutdownDeadline,
+  createShutdownDeadline,
+  DAEMON_GRACEFUL_SHUTDOWN_BUDGET_MS,
+  remainingShutdownTimeMs,
+  settleBeforeShutdownDeadline,
+  type ShutdownDeadline,
+} from "../../utils/shutdown-deadline.js";
 import type {
   AgentClient,
   AgentCreateConfigParent,
@@ -37,7 +45,10 @@ import type { MutableDaemonConfig } from "../daemon-config-store.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 60_000;
 const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 120_000;
-const PROVIDER_LOAD_DRAIN_TIMEOUT_MS = 15_000;
+// Codex owns a five-second startup drain. Keep an additional half-second so
+// that provider-local cleanup can publish its bounded receipt before the
+// shared daemon deadline expires.
+const PROVIDER_CLIENT_SHUTDOWN_RESERVE_MS = 5_500;
 const REFRESH_TIMEOUT_ENV_VAR = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
 export const GLOBAL_PROVIDER_SNAPSHOT_KEY = "paseo:global";
 
@@ -465,7 +476,9 @@ export class ProviderSnapshotManager {
     return this;
   }
 
-  async shutdown(): Promise<void> {
+  async shutdown(
+    deadline: ShutdownDeadline = createShutdownDeadline(DAEMON_GRACEFUL_SHUTDOWN_BUDGET_MS),
+  ): Promise<void> {
     if (this.shutdownPromise) {
       return this.shutdownPromise;
     }
@@ -484,14 +497,16 @@ export class ProviderSnapshotManager {
     this.runtimeEpoch += 1;
     const activeLoads = Array.from(this.activeProviderLoads);
     const pendingClientShutdowns = Array.from(this.pendingClientShutdowns);
-    const shutdownPromise = Promise.resolve()
-      .then(() =>
-        Promise.all([
-          this.drainProviderLoadsBeforeClientShutdown(activeLoads, "provider runtime shutdown"),
-          ...pendingClientShutdowns,
-        ]),
-      )
-      .then(() => shutdownAgentClients(clients, this.logger))
+    this.invalidateProviderLoads();
+    const shutdownPromise = Promise.all([
+      this.shutdownClientsAfterProviderLoads(
+        clients,
+        activeLoads,
+        "provider runtime shutdown",
+        deadline,
+      ),
+      this.drainPendingClientShutdowns(pendingClientShutdowns, deadline),
+    ])
       .then(() => undefined)
       .finally(() => {
         this.lifecycle = "shut_down";
@@ -501,7 +516,6 @@ export class ProviderSnapshotManager {
     // Publish the shared operation before any synchronous observer notification
     // can re-enter shutdown or throw.
     this.shutdownPromise = shutdownPromise;
-    this.invalidateProviderLoads();
     this.demoteSnapshotsForUnavailableRuntime();
     return shutdownPromise;
   }
@@ -1029,12 +1043,12 @@ export class ProviderSnapshotManager {
     if (clients.length === 0) {
       return;
     }
-    const shutdown = this.drainProviderLoadsBeforeClientShutdown(
+    const shutdown = this.shutdownClientsAfterProviderLoads(
+      clients,
       loads,
       "retired provider client cleanup",
-    )
-      .then(() => shutdownAgentClients(clients, this.logger))
-      .then(() => undefined);
+      createShutdownDeadline(DAEMON_GRACEFUL_SHUTDOWN_BUDGET_MS),
+    );
     this.pendingClientShutdowns.add(shutdown);
     void shutdown.then(
       () => this.pendingClientShutdowns.delete(shutdown),
@@ -1048,25 +1062,67 @@ export class ProviderSnapshotManager {
   private async drainProviderLoadsBeforeClientShutdown(
     loads: ProviderLoad[],
     context: string,
+    deadline: ShutdownDeadline,
   ): Promise<void> {
     if (loads.length === 0) {
       return;
     }
-    try {
-      await withTimeout(
-        Promise.all(loads.map((load) => load.drained)).then(() => undefined),
-        PROVIDER_LOAD_DRAIN_TIMEOUT_MS,
-        `Timed out draining provider loads before ${context}`,
-      );
-    } catch (error) {
+    const drainBudgetMs = Math.max(
+      0,
+      remainingShutdownTimeMs(deadline) - PROVIDER_CLIENT_SHUTDOWN_RESERVE_MS,
+    );
+    const drainDeadline = capShutdownDeadline(deadline, drainBudgetMs);
+    const result = await settleBeforeShutdownDeadline(
+      Promise.all(loads.map((load) => load.drained)).then(() => undefined),
+      drainDeadline,
+    );
+    if (result.status !== "completed") {
       // Keep unresolved loads owned by activeProviderLoads until their real operations settle.
       // Client shutdown is the bounded terminal boundary for provider-owned resources.
       this.logger.warn(
         {
-          err: error,
+          ...(result.status === "failed" ? { err: result.error } : {}),
+          context,
+          drainBudgetMs,
           loads: loads.map((load) => ({ provider: load.provider, cwd: load.snapshotCwd })),
         },
-        "Provider load drain timed out; proceeding with client shutdown",
+        "Provider load drain did not complete; proceeding with client shutdown",
+      );
+    }
+  }
+
+  private async shutdownClientsAfterProviderLoads(
+    clients: AgentClient[],
+    loads: ProviderLoad[],
+    context: string,
+    deadline: ShutdownDeadline,
+  ): Promise<void> {
+    await this.drainProviderLoadsBeforeClientShutdown(loads, context, deadline);
+    await shutdownAgentClients(clients, this.logger, {
+      timeoutMs: Math.max(0, remainingShutdownTimeMs(deadline)),
+    });
+  }
+
+  private async drainPendingClientShutdowns(
+    pendingClientShutdowns: Promise<void>[],
+    deadline: ShutdownDeadline,
+  ): Promise<void> {
+    if (pendingClientShutdowns.length === 0) {
+      return;
+    }
+    const result = await settleBeforeShutdownDeadline(
+      Promise.allSettled(pendingClientShutdowns),
+      deadline,
+    );
+    if (result.status === "timed_out") {
+      this.logger.warn(
+        { pendingClientShutdownCount: pendingClientShutdowns.length },
+        "Retired provider client cleanup exceeded the provider shutdown deadline",
+      );
+    } else if (result.status === "failed") {
+      this.logger.warn(
+        { err: result.error, pendingClientShutdownCount: pendingClientShutdowns.length },
+        "Retired provider client cleanup failed during provider shutdown",
       );
     }
   }
