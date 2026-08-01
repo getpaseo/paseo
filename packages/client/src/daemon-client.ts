@@ -626,6 +626,27 @@ export interface FetchProviderSubagentTimelineOptions {
   timeout?: number;
 }
 
+export type BackgroundTasksListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.background_tasks.list.response" }
+>["payload"];
+export type BackgroundTasksStopPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.background_tasks.stop.response" }
+>["payload"];
+export type BackgroundTasksOutputGetPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.background_tasks.output.get.response" }
+>["payload"];
+export type BackgroundTasksOutputSubscribePayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.background_tasks.output.subscribe.response" }
+>["payload"];
+export type BackgroundTasksOutputUnsubscribePayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.background_tasks.output.unsubscribe.response" }
+>["payload"];
+
 // COMPAT(daemon-client-object-options): added in v0.1.102; remove after
 // 2026-12-29 once SDK callers have migrated to object parameters.
 function normalizeFetchAgentOptions(
@@ -2943,6 +2964,152 @@ export class DaemonClient {
       options: { skipQueue: true },
       select: (response) =>
         response.type === "agent.provider_subagents.timeline.get.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload;
+  }
+
+  async listBackgroundTasks(
+    parentAgentId: string,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<BackgroundTasksListPayload> {
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.background_tasks.list.request",
+      parentAgentId,
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.background_tasks.list.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload;
+  }
+
+  async stopBackgroundTask(
+    parentAgentId: string,
+    taskId: string,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<BackgroundTasksStopPayload> {
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.background_tasks.stop.request",
+      parentAgentId,
+      taskId,
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.background_tasks.stop.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload;
+  }
+
+  async getBackgroundTaskOutput(
+    parentAgentId: string,
+    taskId: string,
+    options: {
+      cursor?: number;
+      maxBytes?: number;
+      requestId?: string;
+      timeout?: number;
+    } = {},
+  ): Promise<BackgroundTasksOutputGetPayload> {
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.background_tasks.output.get.request",
+      parentAgentId,
+      taskId,
+      requestId,
+      ...(typeof options.cursor === "number" ? { cursor: options.cursor } : {}),
+      ...(typeof options.maxBytes === "number" ? { maxBytes: options.maxBytes } : {}),
+    });
+    return this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.background_tasks.output.get.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
+  }
+
+  async subscribeBackgroundTaskOutput(
+    parentAgentId: string,
+    taskId: string,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<BackgroundTasksOutputSubscribePayload> {
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.background_tasks.output.subscribe.request",
+      parentAgentId,
+      taskId,
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.background_tasks.output.subscribe.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload;
+  }
+
+  async unsubscribeBackgroundTaskOutput(
+    parentAgentId: string,
+    taskId: string,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<BackgroundTasksOutputUnsubscribePayload> {
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.background_tasks.output.unsubscribe.request",
+      parentAgentId,
+      taskId,
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.background_tasks.output.unsubscribe.response" &&
         response.payload.requestId === requestId
           ? response.payload
           : null,
