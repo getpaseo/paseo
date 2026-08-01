@@ -163,6 +163,7 @@ export class CodexAppServerClient {
   private unexpectedTerminationHandler: UnexpectedTerminationHandler | null = null;
   private nextId = 1;
   private disposed = false;
+  private disposePromise: Promise<void> | null = null;
   private stderrBuffer = "";
 
   constructor(
@@ -245,44 +246,49 @@ export class CodexAppServerClient {
   }
 
   async dispose(): Promise<void> {
-    if (this.disposed) return;
+    if (this.disposePromise) {
+      return this.disposePromise;
+    }
     this.disposed = true;
     this.unexpectedTerminationHandler = null;
+    this.rejectPendingRequests(new Error("Codex app-server client is closed"));
     this.rl.close();
     try {
       this.child.stdin.end();
     } catch {
       // ignore
     }
-    const result = await terminateWithTreeKill(this.child, {
-      gracefulTimeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
-      forceTimeoutMs: APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS,
-      onForceSignal: () => {
+    this.disposePromise = (async () => {
+      const result = await terminateWithTreeKill(this.child, {
+        gracefulTimeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
+        forceTimeoutMs: APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS,
+        onForceSignal: () => {
+          this.logger.warn(
+            { timeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS },
+            "Codex app-server did not exit after SIGTERM; sending SIGKILL",
+          );
+        },
+      });
+      if (result === "kill-timeout") {
         this.logger.warn(
-          { timeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS },
-          "Codex app-server did not exit after SIGTERM; sending SIGKILL",
+          { timeoutMs: APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS },
+          "Codex app-server did not report exit after SIGKILL",
         );
-      },
-    });
-    if (result === "kill-timeout") {
-      this.logger.warn(
-        { timeoutMs: APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS },
-        "Codex app-server did not report exit after SIGKILL",
-      );
-    }
+      }
+    })();
+    return this.disposePromise;
   }
 
   private handleUnexpectedTermination(error: Error): void {
+    // Disposal marks the transport closed before process termination begins.
+    // Always settle pending RPC ownership first so an exit in that interval
+    // cannot leave a request or its long-lived timeout behind.
+    this.rejectPendingRequests(error);
     if (this.disposed) {
       return;
     }
     this.disposed = true;
     this.rl.close();
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(error);
-    }
-    this.pending.clear();
     const handler = this.unexpectedTerminationHandler;
     this.unexpectedTerminationHandler = null;
     if (!handler) {
@@ -293,6 +299,15 @@ export class CodexAppServerClient {
     } catch (handlerError) {
       this.logger.warn({ err: handlerError }, "Codex app-server termination handler threw");
     }
+  }
+
+  private rejectPendingRequests(error: Error): void {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.timer.unref?.();
+      pending.reject(error);
+    }
+    this.pending.clear();
   }
 
   private writeJsonRpcResponse(response: JsonRpcResponse): void {

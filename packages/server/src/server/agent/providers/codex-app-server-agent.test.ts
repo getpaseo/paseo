@@ -1052,6 +1052,55 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("owns all feature-probe siblings until the five-second shutdown bound", async () => {
+    vi.useFakeTimers();
+    const slowProbeStarted = deferred<void>();
+    const finishSlowProbe = deferred<boolean>();
+    const fastFailure = new Error("goals probe failed first");
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    const internals = castInternals<{
+      activeSessionStartups: Set<Promise<AgentSession>>;
+      resolveGoalsEnabled: (signal?: AbortSignal) => Promise<boolean>;
+      resolveAutoReviewEnabled: (signal?: AbortSignal) => Promise<boolean>;
+    }>(provider);
+    internals.resolveGoalsEnabled = async () => {
+      throw fastFailure;
+    };
+    internals.resolveAutoReviewEnabled = async () => {
+      slowProbeStarted.resolve();
+      return await finishSlowProbe.promise;
+    };
+    const startup = provider.createSession(createConfig());
+    void startup.catch(() => undefined);
+
+    try {
+      await slowProbeStarted.promise;
+      expect(internals.activeSessionStartups.size).toBe(1);
+
+      let shutdownSettled = false;
+      const shutdown = provider.shutdown().then(() => {
+        shutdownSettled = true;
+        return undefined;
+      });
+
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(shutdownSettled).toBe(false);
+      expect(internals.activeSessionStartups.size).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await shutdown;
+      expect(shutdownSettled).toBe(true);
+      expect(internals.activeSessionStartups.size).toBe(0);
+
+      finishSlowProbe.resolve(false);
+      await expect(startup).rejects.toBe(fastFailure);
+    } finally {
+      finishSlowProbe.resolve(false);
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
   test.each(["create", "resume"] as const)(
     "passes one composed startup signal through %s feature gates and connection",
     async (operation) => {

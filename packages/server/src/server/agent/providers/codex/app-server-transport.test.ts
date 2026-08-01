@@ -1,3 +1,4 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
@@ -8,6 +9,43 @@ import {
 import { CodexAppServerClient } from "./app-server-transport.js";
 
 describe("Codex app-server transport", () => {
+  test.skipIf(process.platform === "win32")(
+    "dispose settles pending RPCs, releases their timers, and waits for process exit",
+    async () => {
+      const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+        detached: true,
+        stdio: ["pipe", "pipe", "pipe"],
+      }) as ChildProcessWithoutNullStreams;
+      const client = new CodexAppServerClient(child, createTestLogger());
+      const request = client.request("test/never-responds", {}, 60_000).catch((error) => error);
+      const internals = client as unknown as {
+        pending: Map<number, { timer: NodeJS.Timeout }>;
+      };
+      const timer = Array.from(internals.pending.values())[0]?.timer;
+      const pid = child.pid;
+
+      try {
+        expect(pid).toBeDefined();
+        expect(internals.pending.size).toBe(1);
+        expect(timer?.hasRef()).toBe(true);
+
+        await client.dispose();
+
+        await expect(request).resolves.toEqual(
+          expect.objectContaining({ message: "Codex app-server client is closed" }),
+        );
+        expect(internals.pending.size).toBe(0);
+        expect(timer?.hasRef()).toBe(false);
+        expect(() => process.kill(pid!, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+        await expect(client.dispose()).resolves.toBeUndefined();
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      }
+    },
+  );
+
   test("ignores non-JSON stdout lines without dropping pending requests", async () => {
     const child = createCodexAppServerChildProcess();
     const client = new CodexAppServerClient(child, createTestLogger());

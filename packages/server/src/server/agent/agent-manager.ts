@@ -671,7 +671,7 @@ export class AgentManager {
   private readonly providerHealthStaleAfterMs: number;
   private readonly providerHealthNow: () => number;
   private readonly defaultModelResolutionTimeoutMs: number;
-  private readonly registrationAbortController = new AbortController();
+  private readonly shutdownAbortController = new AbortController();
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
@@ -760,7 +760,7 @@ export class AgentManager {
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
     this.invalidateProviderAvailability();
-    this.registrationAbortController.abort(new AgentManagerShuttingDownError());
+    this.shutdownAbortController.abort(new AgentManagerShuttingDownError());
     for (const controller of this.defaultModelResolutionControllers) {
       controller.abort(new AgentManagerShuttingDownError());
     }
@@ -1115,7 +1115,7 @@ export class AgentManager {
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions({
       ...options,
-      signal: this.registrationAbortController.signal,
+      signal: this.shutdownAbortController.signal,
     });
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
@@ -1192,8 +1192,8 @@ export class AgentManager {
     const session = await client.resumeSession(handle, providerLaunchConfig, launchContext, {
       ...resumeOptions,
       signal: resumeOptions?.signal
-        ? AbortSignal.any([this.registrationAbortController.signal, resumeOptions.signal])
-        : this.registrationAbortController.signal,
+        ? AbortSignal.any([this.shutdownAbortController.signal, resumeOptions.signal])
+        : this.shutdownAbortController.signal,
     });
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
@@ -1245,7 +1245,7 @@ export class AgentManager {
         config: providerLaunchConfig,
         storedConfig,
         launchContext,
-        signal: this.registrationAbortController.signal,
+        signal: this.shutdownAbortController.signal,
       },
     );
     let handedToRegistration = false;
@@ -1321,10 +1321,10 @@ export class AgentManager {
 
     const session = handle
       ? await client.resumeSession(handle, providerLaunchConfig, launchContext, {
-          signal: this.registrationAbortController.signal,
+          signal: this.shutdownAbortController.signal,
         })
       : await client.createSession(providerLaunchConfig, launchContext, {
-          signal: this.registrationAbortController.signal,
+          signal: this.shutdownAbortController.signal,
         });
 
     const releaseSwap = await this.enterAgentSessionSwap(agentId);
@@ -4450,6 +4450,7 @@ export class AgentManager {
       return undefined;
     }
     const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, this.shutdownAbortController.signal]);
     this.defaultModelResolutionControllers.add(controller);
     const timeout = setTimeout(() => {
       controller.abort(
@@ -4460,13 +4461,14 @@ export class AgentManager {
     }, this.defaultModelResolutionTimeoutMs);
     timeout.unref?.();
     try {
+      signal.throwIfAborted();
       const catalogRequest = client.fetchCatalog({
         scope: "workspace",
         cwd: config.cwd,
         force: false,
-        signal: controller.signal,
+        signal,
       });
-      const catalog = await this.waitForDefaultModelResolution(catalogRequest, controller.signal);
+      const catalog = await this.waitForDefaultModelResolution(catalogRequest, signal);
       return (catalog.models.find((model) => model.isDefault) ?? catalog.models[0])?.id;
     } catch (error) {
       if (!this.acceptingAgentRegistrations) {
@@ -4657,12 +4659,13 @@ export class AgentManager {
 
     const generation = this.providerAvailabilityGeneration;
     const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, this.shutdownAbortController.signal]);
     const deferredStartState = { pending: deferStart };
     const providerWork = this.executeProviderAvailabilityProbe(
       provider,
       client,
       generation,
-      controller,
+      signal,
       deferredStartState,
     );
     const response = this.runProviderAvailabilityProbe(
@@ -4670,6 +4673,7 @@ export class AgentManager {
       client,
       generation,
       controller,
+      signal,
       providerWork,
     );
     const probe: ProviderAvailabilityProbe = {
@@ -4703,6 +4707,7 @@ export class AgentManager {
     client: AgentClient,
     generation: number,
     controller: AbortController,
+    signal: AbortSignal,
     providerWork: Promise<boolean | null>,
   ): Promise<ProviderAvailability> {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -4712,18 +4717,18 @@ export class AgentManager {
     });
     const resolveFromAbort = () => {
       resolveAborted(
-        controller.signal.reason instanceof Error
-          ? controller.signal.reason
+        signal.reason instanceof Error
+          ? signal.reason
           : new Error("Provider availability check aborted"),
       );
     };
     let result: CachedProviderAvailability;
 
     try {
-      if (controller.signal.aborted) {
+      if (signal.aborted) {
         resolveFromAbort();
       } else {
-        controller.signal.addEventListener("abort", resolveFromAbort, { once: true });
+        signal.addEventListener("abort", resolveFromAbort, { once: true });
       }
       timer = setTimeout(() => {
         controller.abort(
@@ -4761,6 +4766,7 @@ export class AgentManager {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (
+        !this.shutdownAbortController.signal.aborted &&
         generation === this.providerAvailabilityGeneration &&
         this.providerAvailabilityProbes.get(provider)?.controller === controller
       ) {
@@ -4777,10 +4783,11 @@ export class AgentManager {
       if (timer) {
         clearTimeout(timer);
       }
-      controller.signal.removeEventListener("abort", resolveFromAbort);
+      signal.removeEventListener("abort", resolveFromAbort);
     }
 
     if (
+      this.shutdownAbortController.signal.aborted ||
       generation !== this.providerAvailabilityGeneration ||
       this.clients.get(provider) !== client ||
       this.providerEnabled.get(provider) === false ||
@@ -4796,7 +4803,7 @@ export class AgentManager {
     provider: AgentProvider,
     client: AgentClient,
     generation: number,
-    controller: AbortController,
+    signal: AbortSignal,
     deferredStartState: { pending: boolean },
   ): Promise<boolean | null> {
     // Background checks yield so status can publish its cached/checking state.
@@ -4807,14 +4814,14 @@ export class AgentManager {
     return start.then(() => {
       deferredStartState.pending = false;
       if (
-        controller.signal.aborted ||
+        signal.aborted ||
         generation !== this.providerAvailabilityGeneration ||
         this.clients.get(provider) !== client ||
         this.providerEnabled.get(provider) === false
       ) {
         return null;
       }
-      return client.isAvailable({ signal: controller.signal });
+      return client.isAvailable({ signal });
     });
   }
 

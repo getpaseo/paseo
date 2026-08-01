@@ -1187,6 +1187,70 @@ test("shutdown aborts a hung default-model lookup so registration flush complete
   }
 });
 
+test.each(["create", "resume"] as const)(
+  "shutdown blocks post-sweep default-model discovery for an admitted %s",
+  async (operation) => {
+    const workdir = mkdtempSync(join(tmpdir(), `agent-manager-${operation}-shutdown-race-`));
+    const prepareEntered = deferred<void>();
+    const continuePreparing = deferred<void>();
+    class DiscoveryTrackingClient extends TestAgentClient {
+      fetchCatalogCalls = 0;
+
+      override async fetchCatalog(options: FetchCatalogOptions) {
+        this.fetchCatalogCalls += 1;
+        return await super.fetchCatalog(options);
+      }
+    }
+    const client = new DiscoveryTrackingClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000103",
+    });
+    const internals = manager as unknown as {
+      prepareSessionConfig: (
+        config: AgentSessionConfig,
+        agentId: string,
+        env?: Record<string, string>,
+      ) => Promise<{ storedConfig: AgentSessionConfig; launchConfig: AgentSessionConfig }>;
+    };
+    const prepareSessionConfig = internals.prepareSessionConfig.bind(manager);
+    internals.prepareSessionConfig = async (config, agentId, env) => {
+      prepareEntered.resolve();
+      await continuePreparing.promise;
+      return await prepareSessionConfig(config, agentId, env);
+    };
+
+    try {
+      const registration =
+        operation === "create"
+          ? manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+              workspaceId: undefined,
+            })
+          : manager.resumeAgentFromPersistence({
+              provider: "codex",
+              sessionId: "shutdown-race-session",
+              metadata: { cwd: workdir },
+            });
+      await prepareEntered.promise;
+
+      manager.prepareForShutdown();
+      continuePreparing.resolve();
+
+      await expect(registration).rejects.toBeInstanceOf(AgentManagerShuttingDownError);
+      await expect(manager.flushForShutdown()).resolves.toBeUndefined();
+      expect(client.fetchCatalogCalls).toBe(0);
+      expect(manager.listAgents()).toEqual([]);
+    } finally {
+      continuePreparing.resolve();
+      manager.prepareForShutdown();
+      await manager.flushForShutdown().catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+  10_000,
+);
+
 test("normalizeConfig injects Claude's automatic approval default when omitted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-claude-default-test-"));
   const manager = new AgentManager({
@@ -1986,6 +2050,25 @@ test("provider status reuses trusted same-generation readiness without another l
   ]);
   expect(isAvailable).toHaveBeenCalledTimes(1);
   await vi.waitFor(() => expect(isAvailable).toHaveBeenCalledTimes(2));
+});
+
+test("shutdown gate prevents an availability probe created after the controller sweep", async () => {
+  const client = new TestAgentClient();
+  const isAvailable = vi.spyOn(client, "isAvailable");
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  manager.prepareForShutdown();
+
+  await expect(manager.getProviderAvailability("codex", { fresh: true })).resolves.toMatchObject({
+    provider: "codex",
+    status: "checking",
+    checkedAt: null,
+  });
+  expect(isAvailable).not.toHaveBeenCalled();
+  await vi.waitFor(() => {
+    const probes = Reflect.get(manager, "providerAvailabilityProbes") as Map<string, unknown>;
+    expect(probes.size).toBe(0);
+  });
 });
 
 test("a selected mutation replaces a same-tick deferred background probe", async () => {

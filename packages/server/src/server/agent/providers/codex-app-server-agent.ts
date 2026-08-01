@@ -6555,6 +6555,26 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
+  private async resolveSessionFeatureGates(signal: AbortSignal): Promise<{
+    goalsEnabled: boolean;
+    autoReviewEnabled: boolean;
+  }> {
+    const [goalsResult, autoReviewResult] = await Promise.allSettled([
+      this.resolveGoalsEnabled(signal),
+      this.resolveAutoReviewEnabled(signal),
+    ]);
+    if (goalsResult.status === "rejected") {
+      throw goalsResult.reason;
+    }
+    if (autoReviewResult.status === "rejected") {
+      throw autoReviewResult.reason;
+    }
+    return {
+      goalsEnabled: goalsResult.value,
+      autoReviewEnabled: autoReviewResult.value,
+    };
+  }
+
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
     options?: { goalsEnabled?: boolean; agentId?: string },
@@ -6602,10 +6622,8 @@ export class CodexAppServerAgentClient implements AgentClient {
         // utility generations through `codex exec --ephemeral` in a larger change.
       }
       const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
-      const [goalsEnabled, autoReviewEnabled] = await Promise.all([
-        this.resolveGoalsEnabled(startupSignal),
-        this.resolveAutoReviewEnabled(startupSignal),
-      ]);
+      const { goalsEnabled, autoReviewEnabled } =
+        await this.resolveSessionFeatureGates(startupSignal);
       startupSignal.throwIfAborted();
       const session = new CodexAppServerAgentSession(
         sessionConfig,
@@ -6642,10 +6660,8 @@ export class CodexAppServerAgentClient implements AgentClient {
         provider: CODEX_PROVIDER,
         cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
       };
-      const [goalsEnabled, autoReviewEnabled] = await Promise.all([
-        this.resolveGoalsEnabled(startupSignal),
-        this.resolveAutoReviewEnabled(startupSignal),
-      ]);
+      const { goalsEnabled, autoReviewEnabled } =
+        await this.resolveSessionFeatureGates(startupSignal);
       startupSignal.throwIfAborted();
       const session = new CodexAppServerAgentSession(
         merged,
@@ -6845,6 +6861,7 @@ export class CodexAppServerAgentClient implements AgentClient {
           `Codex session startup shutdown cleanup timed out after ${CODEX_SESSION_STARTUP_SHUTDOWN_TIMEOUT_MS}ms`,
         );
       } catch (error) {
+        this.activeSessionStartups.clear();
         this.logger.warn({ err: error }, "Codex session startup shutdown cleanup timed out");
       }
       await Promise.allSettled(Array.from(this.activeCatalogOperations));
