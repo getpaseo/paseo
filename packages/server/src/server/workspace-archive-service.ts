@@ -37,7 +37,7 @@ export interface ArchiveDependencies {
   paseoWorktreesBaseRoot?: string;
   github: ForgeService;
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
-  agentManager: Pick<AgentManager, "listAgents" | "archiveAgent" | "archiveSnapshot">;
+  agentManager: Pick<AgentManager, "listAgents" | "archiveAgent" | "archiveSnapshotWithReceipt">;
   agentStorage: Pick<AgentStorage, "list">;
   lifecycleMutationCoordinator: LifecycleMutationCoordinator;
   // Resolves the worktree at a path to its workspaceId for archive-by-path. The
@@ -531,9 +531,6 @@ export async function archiveWorkspaceContents(
 
   const allLiveAgents = dependencies.agentManager.listAgents();
   const liveAgents = allLiveAgents.filter((agent) => agent.workspaceId === workspaceId);
-  for (const agent of liveAgents) {
-    archivedAgents.add(agent.id);
-  }
 
   let storedRecords: StoredAgentRecord[] = [];
   try {
@@ -548,9 +545,6 @@ export async function archiveWorkspaceContents(
   const matchingStoredRecords = storedRecords.filter(
     (record) => record.workspaceId === workspaceId,
   );
-  for (const record of matchingStoredRecords) {
-    archivedAgents.add(record.id);
-  }
 
   const archivedAt = new Date().toISOString();
   const archiveCandidateIds = new Set<string>();
@@ -571,31 +565,46 @@ export async function archiveWorkspaceContents(
     const parentAgentId = parentAgentIds.get(agentId);
     return !parentAgentId || !archiveCandidateIds.has(parentAgentId);
   };
-  const archiveResults = await Promise.allSettled([
+  const archiveResults = await Promise.allSettled<string[] | null>([
     ...liveAgents
       .filter((agent) => isArchiveRoot(agent.id))
-      .map((agent) => dependencies.agentManager.archiveAgent(agent.id)),
+      .map(async (agent) => {
+        const result = await dependencies.agentManager.archiveAgent(agent.id);
+        return result.archivedAgentIds;
+      }),
     ...matchingStoredRecords
       .filter(
         (record) => !liveAgentIds.has(record.id) && !record.archivedAt && isArchiveRoot(record.id),
       )
-      .map((record) => dependencies.agentManager.archiveSnapshot(record.id, archivedAt)),
-    dependencies.killTerminalsForWorkspace(workspaceId),
+      .map(async (record) => {
+        const result = await dependencies.agentManager.archiveSnapshotWithReceipt(
+          record.id,
+          archivedAt,
+        );
+        return result.archivedAgentIds;
+      }),
+    dependencies.killTerminalsForWorkspace(workspaceId).then(() => null),
   ]);
 
   for (const result of archiveResults) {
-    if (result.status === "rejected") {
-      if (
-        result.reason instanceof LifecycleMutationReentrancyError ||
-        result.reason instanceof LifecycleMutationStaleError
-      ) {
-        throw result.reason;
+    if (result.status === "fulfilled") {
+      if (result.value) {
+        for (const agentId of result.value) {
+          archivedAgents.add(agentId);
+        }
       }
-      dependencies.sessionLogger?.warn(
-        { err: result.reason, workspaceId },
-        "Workspace archive teardown step failed; continuing",
-      );
+      continue;
     }
+    if (
+      result.reason instanceof LifecycleMutationReentrancyError ||
+      result.reason instanceof LifecycleMutationStaleError
+    ) {
+      throw result.reason;
+    }
+    dependencies.sessionLogger?.warn(
+      { err: result.reason, workspaceId },
+      "Workspace archive teardown step failed; continuing",
+    );
   }
 
   return archivedAgents;

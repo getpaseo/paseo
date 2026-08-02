@@ -29,7 +29,7 @@ function createFakeDaemonClient(
 // worktree-session.test.ts prove real filesystem removal end-to-end.
 
 describe("runArchiveCommand", () => {
-  it("sends scope worktree when archiving by worktree path", async () => {
+  it("returns every recursively archived agent when archiving by worktree path", async () => {
     const worktreePath = "/tmp/paseo-home/worktrees/repo/feature";
     const archiveCalls: Array<{
       input: Parameters<DaemonClient["archivePaseoWorktree"]>[0];
@@ -51,7 +51,7 @@ describe("runArchiveCommand", () => {
         archiveCalls.push({ input });
         return {
           success: true,
-          removedAgents: ["agent-1"],
+          removedAgents: ["agent-root", "agent-middle", "agent-grandchild"],
           error: null,
           requestId: "req-archive",
         };
@@ -60,7 +60,7 @@ describe("runArchiveCommand", () => {
 
     const result = await runArchiveCommandWithDeps(
       "feature",
-      {},
+      { host: "localhost:6767" },
       {
         connectToDaemon: async () => fakeClient,
       },
@@ -74,7 +74,7 @@ describe("runArchiveCommand", () => {
       data: {
         name: "feature",
         status: "archived",
-        removedAgents: ["agent-1"],
+        removedAgents: ["agent-root", "agent-middle", "agent-grandchild"],
       },
       schema: expect.any(Object),
     });
@@ -111,7 +111,7 @@ describe("runArchiveCommand", () => {
 
     await runArchiveCommandWithDeps(
       "feature-x",
-      {},
+      { host: "localhost:6767" },
       {
         connectToDaemon: async () => fakeClient,
       },
@@ -134,7 +134,7 @@ describe("runArchiveCommand", () => {
     await expect(
       runArchiveCommandWithDeps(
         "missing",
-        {},
+        { host: "localhost:6767" },
         {
           connectToDaemon: async () => fakeClient,
         },

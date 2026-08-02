@@ -284,6 +284,16 @@ export interface WaitForAgentResult {
   lastMessage: string | null;
 }
 
+export interface AgentArchiveResult {
+  archivedAt: string;
+  archivedAgentIds: string[];
+}
+
+export interface AgentSnapshotArchiveResult {
+  record: StoredAgentRecord;
+  archivedAgentIds: string[];
+}
+
 export interface WaitForAgentStartOptions {
   signal?: AbortSignal;
 }
@@ -1563,7 +1573,7 @@ export class AgentManager {
     }
   }
 
-  async archiveAgent(agentId: string): Promise<{ archivedAt: string }> {
+  async archiveAgent(agentId: string): Promise<AgentArchiveResult> {
     const expected = this.requireLiveLifecycleIdentity(agentId);
     const workspaceIds = await this.collectArchiveWorkspaceIds(agentId, expected.workspaceId);
     return await this.lifecycleMutationCoordinator.run(
@@ -1578,7 +1588,7 @@ export class AgentManager {
     );
   }
 
-  private async archiveAgentInternal(agentId: string): Promise<{ archivedAt: string }> {
+  private async archiveAgentInternal(agentId: string): Promise<AgentArchiveResult> {
     const agent = this.requireAgent(agentId);
     if (!this.registry) {
       throw new Error("Agent storage is not configured");
@@ -1597,9 +1607,9 @@ export class AgentManager {
     await this.closeAgentRuntime(agentId);
     this.discardRetainedAgentState(agentId);
 
-    await this.cascadeArchiveChildren(agentId);
+    const archivedAgentIds = new Set([agentId, ...(await this.cascadeArchiveChildren(agentId))]);
 
-    return { archivedAt };
+    return { archivedAt, archivedAgentIds: Array.from(archivedAgentIds) };
   }
 
   private async collectArchiveWorkspaceIds(
@@ -1649,11 +1659,12 @@ export class AgentManager {
   // label pointing back at the caller. Archiving the parent cascades to those
   // children so subagent fleets don't outlive their orchestrator. Detached
   // handoff agents omit this label, so they stand outside the cascade.
-  private async cascadeArchiveChildren(parentAgentId: string): Promise<void> {
+  private async cascadeArchiveChildren(parentAgentId: string): Promise<string[]> {
     const registry = this.registry;
     if (!registry) {
-      return;
+      return [];
     }
+    const archivedAgentIds = new Set<string>();
     const records = await registry.list();
     for (const record of records) {
       if (record.archivedAt && !this.agents.has(record.id)) {
@@ -1663,11 +1674,18 @@ export class AgentManager {
         continue;
       }
       if (this.agents.has(record.id)) {
-        await this.archiveAgent(record.id);
+        const result = await this.archiveAgent(record.id);
+        for (const archivedAgentId of result.archivedAgentIds) {
+          archivedAgentIds.add(archivedAgentId);
+        }
       } else {
-        await this.archiveSnapshot(record.id, new Date().toISOString());
+        const result = await this.archiveSnapshotWithReceipt(record.id, new Date().toISOString());
+        for (const archivedAgentId of result.archivedAgentIds) {
+          archivedAgentIds.add(archivedAgentId);
+        }
       }
     }
+    return Array.from(archivedAgentIds);
   }
 
   private async markRecordArchived(record: StoredAgentRecord): Promise<ArchivedStoredAgentRecord> {
@@ -1943,6 +1961,14 @@ export class AgentManager {
   }
 
   async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {
+    const result = await this.archiveSnapshotWithReceipt(agentId, archivedAt);
+    return result.record;
+  }
+
+  async archiveSnapshotWithReceipt(
+    agentId: string,
+    archivedAt: string,
+  ): Promise<AgentSnapshotArchiveResult> {
     const expected = await this.requireStoredLifecycleIdentity(agentId);
     const workspaceIds = await this.collectArchiveWorkspaceIds(agentId, expected.workspaceId);
     return await this.lifecycleMutationCoordinator.run(
@@ -1980,7 +2006,7 @@ export class AgentManager {
   private async archiveSnapshotInternal(
     agentId: string,
     archivedAt: string,
-  ): Promise<StoredAgentRecord> {
+  ): Promise<AgentSnapshotArchiveResult> {
     const registry = this.requireRegistry();
     const liveAgent = this.getAgent(agentId);
     if (liveAgent) {
@@ -2018,9 +2044,9 @@ export class AgentManager {
     }
 
     await this.fireAgentArchived(agentId);
-    await this.cascadeArchiveChildren(agentId);
+    const archivedAgentIds = new Set([agentId, ...(await this.cascadeArchiveChildren(agentId))]);
 
-    return nextRecord;
+    return { record: nextRecord, archivedAgentIds: Array.from(archivedAgentIds) };
   }
 
   async unarchiveSnapshot(

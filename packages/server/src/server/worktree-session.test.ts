@@ -49,6 +49,7 @@ import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
+import { LifecycleMutationCoordinator } from "./lifecycle-mutation-coordinator.js";
 
 interface LegacyCreateWorktreeTestOptions {
   branchName: string;
@@ -1852,12 +1853,15 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         },
         agentManager: {
           listAgents: () => [],
-          archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
-          archiveSnapshot: vi.fn(async () => {
+          archiveAgent: vi.fn(async () => {
+            throw new Error("not expected for empty agent list");
+          }),
+          archiveSnapshotWithReceipt: vi.fn(async () => {
             throw new Error("not expected for empty agent list");
           }),
         },
         agentStorage: createAgentStorageStub(),
+        lifecycleMutationCoordinator: new LifecycleMutationCoordinator(),
         findWorkspaceIdForCwd: vi.fn(async () => workspaceA),
         listActiveWorkspaces,
         archiveWorkspaceRecord: createArchiveWorkspaceRecordMutator(
@@ -1923,12 +1927,15 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         },
         agentManager: {
           listAgents: () => [],
-          archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
-          archiveSnapshot: vi.fn(async () => {
+          archiveAgent: vi.fn(async () => {
+            throw new Error("not expected for empty agent list");
+          }),
+          archiveSnapshotWithReceipt: vi.fn(async () => {
             throw new Error("not expected for empty agent list");
           }),
         },
         agentStorage: createAgentStorageStub(),
+        lifecycleMutationCoordinator: new LifecycleMutationCoordinator(),
         findWorkspaceIdForCwd: vi.fn(async (cwd: string) =>
           cwd === created.worktreePath ? workspaceId : null,
         ),
@@ -1999,12 +2006,15 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         },
         agentManager: {
           listAgents: () => [],
-          archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
-          archiveSnapshot: vi.fn(async () => {
+          archiveAgent: vi.fn(async () => {
+            throw new Error("not expected for empty agent list");
+          }),
+          archiveSnapshotWithReceipt: vi.fn(async () => {
             throw new Error("not expected for empty agent list");
           }),
         },
         agentStorage: createAgentStorageStub(),
+        lifecycleMutationCoordinator: new LifecycleMutationCoordinator(),
         findWorkspaceIdForCwd: vi.fn(async (cwd: string) =>
           cwd === sharedCwd ? workspaceA : null,
         ),
@@ -2075,12 +2085,15 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
       },
       agentManager: {
         listAgents: () => [],
-        archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
-        archiveSnapshot: vi.fn(async () => {
+        archiveAgent: vi.fn(async () => {
+          throw new Error("not expected for empty agent list");
+        }),
+        archiveSnapshotWithReceipt: vi.fn(async () => {
           throw new Error("not expected for empty agent list");
         }),
       },
       agentStorage: createAgentStorageStub(),
+      lifecycleMutationCoordinator: new LifecycleMutationCoordinator(),
       findWorkspaceIdForCwd: vi.fn(async (cwd: string) => (cwd === sharedCwd ? workspaceA : null)),
       listActiveWorkspaces,
       archiveWorkspaceRecord: createArchiveWorkspaceRecordMutator(

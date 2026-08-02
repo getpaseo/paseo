@@ -145,11 +145,11 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
       listAgents: () => [],
       archiveAgent: vi.fn(async (agentId: string) => {
         archivedAgentIds.push(agentId);
-        return { archivedAt: new Date().toISOString() };
+        return { archivedAt: new Date().toISOString(), archivedAgentIds: [agentId] };
       }),
-      archiveSnapshot: vi.fn(async (agentId: string, _archivedAt: string) => {
+      archiveSnapshotWithReceipt: vi.fn(async (agentId: string, _archivedAt: string) => {
         archivedSnapshotIds.push(agentId);
-        return {};
+        return { record: {} as StoredAgentRecord, archivedAgentIds: [agentId] };
       }),
     },
     agentStorage: {
@@ -694,11 +694,11 @@ describe("archiveByScope", () => {
       listAgents: () => [{ id: liveAgentId, workspaceId: targetWorkspaceId }] as ManagedAgent[],
       archiveAgent: vi.fn(async (agentId: string) => {
         deps.archivedAgentIds.push(agentId);
-        return { archivedAt: new Date().toISOString() };
+        return { archivedAt: new Date().toISOString(), archivedAgentIds: [agentId] };
       }),
-      archiveSnapshot: vi.fn(async (agentId: string, _archivedAt: string) => {
+      archiveSnapshotWithReceipt: vi.fn(async (agentId: string, _archivedAt: string) => {
         deps.archivedSnapshotIds.push(agentId);
-        return {};
+        return { record: {} as StoredAgentRecord, archivedAgentIds: [agentId] };
       }),
     };
     deps.agentStorage = {
@@ -750,9 +750,14 @@ describe("archiveByScope", () => {
         if (agentId === parentAgentId) {
           deps.archivedAgentIds.push(childAgentId);
         }
-        return { archivedAt: new Date().toISOString() };
+        return {
+          archivedAt: new Date().toISOString(),
+          archivedAgentIds: agentId === parentAgentId ? [parentAgentId, childAgentId] : [agentId],
+        };
       }),
-      archiveSnapshot: vi.fn(async () => ({})),
+      archiveSnapshotWithReceipt: vi.fn(async () => {
+        throw new Error("not expected for live agents");
+      }),
     };
     deps.agentStorage = {
       list: async () =>
@@ -816,19 +821,25 @@ describe("archiveByScope", () => {
       [middleAgentId, [grandchildAgentId]],
     ]);
     const archiveCounts = new Map<string, number>();
-    const archiveWithCascade = (agentId: string): void => {
+    const archiveWithCascade = (agentId: string): string[] => {
       archiveCounts.set(agentId, (archiveCounts.get(agentId) ?? 0) + 1);
+      const archivedAgentIds = [agentId];
       for (const childAgentId of childrenByParent.get(agentId) ?? []) {
-        archiveWithCascade(childAgentId);
+        archivedAgentIds.push(...archiveWithCascade(childAgentId));
       }
+      return archivedAgentIds;
     };
     deps.agentManager = {
       listAgents: () => agents,
       archiveAgent: vi.fn(async (agentId: string) => {
-        archiveWithCascade(agentId);
-        return { archivedAt: new Date().toISOString() };
+        return {
+          archivedAt: new Date().toISOString(),
+          archivedAgentIds: archiveWithCascade(agentId),
+        };
       }),
-      archiveSnapshot: vi.fn(async () => ({})),
+      archiveSnapshotWithReceipt: vi.fn(async () => {
+        throw new Error("not expected for live agents");
+      }),
     };
     deps.agentStorage = {
       list: async () =>
@@ -854,6 +865,7 @@ describe("archiveByScope", () => {
     });
     expect(deps.agentManager.archiveAgent).toHaveBeenCalledTimes(1);
     expect(deps.agentManager.archiveAgent).toHaveBeenCalledWith(rootAgentId);
+    expect(result.archivedAgentIds).toEqual([rootAgentId, middleAgentId, grandchildAgentId]);
     expect(result.archivedWorkspaceIds).toEqual([rootWorkspaceId, grandchildWorkspaceId]);
     expect(deps.archiveWorkspaceRecord).toHaveBeenCalledTimes(2);
     expect(deps.killTerminalsForWorkspace).toHaveBeenCalledTimes(2);
@@ -960,9 +972,14 @@ describe("archiveByScope", () => {
             archiveReactivatedDescendant,
           );
         }
-        return { archivedAt: new Date().toISOString() };
+        return {
+          archivedAt: new Date().toISOString(),
+          archivedAgentIds: agentId === rootAgentId ? [rootAgentId, descendantAgentId] : [agentId],
+        };
       }),
-      archiveSnapshot: vi.fn(async () => ({})),
+      archiveSnapshotWithReceipt: vi.fn(async () => {
+        throw new Error("not expected for live agents");
+      }),
     };
 
     const result = await archiveByScope(deps, {

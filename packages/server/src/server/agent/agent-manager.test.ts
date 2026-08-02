@@ -6423,7 +6423,7 @@ test("unarchiveSnapshot keeps the stored record archived when native unarchive f
   expect(client.unarchivedHandles).toHaveLength(1);
 });
 
-test("archiveAgent cascade archives in-memory children with the full archive contract", async () => {
+test("archiveAgent cascade archives in-memory descendants and returns their receipt", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-contract-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -6453,6 +6453,15 @@ test("archiveAgent cascade archives in-memory children with the full archive con
     undefined,
     { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
   );
+  const grandchild = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Grandchild",
+    },
+    undefined,
+    { labels: { [PARENT_AGENT_ID_LABEL]: child.id }, workspaceId: undefined },
+  );
   const unrelated = await manager.createAgent(
     {
       provider: "codex",
@@ -6463,15 +6472,18 @@ test("archiveAgent cascade archives in-memory children with the full archive con
     { workspaceId: undefined },
   );
 
-  await manager.archiveAgent(parent.id);
+  const result = await manager.archiveAgent(parent.id);
 
   const storedParent = await storage.get(parent.id);
   const storedChild = await storage.get(child.id);
+  const storedGrandchild = await storage.get(grandchild.id);
   const storedUnrelated = await storage.get(unrelated.id);
 
   expectArchivedAgentRecord(storedParent, "closed");
   expectArchivedAgentRecord(storedChild, "closed");
+  expectArchivedAgentRecord(storedGrandchild, "closed");
   expect(storedUnrelated?.archivedAt).toBeUndefined();
+  expect(result.archivedAgentIds).toEqual([parent.id, child.id, grandchild.id]);
 });
 
 test("archiveAgent cascade rearchives a stored-archived child that is live again", async () => {
@@ -7895,6 +7907,7 @@ test("archive does not wait on a terminal event queued from session close", asyn
 
     await expect(manager.archiveAgent(agent.id)).resolves.toEqual({
       archivedAt: expect.any(String),
+      archivedAgentIds: [agent.id],
     });
     expect((await storage.get(agent.id))?.archivedAt).not.toBeNull();
   } finally {
