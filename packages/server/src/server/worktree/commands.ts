@@ -107,6 +107,10 @@ export interface ArchiveCommandInput {
   branchName?: string;
   workspaceId?: string;
   scope?: ArchiveScope["kind"];
+  cleanup?: {
+    state: "ready_to_delete";
+    workspaceIds: string[];
+  };
 }
 
 export type ArchiveCommandResult =
@@ -126,7 +130,7 @@ export async function archiveCommand(
   input: ArchiveCommandInput,
 ): Promise<ArchiveCommandResult> {
   const targetPath = await resolveArchiveTarget(dependencies, input);
-  const scope = input.scope ?? "workspace";
+  const scope = input.cleanup ? "worktree" : (input.scope ?? "workspace");
   const ownership = await isPaseoOwnedWorktreeCwd(targetPath, {
     paseoHome: dependencies.paseoHome,
     worktreesRoot: dependencies.paseoWorktreesBaseRoot,
@@ -145,6 +149,7 @@ export async function archiveCommand(
     const result = await archiveByScope(dependencies, {
       scope: { kind: "worktree", targetPath },
       requestId: input.requestId,
+      cleanup: input.cleanup,
     });
 
     return {

@@ -26,20 +26,31 @@ export async function resolveWorktreeRepositoryIdentity(
     }>;
   },
   cwd: string = process.cwd(),
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<WorktreeRepositoryIdentity> {
-  const identityOptions = [options.project, options.repoRoot, options.cwd].filter(Boolean);
+  const identityOptions = [options.project, options.repoRoot, options.cwd].filter(
+    (value) => value !== undefined,
+  );
   if (identityOptions.length > 1) {
     throw commandError(
       "AMBIGUOUS_REPOSITORY_IDENTITY",
       "Use only one of --project, --repo-root, or --cwd",
     );
   }
-  if (options.project) return { projectId: options.project };
+  const emptyOption = identityOptions.find((value) => value.trim().length === 0);
+  if (emptyOption !== undefined) {
+    throw commandError(
+      "INVALID_REPOSITORY_IDENTITY",
+      "--project, --repo-root, and --cwd cannot be empty",
+    );
+  }
+  if (options.project !== undefined) return { projectId: options.project };
   const explicitRepoRoot = options.repoRoot ?? options.cwd;
-  if (explicitRepoRoot) return { repoRoot: explicitRepoRoot };
+  if (explicitRepoRoot !== undefined) return { repoRoot: explicitRepoRoot };
 
   const daemonHostname = client.getLastServerInfoMessage()?.hostname;
-  if (client.isLocalDaemonConnection() && daemonHostname === hostname()) {
+  const hasExplicitDaemonHost = options.host !== undefined || Boolean(env.PASEO_HOST?.trim());
+  if (!hasExplicitDaemonHost && client.isLocalDaemonConnection() && daemonHostname === hostname()) {
     const projects = (await client.listProjects()).projects;
     const gitContext = resolveLocalGitProjectContext(cwd);
     const registeredProject = gitContext

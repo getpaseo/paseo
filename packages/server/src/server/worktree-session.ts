@@ -439,15 +439,41 @@ export async function handlePaseoWorktreeListRequest(
       { workspaceGitService: dependencies.workspaceGitService },
       { cwd: repository.repoRoot },
     );
+    const listedWorktrees = worktrees.map((entry) => ({
+      worktreePath: entry.path,
+      createdAt: entry.createdAt,
+      branchName: entry.branchName ?? null,
+      head: entry.head ?? null,
+    }));
+    const pendingCleanupWorkspaces = (await dependencies.workspaceRegistry.list()).filter(
+      (workspace) =>
+        workspace.projectId === repository.projectId &&
+        workspace.archivedAt !== null &&
+        workspace.archiveCleanupPhase === "ready_to_delete" &&
+        workspace.kind === "worktree" &&
+        workspace.isPaseoOwnedWorktree &&
+        workspace.worktreeRoot !== null &&
+        existsSync(workspace.worktreeRoot),
+    );
+    for (const workspace of pendingCleanupWorkspaces) {
+      if (
+        listedWorktrees.some((worktree) =>
+          createRealpathAwarePathMatcher(worktree.worktreePath)(workspace.worktreeRoot!),
+        )
+      ) {
+        continue;
+      }
+      listedWorktrees.push({
+        worktreePath: workspace.worktreeRoot!,
+        createdAt: workspace.createdAt,
+        branchName: workspace.branch,
+        head: null,
+      });
+    }
     dependencies.emit({
       type: "paseo_worktree_list_response",
       payload: {
-        worktrees: worktrees.map((entry) => ({
-          worktreePath: entry.path,
-          createdAt: entry.createdAt,
-          branchName: entry.branchName ?? null,
-          head: entry.head ?? null,
-        })),
+        worktrees: listedWorktrees,
         error: null,
         requestId,
       },
@@ -483,15 +509,20 @@ export async function handlePaseoWorktreeArchiveRequest(
   const { requestId } = msg;
 
   try {
+    const explicitWorkspacePlacement = msg.workspaceId
+      ? await resolveExplicitWorkspaceArchivePlacement(msg, dependencies.workspaceRegistry)
+      : null;
     const explicitlySelectedRepository =
-      msg.projectId || msg.repoRoot
+      !msg.workspaceId && (msg.projectId || msg.repoRoot)
         ? await resolveWorktreeRepositoryIdentity(msg, dependencies.projectRegistry)
         : null;
-    const retryPlacement = await resolvePersistedArchiveRetryPlacement(
-      msg,
-      dependencies.workspaceRegistry,
-      explicitlySelectedRepository?.projectId,
-    );
+    const retryPlacement =
+      explicitWorkspacePlacement ??
+      (await resolvePersistedArchiveRetryPlacement(
+        msg,
+        dependencies.workspaceRegistry,
+        explicitlySelectedRepository?.projectId,
+      ));
     if (retryPlacement && !existsSync(retryPlacement.worktreePath)) {
       dependencies.emit({
         type: "paseo_worktree_archive_response",
@@ -505,21 +536,27 @@ export async function handlePaseoWorktreeArchiveRequest(
       return;
     }
 
-    const repository =
-      explicitlySelectedRepository ??
-      (await resolveWorktreeRepositoryIdentity(
-        retryPlacement
-          ? {
-              projectId: retryPlacement.projectId,
-              repoRoot: retryPlacement.mainRepoRoot ?? undefined,
-            }
-          : msg,
-        dependencies.projectRegistry,
-        {
-          workspaceRegistry: dependencies.workspaceRegistry,
-          workspaceGitService: dependencies.workspaceGitService,
-        },
-      ));
+    const repository = explicitWorkspacePlacement
+      ? await resolveWorktreeRepositoryIdentity(
+          {
+            projectId: explicitWorkspacePlacement.projectId,
+          },
+          dependencies.projectRegistry,
+        )
+      : (explicitlySelectedRepository ??
+        (await resolveWorktreeRepositoryIdentity(
+          retryPlacement
+            ? {
+                projectId: retryPlacement.projectId,
+                repoRoot: retryPlacement.mainRepoRoot ?? undefined,
+              }
+            : msg,
+          dependencies.projectRegistry,
+          {
+            workspaceRegistry: dependencies.workspaceRegistry,
+            workspaceGitService: dependencies.workspaceGitService,
+          },
+        )));
     const worktreePath =
       retryPlacement?.worktreePath ??
       (await resolveRepositoryWorktreePath(
@@ -535,14 +572,6 @@ export async function handlePaseoWorktreeArchiveRequest(
           branchName: msg.branchName,
         },
       ));
-    if (msg.workspaceId) {
-      await validateExplicitWorkspaceArchiveTarget({
-        workspaceRegistry: dependencies.workspaceRegistry,
-        workspaceId: msg.workspaceId,
-        projectId: repository.projectId,
-        worktreePath,
-      });
-    }
     const result = await archiveCommand(dependencies, {
       requestId,
       worktreePath,
@@ -550,6 +579,13 @@ export async function handlePaseoWorktreeArchiveRequest(
       branchName: msg.branchName,
       workspaceId: msg.workspaceId,
       scope: msg.scope,
+      cleanup:
+        retryPlacement?.archiveCleanupPhase === "ready_to_delete"
+          ? {
+              state: "ready_to_delete",
+              workspaceIds: retryPlacement.workspaceIds,
+            }
+          : undefined,
     });
     if (!result.ok) {
       dependencies.emit({
@@ -593,6 +629,41 @@ interface PersistedArchiveRetryPlacement {
   projectId: string;
   worktreePath: string;
   mainRepoRoot: string | null;
+  workspaceIds: string[];
+  archiveCleanupPhase: "ready_to_delete" | null;
+}
+
+async function resolveExplicitWorkspaceArchivePlacement(
+  msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>,
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">,
+): Promise<PersistedArchiveRetryPlacement> {
+  const workspace = (await workspaceRegistry.list()).find(
+    (candidate) => candidate.workspaceId === msg.workspaceId,
+  );
+  if (!workspace) {
+    throw new Error(`Workspace not found: ${msg.workspaceId}`);
+  }
+  if (msg.projectId && workspace.projectId !== msg.projectId) {
+    throw new Error("workspaceId does not identify the selected project and worktree path");
+  }
+  if (msg.branchName && workspace.branch !== msg.branchName) {
+    throw new Error("workspaceId does not identify the selected branch");
+  }
+  if (
+    msg.worktreePath &&
+    ![workspace.worktreeRoot, workspace.cwd]
+      .filter((candidate): candidate is string => candidate !== null)
+      .some((candidate) => createRealpathAwarePathMatcher(candidate)(msg.worktreePath!))
+  ) {
+    throw new Error("workspaceId does not identify the selected project and worktree path");
+  }
+  return {
+    projectId: workspace.projectId,
+    worktreePath: workspace.worktreeRoot ?? workspace.cwd,
+    mainRepoRoot: workspace.mainRepoRoot,
+    workspaceIds: [workspace.workspaceId],
+    archiveCleanupPhase: workspace.archiveCleanupPhase,
+  };
 }
 
 async function resolvePersistedArchiveRetryPlacement(
@@ -652,12 +723,19 @@ async function resolvePersistedArchiveRetryPlacement(
 
   const placements = new Map<string, PersistedArchiveRetryPlacement>();
   for (const workspace of candidates) {
-    const placement = {
+    const key = `${workspace.projectId}\0${workspace.worktreeRoot}`;
+    const existing = placements.get(key);
+    placements.set(key, {
       projectId: workspace.projectId,
       worktreePath: workspace.worktreeRoot!,
       mainRepoRoot: workspace.mainRepoRoot,
-    };
-    placements.set(`${placement.projectId}\0${placement.worktreePath}`, placement);
+      workspaceIds: [...(existing?.workspaceIds ?? []), workspace.workspaceId],
+      archiveCleanupPhase:
+        existing?.archiveCleanupPhase === "ready_to_delete" ||
+        workspace.archiveCleanupPhase === "ready_to_delete"
+          ? "ready_to_delete"
+          : null,
+    });
   }
   if (placements.size !== 1) {
     throw new Error("Archived workspace placement does not uniquely identify a worktree");

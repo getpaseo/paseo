@@ -7,7 +7,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import type { ForgeService } from "../services/forge-service.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
-import { createWorktree, type WorktreeConfig } from "../utils/worktree.js";
+import { createWorktree, deletePaseoWorktree, type WorktreeConfig } from "../utils/worktree.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import {
@@ -118,12 +118,14 @@ interface ArchiveDepsInput {
   activeWorkspaces: ActiveWorkspaceRef[];
   paseoWorktreesBaseRoot?: string;
   findWorkspaceIdForCwd?: (cwd: string) => Promise<string | null>;
+  deletePaseoWorktree?: NonNullable<ArchiveDependencies["deletePaseoWorktree"]>;
 }
 
 interface ArchiveTestDependencies extends ArchiveDependencies {
   activeWorkspaces: ActiveWorkspaceRef[];
   archivedAgentIds: string[];
   archivedSnapshotIds: string[];
+  archiveCleanupPhases: Map<string, "ready_to_delete">;
 }
 
 function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
@@ -131,6 +133,7 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
   const active = [...input.activeWorkspaces];
   const archivedAgentIds: string[] = [];
   const archivedSnapshotIds: string[] = [];
+  const archiveCleanupPhases = new Map<string, "ready_to_delete">();
 
   return {
     paseoHome: input.paseoHome,
@@ -157,7 +160,10 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
     findWorkspaceIdForCwd: input.findWorkspaceIdForCwd ?? vi.fn(async () => null),
     listActiveWorkspaces: async () =>
       active.filter((workspace) => !archivedWorkspaceIds.has(workspace.workspaceId)),
-    archiveWorkspaceRecord: async (workspaceId: string) => {
+    archiveWorkspaceRecord: async (workspaceId, context) => {
+      if (context?.archiveCleanupPhase) {
+        archiveCleanupPhases.set(workspaceId, context.archiveCleanupPhase);
+      }
       archivedWorkspaceIds.add(workspaceId);
       const index = active.findIndex((workspace) => workspace.workspaceId === workspaceId);
       if (index !== -1) {
@@ -168,10 +174,12 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
     markWorkspaceArchiving: vi.fn(),
     clearWorkspaceArchiving: vi.fn(),
     killTerminalsForWorkspace: vi.fn(async () => {}),
+    deletePaseoWorktree: input.deletePaseoWorktree,
     sessionLogger: createLogger(),
     activeWorkspaces: active,
     archivedAgentIds,
     archivedSnapshotIds,
+    archiveCleanupPhases,
   };
 }
 
@@ -261,6 +269,70 @@ describe("archiveByScope", () => {
     expect(existsSync(worktree.worktreePath)).toBe(true);
     expect(readFileSync(path.join(repoDir, "shared-teardown.log"), "utf8")).toBe("ok");
   });
+
+  test("persists deletion readiness and does not rerun teardown after deletion fails", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: [
+            "node -e \"const fs=require('fs');const out=process.env.PASEO_SOURCE_CHECKOUT_PATH+'/retry-teardown-count';const count=fs.existsSync(out)?Number(fs.readFileSync(out,'utf8')):0;fs.writeFileSync(out,String(count+1))\"",
+          ],
+        },
+      }),
+    );
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "retry teardown"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "deletion-retry");
+    const workspaceId = "ws-deletion-retry";
+    let deleteAttempts = 0;
+    let deps!: ArchiveTestDependencies;
+    const deleteWithFirstFailure = vi.fn<NonNullable<ArchiveDependencies["deletePaseoWorktree"]>>(
+      async (options) => {
+        deleteAttempts += 1;
+        expect(deps.archiveCleanupPhases.get(workspaceId)).toBe("ready_to_delete");
+        if (deleteAttempts === 1) {
+          throw new Error("intentional deletion failure");
+        }
+        await deletePaseoWorktree(options);
+      },
+    );
+    deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+      deletePaseoWorktree: deleteWithFirstFailure,
+    });
+
+    const first = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-deletion-failure",
+    });
+    const retry = await archiveByScope(deps, {
+      scope: { kind: "worktree", targetPath: worktree.worktreePath },
+      requestId: "req-deletion-retry",
+      cleanup: { state: "ready_to_delete", workspaceIds: [workspaceId] },
+    });
+
+    expect(first.removedDirectory).toBe(false);
+    expect(retry.removedDirectory).toBe(true);
+    expect(deleteWithFirstFailure).toHaveBeenCalledTimes(2);
+    expect(readFileSync(path.join(repoDir, "retry-teardown-count"), "utf8")).toBe("1");
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+  }, 15_000);
 
   test("workspace scope keeps a worktree for an active workspace in a subdirectory", async () => {
     const { tempDir, repoDir } = createGitRepo();
@@ -617,9 +689,11 @@ describe("archiveByScope", () => {
     const events: LifecycleEvent[] = [];
 
     const originalArchiveWorkspaceRecord = deps.archiveWorkspaceRecord;
-    deps.archiveWorkspaceRecord = async (id: string) => {
-      await originalArchiveWorkspaceRecord(id);
-      events.push({ type: "archive", workspaceId: id });
+    deps.archiveWorkspaceRecord = async (id, context) => {
+      await originalArchiveWorkspaceRecord(id, context);
+      if (!context?.archiveCleanupPhase) {
+        events.push({ type: "archive", workspaceId: id });
+      }
     };
     deps.markWorkspaceArchiving = vi.fn((workspaceIds: Iterable<string>, archivingAt: string) => {
       for (const id of workspaceIds) {

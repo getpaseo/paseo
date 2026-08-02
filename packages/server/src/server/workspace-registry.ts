@@ -87,6 +87,12 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // COMPAT(archiveCleanupPhase): added in v0.2.7, remove optional parsing after 2027-02-02.
+  archiveCleanupPhase: z
+    .literal("ready_to_delete")
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   pinnedAt: z
     .string()
     .nullable()
@@ -110,6 +116,7 @@ export interface WorkspaceMutationContext {
 
 export interface WorkspaceArchiveContext {
   autoArchivedChangeRequestUrl?: string;
+  archiveCleanupPhase?: "ready_to_delete";
 }
 
 export interface ProjectMutation {
@@ -498,6 +505,7 @@ export class FileBackedWorkspaceRegistry
       ...(context?.autoArchivedChangeRequestUrl
         ? { autoArchivedChangeRequestUrl: context.autoArchivedChangeRequestUrl }
         : {}),
+      ...(context?.archiveCleanupPhase ? { archiveCleanupPhase: context.archiveCleanupPhase } : {}),
     }));
     if (!workspace) return;
     await this.notifyMutation({ kind: "archive", workspaceId, workspace });
@@ -555,6 +563,7 @@ export function createPersistedWorkspaceRecord(input: {
   updatedAt: string;
   archivedAt?: string | null;
   autoArchivedChangeRequestUrl?: string | null;
+  archiveCleanupPhase?: "ready_to_delete" | null;
   pinnedAt?: string | null;
 }): PersistedWorkspaceRecord {
   return PersistedWorkspaceRecordSchema.parse({
@@ -567,6 +576,7 @@ export function createPersistedWorkspaceRecord(input: {
     mainRepoRoot: input.mainRepoRoot ?? null,
     archivedAt: input.archivedAt ?? null,
     autoArchivedChangeRequestUrl: input.autoArchivedChangeRequestUrl ?? null,
+    archiveCleanupPhase: input.archiveCleanupPhase ?? null,
     pinnedAt: input.pinnedAt ?? null,
   });
 }

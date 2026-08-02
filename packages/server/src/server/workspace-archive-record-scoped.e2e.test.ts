@@ -333,6 +333,7 @@ test("worktree archive targets the explicit workspaceId when a directory backs m
     repoRoot: repoDir,
     workspaceId: localWorkspaceId,
   });
+  expect(archive.error).toBeNull();
   expect(archive.success).toBe(true);
 
   // Exactly the targeted workspace is archived; the worktree-backed sibling stays.

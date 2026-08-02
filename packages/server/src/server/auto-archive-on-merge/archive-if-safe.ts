@@ -129,9 +129,10 @@ export async function archiveIfSafe(input: {
           agentStorage: options.agentStorage,
           findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
           listActiveWorkspaces: options.listActiveWorkspaces,
-          archiveWorkspaceRecord: (workspaceIdToArchive) =>
+          archiveWorkspaceRecord: (workspaceIdToArchive, context) =>
             options.archiveWorkspaceRecord(workspaceIdToArchive, {
               autoArchivedChangeRequestUrl: pullRequest.url,
+              ...context,
             }),
           emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
           markWorkspaceArchiving: options.markWorkspaceArchiving,

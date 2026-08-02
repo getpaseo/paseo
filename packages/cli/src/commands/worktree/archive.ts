@@ -88,11 +88,28 @@ export async function runArchiveCommandWithDeps(
       throw error;
     }
 
-    // Find the worktree by name or branch
-    const worktree = listResponse.worktrees.find((wt) => {
+    // Resolve to one backing path. A branch and a directory can share a name,
+    // and pending cleanup placements can outlive Git's worktree entry.
+    const matchingWorktrees = listResponse.worktrees.filter((wt) => {
       const name = path.basename(wt.worktreePath);
       return name === nameArg || wt.branchName === nameArg;
     });
+    const worktreesByPath = new Map<string, (typeof matchingWorktrees)[number]>();
+    for (const candidate of matchingWorktrees) {
+      if (!worktreesByPath.has(candidate.worktreePath)) {
+        worktreesByPath.set(candidate.worktreePath, candidate);
+      }
+    }
+    const matches = [...worktreesByPath.values()];
+    if (matches.length > 1) {
+      const error: CommandError = {
+        code: "AMBIGUOUS_WORKTREE",
+        message: `Worktree name or branch is ambiguous: ${nameArg}`,
+        details: matches.map((candidate) => candidate.worktreePath).join(", "),
+      };
+      throw error;
+    }
+    const worktree = matches[0];
 
     if (!worktree) {
       const error: CommandError = {

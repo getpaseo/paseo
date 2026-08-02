@@ -157,4 +157,92 @@ describe("runArchiveCommand", () => {
       code: "WORKTREE_NOT_FOUND",
     });
   });
+
+  it("archives a pending cleanup placement after Git forgets the worktree", async () => {
+    const pendingPath = "/tmp/paseo-home/worktrees/repo/pending-cleanup";
+    const archiveCalls: Array<Parameters<DaemonClient["archivePaseoWorktree"]>[0]> = [];
+    const fakeClient = createFakeDaemonClient({
+      getPaseoWorktreeList: async () => ({
+        worktrees: [
+          {
+            worktreePath: pendingPath,
+            branchName: "pending-cleanup",
+            head: null,
+            createdAt: "2026-04-12T00:00:00.000Z",
+          },
+        ],
+        error: null,
+        requestId: "req-list",
+      }),
+      archivePaseoWorktree: async (input) => {
+        archiveCalls.push(input);
+        return {
+          success: true,
+          removedAgents: [],
+          error: null,
+          requestId: "req-archive",
+        };
+      },
+    });
+
+    await runArchiveCommandWithDeps(
+      "pending-cleanup",
+      { project: "prj-repo" },
+      { connectToDaemon: async () => fakeClient },
+    );
+
+    expect(archiveCalls).toEqual([
+      {
+        worktreePath: pendingPath,
+        projectId: "prj-repo",
+        branchName: "pending-cleanup",
+        scope: "worktree",
+      },
+    ]);
+  });
+
+  it("fails closed when a name or branch resolves to multiple worktree paths", async () => {
+    const archiveCalls: Array<Parameters<DaemonClient["archivePaseoWorktree"]>[0]> = [];
+    const fakeClient = createFakeDaemonClient({
+      getPaseoWorktreeList: async () => ({
+        worktrees: [
+          {
+            worktreePath: "/tmp/worktrees/repo/feature",
+            branchName: "other-branch",
+            head: "abc123",
+            createdAt: "2026-04-12T00:00:00.000Z",
+          },
+          {
+            worktreePath: "/tmp/worktrees/repo/pending-cleanup",
+            branchName: "feature",
+            head: null,
+            createdAt: "2026-04-13T00:00:00.000Z",
+          },
+        ],
+        error: null,
+        requestId: "req-list",
+      }),
+      archivePaseoWorktree: async (input) => {
+        archiveCalls.push(input);
+        return {
+          success: true,
+          removedAgents: [],
+          error: null,
+          requestId: "req-archive",
+        };
+      },
+    });
+
+    await expect(
+      runArchiveCommandWithDeps(
+        "feature",
+        { repoRoot: "/repo" },
+        { connectToDaemon: async () => fakeClient },
+      ),
+    ).rejects.toMatchObject({
+      code: "AMBIGUOUS_WORKTREE",
+      details: "/tmp/worktrees/repo/feature, /tmp/worktrees/repo/pending-cleanup",
+    });
+    expect(archiveCalls).toEqual([]);
+  });
 });

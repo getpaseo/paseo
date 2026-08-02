@@ -64,6 +64,24 @@ describe("resolveWorktreeRepositoryIdentity", () => {
     ).rejects.toMatchObject({ code: "REPOSITORY_IDENTITY_REQUIRED" });
   });
 
+  test("does not infer the caller cwd for an explicit loopback host", async () => {
+    await expect(
+      resolveWorktreeRepositoryIdentity(
+        { host: "127.0.0.1:6767" },
+        createLocalClient(),
+        "/local/repository",
+      ),
+    ).rejects.toMatchObject({ code: "REPOSITORY_IDENTITY_REQUIRED" });
+  });
+
+  test("does not infer the caller cwd for a non-empty PASEO_HOST", async () => {
+    await expect(
+      resolveWorktreeRepositoryIdentity({}, createLocalClient(), "/local/repository", {
+        PASEO_HOST: "127.0.0.1:6767",
+      }),
+    ).rejects.toMatchObject({ code: "REPOSITORY_IDENTITY_REQUIRED" });
+  });
+
   test("does not infer the caller cwd for an empty host option that falls back to remote", async () => {
     await expect(
       resolveWorktreeRepositoryIdentity({ host: "" }, createRemoteClient({ hostname: hostname() })),
@@ -334,5 +352,11 @@ describe("resolveWorktreeRepositoryIdentity", () => {
         createRemoteClient(),
       ),
     ).rejects.toMatchObject({ code: "AMBIGUOUS_REPOSITORY_IDENTITY" });
+  });
+
+  test.each(["project", "repoRoot", "cwd"] as const)("rejects an empty %s option", async (key) => {
+    await expect(
+      resolveWorktreeRepositoryIdentity({ [key]: "" }, createLocalClient()),
+    ).rejects.toMatchObject({ code: "INVALID_REPOSITORY_IDENTITY" });
   });
 });

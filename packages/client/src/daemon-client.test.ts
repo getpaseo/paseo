@@ -3192,6 +3192,82 @@ test("subscribes to checkout diff updates via RPC handshake", async () => {
   });
 });
 
+test("keeps a newer checkout diff subscription when an older request fails late", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const olderPromise = client.subscribeCheckoutDiff(
+    "/tmp/older",
+    { mode: "uncommitted" },
+    { subscriptionId: "checkout-sub-1", requestId: "checkout-request-older" },
+  );
+  const olderResult = olderPromise.catch((error: unknown) => error);
+  const newerPromise = client.subscribeCheckoutDiff(
+    "/tmp/newer",
+    { mode: "base", baseRef: "main" },
+    { subscriptionId: "checkout-sub-1", requestId: "checkout-request-newer" },
+  );
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "subscribe_checkout_diff_response",
+      payload: {
+        subscriptionId: "checkout-sub-1",
+        cwd: "/tmp/newer",
+        files: [],
+        error: null,
+        requestId: "checkout-request-newer",
+      },
+    }),
+  );
+  await expect(newerPromise).resolves.toMatchObject({
+    subscriptionId: "checkout-sub-1",
+    cwd: "/tmp/newer",
+    requestId: "checkout-request-newer",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "rpc_error",
+      payload: {
+        requestId: "checkout-request-older",
+        requestType: "subscribe_checkout_diff_request",
+        error: "Checkout diff subscription was superseded by a newer request",
+        code: "checkout_diff_subscription_superseded",
+      },
+    }),
+  );
+  await expect(olderResult).resolves.toMatchObject({
+    name: "DaemonRpcError",
+    requestId: "checkout-request-older",
+    code: "checkout_diff_subscription_superseded",
+  });
+
+  const internal = client as unknown as {
+    checkoutDiffSubscriptions: Map<
+      string,
+      { cwd: string; compare: { mode: "uncommitted" | "base"; baseRef?: string } }
+    >;
+  };
+  expect(internal.checkoutDiffSubscriptions.get("checkout-sub-1")).toEqual({
+    cwd: "/tmp/newer",
+    compare: { mode: "base", baseRef: "main" },
+  });
+});
+
 test("getCheckoutDiff uses one-shot subscription protocol", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -3898,6 +3974,7 @@ test("resubscribes checkout diff streams after reconnect", async () => {
       string,
       { cwd: string; compare: { mode: "uncommitted" | "base"; baseRef?: string } }
     >;
+    waiters: Set<unknown>;
   };
   internal.checkoutDiffSubscriptions.set("checkout-sub-1", {
     cwd: "/tmp/project",
@@ -3916,6 +3993,23 @@ test("resubscribes checkout diff streams after reconnect", async () => {
   expect(request.compare).toEqual({ mode: "base", baseRef: "main" });
   expect(typeof request.requestId).toBe("string");
   expect(z.string().parse(request.requestId).length).toBeGreaterThan(0);
+  expect(internal.waiters.size).toBe(1);
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "subscribe_checkout_diff_response",
+      payload: {
+        subscriptionId: "checkout-sub-1",
+        cwd: "/tmp/project",
+        files: [],
+        error: null,
+        requestId: request.requestId,
+      },
+    }),
+  );
+  await Promise.resolve();
+
+  expect(internal.waiters.size).toBe(0);
 });
 
 test("fetches agents via RPC with filters, sort, and pagination", async () => {

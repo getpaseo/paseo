@@ -437,6 +437,9 @@ describe("workspace registries", () => {
     await workspaceRegistry.archive("workspace-auto-archive", "2026-03-02T00:00:00.000Z", {
       autoArchivedChangeRequestUrl: "https://github.com/acme/repo/pull/123",
     });
+    await workspaceRegistry.archive("workspace-auto-archive", "2026-03-02T00:00:00.000Z", {
+      archiveCleanupPhase: "ready_to_delete",
+    });
 
     const reloaded = new FileBackedWorkspaceRegistry(
       path.join(tmpDir, "projects", "workspaces.json"),
@@ -446,6 +449,7 @@ describe("workspace registries", () => {
     expect(await reloaded.get("workspace-auto-archive")).toMatchObject({
       archivedAt: "2026-03-02T00:00:00.000Z",
       autoArchivedChangeRequestUrl: "https://github.com/acme/repo/pull/123",
+      archiveCleanupPhase: "ready_to_delete",
     });
   });
 

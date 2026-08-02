@@ -2340,15 +2340,10 @@ export class DaemonClient {
     if (this.checkoutDiffSubscriptions.size === 0) {
       return;
     }
-    for (const [subscriptionId, subscription] of this.checkoutDiffSubscriptions) {
-      const message = SessionInboundMessageSchema.parse({
-        type: "subscribe_checkout_diff_request",
+    for (const [subscriptionId, subscription] of Array.from(this.checkoutDiffSubscriptions)) {
+      void this.subscribeCheckoutDiff(subscription.cwd, subscription.compare, {
         subscriptionId,
-        cwd: subscription.cwd,
-        compare: subscription.compare,
-        requestId: this.createRequestId(),
-      });
-      this.sendSessionMessage(message);
+      }).catch(() => undefined);
     }
   }
 
@@ -3569,10 +3564,11 @@ export class DaemonClient {
     const subscriptionId = options?.subscriptionId ?? crypto.randomUUID();
     const normalizedCompare = this.normalizeCheckoutDiffCompare(compare);
     const previousSubscription = this.checkoutDiffSubscriptions.get(subscriptionId) ?? null;
-    this.checkoutDiffSubscriptions.set(subscriptionId, {
+    const attemptedSubscription = {
       cwd,
       compare: normalizedCompare,
-    });
+    };
+    this.checkoutDiffSubscriptions.set(subscriptionId, attemptedSubscription);
 
     const resolvedRequestId = this.createRequestId(options?.requestId);
     const message = SessionInboundMessageSchema.parse({
@@ -3597,10 +3593,12 @@ export class DaemonClient {
         },
       });
     } catch (error) {
-      if (previousSubscription) {
-        this.checkoutDiffSubscriptions.set(subscriptionId, previousSubscription);
-      } else {
-        this.checkoutDiffSubscriptions.delete(subscriptionId);
+      if (this.checkoutDiffSubscriptions.get(subscriptionId) === attemptedSubscription) {
+        if (previousSubscription) {
+          this.checkoutDiffSubscriptions.set(subscriptionId, previousSubscription);
+        } else {
+          this.checkoutDiffSubscriptions.delete(subscriptionId);
+        }
       }
       throw error;
     }

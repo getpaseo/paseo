@@ -41,11 +41,12 @@ export interface ArchiveDependencies {
   // break a same-cwd tie in favor of the worktree-kind record when archiving by
   // path (no explicit workspaceId).
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
-  archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
+  archiveWorkspaceRecord: (workspaceId: string, context?: WorkspaceArchiveContext) => Promise<void>;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
   killTerminalsForWorkspace: (workspaceId: string) => Promise<void>;
+  deletePaseoWorktree?: typeof deletePaseoWorktree;
   sessionLogger?: Logger;
 }
 
@@ -68,6 +69,10 @@ export interface ArchiveResult {
 export interface ArchiveByScopeRequest {
   scope: ArchiveScope;
   requestId: string;
+  cleanup?: {
+    state: "ready_to_delete";
+    workspaceIds: string[];
+  };
 }
 
 export async function requireActiveWorkspaceForArchive(
@@ -319,9 +324,32 @@ async function archiveTargetRecords(
   return { archivedAgents, archivedWorkspaceIds };
 }
 
+async function runArchiveTargetTeardown(input: {
+  backing: BackingDirectory;
+  teardownTargets: ArchiveTarget["teardownTargets"];
+  archivedWorkspaceIds: string[];
+}): Promise<void> {
+  const archivedWorkspaceIdSet = new Set(input.archivedWorkspaceIds);
+  const teardownCwds = uniqueFilesystemPaths(
+    input.teardownTargets
+      .filter(
+        (target) => target.workspaceId === null || archivedWorkspaceIdSet.has(target.workspaceId),
+      )
+      .map((target) => target.cwd),
+  );
+
+  for (const teardownCwd of teardownCwds) {
+    await runWorktreeTeardownCommands({
+      worktreePath: input.backing.path,
+      teardownCwd,
+      repoRootPath: input.backing.mainRepoRoot ?? undefined,
+    });
+  }
+}
+
 async function maybeRemoveDirectory(
   dependencies: ArchiveDependencies,
-  request: Pick<ArchiveByScopeRequest, "requestId">,
+  request: Pick<ArchiveByScopeRequest, "cleanup" | "requestId">,
   target: ArchiveTarget,
   archivedWorkspaceIds: string[],
 ): Promise<boolean> {
@@ -330,31 +358,20 @@ async function maybeRemoveDirectory(
     return false;
   }
 
-  const archivedWorkspaceIdSet = new Set(archivedWorkspaceIds);
-  const teardownCwds = uniqueFilesystemPaths(
-    target.teardownTargets
-      .filter(
-        (teardownTarget) =>
-          teardownTarget.workspaceId === null ||
-          archivedWorkspaceIdSet.has(teardownTarget.workspaceId),
-      )
-      .map((teardownTarget) => teardownTarget.cwd),
-  );
-
-  try {
-    for (const teardownCwd of teardownCwds) {
-      await runWorktreeTeardownCommands({
-        worktreePath: backing.path,
-        teardownCwd,
-        repoRootPath: backing.mainRepoRoot ?? undefined,
+  if (request.cleanup?.state !== "ready_to_delete") {
+    try {
+      await runArchiveTargetTeardown({
+        backing,
+        teardownTargets: target.teardownTargets,
+        archivedWorkspaceIds,
       });
+    } catch (error) {
+      dependencies.sessionLogger?.warn(
+        { err: error, targetPath: backing.path, requestId: request.requestId },
+        "Worktree teardown failed during archive; workspace already archived",
+      );
+      return false;
     }
-  } catch (error) {
-    dependencies.sessionLogger?.warn(
-      { err: error, targetPath: backing.path, requestId: request.requestId },
-      "Worktree teardown failed during archive; workspace already archived",
-    );
-    return false;
   }
 
   let isUnreferenced: boolean;
@@ -377,8 +394,28 @@ async function maybeRemoveDirectory(
     return false;
   }
 
+  const cleanupWorkspaceIds = new Set([
+    ...archivedWorkspaceIds,
+    ...(request.cleanup?.workspaceIds ?? []),
+  ]);
   try {
-    await deletePaseoWorktree({
+    await Promise.all(
+      [...cleanupWorkspaceIds].map((workspaceId) =>
+        dependencies.archiveWorkspaceRecord(workspaceId, {
+          archiveCleanupPhase: "ready_to_delete",
+        }),
+      ),
+    );
+  } catch (error) {
+    dependencies.sessionLogger?.warn(
+      { err: error, targetPath: backing.path, requestId: request.requestId },
+      "Failed to persist worktree cleanup phase; workspace already archived",
+    );
+    return false;
+  }
+
+  try {
+    await (dependencies.deletePaseoWorktree ?? deletePaseoWorktree)({
       cwd: backing.mainRepoRoot,
       worktreePath: backing.path,
       teardownCwds: [],
@@ -556,6 +593,13 @@ export async function archivePersistedWorkspaceRecord(input: {
   }
 
   if (existingWorkspace.archivedAt) {
+    if (input.context) {
+      await input.workspaceRegistry.archive(
+        input.workspaceId,
+        existingWorkspace.archivedAt,
+        input.context,
+      );
+    }
     return existingWorkspace;
   }
 
