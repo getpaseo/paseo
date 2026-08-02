@@ -2498,6 +2498,149 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
     ).toMatchObject({ payload: { success: true, error: null } });
   });
 
+  test("validates explicit repository identity before settling a completed retry", async () => {
+    const { tempDir, repoDir: mainRepoRoot } = createGitRepo();
+    const { tempDir: otherTempDir, repoDir: otherRepoRoot } = createGitRepo();
+    cleanupPaths.push(tempDir, otherTempDir);
+    const projectRoot = path.join(mainRepoRoot, "packages", "app");
+    mkdirSync(projectRoot, { recursive: true });
+    const missingWorktreePath = path.join(tempDir, "removed-explicit-worktree");
+    const workspaceId = "ws-removed-explicit-retry";
+    const project = createPersistedProjectRecord({
+      projectId: "prj-worktree-test",
+      rootPath: projectRoot,
+      kind: "git",
+      displayName: "project A",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const otherProject = createPersistedProjectRecord({
+      projectId: "prj-other",
+      rootPath: otherRepoRoot,
+      kind: "git",
+      displayName: "project B",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const archivedWorkspace = createPersistedWorkspaceRecord({
+      workspaceId,
+      projectId: project.projectId,
+      cwd: missingWorktreePath,
+      kind: "worktree",
+      displayName: "removed explicit retry",
+      branch: "removed-explicit-retry",
+      worktreeRoot: missingWorktreePath,
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: "2026-01-02T00:00:00.000Z",
+    });
+    const emitted: SessionOutboundMessage[] = [];
+    const listWorktrees = vi.fn(async () => {
+      throw new Error("live Git membership must not be read for a completed retry");
+    });
+    const archiveWorkspaceRecord = vi.fn(async () => {});
+    const dependencies = {
+      paseoHome: path.join(tempDir, ".paseo"),
+      github: createGitHubServiceStub(),
+      workspaceGitService: {
+        getSnapshot: vi.fn(async () => null),
+        invalidateWorktreeList: vi.fn(),
+        listWorktrees,
+      },
+      projectRegistry: {
+        get: async (projectId: string) =>
+          [project, otherProject].find((candidate) => candidate.projectId === projectId) ?? null,
+        list: async () => [project, otherProject],
+      },
+      workspaceRegistry: createWorkspaceRegistryForRecords([archivedWorkspace]),
+      agentManager: {
+        listAgents: () => [],
+        archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
+        archiveSnapshot: vi.fn(async () => ({})),
+      },
+      agentStorage: createAgentStorageStub(),
+      findWorkspaceIdForCwd: vi.fn(async () => null),
+      listActiveWorkspaces: vi.fn(async () => []),
+      archiveWorkspaceRecord,
+      emit: (message: SessionOutboundMessage) => emitted.push(message),
+      emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => {}),
+      markWorkspaceArchiving: vi.fn(),
+      clearWorkspaceArchiving: vi.fn(),
+      killTerminalsForWorkspace: vi.fn(async () => {}),
+      sessionLogger: createLogger(),
+    };
+
+    await handlePaseoWorktreeArchiveRequest(dependencies, {
+      type: "paseo_worktree_archive_request",
+      requestId: "req-removed-explicit-mismatch",
+      workspaceId,
+      repoRoot: otherRepoRoot,
+    });
+    await handlePaseoWorktreeArchiveRequest(dependencies, {
+      type: "paseo_worktree_archive_request",
+      requestId: "req-removed-explicit-project-root",
+      workspaceId,
+      repoRoot: projectRoot,
+    });
+    await handlePaseoWorktreeArchiveRequest(dependencies, {
+      type: "paseo_worktree_archive_request",
+      requestId: "req-removed-explicit-main-root",
+      workspaceId,
+      repoRoot: mainRepoRoot,
+    });
+    await handlePaseoWorktreeArchiveRequest(dependencies, {
+      type: "paseo_worktree_archive_request",
+      requestId: "req-removed-explicit-no-root",
+      workspaceId,
+    });
+
+    expect(emitted).toEqual([
+      {
+        type: "paseo_worktree_archive_response",
+        payload: {
+          success: false,
+          removedAgents: [],
+          error: {
+            code: "UNKNOWN",
+            message: "projectId and repoRoot do not identify the same project",
+          },
+          requestId: "req-removed-explicit-mismatch",
+        },
+      },
+      {
+        type: "paseo_worktree_archive_response",
+        payload: {
+          success: true,
+          removedAgents: [],
+          error: null,
+          requestId: "req-removed-explicit-project-root",
+        },
+      },
+      {
+        type: "paseo_worktree_archive_response",
+        payload: {
+          success: true,
+          removedAgents: [],
+          error: null,
+          requestId: "req-removed-explicit-main-root",
+        },
+      },
+      {
+        type: "paseo_worktree_archive_response",
+        payload: {
+          success: true,
+          removedAgents: [],
+          error: null,
+          requestId: "req-removed-explicit-no-root",
+        },
+      },
+    ]);
+    expect(listWorktrees).not.toHaveBeenCalled();
+    expect(archiveWorkspaceRecord).not.toHaveBeenCalled();
+  });
+
   test("rejects a forgotten Paseo path associated only with another project", async () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);

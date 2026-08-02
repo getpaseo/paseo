@@ -515,6 +515,13 @@ export async function handlePaseoWorktreeArchiveRequest(
     const explicitWorkspacePlacement = msg.workspaceId
       ? await resolveExplicitWorkspaceArchivePlacement(msg, dependencies.workspaceRegistry)
       : null;
+    const explicitWorkspaceRepository = explicitWorkspacePlacement
+      ? await resolveExplicitWorkspaceArchiveRepository({
+          placement: explicitWorkspacePlacement,
+          requestedRepoRoot: msg.repoRoot,
+          projectRegistry: dependencies.projectRegistry,
+        })
+      : null;
     const explicitlySelectedRepository =
       !msg.workspaceId && (msg.projectId || msg.repoRoot)
         ? await resolveWorktreeRepositoryIdentity(msg, dependencies.projectRegistry)
@@ -539,26 +546,22 @@ export async function handlePaseoWorktreeArchiveRequest(
       return;
     }
 
-    const repository = explicitWorkspacePlacement
-      ? await resolveExplicitWorkspaceArchiveRepository({
-          placement: explicitWorkspacePlacement,
-          requestedRepoRoot: msg.repoRoot,
-          projectRegistry: dependencies.projectRegistry,
-        })
-      : (explicitlySelectedRepository ??
-        (await resolveWorktreeRepositoryIdentity(
-          archivedRetryPlacement
-            ? {
-                projectId: archivedRetryPlacement.projectId,
-                repoRoot: archivedRetryPlacement.mainRepoRoot ?? undefined,
-              }
-            : msg,
-          dependencies.projectRegistry,
-          {
-            workspaceRegistry: dependencies.workspaceRegistry,
-            workspaceGitService: dependencies.workspaceGitService,
-          },
-        )));
+    const repository =
+      explicitWorkspaceRepository ??
+      explicitlySelectedRepository ??
+      (await resolveWorktreeRepositoryIdentity(
+        archivedRetryPlacement
+          ? {
+              projectId: archivedRetryPlacement.projectId,
+              repoRoot: archivedRetryPlacement.mainRepoRoot ?? undefined,
+            }
+          : msg,
+        dependencies.projectRegistry,
+        {
+          workspaceRegistry: dependencies.workspaceRegistry,
+          workspaceGitService: dependencies.workspaceGitService,
+        },
+      ));
     const worktreePath =
       selectedPlacement?.worktreePath ??
       (await resolveRepositoryWorktreePath(
