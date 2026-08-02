@@ -22,10 +22,14 @@ describe("canAddProviderAccount", () => {
     expect(canAddProviderAccount({ providerId: "omp", source: "builtin" })).toBe(true);
   });
 
-  it("rejects acp, custom rows, and unknown sources", () => {
+  it("rejects acp and custom rows", () => {
     expect(canAddProviderAccount({ providerId: "acp", source: "builtin" })).toBe(false);
     expect(canAddProviderAccount({ providerId: "junie", source: "custom" })).toBe(false);
-    expect(canAddProviderAccount({ providerId: "claude", source: undefined })).toBe(false);
+    expect(canAddProviderAccount({ providerId: "junie", source: undefined })).toBe(false);
+  });
+
+  it("still offers builtins when the daemon omits source", () => {
+    expect(canAddProviderAccount({ providerId: "claude", source: undefined })).toBe(true);
   });
 });
 

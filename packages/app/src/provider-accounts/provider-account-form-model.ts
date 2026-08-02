@@ -31,7 +31,10 @@ export function canAddProviderAccount(input: {
   providerId: string;
   source: "builtin" | "custom" | undefined;
 }): boolean {
-  if (input.source !== "builtin") return false;
+  // `source` is optional on the wire, so daemons that predate it report
+  // undefined. Reject only an explicit "custom": the daemon reports a builtin
+  // id as "builtin" regardless of overrides, so no custom row can reach here.
+  if (input.source === "custom") return false;
   return (ACCOUNT_BASE_PROVIDER_IDS as readonly string[]).includes(input.providerId);
 }
 

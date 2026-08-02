@@ -100,6 +100,7 @@ vi.mock("lucide-react-native", () => {
     ChevronRight: icon("ChevronRight"),
     MoreHorizontal: icon("MoreHorizontal"),
     Trash2: icon("Trash2"),
+    UserPlus: icon("UserPlus"),
   };
 });
 
@@ -244,6 +245,20 @@ vi.mock("@/stores/provider-settings-store", () => ({
 
 vi.mock("@/components/provider-catalog-list", () => ({
   ProviderCatalogList: () => null,
+}));
+
+// The real sheet pulls in react-native-reanimated, which is untransformed here.
+vi.mock("@/components/provider-account-sheet", () => ({
+  ProviderAccountSheet: ({
+    visible,
+    baseProviderId,
+  }: {
+    visible?: boolean;
+    baseProviderId?: string;
+  }) =>
+    visible
+      ? React.createElement("div", { "data-testid": `provider-account-sheet-${baseProviderId}` })
+      : null,
 }));
 
 vi.mock("@/hooks/use-providers-snapshot", () => ({
@@ -441,6 +456,29 @@ describe("ProvidersSection", () => {
       serverId: "server-1",
       provider: "codex",
     });
+  });
+
+  it("opens the account sheet from the actions menu of a builtin provider", () => {
+    snapshotState.entries = [claudeEntry];
+    configState.config = makeConfig();
+
+    render();
+
+    const sheetSelector = '[data-testid="provider-account-sheet-claude"]';
+    expect(container?.querySelector(sheetSelector)).toBeNull();
+    expect(container?.querySelector('[data-testid="provider-remove-claude"]')).toBeNull();
+
+    const addAccount = container?.querySelector<HTMLElement>(
+      '[data-testid="provider-add-account-claude"]',
+    );
+    expect(addAccount).not.toBeNull();
+
+    act(() => {
+      addAccount?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container?.querySelector(sheetSelector)).not.toBeNull();
+    expect(openProviderSettingsMock).not.toHaveBeenCalled();
   });
 
   it("toggles the provider enabled flag through patchConfig when the switch is pressed", async () => {
