@@ -18,6 +18,8 @@ const ASSISTANT_MARKDOWN = [
   "",
   "www.example.com stays plain Markdown text.",
   "",
+  '[docs](https://docs.example.com "Reference") and <https://autolink.example.com>.',
+  "",
   "`https://example.com/generated` stays code, not a generated link.",
   "",
   "```typescript",
@@ -34,6 +36,11 @@ const ASSISTANT_MARKDOWN = [
   "| :-- | --: | :-: |",
   "| Current \\| active | ~~obsolete~~ | ready |",
 ].join("\n");
+
+const EXPECTED_WHOLE_SELECTION_MARKDOWN = ASSISTANT_MARKDOWN.replace(
+  "<https://autolink.example.com>",
+  "[https://autolink.example.com](https://autolink.example.com)",
+);
 
 interface ClipboardContent {
   html: string;
@@ -153,7 +160,7 @@ test("copying an assistant selection preserves Markdown structure and links", as
     await copySelection(page);
 
     const clipboard = await readRichClipboard(page);
-    expect(clipboard.plainText).toBe(ASSISTANT_MARKDOWN);
+    expect(clipboard.plainText).toBe(EXPECTED_WHOLE_SELECTION_MARKDOWN);
     expect(clipboard.html).toContain("<ul>");
     expect(clipboard.html).toContain(
       '<strong><a href="https://example.com/issues/1">First issue</a></strong>',
@@ -163,6 +170,12 @@ test("copying an assistant selection preserves Markdown structure and links", as
     expect(clipboard.html).toContain("A hard break<br>");
     expect(clipboard.html).toContain(
       '<a href="http://www.example.com/">www.example.com</a> stays plain Markdown text.',
+    );
+    expect(clipboard.html).toContain(
+      '<a href="https://docs.example.com/" title="Reference">docs</a>',
+    );
+    expect(clipboard.html).toContain(
+      '<a href="https://autolink.example.com/">https://autolink.example.com</a>',
     );
     expect(clipboard.html).toContain("<code>https://example.com/generated</code>");
     expect(clipboard.html).not.toContain(
@@ -187,6 +200,26 @@ test("copying an assistant selection preserves Markdown structure and links", as
     expect(partialClipboard.plainText).toBe("- **[First](https://example.com/issues/1)**");
     expect(partialClipboard.html).toContain(
       '<li><strong><a href="https://example.com/issues/1">First</a></strong></li>',
+    );
+
+    await selectAssistantText(page, "docs");
+    await copySelection(page);
+
+    const titledLinkClipboard = await readRichClipboard(page);
+    expect(titledLinkClipboard.plainText).toBe('[docs](https://docs.example.com "Reference")');
+    expect(titledLinkClipboard.html).toContain(
+      '<a href="https://docs.example.com/" title="Reference">docs</a>',
+    );
+
+    await selectAssistantText(page, "https://autolink.example.com");
+    await copySelection(page);
+
+    const autolinkClipboard = await readRichClipboard(page);
+    expect(autolinkClipboard.plainText).toBe(
+      "[https://autolink.example.com](https://autolink.example.com)",
+    );
+    expect(autolinkClipboard.html).toContain(
+      '<a href="https://autolink.example.com/">https://autolink.example.com</a>',
     );
 
     await selectAssistantTextRange(page, "Seventh item", "Eighth item");
