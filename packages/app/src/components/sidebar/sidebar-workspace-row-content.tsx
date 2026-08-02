@@ -192,11 +192,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   );
 
   return (
-    <View
-      style={styles.workspaceRowContent}
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-    >
+    <View style={styles.workspaceRowContent}>
       <View style={styles.workspaceRowMain}>
         {leadingProjectName ? (
           <ProjectStatusIndicator
