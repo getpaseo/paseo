@@ -20,6 +20,23 @@ export interface LegacyWorktreeRepositoryIdentityDependencies {
   workspaceGitService: Pick<WorkspaceGitService, "listWorktrees">;
 }
 
+export function assertNonEmptyWorktreeRepositorySelectors(
+  input: WorktreeRepositoryIdentityInput,
+): void {
+  const selectors = [
+    ["projectId", input.projectId],
+    ["repoRoot", input.repoRoot],
+    ["cwd", input.cwd],
+    ["worktreePath", input.worktreePath],
+  ] as const;
+  const emptySelector = selectors.find(
+    ([, value]) => value !== undefined && value.trim().length === 0,
+  );
+  if (emptySelector) {
+    throw new Error(`${emptySelector[0]} cannot be empty`);
+  }
+}
+
 /**
  * Resolves a worktree command to one active daemon-owned project. Request paths
  * must already be absolute roots on this host, so a remote caller cannot smuggle
@@ -30,9 +47,11 @@ export async function resolveWorktreeRepositoryIdentity(
   projectRegistry: Pick<ProjectRegistry, "get" | "list">,
   legacyDependencies?: LegacyWorktreeRepositoryIdentityDependencies,
 ): Promise<ResolvedWorktreeRepository> {
-  if (!input.projectId && !input.repoRoot) {
+  assertNonEmptyWorktreeRepositorySelectors(input);
+
+  if (input.projectId === undefined && input.repoRoot === undefined) {
     const legacyPath = input.cwd ?? input.worktreePath;
-    if (!legacyPath) {
+    if (legacyPath === undefined) {
       throw new Error(
         "projectId, repoRoot, cwd, or worktreePath is required for a worktree command",
       );
@@ -50,8 +69,8 @@ async function resolveRegisteredWorktreeRepositoryIdentity(
   input: WorktreeRepositoryIdentityInput,
   projectRegistry: Pick<ProjectRegistry, "get" | "list">,
 ): Promise<ResolvedWorktreeRepository> {
-  const project = input.projectId ? await projectRegistry.get(input.projectId) : null;
-  if (input.projectId && (!project || project.archivedAt)) {
+  const project = input.projectId !== undefined ? await projectRegistry.get(input.projectId) : null;
+  if (input.projectId !== undefined && (!project || project.archivedAt)) {
     throw new Error(`Project not found: ${input.projectId}`);
   }
 
@@ -60,7 +79,7 @@ async function resolveRegisteredWorktreeRepositoryIdentity(
     if (!repoRoot) {
       throw new Error(`Project root is unavailable: ${project.rootPath}`);
     }
-    if (input.repoRoot) {
+    if (input.repoRoot !== undefined) {
       const requestedRoot = canonicalizeExistingRoot(input.repoRoot);
       if (!requestedRoot || requestedRoot !== repoRoot) {
         throw new Error("projectId and repoRoot do not identify the same project");

@@ -221,6 +221,34 @@ test("archiving a workspace removes it from every subscribed client", async () =
   }
 });
 
+test("direct worktree creation rejects empty repository selectors before cwd fallback", async () => {
+  const repoDir = createGitRepo();
+  await createLocalWorkspace(repoDir, "repository owner");
+
+  const emptyRepoRoot = await ctx.client.createPaseoWorktree({
+    cwd: repoDir,
+    repoRoot: "",
+    worktreeSlug: "empty-repo-root",
+  });
+  const emptyProjectId = await ctx.client.createPaseoWorktree({
+    cwd: repoDir,
+    projectId: "",
+    worktreeSlug: "empty-project-id",
+  });
+  const emptyCwd = await ctx.client.createPaseoWorktree({
+    cwd: "",
+    worktreeSlug: "empty-cwd",
+  });
+
+  expect(emptyRepoRoot).toMatchObject({ workspace: null, error: "repoRoot cannot be empty" });
+  expect(emptyProjectId).toMatchObject({ workspace: null, error: "projectId cannot be empty" });
+  expect(emptyCwd).toMatchObject({ workspace: null, error: "cwd cannot be empty" });
+  await expect(ctx.client.getPaseoWorktreeList({ repoRoot: repoDir })).resolves.toMatchObject({
+    worktrees: [],
+    error: null,
+  });
+});
+
 test("renaming a workspace updates every subscribed client", async () => {
   const cwd = makeTempDir("workspace-rename-global-");
   const workspaceId = await createLocalWorkspace(cwd, "shared workspace");
@@ -353,6 +381,36 @@ test("worktree archive targets the explicit workspaceId when a directory backs m
     repoRoot: repoDir,
     workspaceId: worktreeWorkspace.id,
   });
+}, 60000);
+
+test("explicit workspace archive runs lifecycle cleanup when its active backing path is missing", async () => {
+  const repoDir = createGitRepo();
+  const worktreeResult = await ctx.client.createWorkspace({
+    source: {
+      kind: "worktree",
+      cwd: repoDir,
+      worktreeSlug: "active-missing-backing",
+      baseBranch: "main",
+    },
+  });
+  const workspace = worktreeResult.workspace;
+  if (!workspace?.workspaceDirectory) {
+    throw new Error(worktreeResult.error ?? "Failed to create worktree workspace");
+  }
+
+  rmSync(workspace.workspaceDirectory, { recursive: true, force: true });
+  const archive = await ctx.client.archivePaseoWorktree({
+    workspaceId: workspace.id,
+    scope: "workspace",
+  });
+
+  expect(archive).toMatchObject({ success: true, error: null });
+  await expect
+    .poll(async () => (await activeWorkspaceIds()).has(workspace.id), {
+      timeout: 10000,
+      interval: 100,
+    })
+    .toBe(false);
 }, 60000);
 
 test("keeps the worktree on disk when a sibling workspace still references it", async () => {

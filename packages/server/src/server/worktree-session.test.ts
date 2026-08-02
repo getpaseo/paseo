@@ -2185,6 +2185,86 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
     ).toMatchObject({ payload: { success: true, error: null } });
   });
 
+  test("runs lifecycle archive for an active explicit workspace whose backing path is missing", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+    const workspaceId = "ws-active-missing-placement";
+    const missingWorkspacePath = path.join(tempDir, "removed-active-workspace");
+    const persistedWorkspace = createPersistedWorkspaceRecord({
+      workspaceId,
+      projectId: "prj-worktree-test",
+      cwd: missingWorkspacePath,
+      kind: "local_checkout",
+      displayName: "removed active workspace",
+      mainRepoRoot: repoDir,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const activeWorkspaces = [
+      {
+        workspaceId,
+        cwd: missingWorkspacePath,
+        kind: "local_checkout" as const,
+        worktreeRoot: null,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: repoDir,
+      },
+    ];
+    const emitted: SessionOutboundMessage[] = [];
+    const agentReads = vi.fn(() => []);
+    const archivedWorkspaceRecords: string[] = [];
+    const archiveWorkspaceRecord = vi.fn(
+      createArchiveWorkspaceRecordMutator(activeWorkspaces, archivedWorkspaceRecords),
+    );
+    const listWorktrees = vi.fn(async () => {
+      throw new Error("active workspaceId must not use legacy Git owner inference");
+    });
+
+    await handlePaseoWorktreeArchiveRequest(
+      {
+        paseoHome: path.join(tempDir, ".paseo"),
+        github: createGitHubServiceStub(),
+        workspaceGitService: {
+          getSnapshot: vi.fn(async () => null),
+          invalidateWorktreeList: vi.fn(),
+          listWorktrees,
+        },
+        projectRegistry: createProjectRegistryForRoot(repoDir),
+        workspaceRegistry: createWorkspaceRegistryForRecords([persistedWorkspace]),
+        agentManager: {
+          listAgents: agentReads,
+          archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
+          archiveSnapshot: vi.fn(async () => ({})),
+        },
+        agentStorage: createAgentStorageStub(),
+        findWorkspaceIdForCwd: vi.fn(async () => null),
+        listActiveWorkspaces: vi.fn(async () => activeWorkspaces),
+        archiveWorkspaceRecord,
+        emit: (message) => emitted.push(message),
+        emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => {}),
+        markWorkspaceArchiving: vi.fn(),
+        clearWorkspaceArchiving: vi.fn(),
+        killTerminalsForWorkspace: vi.fn(async () => {}),
+        sessionLogger: createLogger(),
+      },
+      {
+        type: "paseo_worktree_archive_request",
+        requestId: "req-active-missing-placement",
+        workspaceId,
+        scope: "workspace",
+      },
+    );
+
+    expect(agentReads).toHaveBeenCalledTimes(1);
+    expect(archiveWorkspaceRecord).toHaveBeenCalledWith(workspaceId);
+    expect(activeWorkspaces).toEqual([]);
+    expect(archivedWorkspaceRecords).toEqual([workspaceId]);
+    expect(listWorktrees).not.toHaveBeenCalled();
+    expect(
+      emitted.find((message) => message.type === "paseo_worktree_archive_response"),
+    ).toMatchObject({ payload: { success: true, error: null } });
+  });
+
   test("retries cleanup after Git forgets an archived Paseo worktree", async () => {
     const { tempDir, repoDir } = createGitRepo({
       paseoConfig: {

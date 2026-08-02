@@ -67,6 +67,41 @@ describe("resolveWorktreeRepositoryIdentity", () => {
     ).resolves.toMatchObject({ projectId: "prj_repo", repoRoot: realpathSync.native(repoRoot) });
   });
 
+  test("rejects every present empty selector before legacy fallback", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "worktree-repository-identity-"));
+    cleanupPaths.push(tempDir);
+    const repoRoot = join(tempDir, "repo");
+    mkdirSync(repoRoot);
+    const projects = createProjectRegistry(repoRoot);
+    const listWorktrees = vi.fn(async () => []);
+    const legacyDependencies = {
+      workspaceRegistry: { list: async () => [] },
+      workspaceGitService: { listWorktrees },
+    };
+
+    await expect(
+      resolveWorktreeRepositoryIdentity(
+        { projectId: "", cwd: repoRoot },
+        projects,
+        legacyDependencies,
+      ),
+    ).rejects.toThrow("projectId cannot be empty");
+    await expect(
+      resolveWorktreeRepositoryIdentity(
+        { repoRoot: "", cwd: repoRoot },
+        projects,
+        legacyDependencies,
+      ),
+    ).rejects.toThrow("repoRoot cannot be empty");
+    await expect(
+      resolveWorktreeRepositoryIdentity({ cwd: "" }, projects, legacyDependencies),
+    ).rejects.toThrow("cwd cannot be empty");
+    await expect(
+      resolveWorktreeRepositoryIdentity({ worktreePath: "" }, projects, legacyDependencies),
+    ).rejects.toThrow("worktreePath cannot be empty");
+    expect(listWorktrees).not.toHaveBeenCalled();
+  });
+
   test("rejects missing, unregistered, traversing, and symlink-escape roots", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "worktree-repository-identity-"));
     cleanupPaths.push(tempDir);

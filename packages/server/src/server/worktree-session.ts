@@ -54,6 +54,7 @@ import {
   listPaseoWorktreesCommand,
 } from "./worktree/commands.js";
 import {
+  assertNonEmptyWorktreeRepositorySelectors,
   canonicalizeExistingRoot,
   resolveWorktreeRepositoryIdentity,
 } from "./worktree-repository-identity.js";
@@ -509,6 +510,7 @@ export async function handlePaseoWorktreeArchiveRequest(
   const { requestId } = msg;
 
   try {
+    assertNonEmptyWorktreeRepositorySelectors(msg);
     const explicitWorkspacePlacement = msg.workspaceId
       ? await resolveExplicitWorkspaceArchivePlacement(msg, dependencies.workspaceRegistry)
       : null;
@@ -516,14 +518,14 @@ export async function handlePaseoWorktreeArchiveRequest(
       !msg.workspaceId && (msg.projectId || msg.repoRoot)
         ? await resolveWorktreeRepositoryIdentity(msg, dependencies.projectRegistry)
         : null;
-    const retryPlacement =
-      explicitWorkspacePlacement ??
-      (await resolvePersistedArchiveRetryPlacement(
-        msg,
-        dependencies.workspaceRegistry,
-        explicitlySelectedRepository?.projectId,
-      ));
-    if (retryPlacement && !existsSync(retryPlacement.worktreePath)) {
+    const archivedRetryPlacement = await resolveArchivedRetryPlacement({
+      msg,
+      workspaceRegistry: dependencies.workspaceRegistry,
+      explicitWorkspacePlacement,
+      selectedProjectId: explicitlySelectedRepository?.projectId,
+    });
+    const selectedPlacement = explicitWorkspacePlacement ?? archivedRetryPlacement;
+    if (archivedRetryPlacement && !existsSync(archivedRetryPlacement.worktreePath)) {
       dependencies.emit({
         type: "paseo_worktree_archive_response",
         payload: {
@@ -545,10 +547,10 @@ export async function handlePaseoWorktreeArchiveRequest(
         )
       : (explicitlySelectedRepository ??
         (await resolveWorktreeRepositoryIdentity(
-          retryPlacement
+          archivedRetryPlacement
             ? {
-                projectId: retryPlacement.projectId,
-                repoRoot: retryPlacement.mainRepoRoot ?? undefined,
+                projectId: archivedRetryPlacement.projectId,
+                repoRoot: archivedRetryPlacement.mainRepoRoot ?? undefined,
               }
             : msg,
           dependencies.projectRegistry,
@@ -558,7 +560,7 @@ export async function handlePaseoWorktreeArchiveRequest(
           },
         )));
     const worktreePath =
-      retryPlacement?.worktreePath ??
+      selectedPlacement?.worktreePath ??
       (await resolveRepositoryWorktreePath(
         dependencies.workspaceGitService,
         repository.repoRoot,
@@ -580,10 +582,10 @@ export async function handlePaseoWorktreeArchiveRequest(
       workspaceId: msg.workspaceId,
       scope: msg.scope,
       cleanup:
-        retryPlacement?.archiveCleanupPhase === "ready_to_delete"
+        archivedRetryPlacement?.archiveCleanupPhase === "ready_to_delete"
           ? {
               state: "ready_to_delete",
-              workspaceIds: retryPlacement.workspaceIds,
+              workspaceIds: archivedRetryPlacement.workspaceIds,
             }
           : undefined,
     });
@@ -633,10 +635,33 @@ interface PersistedArchiveRetryPlacement {
   archiveCleanupPhase: "ready_to_delete" | null;
 }
 
+interface ExplicitWorkspaceArchivePlacement extends PersistedArchiveRetryPlacement {
+  archivedAt: string | null;
+}
+
+interface ResolveArchivedRetryPlacementOptions {
+  msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>;
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
+  explicitWorkspacePlacement: ExplicitWorkspaceArchivePlacement | null;
+  selectedProjectId?: string;
+}
+
+async function resolveArchivedRetryPlacement({
+  msg,
+  workspaceRegistry,
+  explicitWorkspacePlacement,
+  selectedProjectId,
+}: ResolveArchivedRetryPlacementOptions): Promise<PersistedArchiveRetryPlacement | null> {
+  if (explicitWorkspacePlacement) {
+    return explicitWorkspacePlacement.archivedAt !== null ? explicitWorkspacePlacement : null;
+  }
+  return resolvePersistedArchiveRetryPlacement(msg, workspaceRegistry, selectedProjectId);
+}
+
 async function resolveExplicitWorkspaceArchivePlacement(
   msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>,
   workspaceRegistry: Pick<WorkspaceRegistry, "list">,
-): Promise<PersistedArchiveRetryPlacement> {
+): Promise<ExplicitWorkspaceArchivePlacement> {
   const workspace = (await workspaceRegistry.list()).find(
     (candidate) => candidate.workspaceId === msg.workspaceId,
   );
@@ -663,6 +688,7 @@ async function resolveExplicitWorkspaceArchivePlacement(
     mainRepoRoot: workspace.mainRepoRoot,
     workspaceIds: [workspace.workspaceId],
     archiveCleanupPhase: workspace.archiveCleanupPhase,
+    archivedAt: workspace.archivedAt,
   };
 }
 
