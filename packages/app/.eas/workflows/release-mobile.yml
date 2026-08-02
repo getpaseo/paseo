@@ -4,14 +4,19 @@ on:
   push:
     tags:
       - "v*-fork.*"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        type: string
+        required: true
+        description: "Fork release tag, e.g. v0.2.5-fork.3"
 
 jobs:
   build_ios:
     name: Build iOS
     type: build
     env:
-      PASEO_RELEASE_TAG: ${{ github.ref_name }}
+      PASEO_RELEASE_TAG: ${{ github.ref_name || inputs.release_tag }}
     params:
       platform: ios
       profile: production
