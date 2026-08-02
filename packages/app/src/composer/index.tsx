@@ -112,6 +112,7 @@ import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispat
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { submitAgentInput } from "@/composer/submit";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
+import { createUserMessage, generateMessageId } from "@/types/stream";
 import { ComposerKeyboardScopeProvider, useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { useAppSettings } from "@/hooks/use-settings";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -2065,10 +2066,34 @@ function ComposerContentImpl({
     async (id: string) => {
       if (serverQueuesAgentMessages) {
         if (!client || !beginQueuedAction(id, "send")) return;
+        const queued = queuedMessages.find((message) => message.id === id);
+        if (!queued) {
+          settleQueuedAction(id, "send", { kind: "failed" });
+          return;
+        }
+        const wirePayload = splitComposerAttachmentsForSubmit(queued.attachments, {
+          format: resolveComposerAttachmentSubmitFormat({
+            supportsForgeAttachments: supportsForgeSearch,
+          }),
+        });
+        const clientMessageId = generateMessageId();
+        const submission = createMessageSubmissionWriter(serverId);
+        submission.begin(
+          agentId,
+          createUserMessage({
+            clientMessageId,
+            text: queued.text,
+            timestamp: new Date(),
+            images: wirePayload.images,
+            attachments: wirePayload.attachments,
+          }),
+        );
         try {
           await client.dispatchQueuedAgentMessage(agentId, id);
+          submission.accept(agentId, clientMessageId);
           settleQueuedAction(id, "send", { kind: "sent" });
         } catch (error) {
+          submission.reject(agentId, clientMessageId);
           settleQueuedAction(id, "send", { kind: "failed" });
           setSendError(error instanceof Error ? error.message : t("composer.errors.failedToSend"));
         }
@@ -2105,11 +2130,14 @@ function ComposerContentImpl({
       agentId,
       beginQueuedAction,
       client,
+      queuedMessages,
       queueWriter,
+      serverId,
       serverQueuesAgentMessages,
       setSendError,
       settleQueuedAction,
       submitMessage,
+      supportsForgeSearch,
       t,
     ],
   );
