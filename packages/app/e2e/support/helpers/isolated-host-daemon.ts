@@ -152,6 +152,10 @@ export async function startIsolatedHostDaemon(
       cwd: serverDir,
       env: withDisabledE2ESpeechEnv({
         ...process.env,
+        // Purpose summaries spawn internal generation agents against the mock
+        // provider, whose models stream for minutes and starve timing-sensitive
+        // specs. Tests that cover summaries opt back in via options.environment.
+        PASEO_AGENT_PURPOSE_SUMMARIES: "0",
         ...options.environment,
         PASEO_HOME: paseoHome,
         PASEO_SERVER_ID: serverId,
