@@ -66,12 +66,23 @@ const LiveVoiceRuntimeContext = createContext<LiveVoiceRuntime | null>(null);
 const noopSubscribe = () => () => {};
 const getEmptySnapshot = () => EMPTY_SNAPSHOT;
 
-function asLiveVoiceDaemonClient(client: DaemonClient): LiveVoiceDaemonClient {
+function asLiveVoiceDaemonClient(
+  client: DaemonClient,
+  supportsVoiceCatalog: boolean,
+): LiveVoiceDaemonClient {
   return {
     startLiveVoice: (input) => client.startLiveVoice(input),
     stopLiveVoice: (input) => client.stopLiveVoice(input),
+    ...(supportsVoiceCatalog ? { listLiveVoiceVoices: () => client.listLiveVoiceVoices() } : {}),
     subscribeUpdates: (handler) => client.on("voice.live.update", handler),
   };
+}
+
+function hostSupportsVoiceCatalog(serverId: string): boolean {
+  return (
+    useSessionStore.getState().sessions[serverId]?.serverInfo?.features?.liveVoiceVoiceCatalog ===
+    true
+  );
 }
 
 export function useLiveVoiceOptional(): LiveVoiceContextValue | null {
@@ -115,7 +126,9 @@ export function LiveVoiceProvider({ children }: LiveVoiceProviderProps) {
           // Read through the store on demand: the client is replaced on reconnect,
           // and the runtime should always negotiate over the current one.
           const client = useSessionStore.getState().sessions[serverId]?.client ?? null;
-          return client ? asLiveVoiceDaemonClient(client) : null;
+          return client
+            ? asLiveVoiceDaemonClient(client, hostSupportsVoiceCatalog(serverId))
+            : null;
         },
         (serverId) => {
           const pin = getHostRuntimeStore().pinActiveConnection(serverId);
@@ -123,7 +136,7 @@ export function LiveVoiceProvider({ children }: LiveVoiceProviderProps) {
             return null;
           }
           return {
-            client: asLiveVoiceDaemonClient(pin.client),
+            client: asLiveVoiceDaemonClient(pin.client, hostSupportsVoiceCatalog(serverId)),
             release: pin.release,
           };
         },

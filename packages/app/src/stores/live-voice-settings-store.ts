@@ -10,24 +10,9 @@ import { createJSONStorage, persist } from "zustand/middleware";
  */
 export const MAX_AMBIENT_AGENT_GUIDANCE_LENGTH = 600;
 
-export const LIVE_VOICE_OPTIONS = [
-  "alloy",
-  "ash",
-  "ballad",
-  "coral",
-  "echo",
-  "sage",
-  "shimmer",
-  "verse",
-  "marin",
-  "cedar",
-] as const;
-
-export type LiveVoiceVoice = (typeof LIVE_VOICE_OPTIONS)[number];
-
 interface LiveVoiceSettingsState {
-  /** The OpenAI Realtime voice to use for new calls; null leaves selection to the provider. */
-  voice: LiveVoiceVoice | null;
+  /** The Codex realtime voice to use for new calls; null leaves selection to the provider. */
+  voice: string | null;
   /**
    * Report agent sessions the call did not start — anything finishing, failing,
    * or asking for permission on any connected host.
@@ -35,7 +20,7 @@ interface LiveVoiceSettingsState {
   ambientAgentReports: boolean;
   /** Free text handed to the model verbatim; empty means no standing instruction. */
   ambientAgentGuidance: string;
-  setVoice: (voice: LiveVoiceVoice | null) => void;
+  setVoice: (voice: string | null) => void;
   setAmbientAgentReports: (enabled: boolean) => void;
   setAmbientAgentGuidance: (guidance: string) => void;
 }
@@ -60,9 +45,9 @@ export const useLiveVoiceSettingsStore = create<LiveVoiceSettingsState>()(
   ),
 );
 
-export function getLiveVoiceVoice(): LiveVoiceVoice | undefined {
+export function getLiveVoiceVoice(): string | undefined {
   const voice = useLiveVoiceSettingsStore.getState().voice;
-  return voice && LIVE_VOICE_OPTIONS.includes(voice) ? voice : undefined;
+  return voice?.trim() || undefined;
 }
 
 /**

@@ -34,10 +34,12 @@ import {
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
   type ListImportableSessionsOptions,
+  type LiveVoiceVoiceCatalog,
   type ProviderCatalog,
   type ProviderRefreshContext,
   type ResolveAgentDefaultModeInput,
 } from "../agent-sdk-types.js";
+import { FALLBACK_LIVE_VOICE_OPTIONS } from "@getpaseo/protocol/live-voice-voices";
 import type {
   AgentRealtimeVoiceAppendTextParams,
   AgentRealtimeVoiceEvent,
@@ -920,6 +922,12 @@ const CodexModelListResponseSchema = z.object({
       }),
     )
     .optional(),
+});
+
+const CodexRealtimeVoiceListResponseSchema = z.object({
+  voices: z.object({
+    v1: z.array(z.string()).min(1),
+  }),
 });
 
 function filterCodexThreadsByCwd(
@@ -7186,6 +7194,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   private goalsEnabledPromise: Promise<boolean> | null = null;
   private autoReviewEnabledPromise: Promise<boolean> | null = null;
   private liveVoiceEnabledPromise: Promise<boolean> | null = null;
+  private liveVoiceVoicesPromise: Promise<LiveVoiceVoiceCatalog> | null = null;
 
   constructor(
     private readonly logger: Logger,
@@ -7471,6 +7480,40 @@ export class CodexAppServerAgentClient implements AgentClient {
         ? CODEX_MODES
         : CODEX_MODES.filter((mode) => mode.id !== "auto-review"),
     };
+  }
+
+  async listLiveVoiceVoices(): Promise<LiveVoiceVoiceCatalog> {
+    if (!this.liveVoiceVoicesPromise) {
+      this.liveVoiceVoicesPromise = this.fetchLiveVoiceVoices().catch((error) => {
+        this.logger.warn(
+          { err: error },
+          "Failed to read Live Voice choices from Codex; using the fallback catalog",
+        );
+        return { voices: [...FALLBACK_LIVE_VOICE_OPTIONS] };
+      });
+    }
+    return await this.liveVoiceVoicesPromise;
+  }
+
+  private async fetchLiveVoiceVoices(): Promise<LiveVoiceVoiceCatalog> {
+    if (!(await this.resolveLiveVoiceEnabled())) {
+      return { voices: [...FALLBACK_LIVE_VOICE_OPTIONS] };
+    }
+
+    const child = await this.spawnAppServer(undefined, { liveVoiceEnabled: true });
+    const client = new CodexAppServerClient(child, this.logger);
+    try {
+      await client.request("initialize", buildCodexAppServerInitializeParams());
+      client.notify("initialized", {});
+      const response = CodexRealtimeVoiceListResponseSchema.parse(
+        await client.request("thread/realtime/listVoices", {}),
+      );
+      // Codex realtime v3 uses the app-server catalog's v1 voice family. The
+      // v2 family contains the legacy Realtime names that v3 rejects.
+      return { voices: Array.from(new Set(response.voices.v1)) };
+    } finally {
+      await client.dispose();
+    }
   }
 
   async resolveDefaultModeId(input: ResolveAgentDefaultModeInput): Promise<string> {

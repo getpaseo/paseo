@@ -3550,6 +3550,19 @@ export class DaemonClient {
     };
   }
 
+  /** Read the Live Voice choices from the Codex version installed on this host. */
+  async listLiveVoiceVoices(input: { requestId?: string } = {}): Promise<string[]> {
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"voice.live.voices.response">(
+      {
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+        message: {
+          type: "voice.live.voices.request",
+        },
+      },
+    );
+    return payload.voices;
+  }
+
   /** Close a Live Voice call. Idempotent on the daemon side. */
   async stopLiveVoice(input: { liveSessionId: string; requestId?: string }): Promise<void> {
     await this.sendNamespacedCorrelatedSessionRequest<"voice.live.stop.response">({

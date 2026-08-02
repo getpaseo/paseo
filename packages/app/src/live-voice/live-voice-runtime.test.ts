@@ -167,13 +167,23 @@ describe("live voice runtime", () => {
   });
 
   it("applies the selected voice when starting a new call", async () => {
-    harness = createHarness({ voice: "cedar" });
+    harness = createHarness({ voice: "juniper" });
 
     await harness.runtime.start(SERVER_ID);
 
     expect(harness.client.startLiveVoice).toHaveBeenCalledWith({
       offerSdp: OFFER_SDP,
-      voice: "cedar",
+      voice: "juniper",
+    });
+  });
+
+  it("omits a persisted voice that the target host does not support", async () => {
+    harness = createHarness({ voice: "shimmer" });
+
+    await harness.runtime.start(SERVER_ID);
+
+    expect(harness.client.startLiveVoice).toHaveBeenCalledWith({
+      offerSdp: OFFER_SDP,
     });
   });
 

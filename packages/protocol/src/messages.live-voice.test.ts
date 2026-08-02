@@ -6,6 +6,8 @@ import {
   VoiceLiveStopRequestSchema,
   VoiceLiveStopResponseSchema,
   VoiceLiveUpdateSchema,
+  VoiceLiveVoicesRequestSchema,
+  VoiceLiveVoicesResponseSchema,
 } from "./messages.js";
 
 describe("live voice messages", () => {
@@ -17,6 +19,7 @@ describe("live voice messages", () => {
     });
 
     expect(oldServer.features?.liveVoice).toBeUndefined();
+    expect(oldServer.features?.liveVoiceVoiceCatalog).toBeUndefined();
     expect(oldServer.features?.agentPaseoTools).toBeUndefined();
     expect(
       ServerInfoStatusPayloadSchema.parse({
@@ -97,6 +100,24 @@ describe("live voice messages", () => {
         payload: { requestId: "request-2" },
       }).payload.requestId,
     ).toBe("request-2");
+  });
+
+  test("parses the host-provided voice catalog", () => {
+    expect(
+      VoiceLiveVoicesRequestSchema.parse({
+        type: "voice.live.voices.request",
+        requestId: "request-3",
+      }).requestId,
+    ).toBe("request-3");
+    expect(
+      VoiceLiveVoicesResponseSchema.parse({
+        type: "voice.live.voices.response",
+        payload: {
+          requestId: "request-3",
+          voices: ["cove", "a-future-voice"],
+        },
+      }).payload.voices,
+    ).toEqual(["cove", "a-future-voice"]);
   });
 
   test("parses every update event kind", () => {

@@ -29,6 +29,7 @@ import {
   type LiveVoiceSessionMode,
   type StartLiveVoiceSessionOptions,
 } from "@/live-voice/live-voice-session";
+import { resolveLiveVoiceVoiceForCall } from "@/live-voice/live-voice-voice-catalog";
 
 type VoiceLiveUpdateMessage = Extract<SessionOutboundMessage, { type: "voice.live.update" }>;
 
@@ -83,6 +84,7 @@ export interface LiveVoiceDaemonClient {
     ambientAgentGuidance?: string;
   }): Promise<{ liveSessionId: string; answerSdp: string }>;
   stopLiveVoice(input: { liveSessionId: string }): Promise<void>;
+  listLiveVoiceVoices?(): Promise<string[]>;
   subscribeUpdates(handler: (message: VoiceLiveUpdateMessage) => void): () => void;
 }
 
@@ -139,6 +141,25 @@ export interface LiveVoiceRuntime {
    */
   handleConnectionLost(serverId: string): void;
   destroy(): Promise<void>;
+}
+
+async function resolveSelectedLiveVoice(
+  selectedVoice: string | undefined,
+  client: LiveVoiceDaemonClient,
+): Promise<string | undefined> {
+  const listVoices = client.listLiveVoiceVoices?.bind(client);
+  return await resolveLiveVoiceVoiceForCall({
+    selectedVoice,
+    ...(listVoices ? { listVoices } : {}),
+  });
+}
+
+function resolveLiveVoiceClient(
+  deps: LiveVoiceRuntimeDeps,
+  serverId: string,
+  pin: LiveVoiceConnectionPin | null,
+): LiveVoiceDaemonClient | null {
+  return deps.pinConnection ? (pin?.client ?? null) : deps.getClient(serverId);
 }
 
 /** Thrown by `start`. Mirrors the snapshot's `error` so callers can toast it. */
@@ -431,7 +452,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       // When pinning is available, never silently fall back to an unpinned
       // client: a probe-driven transport swap would orphan the daemon-owned
       // call immediately after negotiation.
-      const client = deps.pinConnection ? (pin?.client ?? null) : deps.getClient(serverId);
+      const client = resolveLiveVoiceClient(deps, serverId, pin);
       if (!client) {
         failStart(serverId, sessionMode, { code: "not_connected", message: null });
       }
@@ -466,7 +487,10 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       // Read once, before negotiating: the prompt the model gets is fixed at
       // start, so a switch flipped mid-call must not leave the two disagreeing.
       const ambientStartFields = toAmbientStartFields(deps.ambientAgentReports?.read());
-      const voice = deps.voice?.read();
+      const voice = await resolveSelectedLiveVoice(deps.voice?.read(), client);
+      if (generation !== startGeneration) {
+        return;
+      }
 
       const sessionOptions: StartLiveVoiceSessionOptions = {
         mode: sessionMode,

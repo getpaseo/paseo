@@ -2342,6 +2342,8 @@ export class Session {
       case "voice.live.stop.request":
         this.handleLiveVoiceStopRequest(msg, source);
         return undefined;
+      case "voice.live.voices.request":
+        return this.handleLiveVoiceVoicesRequest(msg, source);
       case "voice.live.route.response":
         this.liveVoiceRouteBroker?.receiveResponse(msg, this);
         return undefined;
@@ -2355,6 +2357,20 @@ export class Session {
       default:
         return undefined;
     }
+  }
+
+  private async handleLiveVoiceVoicesRequest(
+    msg: Extract<SessionInboundMessage, { type: "voice.live.voices.request" }>,
+    source?: object,
+  ): Promise<void> {
+    const catalog = await this.agentManager.listLiveVoiceVoices();
+    this.emitForSource(
+      {
+        type: "voice.live.voices.response",
+        payload: { requestId: msg.requestId, voices: catalog.voices },
+      },
+      source,
+    );
   }
 
   /**
@@ -2421,13 +2437,15 @@ export class Session {
       CLIENT_CAPS.liveVoiceCrossHostRouter,
       capabilitySourceKey,
     );
+    const voiceCatalog = msg.voice ? await this.agentManager.listLiveVoiceVoices() : null;
+    const voice = voiceCatalog?.voices.includes(msg.voice ?? "") ? msg.voice : undefined;
     // The reconnectable client session owns the call. Android may suspend the
     // control socket while its native WebRTC media path and foreground service
     // remain healthy, so updates and routed requests follow the session across
     // socket replacement.
     const result = await coordinator.start({
       offerSdp: msg.offerSdp,
-      ...(msg.voice ? { voice: msg.voice } : {}),
+      ...(voice ? { voice } : {}),
       owner: { sessionKey: this },
       emit: (update) => {
         this.emit({ type: "voice.live.update", payload: update });

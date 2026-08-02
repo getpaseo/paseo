@@ -88,6 +88,26 @@ async function createConnectedClient() {
 }
 
 describe("DaemonClient Live Voice cross-host routing", () => {
+  test("reads the installed host's Live Voice catalog", async () => {
+    const { client, harness } = await createConnectedClient();
+
+    const resultPromise = client.listLiveVoiceVoices({ requestId: "voices-1" });
+    expect(parseSentMessage(harness.sent[0])).toEqual({
+      type: "voice.live.voices.request",
+      requestId: "voices-1",
+    });
+
+    harness.receive({
+      type: "voice.live.voices.response",
+      payload: {
+        requestId: "voices-1",
+        voices: ["cove", "juniper"],
+      },
+    });
+
+    await expect(resultPromise).resolves.toEqual(["cove", "juniper"]);
+  });
+
   test("executes a tool through the correlated target-host RPC", async () => {
     const { client, harness } = await createConnectedClient();
 

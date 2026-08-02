@@ -746,6 +746,63 @@ describe("workspace label editing", () => {
 });
 
 describe("Live Voice routing session boundary", () => {
+  test("returns the host's upstream Live Voice catalog", async () => {
+    const source = {};
+    const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+    const session = createSessionForTest({
+      targetedMessages,
+      agentManager: {
+        listLiveVoiceVoices: vi.fn().mockResolvedValue({ voices: ["cove", "future-voice"] }),
+      },
+    });
+
+    await session.handleMessage(
+      { type: "voice.live.voices.request", requestId: "voices-request-1" },
+      source,
+    );
+
+    expect(targetedMessages).toEqual([
+      {
+        source,
+        message: {
+          type: "voice.live.voices.response",
+          payload: {
+            requestId: "voices-request-1",
+            voices: ["cove", "future-voice"],
+          },
+        },
+      },
+    ]);
+  });
+
+  test("drops a selected voice that the installed Codex catalog rejects", async () => {
+    const source = {};
+    const start = vi.fn().mockResolvedValue({
+      accepted: true,
+      liveSessionId: "live-session-1",
+      answerSdp: "answer-sdp",
+    });
+    const session = createSessionForTest({
+      agentManager: {
+        listLiveVoiceVoices: vi.fn().mockResolvedValue({ voices: ["cove", "juniper"] }),
+      },
+      liveVoiceCoordinator: { start } as unknown as LiveVoiceCoordinator,
+    });
+
+    await session.handleMessage(
+      {
+        type: "voice.live.start.request",
+        requestId: "start-request-1",
+        offerSdp: "offer-sdp",
+        voice: "shimmer",
+      },
+      source,
+    );
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(start.mock.calls[0]?.[0]).not.toHaveProperty("voice");
+  });
+
   test("a legacy owner starts local-only Live Voice without receiving route messages", async () => {
     const source = {};
     const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];

@@ -1810,6 +1810,8 @@ export class VoiceAssistantWebSocketServer {
         stableProjectIdentity: true,
         // COMPAT(liveVoice): added in v0.2.5, remove after 2027-01-30.
         liveVoice: true,
+        // COMPAT(liveVoiceVoiceCatalog): added in v0.2.6, remove after 2027-02-28.
+        liveVoiceVoiceCatalog: true,
         // COMPAT(agentPaseoTools): added in v0.2.6, remove after 2027-02-28.
         agentPaseoTools: this.agentManager.hasPaseoMcpInjection(),
         // COMPAT(liveVoiceToolExecution): added in v0.2.5, remove after 2027-01-30.

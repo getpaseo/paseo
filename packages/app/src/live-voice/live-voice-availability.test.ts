@@ -11,6 +11,7 @@ function host(overrides: Partial<LiveVoiceHostAvailability> = {}): LiveVoiceHost
     connectionStatus: "online",
     version: "0.2.5",
     supportsLiveVoice: true,
+    supportsVoiceCatalog: false,
     paseoToolsEnabled: true,
     ...overrides,
   };

@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 import type { AgentSession, AgentSessionConfig } from "../agent-sdk-types.js";
 import { asAgentRealtimeVoiceSession } from "../agent-realtime-voice.js";
 import type { AgentRealtimeVoiceEvent } from "../agent-realtime-voice.js";
-import { CodexAppServerAgentSession } from "./codex-app-server-agent.js";
+import { CodexAppServerAgentClient, CodexAppServerAgentSession } from "./codex-app-server-agent.js";
+import { createFakeCodexAppServer } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 
 const THREAD_ID = "thread-live-voice";
@@ -26,6 +28,19 @@ function createConfig(): AgentSessionConfig {
     modeId: "auto",
     model: "gpt-5.4",
   };
+}
+
+function createClientWithFakeAppServer(
+  appServer: ReturnType<typeof createFakeCodexAppServer>,
+): CodexAppServerAgentClient {
+  const client = new CodexAppServerAgentClient(createTestLogger());
+  const internals = client as unknown as {
+    liveVoiceEnabledPromise: Promise<boolean> | null;
+    spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>;
+  };
+  internals.liveVoiceEnabledPromise = Promise.resolve(true);
+  internals.spawnAppServer = async () => appServer.child;
+  return client;
 }
 
 function createSession(liveVoiceEnabled: boolean): {
@@ -68,6 +83,25 @@ function realtimeRequests(
 }
 
 describe("codex live voice", () => {
+  test("reads v3 voice choices from the upstream app-server catalog", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/realtime/listVoices": () => ({
+        voices: {
+          v1: ["cove", "juniper", "future-voice"],
+          v2: ["alloy", "shimmer"],
+          defaultV1: "cove",
+          defaultV2: "alloy",
+        },
+      }),
+    });
+    const client = createClientWithFakeAppServer(appServer);
+
+    await expect(client.listLiveVoiceVoices()).resolves.toEqual({
+      voices: ["cove", "juniper", "future-voice"],
+    });
+    appServer.assertNoErrors();
+  });
+
   test("advertises supportsLiveVoice only when the realtime flag was passed", () => {
     expect(createSession(true).session.capabilities.supportsLiveVoice).toBe(true);
     expect(createSession(false).session.capabilities.supportsLiveVoice).toBe(false);

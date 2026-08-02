@@ -6,6 +6,7 @@ export interface LiveVoiceHostAvailability {
   connectionStatus: HostRuntimeConnectionStatus;
   version: string | null;
   supportsLiveVoice: boolean | null;
+  supportsVoiceCatalog: boolean;
   /** Missing on older compatible daemons, which the policy continues to admit. */
   paseoToolsEnabled: boolean | null;
 }
