@@ -99,6 +99,7 @@ export function useOpenAgentListGesture(enabled: boolean) {
           const panIntent = getHorizontalPanIntent(deltaX, deltaY, 1);
           if (
             !canBeginMobilePanelGesture(motionState.value, "agent", position.value) ||
+            horizontalScroll?.isGestureSuppressed.value ||
             horizontalScroll?.isAnyScrolledRight.value ||
             (isWeb && touchStartX.value > MOBILE_WEB_EDGE_SWIPE_WIDTH) ||
             panIntent === PAN_INTENT_FAIL
@@ -132,6 +133,7 @@ export function useOpenAgentListGesture(enabled: boolean) {
       enabled,
       beginGesture,
       finishGesture,
+      horizontalScroll?.isGestureSuppressed,
       horizontalScroll?.isAnyScrolledRight,
       leftOpenGestureRef,
       motionState,
@@ -249,6 +251,7 @@ export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorer
     updateGesture,
     windowWidth,
   } = useMobilePanelsRuntime();
+  const horizontalScroll = useHorizontalScrollOptional();
   const { startedRevision, touchStartX, touchStartY } = useGestureState();
   const commit = useRevisionCommit(onOpen);
 
@@ -281,6 +284,7 @@ export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorer
           const panIntent = getHorizontalPanIntent(deltaX, deltaY, -1);
           if (
             !canBeginMobilePanelGesture(motionState.value, "agent", position.value) ||
+            horizontalScroll?.isGestureSuppressed.value ||
             (isWeb && touchStartX.value < windowWidth - MOBILE_WEB_EDGE_SWIPE_WIDTH) ||
             panIntent === PAN_INTENT_FAIL
           ) {
@@ -316,6 +320,7 @@ export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorer
       commit,
       enabled,
       finishGesture,
+      horizontalScroll?.isGestureSuppressed,
       leftOpenGestureRef,
       motionState,
       position,
@@ -419,4 +424,9 @@ export function useCloseFileExplorerGesture() {
 
 export function useFileExplorerCloseGestureRef() {
   return useMobilePanelsRuntime().rightCloseGestureRef;
+}
+
+export function useMobilePanelOpenGestureRefs() {
+  const { leftOpenGestureRef, rightOpenGestureRef } = useMobilePanelsRuntime();
+  return { leftOpenGestureRef, rightOpenGestureRef };
 }

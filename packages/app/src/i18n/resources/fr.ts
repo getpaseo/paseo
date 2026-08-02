@@ -279,6 +279,16 @@ export const fr: TranslationResources = {
       openFile: "Ouvrir le fichier",
       copied: "Copié",
     },
+    mermaid: {
+      title: "Diagramme Mermaid",
+      zoomOut: "Dézoomer",
+      zoomIn: "Zoomer",
+      fit: "Ajuster le diagramme",
+      copySource: "Copier la source du diagramme",
+      waiting: "En attente du diagramme...",
+      rendering: "Génération du diagramme...",
+      renderFailed: "Impossible de générer le diagramme",
+    },
     attachments: {
       dismissImage: "Ignorer l'image",
       closeImage: "Fermer l'image",

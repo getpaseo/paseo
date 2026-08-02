@@ -7,7 +7,7 @@
     "start": "npm run start:expo",
     "start:expo": "cross-env APP_VARIANT=development expo start",
     "reset-project": "node ./scripts/reset-project.js",
-    "eas-build-post-install": "npm --prefix ../.. run build:app-deps && npm run build:terminal-webview",
+    "eas-build-post-install": "npm --prefix ../.. run build:app-deps && npm run build:webviews",
     "android": "npm run android:development",
     "android:development": "npm --prefix ../.. run build:client && cross-env APP_VARIANT=development expo prebuild --platform android --non-interactive && cross-env APP_VARIANT=development expo run:android --variant=debug",
     "android:production": "npm --prefix ../.. run build:client && cross-env APP_VARIANT=production expo prebuild --platform android --non-interactive && cross-env APP_VARIANT=production expo run:android --variant=release",
@@ -28,7 +28,9 @@
     "build:web": "npm --prefix ../.. run build:app-deps && expo export --platform web",
     "profile:workspace-tabs": "node ./scripts/profile-workspace-tabs.mjs",
     "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name paseo-app --branch main",
-    "build:terminal-webview": "node ./scripts/build-terminal-webview-html.mjs"
+    "build:terminal-webview": "node ./scripts/build-terminal-webview-html.mjs",
+    "build:mermaid-webview": "node ./scripts/build-mermaid-webview-html.mjs",
+    "build:webviews": "npm run build:terminal-webview && npm run build:mermaid-webview"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.4",
@@ -91,6 +93,7 @@
     "i18next": "^26.3.0",
     "lucide-react-native": "^0.546.0",
     "markdown-it": "^10.0.0",
+    "mermaid": "^11.16.0",
     "mnemonic-id": "^3.2.7",
     "qrcode": "^1.5.4",
     "react": "19.1.0",
