@@ -396,11 +396,30 @@ export class KimiQuotaProvider implements ProviderUsageFetcher {
     );
     try {
       await fs.writeFile(tempPath, JSON.stringify(merged, null, 2), { mode: 0o600 });
+
+      // writeFile above is async I/O that gives the CLI a window to rotate the file on
+      // its own. Re-read right before the rename and confirm nothing changed since the
+      // guard above — the check-then-write gap this closes is what the file-level guard
+      // couldn't cover, since it ran before the write, not right before the replace.
+      const beforeRename = await this.readCredentialFile(filePath);
+      if (!this.credentialsUnchangedSince(existing, beforeRename)) {
+        this.logger.debug("Kimi credentials rotated during refresh; discarding stale merge");
+        await fs.rm(tempPath, { force: true }).catch(() => undefined);
+        return;
+      }
+
       await fs.rename(tempPath, filePath);
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to persist refreshed Kimi credentials");
       await fs.rm(tempPath, { force: true }).catch(() => undefined);
     }
+  }
+
+  private credentialsUnchangedSince(baseline: KimiAuth, candidate: KimiAuth | null): boolean {
+    return (
+      candidate?.access_token === baseline.access_token &&
+      candidate?.refresh_token === baseline.refresh_token
+    );
   }
 
   private async readCredentials(): Promise<KimiCredentialRecord | null> {

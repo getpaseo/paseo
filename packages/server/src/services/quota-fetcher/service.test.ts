@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
+import { promises as fsPromises } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1049,6 +1050,46 @@ describe("real provider usage fetchers", () => {
       access_token: "at_kimi_cli",
       refresh_token: "rt_kimi_cli",
     });
+  });
+
+  it("discards a refreshed Kimi merge if the CLI rotates credentials after the guard but before the rename", async () => {
+    const kimiHome = join(homeDir, ".kimi-code");
+    writeKimiCredentials(kimiHome, "at_kimi_expired");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.kimi.com/coding/v1/usages", () => new Response(null, { status: 401 })],
+        [
+          "https://auth.kimi.com/api/oauth/token",
+          () =>
+            jsonResponse({
+              access_token: "at_kimi_fresh",
+              refresh_token: "rt_kimi_fresh",
+              expires_in: 900,
+            }),
+        ],
+      ]),
+    );
+
+    // The credential-file guard runs, passes, and only then does the CLI rotate the file
+    // — simulated by mutating the file as a side effect of the temp-file write, which is
+    // the async I/O step that sits between the guard read and the final rename.
+    const realWriteFile = fsPromises.writeFile;
+    const writeFileSpy = vi
+      .spyOn(fsPromises, "writeFile")
+      .mockImplementationOnce(async (...args: Parameters<typeof fsPromises.writeFile>) => {
+        writeKimiCredentials(kimiHome, "at_kimi_cli", { refresh_token: "rt_kimi_cli" });
+        return realWriteFile(...args);
+      });
+
+    await service({ kimiHomeDir: homeDir }).listUsage();
+    const persisted = JSON.parse(readFileSync(kimiCredentialPath(kimiHome), "utf8"));
+
+    expect(persisted).toMatchObject({
+      access_token: "at_kimi_cli",
+      refresh_token: "rt_kimi_cli",
+    });
+
+    writeFileSpy.mockRestore();
   });
 
   it("does not recreate a Kimi credential file deleted during the refresh", async () => {
