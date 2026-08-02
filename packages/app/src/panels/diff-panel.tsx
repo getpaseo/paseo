@@ -152,8 +152,8 @@ function WorkingDiffPanel() {
   const toast = useToast();
   const { serverId, workspaceId, tabId, target } = usePaneContext();
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
+  const isConnected = useHostRuntimeIsConnected(serverId);
   const isActive = useRetainedPanelActive();
-  const isConnected = useHostRuntimeIsConnected(serverId, isActive);
   const panelPreferences = useDiffPanelPreferences();
   const [expandedPaths, setExpandedPaths] = useState<string[] | null>(null);
   invariant(target.kind === "working_diff", "WorkingDiffPanel requires working_diff target");
@@ -272,14 +272,13 @@ function CommitDiffPanel() {
   const { t } = useTranslation();
   const { serverId, workspaceId, target } = usePaneContext();
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
-  const isActive = useRetainedPanelActive();
   const panelPreferences = useDiffPanelPreferences();
   invariant(target.kind === "commit_diff", "CommitDiffPanel requires commit_diff target");
   const { files, isLoading, error, capabilityMissing } = useCommitDiffFiles({
     serverId,
     cwd: cwd ?? "",
     sha: target.sha,
-    enabled: isActive && Boolean(cwd),
+    enabled: Boolean(cwd),
   });
   const mode = useMemo(() => ({ kind: "commit" as const }), []);
 

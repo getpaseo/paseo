@@ -32,7 +32,6 @@ interface UseAgentAutocompleteInput {
   setUserInput: (nextValue: string) => void;
   serverId: string;
   agentId: string;
-  active: boolean;
   draftConfig?: DraftCommandConfig;
   onAutocompleteApplied?: () => void;
   onClientSlashCommand?: (command: ClientSlashCommand) => void;
@@ -286,7 +285,6 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     setUserInput,
     serverId,
     agentId,
-    active,
     draftConfig,
     onAutocompleteApplied,
     onClientSlashCommand,
@@ -341,7 +339,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   }, [agentCwd, isDraftContext, queryDraftConfig]);
 
   const client = useHostRuntimeClient(serverId);
-  const isConnected = useHostRuntimeIsConnected(serverId, active);
+  const isConnected = useHostRuntimeIsConnected(serverId);
 
   const mode = resolveAutocompleteMode({ showFileAutocomplete, showCommandAutocomplete });
   const canShowAutocomplete = resolveAutocompleteIsVisible({
@@ -359,7 +357,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   } = useAgentCommandsQuery({
     serverId,
     agentId,
-    enabled: active && mode === "command" && canLoadCommands,
+    enabled: mode === "command" && canLoadCommands,
     draftConfig: queryDraftConfig,
   });
 

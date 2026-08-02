@@ -3,6 +3,7 @@ import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-q
 import { useTranslation } from "react-i18next";
 import type { AgentProvider, ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { useReplicaQuery } from "@/data/query";
@@ -86,7 +87,6 @@ interface UseProvidersSnapshotResult {
 }
 
 interface UseProvidersSnapshotOptions {
-  active?: boolean;
   enabled?: boolean;
   cwd?: string | null;
 }
@@ -96,10 +96,11 @@ export function useProvidersSnapshot(
   options: UseProvidersSnapshotOptions = {},
 ): UseProvidersSnapshotResult {
   const { t } = useTranslation();
+  const retainedPanelActive = useRetainedPanelActive();
   const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId ?? "");
-  const enabled = (options.enabled ?? true) && (options.active ?? true);
-  const isConnected = useHostRuntimeIsConnected(serverId ?? "", enabled);
+  const enabled = (options.enabled ?? true) && retainedPanelActive;
+  const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const cwd = normalizeProvidersSnapshotCwd(options.cwd);
   const supportsSnapshot = useSessionStore(
     (state) => state.sessions[serverId ?? ""]?.serverInfo?.features?.providersSnapshot === true,

@@ -2298,17 +2298,12 @@ export function useHostRuntimeClient(serverId: string): DaemonClient | null {
   );
 }
 
-const subscribeToNothing = () => () => {};
-
-export function useHostRuntimeIsConnected(serverId: string, active = true): boolean {
+export function useHostRuntimeIsConnected(serverId: string): boolean {
   const store = getHostRuntimeStore();
-  const shouldSubscribe = active;
   return useSyncExternalStore(
-    shouldSubscribe
-      ? (onStoreChange) => store.subscribe(serverId, onStoreChange)
-      : subscribeToNothing,
-    () => shouldSubscribe && isHostRuntimeConnected(store.getSnapshot(serverId)),
-    () => shouldSubscribe && isHostRuntimeConnected(store.getSnapshot(serverId)),
+    (onStoreChange) => store.subscribe(serverId, onStoreChange),
+    () => isHostRuntimeConnected(store.getSnapshot(serverId)),
+    () => isHostRuntimeConnected(store.getSnapshot(serverId)),
   );
 }
 

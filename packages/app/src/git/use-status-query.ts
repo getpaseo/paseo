@@ -11,17 +11,12 @@ export const CHECKOUT_STATUS_STALE_TIME = 15_000;
 interface UseCheckoutStatusQueryOptions {
   serverId: string;
   cwd: string;
-  enabled?: boolean;
 }
 
-export function useCheckoutStatusQuery({
-  serverId,
-  cwd,
-  enabled = true,
-}: UseCheckoutStatusQueryOptions) {
+export function useCheckoutStatusQuery({ serverId, cwd }: UseCheckoutStatusQueryOptions) {
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
-  const isConnected = useHostRuntimeIsConnected(serverId, enabled);
+  const isConnected = useHostRuntimeIsConnected(serverId);
 
   const query = useQuery({
     queryKey: checkoutStatusQueryKey(serverId, cwd),
@@ -31,7 +26,7 @@ export function useCheckoutStatusQuery({
       }
       return await fetchCheckoutStatus({ client, serverId, cwd });
     },
-    enabled: enabled && !!client && isConnected && !!cwd,
+    enabled: !!client && isConnected && !!cwd,
     staleTime: Infinity,
     // Freshness is push-driven (checkout_status_update applied globally); with
     // staleTime: Infinity, refetchOnMount only fires after an explicit invalidation

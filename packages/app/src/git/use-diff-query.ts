@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useReplicaQuery } from "@/data/query";
 import { checkoutDiffPushRoute } from "@/data/push-router";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
@@ -47,7 +48,9 @@ export function useCheckoutDiffQuery({
   enabled = true,
   queryScope,
 }: UseCheckoutDiffQueryOptions) {
-  const isConnected = useHostRuntimeIsConnected(serverId, enabled);
+  const retainedPanelActive = useRetainedPanelActive();
+  const queryEnabled = enabled && retainedPanelActive;
+  const isConnected = useHostRuntimeIsConnected(serverId);
   const normalizedCompare = useMemo(
     () => normalizeCheckoutDiffCompare({ mode, baseRef, ignoreWhitespace }),
     [mode, baseRef, ignoreWhitespace],
@@ -67,7 +70,7 @@ export function useCheckoutDiffQuery({
     return normalizedScope ? [...comparisonKey, "scope", normalizedScope] : comparisonKey;
   }, [serverId, cwd, compareMode, compareBaseRef, compareIgnoreWhitespace, queryScope]);
   const subscriptionId = useMemo(() => `checkoutDiff:${JSON.stringify(queryKey)}`, [queryKey]);
-  const routeEnabled = Boolean(enabled && isConnected && cwd);
+  const routeEnabled = Boolean(queryEnabled && isConnected && cwd);
 
   const query = useReplicaQuery<CheckoutDiffQueryPayload>({
     queryKey,
@@ -93,7 +96,7 @@ export function useCheckoutDiffQuery({
     files: payload?.files ?? [],
     payloadError,
     diffTooLarge: payload?.diffTooLarge === true,
-    isLoading: payload === null && enabled && isConnected,
+    isLoading: payload === null && queryEnabled && isConnected,
     isFetching: false,
     isError: Boolean(payloadError),
     error: null,

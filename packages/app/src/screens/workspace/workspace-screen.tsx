@@ -1769,7 +1769,10 @@ function WorkspaceScreenContent({
   });
 
   const client = useHostRuntimeClient(normalizedServerId);
-  const isConnected = useHostRuntimeIsConnected(normalizedServerId, isRouteFocused);
+  const isConnected = useHostRuntimeIsConnected(normalizedServerId);
+  const supportsProvidersSnapshot = useSessionStore(
+    (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.providersSnapshot === true,
+  );
   const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
   const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
   const [isImportSheetVisible, setIsImportSheetVisible] = useState(false);
@@ -1782,11 +1785,24 @@ function WorkspaceScreenContent({
   }, []);
 
   useEffect(() => {
-    if (!isRouteFocused || !isConnected || !client || !workspaceDirectory) {
+    if (
+      !isRouteFocused ||
+      !isConnected ||
+      !client ||
+      !workspaceDirectory ||
+      !supportsProvidersSnapshot
+    ) {
       return;
     }
     prefetchProvidersSnapshot(normalizedServerId, client, { cwd: workspaceDirectory });
-  }, [client, isConnected, isRouteFocused, normalizedServerId, workspaceDirectory]);
+  }, [
+    client,
+    isConnected,
+    isRouteFocused,
+    normalizedServerId,
+    supportsProvidersSnapshot,
+    workspaceDirectory,
+  ]);
 
   const persistenceKey = useMemo(
     () =>

@@ -506,9 +506,8 @@ function AgentPanelContent({
   const resolvedServerId = serverId.trim() || undefined;
   const daemons = useHosts();
   const runtimeServerId = resolvedServerId ?? "";
-  const isPanelActive = useRetainedPanelActive();
   const runtimeClient = useHostRuntimeClient(runtimeServerId);
-  const runtimeIsConnected = useHostRuntimeIsConnected(runtimeServerId, isPanelActive);
+  const runtimeIsConnected = useHostRuntimeIsConnected(runtimeServerId);
   const runtimeConnectionStatus = useHostRuntimeConnectionStatus(runtimeServerId);
   const runtimeLastError = useHostRuntimeLastError(runtimeServerId);
   const hasCachedAgent = useSessionStore((state) => {
