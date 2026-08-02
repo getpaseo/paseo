@@ -74,6 +74,7 @@ export interface ProcessTimelineResponseInput {
   payload: {
     agentId: string;
     direction: TimelineDirection;
+    projection: "projected" | "canonical";
     reset: boolean;
     epoch: string;
     window: { minSeq: number; maxSeq: number; nextSeq: number };
@@ -786,6 +787,25 @@ function deriveCanonicalAcknowledgements(params: {
   return [...acknowledged];
 }
 
+function selectEntriesOwnedByTimelinePage(
+  payload: ProcessTimelineResponseInput["payload"],
+): TimelineResponseEntry[] {
+  if (
+    payload.direction !== "before" ||
+    payload.projection !== "projected" ||
+    !payload.startCursor ||
+    !payload.endCursor
+  ) {
+    return payload.entries;
+  }
+
+  const pageStartSeq = payload.startCursor.seq;
+  const pageEndSeq = payload.endCursor.seq;
+  return payload.entries.filter(
+    (entry) => entry.seqStart >= pageStartSeq && entry.seqStart <= pageEndSeq,
+  );
+}
+
 function applyTimelineIncrementalPath(args: {
   timelineUnits: TimelineUnit[];
   payload: ProcessTimelineResponseInput["payload"];
@@ -802,7 +822,7 @@ function applyTimelineIncrementalPath(args: {
   const sideEffects: TimelineReducerSideEffect[] = [];
   let acknowledgedClientMessageIds: string[] = [];
 
-  if (timelineUnits.length === 0) {
+  if (timelineUnits.length === 0 && payload.direction !== "before") {
     return {
       tail: nextTail,
       head: nextHead,
@@ -827,9 +847,17 @@ function applyTimelineIncrementalPath(args: {
           currentCursor,
         });
 
+  if (
+    payload.direction === "before" &&
+    cursor &&
+    currentCursor &&
+    cursor.startSeq !== currentCursor.startSeq
+  ) {
+    older = payload.hasOlder ? "available" : "none";
+  }
+
   if (acceptedUnits.length > 0) {
     if (payload.direction === "before") {
-      older = payload.hasOlder ? "available" : "none";
       const olderTail = hydrateStreamState(
         acceptedUnits.map(({ event, timestamp, seqEnd }) => ({
           event,
@@ -915,7 +943,7 @@ export function processTimelineResponse(
   // ------------------------------------------------------------------
   // Convert entries to timeline units
   // ------------------------------------------------------------------
-  const timelineUnits = payload.entries.map((entry) => ({
+  const timelineUnits = selectEntriesOwnedByTimelinePage(payload).map((entry) => ({
     seq: entry.seqStart,
     seqEnd: entry.seqEnd,
     sourceSeqRanges:

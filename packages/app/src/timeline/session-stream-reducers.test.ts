@@ -224,6 +224,7 @@ const baseTimelineInput: ProcessTimelineResponseInput = {
   payload: {
     agentId: "agent-1",
     direction: "after",
+    projection: "projected",
     reset: false,
     epoch: "epoch-1",
     window: { minSeq: 1, maxSeq: 0, nextSeq: 1 },
@@ -2540,6 +2541,73 @@ describe("processTimelineResponse", () => {
     expect(result.older).toBe("none");
   });
 
+  it("keeps only projected entries anchored in an older response page", () => {
+    const currentTail: StreamItem[] = [
+      {
+        kind: "user_message",
+        id: "current-81",
+        text: "current-81",
+        timestamp: new Date(81000),
+      },
+    ];
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 81, endSeq: 100 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        projection: "projected",
+        epoch: "epoch-1",
+        startCursor: { seq: 41 },
+        endCursor: { seq: 80 },
+        hasOlder: true,
+        entries: [
+          makeTimelineEntry(1, "wide assistant", "assistant_message", 80),
+          makeTimelineEntry(50, "owned by this page", "user_message"),
+        ],
+      },
+    });
+
+    expect(getAssistantTexts(result.tail)).toEqual([]);
+    expect(getUserTexts(result.tail)).toEqual(["owned by this page", "current-81"]);
+    expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 41, endSeq: 100 });
+    expect(result.older).toBe("available");
+  });
+
+  it("advances through an older projected page with no anchored entries", () => {
+    const currentTail: StreamItem[] = [
+      {
+        kind: "user_message",
+        id: "current-81",
+        text: "current-81",
+        timestamp: new Date(81000),
+      },
+    ];
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 81, endSeq: 100 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        projection: "projected",
+        epoch: "epoch-1",
+        startCursor: { seq: 41 },
+        endCursor: { seq: 80 },
+        hasOlder: true,
+        entries: [makeTimelineEntry(1, "wide assistant", "assistant_message", 80)],
+      },
+    });
+
+    expect(result.tail).toBe(currentTail);
+    expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 41, endSeq: 100 });
+    expect(result.cursorChanged).toBe(true);
+    expect(result.older).toBe("available");
+  });
+
   it("drops a stale before page anchored before a resume-tail replacement", () => {
     const currentTail: StreamItem[] = [
       {
@@ -3616,6 +3684,7 @@ describe("processAgentStreamEvents", () => {
       payload: {
         agentId: "agent-1",
         direction: "tail",
+        projection: "projected",
         reset: false,
         epoch: "epoch-1",
         window: { minSeq: 186, maxSeq: 186, nextSeq: 187 },
@@ -3660,6 +3729,7 @@ describe("processAgentStreamEvents", () => {
       payload: {
         agentId: "agent-1",
         direction: "tail",
+        projection: "projected",
         reset: false,
         epoch: "epoch-1",
         window: { minSeq: 10, maxSeq: 10, nextSeq: 11 },

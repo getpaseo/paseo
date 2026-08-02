@@ -1,5 +1,6 @@
 import { once } from "node:events";
-import { spawn, execSync, type ChildProcess } from "node:child_process";
+import { spawn, execFileSync, execSync, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -23,6 +24,7 @@ export interface IsolatedHostDaemonOptions {
   };
   paseoHome?: string;
   preserveHome?: boolean;
+  publishedVersion?: string;
 }
 
 async function getAvailablePort(): Promise<number> {
@@ -100,6 +102,31 @@ export async function startIsolatedHostDaemon(
 
   const paseoHome =
     options.paseoHome ?? (await mkdtemp(path.join(tmpdir(), "paseo-e2e-secondary-host-")));
+  let publishedPackageRoot: string | null = null;
+  if (options.publishedVersion) {
+    publishedPackageRoot = await mkdtemp(path.join(tmpdir(), "paseo-e2e-published-server-"));
+    await writeFile(
+      path.join(publishedPackageRoot, "package.json"),
+      `${JSON.stringify({ private: true })}\n`,
+    );
+    const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+    try {
+      execFileSync(
+        npmCommand,
+        [
+          "install",
+          "--no-audit",
+          "--no-fund",
+          "--no-package-lock",
+          `@getpaseo/server@${options.publishedVersion}`,
+        ],
+        { cwd: publishedPackageRoot, stdio: "ignore" },
+      );
+    } catch (error) {
+      await rm(publishedPackageRoot, { recursive: true, force: true });
+      throw error;
+    }
+  }
   if (options.mutableRelay) {
     const endpoint =
       options.mutableRelay.endpoint ??
@@ -120,10 +147,27 @@ export async function startIsolatedHostDaemon(
       })}\n`,
     );
   }
-  const serverDir = path.resolve(__dirname, "../../../../server");
-  const tsxBin = execSync("which tsx").toString().trim();
+  const serverDir = publishedPackageRoot
+    ? path.join(publishedPackageRoot, "node_modules", "@getpaseo", "server")
+    : path.resolve(__dirname, "../../../../server");
+  const sourceEntrypoint = path.join(serverDir, "scripts/supervisor-entrypoint.ts");
+  const builtEntrypoint = path.join(serverDir, "dist/scripts/supervisor-entrypoint.js");
+  let daemonCommand: { command: string; args: string[] } | null = null;
+  if (existsSync(sourceEntrypoint)) {
+    daemonCommand = {
+      command: execSync("which tsx").toString().trim(),
+      args: [sourceEntrypoint, "--dev"],
+    };
+  } else if (existsSync(builtEntrypoint)) {
+    daemonCommand = { command: process.execPath, args: [builtEntrypoint] };
+  }
+  if (!daemonCommand) {
+    throw new Error(
+      `E2E server package has no source or built supervisor entrypoint: ${serverDir}`,
+    );
+  }
   const spawnDaemon = async (): Promise<ChildProcess> => {
-    const child = spawn(tsxBin, ["scripts/supervisor-entrypoint.ts", "--dev"], {
+    const child = spawn(daemonCommand.command, daemonCommand.args, {
       cwd: serverDir,
       env: withDisabledE2ESpeechEnv({
         ...process.env,
@@ -165,6 +209,9 @@ export async function startIsolatedHostDaemon(
     if (!options.preserveHome) {
       await rm(paseoHome, { recursive: true, force: true });
     }
+    if (publishedPackageRoot) {
+      await rm(publishedPackageRoot, { recursive: true, force: true });
+    }
     throw error;
   }
   let closed = false;
@@ -185,6 +232,9 @@ export async function startIsolatedHostDaemon(
       await stopProcess(child);
       if (!options.preserveHome) {
         await rm(paseoHome, { recursive: true, force: true });
+      }
+      if (publishedPackageRoot) {
+        await rm(publishedPackageRoot, { recursive: true, force: true });
       }
     },
   };

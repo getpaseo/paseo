@@ -56,7 +56,9 @@ interface OlderHistoryLoadingOperation {
 interface OlderHistoryPages {
   expectRequestedPages(count: number): Promise<void>;
   expectSettledWithRequestedPages(count: number): Promise<void>;
-  expectNoRepeatedAssistantEntries(): void;
+  expectNoRepeatedEntries(): void;
+  expectRepeatedEntries(): void;
+  expectOwnedTextRendered(text: string): Promise<void>;
   releasePage(pageNumber: number): void;
 }
 
@@ -161,8 +163,12 @@ export async function expectTimelinePromptPositionPreserved(
     .toBeLessThanOrEqual(2);
 }
 
-export async function openAgentTimeline(page: Page, agent: MockAgentWorkspace): Promise<void> {
-  await page.goto(buildAgentRoute(agent.workspaceId, agent.agentId));
+export async function openAgentTimeline(
+  page: Page,
+  agent: MockAgentWorkspace,
+  serverId?: string,
+): Promise<void> {
+  await page.goto(buildAgentRoute(agent.workspaceId, agent.agentId, serverId));
   await page.waitForURL(
     (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
     { timeout: 60_000 },
@@ -262,8 +268,13 @@ export async function holdNextOlderTimelinePage(
 export async function holdOlderHistoryPages(
   page: Page,
   agent: MockAgentWorkspace,
+  daemonPort?: number,
 ): Promise<OlderHistoryPages> {
-  const gate: OlderTimelinePagesGate = await holdAgentOlderTimelinePages(page, agent.agentId);
+  const gate: OlderTimelinePagesGate = await holdAgentOlderTimelinePages(
+    page,
+    agent.agentId,
+    daemonPort,
+  );
   return {
     async expectRequestedPages(count) {
       await gate.waitForRequestCount(count);
@@ -273,8 +284,17 @@ export async function holdOlderHistoryPages(
       await waitForTimelineGeometryToSettle(page);
       expect(gate.getRequestCount()).toBe(count);
     },
-    expectNoRepeatedAssistantEntries() {
-      expect(gate.getRepeatedAssistantEntryCount()).toBe(0);
+    expectNoRepeatedEntries() {
+      expect(gate.getRepeatedEntryCount()).toBe(0);
+    },
+    expectRepeatedEntries() {
+      expect(gate.getRepeatedEntryCount()).toBeGreaterThan(0);
+    },
+    async expectOwnedTextRendered(text) {
+      const expectedCount = gate.getOwnedEntryCountContaining(text);
+      expect(expectedCount).toBeGreaterThan(0);
+      const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+      await expect(timeline.getByText(text, { exact: false })).toHaveCount(expectedCount);
     },
     releasePage(pageNumber) {
       gate.releasePage(pageNumber);

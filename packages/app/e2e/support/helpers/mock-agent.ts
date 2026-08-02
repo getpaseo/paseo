@@ -70,8 +70,12 @@ export async function seedRunningMockAgentWorkspace(
   }
 }
 
-export function buildAgentRoute(workspaceId: string, agentId: string): string {
-  return buildHostAgentDetailRoute(getServerId(), agentId, workspaceId);
+export function buildAgentRoute(
+  workspaceId: string,
+  agentId: string,
+  serverId = getServerId(),
+): string {
+  return buildHostAgentDetailRoute(serverId, agentId, workspaceId);
 }
 
 /** Boots the app directly at the agent's workspace route and waits for the open intent to settle. */
