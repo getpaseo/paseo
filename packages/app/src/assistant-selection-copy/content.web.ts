@@ -1,4 +1,5 @@
 import TurndownService from "turndown";
+import { gfm } from "turndown-plugin-gfm";
 import {
   createMarkdownClipboardContent,
   type MarkdownClipboardContent,
@@ -18,6 +19,11 @@ const turndown = new TurndownService({
   codeBlockStyle: "fenced",
   emDelimiter: "_",
   strongDelimiter: "**",
+});
+turndown.use(gfm);
+turndown.addRule("gfmStrikethrough", {
+  filter: ["del", "s"],
+  replacement: (content) => `~~${content}~~`,
 });
 turndown.addRule("compactListItem", {
   filter: "li",
@@ -48,11 +54,28 @@ export function createAssistantSelectionClipboardContent(
   }
 
   const container = document.createElement("div");
-  container.append(range.cloneContents());
+  container.append(wrapSelectionWithAncestors(range, startMessage));
   restoreMarkdownElements(container);
 
   const markdown = turndown.turndown(container.innerHTML).trim();
   return markdown ? createMarkdownClipboardContent(markdown) : null;
+}
+
+function wrapSelectionWithAncestors(range: Range, message: Element): Node {
+  let selected: Node = range.cloneContents();
+  let ancestor =
+    range.commonAncestorContainer instanceof Element
+      ? range.commonAncestorContainer
+      : range.commonAncestorContainer.parentElement;
+
+  while (ancestor && ancestor !== message) {
+    const wrapper = ancestor.cloneNode(false) as Element;
+    wrapper.append(selected);
+    selected = wrapper;
+    ancestor = ancestor.parentElement;
+  }
+
+  return selected;
 }
 
 function closestAssistantMessage(node: Node): Element | null {

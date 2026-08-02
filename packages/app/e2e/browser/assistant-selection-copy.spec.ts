@@ -5,7 +5,7 @@ import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-
 const ASSISTANT_MARKDOWN = [
   "Direct matches:",
   "",
-  "- [First issue](https://example.com/issues/1): exact `apply_patch` failure.",
+  "- **[First issue](https://example.com/issues/1)**: exact `apply_patch` failure.",
   "- [Second issue](https://example.com/issues/2): repeated sandbox setup.",
   "",
   "5. Fifth item",
@@ -19,6 +19,10 @@ const ASSISTANT_MARKDOWN = [
   "```typescript",
   'const answer = "yes";',
   "```",
+  "",
+  "| Status | Result |",
+  "| --- | --- |",
+  "| Current | ~~obsolete~~ |",
 ].join("\n");
 
 interface ClipboardContent {
@@ -42,6 +46,30 @@ async function selectAssistantMessage(page: Page): Promise<void> {
     selection?.removeAllRanges();
     selection?.addRange(range);
   });
+}
+
+async function selectAssistantText(page: Page, text: string): Promise<void> {
+  const assistantMessage = page.getByTestId("assistant-message").filter({
+    hasText: "Direct matches:",
+  });
+  await assistantMessage.evaluate((element, selectedText) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let textNode = walker.nextNode();
+    while (textNode) {
+      const start = textNode.textContent?.indexOf(selectedText) ?? -1;
+      if (start >= 0) {
+        const range = document.createRange();
+        range.setStart(textNode, start);
+        range.setEnd(textNode, start + selectedText.length);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return;
+      }
+      textNode = walker.nextNode();
+    }
+    throw new Error(`Could not find assistant text: ${selectedText}`);
+  }, text);
 }
 
 async function copySelection(page: Page): Promise<void> {
@@ -87,7 +115,9 @@ test("copying an assistant selection preserves Markdown structure and links", as
     const clipboard = await readRichClipboard(page);
     expect(clipboard.plainText).toBe(ASSISTANT_MARKDOWN);
     expect(clipboard.html).toContain("<ul>");
-    expect(clipboard.html).toContain('<a href="https://example.com/issues/1">First issue</a>');
+    expect(clipboard.html).toContain(
+      '<strong><a href="https://example.com/issues/1">First issue</a></strong>',
+    );
     expect(clipboard.html).toContain("<code>apply_patch</code>");
     expect(clipboard.html).toContain('<ol start="5">');
     expect(clipboard.html).toContain("A hard break<br>");
@@ -96,6 +126,17 @@ test("copying an assistant selection preserves Markdown structure and links", as
       '<a href="https://example.com/generated"><code>https://example.com/generated</code></a>',
     );
     expect(clipboard.html).toContain('<code class="language-typescript">');
+    expect(clipboard.html).toContain("<table>");
+    expect(clipboard.html).toContain("<s>obsolete</s>");
+
+    await selectAssistantText(page, "First");
+    await copySelection(page);
+
+    const partialClipboard = await readRichClipboard(page);
+    expect(partialClipboard.plainText).toBe("- **[First](https://example.com/issues/1)**");
+    expect(partialClipboard.html).toContain(
+      '<li><strong><a href="https://example.com/issues/1">First</a></strong></li>',
+    );
   } finally {
     await agent.cleanup();
   }
