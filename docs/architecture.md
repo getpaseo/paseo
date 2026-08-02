@@ -175,18 +175,30 @@ hidden Live Voice host on A
 ```
 
 Work started that way runs longer than a sentence, so the route has a return
-leg. A routed tool call that leaves an agent working asks the target daemon to
-watch its current turn. Permission requests are nonterminal; when the turn
-completes or fails, the target reports to
-the socket that started it, the app matches that report to the call it made it
-for, and the source daemon appends the news to the running conversation
-(`thread/realtime/appendText`), which the model then says out loud.
+leg. The app records the agent id returned by a routed tool call. Every host
+connection also feeds its normal agent-completion events into that registry, so
+completion learned from a live directory delta, a delegated agent, or a
+post-reconnect directory snapshot follows the same path. The app performs one
+event-triggered timeline-tail read when it needs the final response; it does not
+poll for status. A target-specific watcher remains a second event source for
+permission and completion reports. The two sources are deduplicated before the
+source daemon appends the news to the running conversation
+(`thread/realtime/appendText`).
+
+A fast agent can finish before the routed tool response returns its agent id.
+The app temporarily keeps completion events observed after the route began and
+claims one when the response supplies the id. Host and agent identity are keyed
+by the connection that delivered the event, and any embedded identity must
+match it. Replacing a target connection replaces its event handlers without
+discarding call correlation, so a later completion on the new connection still
+reaches the call.
 
 The target daemon is never told which call the work belongs to — it has no
 liveSessionId and can address no socket but the requesting one. The app holds the
 correlation, and the source daemon still checks that the socket asking it to
 speak owns the call it names. A report for a call that has ended is dropped
-rather than spoken into whatever call came after it.
+rather than spoken into whatever call came after it. Completion text is bounded
+and credential-redacted before it crosses into the realtime conversation.
 
 A call can also report agents it did not start, gated on a user setting that is
 off by default. When it is on, the app turns on an ambient watch (`voice.live

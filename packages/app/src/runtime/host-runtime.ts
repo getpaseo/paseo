@@ -44,6 +44,7 @@ import {
 } from "@/desktop/daemon/desktop-daemon-transport";
 import { getDesktopHost } from "@/desktop/host";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { findLatestAssistantMessageFromTimeline } from "@getpaseo/protocol/agent-attention-notification";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
   useSessionStore,
@@ -60,7 +61,10 @@ import {
   mountServerDataPushRouter,
 } from "@/data/push-router";
 import { mountBrowserAutomationDaemonClientHandler } from "@/desktop/browser/automation/handler";
-import { mountLiveVoiceCrossHostRouter } from "@/live-voice/live-voice-cross-host-router";
+import {
+  mountLiveVoiceCrossHostRouter,
+  type LiveVoiceCrossHostRouterDeps,
+} from "@/live-voice/live-voice-cross-host-router";
 import { isAuthorizedLiveVoiceRoute } from "@/live-voice/live-voice-route-authority";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
@@ -155,6 +159,39 @@ export function isHostRuntimeDirectoryLoading(snapshot: HostRuntimeSnapshot | nu
     (snapshot.connectionStatus === "connecting" || snapshot.connectionStatus === "online")
   );
 }
+
+export const liveVoiceCrossHostRouterDeps: LiveVoiceCrossHostRouterDeps = {
+  getSavedHosts: () => getHostRuntimeStore().getHosts(),
+  getHostRuntimeSnapshot: (serverId) => getHostRuntimeStore().getSnapshot(serverId),
+  getHostServerInfo: (serverId) =>
+    useSessionStore.getState().sessions[serverId]?.serverInfo ?? null,
+  getAgentSummary: (serverId, agentId) => {
+    const session = useSessionStore.getState().sessions[serverId];
+    const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
+    return agent
+      ? { title: agent.title, status: agent.status, lastError: agent.lastError ?? null }
+      : null;
+  },
+  readAgentCompletionSummary: async (serverId, agentId) => {
+    const pin = getHostRuntimeStore().pinActiveConnection(serverId);
+    if (!pin) {
+      return null;
+    }
+    try {
+      const page = await pin.client.fetchAgentTimeline(agentId, {
+        direction: "tail",
+        projection: "canonical",
+        limit: 40,
+        timeout: 10_000,
+      });
+      return findLatestAssistantMessageFromTimeline(page.entries.map((entry) => entry.item));
+    } finally {
+      pin.release();
+    }
+  },
+  pinActiveConnection: (serverId) => getHostRuntimeStore().pinActiveConnection(serverId),
+  isAuthorizedSourceCall: isAuthorizedLiveVoiceRoute,
+};
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -598,14 +635,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       const unmountLiveVoiceRouter = mountLiveVoiceCrossHostRouter({
         sourceServerId: host.serverId,
         sourceClient: client,
-        deps: {
-          getSavedHosts: () => getHostRuntimeStore().getHosts(),
-          getHostRuntimeSnapshot: (serverId) => getHostRuntimeStore().getSnapshot(serverId),
-          getHostServerInfo: (serverId) =>
-            useSessionStore.getState().sessions[serverId]?.serverInfo ?? null,
-          pinActiveConnection: (serverId) => getHostRuntimeStore().pinActiveConnection(serverId),
-          isAuthorizedSourceCall: isAuthorizedLiveVoiceRoute,
-        },
+        deps: liveVoiceCrossHostRouterDeps,
         onError: (error) => {
           console.error("[LiveVoice] Cross-host route failed", {
             sourceServerId: host.serverId,
@@ -1477,6 +1507,10 @@ interface AgentDirectoryRefreshInput {
 export class HostRuntimeStore {
   private controllers = new Map<string, HostRuntimeController>();
   private serverListeners = new Map<string, Set<() => void>>();
+  private agentStoppedRunningListeners = new Map<string, Set<(agentId: string) => void>>();
+  private globalAgentStoppedRunningListeners = new Set<
+    (serverId: string, agentId: string) => void
+  >();
   private globalListeners = new Set<() => void>();
   private hostListListeners = new Set<() => void>();
   private version = 0;
@@ -2404,6 +2438,24 @@ export class HostRuntimeStore {
     };
   }
 
+  subscribeAgentStoppedRunning(serverId: string, listener: (agentId: string) => void): () => void {
+    const listeners = this.agentStoppedRunningListeners.get(serverId) ?? new Set();
+    listeners.add(listener);
+    this.agentStoppedRunningListeners.set(serverId, listeners);
+    return () => {
+      const current = this.agentStoppedRunningListeners.get(serverId);
+      if (!current) return;
+      current.delete(listener);
+      if (current.size === 0) this.agentStoppedRunningListeners.delete(serverId);
+    };
+  }
+
+  subscribeAllAgentStoppedRunning(
+    listener: (serverId: string, agentId: string) => void,
+  ): () => void {
+    this.globalAgentStoppedRunningListeners.add(listener);
+    return () => this.globalAgentStoppedRunningListeners.delete(listener);
+  }
   subscribeAll(listener: () => void): () => void {
     this.globalListeners.add(listener);
     return () => {
@@ -2538,6 +2590,16 @@ export class HostRuntimeStore {
     }
     for (const listener of this.globalListeners) {
       listener();
+    }
+  }
+
+  private onAgentStoppedRunning(serverId: string, agentId: string): void {
+    this.drainQueuedAgentMessage(serverId, agentId);
+    for (const listener of this.agentStoppedRunningListeners.get(serverId) ?? []) {
+      listener(agentId);
+    }
+    for (const listener of this.globalAgentStoppedRunningListeners) {
+      listener(serverId, agentId);
     }
   }
 }

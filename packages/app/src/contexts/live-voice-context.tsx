@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, liveVoiceCrossHostRouterDeps } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import {
   createDefaultLiveVoiceRuntimeDeps,
@@ -27,6 +27,7 @@ import {
   type LiveVoiceAmbientWatchDeps,
 } from "@/live-voice/live-voice-ambient-watch";
 import { getLiveVoiceAmbientSettings, getLiveVoiceVoice } from "@/stores/live-voice-settings-store";
+import { handleClientObservedLiveVoiceAgentStopped } from "@/live-voice/live-voice-cross-host-router";
 
 /**
  * Every host the app holds a connection to, read on demand. A call can outlive
@@ -166,6 +167,27 @@ export function LiveVoiceProvider({ children }: LiveVoiceProviderProps) {
   const runtime = runtimeRef.current;
 
   useEffect(() => registerLiveVoiceRouteAuthority(runtime), [runtime]);
+
+  // Directory reconciliation is the client-wide completion source. It covers
+  // every connected host, delegated agents that do not emit attention pushes,
+  // and turns learned from a fresh snapshot after connection churn.
+  useEffect(
+    () =>
+      getHostRuntimeStore().subscribeAllAgentStoppedRunning((serverId, agentId) => {
+        void handleClientObservedLiveVoiceAgentStopped({
+          targetServerId: serverId,
+          agentId,
+          deps: liveVoiceCrossHostRouterDeps,
+        }).catch((error) => {
+          console.warn("[LiveVoice] Could not route observed agent completion", {
+            serverId,
+            agentId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }),
+    [],
+  );
 
   // Declared before the destroy effect below so React detaches the cues first:
   // tearing the provider down ends the call, and that end is not a transition

@@ -1,4 +1,5 @@
 import {
+  type AgentAttentionRequiredNotification,
   LiveVoiceToolExecutionRejectedError,
   type DaemonClient,
 } from "@getpaseo/client/internal/daemon-client";
@@ -11,14 +12,23 @@ import type {
   VoiceLiveToolResult,
 } from "@getpaseo/protocol/live-voice-routing";
 import {
+  associateRoutedLiveVoiceAgent,
+  canMatchPendingRoutedLiveVoiceWork,
+  claimRoutedLiveVoiceNotification,
   forgetRoutedLiveVoiceWork,
   forgetRoutedLiveVoiceWorkForSource,
   getAmbientLiveVoiceWatch,
   getRoutedLiveVoiceWork,
+  getRoutedLiveVoiceWorkForAgent,
+  rememberObservedLiveVoiceCompletion,
+  releaseRoutedLiveVoiceNotificationClaim,
   trackRoutedLiveVoiceWork,
 } from "@/live-voice/live-voice-work-registry";
 
-type LiveVoiceRouteSourceClient = Pick<DaemonClient, "on" | "sendLiveVoiceRouteResponse">;
+type LiveVoiceRouteSourceClient = Pick<
+  DaemonClient,
+  "on" | "onAgentAttentionRequired" | "sendLiveVoiceRouteResponse"
+>;
 
 interface LiveVoiceHostClient {
   executeLiveVoiceTool(input: {
@@ -60,6 +70,11 @@ export interface LiveVoiceCrossHostRouterDeps {
   getSavedHosts(): readonly SavedHostSummary[];
   getHostRuntimeSnapshot(serverId: string): HostRuntimeSummary | null;
   getHostServerInfo(serverId: string): HostServerInfoSummary | null;
+  getAgentSummary(
+    serverId: string,
+    agentId: string,
+  ): { title: string | null; status?: string; lastError?: string | null } | null;
+  readAgentCompletionSummary(serverId: string, agentId: string): Promise<string | null>;
   pinActiveConnection(serverId: string): PinnedHostConnection | null;
   isAuthorizedSourceCall(sourceServerId: string, liveSessionId: string): boolean;
 }
@@ -107,8 +122,20 @@ export function mountLiveVoiceCrossHostRouter(
       options.onError?.(error);
     });
   });
+  const unsubscribeObservedCompletions = options.sourceClient.onAgentAttentionRequired(
+    (notification) => {
+      void handleClientObservedLiveVoiceCompletion({
+        targetServerId: options.sourceServerId,
+        deps: options.deps,
+        notification,
+      }).catch((error) => {
+        options.onError?.(error);
+      });
+    },
+  );
   return () => {
     forgetRoutedLiveVoiceWorkForSource(options.sourceServerId);
+    unsubscribeObservedCompletions();
     unsubscribeAgentUpdates();
     unsubscribeRouteRequests();
   };
@@ -132,11 +159,107 @@ export async function handleLiveVoiceAgentUpdate(input: {
   if (!tracked) {
     return;
   }
+  await deliverLiveVoiceAgentNotification({
+    targetServerId,
+    deps,
+    tracked,
+    notification: message.payload.notification,
+    requestId: message.payload.requestId,
+  });
+}
+
+/**
+ * Routes the daemon's ordinary agent-attention signal into Live Voice. This is
+ * the source-agnostic path: every prompt/delegation surface converges on the
+ * same completion event, and every connected host client mounts this handler.
+ */
+export async function handleClientObservedLiveVoiceCompletion(input: {
+  targetServerId: string;
+  deps: LiveVoiceCrossHostRouterDeps;
+  notification: AgentAttentionRequiredNotification;
+}): Promise<void> {
+  const { targetServerId, deps } = input;
+  const observed = toObservedAgentNotification(targetServerId, deps, input.notification);
+  if (!observed) {
+    return;
+  }
+  await routeClientObservedLiveVoiceCompletion({ targetServerId, deps, observed });
+}
+
+/**
+ * Directory reconciliation reports this transition for ordinary and delegated
+ * agents, including work that completed while a host connection was away.
+ * Read the final assistant tail once in response to that event; this is an
+ * enrichment read, not a status polling loop.
+ */
+export async function handleClientObservedLiveVoiceAgentStopped(input: {
+  targetServerId: string;
+  agentId: string;
+  deps: LiveVoiceCrossHostRouterDeps;
+}): Promise<void> {
+  const { targetServerId, agentId, deps } = input;
+  if (!canMatchPendingRoutedLiveVoiceWork(targetServerId, agentId)) {
+    return;
+  }
+  const agent = deps.getAgentSummary(targetServerId, agentId);
+  const rawSummary = await deps
+    .readAgentCompletionSummary(targetServerId, agentId)
+    .catch(() => null);
+  const observed: VoiceLiveAgentNotification = {
+    agentId,
+    title: sanitizeObservedText(agent?.title ?? agentId, 200) || agentId,
+    reason: agent?.status === "error" ? "errored" : "turn_completed",
+    scope: "agent_turn",
+    summary:
+      sanitizeObservedText(
+        rawSummary ?? (agent?.status === "error" ? (agent.lastError ?? "") : ""),
+        1_200,
+      ) || null,
+  };
+  await routeClientObservedLiveVoiceCompletion({ targetServerId, deps, observed });
+}
+
+async function routeClientObservedLiveVoiceCompletion(input: {
+  targetServerId: string;
+  deps: LiveVoiceCrossHostRouterDeps;
+  observed: VoiceLiveAgentNotification;
+}): Promise<void> {
+  const { targetServerId, deps, observed } = input;
+  const tracked = getRoutedLiveVoiceWorkForAgent(targetServerId, observed.agentId);
+  if (!tracked) {
+    if (canMatchPendingRoutedLiveVoiceWork(targetServerId, observed.agentId)) {
+      rememberObservedLiveVoiceCompletion({ targetServerId, notification: observed });
+    }
+    return;
+  }
+  await deliverLiveVoiceAgentNotification({
+    targetServerId,
+    deps,
+    tracked: { ...tracked, ambient: false },
+    notification: observed,
+    requestId: tracked.requestId,
+  });
+}
+
+async function deliverLiveVoiceAgentNotification(input: {
+  targetServerId: string;
+  deps: LiveVoiceCrossHostRouterDeps;
+  tracked: ResolvedReportedWork;
+  notification: VoiceLiveAgentNotification;
+  requestId: string;
+}): Promise<void> {
+  const { targetServerId, deps, tracked, notification, requestId } = input;
   if (!deps.isAuthorizedSourceCall(tracked.sourceServerId, tracked.liveSessionId)) {
     return;
   }
   const pin = deps.pinActiveConnection(tracked.sourceServerId);
   if (!pin) {
+    return;
+  }
+  const claimed =
+    tracked.ambient || claimRoutedLiveVoiceNotification(requestId, notification.reason);
+  if (!claimed) {
+    pin.release();
     return;
   }
   const hostLabel = deps
@@ -147,7 +270,7 @@ export async function handleLiveVoiceAgentUpdate(input: {
     const delivery = await pin.client.notifyLiveVoiceAgentUpdate({
       liveSessionId: tracked.liveSessionId,
       notification: {
-        ...message.payload.notification,
+        ...notification,
         // Only the app knows what the user calls this machine, and a call can
         // reach several of them.
         ...(hostLabel ? { hostLabel } : {}),
@@ -155,15 +278,74 @@ export async function handleLiveVoiceAgentUpdate(input: {
     });
     // Ambient reports have no registry entry to retire — the host's watch stays
     // registered until the call ends, because more will follow.
-    if (
-      !tracked.ambient &&
-      (!delivery.delivered || message.payload.notification.reason !== "needs_permission")
-    ) {
-      forgetRoutedLiveVoiceWork(message.payload.requestId);
+    if (!tracked.ambient && (!delivery.delivered || notification.reason !== "needs_permission")) {
+      forgetRoutedLiveVoiceWork(requestId);
     }
+  } catch (error) {
+    if (!tracked.ambient) {
+      releaseRoutedLiveVoiceNotificationClaim(requestId, notification.reason);
+    }
+    throw error;
   } finally {
     pin.release();
   }
+}
+
+function toObservedAgentNotification(
+  targetServerId: string,
+  deps: LiveVoiceCrossHostRouterDeps,
+  event: AgentAttentionRequiredNotification,
+): VoiceLiveAgentNotification | null {
+  const reason = event.reason;
+  // Permission requests retain their existing target-specific path. Unlike
+  // terminal completion, the same agent can legitimately ask more than once.
+  if (reason === "permission") {
+    return null;
+  }
+  const embedded = event.notification?.data;
+  if (
+    embedded &&
+    (embedded.serverId !== targetServerId ||
+      embedded.agentId !== event.agentId ||
+      embedded.reason !== event.reason)
+  ) {
+    return null;
+  }
+  const title = sanitizeObservedText(
+    deps.getAgentSummary(targetServerId, event.agentId)?.title ?? event.agentId,
+    200,
+  );
+  return {
+    agentId: event.agentId,
+    title: title || event.agentId,
+    reason: toObservedReason(reason),
+    scope: "agent_turn",
+    summary: sanitizeObservedText(event.notification?.body ?? "", 1_200) || null,
+  };
+}
+
+function toObservedReason(
+  reason: Exclude<AgentAttentionRequiredNotification["reason"], "permission">,
+): string {
+  switch (reason) {
+    case "finished":
+      return "turn_completed";
+    case "error":
+      return "errored";
+  }
+}
+
+function sanitizeObservedText(value: string, limit: number): string {
+  const redacted = value
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]")
+    .replace(
+      /(["']?(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
+      "$1[redacted]",
+    )
+    .replace(/(https?:\/\/)[^/@\s]+:[^/@\s]+@/gi, "$1[redacted]@")
+    .replace(/\s+/g, " ")
+    .trim();
+  return redacted.length <= limit ? redacted : `${redacted.slice(0, limit)}…`;
 }
 
 interface ResolvedReportedWork {
@@ -294,35 +476,52 @@ async function handleLiveVoiceExecuteRouteRequest(input: {
     });
   }
 
+  let execution: Awaited<ReturnType<LiveVoiceHostClient["executeLiveVoiceTool"]>>;
   try {
-    const execution = await pin.client.executeLiveVoiceTool({
+    execution = await pin.client.executeLiveVoiceTool({
       toolName: operation.toolName,
       arguments: operation.arguments,
       requestId: executeRequestId,
       ...(notifyOnAgentFinish ? { notifyOnAgentFinish: true } : {}),
     });
-    if (notifyOnAgentFinish && !execution.backgroundAgentId) {
-      forgetRoutedLiveVoiceWork(executeRequestId);
-    }
-    sourceClient.sendLiveVoiceRouteResponse({
-      type: "voice.live.route.response",
-      payload: {
-        requestId: request.requestId,
-        liveSessionId: request.liveSessionId,
-        ok: true,
-        result: {
-          kind: "execute_tool",
-          targetServerId: operation.targetServerId,
-          toolResult: execution.toolResult,
-        },
-      },
-    });
   } catch (error) {
     // The call never completed, so nothing on the target is watching for us.
     forgetRoutedLiveVoiceWork(executeRequestId);
     sendFailure(sourceClient, request, normalizeExecutionError(error));
-  } finally {
     pin.release();
+    return;
+  }
+  pin.release();
+
+  let observed: VoiceLiveAgentNotification | null = null;
+  if (notifyOnAgentFinish && !execution.backgroundAgentId) {
+    forgetRoutedLiveVoiceWork(executeRequestId);
+  } else if (notifyOnAgentFinish && execution.backgroundAgentId) {
+    observed = associateRoutedLiveVoiceAgent(executeRequestId, execution.backgroundAgentId);
+  }
+  sourceClient.sendLiveVoiceRouteResponse({
+    type: "voice.live.route.response",
+    payload: {
+      requestId: request.requestId,
+      liveSessionId: request.liveSessionId,
+      ok: true,
+      result: {
+        kind: "execute_tool",
+        targetServerId: operation.targetServerId,
+        toolResult: execution.toolResult,
+      },
+    },
+  });
+
+  const tracked = getRoutedLiveVoiceWork(executeRequestId);
+  if (observed && tracked) {
+    await deliverLiveVoiceAgentNotification({
+      targetServerId: operation.targetServerId,
+      deps,
+      tracked: { ...tracked, ambient: false },
+      notification: observed,
+      requestId: executeRequestId,
+    });
   }
 }
 
