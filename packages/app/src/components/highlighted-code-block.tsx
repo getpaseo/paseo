@@ -11,6 +11,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { highlightToKeyedLines, type KeyedLine } from "@/utils/highlight-cache";
+import { markdownCopyDataSet } from "@/assistant-selection-copy/markup";
 
 interface HighlightedCodeBlockProps {
   code: string;
@@ -36,6 +37,11 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   markdown: "md",
   elixir: "ex",
 };
+
+const MARKDOWN_CODE_BLOCK_DATASET = {
+  ...CODE_SURFACE_DATASET,
+  ...markdownCopyDataSet.pre,
+} as const;
 
 function fenceLanguageToExtension(info: string | null | undefined): string | null {
   if (!info) return null;
@@ -79,14 +85,18 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   return (
     <View
       style={containerStyle}
-      dataSet={CODE_SURFACE_DATASET}
+      dataSet={MARKDOWN_CODE_BLOCK_DATASET}
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
     >
       {keyedLines ? (
-        <MarkdownTextSpan style={innerTextStyle}>{renderCodeSegments(keyedLines)}</MarkdownTextSpan>
+        <MarkdownTextSpan style={innerTextStyle} copyTag="code">
+          {renderCodeSegments(keyedLines)}
+        </MarkdownTextSpan>
       ) : (
-        <MarkdownTextSpan style={innerTextStyle}>{renderedCode}</MarkdownTextSpan>
+        <MarkdownTextSpan style={innerTextStyle} copyTag="code">
+          {renderedCode}
+        </MarkdownTextSpan>
       )}
       <CopyButton getCode={getCode} visible={controlsVisible} />
     </View>
@@ -195,6 +205,7 @@ const CopyButton = React.memo(function CopyButton({ getCode, visible }: CopyButt
       accessibilityRole="button"
       accessibilityLabel={copied ? t("message.actions.copied") : t("message.actions.copyCode")}
       hitSlop={8}
+      dataSet={markdownCopyDataSet.ignore}
     >
       {({ hovered }) => {
         const iconColor = hovered

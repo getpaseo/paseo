@@ -16,6 +16,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
+import { markdownCopyDataSet } from "@/assistant-selection-copy/markup";
 import { useAssistantFileLinkResolverContext } from "./provider";
 import type { AssistantFileLinkSource } from "./resolver";
 import { useFileLink } from "./use-file-link";
@@ -26,6 +27,11 @@ interface AssistantMarkdownLinkProps {
   monoSurface?: boolean;
   children: ReactNode;
 }
+
+const MARKDOWN_CODE_LINK_DATASET = {
+  ...CODE_SURFACE_DATASET,
+  ...markdownCopyDataSet.code,
+} as const;
 
 export function AssistantMarkdownLink({
   source,
@@ -111,7 +117,10 @@ export function AssistantMarkdownLink({
         onHoverIn={handleHoverIn}
         onHoverOut={handleHoverOut}
       >
-        <Text dataSet={monoSurface ? CODE_SURFACE_DATASET : undefined} style={hoveredTextStyle}>
+        <Text
+          dataSet={monoSurface ? MARKDOWN_CODE_LINK_DATASET : undefined}
+          style={hoveredTextStyle}
+        >
           {children}
         </Text>
       </Pressable>

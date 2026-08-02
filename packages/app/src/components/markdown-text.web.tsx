@@ -8,10 +8,12 @@ import {
   type ViewStyle,
 } from "react-native";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
+import { markdownCopyDataSet, type MarkdownCopyInlineTag } from "@/assistant-selection-copy/markup";
 
 interface MarkdownTextSpanProps {
   style?: StyleProp<TextStyle>;
   monoSurface?: boolean;
+  copyTag?: MarkdownCopyInlineTag;
   children: ReactNode;
   // Web links use the <a>/Pressable path in link.tsx, not this span, so these
   // are accepted for prop-shape parity with the native variants and forwarded
@@ -28,17 +30,20 @@ interface MarkdownTextSpanProps {
 export function MarkdownTextSpan({
   style,
   monoSurface,
+  copyTag,
   children,
   onPress,
   accessibilityRole,
 }: MarkdownTextSpanProps) {
+  const dataSet = useMemo(() => {
+    if (copyTag) {
+      return { ...CODE_SURFACE_DATASET, ...markdownCopyDataSet[copyTag] };
+    }
+    return monoSurface ? CODE_SURFACE_DATASET : undefined;
+  }, [copyTag, monoSurface]);
+
   return (
-    <Text
-      dataSet={monoSurface ? CODE_SURFACE_DATASET : undefined}
-      style={style}
-      onPress={onPress}
-      accessibilityRole={accessibilityRole}
-    >
+    <Text dataSet={dataSet} style={style} onPress={onPress} accessibilityRole={accessibilityRole}>
       {children}
     </Text>
   );
@@ -57,5 +62,9 @@ const MARKDOWN_PARAGRAPH_RESET: ViewStyle = {};
 // elements via CSS user-select, so no UITextView equivalent is needed.
 export function MarkdownParagraphView({ paragraphStyle, children }: MarkdownParagraphViewProps) {
   const style = useMemo(() => [paragraphStyle, MARKDOWN_PARAGRAPH_RESET], [paragraphStyle]);
-  return <View style={style}>{children}</View>;
+  return (
+    <View style={style} dataSet={markdownCopyDataSet.p}>
+      {children}
+    </View>
+  );
 }
