@@ -27,6 +27,7 @@ import {
   getCurrentBranch,
   getCheckoutDiff,
   getCheckoutShortstat,
+  getCheckoutUncommittedShortstat,
   getPullRequestStatus,
   getCheckoutStatus,
   checkoutResolvedBranch,
@@ -1014,6 +1015,19 @@ const x = 1;
     const shortstat = await getCheckoutShortstat(repoDir);
 
     expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+  });
+
+  it("keeps uncommitted shortstat scoped to working tree changes on a feature branch", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature update");
+    writeFileSync(join(repoDir, "file.txt"), "local one\nlocal two\n");
+
+    const branchShortstat = await getCheckoutShortstat(repoDir);
+    const uncommittedShortstat = await getCheckoutUncommittedShortstat(repoDir);
+
+    expect(branchShortstat).toEqual({ additions: 3, deletions: 1 });
+    expect(uncommittedShortstat).toEqual({ additions: 2, deletions: 1 });
   });
 
   it("includes untracked file lines in shortstat additions", async () => {

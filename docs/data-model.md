@@ -516,6 +516,11 @@ history surfaces tolerate transient orphaned workspaces by omitting those rows s
 blank the whole History screen, but mutation paths should repair or remove the orphaned state rather
 than treating it as valid.
 
+Workspace descriptor `diffStat` is runtime Git metadata, not a persisted workspace field. It is
+scoped to uncommitted working-tree state, including staged and untracked text additions, because the
+sidebar/archive UI uses it to describe local work that archive may discard. Branch/PR diff against
+the base branch is separate checkout UI state and must not be reused for archive-risk copy.
+
 ---
 
 ## 8. Push Token Store

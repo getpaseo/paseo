@@ -15,7 +15,7 @@ import {
   type CheckoutDiffResult,
   getCheckoutDiff,
   getCheckoutSnapshotFacts,
-  getCheckoutShortstat,
+  getCheckoutUncommittedShortstat,
   getCheckoutStatus,
   getPullRequestStatus,
   forgeAuthStateFromError,
@@ -271,7 +271,7 @@ interface WorkspaceGitServiceDependencies {
   readdir: typeof readdir;
   getCheckoutSnapshotFacts: typeof getCheckoutSnapshotFacts;
   getCheckoutStatus: typeof getCheckoutStatus;
-  getCheckoutShortstat: typeof getCheckoutShortstat;
+  getCheckoutUncommittedShortstat: typeof getCheckoutUncommittedShortstat;
   getCheckoutDiff: typeof getCheckoutDiff;
   getPullRequestStatus: typeof getPullRequestStatus;
   resolveBranchCheckout: typeof resolveBranchCheckout;
@@ -364,7 +364,7 @@ function buildDefaultWorkspaceGitServiceDeps(): WorkspaceGitServiceDependencies 
     readdir,
     getCheckoutSnapshotFacts,
     getCheckoutStatus,
-    getCheckoutShortstat,
+    getCheckoutUncommittedShortstat,
     getCheckoutDiff,
     getPullRequestStatus,
     resolveBranchCheckout,
@@ -1824,7 +1824,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     const diffStat = await this.deps
-      .getCheckoutShortstat(cwd, context, { force: request.force })
+      .getCheckoutUncommittedShortstat(cwd, context, { force: request.force })
       .catch(() => null);
 
     target.latestGit = {
