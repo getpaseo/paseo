@@ -330,6 +330,7 @@ test("startAgentRun registers acknowledgement before consuming a fast iterator",
     tryRunOutOfBand: () => false,
     hasInFlightRun: () => false,
     replaceAgentRun: async () => (async function* noop() {})(),
+    steerOrReplaceActiveTurn: async () => ({ status: "inactive" as const }),
     streamAgent,
     getPendingAgentRunStartAcknowledged: () => {
       acknowledgementRegistered = true;

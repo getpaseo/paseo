@@ -207,6 +207,8 @@ type ScheduleAgentManager = Pick<
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
+  | "getPendingAgentRunStartAcknowledged"
+  | "waitForAgentRunStart"
 > &
   Pick<
     AgentManager,
