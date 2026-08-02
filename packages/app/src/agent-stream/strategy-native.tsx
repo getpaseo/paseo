@@ -28,7 +28,6 @@ import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-k
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import {
   createStreamStrategy,
-  getStreamItemRenderKey,
   isNearBottomForStreamRenderStrategy,
   resolveBottomAnchorTransportBehavior,
 } from "./strategy";
@@ -82,8 +81,8 @@ function getHistoryRowDisplayVariant(item: StreamItem, compact: boolean): Stream
   return variants[key];
 }
 
-function keyExtractor(item: StreamItem): string {
-  return getStreamItemRenderKey(item);
+function keyExtractor(item: { id: string }): string {
+  return item.id;
 }
 
 function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrategy }) {
@@ -555,9 +554,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     // the memo invoke them again when that state changes.
     void liveHeadRowRevision;
     const liveHeadRows = segments.liveHead.map((item, index) => (
-      <Fragment key={getStreamItemRenderKey(item)}>
-        {renderLiveHeadRow(item, index, segments.liveHead)}
-      </Fragment>
+      <Fragment key={item.id}>{renderLiveHeadRow(item, index, segments.liveHead)}</Fragment>
     ));
     const liveAuxiliary = renderLiveAuxiliary();
     if (

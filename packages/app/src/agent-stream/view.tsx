@@ -199,10 +199,10 @@ function renderListEmptyComponent(input: {
 
 function renderHistoryStreamItem(input: {
   item: StreamItem;
-  layoutItemByItem: Map<StreamItem, StreamLayoutItem>;
+  layoutItemById: Map<string, StreamLayoutItem>;
   renderStreamItem: (layoutItem: StreamLayoutItem) => ReactNode;
 }): ReactNode {
-  const layoutItem = input.layoutItemByItem.get(input.item);
+  const layoutItem = input.layoutItemById.get(input.item.id);
   if (!layoutItem) {
     return null;
   }
@@ -211,10 +211,10 @@ function renderHistoryStreamItem(input: {
 
 function renderLiveHeadStreamItem(input: {
   item: StreamItem;
-  layoutItemByItem: Map<StreamItem, StreamLayoutItem>;
+  layoutItemById: Map<string, StreamLayoutItem>;
   renderStreamItem: (layoutItem: StreamLayoutItem) => ReactNode;
 }): ReactNode {
-  const layoutItem = input.layoutItemByItem.get(input.item);
+  const layoutItem = input.layoutItemById.get(input.item.id);
   if (!layoutItem) {
     return null;
   }
@@ -852,30 +852,30 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const { boundary, auxiliary } = renderModel;
 
-    const layoutHistoryItemByItem = useMemo(() => {
-      const itemByItem = new Map<StreamItem, StreamLayoutItem>();
+    const layoutHistoryItemById = useMemo(() => {
+      const itemById = new Map<string, StreamLayoutItem>();
       for (const item of streamLayout.history) {
-        itemByItem.set(item.item, item);
+        itemById.set(item.item.id, item);
       }
-      return itemByItem;
+      return itemById;
     }, [streamLayout.history]);
 
-    const layoutLiveHeadItemByItem = useMemo(() => {
-      const itemByItem = new Map<StreamItem, StreamLayoutItem>();
+    const layoutLiveHeadItemById = useMemo(() => {
+      const itemById = new Map<string, StreamLayoutItem>();
       for (const item of streamLayout.liveHead) {
-        itemByItem.set(item.item, item);
+        itemById.set(item.item.id, item);
       }
-      return itemByItem;
+      return itemById;
     }, [streamLayout.liveHead]);
 
     const renderHistoryRow = useCallback(
       (item: StreamItem) =>
         renderHistoryStreamItem({
           item,
-          layoutItemByItem: layoutHistoryItemByItem,
+          layoutItemById: layoutHistoryItemById,
           renderStreamItem,
         }),
-      [layoutHistoryItemByItem, renderStreamItem],
+      [layoutHistoryItemById, renderStreamItem],
     );
 
     const renderHistoryVirtualizedRow = useCallback<
@@ -886,14 +886,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [renderHistoryRow],
     );
     // useStableEvent keeps the function reference stable across flushes.
-    // layoutLiveHeadItemByItem and renderStreamItem are read from the ref at call time,
+    // layoutLiveHeadItemById and renderStreamItem are read from the ref at call time,
     // so the live-head render always uses the latest layout without causing renderers
     // to be a new object on every text-chunk flush.
     const renderLiveHeadRow: StreamSegmentRenderers["renderLiveHeadRow"] = useStableEvent(
       (item: StreamItem) =>
         renderLiveHeadStreamItem({
           item,
-          layoutItemByItem: layoutLiveHeadItemByItem,
+          layoutItemById: layoutLiveHeadItemById,
           renderStreamItem,
         }),
     );

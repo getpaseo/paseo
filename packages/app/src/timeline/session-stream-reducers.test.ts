@@ -2608,6 +2608,56 @@ describe("processTimelineResponse", () => {
     expect(result.older).toBe("available");
   });
 
+  it("gives prepended assistant blocks unique ids across independently hydrated pages", () => {
+    const currentTail: StreamItem[] = [
+      {
+        kind: "user_message",
+        id: "current-81",
+        text: "current-81",
+        timestamp: new Date(81000),
+      },
+      {
+        kind: "assistant_message",
+        id: "shared-provider-message",
+        messageId: "shared-provider-message",
+        text: "newer assistant block",
+        timestamp: new Date(82000),
+      },
+    ];
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 81, endSeq: 100 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        projection: "projected",
+        epoch: "epoch-1",
+        startCursor: { seq: 41 },
+        endCursor: { seq: 80 },
+        hasOlder: true,
+        entries: [
+          {
+            ...makeTimelineEntry(50, "older assistant block"),
+            item: {
+              type: "assistant_message",
+              text: "older assistant block",
+              messageId: "shared-provider-message",
+            },
+          },
+        ],
+      },
+    });
+
+    const assistants = result.tail.filter((item) => item.kind === "assistant_message");
+    expect(assistants.map((item) => item.messageId)).toEqual([
+      "shared-provider-message",
+      "shared-provider-message",
+    ]);
+    expect(new Set(assistants.map((item) => item.id)).size).toBe(2);
+  });
+
   it("drops a stale before page anchored before a resume-tail replacement", () => {
     const currentTail: StreamItem[] = [
       {

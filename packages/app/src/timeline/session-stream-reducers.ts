@@ -790,6 +790,8 @@ function deriveCanonicalAcknowledgements(params: {
 function selectEntriesOwnedByTimelinePage(
   payload: ProcessTimelineResponseInput["payload"],
 ): TimelineResponseEntry[] {
+  // COMPAT(projectedBeforePageOwnership): added in v0.2.6, remove after 2027-02-02
+  // once the supported daemon floor paginates projected before pages.
   if (
     payload.direction !== "before" ||
     payload.projection !== "projected" ||
@@ -864,7 +866,16 @@ function applyTimelineIncrementalPath(args: {
           timestamp,
           timelineCursor: { epoch: payload.epoch, seq: seqEnd },
         })),
-        { source: "canonical" },
+        {
+          source: "canonical",
+          reservedItemIds: new Set(
+            currentTail.flatMap((item) =>
+              item.kind === "assistant_message" && item.blockGroupId
+                ? [item.id, item.blockGroupId]
+                : [item.id],
+            ),
+          ),
+        },
       );
       nextTail = mergePrependedCanonicalTail(olderTail, currentTail);
     } else {

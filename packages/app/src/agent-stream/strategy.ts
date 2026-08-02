@@ -51,11 +51,6 @@ export interface StreamSegmentRenderers {
   renderLiveAuxiliary: () => ReactNode;
 }
 
-export function getStreamItemRenderKey(item: StreamItem): string {
-  const cursor = item.timelineCursor;
-  return cursor ? `${item.id}:${cursor.epoch}:${cursor.seq}` : item.id;
-}
-
 export interface StreamHistoryRowRevision {
   contentById: { has(id: string): boolean };
   displayStateById: { has(id: string): boolean };
