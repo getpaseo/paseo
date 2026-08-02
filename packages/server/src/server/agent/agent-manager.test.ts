@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
+  AgentHistoryHydrationError,
   AgentManager,
   AgentManagerShuttingDownError,
   commandMayHaveChangedExternalState,
@@ -442,6 +443,44 @@ class TestAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {}
+}
+
+class NonSettlingHistorySession extends TestAgentSession {
+  readonly historyStarted = deferred<void>();
+  readonly returnRequested = deferred<void>();
+  returnCallCount = 0;
+  private readonly nextResult = deferred<IteratorResult<AgentStreamEvent>>();
+
+  override streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    const iterator = {
+      next: async () => {
+        this.historyStarted.resolve();
+        return await this.nextResult.promise;
+      },
+      return: async () => {
+        this.returnCallCount += 1;
+        this.returnRequested.resolve();
+        return { done: true, value: undefined };
+      },
+      throw: async (error: unknown) => {
+        throw error;
+      },
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+    };
+    return iterator as AsyncGenerator<AgentStreamEvent>;
+  }
+}
+
+class SingleSessionAgentClient extends TestAgentClient {
+  constructor(private readonly session: AgentSession) {
+    super();
+  }
+
+  override async createSession(): Promise<AgentSession> {
+    return this.session;
+  }
 }
 
 class AtomicTestTimelineStore implements AgentTimelineStore {
@@ -4187,6 +4226,334 @@ test("force hydration preserves provider and turn identity for a canonical promp
       }),
     ]);
   } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("provider hydration bounds sustained live events and releases the gate", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hydration-buffer-bound-"));
+  const agentId = "00000000-0000-4000-8000-000000000167";
+  const session = new NonSettlingHistorySession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: { codex: new SingleSessionAgentClient(session) },
+    historyHydrationMaxBufferedOperations: 3,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const hydration = manager.hydrateTimelineFromProvider(created.id);
+    await session.historyStarted.promise;
+
+    for (let index = 1; index <= 20; index += 1) {
+      session.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: `live event ${index}` },
+      });
+    }
+
+    const hydrationState = manager as unknown as {
+      activeHistoryHydrations: Map<
+        string,
+        { preGateBufferedOperations: unknown[]; bufferedOperations: unknown[] }
+      >;
+    };
+    const activeHydration = hydrationState.activeHistoryHydrations.get(agentId);
+    expect(
+      (activeHydration?.preGateBufferedOperations.length ?? 0) +
+        (activeHydration?.bufferedOperations.length ?? 0),
+    ).toBeLessThanOrEqual(3);
+    await session.returnRequested.promise;
+    await hydration;
+    expect(session.returnCallCount).toBe(1);
+    expect(manager.getTimeline(agentId)).toEqual(
+      Array.from({ length: 20 }, (_, index) => ({
+        type: "user_message",
+        text: `live event ${index + 1}`,
+      })),
+    );
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("buffer cancellation preserves pre-gate event order without deadlock", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hydration-pre-gate-cancel-"));
+  const agentId = "00000000-0000-4000-8000-000000000173";
+  const session = new NonSettlingHistorySession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: { codex: new SingleSessionAgentClient(session) },
+    historyHydrationMaxBufferedOperations: 2,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const releasePreGateEvent = deferred<void>();
+    const hydrationState = manager as unknown as {
+      sessionEventTails: Map<string, Promise<void>>;
+    };
+    hydrationState.sessionEventTails.set(agentId, releasePreGateEvent.promise);
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "user_message", text: "event admitted before hydration" },
+    });
+
+    const hydration = manager.hydrateTimelineFromProvider(created.id);
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "user_message", text: "first event admitted during hydration" },
+    });
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "user_message", text: "second event admitted during hydration" },
+    });
+    releasePreGateEvent.resolve();
+
+    await hydration;
+    expect(manager.getTimeline(agentId)).toEqual([
+      { type: "user_message", text: "event admitted before hydration" },
+      { type: "user_message", text: "first event admitted during hydration" },
+      { type: "user_message", text: "second event admitted during hydration" },
+    ]);
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("provider hydration timeout releases admitted live events once in order", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hydration-timeout-order-"));
+  const agentId = "00000000-0000-4000-8000-000000000168";
+  const session = new NonSettlingHistorySession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: { codex: new SingleSessionAgentClient(session) },
+    rescueTimeouts: { historyHydrationMs: 25 },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const hydration = manager.hydrateTimelineFromProvider(created.id);
+    await session.historyStarted.promise;
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "user_message", text: "first admitted event" },
+    });
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "user_message", text: "second admitted event" },
+    });
+
+    await vi.advanceTimersByTimeAsync(25);
+    await hydration;
+    expect(manager.getTimeline(agentId)).toEqual([
+      { type: "user_message", text: "first admitted event" },
+      { type: "user_message", text: "second admitted event" },
+    ]);
+  } finally {
+    vi.useRealTimers();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("forced provider hydration reports a typed timeout failure", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hydration-forced-timeout-"));
+  const agentId = "00000000-0000-4000-8000-000000000169";
+  const session = new NonSettlingHistorySession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: { codex: new SingleSessionAgentClient(session) },
+    rescueTimeouts: { historyHydrationMs: 25 },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const failure = manager
+      .hydrateTimelineFromProvider(created.id, { force: true })
+      .catch((error: unknown) => error);
+    await session.historyStarted.promise;
+
+    await vi.advanceTimersByTimeAsync(25);
+    const error = await failure;
+    expect(error).toBeInstanceOf(AgentHistoryHydrationError);
+    expect(error).toMatchObject({ agentId, reason: "timed_out" });
+  } finally {
+    vi.useRealTimers();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("closing an agent cancels hydration, clears its gate, and does not replay", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hydration-close-"));
+  const agentId = "00000000-0000-4000-8000-000000000170";
+  const session = new NonSettlingHistorySession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: { codex: new SingleSessionAgentClient(session) },
+    logger,
+    idFactory: () => agentId,
+  });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), { agentId, replayState: false });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const hydrationFailure = manager
+      .hydrateTimelineFromProvider(created.id, { force: true })
+      .catch((error: unknown) => error);
+    await session.historyStarted.promise;
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "user_message", text: "must not replay after close" },
+    });
+
+    await manager.closeAgent(agentId);
+    const error = await hydrationFailure;
+    expect(error).toBeInstanceOf(AgentHistoryHydrationError);
+    expect(error).toMatchObject({ agentId, reason: "cancelled" });
+    expect(session.returnCallCount).toBe(1);
+    expect(
+      events.some(
+        (event) =>
+          event.type === "agent_stream" &&
+          event.event.type === "timeline" &&
+          event.event.item.type === "user_message" &&
+          event.event.item.text === "must not replay after close",
+      ),
+    ).toBe(false);
+    const hydrationState = manager as unknown as {
+      activeHistoryHydrations: Map<string, unknown>;
+      historyHydrationTails: Map<string, Promise<void>>;
+      coalescerHistoryHydrationTokens: Map<string, symbol>;
+    };
+    expect(hydrationState.activeHistoryHydrations.has(agentId)).toBe(false);
+    expect(hydrationState.historyHydrationTails.has(agentId)).toBe(false);
+    expect(hydrationState.coalescerHistoryHydrationTokens.has(agentId)).toBe(false);
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("provider hydration requests iterator cleanup exactly once", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hydration-return-"));
+  const agentId = "00000000-0000-4000-8000-000000000171";
+  const session = new NonSettlingHistorySession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: { codex: new SingleSessionAgentClient(session) },
+    rescueTimeouts: { historyHydrationMs: 25 },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const hydration = manager.hydrateTimelineFromProvider(created.id);
+    await session.historyStarted.promise;
+
+    await vi.advanceTimersByTimeAsync(25);
+    await hydration;
+    await manager.closeAgent(agentId);
+    expect(session.returnCallCount).toBe(1);
+  } finally {
+    vi.useRealTimers();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("normal provider hydration keeps atomic history and live event ordering", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hydration-normal-"));
+  const agentId = "00000000-0000-4000-8000-000000000172";
+  const historyStarted = deferred<void>();
+  const releaseHistory = deferred<void>();
+  let returnCallCount = 0;
+  let session: TestAgentSession | null = null;
+
+  class NormalHistorySession extends TestAgentSession {
+    override streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      const iterator = (async function* () {
+        historyStarted.resolve();
+        await releaseHistory.promise;
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text: "complete provider history" },
+        } satisfies AgentStreamEvent;
+      })();
+      const closeIterator = iterator.return.bind(iterator);
+      iterator.return = async (value) => {
+        returnCallCount += 1;
+        return await closeIterator(value);
+      };
+      return iterator;
+    }
+  }
+
+  class NormalHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new NormalHistorySession(config);
+      return session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new NormalHistoryClient() },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const hydration = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    await historyStarted.promise;
+    session?.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "user_message", text: "live event during normal hydration" },
+    });
+    releaseHistory.resolve();
+
+    await hydration;
+    expect(manager.getTimeline(agentId)).toEqual([
+      { type: "user_message", text: "complete provider history" },
+      { type: "user_message", text: "live event during normal hydration" },
+    ]);
+    expect(returnCallCount).toBe(0);
+  } finally {
+    releaseHistory.resolve();
     await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }

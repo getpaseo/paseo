@@ -78,6 +78,8 @@ import {
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+const HISTORY_HYDRATION_TIMEOUT_MS = 3_000;
+const HISTORY_HYDRATION_MAX_BUFFERED_OPERATIONS = 1_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
   supportsSessionPersistence: true,
@@ -115,6 +117,34 @@ export class AgentRunCancellationError extends Error {
       `Cannot ${action} agent ${agentId} because its active run cancellation was not acknowledged`,
     );
     this.name = "AgentRunCancellationError";
+  }
+}
+
+export type AgentHistoryHydrationFailureReason =
+  | "timed_out"
+  | "buffer_limit_exceeded"
+  | "cancelled";
+
+function getHistoryHydrationErrorMessage(
+  agentId: string,
+  reason: AgentHistoryHydrationFailureReason,
+): string {
+  if (reason === "timed_out") {
+    return `Provider history hydration timed out for agent ${agentId}`;
+  }
+  if (reason === "buffer_limit_exceeded") {
+    return `Provider history hydration buffered operation limit was exceeded for agent ${agentId}`;
+  }
+  return `Provider history hydration was cancelled for agent ${agentId}`;
+}
+
+export class AgentHistoryHydrationError extends Error {
+  constructor(
+    public readonly agentId: string,
+    public readonly reason: AgentHistoryHydrationFailureReason,
+  ) {
+    super(getHistoryHydrationErrorMessage(agentId, reason));
+    this.name = "AgentHistoryHydrationError";
   }
 }
 
@@ -230,6 +260,25 @@ export interface ProviderAvailability {
 interface AgentManagerRescueTimeouts {
   reloadSessionCloseMs?: number;
   interruptSessionMs?: number;
+  historyHydrationMs?: number;
+}
+
+function resolveAgentManagerRescueTimeouts(
+  options: AgentManagerOptions,
+): Required<AgentManagerRescueTimeouts> {
+  return {
+    reloadSessionCloseMs:
+      options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
+    interruptSessionMs: options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
+    historyHydrationMs: options.rescueTimeouts?.historyHydrationMs ?? HISTORY_HYDRATION_TIMEOUT_MS,
+  };
+}
+
+function resolveHistoryHydrationMaxBufferedOperations(options: AgentManagerOptions): number {
+  return Math.max(
+    1,
+    options.historyHydrationMaxBufferedOperations ?? HISTORY_HYDRATION_MAX_BUFFERED_OPERATIONS,
+  );
 }
 
 interface ProviderEnabledFlag {
@@ -265,6 +314,7 @@ export interface AgentManagerOptions {
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
+  historyHydrationMaxBufferedOperations?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   logger: Logger;
 }
@@ -317,6 +367,13 @@ interface HandleStreamEventOptions {
 
 interface ActiveHistoryHydration {
   token: symbol;
+  abortController: AbortController;
+  cancellationError: AgentHistoryHydrationError | null;
+  discardBufferedOperations: boolean;
+  historyIterator: AsyncGenerator<AgentStreamEvent> | null;
+  historyIteratorReturnRequested: boolean;
+  releasePromise: Promise<void>;
+  resolveRelease: () => void;
   preGateCoalescerToken: symbol;
   preGateCoalescerOpen: boolean;
   preGateSessionEventTokens: Set<symbol>;
@@ -342,6 +399,11 @@ interface BufferedHistoryHydrationOperation {
   providerSubagentEvent?: { provider: AgentProvider; event: ProviderSubagentInputEvent };
   resolve?: () => void;
   reject?: (error: unknown) => void;
+}
+
+interface ProviderHistoryEvents {
+  timeline: Extract<AgentStreamEvent, { type: "timeline" }>[];
+  providerSubagents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[];
 }
 
 interface ManagedAgentBase {
@@ -666,6 +728,7 @@ export class AgentManager {
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
+  private readonly historyHydrationMaxBufferedOperations: number;
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
@@ -679,12 +742,9 @@ export class AgentManager {
     this.configurePaseoTools(options);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
-    this.rescueTimeouts = {
-      reloadSessionCloseMs:
-        options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
-      interruptSessionMs:
-        options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
-    };
+    this.rescueTimeouts = resolveAgentManagerRescueTimeouts(options);
+    this.historyHydrationMaxBufferedOperations =
+      resolveHistoryHydrationMaxBufferedOperations(options);
     this.agentStreamCoalescer = new AgentStreamCoalescer({
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
       timers: { setTimeout, clearTimeout },
@@ -762,6 +822,11 @@ export class AgentManager {
 
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
+    for (const agentId of this.activeHistoryHydrations.keys()) {
+      this.cancelHistoryHydration(agentId, new AgentHistoryHydrationError(agentId, "cancelled"), {
+        discardBufferedOperations: true,
+      });
+    }
   }
 
   setPaseoToolsEnabled(enabled: boolean): void {
@@ -1345,6 +1410,7 @@ export class AgentManager {
     try {
       this.assertAcceptingAgentRegistrations();
 
+      await this.cancelAndWaitForHistoryHydration(agentId);
       const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
       try {
         await this.persistSnapshot(closedExisting);
@@ -1460,6 +1526,7 @@ export class AgentManager {
       },
       "agent.manager.close.start",
     );
+    await this.cancelAndWaitForHistoryHydration(agentId);
     await this.drainSessionEvents(agentId);
     this.cancelRunningProviderSubagents(agentId);
     const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
@@ -2597,6 +2664,7 @@ export class AgentManager {
     hydrationToken: symbol,
     ownsLatestTail: () => boolean,
   ): Promise<void> {
+    let timeout: NodeJS.Timeout | null = null;
     try {
       await this.drainSessionEvents(agentId);
       // Preserve coalesced output admitted before or during the drain. The already-installed gate
@@ -2605,10 +2673,22 @@ export class AgentManager {
       const agent = this.requireSessionAgent(agentId);
       const activeHydration = this.activeHistoryHydrations.get(agentId);
       if (!activeHydration || activeHydration.token !== hydrationToken) {
-        throw new Error(`Agent ${agentId} history hydration ownership was lost`);
+        throw new AgentHistoryHydrationError(agentId, "cancelled");
       }
+      timeout = setTimeout(() => {
+        this.cancelHistoryHydration(agentId, new AgentHistoryHydrationError(agentId, "timed_out"));
+      }, this.rescueTimeouts.historyHydrationMs);
       await this.hydrateTimelineFromLegacyProviderHistory(agent, options, activeHydration);
+      if (activeHydration.cancellationError) {
+        agent.historyPrimed = false;
+        if (options?.force) {
+          throw activeHydration.cancellationError;
+        }
+      }
     } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       if (ownsLatestTail()) {
         await this.releaseHistoryHydration(agentId, hydrationToken, ownsLatestTail);
       }
@@ -2669,6 +2749,7 @@ export class AgentManager {
   }
 
   async deleteAgentState(agentId: string): Promise<void> {
+    await this.cancelAndWaitForHistoryHydration(agentId);
     this.discardRetainedAgentState(agentId);
     await this.deleteCommittedTimeline(agentId);
   }
@@ -3166,9 +3247,17 @@ export class AgentManager {
   private enqueueSessionEvent(agentId: string, event: AgentStreamEvent): void {
     const activeHydration = this.activeHistoryHydrations.get(agentId);
     if (activeHydration) {
-      activeHydration.bufferedOperations.push({
+      void this.runOrBufferHistoryHydrationOperation(agentId, {
         kind: "session_event",
         run: async () => this.processSessionEvent(agentId, event, activeHydration.token),
+      }).catch((err) => {
+        if (err instanceof AgentHistoryHydrationError && err.reason === "cancelled") {
+          return;
+        }
+        this.logger.error(
+          { err, agentId, eventType: event.type },
+          "Failed to process session event",
+        );
       });
       return;
     }
@@ -3441,18 +3530,9 @@ export class AgentManager {
     broadcast: boolean,
     activeHydration: ActiveHistoryHydration,
   ): Promise<void> {
-    const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
-    const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-    for await (const event of agent.session.streamHistory()) {
-      if (event.type === "timeline") {
-        if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
-          continue;
-        }
-        historyEvents.push(event);
-      } else if (event.type === "provider_subagent") {
-        providerSubagentEvents.push(event);
-      }
-    }
+    const history = await this.collectProviderHistoryEvents(agent, activeHydration);
+    const historyEvents = history.timeline;
+    const providerSubagentEvents = history.providerSubagents;
 
     let historyRows = this.buildProviderHistoryRows(historyEvents, 1);
     const merged = this.mergeCarriedLiveTimelineRows(agent.id, activeHydration, historyRows);
@@ -3565,28 +3645,17 @@ export class AgentManager {
     broadcast: boolean | (() => boolean),
     activeHydration: ActiveHistoryHydration,
   ): Promise<void> {
-    const timelineEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
-    const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
     agent.historyPrimed = true;
+    let history: ProviderHistoryEvents;
     try {
-      for await (const event of agent.session.streamHistory()) {
-        if (event.type === "provider_subagent") {
-          providerSubagentEvents.push(event);
-          continue;
-        }
-        if (event.type !== "timeline") {
-          continue;
-        }
-        if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
-          continue;
-        }
-        timelineEvents.push(event);
-      }
+      history = await this.collectProviderHistoryEvents(agent, activeHydration);
     } catch {
       agent.historyPrimed = false;
       // ignore history failures
       return;
     }
+    const timelineEvents = history.timeline;
+    const providerSubagentEvents = history.providerSubagents;
 
     const existingRows = this.timelineStore.getRows(agent.id);
     const historyRows = this.buildProviderHistoryRows(
@@ -3626,6 +3695,81 @@ export class AgentManager {
           timestamp: row.timestamp,
         });
       }
+    }
+  }
+
+  private async collectProviderHistoryEvents(
+    agent: ActiveManagedAgent,
+    activeHydration: ActiveHistoryHydration,
+  ): Promise<ProviderHistoryEvents> {
+    this.throwIfHistoryHydrationCancelled(activeHydration);
+    const iterator = agent.session.streamHistory();
+    activeHydration.historyIterator = iterator;
+    activeHydration.historyIteratorReturnRequested = false;
+    const timeline: ProviderHistoryEvents["timeline"] = [];
+    const providerSubagents: ProviderHistoryEvents["providerSubagents"] = [];
+
+    try {
+      while (true) {
+        const result = await this.nextProviderHistoryEvent(agent.id, activeHydration, iterator);
+        if (result.done) {
+          return { timeline, providerSubagents };
+        }
+        const event = result.value;
+        if (event.type === "provider_subagent") {
+          providerSubagents.push(event);
+          continue;
+        }
+        if (event.type !== "timeline") {
+          continue;
+        }
+        if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
+          continue;
+        }
+        timeline.push(event);
+      }
+    } catch (error) {
+      this.requestHistoryIteratorReturn(agent.id, activeHydration, iterator);
+      throw error;
+    } finally {
+      if (activeHydration.historyIterator === iterator) {
+        activeHydration.historyIterator = null;
+      }
+    }
+  }
+
+  private async nextProviderHistoryEvent(
+    agentId: string,
+    activeHydration: ActiveHistoryHydration,
+    iterator: AsyncGenerator<AgentStreamEvent>,
+  ): Promise<IteratorResult<AgentStreamEvent>> {
+    this.throwIfHistoryHydrationCancelled(activeHydration);
+    const signal = activeHydration.abortController.signal;
+    let onAbort: (() => void) | null = null;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      onAbort = () => {
+        reject(
+          activeHydration.cancellationError ?? new AgentHistoryHydrationError(agentId, "cancelled"),
+        );
+      };
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
+    try {
+      return await Promise.race([iterator.next(), cancelled]);
+    } finally {
+      if (onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
+    }
+  }
+
+  private throwIfHistoryHydrationCancelled(activeHydration: ActiveHistoryHydration): void {
+    if (activeHydration.cancellationError) {
+      throw activeHydration.cancellationError;
     }
   }
 
@@ -3804,8 +3948,19 @@ export class AgentManager {
     }
     const currentRows = this.timelineStore.getRows(agentId);
     const token = Symbol(agentId);
+    let resolveRelease!: () => void;
+    const releasePromise = new Promise<void>((resolvePromise) => {
+      resolveRelease = resolvePromise;
+    });
     this.activeHistoryHydrations.set(agentId, {
       token,
+      abortController: new AbortController(),
+      cancellationError: null,
+      discardBufferedOperations: false,
+      historyIterator: null,
+      historyIteratorReturnRequested: false,
+      releasePromise,
+      resolveRelease,
       preGateCoalescerToken: Symbol(`${agentId}:pre-gate-coalescer`),
       preGateCoalescerOpen: true,
       preGateSessionEventTokens: new Set(this.sessionEventAdmissionTokens.get(agentId) ?? []),
@@ -3831,15 +3986,23 @@ export class AgentManager {
   ): Promise<void> {
     const activeHydration = this.activeHistoryHydrations.get(agentId);
     if (!activeHydration || activeHydration.token !== token) {
-      throw new Error(`Agent ${agentId} history hydration ownership was lost`);
+      return;
     }
 
-    await this.drainSessionEvents(agentId);
+    if (!activeHydration.cancellationError) {
+      await this.drainSessionEvents(agentId);
+    }
     while (true) {
+      if (activeHydration.discardBufferedOperations) {
+        this.rejectBufferedHistoryHydrationOperations(agentId, activeHydration);
+        this.finishHistoryHydration(agentId, activeHydration);
+        await this.drainSessionEvents(agentId);
+        return;
+      }
       // A successor owns every operation that remains queued. Do not consume
       // even one of its writes; it will release the shared gate after its
       // provider-history replacement has committed.
-      if (!stillOwnsTail()) {
+      if (!activeHydration.cancellationError && !stillOwnsTail()) {
         return;
       }
       const operation =
@@ -3875,10 +4038,98 @@ export class AgentManager {
         continue;
       }
       if (this.activeHistoryHydrations.get(agentId) !== activeHydration) {
-        throw new Error(`Agent ${agentId} history hydration ownership was lost`);
+        return;
       }
-      this.activeHistoryHydrations.delete(agentId);
+      this.finishHistoryHydration(agentId, activeHydration);
+      await this.drainSessionEvents(agentId);
       return;
+    }
+  }
+
+  private finishHistoryHydration(agentId: string, activeHydration: ActiveHistoryHydration): void {
+    if (this.activeHistoryHydrations.get(agentId) === activeHydration) {
+      this.activeHistoryHydrations.delete(agentId);
+    }
+    this.coalescerHistoryHydrationTokens.delete(agentId);
+    activeHydration.resolveRelease();
+  }
+
+  private cancelHistoryHydration(
+    agentId: string,
+    error: AgentHistoryHydrationError,
+    options?: { discardBufferedOperations?: boolean },
+  ): ActiveHistoryHydration | null {
+    const activeHydration = this.activeHistoryHydrations.get(agentId);
+    if (!activeHydration) {
+      return null;
+    }
+    if (!activeHydration.cancellationError) {
+      activeHydration.cancellationError = error;
+      activeHydration.abortController.abort(error);
+    }
+    if (options?.discardBufferedOperations) {
+      activeHydration.discardBufferedOperations = true;
+      this.rejectBufferedHistoryHydrationOperations(agentId, activeHydration);
+    }
+    const iterator = activeHydration.historyIterator;
+    if (iterator) {
+      this.requestHistoryIteratorReturn(agentId, activeHydration, iterator);
+    }
+    return activeHydration;
+  }
+
+  private async cancelAndWaitForHistoryHydration(agentId: string): Promise<void> {
+    const tail = this.historyHydrationTails.get(agentId);
+    const activeHydration = this.cancelHistoryHydration(
+      agentId,
+      new AgentHistoryHydrationError(agentId, "cancelled"),
+      { discardBufferedOperations: true },
+    );
+    if (tail) {
+      await tail.catch(() => undefined);
+    }
+    if (activeHydration && this.activeHistoryHydrations.get(agentId) === activeHydration) {
+      this.finishHistoryHydration(agentId, activeHydration);
+    }
+    if (tail && this.historyHydrationTails.get(agentId) === tail) {
+      this.historyHydrationTails.delete(agentId);
+    }
+  }
+
+  private rejectBufferedHistoryHydrationOperations(
+    agentId: string,
+    activeHydration: ActiveHistoryHydration,
+  ): void {
+    const error =
+      activeHydration.cancellationError ?? new AgentHistoryHydrationError(agentId, "cancelled");
+    for (const operation of [
+      ...activeHydration.preGateBufferedOperations,
+      ...activeHydration.bufferedOperations,
+    ]) {
+      operation.reject?.(error);
+    }
+    activeHydration.preGateBufferedOperations.length = 0;
+    activeHydration.bufferedOperations.length = 0;
+  }
+
+  private requestHistoryIteratorReturn(
+    agentId: string,
+    activeHydration: ActiveHistoryHydration,
+    iterator: AsyncGenerator<AgentStreamEvent>,
+  ): void {
+    if (
+      activeHydration.historyIterator !== iterator ||
+      activeHydration.historyIteratorReturnRequested
+    ) {
+      return;
+    }
+    activeHydration.historyIteratorReturnRequested = true;
+    try {
+      void iterator.return(undefined).catch((error) => {
+        this.logger.warn({ err: error, agentId }, "Provider history iterator cleanup failed");
+      });
+    } catch (error) {
+      this.logger.warn({ err: error, agentId }, "Provider history iterator cleanup failed");
     }
   }
 
@@ -3900,32 +4151,35 @@ export class AgentManager {
     historyHydrationToken?: symbol,
   ): Promise<void> {
     const activeHydration = this.activeHistoryHydrations.get(agentId);
-    if (!activeHydration || activeHydration.token === historyHydrationToken) {
-      let result: Promise<void>;
-      try {
-        result = Promise.resolve(operation.run());
-      } catch (error) {
-        return Promise.reject(error);
-      }
-      const providerSubagentEvent = operation.providerSubagentEvent;
-      if (activeHydration && providerSubagentEvent) {
-        return result.then(() => {
-          activeHydration.carriedProviderSubagentEvents.push(
-            structuredClone(providerSubagentEvent),
-          );
-          return undefined;
-        });
-      }
-      return result;
+    if (!activeHydration) {
+      return this.runHistoryHydrationOperation(operation);
     }
 
-    if (
+    if (activeHydration.discardBufferedOperations) {
+      return Promise.reject(
+        activeHydration.cancellationError ?? new AgentHistoryHydrationError(agentId, "cancelled"),
+      );
+    }
+
+    if (activeHydration.token === historyHydrationToken) {
+      return this.runHistoryHydrationOperation(operation, activeHydration);
+    }
+
+    const isPreGateOperation =
       historyHydrationToken === activeHydration.preGateCoalescerToken ||
       (historyHydrationToken !== undefined &&
-        activeHydration.preGateSessionEventTokens.has(historyHydrationToken))
-    ) {
+        activeHydration.preGateSessionEventTokens.has(historyHydrationToken));
+    if (isPreGateOperation) {
+      if (activeHydration.cancellationError) {
+        return this.runHistoryHydrationOperation(operation);
+      }
       activeHydration.preGateBufferedOperations.push(operation);
+      this.cancelHistoryHydrationAtBufferLimit(agentId, activeHydration);
       return Promise.resolve();
+    }
+
+    if (activeHydration.cancellationError) {
+      return this.queueOperationAfterHistoryHydrationRelease(agentId, activeHydration, operation);
     }
 
     return new Promise<void>((promiseResolve, promiseReject) => {
@@ -3934,7 +4188,76 @@ export class AgentManager {
         resolve: promiseResolve,
         reject: promiseReject,
       });
+      this.cancelHistoryHydrationAtBufferLimit(agentId, activeHydration);
     });
+  }
+
+  private runHistoryHydrationOperation(
+    operation: BufferedHistoryHydrationOperation,
+    activeHydration?: ActiveHistoryHydration,
+  ): Promise<void> {
+    let result: Promise<void>;
+    try {
+      result = Promise.resolve(operation.run());
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const providerSubagentEvent = operation.providerSubagentEvent;
+    if (!activeHydration || !providerSubagentEvent) {
+      return result;
+    }
+    return result.then(() => {
+      activeHydration.carriedProviderSubagentEvents.push(structuredClone(providerSubagentEvent));
+      return undefined;
+    });
+  }
+
+  private cancelHistoryHydrationAtBufferLimit(
+    agentId: string,
+    activeHydration: ActiveHistoryHydration,
+  ): void {
+    const bufferedOperationCount =
+      activeHydration.preGateBufferedOperations.length + activeHydration.bufferedOperations.length;
+    if (bufferedOperationCount < this.historyHydrationMaxBufferedOperations) {
+      return;
+    }
+    this.cancelHistoryHydration(
+      agentId,
+      new AgentHistoryHydrationError(agentId, "buffer_limit_exceeded"),
+    );
+  }
+
+  private queueOperationAfterHistoryHydrationRelease(
+    agentId: string,
+    activeHydration: ActiveHistoryHydration,
+    operation: BufferedHistoryHydrationOperation,
+  ): Promise<void> {
+    const previous = this.sessionEventTails.get(agentId) ?? Promise.resolve();
+    const result = previous
+      .catch(() => undefined)
+      .then(async () => {
+        await activeHydration.releasePromise;
+        if (activeHydration.discardBufferedOperations) {
+          throw (
+            activeHydration.cancellationError ??
+            new AgentHistoryHydrationError(agentId, "cancelled")
+          );
+        }
+        return await operation.run();
+      });
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.sessionEventTails.set(agentId, settled);
+    this.trackBackgroundTask(settled);
+    void settled.then(() => {
+      if (this.sessionEventTails.get(agentId) === settled) {
+        this.sessionEventTails.delete(agentId);
+      }
+      return undefined;
+    });
+    return result;
   }
 
   private flushCoalescedTimelineItems(agentId: string, historyHydrationToken?: symbol): void {
