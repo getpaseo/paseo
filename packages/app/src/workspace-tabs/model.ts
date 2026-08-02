@@ -21,6 +21,7 @@ export type WorkspaceTabTarget =
   | { kind: "agent"; agentId: string }
   | { kind: "provider_subagent"; parentAgentId: string; subagentId: string }
   | { kind: "background_task"; parentAgentId: string; taskId: string }
+  | { kind: "loop"; loopId: string }
   | { kind: "terminal"; terminalId: string }
   | { kind: "browser"; browserId: string }
   | { kind: "codeServer"; codeServerId: string }

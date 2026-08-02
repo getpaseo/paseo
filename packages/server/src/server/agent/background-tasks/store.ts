@@ -37,6 +37,15 @@ export function isShellTaskType(type: string): boolean {
   return normalized === "shell" || normalized === "bash" || normalized === "local_bash";
 }
 
+export function isSubagentTaskType(type: string): boolean {
+  const normalized = type.trim().toLowerCase();
+  return normalized === "subagent";
+}
+
+export function isTrackableBackgroundTaskType(type: string): boolean {
+  return !isSubagentTaskType(type);
+}
+
 function taskKey(parentAgentId: string, taskId: string): string {
   return `${parentAgentId}\0${taskId}`;
 }
@@ -62,7 +71,7 @@ export class BackgroundTaskStore {
     }
 
     for (const task of tasks) {
-      if (!isShellTaskType(task.type)) continue;
+      if (!isTrackableBackgroundTaskType(task.type)) continue;
       const previous = previousByTaskId.get(task.taskId);
       const next: BackgroundTaskDescriptor = {
         taskId: task.taskId,

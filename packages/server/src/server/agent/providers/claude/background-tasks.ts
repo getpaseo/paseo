@@ -5,7 +5,7 @@ import type {
   BackgroundTaskStatus,
   BackgroundTaskStore,
 } from "../../background-tasks/store.js";
-import { isShellTaskType } from "../../background-tasks/store.js";
+import { isTrackableBackgroundTaskType } from "../../background-tasks/store.js";
 
 export type BackgroundTaskInputEvent =
   | {
@@ -81,7 +81,7 @@ function mapTaskStartedEvent(
   nowIso: string,
 ): BackgroundTaskInputEvent | null {
   const type = toNonEmptyString(record.task_type) ?? toNonEmptyString(record.type) ?? "shell";
-  if (!isShellTaskType(type)) return null;
+  if (!isTrackableBackgroundTaskType(type)) return null;
   const description = toNonEmptyString(record.description) ?? taskId;
   return {
     kind: "replace",

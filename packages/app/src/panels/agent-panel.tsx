@@ -97,6 +97,22 @@ import { BackgroundTasksTrack } from "@/background-tasks/track";
 import { useBackgroundTasksForParent } from "@/background-tasks/select";
 import { refreshBackgroundTasks } from "@/background-tasks/store";
 import { useStopBackgroundTask } from "@/background-tasks/use-stop-background-task";
+import { LoopsTrack } from "@/loops/track";
+import { selectLoopsForAgentFromStore, refreshLoops, useLoopStore } from "@/loops/store";
+import { useStopLoop } from "@/loops/use-stop-loop";
+import { HeartbeatsTrack } from "@/heartbeats/track";
+import {
+  mergeHeartbeatRows,
+  selectPaseoHeartbeatRows,
+  useProviderHeartbeatRows,
+  type HeartbeatRow,
+} from "@/heartbeats/select";
+import { refreshProviderHeartbeats } from "@/heartbeats/provider-store";
+import { useHeartbeatActions } from "@/heartbeats/use-heartbeat-actions";
+import { ProviderHeartbeatDetailSheet } from "@/heartbeats/provider-detail-sheet";
+import { ScheduleFormSheet } from "@/components/schedules/schedule-form-sheet";
+import { useSchedules, type AggregatedSchedule } from "@/hooks/use-schedules";
+import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
@@ -1599,17 +1615,61 @@ function ActiveAgentComposer({
     serverId,
     parentAgentId: agentId,
   });
+  const loopsByServer = useLoopStore((state) => state.loopsByServer);
+  const loopRows = useMemo(
+    () => selectLoopsForAgentFromStore(loopsByServer, serverId, agentId),
+    [agentId, loopsByServer, serverId],
+  );
+  const { loadState: schedulesLoadState } = useSchedules();
+  const schedulesForServer = useMemo(() => {
+    if (schedulesLoadState.status !== "loaded") return EMPTY_AGGREGATED_SCHEDULES;
+    return schedulesLoadState.data.filter((schedule) => schedule.serverId === serverId);
+  }, [schedulesLoadState, serverId]);
+  const paseoHeartbeatRows = useMemo(
+    () =>
+      selectPaseoHeartbeatRows({
+        agentId,
+        serverId,
+        schedules: schedulesForServer,
+      }),
+    [agentId, schedulesForServer, serverId],
+  );
+  const providerHeartbeatRows = useProviderHeartbeatRows({
+    serverId,
+    parentAgentId: agentId,
+  });
+  const heartbeatRows = useMemo(
+    () => mergeHeartbeatRows(paseoHeartbeatRows, providerHeartbeatRows),
+    [paseoHeartbeatRows, providerHeartbeatRows],
+  );
+  const {
+    pauseHeartbeat,
+    resumeHeartbeat,
+    deleteHeartbeat,
+    pendingIds: heartbeatPendingIds,
+  } = useHeartbeatActions({ serverId, parentAgentId: agentId });
+  const [heartbeatScheduleForm, setHeartbeatScheduleForm] = useState<HeartbeatScheduleFormState>({
+    mode: "closed",
+  });
+  const [providerHeartbeatDetail, setProviderHeartbeatDetail] = useState<Extract<
+    HeartbeatRow,
+    { kind: "provider" }
+  > | null>(null);
   const canDetachSubagents = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
   );
   const supportsBackgroundTasks = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.backgroundTasks === true,
   );
+  const supportsProviderHeartbeats = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.providerHeartbeats === true,
+  );
   const sessionClient = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const { stopTask: stopBackgroundTask, stoppingTaskIds } = useStopBackgroundTask({
     serverId,
     parentAgentId: agentId,
   });
+  const { stopLoop, stoppingLoopIds } = useStopLoop({ serverId });
   const handleOpenSubagent = useCallback(
     (subagentId: string) => {
       navigateToAgent({ serverId, agentId: subagentId });
@@ -1628,10 +1688,46 @@ function ActiveAgentComposer({
     },
     [agentId, openTab],
   );
+  const handleOpenLoop = useCallback(
+    (loopId: string) => {
+      openTab({ kind: "loop", loopId });
+    },
+    [openTab],
+  );
+  const handleOpenHeartbeat = useCallback(
+    (row: HeartbeatRow) => {
+      if (row.kind === "paseo") {
+        const schedule = schedulesForServer.find((entry) => entry.id === row.id);
+        if (!schedule) return;
+        setHeartbeatScheduleForm({
+          mode: "edit",
+          serverId: row.serverId,
+          schedule,
+        });
+        return;
+      }
+      setProviderHeartbeatDetail(row);
+    },
+    [schedulesForServer],
+  );
+  const closeHeartbeatScheduleForm = useCallback(() => {
+    setHeartbeatScheduleForm({ mode: "closed" });
+  }, []);
+  const closeProviderHeartbeatDetail = useCallback(() => {
+    setProviderHeartbeatDetail(null);
+  }, []);
   useEffect(() => {
     if (!sessionClient || !supportsBackgroundTasks) return;
     void refreshBackgroundTasks(sessionClient, serverId, agentId).catch(() => undefined);
   }, [agentId, serverId, sessionClient, supportsBackgroundTasks]);
+  useEffect(() => {
+    if (!sessionClient) return;
+    void refreshLoops(sessionClient, serverId).catch(() => undefined);
+  }, [agentId, serverId, sessionClient]);
+  useEffect(() => {
+    if (!sessionClient || !supportsProviderHeartbeats) return;
+    void refreshProviderHeartbeats(sessionClient, serverId, agentId).catch(() => undefined);
+  }, [agentId, serverId, sessionClient, supportsProviderHeartbeats]);
   const handleArchiveSubagent = useArchiveSubagent({ serverId });
   const handleDetachSubagent = useDetachSubagent({ serverId });
   const handleHideFinishedProviderSubagents = useHideFinishedProviderSubagents({
@@ -1732,6 +1828,20 @@ function ActiveAgentComposer({
         onArchiveFinished={handleHideFinishedProviderSubagents}
         onDetachSubagent={canDetachSubagents ? handleDetachSubagent : undefined}
       />
+      <HeartbeatsTrack
+        rows={heartbeatRows}
+        onOpenRow={handleOpenHeartbeat}
+        onPause={pauseHeartbeat}
+        onResume={resumeHeartbeat}
+        onDelete={deleteHeartbeat}
+        pendingIds={heartbeatPendingIds}
+      />
+      <LoopsTrack
+        rows={loopRows}
+        onOpenLoop={handleOpenLoop}
+        onStopLoop={stopLoop}
+        stoppingLoopIds={stoppingLoopIds}
+      />
       {supportsBackgroundTasks ? (
         <BackgroundTasksTrack
           rows={backgroundTaskRows}
@@ -1764,9 +1874,31 @@ function ActiveAgentComposer({
         onClientSlashCommand={handleClientSlashCommand}
         isCompactLayout={isCompactComposerLayout}
       />
+      <ScheduleFormSheet
+        serverId={
+          heartbeatScheduleForm.mode === "edit" ? heartbeatScheduleForm.serverId : undefined
+        }
+        visible={heartbeatScheduleForm.mode === "edit"}
+        onClose={closeHeartbeatScheduleForm}
+        mode="edit"
+        schedule={
+          heartbeatScheduleForm.mode === "edit" ? heartbeatScheduleForm.schedule : undefined
+        }
+      />
+      <ProviderHeartbeatDetailSheet
+        visible={providerHeartbeatDetail != null}
+        row={providerHeartbeatDetail}
+        onClose={closeProviderHeartbeatDetail}
+      />
     </ReanimatedAnimated.View>
   );
 }
+
+const EMPTY_AGGREGATED_SCHEDULES: AggregatedSchedule[] = [];
+
+type HeartbeatScheduleFormState =
+  | { mode: "closed" }
+  | { mode: "edit"; serverId: string; schedule: ScheduleSummary };
 
 function AgentSessionUnavailableState({
   serverLabel,

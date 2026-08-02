@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.917 - 2026-08-02
+
+### Added
+
+- Agent pane **Heartbeats** track: Paseo agent-target schedules plus provider session schedules (Claude `CronCreate` / fixed and dynamic `/loop`) with Subagents-style `paseo` | `provider` rows
+- Agent pane **Loops** track: running Paseo loops where this agent is active worker or verifier, with inspect tab and Stop
+- Background Tasks expansion beyond shell-only: live **monitor**, **workflow**, and other non-subagent types with type badges (Shell / Monitor / Workflow / Other)
+- Protocol/feature surface for provider heartbeats (`server_info.features.providerHeartbeats`, list/update/delete RPCs) and loop list optional `activeWorkerAgentId` / `activeVerifierAgentId`
+
+### Improved
+
+- Stack above the composer is now Queue → Subagents → Heartbeats → Loops → Background Tasks (each track still hides when empty)
+- Glossary: Heartbeat includes provider session schedules; Claude `/loop` maps to Heartbeats (not Paseo Loops); Background Tasks is non-subagent live work
+
+### Notes
+
+- Provider heartbeat delete is view-only when Claude does not expose an in-process CronDelete API (row removed from Paseo with an advisory error; the session schedule may still fire until Claude cancels it)
+- Claude session-schedule membership is tool-correlation-first in v1; focus-time CronList refresh remains a follow-up
+
 ## 0.2.916 - 2026-08-01
 
 ### Added

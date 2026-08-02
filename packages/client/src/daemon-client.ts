@@ -628,6 +628,14 @@ export type BackgroundTasksOutputUnsubscribePayload = Extract<
   SessionOutboundMessage,
   { type: "agent.background_tasks.output.unsubscribe.response" }
 >["payload"];
+export type ProviderHeartbeatsListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.provider_heartbeats.list.response" }
+>["payload"];
+export type ProviderHeartbeatsDeletePayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.provider_heartbeats.delete.response" }
+>["payload"];
 
 // COMPAT(daemon-client-object-options): added in v0.1.102; remove after
 // 2026-12-29 once SDK callers have migrated to object parameters.
@@ -3100,6 +3108,62 @@ export class DaemonClient {
       throw new Error(payload.error);
     }
     return payload;
+  }
+
+  async listProviderHeartbeats(
+    parentAgentId: string,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<ProviderHeartbeatsListPayload> {
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.provider_heartbeats.list.request",
+      parentAgentId,
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.provider_heartbeats.list.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload;
+  }
+
+  async deleteProviderHeartbeat(
+    parentAgentId: string,
+    taskId: string,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<ProviderHeartbeatsDeletePayload> {
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.provider_heartbeats.delete.request",
+      parentAgentId,
+      taskId,
+      requestId,
+    });
+    // Return full payload even when error is non-null: server may remove the
+    // row from Paseo's view while reporting an advisory cancel limitation
+    // ("Provider cancel is not available; removed from Paseo view only").
+    // Callers can toast the advisory and still refresh the list.
+    return this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.provider_heartbeats.delete.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
   }
 
   async setAgentTimelineSubscription(agentIds: string[]): Promise<void> {

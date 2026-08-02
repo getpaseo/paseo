@@ -1464,6 +1464,19 @@ export const BackgroundTasksListRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const ProviderHeartbeatsListRequestMessageSchema = z.object({
+  type: z.literal("agent.provider_heartbeats.list.request"),
+  parentAgentId: z.string(),
+  requestId: z.string(),
+});
+
+export const ProviderHeartbeatsDeleteRequestMessageSchema = z.object({
+  type: z.literal("agent.provider_heartbeats.delete.request"),
+  parentAgentId: z.string(),
+  taskId: z.string().min(1),
+  requestId: z.string(),
+});
+
 export const BackgroundTasksStopRequestMessageSchema = z.object({
   type: z.literal("agent.background_tasks.stop.request"),
   parentAgentId: z.string(),
@@ -2604,6 +2617,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   BackgroundTasksOutputGetRequestMessageSchema,
   BackgroundTasksOutputSubscribeRequestMessageSchema,
   BackgroundTasksOutputUnsubscribeRequestMessageSchema,
+  ProviderHeartbeatsListRequestMessageSchema,
+  ProviderHeartbeatsDeleteRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
@@ -2945,6 +2960,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerSubagents: z.boolean().optional(),
         // COMPAT(backgroundTasks): added in v0.2.x, remove gate after 2027-02-01.
         backgroundTasks: z.boolean().optional(),
+        // COMPAT(providerHeartbeats): added in v0.2.x, remove gate after 2027-02-02.
+        providerHeartbeats: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: z.boolean().optional(),
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
@@ -3788,6 +3805,23 @@ export const BackgroundTaskDescriptorPayloadSchema = z.object({
 });
 export type BackgroundTaskDescriptorPayload = z.infer<typeof BackgroundTaskDescriptorPayloadSchema>;
 
+export const ProviderHeartbeatModeSchema = z.enum(["recurring", "one_shot", "dynamic"]);
+export type ProviderHeartbeatMode = z.infer<typeof ProviderHeartbeatModeSchema>;
+
+export const ProviderHeartbeatDescriptorPayloadSchema = z.object({
+  taskId: z.string().min(1),
+  parentAgentId: z.string().min(1),
+  provider: AgentProviderSchema,
+  prompt: z.string(),
+  mode: ProviderHeartbeatModeSchema,
+  scheduleLabel: z.string(),
+  nextHint: z.string().nullable(),
+  updatedAt: z.string(),
+});
+export type ProviderHeartbeatDescriptorPayload = z.infer<
+  typeof ProviderHeartbeatDescriptorPayloadSchema
+>;
+
 export const BackgroundTasksListResponseMessageSchema = z.object({
   type: z.literal("agent.background_tasks.list.response"),
   payload: z.object({
@@ -3803,6 +3837,34 @@ export const BackgroundTasksUpdateMessageSchema = z.object({
   payload: z.object({
     parentAgentId: z.string(),
     tasks: z.array(BackgroundTaskDescriptorPayloadSchema),
+  }),
+});
+
+export const ProviderHeartbeatsListResponseMessageSchema = z.object({
+  type: z.literal("agent.provider_heartbeats.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    parentAgentId: z.string(),
+    heartbeats: z.array(ProviderHeartbeatDescriptorPayloadSchema),
+    error: z.string().nullable(),
+  }),
+});
+
+export const ProviderHeartbeatsUpdateMessageSchema = z.object({
+  type: z.literal("agent.provider_heartbeats.update"),
+  payload: z.object({
+    parentAgentId: z.string(),
+    heartbeats: z.array(ProviderHeartbeatDescriptorPayloadSchema),
+  }),
+});
+
+export const ProviderHeartbeatsDeleteResponseMessageSchema = z.object({
+  type: z.literal("agent.provider_heartbeats.delete.response"),
+  payload: z.object({
+    requestId: z.string(),
+    parentAgentId: z.string(),
+    taskId: z.string(),
+    error: z.string().nullable(),
   }),
 });
 
@@ -5510,6 +5572,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   BackgroundTasksOutputSubscribeResponseMessageSchema,
   BackgroundTasksOutputUnsubscribeResponseMessageSchema,
   BackgroundTasksOutputUpdateMessageSchema,
+  ProviderHeartbeatsListResponseMessageSchema,
+  ProviderHeartbeatsUpdateMessageSchema,
+  ProviderHeartbeatsDeleteResponseMessageSchema,
   SetAgentTimelineSubscriptionResponseMessageSchema,
   AgentAttentionRequiredMessageSchema,
   AgentForkContextResponseMessageSchema,

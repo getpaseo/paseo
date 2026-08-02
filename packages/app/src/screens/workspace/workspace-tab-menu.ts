@@ -151,6 +151,9 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "background_task") {
     return `workspace-background-task-close-${tab.target.taskId}`;
   }
+  if (tab.target.kind === "loop") {
+    return `workspace-loop-close-${tab.target.loopId}`;
+  }
   if (tab.target.kind === "commit_diff") {
     return `workspace-commit-diff-close-${encodeFilePathForPathSegment(tab.target.sha)}`;
   }

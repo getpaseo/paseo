@@ -1692,6 +1692,26 @@ export class Session {
           return;
         }
 
+        if (event.type === "provider_heartbeats") {
+          this.emit({
+            type: "agent.provider_heartbeats.update",
+            payload: {
+              parentAgentId: event.parentAgentId,
+              heartbeats: event.heartbeats.map((heartbeat) => ({
+                taskId: heartbeat.taskId,
+                parentAgentId: heartbeat.parentAgentId,
+                provider: heartbeat.provider,
+                prompt: heartbeat.prompt,
+                mode: heartbeat.mode,
+                scheduleLabel: heartbeat.scheduleLabel,
+                nextHint: heartbeat.nextHint,
+                updatedAt: heartbeat.updatedAt,
+              })),
+            },
+          });
+          return;
+        }
+
         if (event.type !== "agent_stream") {
           return;
         }
@@ -2024,6 +2044,10 @@ export class Session {
         return this.handleBackgroundTasksOutputSubscribeRequest(msg);
       case "agent.background_tasks.output.unsubscribe.request":
         return this.handleBackgroundTasksOutputUnsubscribeRequest(msg);
+      case "agent.provider_heartbeats.list.request":
+        return this.handleProviderHeartbeatsListRequest(msg);
+      case "agent.provider_heartbeats.delete.request":
+        return this.handleProviderHeartbeatsDeleteRequest(msg);
       case "agent.timeline.set_subscription.request": {
         const agentIds = [...new Set(msg.agentIds)].sort();
         if (
@@ -6351,6 +6375,69 @@ export class Session {
           requestId: msg.requestId,
           parentAgentId: msg.parentAgentId,
           tasks: [],
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleProviderHeartbeatsListRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.provider_heartbeats.list.request" }>,
+  ): Promise<void> {
+    try {
+      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      this.emit({
+        type: "agent.provider_heartbeats.list.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          heartbeats: this.agentManager.listProviderHeartbeats(msg.parentAgentId),
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.provider_heartbeats.list.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          heartbeats: [],
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleProviderHeartbeatsDeleteRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.provider_heartbeats.delete.request" }>,
+  ): Promise<void> {
+    try {
+      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      const result = await this.agentManager.deleteProviderHeartbeat(msg.parentAgentId, msg.taskId);
+      this.emit({
+        type: "agent.provider_heartbeats.delete.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          taskId: msg.taskId,
+          error: result.error,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.provider_heartbeats.delete.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          taskId: msg.taskId,
           error: error instanceof Error ? error.message : String(error),
         },
       });

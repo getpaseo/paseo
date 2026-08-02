@@ -503,6 +503,9 @@ function getFallbackTabOptionDescription(
   if (tab.target.kind === "background_task") {
     return labels.agent;
   }
+  if (tab.target.kind === "loop") {
+    return labels.agent;
+  }
   if (tab.target.kind === "commit_diff") {
     return tab.target.sha.slice(0, 7);
   }

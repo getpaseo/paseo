@@ -33,6 +33,7 @@ import {
   extractBashBackgroundTaskCorrelation,
   mapClaudeBackgroundSystemMessage,
 } from "./background-tasks.js";
+import { mapClaudeProviderHeartbeatToolEvent } from "./provider-heartbeats.js";
 import {
   findClaudeModel,
   getClaudeModelsWithSettings,
@@ -4685,10 +4686,11 @@ class ClaudeAgentSession implements AgentSession {
       text,
       items,
     });
-    this.emitBashBackgroundTaskCorrelation({
+    this.emitToolResultSideEffects({
       toolName,
       toolInput: entry?.input ?? null,
       toolOutput: output ?? block.content ?? null,
+      isError: block.is_error === true,
     });
     this.appendToolResultImages(images, items);
 
@@ -4741,6 +4743,16 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
+  private emitToolResultSideEffects(input: {
+    toolName: string;
+    toolInput: unknown;
+    toolOutput: unknown;
+    isError?: boolean;
+  }): void {
+    this.emitBashBackgroundTaskCorrelation(input);
+    this.emitProviderHeartbeatToolCorrelation(input);
+  }
+
   private emitBashBackgroundTaskCorrelation(input: {
     toolName: string;
     toolInput: unknown;
@@ -4760,6 +4772,29 @@ class ClaudeAgentSession implements AgentSession {
           status: "running",
         },
       },
+    });
+  }
+
+  private emitProviderHeartbeatToolCorrelation(input: {
+    toolName: string;
+    toolInput: unknown;
+    toolOutput: unknown;
+    isError?: boolean;
+  }): void {
+    const event = mapClaudeProviderHeartbeatToolEvent(
+      {
+        toolName: input.toolName,
+        toolInput: input.toolInput,
+        toolOutput: input.toolOutput,
+        isError: input.isError === true,
+      },
+      new Date().toISOString(),
+    );
+    if (!event) return;
+    this.notifySubscribers({
+      type: "provider_heartbeats",
+      provider: "claude",
+      event,
     });
   }
 

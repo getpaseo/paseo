@@ -1,10 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { BackgroundTaskStore, isShellTaskType } from "./store.js";
+import {
+  BackgroundTaskStore,
+  isShellTaskType,
+  isSubagentTaskType,
+  isTrackableBackgroundTaskType,
+} from "./store.js";
 
 const PARENT = "00000000-0000-4000-8000-000000000001";
 
 describe("BackgroundTaskStore", () => {
-  it("keeps only shell tasks on replace", () => {
+  it("includes monitor and workflow and excludes subagent", () => {
+    const store = new BackgroundTaskStore();
+    const tasks = store.replaceLiveSet(
+      "parent-1",
+      [
+        { taskId: "s1", type: "shell", description: "npm run dev" },
+        { taskId: "m1", type: "monitor", description: "watch deploy" },
+        { taskId: "w1", type: "workflow", description: "review-changes" },
+        { taskId: "a1", type: "subagent", description: "Explore" },
+        { taskId: "o1", type: "mystery", description: "other work" },
+      ],
+      "2026-08-02T00:00:00.000Z",
+    );
+    expect(tasks.map((t) => t.taskId).sort()).toEqual(["m1", "o1", "s1", "w1"]);
+    expect(isSubagentTaskType("subagent")).toBe(true);
+    expect(isTrackableBackgroundTaskType("monitor")).toBe(true);
+    expect(isTrackableBackgroundTaskType("subagent")).toBe(false);
+  });
+
+  it("keeps non-subagent tasks and drops subagent on replace", () => {
     const store = new BackgroundTaskStore();
     const listed = store.replaceLiveSet(
       PARENT,
@@ -17,6 +41,8 @@ describe("BackgroundTaskStore", () => {
     expect(listed.map((t) => t.taskId)).toEqual(["s1"]);
     expect(isShellTaskType("shell")).toBe(true);
     expect(isShellTaskType("subagent")).toBe(false);
+    expect(isSubagentTaskType("subagent")).toBe(true);
+    expect(isTrackableBackgroundTaskType("shell")).toBe(true);
   });
 
   it("replace drops tasks no longer present", () => {

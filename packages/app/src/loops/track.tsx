@@ -3,13 +3,12 @@ import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } fr
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight, Square } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { BackgroundTaskDescriptorPayload } from "@getpaseo/protocol/messages";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useIsCompactFormFactor, MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
-import { normalizeBackgroundTaskDisplayType, type BackgroundTaskDisplayType } from "./type-badge";
+import type { LoopRole, LoopTrackRow } from "./select";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
@@ -20,62 +19,53 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
 
-export interface BackgroundTasksTrackProps {
-  rows: BackgroundTaskDescriptorPayload[];
-  onOpenTask: (taskId: string) => void;
-  onStopTask: (taskId: string) => void;
-  stoppingTaskIds?: ReadonlySet<string>;
+export interface LoopsTrackProps {
+  rows: LoopTrackRow[];
+  onOpenLoop: (loopId: string) => void;
+  onStopLoop: (loopId: string) => void;
+  stoppingLoopIds?: ReadonlySet<string>;
 }
 
 const LIST_MAX_HEIGHT = 200;
 
-function rowLabel(row: BackgroundTaskDescriptorPayload): string {
-  const command = row.command?.trim();
-  if (command) return command;
-  const description = row.description.trim();
-  return description.length > 0 ? description : row.taskId;
+function rowLabel(row: LoopTrackRow): string {
+  const name = row.name?.trim();
+  if (name) return name;
+  const preview = row.promptPreview?.trim();
+  if (preview) return preview;
+  return row.loopId;
 }
 
-function statusLabel(
-  status: BackgroundTaskDescriptorPayload["status"],
-  t: (key: string) => string,
-): string {
+function roleLabel(role: LoopRole, t: (key: string) => string): string {
+  return role === "worker" ? t("loops.roleWorker") : t("loops.roleVerifier");
+}
+
+function statusLabel(status: LoopTrackRow["status"], t: (key: string) => string): string {
   switch (status) {
     case "running":
-      return t("backgroundTasks.statusRunning");
-    case "stopped":
-      return t("backgroundTasks.statusStopped");
-    case "failed":
-      return t("backgroundTasks.statusFailed");
-    case "completed":
-      return t("backgroundTasks.statusCompleted");
+      return t("loops.statusRunning");
     default:
-      return t("backgroundTasks.statusUnknown");
+      return t("loops.statusUnknown");
   }
 }
 
-function typeBadgeLabel(
-  displayType: BackgroundTaskDisplayType,
-  t: (key: string) => string,
+function rowMeta(
+  row: LoopTrackRow,
+  t: (key: string, options?: { count: number }) => string,
 ): string {
-  switch (displayType) {
-    case "shell":
-      return t("backgroundTasks.typeShell");
-    case "monitor":
-      return t("backgroundTasks.typeMonitor");
-    case "workflow":
-      return t("backgroundTasks.typeWorkflow");
-    case "other":
-      return t("backgroundTasks.typeOther");
+  const parts = [roleLabel(row.role, t), statusLabel(row.status, t)];
+  if (row.activeIteration != null) {
+    parts.push(t("loops.iteration", { count: row.activeIteration }));
   }
+  return parts.join(" · ");
 }
 
-export function BackgroundTasksTrack({
+export function LoopsTrack({
   rows,
-  onOpenTask,
-  onStopTask,
-  stoppingTaskIds,
-}: BackgroundTasksTrackProps): ReactElement | null {
+  onOpenLoop,
+  onStopLoop,
+  stoppingLoopIds,
+}: LoopsTrackProps): ReactElement | null {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
@@ -104,19 +94,17 @@ export function BackgroundTasksTrack({
   }
 
   const headerLabel =
-    rows.length > 0
-      ? t("backgroundTasks.headerCount", { count: rows.length })
-      : t("backgroundTasks.header");
+    rows.length > 0 ? t("loops.headerCount", { count: rows.length }) : t("loops.header");
 
   return (
-    <View style={styles.outer} testID="background-tasks-track">
+    <View style={styles.outer} testID="loops-track">
       <View style={styles.track}>
         <View style={surfaceStyle}>
           <View style={headerContainerStyle}>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={headerLabel}
-              testID="background-tasks-track-header"
+              testID="loops-track-header"
               onPress={toggleExpanded}
               style={headerStyle}
             >
@@ -138,12 +126,12 @@ export function BackgroundTasksTrack({
               nestedScrollEnabled
             >
               {rows.map((row) => (
-                <BackgroundTasksTrackRow
-                  key={row.taskId}
+                <LoopsTrackRow
+                  key={`${row.loopId}:${row.role}`}
                   row={row}
-                  stopping={stoppingTaskIds?.has(row.taskId) === true}
-                  onOpenTask={onOpenTask}
-                  onStopTask={onStopTask}
+                  stopping={stoppingLoopIds?.has(row.loopId) === true}
+                  onOpenLoop={onOpenLoop}
+                  onStopLoop={onStopLoop}
                 />
               ))}
             </ScrollView>
@@ -154,60 +142,59 @@ export function BackgroundTasksTrack({
   );
 }
 
-function BackgroundTasksTrackRow({
+function LoopsTrackRow({
   row,
   stopping,
-  onOpenTask,
-  onStopTask,
+  onOpenLoop,
+  onStopLoop,
 }: {
-  row: BackgroundTaskDescriptorPayload;
+  row: LoopTrackRow;
   stopping: boolean;
-  onOpenTask: (taskId: string) => void;
-  onStopTask: (taskId: string) => void;
+  onOpenLoop: (loopId: string) => void;
+  onStopLoop: (loopId: string) => void;
 }): ReactElement {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
   const [hovered, setHovered] = useState(false);
   const label = rowLabel(row);
-  const displayType = normalizeBackgroundTaskDisplayType(row.type);
-  const typeLabel = typeBadgeLabel(displayType, t);
+  const role = roleLabel(row.role, t);
   const handlePress = useCallback(() => {
-    onOpenTask(row.taskId);
-  }, [onOpenTask, row.taskId]);
+    onOpenLoop(row.loopId);
+  }, [onOpenLoop, row.loopId]);
   const handleStopPress = useCallback(() => {
-    onStopTask(row.taskId);
-  }, [onStopTask, row.taskId]);
+    onStopLoop(row.loopId);
+  }, [onStopLoop, row.loopId]);
   const handlePointerEnter = useCallback(() => setHovered(true), []);
   const handlePointerLeave = useCallback(() => setHovered(false), []);
   const actionsAlwaysVisible = isNative || isCompact;
   const actionsVisible = actionsAlwaysVisible || hovered;
-  const canStop = row.status === "running" || row.status === "unknown";
+  const canStop = row.status === "running";
 
   return (
     <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${typeLabel} ${label}`}
-        testID={`background-tasks-track-row-${row.taskId}`}
+        accessibilityLabel={`${role} ${label}`}
+        testID={`loops-track-row-${row.loopId}`}
         onPress={handlePress}
       >
         {({ pressed }) => (
           <View style={hovered || pressed ? styles.rowActive : styles.row}>
             <View style={styles.rowText}>
               <View style={styles.rowTitle}>
-                <StatusBadge label={typeLabel} variant="muted" />
+                <StatusBadge label={role} variant="muted" />
                 <Text style={styles.rowLabel} numberOfLines={1}>
                   {label}
                 </Text>
               </View>
               <Text style={styles.rowMeta} numberOfLines={1}>
-                {statusLabel(row.status, t)}
+                {rowMeta(row, t)}
               </Text>
             </View>
             {canStop ? (
-              <BackgroundTaskStopButton
+              <LoopStopButton
                 label={label}
-                taskId={row.taskId}
+                loopId={row.loopId}
                 visible={actionsVisible}
                 stopping={stopping}
                 onPress={handleStopPress}
@@ -220,15 +207,15 @@ function BackgroundTasksTrackRow({
   );
 }
 
-function BackgroundTaskStopButton({
+function LoopStopButton({
   label,
-  taskId,
+  loopId,
   visible,
   stopping,
   onPress,
 }: {
   label: string;
-  taskId: string;
+  loopId: string;
   visible: boolean;
   stopping: boolean;
   onPress: () => void;
@@ -243,8 +230,8 @@ function BackgroundTaskStopButton({
         <TooltipTrigger asChild disabled={!visible || stopping}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={t("backgroundTasks.stopAction", { label })}
-            testID={`background-tasks-track-stop-${taskId}`}
+            accessibilityLabel={t("loops.stopAction", { label })}
+            testID={`loops-track-stop-${loopId}`}
             onPress={onPress}
             style={styles.actionButton}
             hitSlop={8}
@@ -263,7 +250,7 @@ function BackgroundTaskStopButton({
           </Pressable>
         </TooltipTrigger>
         <TooltipContent side="top" align="center" offset={8}>
-          <Text style={styles.tooltipText}>{t("backgroundTasks.stopTooltip")}</Text>
+          <Text style={styles.tooltipText}>{t("loops.stopTooltip")}</Text>
         </TooltipContent>
       </Tooltip>
     </View>

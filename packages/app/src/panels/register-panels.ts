@@ -9,6 +9,7 @@ import { setupPanelRegistration } from "@/panels/setup-panel";
 import { terminalPanelRegistration } from "@/panels/terminal-panel";
 import { providerSubagentPanelRegistration } from "@/panels/provider-subagent-panel";
 import { backgroundTaskPanelRegistration } from "@/panels/background-task-panel";
+import { loopPanelRegistration } from "@/panels/loop-panel";
 
 let panelsRegistered = false;
 
@@ -20,6 +21,7 @@ export function ensurePanelsRegistered(): void {
   registerPanel(agentPanelRegistration);
   registerPanel(providerSubagentPanelRegistration);
   registerPanel(backgroundTaskPanelRegistration);
+  registerPanel(loopPanelRegistration);
   registerPanel(setupPanelRegistration);
   registerPanel(terminalPanelRegistration);
   registerPanel(browserPanelRegistration);

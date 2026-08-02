@@ -33,7 +33,7 @@ describe("mapClaudeBackgroundSystemMessage", () => {
 });
 
 describe("applyClaudeBackgroundSystemMessage", () => {
-  it("replaces live set from background_tasks_changed shell-only", () => {
+  it("replaces live set from background_tasks_changed excluding subagents", () => {
     const store = new BackgroundTaskStore();
     const result = applyClaudeBackgroundSystemMessage(
       store,
@@ -43,13 +43,52 @@ describe("applyClaudeBackgroundSystemMessage", () => {
         subtype: "background_tasks_changed",
         tasks: [
           { task_id: "s1", task_type: "shell", description: "npm run dev" },
+          { task_id: "m1", task_type: "monitor", description: "watch deploy" },
+          { task_id: "w1", task_type: "workflow", description: "review-changes" },
           { task_id: "x1", task_type: "subagent", description: "Explore" },
         ],
       },
       "2026-08-01T00:00:00.000Z",
     );
     expect(result.changed).toBe(true);
-    expect(result.tasks.map((t) => t.taskId)).toEqual(["s1"]);
+    expect(result.tasks.map((t) => t.taskId).sort()).toEqual(["m1", "s1", "w1"]);
+  });
+
+  it("task_started accepts non-shell non-subagent types", () => {
+    const store = new BackgroundTaskStore();
+    const result = applyClaudeBackgroundSystemMessage(
+      store,
+      PARENT,
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "m1",
+        task_type: "monitor",
+        description: "watch deploy",
+      },
+      "2026-08-01T00:00:02.000Z",
+    );
+    expect(result.changed).toBe(true);
+    expect(result.tasks.map((t) => t.taskId)).toEqual(["m1"]);
+    expect(result.tasks[0]?.type).toBe("monitor");
+  });
+
+  it("task_started ignores subagent types", () => {
+    const store = new BackgroundTaskStore();
+    const result = applyClaudeBackgroundSystemMessage(
+      store,
+      PARENT,
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "a1",
+        task_type: "subagent",
+        description: "Explore",
+      },
+      "2026-08-01T00:00:02.000Z",
+    );
+    expect(result.changed).toBe(false);
+    expect(result.tasks).toEqual([]);
   });
 
   it("drops terminal task_notification rows from the live set", () => {

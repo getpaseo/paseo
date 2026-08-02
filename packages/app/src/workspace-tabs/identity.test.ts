@@ -5,6 +5,42 @@ import {
   workspaceTabTargetsEqual,
 } from "./identity";
 
+describe("loop tab identity", () => {
+  test("normalizes and compares loop ids", () => {
+    const target = normalizeWorkspaceTabTarget({
+      kind: "loop",
+      loopId: " loop-a ",
+    });
+
+    expect(target).toEqual({
+      kind: "loop",
+      loopId: "loop-a",
+    });
+    expect(
+      target &&
+        workspaceTabTargetsEqual(target, {
+          kind: "loop",
+          loopId: "loop-a",
+        }),
+    ).toBe(true);
+  });
+
+  test("builds a deterministic loop tab id", () => {
+    expect(buildDeterministicWorkspaceTabId({ kind: "loop", loopId: "loop-a" })).toBe(
+      "loop_loop-a",
+    );
+  });
+
+  test("rejects a blank loop id", () => {
+    expect(
+      normalizeWorkspaceTabTarget({
+        kind: "loop",
+        loopId: "   ",
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("provider subagent tab identity", () => {
   test("normalizes and compares the parent and provider child as one tab identity", () => {
     const target = normalizeWorkspaceTabTarget({
