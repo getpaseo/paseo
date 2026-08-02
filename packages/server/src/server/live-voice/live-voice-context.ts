@@ -75,6 +75,21 @@ const PASEO_VISIBLE_CREATION_RULES = [
   "- Never silently fall back to runtime-internal creation. If Paseo creation is unavailable, fails, or does not return the required ids, tell the user that creation did not succeed.",
 ];
 
+const AUTHORITATIVE_PASEO_STATE_RULES = [
+  "- Treat Paseo MCP results as authoritative. Your own working session's collaboration or subagent tree is not Paseo's agent list. Never infer Paseo state from OS processes, desktop screenshots, or local Codex session logs.",
+  "- Use those fallback sources only if Paseo MCP is unavailable or a Paseo MCP call fails, and explicitly tell the user what fallback you used and why.",
+];
+
+const AUTHORITATIVE_PASEO_STATE_WITH_ROUTING = [
+  "- For any question about Paseo hosts, workspaces, agent sessions, their status, or what an agent said, did, or is doing, use Paseo MCP first. Call list_hosts to identify the host, then route ordinary host tools such as list_agents, get_agent_status, and get_agent_activity as appropriate; use list_pending_permissions when work may be blocked.",
+  ...AUTHORITATIVE_PASEO_STATE_RULES,
+];
+
+const AUTHORITATIVE_LOCAL_PASEO_STATE = [
+  "- For any question about this Paseo host, its workspaces, agent sessions, their status, or what an agent said, did, or is doing, use Paseo MCP first. Read with list_agents, get_agent_status, get_agent_activity, or list_pending_permissions as appropriate instead of prompting a session.",
+  ...AUTHORITATIVE_PASEO_STATE_RULES,
+];
+
 /**
  * Read tools, spelled out.
  *
@@ -85,7 +100,6 @@ const PASEO_VISIBLE_CREATION_RULES = [
  * accident through tool discovery.
  */
 const READ_BEFORE_PROMPTING = [
-  "- To find out what a session said, did, or is doing now, read it instead of prompting it. get_agent_activity returns its recent messages, get_agent_status its current state, list_agents what exists, and list_pending_permissions what is blocked and waiting on an answer.",
   "- Prompting a session to ask what it did costs it a full turn and adds your question to its history. Prompt only to give a session new work; read for everything else.",
   "- The state below is a snapshot from when this call started, so it goes stale. Re-read before answering a question about what is running now.",
 ];
@@ -169,6 +183,12 @@ function buildAmbientAgentReportInstructions(guidance: string | undefined): stri
 
 export function buildLiveVoicePrompt(options: LiveVoicePromptOptions): string {
   const crossHostRoutingAvailable = options.crossHostRoutingAvailable ?? true;
+  let authoritativeStateInstructions: string[] = [];
+  if (options.paseoToolsAvailable) {
+    authoritativeStateInstructions = crossHostRoutingAvailable
+      ? AUTHORITATIVE_PASEO_STATE_WITH_ROUTING
+      : AUTHORITATIVE_LOCAL_PASEO_STATE;
+  }
   return [
     "You are the voice of Paseo on this machine.",
     "",
@@ -176,6 +196,7 @@ export function buildLiveVoicePrompt(options: LiveVoicePromptOptions): string {
     "",
     "How you work:",
     "- You are the user's chief of staff, not one of their agent sessions. Your job is to be an intermediary to their full text-based agent sessions: route work to them, read what they produce, and report back in plain speech.",
+    ...authoritativeStateInstructions,
     "- You have a working session of your own, in a plain directory with none of their projects in it, so never do coding work yourself — the sessions you route to are the ones that run with their code.",
     ...PASEO_VISIBLE_CREATION_RULES,
     ...resolveDelegationInstructions(options.paseoToolsAvailable, crossHostRoutingAvailable),

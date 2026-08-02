@@ -109,7 +109,31 @@ describe("live voice prompt", () => {
 
     expect(prompt).toContain("get_agent_activity");
     expect(prompt).toContain("list_pending_permissions");
-    expect(prompt).toMatch(/read it instead of prompting it/i);
+    expect(prompt).toMatch(/read for everything else/i);
+  });
+
+  it("makes Paseo MCP the early authoritative source for Paseo state", () => {
+    const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
+
+    expect(prompt).toMatch(/use Paseo MCP first/i);
+    expect(prompt).toMatch(
+      /Call list_hosts to identify the host, then route ordinary host tools such as list_agents, get_agent_status, and get_agent_activity/i,
+    );
+    expect(prompt).toMatch(/Treat Paseo MCP results as authoritative/i);
+    expect(prompt.indexOf("use Paseo MCP first")).toBeLessThan(
+      prompt.indexOf("never do coding work yourself"),
+    );
+  });
+
+  it("forbids local inference about Paseo state and discloses fallbacks", () => {
+    const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
+
+    expect(prompt).toMatch(/collaboration or subagent tree is not Paseo's agent list/i);
+    expect(prompt).toMatch(
+      /Never infer Paseo state from OS processes, desktop screenshots, or local Codex session logs/i,
+    );
+    expect(prompt).toMatch(/only if Paseo MCP is unavailable or a Paseo MCP call fails/i);
+    expect(prompt).toMatch(/explicitly tell the user what fallback you used and why/i);
   });
 
   it("says nothing about unrequested reports when the client is not sending them", () => {
