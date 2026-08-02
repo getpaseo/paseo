@@ -231,7 +231,7 @@ describe("useComposerGithubAutoAttach", () => {
     vi.useRealTimers();
   });
 
-  it("stays resolving while overlapping lookups share a ref", async () => {
+  it("releases a removed ref without waiting for its lookup to settle", async () => {
     vi.useFakeTimers();
     const firstLookup = deferred<ForgeSearchPayload>();
     const secondLookup = deferred<ForgeSearchPayload>();
@@ -256,15 +256,47 @@ describe("useComposerGithubAutoAttach", () => {
     await flushDebounce();
 
     await act(async () => {
-      firstLookup.resolve(githubPayload([], "search-101"));
-      await Promise.resolve();
-    });
-    expect(result.current.isResolving).toBe(true);
-
-    await act(async () => {
       secondLookup.resolve(githubPayload([], "search-202"));
       await Promise.resolve();
     });
+    expect(result.current.isResolving).toBe(false);
+
+    await act(async () => {
+      firstLookup.resolve(githubPayload([], "search-101"));
+      await Promise.resolve();
+    });
+    vi.useRealTimers();
+  });
+
+  it("stays resolving when an unrelated attachment is added during lookup", async () => {
+    vi.useFakeTimers();
+    const lookup = deferred<ForgeSearchPayload>();
+    const client: ForgeSearchClient = {
+      searchForge: vi.fn().mockReturnValue(lookup.promise),
+    };
+    const { result } = renderHook(() => useHarness(client), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.setText("Review https://github.com/acme/paseo/pull/101");
+    });
+    await flushDebounce();
+
+    act(() => {
+      result.current.setAttachments([{ kind: "forge_issue", item: issue202 }]);
+      result.current.setText("Review https://github.com/acme/paseo/pull/101 please");
+    });
+
+    expect(result.current.isResolving).toBe(true);
+
+    await act(async () => {
+      lookup.resolve(githubPayload([pr101], "search-101"));
+      await Promise.resolve();
+    });
+
+    expect(result.current.attachments).toEqual([
+      { kind: "forge_issue", item: issue202 },
+      { kind: "forge_change_request", item: pr101 },
+    ]);
     expect(result.current.isResolving).toBe(false);
     vi.useRealTimers();
   });

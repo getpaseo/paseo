@@ -50,20 +50,28 @@ export function useComposerGithubAutoAttach(
   );
 
   latestRef.current = params;
+  const lookupCandidateKey = getLookupCandidateKey(params, removedRefKeysRef.current);
+  const presentPullRequestKey = getPresentPullRequestKey(params);
+  const hasClient = params.client !== null;
 
   useEffect(() => {
-    suppressRefsCarriedAcrossTargets({
-      params: latestRef.current,
-      previousTargetRef,
-      removedRefKeys: removedRefKeysRef.current,
-    });
     notifyNewPullRequestRefs({
       params: latestRef.current,
       presentPullRequestKeysRef,
     });
+  }, [presentPullRequestKey]);
+
+  useEffect(() => {
+    const initial = latestRef.current;
+    const removedRefKeys = removedRefKeysRef.current;
+    suppressRefsCarriedAcrossTargets({
+      params: initial,
+      previousTargetRef,
+      removedRefKeys,
+    });
     const refs = refsReadyForLookup({
       params: latestRef.current,
-      removedRefKeys: removedRefKeysRef.current,
+      removedRefKeys,
       pendingRefKeys: pendingRefKeysRef.current,
     });
     if (refs.length === 0) {
@@ -72,36 +80,52 @@ export function useComposerGithubAutoAttach(
 
     const refKeys = refs.map(githubRefKey);
     setResolvingRefCounts((current) => addKeys(current, refKeys));
-    let resolvingReleased = false;
-    const releaseResolving = () => {
-      if (resolvingReleased) return;
-      resolvingReleased = true;
-      clearResolvingKeys(setResolvingRefCounts, refKeys);
+    const unreleasedRefKeys = new Set(refKeys);
+    let lookupStarted = false;
+    const releaseResolving = (keys: readonly string[]) => {
+      const keysToRelease = keys.filter((key) => unreleasedRefKeys.delete(key));
+      if (keysToRelease.length === 0) return;
+      clearResolvingKeys(setResolvingRefCounts, keysToRelease);
     };
 
     const timerId = setTimeout(() => {
+      lookupStarted = true;
       void attachRefs({
         refs,
         queryClient,
         latestRef,
-        removedRefKeys: removedRefKeysRef.current,
+        removedRefKeys,
         pendingRefKeys: pendingRefKeysRef.current,
-      }).finally(releaseResolving);
+        onSettled: (key) => releaseResolving([key]),
+      });
     }, AUTO_ATTACH_DEBOUNCE_MS);
 
     return () => {
       clearTimeout(timerId);
-      releaseResolving();
+      if (!lookupStarted) {
+        releaseResolving([...unreleasedRefKeys]);
+        return;
+      }
+      const current = latestRef.current;
+      const invalidRefKeys = refs.flatMap((ref) =>
+        isLookupStillRelevant({
+          ref,
+          initial,
+          current,
+          removedRefKeys,
+        })
+          ? []
+          : [githubRefKey(ref)],
+      );
+      releaseResolving(invalidRefKeys);
     };
   }, [
-    params.text,
+    lookupCandidateKey,
     params.remoteUrl,
-    params.attachments,
-    params.client,
+    hasClient,
     params.isConnected,
     params.serverId,
     params.cwd,
-    params.supportsForgeSearch,
     queryClient,
   ]);
 
@@ -118,6 +142,49 @@ export function useComposerGithubAutoAttach(
       markGithubAttachmentRemoved,
     }),
     [markGithubAttachmentRemoved, resolvingRefCounts.size],
+  );
+}
+
+function getLookupCandidateKey(
+  params: ComposerGithubAutoAttachInput,
+  removedRefKeys: ReadonlySet<string>,
+): string {
+  return extractGithubRefs(params.text, params.remoteUrl)
+    .filter((ref) => {
+      const key = githubRefKey(ref);
+      return !removedRefKeys.has(key) && !hasGithubAttachment(params.attachments, ref);
+    })
+    .map(githubRefKey)
+    .sort()
+    .join("|");
+}
+
+function getPresentPullRequestKey(params: ComposerGithubAutoAttachInput): string {
+  return extractGithubRefs(params.text, params.remoteUrl)
+    .filter((ref) => ref.kind === "pull")
+    .map(githubRefKey)
+    .sort()
+    .join("|");
+}
+
+function isLookupStillRelevant({
+  ref,
+  initial,
+  current,
+  removedRefKeys,
+}: {
+  ref: GithubRef;
+  initial: ComposerGithubAutoAttachInput;
+  current: ComposerGithubAutoAttachInput;
+  removedRefKeys: ReadonlySet<string>;
+}): boolean {
+  return (
+    current.client !== null &&
+    current.isConnected &&
+    !removedRefKeys.has(githubRefKey(ref)) &&
+    isSameLookupTarget(initial, current) &&
+    isRefStillPresent(ref, current) &&
+    !hasGithubAttachment(current.attachments, ref)
   );
 }
 
@@ -198,25 +265,31 @@ async function attachRefs({
   latestRef,
   removedRefKeys,
   pendingRefKeys,
+  onSettled,
 }: {
   refs: GithubRef[];
   queryClient: QueryClient;
   latestRef: RefObject<ComposerGithubAutoAttachInput>;
   removedRefKeys: Set<string>;
   pendingRefKeys: Set<string>;
+  onSettled: (key: string) => void;
 }): Promise<void> {
-  for (const ref of refs) {
-    const key = githubRefKey(ref);
-    if (pendingRefKeys.has(key)) {
-      continue;
-    }
-    pendingRefKeys.add(key);
-    try {
-      await attachRef({ ref, key, queryClient, latestRef, removedRefKeys });
-    } finally {
-      pendingRefKeys.delete(key);
-    }
-  }
+  await Promise.all(
+    refs.map(async (ref) => {
+      const key = githubRefKey(ref);
+      if (pendingRefKeys.has(key)) {
+        onSettled(key);
+        return;
+      }
+      pendingRefKeys.add(key);
+      try {
+        await attachRef({ ref, key, queryClient, latestRef, removedRefKeys });
+      } finally {
+        pendingRefKeys.delete(key);
+        onSettled(key);
+      }
+    }),
+  );
 }
 
 async function attachRef({
