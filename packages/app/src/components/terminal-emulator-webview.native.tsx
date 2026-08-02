@@ -28,6 +28,7 @@ import { terminalEmulatorWebViewHtml } from "../terminal/webview/terminal-emulat
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
 import { openExternalUrl } from "../utils/open-external-url";
 import type { TerminalEmulatorHandle, TerminalEmulatorProps } from "./terminal-emulator-contract";
+import { shouldResetForMissingRendererReady } from "./terminal-webview-readiness";
 
 type BridgeInboundMessage =
   | {
@@ -181,7 +182,8 @@ export default function WebViewTerminalEmulator({
   const rendererReadyVersionRef = useRef(0);
   const pendingMessagesRef = useRef<BridgeInboundMessage[]>([]);
   const outputDecoderRef = useRef(new TextDecoder());
-  const mountedStreamKeyRef = useRef<string | null>(null);
+  const mountRequestedStreamKeyRef = useRef<string | null>(null);
+  const rendererReadyStreamKeyRef = useRef<string | null>(null);
   const bridgeReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rendererReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingTapRef = useRef<PendingTerminalTap | null>(null);
@@ -249,7 +251,8 @@ export default function WebViewTerminalEmulator({
     clearRendererReadyTimeout();
     bridgeReadyRef.current = false;
     pendingMessagesRef.current = [];
-    mountedStreamKeyRef.current = null;
+    mountRequestedStreamKeyRef.current = null;
+    rendererReadyStreamKeyRef.current = null;
     callbacksRef.current.onRendererReadyChange?.({ streamKey, isReady: false });
     setWebViewEpoch((value) => value + 1);
   }, [clearBridgeReadyTimeout, clearRendererReadyTimeout, streamKey]);
@@ -272,8 +275,13 @@ export default function WebViewTerminalEmulator({
     rendererReadyTimeoutRef.current = setTimeout(() => {
       rendererReadyTimeoutRef.current = null;
       if (
-        rendererReadyVersionRef.current !== expectedRendererReadyVersion ||
-        mountedStreamKeyRef.current === streamKey
+        !shouldResetForMissingRendererReady({
+          expectedReadyVersion: expectedRendererReadyVersion,
+          currentReadyVersion: rendererReadyVersionRef.current,
+          expectedStreamKey: streamKey,
+          mountRequestedStreamKey: mountRequestedStreamKeyRef.current,
+          rendererReadyStreamKey: rendererReadyStreamKeyRef.current,
+        })
       ) {
         return;
       }
@@ -354,7 +362,8 @@ export default function WebViewTerminalEmulator({
   useEffect(() => {
     if (bridgeReadyVersion <= 0) return;
     const mountMessage = createMountMessage(mountConfigRef.current);
-    mountedStreamKeyRef.current = streamKey;
+    mountRequestedStreamKeyRef.current = streamKey;
+    rendererReadyStreamKeyRef.current = null;
     sendToWebView(mountMessage);
     flushPendingMessages();
     scheduleRendererReadyWatchdog();
@@ -368,27 +377,27 @@ export default function WebViewTerminalEmulator({
 
   const themeKey = useMemo(() => buildThemeKey(xtermTheme), [xtermTheme]);
   useEffect(() => {
-    if (!mountedStreamKeyRef.current) return;
+    if (!mountRequestedStreamKeyRef.current) return;
     sendToWebView({ type: "setTheme", streamKey, theme: xtermTheme });
   }, [sendToWebView, streamKey, themeKey, xtermTheme]);
 
   useEffect(() => {
-    if (!mountedStreamKeyRef.current) return;
+    if (!mountRequestedStreamKeyRef.current) return;
     sendToWebView({ type: "setScrollback", streamKey, lines: scrollbackLines });
   }, [scrollbackLines, sendToWebView, streamKey]);
 
   useEffect(() => {
-    if (!mountedStreamKeyRef.current) return;
+    if (!mountRequestedStreamKeyRef.current) return;
     sendToWebView({ type: "setFont", streamKey, fontFamily, fontSize });
   }, [fontFamily, fontSize, sendToWebView, streamKey]);
 
   useEffect(() => {
-    if (!mountedStreamKeyRef.current) return;
+    if (!mountRequestedStreamKeyRef.current) return;
     sendToWebView({ type: "setPendingModifiers", streamKey, pendingModifiers });
   }, [pendingModifiers, sendToWebView, streamKey]);
 
   useEffect(() => {
-    if (!mountedStreamKeyRef.current) return;
+    if (!mountRequestedStreamKeyRef.current) return;
     sendToWebView({ type: "setSwipeGesturesEnabled", streamKey, enabled: swipeGesturesEnabled });
   }, [sendToWebView, streamKey, swipeGesturesEnabled]);
 
@@ -406,8 +415,8 @@ export default function WebViewTerminalEmulator({
 
   useEffect(() => {
     return () => {
-      if (mountedStreamKeyRef.current) {
-        const previousStreamKey = mountedStreamKeyRef.current;
+      if (mountRequestedStreamKeyRef.current) {
+        const previousStreamKey = mountRequestedStreamKeyRef.current;
         callbacksRef.current.onRendererReadyChange?.({
           streamKey: previousStreamKey,
           isReady: false,
@@ -416,7 +425,8 @@ export default function WebViewTerminalEmulator({
       }
       bridgeReadyRef.current = false;
       pendingMessagesRef.current = [];
-      mountedStreamKeyRef.current = null;
+      mountRequestedStreamKeyRef.current = null;
+      rendererReadyStreamKeyRef.current = null;
       clearBridgeReadyTimeout();
       clearRendererReadyTimeout();
     };
@@ -432,10 +442,12 @@ export default function WebViewTerminalEmulator({
         return true;
       }
       if (message.type === "rendererReady") {
-        mountedStreamKeyRef.current = message.isReady ? message.streamKey : null;
-        if (message.isReady) {
-          rendererReadyVersionRef.current += 1;
-          clearRendererReadyTimeout();
+        if (message.streamKey === mountRequestedStreamKeyRef.current) {
+          rendererReadyStreamKeyRef.current = message.isReady ? message.streamKey : null;
+          if (message.isReady) {
+            rendererReadyVersionRef.current += 1;
+            clearRendererReadyTimeout();
+          }
         }
         callbacksRef.current.onRendererReadyChange?.({
           streamKey: message.streamKey,
@@ -546,7 +558,8 @@ export default function WebViewTerminalEmulator({
 
   const handleLoadStart = useCallback<NonNullable<WebViewProps["onLoadStart"]>>(() => {
     bridgeReadyRef.current = false;
-    mountedStreamKeyRef.current = null;
+    mountRequestedStreamKeyRef.current = null;
+    rendererReadyStreamKeyRef.current = null;
     scheduleBridgeReadyWatchdog();
   }, [scheduleBridgeReadyWatchdog]);
 
