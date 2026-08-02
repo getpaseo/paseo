@@ -73,7 +73,7 @@ export function useCheckoutCommitsQuery({
   enabled = true,
 }: UseCheckoutCommitsQueryOptions): CheckoutCommitsQueryResult {
   const client = useHostRuntimeClient(serverId);
-  const isConnected = useHostRuntimeIsConnected(serverId);
+  const isConnected = useHostRuntimeIsConnected(serverId, enabled);
   // COMPAT(commitsList): added in v0.1.110, remove after 2027-01-16.
   // COMPAT(commitBaseClassification): added in v0.2.0, remove after 2027-01-23.
   // Single capability-detection site; downstream reads a clean load-state union.

@@ -47,7 +47,7 @@ export function useCheckoutDiffQuery({
   enabled = true,
   queryScope,
 }: UseCheckoutDiffQueryOptions) {
-  const isConnected = useHostRuntimeIsConnected(serverId);
+  const isConnected = useHostRuntimeIsConnected(serverId, enabled);
   const normalizedCompare = useMemo(
     () => normalizeCheckoutDiffCompare({ mode, baseRef, ignoreWhitespace }),
     [mode, baseRef, ignoreWhitespace],

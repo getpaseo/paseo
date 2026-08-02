@@ -86,6 +86,7 @@ interface UseProvidersSnapshotResult {
 }
 
 interface UseProvidersSnapshotOptions {
+  active?: boolean;
   enabled?: boolean;
   cwd?: string | null;
 }
@@ -97,8 +98,8 @@ export function useProvidersSnapshot(
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId ?? "");
-  const isConnected = useHostRuntimeIsConnected(serverId ?? "");
-  const enabled = options.enabled ?? true;
+  const enabled = (options.enabled ?? true) && (options.active ?? true);
+  const isConnected = useHostRuntimeIsConnected(serverId ?? "", enabled);
   const cwd = normalizeProvidersSnapshotCwd(options.cwd);
   const supportsSnapshot = useSessionStore(
     (state) => state.sessions[serverId ?? ""]?.serverInfo?.features?.providersSnapshot === true,

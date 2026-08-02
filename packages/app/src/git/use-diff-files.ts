@@ -58,7 +58,7 @@ export function resolveCommitDiffFiles(
 export function useCommitDiffFiles(ctx: CommitDiffFilesContext): CommitDiffFilesResult {
   const { serverId, cwd, sha, enabled = true } = ctx;
   const client = useHostRuntimeClient(serverId);
-  const isConnected = useHostRuntimeIsConnected(serverId);
+  const isConnected = useHostRuntimeIsConnected(serverId, enabled);
   const commitsQuery = useCheckoutCommitsQuery({ serverId, cwd, enabled });
   const commitsData = commitsQuery.status === "loaded" ? commitsQuery.data : null;
   const commitFiles = useMemo(() => {

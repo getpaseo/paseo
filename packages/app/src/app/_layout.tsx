@@ -52,6 +52,7 @@ import {
   canDesktopAppSidebarShare,
   resolveDesktopAppChromeLayout,
   resolveDesktopAppContentMinimum,
+  resolveDesktopSidebarVisibility,
 } from "@/components/desktop-sidebar-layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { HorizontalScrollProvider } from "@/contexts/horizontal-scroll-context";
@@ -78,6 +79,7 @@ import { RosettaCalloutSource } from "@/desktop/updates/rosetta-callout-source";
 import { UpdateCalloutSource } from "@/desktop/updates/update-callout-source";
 import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-action";
 import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-action";
+import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { KeyboardShiftProvider } from "@/hooks/use-keyboard-shift-style";
@@ -450,6 +452,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const isWorkspaceRoute = parseHostWorkspaceRouteFromPathname(pathname) !== null;
   const isWorkspaceFocusModeEnabled = isWorkspaceRoute && isFocusModeEnabled;
   const chromeEnabled = chromeEnabledOverride ?? daemons.length > 0;
+  const hasMountedDesktopSidebar = useLatchedBoolean(chromeEnabled);
   const toggleAgentList = isCompactLayout ? toggleMobileAgentList : toggleDesktopAgentList;
   const toggleDesktopSidebars = useCallback(() => {
     const { desktop } = usePanelStore.getState();
@@ -491,16 +494,18 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     requestedExplorerWidth: explorerWidth,
     viewportWidth,
   });
-  const desktopSidebarMounted = chromeEnabled && !isWorkspaceFocusModeEnabled;
-  const desktopSidebarVisible =
-    !isCompactLayout &&
-    desktopSidebarMounted &&
-    isDesktopAgentListOpen &&
-    canDesktopAppSidebarShare({
+  const desktopSidebarMounted = hasMountedDesktopSidebar && !isWorkspaceFocusModeEnabled;
+  const desktopSidebarVisible = resolveDesktopSidebarVisibility({
+    chromeEnabled,
+    isCompactLayout,
+    isMounted: desktopSidebarMounted,
+    isOpen: isDesktopAgentListOpen,
+    canShare: canDesktopAppSidebarShare({
       contentMinimumWidth: appContentMinimumWidth,
       requestedSidebarWidth: sidebarWidth,
       viewportWidth,
-    });
+    }),
+  });
   const hasTopLeftWindowControls = useHasWindowChromeObstruction("top-left");
   const appChromeLayout = resolveDesktopAppChromeLayout({
     desktopSidebarRendered: desktopSidebarVisible,

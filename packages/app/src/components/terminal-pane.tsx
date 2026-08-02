@@ -1,4 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import Animated, { runOnJS, useAnimatedReaction } from "react-native-reanimated";
@@ -172,6 +173,7 @@ export function TerminalPane({
   onOpenWorkspaceFile,
 }: TerminalPaneProps) {
   const { t } = useTranslation();
+  const retainedPanelActive = useRetainedPanelActive();
   const isAppActivelyVisible = useAppActivelyVisible();
   const { theme } = useUnistyles();
   const { settings } = useAppSettings();
@@ -190,7 +192,7 @@ export function TerminalPane({
   });
 
   const client = useHostRuntimeClient(serverId);
-  const isConnected = useHostRuntimeIsConnected(serverId);
+  const isConnected = useHostRuntimeIsConnected(serverId, retainedPanelActive);
   const supportsTerminalRestoreModes = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.["terminal-restore-modes"] === true,
   );

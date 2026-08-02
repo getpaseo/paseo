@@ -111,6 +111,7 @@ import { getFileTypeLabel } from "@/attachments/file-types";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { AttachmentLabel, AttachmentPill, AttachmentThumbnail } from "@/components/attachment-pill";
 import { AttachmentLightbox } from "@/components/attachment-lightbox";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
@@ -1032,8 +1033,9 @@ export function Composer({
 }: ComposerProps) {
   const { t } = useTranslation();
   const buttonIconSize = resolveComposerButtonIconSize();
+  const retainedPanelActive = useRetainedPanelActive();
   const client = useHostRuntimeClient(serverId);
-  const isConnected = useHostRuntimeIsConnected(serverId);
+  const isConnected = useHostRuntimeIsConnected(serverId, retainedPanelActive);
   const agentDirectoryStatus = useHostRuntimeAgentDirectoryStatus(serverId);
   const toast = useToast();
   const toastErrorRef = useRef(toast.error);
@@ -1154,6 +1156,7 @@ export function Composer({
     setUserInput,
     serverId,
     agentId,
+    active: retainedPanelActive,
     draftConfig: commandDraftConfig,
     canExecuteClientSlashCommand: buildOutgoingAttachments(attachments).length === 0,
     onClientSlashCommand: runClientSlashCommand,

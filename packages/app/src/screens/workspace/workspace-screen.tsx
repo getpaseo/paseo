@@ -102,7 +102,7 @@ import {
   useHostRuntimeSnapshot,
   useHosts,
 } from "@/runtime/host-runtime";
-import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { shouldShowWorkspaceSetup, useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
@@ -1769,7 +1769,7 @@ function WorkspaceScreenContent({
   });
 
   const client = useHostRuntimeClient(normalizedServerId);
-  const isConnected = useHostRuntimeIsConnected(normalizedServerId);
+  const isConnected = useHostRuntimeIsConnected(normalizedServerId, isRouteFocused);
   const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
   const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
   const [isImportSheetVisible, setIsImportSheetVisible] = useState(false);
@@ -1781,11 +1781,12 @@ function WorkspaceScreenContent({
     setIsImportSheetVisible(false);
   }, []);
 
-  // Warm the workspace-scoped provider snapshot so the model picker is ready when opened.
-  useProvidersSnapshot(normalizedServerId, {
-    cwd: workspaceDirectory,
-    enabled: isRouteFocused,
-  });
+  useEffect(() => {
+    if (!isRouteFocused || !isConnected || !client || !workspaceDirectory) {
+      return;
+    }
+    prefetchProvidersSnapshot(normalizedServerId, client, { cwd: workspaceDirectory });
+  }, [client, isConnected, isRouteFocused, normalizedServerId, workspaceDirectory]);
 
   const persistenceKey = useMemo(
     () =>

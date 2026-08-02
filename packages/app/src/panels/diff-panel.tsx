@@ -152,8 +152,8 @@ function WorkingDiffPanel() {
   const toast = useToast();
   const { serverId, workspaceId, tabId, target } = usePaneContext();
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
-  const isConnected = useHostRuntimeIsConnected(serverId);
   const isActive = useRetainedPanelActive();
+  const isConnected = useHostRuntimeIsConnected(serverId, isActive);
   const panelPreferences = useDiffPanelPreferences();
   const [expandedPaths, setExpandedPaths] = useState<string[] | null>(null);
   invariant(target.kind === "working_diff", "WorkingDiffPanel requires working_diff target");

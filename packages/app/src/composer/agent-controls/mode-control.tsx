@@ -245,6 +245,7 @@ function compareAvailableModes(a: AgentMode[], b: AgentMode[]): boolean {
 export function useLiveAgentModeControl(
   serverId: string,
   agentId: string,
+  active: boolean,
 ): AgentModeControlValue | null {
   const slice = useSessionStore(
     useShallow((state) => {
@@ -265,7 +266,10 @@ export function useLiveAgentModeControl(
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const { updatePreferences } = useFormPreferences();
   const toast = useToast();
-  const { entries: snapshotEntries } = useProvidersSnapshot(serverId, { cwd: slice?.cwd });
+  const { entries: snapshotEntries } = useProvidersSnapshot(serverId, {
+    active,
+    cwd: slice?.cwd,
+  });
 
   const providerDefinitions = useMemo<AgentProviderDefinition[]>(() => {
     if (!slice?.provider) return [];

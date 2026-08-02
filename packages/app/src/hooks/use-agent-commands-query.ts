@@ -52,7 +52,7 @@ export function useAgentCommandsQuery({
 }: UseAgentCommandsQueryOptions) {
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
-  const isConnected = useHostRuntimeIsConnected(serverId);
+  const isConnected = useHostRuntimeIsConnected(serverId, enabled);
 
   const query = useQuery({
     queryKey: agentCommandsQueryKey({ serverId, agentId, draftConfig }),
