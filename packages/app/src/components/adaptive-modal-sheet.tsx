@@ -23,6 +23,7 @@ import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { ArrowLeft, Search, X } from "lucide-react-native";
 import {
   IsolatedBottomSheetModal,
+  useIsInsideBottomSheetInputScope,
   useIsolatedBottomSheetVisibility,
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import { getCompactSheetSafeAreaPadding } from "@/components/adaptive-modal-sheet-layout";
@@ -293,6 +294,7 @@ const ThemedBottomSheetTextInput = withUnistyles(BottomSheetTextInput, (theme) =
 export const AdaptiveTextInput = forwardRef<TextInput, AdaptiveTextInputProps>(
   function AdaptiveTextInputInner(props, ref) {
     const isMobile = useIsCompactFormFactor();
+    const insideBottomSheet = useIsInsideBottomSheetInputScope();
     const { value: _value, initialValue, resetKey, defaultValue, style, ...inputProps } = props;
     // Leaf-owned color goes LAST so callers cannot override it with a stale
     // theme read. Outline color is theme-aware on web :focus-visible.
@@ -302,7 +304,11 @@ export const AdaptiveTextInput = forwardRef<TextInput, AdaptiveTextInputProps>(
       style: [styles.adaptiveInputOutline, style, styles.adaptiveInputText],
     };
 
-    if (isMobile && isNative) {
+    // BottomSheetTextInput / useBottomSheetInternal only work under a Gorhom
+    // sheet. Screens like backlog search reuse AdaptiveTextInput outside
+    // sheets — those must use a normal TextInput or Android crashes with
+    // "useBottomSheetInternal cannot be used out of the BottomSheet".
+    if (isMobile && isNative && insideBottomSheet) {
       return (
         <ThemedBottomSheetTextInput
           key={resetKey}
