@@ -6299,8 +6299,10 @@ test("archiveAgent keeps a close-failed provider supervised for a deterministic 
   expectArchivedAgentRecord(await storage.get(agent.id), "closed");
 });
 
-test("archiveAgent preserves its receipt when final closed snapshot persistence fails", async () => {
+test("archiveAgent finishes its descendant cascade when final snapshot persistence fails", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-final-snapshot-failure-"));
+  const finalSnapshotFailure = new Error("Injected final snapshot persistence failure");
+  let failingAgentId: string | null = null;
 
   class FinalSnapshotFailureStorage extends AgentStorage {
     readonly events: string[] = [];
@@ -6308,7 +6310,7 @@ test("archiveAgent preserves its receipt when final closed snapshot persistence 
     override async update(agentId: string, updater: AgentRecordUpdater) {
       const record = await super.update(agentId, updater);
       if (record?.archivedAt) {
-        this.events.push("record-archived");
+        this.events.push(`record-archived:${agentId}`);
       }
       return record;
     }
@@ -6318,9 +6320,12 @@ test("archiveAgent preserves its receipt when final closed snapshot persistence 
       options?: Parameters<AgentStorage["applySnapshot"]>[1],
     ): Promise<void> {
       const record = await this.get(agent.id);
-      if (record?.archivedAt && agent.lifecycle === "closed") {
-        this.events.push("runtime-closed", "final-snapshot-persistence-failed");
-        throw new Error("Injected final snapshot persistence failure");
+      if (agent.id === failingAgentId && record?.archivedAt && agent.lifecycle === "closed") {
+        this.events.push(
+          `runtime-closed:${agent.id}`,
+          `final-snapshot-persistence-failed:${agent.id}`,
+        );
+        throw finalSnapshotFailure;
       }
       await super.applySnapshot(agent, options);
     }
@@ -6332,33 +6337,67 @@ test("archiveAgent preserves its receipt when final closed snapshot persistence 
     registry: storage,
     logger,
   });
-  const agent = await manager.createAgent(
-    { provider: "codex", cwd: workdir, title: "Final snapshot failure target" },
+  const parent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Final snapshot failure parent" },
     undefined,
-    { workspaceId: "workspace-final-snapshot-failure" },
+    { workspaceId: "workspace-final-snapshot-failure-parent" },
   );
+  const child = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Child" },
+    undefined,
+    {
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+      workspaceId: "workspace-final-snapshot-failure-child",
+    },
+  );
+  const grandchild = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Grandchild" },
+    undefined,
+    {
+      labels: { [PARENT_AGENT_ID_LABEL]: child.id },
+      workspaceId: "workspace-final-snapshot-failure-grandchild",
+    },
+  );
+  failingAgentId = parent.id;
 
   let archiveError: unknown;
   try {
-    await manager.archiveAgent(agent.id);
+    await manager.archiveAgent(parent.id);
   } catch (error) {
     archiveError = error;
   }
 
   expect(archiveError).toBeInstanceOf(AgentArchiveError);
   expect(archiveError).toMatchObject({
-    archivedAgentIds: [agent.id],
+    archivedAgentIds: [parent.id, child.id, grandchild.id],
     failedAgentIds: [],
     indeterminateAgentIds: [],
-    cause: expect.objectContaining({ message: "Injected final snapshot persistence failure" }),
   });
+  expect((archiveError as AgentArchiveError).cause).toBe(finalSnapshotFailure);
   expect(storage.events).toEqual([
-    "record-archived",
-    "runtime-closed",
-    "final-snapshot-persistence-failed",
+    `record-archived:${parent.id}`,
+    `runtime-closed:${parent.id}`,
+    `final-snapshot-persistence-failed:${parent.id}`,
+    `record-archived:${child.id}`,
+    `record-archived:${grandchild.id}`,
   ]);
-  expect(manager.getAgent(agent.id)).toBeNull();
-  expectArchivedAgentRecord(await storage.get(agent.id), "idle");
+  expect(manager.getAgent(parent.id)).toBeNull();
+  expect(manager.getAgent(child.id)).toBeNull();
+  expect(manager.getAgent(grandchild.id)).toBeNull();
+  expectArchivedAgentRecord(await storage.get(parent.id), "idle");
+  expectArchivedAgentRecord(await storage.get(child.id), "closed");
+  expectArchivedAgentRecord(await storage.get(grandchild.id), "closed");
+
+  const managerInternals = manager as unknown as {
+    agentLifecycleIdentities: Map<string, unknown>;
+    timelineStore: { has(agentId: string): boolean };
+  };
+  expect(managerInternals.agentLifecycleIdentities.has(parent.id)).toBe(false);
+  expect(managerInternals.timelineStore.has(parent.id)).toBe(false);
+
+  await expect(
+    manager.archiveSnapshotWithReceipt(parent.id, new Date().toISOString()),
+  ).resolves.toMatchObject({ archivedAgentIds: [parent.id] });
 });
 
 test("fires onAgentArchived for archived parent and cascaded children", async () => {

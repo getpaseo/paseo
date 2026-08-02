@@ -211,6 +211,40 @@ test("createPaseoClient exposes workspace list through the daemon client", async
   await client.close();
 });
 
+test("createPaseoClient preserves workspace archive receipts", async () => {
+  const { client, ws } = await connectClient();
+
+  const archivePromise = client.workspaces.archive("workspace_sdk", "archive-workspace-request");
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "archive_workspace_request",
+    requestId: "archive-workspace-request",
+    workspaceId: "workspace_sdk",
+  });
+
+  ws.message(
+    sessionMessage({
+      type: "archive_workspace_response",
+      payload: {
+        requestId: "archive-workspace-request",
+        workspaceId: "workspace_sdk",
+        archivedAt: null,
+        removedAgents: ["agent-parent", "agent-child"],
+        error: "Injected final snapshot persistence failure",
+      },
+    }),
+  );
+
+  await expect(archivePromise).resolves.toEqual({
+    requestId: "archive-workspace-request",
+    workspaceId: "workspace_sdk",
+    archivedAt: null,
+    removedAgents: ["agent-parent", "agent-child"],
+    error: "Injected final snapshot persistence failure",
+  });
+
+  await client.close();
+});
+
 test("workspace handles keep identity and refresh snapshots through existing driver calls", async () => {
   const { client, ws } = await connectClient();
   const openedWorkspace = createWorkspace();

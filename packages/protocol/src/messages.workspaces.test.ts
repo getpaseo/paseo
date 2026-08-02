@@ -10,6 +10,46 @@ import {
 } from "./messages.js";
 
 describe("workspace message schemas", () => {
+  test("parses the legacy workspace archive receipt as an optional extension", () => {
+    const legacy = SessionOutboundMessageSchema.parse({
+      type: "archive_workspace_response",
+      payload: {
+        requestId: "req-archive-legacy",
+        workspaceId: "workspace-1",
+        archivedAt: "2026-08-02T00:00:00.000Z",
+        error: null,
+      },
+    });
+    const withReceipt = SessionOutboundMessageSchema.parse({
+      type: "archive_workspace_response",
+      payload: {
+        requestId: "req-archive-partial",
+        workspaceId: "workspace-1",
+        archivedAt: null,
+        removedAgents: ["agent-parent", "agent-child"],
+        error: "Injected final snapshot persistence failure",
+      },
+    });
+
+    expect(legacy).not.toHaveProperty("payload.removedAgents");
+    expect(withReceipt).toMatchObject({
+      payload: { removedAgents: ["agent-parent", "agent-child"] },
+    });
+  });
+
+  test("keeps the worktree archive receipt required", () => {
+    expect(
+      SessionOutboundMessageSchema.safeParse({
+        type: "paseo_worktree_archive_response",
+        payload: {
+          success: false,
+          error: { code: "UNKNOWN", message: "Archive failed" },
+          requestId: "req-worktree-archive",
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   test("parses fetch_workspaces_request", () => {
     const parsed = SessionInboundMessageSchema.parse({
       type: "fetch_workspaces_request",

@@ -22,7 +22,12 @@ import type { AgentUpdatesService } from "./session/agent-updates/agent-updates-
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createTerminalManager } from "../terminal/terminal-manager.js";
-import { AgentManager, type AgentManagerEvent, type ManagedAgent } from "./agent/agent-manager.js";
+import {
+  AgentArchiveError,
+  AgentManager,
+  type AgentManagerEvent,
+  type ManagedAgent,
+} from "./agent/agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
 import type {
   AgentClient,
@@ -44,6 +49,7 @@ import {
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
 import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
+import { LifecycleMutationCoordinator } from "./lifecycle-mutation-coordinator.js";
 import type { ForgeService } from "../services/forge-service.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 import { deriveProjectKey } from "./project-key.js";
@@ -570,10 +576,12 @@ function createSessionForWorkspaceTests(
     warn: vi.fn(),
     error: vi.fn(),
   };
+  const lifecycleMutationCoordinator = new LifecycleMutationCoordinator();
   const agentManager = asAgentManager({
     subscribe: () => () => {},
     listAgents: () => [],
     getAgent: () => null,
+    getLifecycleMutationCoordinator: () => lifecycleMutationCoordinator,
     archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
     archiveSnapshot: async () => ({}),
     unarchiveSnapshot: async () => true,
@@ -5617,6 +5625,49 @@ test("archive_workspace_request hides non-destructive workspace records", async 
     | { payload: Record<string, unknown> }
     | undefined;
   expect(response?.payload.error).toBeNull();
+  expect(response?.payload.removedAgents).toEqual([]);
+});
+
+test("archive_workspace_request returns confirmed agents when archive partially fails", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const archivedAgentId = "agent-final-snapshot-failed";
+  const liveAgent = makeManagedAgent({
+    id: archivedAgentId,
+    cwd: REPO_CWD,
+    workspaceId: "ws-repo-running",
+    lifecycle: "idle",
+    updatedAt: "2026-08-02T00:00:00.000Z",
+  }) as unknown as ManagedAgent;
+  const finalSnapshotFailure = new Error("Injected final snapshot persistence failure");
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    agentManager: {
+      listAgents: () => [liveAgent],
+      archiveAgent: async () => {
+        throw new AgentArchiveError({
+          archivedAgentIds: [archivedAgentId],
+          failedAgentIds: [],
+          cause: finalSnapshotFailure,
+        });
+      },
+    },
+    agentStorage: { list: async () => [] },
+  });
+
+  await session.handleMessage({
+    type: "archive_workspace_request",
+    workspaceId: "ws-repo-running",
+    requestId: "req-archive-partial",
+  });
+
+  const response = findByType(emitted, "archive_workspace_response");
+  expect(response?.payload).toEqual({
+    requestId: "req-archive-partial",
+    workspaceId: "ws-repo-running",
+    archivedAt: null,
+    removedAgents: [archivedAgentId],
+    error: finalSnapshotFailure.message,
+  });
 });
 
 test("archive_workspace_request archives a worktree-kind workspace and removes the directory on last reference", async () => {

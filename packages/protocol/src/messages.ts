@@ -3558,6 +3558,7 @@ export const ArchiveWorkspaceResponseMessageSchema = z.object({
     requestId: z.string(),
     workspaceId: z.string(),
     archivedAt: z.string().nullable(),
+    removedAgents: z.array(z.string()).optional(),
     error: z.string().nullable(),
   }),
 });
@@ -4734,7 +4735,7 @@ export const PaseoWorktreeArchiveResponseSchema = z.object({
   type: z.literal("paseo_worktree_archive_response"),
   payload: z.object({
     success: z.boolean(),
-    removedAgents: z.array(z.string()).optional(),
+    removedAgents: z.array(z.string()),
     error: CheckoutErrorSchema.nullable(),
     requestId: z.string(),
   }),

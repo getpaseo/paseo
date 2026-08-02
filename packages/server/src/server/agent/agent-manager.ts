@@ -1641,32 +1641,40 @@ export class AgentManager {
 
     const { archivedAt } = await this.markRecordArchived(stored);
     agent.updatedAt = new Date(archivedAt);
+    let runtimeCloseError: unknown;
     try {
       await this.closeAgentRuntime(agentId, { providerSessionAlreadyClosed: true });
     } catch (error) {
-      throw new AgentArchiveError({
-        archivedAgentIds: [agentId],
-        failedAgentIds: [],
-        cause: error,
-      });
+      runtimeCloseError = error;
     }
     this.discardRetainedAgentState(agentId);
 
-    let archivedChildIds: string[];
+    let archivedChildIds: string[] = [];
+    let cascadeError: AgentArchiveError | undefined;
     try {
       archivedChildIds = await this.cascadeArchiveChildren(agentId);
     } catch (error) {
       if (error instanceof AgentArchiveError) {
-        throw new AgentArchiveError({
-          archivedAgentIds: [agentId, ...error.archivedAgentIds],
-          failedAgentIds: error.failedAgentIds,
-          indeterminateAgentIds: error.indeterminateAgentIds,
-          cause: error.cause,
+        cascadeError = error;
+        archivedChildIds = error.archivedAgentIds;
+      } else {
+        cascadeError = new AgentArchiveError({
+          archivedAgentIds: [],
+          failedAgentIds: [],
+          cause: error,
         });
       }
-      throw error;
     }
     const archivedAgentIds = new Set([agentId, ...archivedChildIds]);
+
+    if (runtimeCloseError !== undefined || cascadeError) {
+      throw new AgentArchiveError({
+        archivedAgentIds: Array.from(archivedAgentIds),
+        failedAgentIds: cascadeError?.failedAgentIds ?? [],
+        indeterminateAgentIds: cascadeError?.indeterminateAgentIds ?? [],
+        cause: runtimeCloseError ?? cascadeError?.cause,
+      });
+    }
 
     return { archivedAt, archivedAgentIds: Array.from(archivedAgentIds) };
   }

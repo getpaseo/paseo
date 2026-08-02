@@ -104,6 +104,7 @@ export interface PaseoWorkspaceArchiveResult {
   requestId: string;
   workspaceId: string;
   archivedAt: string | null;
+  removedAgents?: string[];
   error: string | null;
 }
 

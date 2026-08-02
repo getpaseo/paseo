@@ -67,7 +67,11 @@ import {
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
 
-import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
+import {
+  AgentArchiveError,
+  AgentManager,
+  AgentRunCancellationError,
+} from "./agent/agent-manager.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
   AgentManagerEvent,
@@ -5813,7 +5817,7 @@ export class Session {
         request.workspaceId,
       );
 
-      await archiveByScope(
+      const result = await archiveByScope(
         {
           paseoHome: this.paseoHome,
           paseoWorktreesBaseRoot: this.worktreesRoot,
@@ -5848,6 +5852,7 @@ export class Session {
           requestId: request.requestId,
           workspaceId: request.workspaceId,
           archivedAt,
+          removedAgents: result.archivedAgentIds,
           error: null,
         },
       });
@@ -5863,6 +5868,7 @@ export class Session {
           requestId: request.requestId,
           workspaceId: request.workspaceId,
           archivedAt: null,
+          removedAgents: error instanceof AgentArchiveError ? error.archivedAgentIds : [],
           error: message,
         },
       });
