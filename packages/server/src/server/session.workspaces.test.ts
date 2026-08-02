@@ -7527,6 +7527,83 @@ test("a workspace leaving a filtered subscription after bootstrap emits a remova
   ]);
 });
 
+test("queued workspace updates are dropped when a new workspace subscription replaces the old one", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const descriptor = {
+    id: "ws-replaced-subscription",
+    projectId: "proj-replaced-subscription",
+    projectDisplayName: "repo",
+    projectRootPath: REPO_CWD,
+    workspaceDirectory: REPO_CWD,
+    projectKind: "git" as const,
+    workspaceKind: "local_checkout" as const,
+    name: "repo work",
+    status: "done" as const,
+    activityAt: null,
+    diffStat: null,
+  };
+  let currentDescriptor = descriptor;
+  let listCallCount = 0;
+  session.listFetchWorkspacesEntries = async () => {
+    listCallCount += 1;
+    return {
+      entries: listCallCount === 1 ? [descriptor] : [],
+      emptyProjects: [],
+      pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+    };
+  };
+
+  const firstBuildStarted = deferred<void>();
+  const releaseFirstBuild = deferred<void>();
+  let buildCount = 0;
+  session.buildWorkspaceDescriptorMap = async () => {
+    buildCount += 1;
+    if (buildCount === 1) {
+      firstBuildStarted.resolve();
+      await releaseFirstBuild.promise;
+    }
+    return new Map([[currentDescriptor.id, currentDescriptor]]);
+  };
+
+  await session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "req-old-workspaces",
+    filter: { query: "repo" },
+    subscribe: { subscriptionId: "sub-old-workspaces" },
+  });
+
+  emitted.length = 0;
+  const queuedUpdate = session.emitWorkspaceUpdatesForWorkspaceIds([descriptor.id]);
+  await firstBuildStarted.promise;
+
+  await session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "req-new-workspaces",
+    filter: { query: "other" },
+    subscribe: { subscriptionId: "sub-new-workspaces" },
+  });
+
+  emitted.length = 0;
+  releaseFirstBuild.resolve();
+  await queuedUpdate;
+  await waitForImmediate();
+
+  expect(filterByType(emitted, "workspace_update")).toEqual([]);
+
+  currentDescriptor = { ...descriptor, name: "other work" };
+  await session.emitWorkspaceUpdatesForWorkspaceIds([descriptor.id]);
+
+  expect(filterByType(emitted, "workspace_update")).toEqual([
+    {
+      type: "workspace_update",
+      payload: { kind: "upsert", workspace: currentDescriptor },
+    },
+  ]);
+});
+
 const ICON_PNG_1X1 = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
   0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00,

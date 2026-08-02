@@ -4696,7 +4696,8 @@ export class Session {
     workspaceIds: Iterable<string>,
     options?: WorkspaceUpdateOptions,
   ): Promise<void> {
-    if (!this.workspaceUpdatesSubscription) {
+    const subscription = this.workspaceUpdatesSubscription;
+    if (!subscription) {
       return;
     }
 
@@ -4705,18 +4706,19 @@ export class Session {
       return;
     }
 
-    await this.enqueueWorkspaceUpdates(uniqueWorkspaceIds, options);
+    await this.enqueueWorkspaceUpdates(uniqueWorkspaceIds, subscription, options);
   }
 
   private enqueueWorkspaceUpdates(
     workspaceIds: ReadonlySet<string>,
+    subscription: WorkspaceUpdatesSubscriptionState,
     options: WorkspaceUpdateOptions | undefined,
   ): Promise<void> {
     const previous = Array.from(workspaceIds, (workspaceId) =>
       (this.workspaceUpdateTails.get(workspaceId) ?? Promise.resolve()).catch(() => undefined),
     );
     const next = Promise.all(previous).then(() =>
-      this.emitWorkspaceUpdateBatch(workspaceIds, options),
+      this.emitWorkspaceUpdateBatch(workspaceIds, subscription, options),
     );
     for (const workspaceId of workspaceIds) {
       this.workspaceUpdateTails.set(workspaceId, next);
@@ -4735,10 +4737,10 @@ export class Session {
 
   private async emitWorkspaceUpdateBatch(
     workspaceIds: ReadonlySet<string>,
+    subscription: WorkspaceUpdatesSubscriptionState,
     options: WorkspaceUpdateOptions | undefined,
   ): Promise<void> {
-    const subscription = this.workspaceUpdatesSubscription;
-    if (!subscription) {
+    if (this.workspaceUpdatesSubscription !== subscription) {
       return;
     }
 
@@ -4748,6 +4750,9 @@ export class Session {
     });
 
     for (const workspaceId of workspaceIds) {
+      if (this.workspaceUpdatesSubscription !== subscription) {
+        return;
+      }
       const workspace = descriptorsByWorkspaceId.get(workspaceId);
       const filteredWorkspace =
         workspace && this.matchesWorkspaceFilter({ workspace, filter: subscription.filter })
@@ -4769,6 +4774,9 @@ export class Session {
       if (!nextWorkspace) {
         if (this.shouldSkipWorkspaceRemoval(lastEmitted, options?.removedProjectId)) {
           continue;
+        }
+        if (this.workspaceUpdatesSubscription !== subscription) {
+          return;
         }
         subscription.lastEmittedByWorkspaceId.delete(workspaceId);
         this.bufferOrEmitWorkspaceUpdate(
