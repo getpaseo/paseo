@@ -437,6 +437,11 @@ export type AgentStreamEvent =
       type: "background_tasks";
       provider: AgentProvider;
       event: import("./providers/claude/background-tasks.js").BackgroundTaskInputEvent;
+    }
+  | {
+      type: "provider_heartbeats";
+      provider: AgentProvider;
+      event: import("./providers/claude/provider-heartbeats.js").ProviderHeartbeatInputEvent;
     };
 
 export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {

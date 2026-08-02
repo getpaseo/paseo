@@ -74,12 +74,17 @@ import {
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
 import { applyBackgroundTaskInputEvent } from "./providers/claude/background-tasks.js";
+import { applyProviderHeartbeatInputEvent } from "./providers/claude/provider-heartbeats.js";
 import {
   BackgroundTaskStore,
   isTerminalBackgroundTaskStatus,
   type BackgroundTaskDescriptor,
 } from "./background-tasks/store.js";
 import { resolveBackgroundTaskOutputEof } from "./background-tasks/output-eof.js";
+import {
+  ProviderHeartbeatStore,
+  type ProviderHeartbeatDescriptor,
+} from "./provider-heartbeats/store.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -179,6 +184,11 @@ export type AgentManagerEvent =
       type: "background_tasks";
       parentAgentId: string;
       tasks: BackgroundTaskDescriptor[];
+    }
+  | {
+      type: "provider_heartbeats";
+      parentAgentId: string;
+      heartbeats: ProviderHeartbeatDescriptor[];
     }
   | {
       type: "agent_stream";
@@ -574,6 +584,7 @@ export class AgentManager {
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly backgroundTaskStore = new BackgroundTaskStore();
+  private readonly providerHeartbeatStore = new ProviderHeartbeatStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
@@ -1032,6 +1043,41 @@ export class AgentManager {
     await agent.session.stopBackgroundTask(taskId);
   }
 
+  listProviderHeartbeats(parentAgentId: string): ProviderHeartbeatDescriptor[] {
+    this.requirePublicAgent(parentAgentId);
+    return this.providerHeartbeatStore.list(parentAgentId);
+  }
+
+  /**
+   * Best-effort delete for provider session schedules.
+   * Claude has no public CronDelete API on the session object in v1, so we remove
+   * the row from the Paseo live set (UI honesty) and return an error explaining
+   * that provider-side cancel is view-only for now.
+   */
+  async deleteProviderHeartbeat(
+    parentAgentId: string,
+    taskId: string,
+  ): Promise<{ error: string | null }> {
+    this.requirePublicAgent(parentAgentId);
+    const existing = this.providerHeartbeatStore.get(parentAgentId, taskId);
+    if (!existing) {
+      return { error: "Provider heartbeat not found" };
+    }
+    const removed = this.providerHeartbeatStore.remove(parentAgentId, taskId);
+    if (removed) {
+      this.dispatch({
+        type: "provider_heartbeats",
+        parentAgentId,
+        heartbeats: this.providerHeartbeatStore.list(parentAgentId),
+      });
+    }
+    // No Claude runtime CronDelete injection in v1 — keep UI honest by dropping
+    // the live row, but surface that the provider schedule may still fire.
+    return {
+      error: "Provider cancel is not available; removed from Paseo view only",
+    };
+  }
+
   async readBackgroundTaskOutput(input: {
     parentAgentId: string;
     taskId: string;
@@ -1394,6 +1440,8 @@ export class AgentManager {
         }
         this.backgroundTaskStore.deleteParent(agentId);
         this.dispatch({ type: "background_tasks", parentAgentId: agentId, tasks: [] });
+        this.providerHeartbeatStore.deleteParent(agentId);
+        this.dispatch({ type: "provider_heartbeats", parentAgentId: agentId, heartbeats: [] });
       }
 
       // Preserve existing labels and timeline during reload.
@@ -3043,6 +3091,8 @@ export class AgentManager {
     }
     this.backgroundTaskStore.deleteParent(agentId);
     this.dispatch({ type: "background_tasks", parentAgentId: agentId, tasks: [] });
+    this.providerHeartbeatStore.deleteParent(agentId);
+    this.dispatch({ type: "provider_heartbeats", parentAgentId: agentId, heartbeats: [] });
   }
 
   private emitClosedAgent(agent: ManagedAgentClosed, options?: { persist?: boolean }): void {
@@ -3149,6 +3199,21 @@ export class AgentManager {
           type: "background_tasks",
           parentAgentId: agent.id,
           tasks: result.tasks,
+        });
+      }
+      return;
+    }
+    if (event.type === "provider_heartbeats") {
+      const result = applyProviderHeartbeatInputEvent(
+        this.providerHeartbeatStore,
+        agent.id,
+        event.event,
+      );
+      if (result.changed) {
+        this.dispatch({
+          type: "provider_heartbeats",
+          parentAgentId: agent.id,
+          heartbeats: result.heartbeats,
         });
       }
       return;
@@ -3334,6 +3399,10 @@ export class AgentManager {
     this.backgroundTaskStore.deleteParent(agent.id);
     if (broadcast) {
       this.dispatch({ type: "background_tasks", parentAgentId: agent.id, tasks: [] });
+    }
+    this.providerHeartbeatStore.deleteParent(agent.id);
+    if (broadcast) {
+      this.dispatch({ type: "provider_heartbeats", parentAgentId: agent.id, heartbeats: [] });
     }
     for (const event of providerSubagentEvents) {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
