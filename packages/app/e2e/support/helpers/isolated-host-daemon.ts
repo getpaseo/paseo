@@ -1,6 +1,11 @@
 import { once } from "node:events";
-import { spawn, execFileSync, execSync, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import {
+  spawn,
+  execFileSync,
+  execSync,
+  type ChildProcess,
+  type SpawnOptions,
+} from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -150,24 +155,9 @@ export async function startIsolatedHostDaemon(
   const serverDir = publishedPackageRoot
     ? path.join(publishedPackageRoot, "node_modules", "@getpaseo", "server")
     : path.resolve(__dirname, "../../../../server");
-  const sourceEntrypoint = path.join(serverDir, "scripts/supervisor-entrypoint.ts");
-  const builtEntrypoint = path.join(serverDir, "dist/scripts/supervisor-entrypoint.js");
-  let daemonCommand: { command: string; args: string[] } | null = null;
-  if (existsSync(sourceEntrypoint)) {
-    daemonCommand = {
-      command: execSync("which tsx").toString().trim(),
-      args: [sourceEntrypoint, "--dev"],
-    };
-  } else if (existsSync(builtEntrypoint)) {
-    daemonCommand = { command: process.execPath, args: [builtEntrypoint] };
-  }
-  if (!daemonCommand) {
-    throw new Error(
-      `E2E server package has no source or built supervisor entrypoint: ${serverDir}`,
-    );
-  }
+  const tsxBin = execSync("which tsx").toString().trim();
   const spawnDaemon = async (): Promise<ChildProcess> => {
-    const child = spawn(daemonCommand.command, daemonCommand.args, {
+    const spawnOptions: SpawnOptions = {
       cwd: serverDir,
       env: withDisabledE2ESpeechEnv({
         ...process.env,
@@ -182,7 +172,10 @@ export async function startIsolatedHostDaemon(
       }),
       stdio: ["ignore", "ignore", "pipe"],
       detached: false,
-    });
+    };
+    const child = publishedPackageRoot
+      ? spawn(process.execPath, ["dist/scripts/supervisor-entrypoint.js"], spawnOptions)
+      : spawn(tsxBin, ["scripts/supervisor-entrypoint.ts", "--dev"], spawnOptions);
 
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => {
