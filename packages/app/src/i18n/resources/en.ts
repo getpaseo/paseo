@@ -1788,6 +1788,10 @@ export const en = {
       detailLevel: {
         title: "Detail level",
       },
+      chatOutline: {
+        title: "Chat outline",
+        description: "Show an outline for jumping between prompts",
+      },
       fonts: {
         title: "Fonts",
         systemDefault: "System default",

@@ -1778,6 +1778,10 @@ export const ar: TranslationResources = {
       detailLevel: {
         title: "مستوى التفاصيل",
       },
+      chatOutline: {
+        title: "مخطط المحادثة",
+        description: "عرض مخطط للتنقل بين المطالبات",
+      },
       fonts: {
         title: "الخطوط",
         systemDefault: "الافتراضي للنظام",

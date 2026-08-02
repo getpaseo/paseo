@@ -1828,6 +1828,10 @@ export const fr: TranslationResources = {
       detailLevel: {
         title: "Niveau de détail",
       },
+      chatOutline: {
+        title: "Plan de la discussion",
+        description: "Afficher un plan pour passer d’une requête à l’autre",
+      },
       fonts: {
         title: "Polices",
         systemDefault: "Valeur par défaut du système",

@@ -1809,6 +1809,10 @@ export const ptBR: TranslationResources = {
       detailLevel: {
         title: "Nível de detalhe",
       },
+      chatOutline: {
+        title: "Estrutura do chat",
+        description: "Mostrar uma estrutura para navegar entre prompts",
+      },
       fonts: {
         title: "Fontes",
         systemDefault: "Sistema padrão",

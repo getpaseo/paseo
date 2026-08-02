@@ -1793,6 +1793,10 @@ export const ja: TranslationResources = {
       detailLevel: {
         title: "詳細レベル",
       },
+      chatOutline: {
+        title: "チャットのアウトライン",
+        description: "プロンプト間を移動するためのアウトラインを表示します",
+      },
       fonts: {
         title: "フォント",
         systemDefault: "システムデフォルト",

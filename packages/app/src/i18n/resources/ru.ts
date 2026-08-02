@@ -1814,6 +1814,10 @@ export const ru: TranslationResources = {
       detailLevel: {
         title: "Уровень детализации",
       },
+      chatOutline: {
+        title: "Структура чата",
+        description: "Показывать структуру для перехода между запросами",
+      },
       fonts: {
         title: "Шрифты",
         systemDefault: "Система по умолчанию",

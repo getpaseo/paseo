@@ -197,6 +197,24 @@ describe("deriveAgentStreamTurnLiveness", () => {
   });
 });
 
+describe("detached timeline windows", () => {
+  it("does not apply or catch up live events while viewing an older window", () => {
+    const currentTail = [makeAssistantItem("older window")];
+    const result = processAgentStreamEvents({
+      events: [makeStreamReducerEvent(makeAssistantTimelineEvent("new live output"), 101)],
+      currentTail,
+      currentHead: [],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 40 },
+      hasAuthoritativeBaseline: true,
+      isDetached: true,
+    });
+
+    expect(result.tail).toBe(currentTail);
+    expect(result.changedTail).toBe(false);
+    expect(result.sideEffects).toEqual([]);
+  });
+});
+
 function getAssistantTexts(items: StreamItem[]): string[] {
   return items
     .filter((item): item is Extract<StreamItem, { kind: "assistant_message" }> => {
@@ -2656,6 +2674,39 @@ describe("processTimelineResponse", () => {
       "shared-provider-message",
     ]);
     expect(new Set(assistants.map((item) => item.id)).size).toBe(2);
+  });
+
+  it("retains the current timeline while merging a disjoint prompt-jump window", () => {
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [
+        {
+          kind: "user_message",
+          id: "newest",
+          text: "newest",
+          timestamp: new Date(1000),
+          timelineCursor: { epoch: "epoch-1", seq: 100 },
+        },
+        makeSubmittedUserMessage("pending submission", "pending-submission"),
+      ],
+      currentCursor: { epoch: "epoch-1", startSeq: 80, endSeq: 100 },
+      sendingClientMessageIds: ["pending-submission"],
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        mergeWindow: true,
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 40 },
+        hasOlder: false,
+        hasNewer: true,
+        entries: [makeTimelineEntry(1, "oldest", "user_message")],
+      },
+    });
+
+    expect(getUserTexts(result.tail)).toEqual(["oldest", "newest", "pending submission"]);
+    expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 1, endSeq: 100 });
+    expect(result.sideEffects).not.toContainEqual(expect.objectContaining({ type: "catch_up" }));
   });
 
   it("drops a stale before page anchored before a resume-tail replacement", () => {

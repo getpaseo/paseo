@@ -1757,6 +1757,10 @@ export const zhCN: TranslationResources = {
       detailLevel: {
         title: "详细程度",
       },
+      chatOutline: {
+        title: "聊天大纲",
+        description: "显示用于在提示词之间跳转的大纲",
+      },
       fonts: {
         title: "字体",
         systemDefault: "系统默认",
