@@ -824,7 +824,7 @@ export const ar: TranslationResources = {
       },
       openInEditor: {
         open: "يفتح",
-        chooseEditor: "اختر المحرر",
+        chooseApplication: "اختر التطبيق",
         openIn: "افتح مساحة العمل في{{target}}",
         openFileIn: "Open {{fileName}} in {{target}}",
         failedOpen: "فشل في فتح مساحة العمل",

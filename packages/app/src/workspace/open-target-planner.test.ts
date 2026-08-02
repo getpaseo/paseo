@@ -14,6 +14,12 @@ const desktopTargets = [
     kind: "file-manager" as const,
     icon: { kind: "symbol" as const, name: "folder" as const },
   },
+  {
+    id: "terminal:ghostty",
+    label: "Ghostty",
+    kind: "terminal" as const,
+    icon: { kind: "symbol" as const, name: "terminal" as const },
+  },
 ];
 
 const checkoutStatus = {
@@ -84,6 +90,28 @@ describe("planWorkspaceOpenTargets", () => {
     });
   });
 
+  it("always opens terminal targets at the workspace instead of the active file", () => {
+    const targets = planWorkspaceOpenTargets({
+      workspaceDirectory: "/repo",
+      activeFile: { path: "src/app.ts", lineStart: 3 },
+      desktopTargets,
+      canUseDesktopBridge: true,
+      isLocalExecution: true,
+    });
+
+    expect(targets[2]).toMatchObject({
+      source: "desktop",
+      id: "terminal:ghostty",
+      kind: "terminal",
+      openInput: {
+        editorId: "terminal:ghostty",
+        workspacePath: "/repo",
+      },
+    });
+    expect(targets[2]).not.toHaveProperty("openInput.filePath");
+    expect(targets[2]).not.toHaveProperty("openInput.line");
+  });
+
   it("passes custom target ids through as strings", () => {
     const targets = planWorkspaceOpenTargets({
       workspaceDirectory: "/repo",
@@ -105,6 +133,7 @@ describe("planWorkspaceOpenTargets", () => {
         source: "desktop",
         id: "script:open-in-nvim",
         label: "Open in Neovim",
+        kind: "editor",
         editorId: "script:open-in-nvim",
         icon: { kind: "symbol", name: "terminal" },
         openInput: {

@@ -835,7 +835,7 @@ export const ja: TranslationResources = {
       },
       openInEditor: {
         open: "開く",
-        chooseEditor: "エディタを選択",
+        chooseApplication: "アプリケーションを選択",
         openIn: "{{target}}でワークスペースを開く",
         openFileIn: "{{target}}で{{fileName}}を開く",
         failedOpen: "ワークスペースを開けませんでした",

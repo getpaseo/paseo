@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { listAvailableEditorTargets, openEditorTarget } from "./registry.js";
@@ -9,6 +11,23 @@ import { pycharmTarget } from "./targets/pycharm.js";
 import { vscodeTarget } from "./targets/vscode.js";
 import { webstormTarget } from "./targets/webstorm.js";
 import { zedTarget } from "./targets/zed.js";
+import {
+  alacrittyTerminalTarget,
+  ghosttyTerminalTarget,
+  gnomeConsoleTarget,
+  gnomeTerminalTarget,
+  itermTerminalTarget,
+  kittyTerminalTarget,
+  konsoleTerminalTarget,
+  linuxDefaultTerminalTarget,
+  macTerminalTarget,
+  ptyxisTerminalTarget,
+  tilixTerminalTarget,
+  warpTerminalTarget,
+  weztermTerminalTarget,
+  windowsTerminalTarget,
+  xfceTerminalTarget,
+} from "./targets/terminal.js";
 
 interface RecordedLaunch {
   command: string;
@@ -19,6 +38,7 @@ class FakeEditorTargets implements EditorTargetRuntime {
   readonly launches: RecordedLaunch[] = [];
   readonly openedPaths: string[] = [];
   readonly revealedPaths: string[] = [];
+  readonly openedExternalUrls: string[] = [];
   readonly openedMacApplications: Array<{
     applicationName: string;
     paths: string[];
@@ -29,6 +49,7 @@ class FakeEditorTargets implements EditorTargetRuntime {
   private readonly paths = new Set<string>();
   private readonly commands = new Map<string, string>();
   private readonly macApplications = new Set<string>();
+  private readonly externalUrlProtocols = new Set<string>();
 
   constructor(platform: NodeJS.Platform = "linux", env: NodeJS.ProcessEnv = {}) {
     this.platform = platform;
@@ -45,6 +66,10 @@ class FakeEditorTargets implements EditorTargetRuntime {
 
   installMacApplication(applicationName: string): void {
     this.macApplications.add(applicationName);
+  }
+
+  installExternalUrlProtocol(protocol: string): void {
+    this.externalUrlProtocols.add(protocol);
   }
 
   pathExists(targetPath: string): boolean {
@@ -69,6 +94,14 @@ class FakeEditorTargets implements EditorTargetRuntime {
 
   async openPath(targetPath: string): Promise<void> {
     this.openedPaths.push(targetPath);
+  }
+
+  async openExternalUrl(url: string): Promise<void> {
+    this.openedExternalUrls.push(url);
+  }
+
+  hasExternalUrlHandler(url: string): boolean {
+    return this.externalUrlProtocols.has(new URL(url).protocol);
   }
 
   revealPath(targetPath: string): void {
@@ -288,5 +321,172 @@ describe("editor target registry", () => {
 
     expect(macTargets.map((target) => target.id)).toEqual(["finder"]);
     expect(windowsTargets.map((target) => target.id)).toEqual(["explorer"]);
+  });
+
+  it("uses bundled brand icons for named terminals and a symbol for the Linux default", async () => {
+    const runtime = new FakeEditorTargets();
+    const targetsAndIcons = [
+      [ghosttyTerminalTarget, "ghostty.png"],
+      [warpTerminalTarget, "warp.png"],
+      [weztermTerminalTarget, "wezterm.png"],
+      [kittyTerminalTarget, "kitty.png"],
+      [alacrittyTerminalTarget, "alacritty.png"],
+      [itermTerminalTarget, "iterm2.png"],
+      [macTerminalTarget, "macos-terminal.png"],
+      [windowsTerminalTarget, "windows-terminal.png"],
+      [gnomeTerminalTarget, "gnome-terminal.png"],
+      [gnomeConsoleTarget, "gnome-console.png"],
+      [ptyxisTerminalTarget, "ptyxis.png"],
+      [konsoleTerminalTarget, "konsole.png"],
+      [tilixTerminalTarget, "tilix.png"],
+      [xfceTerminalTarget, "xfce-terminal.png"],
+    ] as const;
+
+    for (const [target, iconFileName] of targetsAndIcons) {
+      expect((await target.describe(runtime)).icon).toEqual({
+        kind: "image",
+        dataUrl: `data:image/png;base64,${iconFileName}`,
+      });
+    }
+    expect((await linuxDefaultTerminalTarget.describe(runtime)).icon).toEqual({
+      kind: "symbol",
+      name: "terminal",
+    });
+
+    for (const [, iconFileName] of targetsAndIcons) {
+      const bytes = await readFile(
+        path.resolve(__dirname, "../../../assets/editor-targets", iconFileName),
+      );
+      expect(bytes.subarray(1, 4).toString("ascii")).toBe("PNG");
+      expect(bytes.readUInt32BE(16)).toBe(64);
+      expect(bytes.readUInt32BE(20)).toBe(64);
+    }
+  });
+
+  it("detects macOS terminals and opens their workspace through the application", async () => {
+    const runtime = new FakeEditorTargets("darwin");
+    runtime.installMacApplication("Ghostty");
+    runtime.installMacApplication("iTerm");
+
+    const targets = await listAvailableEditorTargets(runtime, [
+      ghosttyTerminalTarget,
+      itermTerminalTarget,
+      macTerminalTarget,
+    ]);
+    expect(targets.map(({ id, kind }) => ({ id, kind }))).toEqual([
+      { id: "terminal:ghostty", kind: "terminal" },
+      { id: "terminal:iterm2", kind: "terminal" },
+      { id: "terminal:macos", kind: "terminal" },
+    ]);
+
+    await ghosttyTerminalTarget.launch({ workspacePath: "/repo with spaces" }, runtime);
+    expect(runtime.openedMacApplications).toEqual([
+      { applicationName: "Ghostty", paths: ["/repo with spaces"] },
+    ]);
+  });
+
+  it("launches installed Linux terminals with their working-directory contracts", async () => {
+    const runtime = new FakeEditorTargets("linux");
+    runtime.installCommand("ghostty");
+    runtime.installCommand("wezterm");
+    runtime.installCommand("kitty");
+    runtime.installCommand("alacritty");
+    runtime.installCommand("gnome-terminal");
+    runtime.installCommand("kgx");
+    runtime.installCommand("ptyxis");
+    runtime.installCommand("konsole");
+    runtime.installCommand("tilix");
+    runtime.installCommand("xfce4-terminal");
+    runtime.installCommand("xdg-terminal-exec");
+
+    const targets = await listAvailableEditorTargets(runtime, [
+      ghosttyTerminalTarget,
+      weztermTerminalTarget,
+      kittyTerminalTarget,
+      alacrittyTerminalTarget,
+      gnomeTerminalTarget,
+      gnomeConsoleTarget,
+      ptyxisTerminalTarget,
+      konsoleTerminalTarget,
+      tilixTerminalTarget,
+      xfceTerminalTarget,
+      linuxDefaultTerminalTarget,
+    ]);
+    expect(targets.map((target) => target.id)).toEqual([
+      "terminal:ghostty",
+      "terminal:wezterm",
+      "terminal:kitty",
+      "terminal:alacritty",
+      "terminal:gnome-terminal",
+      "terminal:gnome-console",
+      "terminal:ptyxis",
+      "terminal:konsole",
+      "terminal:tilix",
+      "terminal:xfce",
+      "terminal:linux-default",
+    ]);
+
+    await ghosttyTerminalTarget.launch({ workspacePath: "/repo's worktree" }, runtime);
+    await weztermTerminalTarget.launch({ workspacePath: "/repo's worktree" }, runtime);
+    await kittyTerminalTarget.launch({ workspacePath: "/repo's worktree" }, runtime);
+    await alacrittyTerminalTarget.launch({ workspacePath: "/repo's worktree" }, runtime);
+    await gnomeTerminalTarget.launch({ workspacePath: "/repo's worktree" }, runtime);
+    await gnomeConsoleTarget.launch({ workspacePath: "/repo's worktree" }, runtime);
+    await ptyxisTerminalTarget.launch({ workspacePath: "/repo's worktree" }, runtime);
+    await konsoleTerminalTarget.launch({ workspacePath: "/repo's worktree" }, runtime);
+    await tilixTerminalTarget.launch({ workspacePath: "/repo's worktree" }, runtime);
+    await xfceTerminalTarget.launch({ workspacePath: "/repo's worktree" }, runtime);
+    await linuxDefaultTerminalTarget.launch({ workspacePath: "/repo's worktree" }, runtime);
+    expect(runtime.launches).toEqual([
+      {
+        command: "/bin/ghostty",
+        args: ["+new-window", "--working-directory=/repo's worktree"],
+      },
+      { command: "/bin/wezterm", args: ["start", "--cwd", "/repo's worktree"] },
+      { command: "/bin/kitty", args: ["--directory", "/repo's worktree"] },
+      { command: "/bin/alacritty", args: ["--working-directory", "/repo's worktree"] },
+      { command: "/bin/gnome-terminal", args: ["--working-directory=/repo's worktree"] },
+      { command: "/bin/kgx", args: ["--working-directory=/repo's worktree"] },
+      {
+        command: "/bin/ptyxis",
+        args: ["--new-window", "--working-directory", "/repo's worktree"],
+      },
+      { command: "/bin/konsole", args: ["--workdir", "/repo's worktree"] },
+      { command: "/bin/tilix", args: ["--working-directory=/repo's worktree"] },
+      { command: "/bin/xfce4-terminal", args: ["--working-directory=/repo's worktree"] },
+      { command: "/bin/xdg-terminal-exec", args: ["--dir=/repo's worktree"] },
+    ]);
+  });
+
+  it("detects Windows Terminal and cross-platform Windows terminals", async () => {
+    const runtime = new FakeEditorTargets("win32");
+    runtime.installCommand("wt.exe");
+    runtime.installCommand("wezterm.exe");
+    runtime.installCommand("alacritty.exe");
+    runtime.installExternalUrlProtocol("warp:");
+
+    const targets = await listAvailableEditorTargets(runtime, [
+      windowsTerminalTarget,
+      weztermTerminalTarget,
+      alacrittyTerminalTarget,
+      warpTerminalTarget,
+      ghosttyTerminalTarget,
+      kittyTerminalTarget,
+    ]);
+    expect(targets.map((target) => target.id)).toEqual([
+      "terminal:windows-terminal",
+      "terminal:wezterm",
+      "terminal:alacritty",
+      "terminal:warp",
+    ]);
+
+    await windowsTerminalTarget.launch({ workspacePath: "C:/repo & worktree" }, runtime);
+    await warpTerminalTarget.launch({ workspacePath: "C:/repo & worktree" }, runtime);
+    expect(runtime.launches).toEqual([
+      { command: "/bin/wt.exe", args: ["-d", "C:/repo & worktree"] },
+    ]);
+    expect(runtime.openedExternalUrls).toEqual([
+      "warp://action/new_window?path=C%3A%2Frepo+%26+worktree",
+    ]);
   });
 });

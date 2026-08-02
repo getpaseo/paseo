@@ -25,6 +25,23 @@ import { vscodeInsidersTarget } from "./targets/vscode-insiders.js";
 import { vscodeTarget } from "./targets/vscode.js";
 import { webstormTarget } from "./targets/webstorm.js";
 import { zedTarget } from "./targets/zed.js";
+import {
+  alacrittyTerminalTarget,
+  ghosttyTerminalTarget,
+  gnomeConsoleTarget,
+  gnomeTerminalTarget,
+  itermTerminalTarget,
+  kittyTerminalTarget,
+  konsoleTerminalTarget,
+  linuxDefaultTerminalTarget,
+  macTerminalTarget,
+  ptyxisTerminalTarget,
+  tilixTerminalTarget,
+  warpTerminalTarget,
+  weztermTerminalTarget,
+  windowsTerminalTarget,
+  xfceTerminalTarget,
+} from "./targets/terminal.js";
 
 export const EDITOR_TARGETS: readonly EditorTarget[] = [
   cursorTarget,
@@ -47,6 +64,21 @@ export const EDITOR_TARGETS: readonly EditorTarget[] = [
   rubymineTarget,
   rustroverTarget,
   webstormTarget,
+  ghosttyTerminalTarget,
+  warpTerminalTarget,
+  weztermTerminalTarget,
+  kittyTerminalTarget,
+  alacrittyTerminalTarget,
+  itermTerminalTarget,
+  macTerminalTarget,
+  windowsTerminalTarget,
+  gnomeTerminalTarget,
+  gnomeConsoleTarget,
+  ptyxisTerminalTarget,
+  konsoleTerminalTarget,
+  tilixTerminalTarget,
+  xfceTerminalTarget,
+  linuxDefaultTerminalTarget,
   finderTarget,
   explorerTarget,
   fileManagerTarget,

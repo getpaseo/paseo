@@ -834,7 +834,7 @@ export const en = {
       },
       openInEditor: {
         open: "Open",
-        chooseEditor: "Choose editor",
+        chooseApplication: "Choose application",
         openIn: "Open workspace in {{target}}",
         openFileIn: "Open {{fileName}} in {{target}}",
         failedOpen: "Failed to open workspace",

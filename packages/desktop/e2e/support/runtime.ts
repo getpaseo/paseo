@@ -85,7 +85,7 @@ export interface DesktopRuntimeConfig {
 interface DesktopEditorTargetConfig {
   id: string;
   label: string;
-  kind: "editor" | "file-manager";
+  kind: "editor" | "terminal" | "file-manager";
   icon: { kind: "image"; dataUrl: string } | { kind: "symbol"; name: "folder" | "terminal" };
 }
 
