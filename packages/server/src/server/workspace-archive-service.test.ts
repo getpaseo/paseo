@@ -8,7 +8,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ForgeService } from "../services/forge-service.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import { createWorktree, type WorktreeConfig } from "../utils/worktree.js";
-import type { ManagedAgent } from "./agent/agent-manager.js";
+import { AgentArchiveError, type ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { LifecycleMutationCoordinator } from "./lifecycle-mutation-coordinator.js";
@@ -939,7 +939,7 @@ describe("archiveByScope", () => {
     expect(deps.killTerminalsForWorkspace).not.toHaveBeenCalledWith(middleWorkspaceId);
   });
 
-  test("archives no workspace records when an alternating-workspace cascade rejects", async () => {
+  test("archives only safe target records when an alternating-workspace cascade rejects", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
     const worktree = await createPaseoOwnedWorktree(
@@ -982,7 +982,11 @@ describe("archiveByScope", () => {
       listAgents: () => agents,
       archiveAgent: vi.fn(async (agentId: string) => {
         expect(agentId).toBe(rootAgentId);
-        throw new Error(`Injected archive failure for ${grandchildAgentId}`);
+        throw new AgentArchiveError({
+          archivedAgentIds: [rootAgentId, middleAgentId],
+          failedAgentIds: [grandchildAgentId],
+          cause: new Error(`Injected archive failure for ${grandchildAgentId}`),
+        });
       }),
       archiveSnapshotWithReceipt: vi.fn(async () => {
         throw new Error("not expected for live agents");
@@ -1000,18 +1004,28 @@ describe("archiveByScope", () => {
     } as Pick<AgentStorage, "list">;
     deps.archiveWorkspaceRecord = vi.fn(deps.archiveWorkspaceRecord);
 
-    await expect(
-      archiveByScope(deps, {
+    let archiveError: unknown;
+    try {
+      await archiveByScope(deps, {
         scope: { kind: "worktree", targetPath: worktree.worktreePath },
         requestId: "req-alternating-workspace-failure",
-      }),
-    ).rejects.toThrow(`Injected archive failure for ${grandchildAgentId}`);
+      });
+    } catch (error) {
+      archiveError = error;
+    }
 
+    expect(archiveError).toBeInstanceOf(AgentArchiveError);
+    expect(archiveError).toMatchObject({
+      archivedAgentIds: [rootAgentId, middleAgentId],
+      failedAgentIds: [grandchildAgentId],
+    });
     expect(deps.agentManager.archiveAgent).toHaveBeenCalledOnce();
     expect(deps.agentManager.archiveAgent).toHaveBeenCalledWith(rootAgentId);
-    expect(deps.archiveWorkspaceRecord).not.toHaveBeenCalled();
+    expect(deps.archiveWorkspaceRecord).toHaveBeenCalledOnce();
+    expect(deps.archiveWorkspaceRecord).toHaveBeenCalledWith(rootWorkspaceId);
+    expect(deps.killTerminalsForWorkspace).toHaveBeenCalledOnce();
+    expect(deps.killTerminalsForWorkspace).toHaveBeenCalledWith(rootWorkspaceId);
     expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([
-      rootWorkspaceId,
       middleWorkspaceId,
       grandchildWorkspaceId,
     ]);

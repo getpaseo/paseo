@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import type { Logger } from "pino";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
-import type { AgentManager } from "./agent/agent-manager.js";
+import { AgentArchiveError, type AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { LifecycleMutationCoordinator } from "./lifecycle-mutation-coordinator.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
@@ -393,24 +393,79 @@ async function archiveTargetRecords(
   const archivedAgents = new Set<string>();
   const archivedWorkspaceIds: string[] = [];
   const archiveWorkspaceIdSet = new Set(archiveWorkspaceIds);
+  const agentWorkspaceIds = new Map<string, string>();
+  for (const agent of dependencies.agentManager.listAgents()) {
+    if (agent.workspaceId) {
+      agentWorkspaceIds.set(agent.id, agent.workspaceId);
+    }
+  }
+  try {
+    for (const record of await dependencies.agentStorage.list()) {
+      if (record.workspaceId) {
+        agentWorkspaceIds.set(record.id, record.workspaceId);
+      }
+    }
+  } catch {
+    // archiveWorkspaceContents logs storage listing failures. Missing ownership
+    // here prevents workspace mutation if an agent archive later fails.
+  }
 
   const agentResults = await Promise.allSettled(
     targetWorkspaceIds.map((workspaceId) =>
-      archiveWorkspaceContents(dependencies, workspaceId, archiveWorkspaceIdSet),
+      archiveWorkspaceContents(
+        {
+          agentManager: dependencies.agentManager,
+          agentStorage: dependencies.agentStorage,
+          sessionLogger: dependencies.sessionLogger,
+        },
+        workspaceId,
+        archiveWorkspaceIdSet,
+      ),
     ),
   );
 
+  const failedAgentIds = new Set<string>();
+  const unsafeWorkspaceIds = new Set<string>();
+  let failureCause: unknown;
+  let canIdentifyFailedWorkspaces = true;
   for (const result of agentResults) {
-    if (result.status === "rejected") {
+    if (result.status === "fulfilled") {
+      for (const agentId of result.value) {
+        archivedAgents.add(agentId);
+      }
+      continue;
+    }
+    if (!(result.reason instanceof AgentArchiveError)) {
       throw result.reason;
     }
-    for (const agentId of result.value) {
+    failureCause ??= result.reason.cause;
+    for (const agentId of result.reason.archivedAgentIds) {
       archivedAgents.add(agentId);
+    }
+    for (const agentId of result.reason.failedAgentIds) {
+      failedAgentIds.add(agentId);
+      const failedWorkspaceId = agentWorkspaceIds.get(agentId);
+      if (!failedWorkspaceId || !archiveWorkspaceIdSet.has(failedWorkspaceId)) {
+        canIdentifyFailedWorkspaces = false;
+        continue;
+      }
+      unsafeWorkspaceIds.add(failedWorkspaceId);
     }
   }
 
+  const safeTargetWorkspaceIds = canIdentifyFailedWorkspaces
+    ? targetWorkspaceIds.filter((workspaceId) => !unsafeWorkspaceIds.has(workspaceId))
+    : [];
   const recordResults = await Promise.allSettled(
-    targetWorkspaceIds.map(async (workspaceId) => {
+    safeTargetWorkspaceIds.map(async (workspaceId) => {
+      try {
+        await dependencies.killTerminalsForWorkspace(workspaceId);
+      } catch (error) {
+        dependencies.sessionLogger?.warn(
+          { err: error, workspaceId },
+          "Workspace archive teardown step failed; continuing",
+        );
+      }
       await dependencies.archiveWorkspaceRecord(workspaceId);
       return workspaceId;
     }),
@@ -422,9 +477,17 @@ async function archiveTargetRecords(
       continue;
     }
     dependencies.sessionLogger?.warn(
-      { err: result.reason, requestId, workspaceId: targetWorkspaceIds[index] },
+      { err: result.reason, requestId, workspaceId: safeTargetWorkspaceIds[index] },
       "archiveByScope workspace teardown failed; continuing",
     );
+  }
+
+  if (failureCause !== undefined) {
+    throw new AgentArchiveError({
+      archivedAgentIds: archivedAgents,
+      failedAgentIds,
+      cause: failureCause,
+    });
   }
 
   return { archivedAgents, archivedWorkspaceIds };
@@ -518,12 +581,12 @@ function uniqueFilesystemPaths(paths: string[]): string[] {
 
 export type ArchiveWorkspaceContentsDependencies = Pick<
   ArchiveDependencies,
-  "agentManager" | "agentStorage" | "killTerminalsForWorkspace" | "sessionLogger"
->;
+  "agentManager" | "agentStorage" | "sessionLogger"
+> &
+  Partial<Pick<ArchiveDependencies, "killTerminalsForWorkspace">>;
 
-// Tears down everything OWNED by a single workspace record: its live agents,
-// its persisted-but-not-running agent snapshots, and its terminals. Scoped by
-// workspaceId so a sibling workspace sharing the same directory is untouched.
+// Archives agents owned by a single workspace record. Terminal teardown waits
+// until every agent result identifies which target workspaces are safe.
 // Returns the set of archived agent ids.
 export async function archiveWorkspaceContents(
   dependencies: ArchiveWorkspaceContentsDependencies,
@@ -569,7 +632,7 @@ export async function archiveWorkspaceContents(
     const parentAgentId = parentAgentIds.get(agentId);
     return !parentAgentId || !archiveCandidateIds.has(parentAgentId);
   };
-  const agentArchivePromises = [
+  const archiveResults = await Promise.allSettled([
     ...liveAgents
       .filter((agent) => isArchiveRoot(agent.id))
       .map(async (agent) => {
@@ -587,22 +650,7 @@ export async function archiveWorkspaceContents(
         );
         return result.archivedAgentIds;
       }),
-  ];
-  const terminalTeardown = dependencies.killTerminalsForWorkspace(workspaceId).then(
-    () => ({ status: "fulfilled" }) as const,
-    (reason: unknown) => ({ status: "rejected", reason }) as const,
-  );
-  const [archiveResults, terminalResult] = await Promise.all([
-    Promise.allSettled(agentArchivePromises),
-    terminalTeardown,
   ]);
-
-  if (terminalResult.status === "rejected") {
-    dependencies.sessionLogger?.warn(
-      { err: terminalResult.reason, workspaceId },
-      "Workspace archive teardown step failed; continuing",
-    );
-  }
 
   for (const result of archiveResults) {
     if (result.status === "fulfilled") {
@@ -612,6 +660,17 @@ export async function archiveWorkspaceContents(
       continue;
     }
     throw result.reason;
+  }
+
+  if (dependencies.killTerminalsForWorkspace) {
+    try {
+      await dependencies.killTerminalsForWorkspace(workspaceId);
+    } catch (error) {
+      dependencies.sessionLogger?.warn(
+        { err: error, workspaceId },
+        "Workspace archive teardown step failed; continuing",
+      );
+    }
   }
 
   return archivedAgents;

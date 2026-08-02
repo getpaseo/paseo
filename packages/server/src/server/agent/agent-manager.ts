@@ -289,6 +289,24 @@ export interface AgentArchiveResult {
   archivedAgentIds: string[];
 }
 
+export class AgentArchiveError extends Error {
+  readonly archivedAgentIds: string[];
+  readonly failedAgentIds: string[];
+  override readonly cause: unknown;
+
+  constructor(options: {
+    archivedAgentIds: Iterable<string>;
+    failedAgentIds: Iterable<string>;
+    cause: unknown;
+  }) {
+    super(options.cause instanceof Error ? options.cause.message : "Agent archive failed");
+    this.name = "AgentArchiveError";
+    this.archivedAgentIds = Array.from(new Set(options.archivedAgentIds));
+    this.failedAgentIds = Array.from(new Set(options.failedAgentIds));
+    this.cause = options.cause;
+  }
+}
+
 export interface AgentSnapshotArchiveResult {
   record: StoredAgentRecord;
   archivedAgentIds: string[];
@@ -1607,7 +1625,20 @@ export class AgentManager {
     await this.closeAgentRuntime(agentId);
     this.discardRetainedAgentState(agentId);
 
-    const archivedAgentIds = new Set([agentId, ...(await this.cascadeArchiveChildren(agentId))]);
+    let archivedChildIds: string[];
+    try {
+      archivedChildIds = await this.cascadeArchiveChildren(agentId);
+    } catch (error) {
+      if (error instanceof AgentArchiveError) {
+        throw new AgentArchiveError({
+          archivedAgentIds: [agentId, ...error.archivedAgentIds],
+          failedAgentIds: error.failedAgentIds,
+          cause: error.cause,
+        });
+      }
+      throw error;
+    }
+    const archivedAgentIds = new Set([agentId, ...archivedChildIds]);
 
     return { archivedAt, archivedAgentIds: Array.from(archivedAgentIds) };
   }
@@ -1673,16 +1704,27 @@ export class AgentManager {
       if (record.labels?.[PARENT_AGENT_ID_LABEL] !== parentAgentId) {
         continue;
       }
-      if (this.agents.has(record.id)) {
-        const result = await this.archiveAgent(record.id);
-        for (const archivedAgentId of result.archivedAgentIds) {
-          archivedAgentIds.add(archivedAgentId);
+      try {
+        if (this.agents.has(record.id)) {
+          const result = await this.archiveAgent(record.id);
+          for (const archivedAgentId of result.archivedAgentIds) {
+            archivedAgentIds.add(archivedAgentId);
+          }
+        } else {
+          const result = await this.archiveSnapshotWithReceipt(record.id, new Date().toISOString());
+          for (const archivedAgentId of result.archivedAgentIds) {
+            archivedAgentIds.add(archivedAgentId);
+          }
         }
-      } else {
-        const result = await this.archiveSnapshotWithReceipt(record.id, new Date().toISOString());
-        for (const archivedAgentId of result.archivedAgentIds) {
-          archivedAgentIds.add(archivedAgentId);
-        }
+      } catch (error) {
+        throw new AgentArchiveError({
+          archivedAgentIds: [
+            ...archivedAgentIds,
+            ...(error instanceof AgentArchiveError ? error.archivedAgentIds : []),
+          ],
+          failedAgentIds: error instanceof AgentArchiveError ? error.failedAgentIds : [record.id],
+          cause: error instanceof AgentArchiveError ? error.cause : error,
+        });
       }
     }
     return Array.from(archivedAgentIds);
@@ -2044,7 +2086,20 @@ export class AgentManager {
     }
 
     await this.fireAgentArchived(agentId);
-    const archivedAgentIds = new Set([agentId, ...(await this.cascadeArchiveChildren(agentId))]);
+    let archivedChildIds: string[];
+    try {
+      archivedChildIds = await this.cascadeArchiveChildren(agentId);
+    } catch (error) {
+      if (error instanceof AgentArchiveError) {
+        throw new AgentArchiveError({
+          archivedAgentIds: [agentId, ...error.archivedAgentIds],
+          failedAgentIds: error.failedAgentIds,
+          cause: error.cause,
+        });
+      }
+      throw error;
+    }
+    const archivedAgentIds = new Set([agentId, ...archivedChildIds]);
 
     return { record: nextRecord, archivedAgentIds: Array.from(archivedAgentIds) };
   }

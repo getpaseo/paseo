@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
   AgentManager,
+  AgentArchiveError,
   AgentManagerShuttingDownError,
   commandMayHaveChangedExternalState,
   type AgentManagerEvent,
@@ -6714,7 +6715,7 @@ test("archiveAgent cascade notifies subscribers for in-memory and off-memory chi
   });
 });
 
-test("archiveAgent cascade surfaces partial child archive failures", async () => {
+test("archiveAgent cascade reports successful ancestors when a descendant fails", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-partial-failure-"));
   const storagePath = join(workdir, "agents");
   let failingChildId: string | null = null;
@@ -6751,16 +6752,40 @@ test("archiveAgent cascade surfaces partial child archive failures", async () =>
     {
       provider: "codex",
       cwd: workdir,
-      title: "Failing Child",
+      title: "Archived Child",
     },
     undefined,
     { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
   );
-  failingChildId = child.id;
-
-  await expect(manager.archiveAgent(parent.id)).rejects.toThrow(
-    `Injected cascade archive failure for ${child.id}`,
+  const grandchild = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Failing Grandchild",
+    },
+    undefined,
+    { labels: { [PARENT_AGENT_ID_LABEL]: child.id }, workspaceId: undefined },
   );
+  failingChildId = grandchild.id;
+
+  let archiveError: unknown;
+  try {
+    await manager.archiveAgent(parent.id);
+  } catch (error) {
+    archiveError = error;
+  }
+
+  expect(archiveError).toBeInstanceOf(AgentArchiveError);
+  expect(archiveError).toMatchObject({
+    archivedAgentIds: [parent.id, child.id],
+    failedAgentIds: [grandchild.id],
+    cause: expect.objectContaining({
+      message: `Injected cascade archive failure for ${grandchild.id}`,
+    }),
+  });
+  expect((await storage.get(parent.id))?.archivedAt).toEqual(expect.any(String));
+  expect((await storage.get(child.id))?.archivedAt).toEqual(expect.any(String));
+  expect((await storage.get(grandchild.id))?.archivedAt).toBeUndefined();
 });
 
 test("turn_failed emits a system error assistant timeline message and keeps error lifecycle", async () => {

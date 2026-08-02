@@ -31,7 +31,7 @@ import {
 } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
-import type { ManagedAgent } from "./agent/agent-manager.js";
+import { AgentArchiveError, type ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import {
   createPersistedProjectRecord,
@@ -1898,7 +1898,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
     });
   });
 
-  test("returns failure and keeps the workspace active when a recursive child archive rejects", async () => {
+  test("returns partial receipts and keeps a failed descendant workspace active", async () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);
 
@@ -1911,22 +1911,26 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
       runSetup: false,
       paseoHome,
     });
-    const workspaceId = "ws-recursive-child-failure";
+    const rootWorkspaceId = "ws-recursive-root";
+    const middleWorkspaceId = "ws-recursive-middle";
+    const failedWorkspaceId = "ws-recursive-failed";
     const rootAgentId = "agent-recursive-root";
     const childAgentId = "agent-recursive-child";
     const grandchildAgentId = "agent-recursive-grandchild";
+    const middleCwd = path.join(tempDir, "middle-workspace");
+    mkdirSync(middleCwd);
     const agents = [
-      { id: rootAgentId, cwd: created.worktreePath, workspaceId },
+      { id: rootAgentId, cwd: created.worktreePath, workspaceId: rootWorkspaceId },
       {
         id: childAgentId,
-        cwd: created.worktreePath,
-        workspaceId,
+        cwd: middleCwd,
+        workspaceId: middleWorkspaceId,
         labels: { "paseo.parent-agent-id": rootAgentId },
       },
       {
         id: grandchildAgentId,
         cwd: created.worktreePath,
-        workspaceId,
+        workspaceId: failedWorkspaceId,
         labels: { "paseo.parent-agent-id": childAgentId },
       },
     ] as ManagedAgent[];
@@ -1938,10 +1942,15 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
       archivedAt: null,
     })) as StoredAgentRecord[];
     const activeWorkspaces = [
-      { workspaceId, cwd: created.worktreePath, kind: "worktree" as const },
+      { workspaceId: rootWorkspaceId, cwd: created.worktreePath, kind: "worktree" as const },
+      { workspaceId: middleWorkspaceId, cwd: middleCwd, kind: "local_checkout" as const },
+      { workspaceId: failedWorkspaceId, cwd: created.worktreePath, kind: "worktree" as const },
     ];
-    const archiveWorkspaceRecord = vi.fn(async () => {});
-    const archivedBeforeFailure: string[] = [];
+    const archivedWorkspaceRecords: string[] = [];
+    const archiveWorkspaceRecord = vi.fn(
+      createArchiveWorkspaceRecordMutator(activeWorkspaces, archivedWorkspaceRecords),
+    );
+    const killTerminalsForWorkspace = vi.fn(async () => {});
     const emitted: SessionOutboundMessage[] = [];
 
     await handlePaseoWorktreeArchiveRequest(
@@ -1956,8 +1965,11 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
           listAgents: () => agents,
           archiveAgent: vi.fn(async (agentId: string) => {
             expect(agentId).toBe(rootAgentId);
-            archivedBeforeFailure.push(rootAgentId, childAgentId);
-            throw new Error(`Injected archive failure for ${grandchildAgentId}`);
+            throw new AgentArchiveError({
+              archivedAgentIds: [rootAgentId, childAgentId],
+              failedAgentIds: [grandchildAgentId],
+              cause: new Error(`Injected archive failure for ${grandchildAgentId}`),
+            });
           }),
           archiveSnapshotWithReceipt: vi.fn(async () => {
             throw new Error("not expected for live agents");
@@ -1965,14 +1977,14 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         },
         agentStorage: { list: async () => storedAgents },
         lifecycleMutationCoordinator: new LifecycleMutationCoordinator(),
-        findWorkspaceIdForCwd: vi.fn(async () => workspaceId),
+        findWorkspaceIdForCwd: vi.fn(async () => rootWorkspaceId),
         listActiveWorkspaces: vi.fn(async () => activeWorkspaces),
         archiveWorkspaceRecord,
         emit: (message) => emitted.push(message),
         emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => {}),
         markWorkspaceArchiving: vi.fn(),
         clearWorkspaceArchiving: vi.fn(),
-        killTerminalsForWorkspace: vi.fn(async () => {}),
+        killTerminalsForWorkspace,
         sessionLogger: createLogger(),
       },
       {
@@ -1980,20 +1992,24 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         requestId: "req-recursive-child-failure",
         worktreePath: created.worktreePath,
         repoRoot: repoDir,
-        workspaceId,
-        scope: "workspace",
+        scope: "worktree",
       },
     );
 
-    expect(archivedBeforeFailure).toEqual([rootAgentId, childAgentId]);
-    expect(archiveWorkspaceRecord).not.toHaveBeenCalled();
-    expect(activeWorkspaces).toHaveLength(1);
+    expect(archivedWorkspaceRecords).toEqual([rootWorkspaceId]);
+    expect(archiveWorkspaceRecord).toHaveBeenCalledOnce();
+    expect(killTerminalsForWorkspace).toHaveBeenCalledOnce();
+    expect(killTerminalsForWorkspace).toHaveBeenCalledWith(rootWorkspaceId);
+    expect(activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([
+      middleWorkspaceId,
+      failedWorkspaceId,
+    ]);
     expect(existsSync(created.worktreePath)).toBe(true);
     expect(emitted.find((message) => message.type === "paseo_worktree_archive_response")).toEqual({
       type: "paseo_worktree_archive_response",
       payload: {
         success: false,
-        removedAgents: [],
+        removedAgents: [rootAgentId, childAgentId],
         error: {
           code: "UNKNOWN",
           message: `Injected archive failure for ${grandchildAgentId}`,

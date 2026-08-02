@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 import { basename } from "node:path";
 
 import type { AgentSessionConfig } from "./agent/agent-sdk-types.js";
+import { AgentArchiveError } from "./agent/agent-manager.js";
 import {
   type GitSetupOptions,
   type FirstAgentContext,
@@ -496,7 +497,7 @@ export async function handlePaseoWorktreeArchiveRequest(
       type: "paseo_worktree_archive_response",
       payload: {
         success: false,
-        removedAgents: [],
+        removedAgents: error instanceof AgentArchiveError ? error.archivedAgentIds : [],
         error: toCheckoutError(error),
         requestId,
       },
