@@ -778,6 +778,88 @@ describe("archiveByScope", () => {
     expect(deps.archivedAgentIds).toEqual([parentAgentId, childAgentId]);
   });
 
+  test("archives an alternating-workspace descendant chain once from the target root", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const middleCwd = path.join(tempDir, "middle-workspace");
+    mkdirSync(middleCwd);
+    const rootWorkspaceId = "ws-alternating-root";
+    const middleWorkspaceId = "ws-alternating-middle";
+    const grandchildWorkspaceId = "ws-alternating-grandchild";
+    const rootAgentId = "agent-alternating-root";
+    const middleAgentId = "agent-alternating-middle";
+    const grandchildAgentId = "agent-alternating-grandchild";
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [
+        { workspaceId: rootWorkspaceId, cwd: repoDir, kind: "local_checkout" },
+        { workspaceId: middleWorkspaceId, cwd: middleCwd, kind: "local_checkout" },
+        { workspaceId: grandchildWorkspaceId, cwd: repoDir, kind: "local_checkout" },
+      ],
+    });
+    const agents = [
+      { id: rootAgentId, cwd: repoDir, workspaceId: rootWorkspaceId },
+      {
+        id: middleAgentId,
+        cwd: middleCwd,
+        workspaceId: middleWorkspaceId,
+        labels: { "paseo.parent-agent-id": rootAgentId },
+      },
+      {
+        id: grandchildAgentId,
+        cwd: repoDir,
+        workspaceId: grandchildWorkspaceId,
+        labels: { "paseo.parent-agent-id": middleAgentId },
+      },
+    ] as ManagedAgent[];
+    const childrenByParent = new Map([
+      [rootAgentId, [middleAgentId]],
+      [middleAgentId, [grandchildAgentId]],
+    ]);
+    const archiveCounts = new Map<string, number>();
+    const archiveWithCascade = (agentId: string): void => {
+      archiveCounts.set(agentId, (archiveCounts.get(agentId) ?? 0) + 1);
+      for (const childAgentId of childrenByParent.get(agentId) ?? []) {
+        archiveWithCascade(childAgentId);
+      }
+    };
+    deps.agentManager = {
+      listAgents: () => agents,
+      archiveAgent: vi.fn(async (agentId: string) => {
+        archiveWithCascade(agentId);
+        return { archivedAt: new Date().toISOString() };
+      }),
+      archiveSnapshot: vi.fn(async () => ({})),
+    };
+    deps.agentStorage = {
+      list: async () =>
+        agents.map((agent) => ({
+          id: agent.id,
+          cwd: agent.cwd,
+          workspaceId: agent.workspaceId,
+          archivedAt: null,
+          labels: agent.labels,
+        })) as StoredAgentRecord[],
+    } as Pick<AgentStorage, "list">;
+    deps.archiveWorkspaceRecord = vi.fn(deps.archiveWorkspaceRecord);
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "worktree", targetPath: repoDir },
+      requestId: "req-alternating-workspaces",
+    });
+
+    expect(Object.fromEntries(archiveCounts)).toEqual({
+      [rootAgentId]: 1,
+      [middleAgentId]: 1,
+      [grandchildAgentId]: 1,
+    });
+    expect(deps.agentManager.archiveAgent).toHaveBeenCalledTimes(1);
+    expect(deps.agentManager.archiveAgent).toHaveBeenCalledWith(rootAgentId);
+    expect(result.archivedWorkspaceIds).toEqual([rootWorkspaceId, grandchildWorkspaceId]);
+    expect(deps.archiveWorkspaceRecord).toHaveBeenCalledTimes(2);
+    expect(deps.killTerminalsForWorkspace).toHaveBeenCalledTimes(2);
+    expect(deps.killTerminalsForWorkspace).not.toHaveBeenCalledWith(middleWorkspaceId);
+  });
+
   test("does not archive the root when a late descendant adds an uncovered workspace", async () => {
     const { tempDir } = createGitRepo();
     const targetWorkspaceId = "ws-late-root";

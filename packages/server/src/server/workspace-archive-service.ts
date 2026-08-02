@@ -134,7 +134,12 @@ export async function archiveByScope(
 ): Promise<ArchiveResult> {
   const initialTarget = await resolveArchiveTarget(dependencies, request.scope);
   if (initialTarget.workspaceIds.length === 0) {
-    return await archiveResolvedTarget(dependencies, request, initialTarget);
+    return await archiveResolvedTarget(
+      dependencies,
+      request,
+      initialTarget,
+      initialTarget.workspaceIds,
+    );
   }
 
   const workspaceIds = await collectArchiveWorkspaceIds(dependencies, initialTarget.workspaceIds);
@@ -148,7 +153,7 @@ export async function archiveByScope(
       throw new WorkspaceArchiveScopeChangedError();
     }
 
-    return await archiveResolvedTarget(dependencies, request, target);
+    return await archiveResolvedTarget(dependencies, request, target, currentWorkspaceIds);
   });
 }
 
@@ -156,6 +161,7 @@ async function archiveResolvedTarget(
   dependencies: ArchiveDependencies,
   request: ArchiveByScopeRequest,
   target: ArchiveTarget,
+  archiveWorkspaceIds: readonly string[],
 ): Promise<ArchiveResult> {
   const targetWorkspaceIds = target.workspaceIds;
 
@@ -173,6 +179,7 @@ async function archiveResolvedTarget(
     const { archivedAgents, archivedWorkspaceIds } = await archiveTargetRecords(
       dependencies,
       targetWorkspaceIds,
+      archiveWorkspaceIds,
       request.requestId,
     );
 
@@ -384,15 +391,20 @@ async function resolveBackingDirectory(
 async function archiveTargetRecords(
   dependencies: ArchiveDependencies,
   targetWorkspaceIds: string[],
+  archiveWorkspaceIds: readonly string[],
   requestId: string,
 ): Promise<{ archivedAgents: Set<string>; archivedWorkspaceIds: string[] }> {
   const archivedAgents = new Set<string>();
   const archivedWorkspaceIds: string[] = [];
-  const archiveWorkspaceIds = new Set(targetWorkspaceIds);
+  const archiveWorkspaceIdSet = new Set(archiveWorkspaceIds);
 
   const results = await Promise.allSettled(
     targetWorkspaceIds.map(async (workspaceId) => {
-      const agents = await archiveWorkspaceContents(dependencies, workspaceId, archiveWorkspaceIds);
+      const agents = await archiveWorkspaceContents(
+        dependencies,
+        workspaceId,
+        archiveWorkspaceIdSet,
+      );
       await dependencies.archiveWorkspaceRecord(workspaceId);
       return { workspaceId, agents };
     }),
