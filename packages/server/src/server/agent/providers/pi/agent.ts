@@ -1630,6 +1630,11 @@ export class PiRpcAgentSession implements AgentSession {
     }
     const text = this.heldTextBuf;
     this.heldTextBuf = "";
+    // Once the hold flushes we assume thinking is done and stream the rest of this
+    // message directly (no perpetual buffering). This re-arms on the next assistant
+    // message_start/end. ponytail: a trailing reasoning delta arriving well after a
+    // flush (e.g. after a mid-message tool call) still re-splits the reasoning run;
+    // only contentIndex-based grouping fully fixes that, add it if it shows up.
     this.textStreamDirect = true;
     if (text) {
       this.emit({
@@ -2362,6 +2367,10 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private completeTurn(turnId: string | undefined, messages: PiAgentMessage[]): void {
+    // Flush any buffered text before ids are cleared (and before ANY early return),
+    // so the fragment is emitted under the correct turn/message and no held text
+    // survives the turn with a dangling timer that could emit under later/empty ids.
+    this.flushHeldText();
     if (turnId && this.interruptingTurnId === turnId && isPiAbortedTerminalResponse(messages)) {
       this.interruptedTerminalError = {
         turnId,
@@ -2379,7 +2388,6 @@ export class PiRpcAgentSession implements AgentSession {
     // Flush any buffered text from this turn before its ids are cleared, so the
     // fragment is emitted under the correct turn/message and doesn't outlive the
     // turn (or attach to the next one) when a turn ends without assistant message_end.
-    this.flushHeldText();
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
