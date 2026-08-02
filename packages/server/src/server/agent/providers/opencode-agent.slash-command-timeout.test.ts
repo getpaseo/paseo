@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
@@ -74,20 +74,27 @@ describe("OpenCodeAgentSession slash command timeout handling", () => {
     expect(openCodeClient.calls.sessionCommand).toEqual([]);
   });
 
-  test("waits for SSE completion when slash commands hit a header timeout", async () => {
-    const idleEventGate = createDeferred<void>();
+  test("rejects pre-dispatch idle and waits for timeout-owned SSE completion", async () => {
+    const staleIdleGate = createDeferred<void>();
+    const staleIdleConsumed = createDeferred<void>();
+    const acceptedIdleGate = createDeferred<void>();
     const runtime = new TestOpenCodeHarness();
     const openCodeClient = createOpenCodeClientWithConnectedProvider();
     openCodeClient.sessionCommandError = new Error("fetch failed: Headers Timeout Error");
     openCodeClient.commandListResponse = {
       data: [{ name: "help", description: "Show help", hints: [] }],
     };
+    openCodeClient.sessionMessagesImplementation = async () => {
+      staleIdleGate.resolve();
+      await staleIdleConsumed.promise;
+      return { data: [] };
+    };
     openCodeClient.eventStream = (async function* () {
-      await idleEventGate.promise;
-      yield {
-        type: "session.idle",
-        properties: { sessionID: "session-1" },
-      };
+      await staleIdleGate.promise;
+      yield idleEvent();
+      staleIdleConsumed.resolve();
+      await acceptedIdleGate.promise;
+      yield idleEvent();
     })();
     runtime.enqueueClient(openCodeClient);
 
@@ -96,17 +103,39 @@ describe("OpenCodeAgentSession slash command timeout handling", () => {
       createClient: runtime.createClient,
     });
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp" });
-
-    const runPromise = session.run("/help");
-    await Promise.resolve();
-    idleEventGate.resolve();
-
-    await expect(runPromise).resolves.toMatchObject({
-      sessionId: "session-1",
-      finalText: "",
-      timeline: [],
-      usage: undefined,
+    const terminalEvents: string[] = [];
+    const unsubscribe = session.subscribe((event) => {
+      if (
+        event.type === "turn_completed" ||
+        event.type === "turn_failed" ||
+        event.type === "turn_canceled"
+      ) {
+        terminalEvents.push(event.type);
+      }
     });
+
+    try {
+      const runPromise = session.run("/help");
+      await vi.waitFor(() => {
+        expect(openCodeClient.calls.sessionCommand).toHaveLength(1);
+      });
+      expect(terminalEvents).toEqual([]);
+      acceptedIdleGate.resolve();
+
+      await expect(runPromise).resolves.toMatchObject({
+        sessionId: "session-1",
+        finalText: "",
+        timeline: [],
+        usage: undefined,
+      });
+      expect(terminalEvents).toEqual(["turn_completed"]);
+    } finally {
+      staleIdleGate.resolve();
+      staleIdleConsumed.resolve();
+      acceptedIdleGate.resolve();
+      unsubscribe();
+      await session.close();
+    }
   });
 
   test("leaves successful slash command turns open until OpenCode emits idle", async () => {

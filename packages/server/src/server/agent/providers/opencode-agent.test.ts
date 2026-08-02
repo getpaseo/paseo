@@ -1769,6 +1769,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       },
       session: {
         abort: vi.fn().mockResolvedValue({ error: null }),
+        messages: vi.fn().mockResolvedValue({ data: [] }),
         update: vi.fn().mockResolvedValue({ error: null }),
         promptAsync: vi.fn().mockImplementation(async () => {
           eventsGate.resolve();
@@ -2416,7 +2417,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     },
   );
 
-  test("times out a stalled slash-command baseline once and ignores its late response", async () => {
+  test("fails a stalled slash-command baseline once without dispatching", async () => {
     vi.useFakeTimers();
     const baselineRequested = createTestDeferred<AbortSignal>();
     const baselineResponse = createTestDeferred<{ data: unknown[] }>();
@@ -2437,6 +2438,8 @@ describe("OpenCode adapter startTurn error handling", () => {
         };
       },
     );
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
 
     try {
       const startTurn = parent.startTurn("/review staged changes");
@@ -2448,15 +2451,23 @@ describe("OpenCode adapter startTurn error handling", () => {
       await expect(startTurn).resolves.toEqual({ turnId: "opencode-turn-0" });
 
       expect(baselineSignal.aborted).toBe(true);
-      expect(openCode.calls.sessionCommand).toEqual([
-        expect.objectContaining({ command: "review", arguments: "staged changes" }),
+      expect(terminalTurnEvents(events)).toEqual([
+        expect.objectContaining({
+          type: "turn_failed",
+          provider: "opencode",
+          error: "Failed to read OpenCode session messages before dispatch",
+        }),
       ]);
+      expect(openCode.calls.sessionCommand).toEqual([]);
+      expect(openCode.calls.sessionSummarize).toEqual([]);
+      expect(openCode.calls.sessionPromptAsync).toEqual([]);
       expect(vi.getTimerCount()).toBe(0);
 
       baselineResponse.resolve({ data: [persistedUserMessage("msg_late_baseline")] });
       await Promise.resolve();
       await Promise.resolve();
-      expect(openCode.calls.sessionCommand).toHaveLength(1);
+      expect(terminalTurnEvents(events)).toHaveLength(1);
+      expect(openCode.calls.sessionCommand).toEqual([]);
     } finally {
       baselineResponse.resolve({ data: [] });
       await parent.close();
@@ -2598,6 +2609,98 @@ describe("OpenCode adapter startTurn error handling", () => {
     } finally {
       baselineResponse.resolve({ data: [] });
       await parent.close();
+    }
+  });
+
+  test("completes idle-only /review once after command acknowledgement and allows replacement", async () => {
+    const commandDispatched = createTestDeferred<void>();
+    const staleIdleConsumed = createTestDeferred<void>();
+    const replacementDispatched = createTestDeferred<void>();
+    const sessionId = "ses_idle_only_command";
+    async function* idleOnlyCommandStream(signal: AbortSignal) {
+      yield { type: "server.connected", properties: {} };
+      await Promise.race([commandDispatched.promise, waitForAbort(signal)]);
+      if (signal.aborted) return;
+      yield { type: "session.idle", properties: { sessionID: sessionId } };
+      staleIdleConsumed.resolve();
+      await Promise.race([replacementDispatched.promise, waitForAbort(signal)]);
+      if (signal.aborted) return;
+      yield {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_idle_only_replacement_user",
+            sessionID: sessionId,
+            role: "user",
+          },
+        },
+      };
+      yield { type: "session.idle", properties: { sessionID: sessionId } };
+      await waitForAbort(signal);
+    }
+    const fakeClient = {
+      command: {
+        list: vi.fn().mockResolvedValue({
+          data: [{ name: "review", description: "Review changes", source: "command" }],
+        }),
+      },
+      global: {
+        event: vi.fn().mockImplementation(async (options: { signal: AbortSignal }) => ({
+          stream: idleOnlyCommandStream(options.signal),
+        })),
+      },
+      session: {
+        messages: vi.fn().mockResolvedValue({ data: [] }),
+        command: vi.fn().mockImplementation(async () => {
+          commandDispatched.resolve();
+          await staleIdleConsumed.promise;
+          return { data: {} };
+        }),
+        promptAsync: vi.fn().mockImplementation(async () => {
+          replacementDispatched.resolve();
+          return { data: {} };
+        }),
+        status: vi.fn().mockResolvedValue({ data: {} }),
+      },
+    } as never;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      sessionId,
+      createTestLogger(),
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      await expect(session.startTurn("/review")).resolves.toEqual({ turnId: "opencode-turn-0" });
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({
+            type: "turn_completed",
+            provider: "opencode",
+            turnId: "opencode-turn-0",
+          }),
+        ]);
+      });
+      expect(fakeClient.session.command).toHaveBeenCalledTimes(1);
+      expect(fakeClient.session.status).toHaveBeenCalledTimes(1);
+
+      await expect(session.startTurn("replacement prompt")).resolves.toEqual({
+        turnId: "opencode-turn-1",
+      });
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({ type: "turn_completed", turnId: "opencode-turn-0" }),
+          expect.objectContaining({ type: "turn_completed", turnId: "opencode-turn-1" }),
+        ]);
+      });
+      expect(fakeClient.session.promptAsync).toHaveBeenCalledTimes(1);
+    } finally {
+      commandDispatched.resolve();
+      staleIdleConsumed.resolve();
+      replacementDispatched.resolve();
+      await session.close();
     }
   });
 
@@ -3255,85 +3358,73 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
-  test("fails EOF recovery when a failed baseline lets stale history race the current turn", async () => {
-    const streamEnd = createTestDeferred<void>();
-    const staleUser = persistedUserMessage("msg_stale_baseline_user");
-    const currentUser = persistedUserMessage("msg_current_baseline_user");
-    let messagesCallCount = 0;
-    async function* eventStream(signal: AbortSignal) {
-      yield { type: "server.connected", properties: {} };
-      await Promise.race([streamEnd.promise, waitForAbort(signal)]);
-      if (signal.aborted) return;
-      for (const messageId of ["msg_stale_baseline_user", "msg_current_baseline_user"]) {
-        yield {
-          type: "message.updated",
-          properties: {
-            info: {
-              id: messageId,
-              sessionID: "ses_failed_ownership_baseline",
-              role: "user",
-            },
-          },
-        };
-      }
-    }
-    const { parent, openCode } = await createParentSession(
-      "ses_failed_ownership_baseline",
-      (client) => {
-        client.sessionPromptAsyncEvents = [];
+  test.each([
+    { label: "prompt", prompt: "current prompt", commandName: undefined },
+    { label: "command", prompt: "/review staged changes", commandName: "review" },
+    { label: "summarize", prompt: "/compact", commandName: undefined },
+  ])(
+    "fails an unavailable baseline before $label dispatch and allows replacement",
+    async (testCase) => {
+      const sessionId = `ses_failed_${testCase.label}_baseline`;
+      let messagesCallCount = 0;
+      const { parent, openCode } = await createParentSession(sessionId, (client) => {
+        if (testCase.commandName) {
+          client.commandListResponse = {
+            data: [{ name: testCase.commandName, description: "Test command", source: "command" }],
+          };
+        }
         client.sessionMessagesImplementation = async () => {
           messagesCallCount += 1;
-          if (messagesCallCount === 1) {
-            return { error: { message: "baseline unavailable" } };
-          }
-          return {
-            data: [
-              staleUser,
-              persistedAssistantMessage({
-                id: "msg_stale_baseline_assistant",
-                parentId: "msg_stale_baseline_user",
-                completed: 2,
-              }),
-              currentUser,
-              persistedAssistantMessage({
-                id: "msg_current_baseline_assistant",
-                parentId: "msg_current_baseline_user",
-                completed: 4,
-              }),
-            ],
-          };
+          return messagesCallCount === 1
+            ? { error: { message: "baseline unavailable" } }
+            : { data: [] };
         };
-        client.globalEventImplementation = async (options) => {
-          const signal = (options as { signal: AbortSignal }).signal;
-          return {
-            stream: eventStream(signal),
-          };
-        };
-      },
-    );
-    const events: AgentStreamEvent[] = [];
-    parent.subscribe((event) => events.push(event));
+        client.sessionPromptAsyncEvents = [
+          {
+            type: "message.updated",
+            properties: {
+              info: { id: "msg_baseline_replacement_user", sessionID: sessionId, role: "user" },
+            },
+          },
+          ...assistantTurnEvents({ sessionId }),
+        ];
+      });
+      const events: AgentStreamEvent[] = [];
+      parent.subscribe((event) => events.push(event));
 
-    try {
-      await parent.startTurn("current prompt");
-      streamEnd.resolve();
-
-      await vi.waitFor(() => {
+      try {
+        await expect(parent.startTurn(testCase.prompt)).resolves.toEqual({
+          turnId: "opencode-turn-0",
+        });
         expect(terminalTurnEvents(events)).toEqual([
           expect.objectContaining({
             type: "turn_failed",
-            error: "OpenCode event stream ended before the turn reached a terminal state",
+            provider: "opencode",
+            error: "Failed to read OpenCode session messages before dispatch",
+            turnId: "opencode-turn-0",
           }),
         ]);
-      });
-      expect(eventsWithType(events, "turn_completed")).toEqual([]);
-      expect(openCode.calls.sessionMessages).toHaveLength(1);
-      expect(openCode.calls.sessionStatus).toEqual([{ directory: "/workspace/repo" }]);
-    } finally {
-      streamEnd.resolve();
-      await parent.close();
-    }
-  });
+        expect(openCode.calls.sessionPromptAsync).toEqual([]);
+        expect(openCode.calls.sessionCommand).toEqual([]);
+        expect(openCode.calls.sessionSummarize).toEqual([]);
+
+        await expect(parent.startTurn("replacement prompt")).resolves.toEqual({
+          turnId: "opencode-turn-1",
+        });
+        await vi.waitFor(() => {
+          expect(terminalTurnEvents(events)).toEqual([
+            expect.objectContaining({ type: "turn_failed", turnId: "opencode-turn-0" }),
+            expect.objectContaining({ type: "turn_completed", turnId: "opencode-turn-1" }),
+          ]);
+        });
+        expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+        expect(openCode.calls.sessionCommand).toEqual([]);
+        expect(openCode.calls.sessionSummarize).toEqual([]);
+      } finally {
+        await parent.close();
+      }
+    },
+  );
 
   test("fails once instead of reconnecting when EOF arrives before submission acceptance", async () => {
     const eventsGate = createTestDeferred<void>();
@@ -3351,7 +3442,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         }),
       },
       session: {
-        messages: vi.fn().mockResolvedValue({ error: { message: "baseline unavailable" } }),
+        messages: vi.fn().mockResolvedValue({ data: [] }),
         promptAsync: vi.fn().mockImplementation(async () => {
           eventsGate.resolve();
           return { data: {}, error: undefined };
@@ -4439,6 +4530,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         event: vi.fn().mockResolvedValue({ stream: neverYieldingStream }),
       },
       session: {
+        messages: vi.fn().mockResolvedValue({ data: [] }),
         promptAsync: vi.fn(() => {
           throw new Error("boom: synchronous throw");
         }),

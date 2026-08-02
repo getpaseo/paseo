@@ -2819,6 +2819,7 @@ type OpenCodeTurnState =
       status: "running";
       turnId: string;
       submission: "pending" | "dispatched" | "accepted";
+      acceptance: "activity" | "command_acknowledgement";
       observation: "trusted" | "quarantined";
     }
   | { status: "stopping"; stop: OpenCodeStop };
@@ -3389,6 +3390,7 @@ class OpenCodeAgentSession implements AgentSession {
       status: "running",
       turnId,
       submission: "pending",
+      acceptance: "activity",
       observation: "trusted",
     };
     this.foregroundOwnership = { status: "inactive" };
@@ -3398,20 +3400,31 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.activeForegroundTurnId !== turnId) {
       return { turnId };
     }
+    this.setSlashCommandAcceptance(slashCommand);
     const startingTotalCostUsd = this.sessionTotalCostUsd;
     const foregroundMessages = await this.readForegroundSessionMessages(turnAbortController.signal);
+    if (foregroundMessages === null) {
+      this.finishForegroundTurn(
+        {
+          type: "turn_failed",
+          provider: "opencode",
+          error: "Failed to read OpenCode session messages before dispatch",
+        },
+        turnId,
+      );
+      return { turnId };
+    }
     if (!this.markForegroundSubmissionDispatched(turnId, turnAbortController.signal)) {
       return { turnId };
     }
-    this.foregroundOwnership = foregroundMessages
-      ? {
-          status: "baseline",
-          knownMessageIds: new Set(foregroundMessages.map((message) => message.info.id)),
-          startingTotalCostUsd,
-        }
-      : { status: "inactive" };
+    this.foregroundOwnership = {
+      status: "baseline",
+      knownMessageIds: new Set(foregroundMessages.map((message) => message.info.id)),
+      startingTotalCostUsd,
+    };
 
     if (slashCommand) {
+      const dispatchRunnerStatusRevision = this.runnerStatusRevision;
       if (slashCommand.commandName === "compact" || slashCommand.commandName === "summarize") {
         this.suppressAssistantMessagesUntilIdle.active = true;
         void this.client.session
@@ -3431,8 +3444,13 @@ class OpenCodeAgentSession implements AgentSession {
                 },
                 turnId,
               );
+              return;
             }
-            return;
+            return this.reconcileAcknowledgedSlashCommand(
+              turnId,
+              turnAbortController.signal,
+              dispatchRunnerStatusRevision,
+            );
           })
           .catch((error) => {
             this.suppressAssistantMessagesUntilIdle.active = false;
@@ -3448,8 +3466,8 @@ class OpenCodeAgentSession implements AgentSession {
         return { turnId };
       }
 
-      // command() is only dispatch acknowledgement. OpenCode session events are
-      // the source of truth for when the command turn becomes idle or fails.
+      // command() is only dispatch acknowledgement. Authoritative status and
+      // session events decide when the command turn becomes idle or fails.
       void this.client.session
         .command({
           sessionID: this.sessionId,
@@ -3463,40 +3481,42 @@ class OpenCodeAgentSession implements AgentSession {
         .then((response) => {
           if (response.error) {
             if (isOpenCodeHeadersTimeoutFailure(response.error)) {
-              this.logger.warn(
-                {
-                  err: response.error,
-                  commandName: slashCommand.commandName,
-                  turnId,
-                },
-                "OpenCode slash command hit a header timeout; waiting for SSE terminal event",
-              );
-              return;
+              return this.reconcileTimedOutSlashCommand({
+                error: response.error,
+                commandName: slashCommand.commandName,
+                turnId,
+                signal: turnAbortController.signal,
+                dispatchRunnerStatusRevision,
+              });
             }
             const errorMsg = toDiagnosticErrorMessage(response.error);
             this.finishForegroundTurn(
               { type: "turn_failed", provider: "opencode", error: errorMsg },
               turnId,
             );
+            return;
           }
-          return;
+          return this.reconcileAcknowledgedSlashCommand(
+            turnId,
+            turnAbortController.signal,
+            dispatchRunnerStatusRevision,
+          );
         })
         .catch((err) => {
           if (isOpenCodeHeadersTimeoutFailure(err)) {
-            this.logger.warn(
-              {
-                err,
-                commandName: slashCommand.commandName,
-                turnId,
-              },
-              "OpenCode slash command hit a header timeout; waiting for SSE terminal event",
-            );
-            return;
+            return this.reconcileTimedOutSlashCommand({
+              error: err,
+              commandName: slashCommand.commandName,
+              turnId,
+              signal: turnAbortController.signal,
+              dispatchRunnerStatusRevision,
+            });
           }
           this.finishForegroundTurn(
             { type: "turn_failed", provider: "opencode", error: toDiagnosticErrorMessage(err) },
             turnId,
           );
+          return;
         });
     } else {
       // Wrap in an async IIFE so a synchronous throw from promptAsync (e.g.
@@ -4317,7 +4337,7 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
     this.acceptForegroundSubmissionFromEvent(event, turnId);
-    this.promoteForegroundOwnership(event);
+    this.promoteForegroundOwnership(event, turnId);
     this.traceOpenCode("provider.opencode.parsed_event", {
       turnId,
       n: eventCount,
@@ -4558,7 +4578,7 @@ class OpenCodeAgentSession implements AgentSession {
     return null;
   }
 
-  private promoteForegroundOwnership(event: OpenCodeEvent): void {
+  private promoteForegroundOwnership(event: OpenCodeEvent, turnId: string): void {
     if (getOpenCodeEventSessionId(event) !== this.sessionId) {
       return;
     }
@@ -4585,7 +4605,7 @@ class OpenCodeAgentSession implements AgentSession {
       initiatingMessageId,
       startingTotalCostUsd: ownership.startingTotalCostUsd,
     };
-    this.markForegroundSubmissionAccepted();
+    this.markForegroundSubmissionAccepted(turnId, "activity");
   }
 
   private acceptForegroundSubmissionFromEvent(event: OpenCodeEvent, turnId: string): void {
@@ -4611,7 +4631,7 @@ class OpenCodeAgentSession implements AgentSession {
     ) {
       return;
     }
-    this.markForegroundSubmissionAccepted();
+    this.markForegroundSubmissionAccepted(turnId, "activity");
   }
 
   private startAutonomousTurn(runnerBoundaryReached: boolean): string {
@@ -4620,6 +4640,7 @@ class OpenCodeAgentSession implements AgentSession {
       status: "running",
       turnId,
       submission: "accepted",
+      acceptance: "activity",
       observation: "trusted",
     };
     this.foregroundOwnership = {
@@ -4645,6 +4666,35 @@ class OpenCodeAgentSession implements AgentSession {
     return true;
   }
 
+  private setSlashCommandAcceptance(
+    slashCommand: { commandName: string; args?: string } | null,
+  ): void {
+    if (!slashCommand) {
+      return;
+    }
+    if (this.turnState.status === "running") {
+      this.turnState = { ...this.turnState, acceptance: "command_acknowledgement" };
+    }
+  }
+
+  private reconcileTimedOutSlashCommand(params: {
+    error: unknown;
+    commandName: string;
+    turnId: string;
+    signal: AbortSignal;
+    dispatchRunnerStatusRevision: number;
+  }): Promise<void> {
+    this.logger.warn(
+      { err: params.error, commandName: params.commandName, turnId: params.turnId },
+      "OpenCode slash command hit a header timeout; waiting for SSE terminal event",
+    );
+    return this.reconcileAcknowledgedSlashCommand(
+      params.turnId,
+      params.signal,
+      params.dispatchRunnerStatusRevision,
+    );
+  }
+
   private isForegroundSubmissionDispatched(turnId: string): boolean {
     return (
       this.turnState.status === "running" &&
@@ -4653,10 +4703,58 @@ class OpenCodeAgentSession implements AgentSession {
     );
   }
 
-  private markForegroundSubmissionAccepted(): void {
-    if (this.turnState.status === "running" && this.turnState.submission === "dispatched") {
+  private markForegroundSubmissionAccepted(
+    turnId: string,
+    acceptance: "activity" | "command_acknowledgement",
+  ): boolean {
+    if (
+      this.turnState.status === "running" &&
+      this.turnState.turnId === turnId &&
+      this.turnState.submission === "dispatched" &&
+      this.turnState.acceptance === acceptance
+    ) {
       this.turnState = { ...this.turnState, submission: "accepted" };
+      return true;
     }
+    return false;
+  }
+
+  private async reconcileAcknowledgedSlashCommand(
+    turnId: string,
+    signal: AbortSignal,
+    dispatchRunnerStatusRevision: number,
+  ): Promise<void> {
+    if (!this.markForegroundSubmissionAccepted(turnId, "command_acknowledgement")) {
+      return;
+    }
+    if (this.runnerStatusRevision === dispatchRunnerStatusRevision) {
+      return;
+    }
+    const observedRunnerStatusRevision = this.runnerStatusRevision;
+    let runnerStatus: OpenCodeRunnerStatus;
+    try {
+      runnerStatus = await this.readProviderRunnerStatus(signal);
+    } catch (error) {
+      if (!signal.aborted && this.activeForegroundTurnId === turnId) {
+        this.logger.debug(
+          { err: error, sessionId: this.sessionId, turnId },
+          "Failed to reconcile acknowledged OpenCode slash command status",
+        );
+      }
+      return;
+    }
+    if (
+      signal.aborted ||
+      this.activeForegroundTurnId !== turnId ||
+      this.runnerStatusRevision !== observedRunnerStatusRevision ||
+      isOpenCodeRunnerActive(runnerStatus)
+    ) {
+      return;
+    }
+    this.finishForegroundTurnAfterConfirmedIdle(
+      { type: "turn_completed", provider: "opencode" },
+      turnId,
+    );
   }
 
   private isForegroundSubmissionAccepted(turnId: string): boolean {
