@@ -31,6 +31,7 @@ import {
 } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
+import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import {
   createPersistedProjectRecord,
@@ -1893,6 +1894,111 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
       payload: {
         success: true,
         error: null,
+      },
+    });
+  });
+
+  test("returns failure and keeps the workspace active when a recursive child archive rejects", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+
+    const paseoHome = path.join(tempDir, ".paseo");
+    const created = await createLegacyWorktreeForTest({
+      branchName: "archive-recursive-child-failure",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "archive-recursive-child-failure",
+      runSetup: false,
+      paseoHome,
+    });
+    const workspaceId = "ws-recursive-child-failure";
+    const rootAgentId = "agent-recursive-root";
+    const childAgentId = "agent-recursive-child";
+    const grandchildAgentId = "agent-recursive-grandchild";
+    const agents = [
+      { id: rootAgentId, cwd: created.worktreePath, workspaceId },
+      {
+        id: childAgentId,
+        cwd: created.worktreePath,
+        workspaceId,
+        labels: { "paseo.parent-agent-id": rootAgentId },
+      },
+      {
+        id: grandchildAgentId,
+        cwd: created.worktreePath,
+        workspaceId,
+        labels: { "paseo.parent-agent-id": childAgentId },
+      },
+    ] as ManagedAgent[];
+    const storedAgents = agents.map((agent) => ({
+      id: agent.id,
+      cwd: agent.cwd,
+      workspaceId: agent.workspaceId,
+      labels: agent.labels,
+      archivedAt: null,
+    })) as StoredAgentRecord[];
+    const activeWorkspaces = [
+      { workspaceId, cwd: created.worktreePath, kind: "worktree" as const },
+    ];
+    const archiveWorkspaceRecord = vi.fn(async () => {});
+    const archivedBeforeFailure: string[] = [];
+    const emitted: SessionOutboundMessage[] = [];
+
+    await handlePaseoWorktreeArchiveRequest(
+      {
+        paseoHome,
+        github: createGitHubServiceStub(),
+        workspaceGitService: {
+          getSnapshot: vi.fn(async () => null),
+          listWorktrees: vi.fn(async () => []),
+        },
+        agentManager: {
+          listAgents: () => agents,
+          archiveAgent: vi.fn(async (agentId: string) => {
+            expect(agentId).toBe(rootAgentId);
+            archivedBeforeFailure.push(rootAgentId, childAgentId);
+            throw new Error(`Injected archive failure for ${grandchildAgentId}`);
+          }),
+          archiveSnapshotWithReceipt: vi.fn(async () => {
+            throw new Error("not expected for live agents");
+          }),
+        },
+        agentStorage: { list: async () => storedAgents },
+        lifecycleMutationCoordinator: new LifecycleMutationCoordinator(),
+        findWorkspaceIdForCwd: vi.fn(async () => workspaceId),
+        listActiveWorkspaces: vi.fn(async () => activeWorkspaces),
+        archiveWorkspaceRecord,
+        emit: (message) => emitted.push(message),
+        emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => {}),
+        markWorkspaceArchiving: vi.fn(),
+        clearWorkspaceArchiving: vi.fn(),
+        killTerminalsForWorkspace: vi.fn(async () => {}),
+        sessionLogger: createLogger(),
+      },
+      {
+        type: "paseo_worktree_archive_request",
+        requestId: "req-recursive-child-failure",
+        worktreePath: created.worktreePath,
+        repoRoot: repoDir,
+        workspaceId,
+        scope: "workspace",
+      },
+    );
+
+    expect(archivedBeforeFailure).toEqual([rootAgentId, childAgentId]);
+    expect(archiveWorkspaceRecord).not.toHaveBeenCalled();
+    expect(activeWorkspaces).toHaveLength(1);
+    expect(existsSync(created.worktreePath)).toBe(true);
+    expect(emitted.find((message) => message.type === "paseo_worktree_archive_response")).toEqual({
+      type: "paseo_worktree_archive_response",
+      payload: {
+        success: false,
+        removedAgents: [],
+        error: {
+          code: "UNKNOWN",
+          message: `Injected archive failure for ${grandchildAgentId}`,
+        },
+        requestId: "req-recursive-child-failure",
       },
     });
   });

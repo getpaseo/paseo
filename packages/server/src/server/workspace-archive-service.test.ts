@@ -219,6 +219,73 @@ describe("archiveByScope", () => {
     expect(existsSync(worktree.worktreePath)).toBe(false);
   });
 
+  test("continues archiving when terminal teardown fails", async () => {
+    const { tempDir } = createGitRepo();
+    const workspaceId = "ws-terminal-teardown-failure";
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [{ workspaceId, cwd: tempDir, kind: "local_checkout" }],
+    });
+    const terminalError = new Error("Injected terminal teardown failure");
+    deps.killTerminalsForWorkspace = vi.fn(async () => {
+      throw terminalError;
+    });
+    deps.archiveWorkspaceRecord = vi.fn(deps.archiveWorkspaceRecord);
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-terminal-teardown-failure",
+    });
+
+    expect(result).toEqual({
+      archivedAgentIds: [],
+      archivedWorkspaceIds: [workspaceId],
+      removedDirectory: false,
+    });
+    expect(deps.archiveWorkspaceRecord).toHaveBeenCalledWith(workspaceId);
+    expect(deps.sessionLogger?.warn).toHaveBeenCalledWith(
+      { err: terminalError, workspaceId },
+      "Workspace archive teardown step failed; continuing",
+    );
+  });
+
+  test("keeps the workspace active when a stored agent archive rejects", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "stored-agent-failure");
+    const workspaceId = "ws-stored-agent-failure";
+    const storedAgentId = "agent-stored-failure";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
+    });
+    deps.agentStorage = {
+      list: async () => [
+        {
+          id: storedAgentId,
+          cwd: worktree.worktreePath,
+          workspaceId,
+          archivedAt: null,
+        } as StoredAgentRecord,
+      ],
+    } as Pick<AgentStorage, "list">;
+    deps.agentManager.archiveSnapshotWithReceipt = vi.fn(async () => {
+      throw new Error("Injected stored agent archive failure");
+    });
+    deps.archiveWorkspaceRecord = vi.fn(deps.archiveWorkspaceRecord);
+
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "worktree", targetPath: worktree.worktreePath },
+        requestId: "req-stored-agent-failure",
+      }),
+    ).rejects.toThrow("Injected stored agent archive failure");
+
+    expect(deps.archiveWorkspaceRecord).not.toHaveBeenCalled();
+    expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([workspaceId]);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+  });
+
   test("workspace scope runs teardown while keeping a directory referenced by a sibling", async () => {
     const { tempDir, repoDir } = createGitRepo();
     writeFileSync(
@@ -870,6 +937,85 @@ describe("archiveByScope", () => {
     expect(deps.archiveWorkspaceRecord).toHaveBeenCalledTimes(2);
     expect(deps.killTerminalsForWorkspace).toHaveBeenCalledTimes(2);
     expect(deps.killTerminalsForWorkspace).not.toHaveBeenCalledWith(middleWorkspaceId);
+  });
+
+  test("archives no workspace records when an alternating-workspace cascade rejects", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(
+      repoDir,
+      paseoHome,
+      "alternating-workspace-failure",
+    );
+    const middleCwd = path.join(tempDir, "middle-workspace-failure");
+    mkdirSync(middleCwd);
+    const rootWorkspaceId = "ws-failing-root";
+    const middleWorkspaceId = "ws-failing-middle";
+    const grandchildWorkspaceId = "ws-failing-grandchild";
+    const rootAgentId = "agent-failing-root";
+    const middleAgentId = "agent-failing-middle";
+    const grandchildAgentId = "agent-failing-grandchild";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        { workspaceId: rootWorkspaceId, cwd: worktree.worktreePath, kind: "worktree" },
+        { workspaceId: middleWorkspaceId, cwd: middleCwd, kind: "local_checkout" },
+        { workspaceId: grandchildWorkspaceId, cwd: worktree.worktreePath, kind: "worktree" },
+      ],
+    });
+    const agents = [
+      { id: rootAgentId, cwd: worktree.worktreePath, workspaceId: rootWorkspaceId },
+      {
+        id: middleAgentId,
+        cwd: middleCwd,
+        workspaceId: middleWorkspaceId,
+        labels: { "paseo.parent-agent-id": rootAgentId },
+      },
+      {
+        id: grandchildAgentId,
+        cwd: worktree.worktreePath,
+        workspaceId: grandchildWorkspaceId,
+        labels: { "paseo.parent-agent-id": middleAgentId },
+      },
+    ] as ManagedAgent[];
+    deps.agentManager = {
+      listAgents: () => agents,
+      archiveAgent: vi.fn(async (agentId: string) => {
+        expect(agentId).toBe(rootAgentId);
+        throw new Error(`Injected archive failure for ${grandchildAgentId}`);
+      }),
+      archiveSnapshotWithReceipt: vi.fn(async () => {
+        throw new Error("not expected for live agents");
+      }),
+    };
+    deps.agentStorage = {
+      list: async () =>
+        agents.map((agent) => ({
+          id: agent.id,
+          cwd: agent.cwd,
+          workspaceId: agent.workspaceId,
+          archivedAt: null,
+          labels: agent.labels,
+        })) as StoredAgentRecord[],
+    } as Pick<AgentStorage, "list">;
+    deps.archiveWorkspaceRecord = vi.fn(deps.archiveWorkspaceRecord);
+
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "worktree", targetPath: worktree.worktreePath },
+        requestId: "req-alternating-workspace-failure",
+      }),
+    ).rejects.toThrow(`Injected archive failure for ${grandchildAgentId}`);
+
+    expect(deps.agentManager.archiveAgent).toHaveBeenCalledOnce();
+    expect(deps.agentManager.archiveAgent).toHaveBeenCalledWith(rootAgentId);
+    expect(deps.archiveWorkspaceRecord).not.toHaveBeenCalled();
+    expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([
+      rootWorkspaceId,
+      middleWorkspaceId,
+      grandchildWorkspaceId,
+    ]);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 
   test("does not archive the root when a late descendant adds an uncovered workspace", async () => {

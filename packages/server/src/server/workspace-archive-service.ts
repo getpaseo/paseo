@@ -5,11 +5,7 @@ import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
-import {
-  LifecycleMutationReentrancyError,
-  LifecycleMutationStaleError,
-  type LifecycleMutationCoordinator,
-} from "./lifecycle-mutation-coordinator.js";
+import type { LifecycleMutationCoordinator } from "./lifecycle-mutation-coordinator.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { ForgeService } from "../services/forge-service.js";
 import {
@@ -398,30 +394,37 @@ async function archiveTargetRecords(
   const archivedWorkspaceIds: string[] = [];
   const archiveWorkspaceIdSet = new Set(archiveWorkspaceIds);
 
-  const results = await Promise.allSettled(
+  const agentResults = await Promise.allSettled(
+    targetWorkspaceIds.map((workspaceId) =>
+      archiveWorkspaceContents(dependencies, workspaceId, archiveWorkspaceIdSet),
+    ),
+  );
+
+  for (const result of agentResults) {
+    if (result.status === "rejected") {
+      throw result.reason;
+    }
+    for (const agentId of result.value) {
+      archivedAgents.add(agentId);
+    }
+  }
+
+  const recordResults = await Promise.allSettled(
     targetWorkspaceIds.map(async (workspaceId) => {
-      const agents = await archiveWorkspaceContents(
-        dependencies,
-        workspaceId,
-        archiveWorkspaceIdSet,
-      );
       await dependencies.archiveWorkspaceRecord(workspaceId);
-      return { workspaceId, agents };
+      return workspaceId;
     }),
   );
 
-  for (const result of results) {
+  for (const [index, result] of recordResults.entries()) {
     if (result.status === "fulfilled") {
-      archivedWorkspaceIds.push(result.value.workspaceId);
-      for (const agentId of result.value.agents) {
-        archivedAgents.add(agentId);
-      }
-    } else {
-      dependencies.sessionLogger?.warn(
-        { err: result.reason, requestId },
-        "archiveByScope workspace teardown failed; continuing",
-      );
+      archivedWorkspaceIds.push(result.value);
+      continue;
     }
+    dependencies.sessionLogger?.warn(
+      { err: result.reason, requestId, workspaceId: targetWorkspaceIds[index] },
+      "archiveByScope workspace teardown failed; continuing",
+    );
   }
 
   return { archivedAgents, archivedWorkspaceIds };
@@ -550,7 +553,8 @@ export async function archiveWorkspaceContents(
   const archiveCandidateIds = new Set<string>();
   const parentAgentIds = new Map<string, string | undefined>();
   for (const record of storedRecords) {
-    if (!record.archivedAt && record.workspaceId && archiveWorkspaceIds.has(record.workspaceId)) {
+    const recordWorkspaceId = record.workspaceId;
+    if (!record.archivedAt && recordWorkspaceId && archiveWorkspaceIds.has(recordWorkspaceId)) {
       archiveCandidateIds.add(record.id);
       parentAgentIds.set(record.id, record.labels?.[PARENT_AGENT_ID_LABEL]);
     }
@@ -565,7 +569,7 @@ export async function archiveWorkspaceContents(
     const parentAgentId = parentAgentIds.get(agentId);
     return !parentAgentId || !archiveCandidateIds.has(parentAgentId);
   };
-  const archiveResults = await Promise.allSettled<string[] | null>([
+  const agentArchivePromises = [
     ...liveAgents
       .filter((agent) => isArchiveRoot(agent.id))
       .map(async (agent) => {
@@ -583,28 +587,31 @@ export async function archiveWorkspaceContents(
         );
         return result.archivedAgentIds;
       }),
-    dependencies.killTerminalsForWorkspace(workspaceId).then(() => null),
+  ];
+  const terminalTeardown = dependencies.killTerminalsForWorkspace(workspaceId).then(
+    () => ({ status: "fulfilled" }) as const,
+    (reason: unknown) => ({ status: "rejected", reason }) as const,
+  );
+  const [archiveResults, terminalResult] = await Promise.all([
+    Promise.allSettled(agentArchivePromises),
+    terminalTeardown,
   ]);
+
+  if (terminalResult.status === "rejected") {
+    dependencies.sessionLogger?.warn(
+      { err: terminalResult.reason, workspaceId },
+      "Workspace archive teardown step failed; continuing",
+    );
+  }
 
   for (const result of archiveResults) {
     if (result.status === "fulfilled") {
-      if (result.value) {
-        for (const agentId of result.value) {
-          archivedAgents.add(agentId);
-        }
+      for (const agentId of result.value) {
+        archivedAgents.add(agentId);
       }
       continue;
     }
-    if (
-      result.reason instanceof LifecycleMutationReentrancyError ||
-      result.reason instanceof LifecycleMutationStaleError
-    ) {
-      throw result.reason;
-    }
-    dependencies.sessionLogger?.warn(
-      { err: result.reason, workspaceId },
-      "Workspace archive teardown step failed; continuing",
-    );
+    throw result.reason;
   }
 
   return archivedAgents;
