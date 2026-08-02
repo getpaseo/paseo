@@ -234,11 +234,18 @@ export class AgentMessageQueueStore {
         this.cache = { version: 1, queues: {}, revisions: {} };
       } else if (error instanceof SyntaxError || error instanceof z.ZodError) {
         const corruptPath = `${this.options.filePath}.corrupt-${Date.now()}-${randomUUID()}`;
-        await rename(this.options.filePath, corruptPath);
-        this.options.logger.error(
-          { err: error, corruptPath },
-          "Quarantined corrupt agent message queue and started empty",
-        );
+        try {
+          await rename(this.options.filePath, corruptPath);
+          this.options.logger.error(
+            { err: error, corruptPath },
+            "Quarantined corrupt agent message queue and started empty",
+          );
+        } catch (quarantineError) {
+          this.options.logger.error(
+            { err: error, quarantineError, corruptPath },
+            "Could not quarantine corrupt agent message queue; started empty",
+          );
+        }
         this.cache = { version: 1, queues: {}, revisions: {} };
       } else {
         this.options.logger.error({ err: error }, "Failed to load agent message queue");
