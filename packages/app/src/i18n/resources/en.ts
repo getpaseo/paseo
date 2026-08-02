@@ -2622,8 +2622,41 @@ export const en = {
       updateErrorTitle: "Unable to update provider",
       actions: {
         menu: "{{name}} actions",
+        addAccount: "Add account",
         remove: "Remove provider",
         removing: "Removing...",
+      },
+      account: {
+        title: "Add {{provider}} account",
+        errorTitle: "Unable to add account",
+        submit: "Add account",
+        fields: {
+          label: "Name",
+          providerId: "Provider ID",
+          description: "Description",
+          env: "Environment variables",
+          envKey: "Variable name",
+          envValue: "Variable value",
+        },
+        placeholders: {
+          label: "{{provider}} (Work)",
+          providerId: "claude-work",
+          description: "Optional",
+          envKey: "NAME",
+          envValue: "Value",
+        },
+        actions: {
+          addVariable: "Add variable",
+          removeVariable: "Remove variable",
+        },
+        errors: {
+          labelRequired: "Enter a name.",
+          idRequired: "Enter a provider ID.",
+          idInvalid: "Use lowercase letters, numbers, and dashes, starting with a letter.",
+          idTaken: "This provider ID is already taken.",
+          envKeyRequired: "Enter a variable name.",
+          envDuplicate: "This variable is already set.",
+        },
       },
       remove: {
         confirmTitle: "Remove {{name}}?",

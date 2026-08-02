@@ -2577,8 +2577,42 @@ export const fr: TranslationResources = {
       updateErrorTitle: "Impossible de mettre à jour le fournisseur",
       actions: {
         menu: "{{name}} actions",
+        addAccount: "Ajouter un compte",
         remove: "Remove provider",
         removing: "Removing...",
+      },
+      account: {
+        title: "Ajouter un compte {{provider}}",
+        errorTitle: "Impossible d'ajouter le compte",
+        submit: "Ajouter un compte",
+        fields: {
+          label: "Nom",
+          providerId: "ID du fournisseur",
+          description: "Description",
+          env: "Variables d'environnement",
+          envKey: "Nom de la variable",
+          envValue: "Valeur de la variable",
+        },
+        placeholders: {
+          label: "{{provider}} (Travail)",
+          providerId: "claude-work",
+          description: "Facultatif",
+          envKey: "NOM",
+          envValue: "Valeur",
+        },
+        actions: {
+          addVariable: "Ajouter une variable",
+          removeVariable: "Supprimer la variable",
+        },
+        errors: {
+          labelRequired: "Saisissez un nom.",
+          idRequired: "Saisissez un ID de fournisseur.",
+          idInvalid:
+            "Utilisez des minuscules, des chiffres et des tirets, en commençant par une lettre.",
+          idTaken: "Cet ID de fournisseur est déjà utilisé.",
+          envKeyRequired: "Saisissez le nom de la variable.",
+          envDuplicate: "Cette variable est déjà définie.",
+        },
       },
       remove: {
         confirmTitle: "Remove {{name}}?",

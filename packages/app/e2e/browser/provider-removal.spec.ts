@@ -71,7 +71,14 @@ test.describe("provider removal", () => {
       await openSettingsHost(page, getServerId());
       await openSettingsHostSection(page, getServerId(), "providers");
 
-      await expect(page.getByTestId("provider-actions-claude")).toHaveCount(0);
+      // Builtin providers get an actions menu for adding accounts, but they can
+      // never be removed.
+      await page.getByTestId("provider-actions-claude").click();
+      await expect(page.getByTestId("provider-add-account-claude")).toBeVisible();
+      await expect(page.getByTestId("provider-remove-claude")).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId("provider-add-account-claude")).toHaveCount(0);
+
       await openAddProviderArea(page);
       await installAcpCatalogProvider(page, CUSTOM_PROVIDER.name);
       await expectProviderInstalledInSettings(page, CUSTOM_PROVIDER.name);

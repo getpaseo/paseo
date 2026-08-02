@@ -2554,8 +2554,41 @@ export const ptBR: TranslationResources = {
       updateErrorTitle: "Não foi possível atualizar provedor",
       actions: {
         menu: "{{name}} actions",
+        addAccount: "Adicionar conta",
         remove: "Remove provider",
         removing: "Removing...",
+      },
+      account: {
+        title: "Adicionar conta do {{provider}}",
+        errorTitle: "Não foi possível adicionar a conta",
+        submit: "Adicionar conta",
+        fields: {
+          label: "Nome",
+          providerId: "ID do provedor",
+          description: "Descrição",
+          env: "Variáveis de ambiente",
+          envKey: "Nome da variável",
+          envValue: "Valor da variável",
+        },
+        placeholders: {
+          label: "{{provider}} (Trabalho)",
+          providerId: "claude-work",
+          description: "Opcional",
+          envKey: "NOME",
+          envValue: "Valor",
+        },
+        actions: {
+          addVariable: "Adicionar variável",
+          removeVariable: "Remover variável",
+        },
+        errors: {
+          labelRequired: "Digite um nome.",
+          idRequired: "Digite um ID de provedor.",
+          idInvalid: "Use letras minúsculas, números e hifens, começando por uma letra.",
+          idTaken: "Este ID de provedor já está em uso.",
+          envKeyRequired: "Digite o nome da variável.",
+          envDuplicate: "Esta variável já está definida.",
+        },
       },
       remove: {
         confirmTitle: "Remove {{name}}?",

@@ -2570,8 +2570,41 @@ export const es: TranslationResources = {
       updateErrorTitle: "No se puede actualizar el proveedor",
       actions: {
         menu: "{{name}} actions",
+        addAccount: "Añadir cuenta",
         remove: "Remove provider",
         removing: "Removing...",
+      },
+      account: {
+        title: "Añadir cuenta de {{provider}}",
+        errorTitle: "No se pudo añadir la cuenta",
+        submit: "Añadir cuenta",
+        fields: {
+          label: "Nombre",
+          providerId: "ID del proveedor",
+          description: "Descripción",
+          env: "Variables de entorno",
+          envKey: "Nombre de la variable",
+          envValue: "Valor de la variable",
+        },
+        placeholders: {
+          label: "{{provider}} (Trabajo)",
+          providerId: "claude-work",
+          description: "Opcional",
+          envKey: "NOMBRE",
+          envValue: "Valor",
+        },
+        actions: {
+          addVariable: "Añadir variable",
+          removeVariable: "Quitar variable",
+        },
+        errors: {
+          labelRequired: "Escribe un nombre.",
+          idRequired: "Escribe un ID de proveedor.",
+          idInvalid: "Usa minúsculas, números y guiones, empezando por una letra.",
+          idTaken: "Este ID de proveedor ya está en uso.",
+          envKeyRequired: "Escribe el nombre de la variable.",
+          envDuplicate: "Esta variable ya está definida.",
+        },
       },
       remove: {
         confirmTitle: "Remove {{name}}?",

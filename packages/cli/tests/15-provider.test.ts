@@ -19,6 +19,8 @@
  * - provider models --json outputs valid JSON
  * - provider diagnostic shows the daemon's provider diagnostic
  * - provider diagnostic --json returns structured output
+ * - provider add creates a custom profile that provider rm removes
+ * - provider add and rm refuse built-in provider ids
  */
 
 import assert from "node:assert";
@@ -430,7 +432,6 @@ try {
     );
     console.log("✓ provider models --quiet outputs model IDs only\n");
   }
-
   // Test 12: provider diagnostic shows the daemon's provider diagnostic
   {
     console.log("Test 12: provider diagnostic shows the daemon's provider diagnostic");
@@ -462,6 +463,85 @@ try {
     assert(data.diagnostic.includes("Version:"), "JSON should include the provider version");
     assert(data.diagnostic.includes("Status:"), "JSON should include provider status");
     console.log("✓ provider diagnostic --json returns structured output\n");
+  }
+
+  // Test 14: provider add creates a custom profile that provider rm removes
+  {
+    console.log("Test 14: provider add creates a custom profile that provider rm removes");
+    const added = await ctx.paseo([
+      "provider",
+      "add",
+      "claude-work",
+      "--extends",
+      "claude",
+      "--label",
+      "Claude (Work)",
+      "--env",
+      "ANTHROPIC_API_KEY=sk-ant-test",
+      "--model",
+      "claude-sonnet-5=Sonnet 5",
+      "--json",
+    ]);
+    assert.strictEqual(
+      added.exitCode,
+      0,
+      `provider add should exit 0\n${added.stdout}\n${added.stderr}`,
+    );
+    const addedRow = JSON.parse(added.stdout.trim()) as {
+      provider: string;
+      label: string;
+      extends: string;
+    };
+    assert.strictEqual(addedRow.provider, "claude-work", "add should echo the new provider id");
+    assert.strictEqual(addedRow.extends, "claude", "add should echo the extends target");
+
+    const afterAdd = await ctx.paseo(["provider", "ls", "--json"]);
+    assert.strictEqual(afterAdd.exitCode, 0, "provider ls should exit 0 after add");
+    const listedRows = JSON.parse(afterAdd.stdout.trim()) as Array<
+      ProviderListRow & { source?: string }
+    >;
+    const custom = listedRows.find((row) => row.provider === "claude-work");
+    assert(custom, "provider ls should include the new profile");
+    assert.strictEqual(custom.source, "custom", "the new profile should be listed as custom");
+    const builtin = listedRows.find((row) => row.provider === "codex");
+    assert.strictEqual(
+      builtin?.source,
+      "builtin",
+      "built-in providers should be listed as builtin",
+    );
+
+    const removed = await ctx.paseo(["provider", "rm", "claude-work", "--json"]);
+    assert.strictEqual(
+      removed.exitCode,
+      0,
+      `provider rm should exit 0\n${removed.stdout}\n${removed.stderr}`,
+    );
+
+    const afterRm = await ctx.paseo(["provider", "ls", "--json"]);
+    const remainingRows = JSON.parse(afterRm.stdout.trim()) as ProviderListRow[];
+    assert(
+      !remainingRows.some((row) => row.provider === "claude-work"),
+      "provider ls should drop the removed profile",
+    );
+    console.log("✓ provider add creates a custom profile that provider rm removes\n");
+  }
+
+  // Test 15: provider add and rm refuse built-in provider ids
+  {
+    console.log("Test 15: provider add and rm refuse built-in provider ids");
+    const addBuiltin = await ctx.paseo(["provider", "add", "claude", "--extends", "claude"]);
+    assert.notStrictEqual(addBuiltin.exitCode, 0, "adding a built-in id should fail");
+    assert(
+      (addBuiltin.stdout + addBuiltin.stderr).includes("built-in"),
+      "error should explain that the id is built-in",
+    );
+
+    const rmBuiltin = await ctx.paseo(["provider", "rm", "claude"]);
+    assert.notStrictEqual(rmBuiltin.exitCode, 0, "removing a built-in provider should fail");
+
+    const rmMissing = await ctx.paseo(["provider", "rm", "not-configured"]);
+    assert.notStrictEqual(rmMissing.exitCode, 0, "removing an unknown provider should fail");
+    console.log("✓ provider add and rm refuse built-in provider ids\n");
   }
 } finally {
   await ctx.stop();

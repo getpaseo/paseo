@@ -2513,8 +2513,41 @@ export const ar: TranslationResources = {
       updateErrorTitle: "غير قادر على تحديث الموفر",
       actions: {
         menu: "{{name}} actions",
+        addAccount: "إضافة حساب",
         remove: "Remove provider",
         removing: "Removing...",
+      },
+      account: {
+        title: "إضافة حساب {{provider}}",
+        errorTitle: "تعذر إضافة الحساب",
+        submit: "إضافة حساب",
+        fields: {
+          label: "الاسم",
+          providerId: "معرّف المزود",
+          description: "الوصف",
+          env: "متغيرات البيئة",
+          envKey: "اسم المتغير",
+          envValue: "قيمة المتغير",
+        },
+        placeholders: {
+          label: "{{provider}} (العمل)",
+          providerId: "claude-work",
+          description: "اختياري",
+          envKey: "الاسم",
+          envValue: "القيمة",
+        },
+        actions: {
+          addVariable: "إضافة متغير",
+          removeVariable: "إزالة المتغير",
+        },
+        errors: {
+          labelRequired: "أدخل اسمًا.",
+          idRequired: "أدخل معرّف المزود.",
+          idInvalid: "استخدم أحرفًا صغيرة وأرقامًا وشرطات، بدءًا بحرف.",
+          idTaken: "معرّف المزود هذا مستخدم بالفعل.",
+          envKeyRequired: "أدخل اسم المتغير.",
+          envDuplicate: "هذا المتغير معيّن بالفعل.",
+        },
       },
       remove: {
         confirmTitle: "Remove {{name}}?",
