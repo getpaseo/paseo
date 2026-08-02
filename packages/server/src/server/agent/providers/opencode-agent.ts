@@ -2819,6 +2819,7 @@ type OpenCodeTurnState =
       status: "running";
       turnId: string;
       submission: "pending" | "dispatched" | "accepted";
+      dispatchStreamEventRevision: number | null;
       acceptance: "activity" | "command_acknowledgement";
       observation: "trusted" | "quarantined";
     }
@@ -3047,6 +3048,8 @@ class OpenCodeAgentSession implements AgentSession {
   private abortSettlement: Promise<void> = Promise.resolve();
   private externalStatusReconciliationStarted = false;
   private runnerStatusRevision = 0;
+  private streamEventRevision = 0;
+  private latestRunnerStatusStreamEventRevision = 0;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private subAgentsByCallId = new Map<string, OpenCodeSubAgentActivityState>();
   private subAgentCallIdByChildSessionId = new Map<string, string>();
@@ -3390,6 +3393,7 @@ class OpenCodeAgentSession implements AgentSession {
       status: "running",
       turnId,
       submission: "pending",
+      dispatchStreamEventRevision: null,
       acceptance: "activity",
       observation: "trusted",
     };
@@ -3414,7 +3418,11 @@ class OpenCodeAgentSession implements AgentSession {
       );
       return { turnId };
     }
-    if (!this.markForegroundSubmissionDispatched(turnId, turnAbortController.signal)) {
+    const dispatchStreamEventRevision = this.markForegroundSubmissionDispatched(
+      turnId,
+      turnAbortController.signal,
+    );
+    if (dispatchStreamEventRevision === null) {
       return { turnId };
     }
     this.foregroundOwnership = {
@@ -3424,7 +3432,6 @@ class OpenCodeAgentSession implements AgentSession {
     };
 
     if (slashCommand) {
-      const dispatchRunnerStatusRevision = this.runnerStatusRevision;
       if (slashCommand.commandName === "compact" || slashCommand.commandName === "summarize") {
         this.suppressAssistantMessagesUntilIdle.active = true;
         void this.client.session
@@ -3449,7 +3456,7 @@ class OpenCodeAgentSession implements AgentSession {
             return this.reconcileAcknowledgedSlashCommand(
               turnId,
               turnAbortController.signal,
-              dispatchRunnerStatusRevision,
+              dispatchStreamEventRevision,
             );
           })
           .catch((error) => {
@@ -3486,7 +3493,7 @@ class OpenCodeAgentSession implements AgentSession {
                 commandName: slashCommand.commandName,
                 turnId,
                 signal: turnAbortController.signal,
-                dispatchRunnerStatusRevision,
+                dispatchStreamEventRevision,
               });
             }
             const errorMsg = toDiagnosticErrorMessage(response.error);
@@ -3499,7 +3506,7 @@ class OpenCodeAgentSession implements AgentSession {
           return this.reconcileAcknowledgedSlashCommand(
             turnId,
             turnAbortController.signal,
-            dispatchRunnerStatusRevision,
+            dispatchStreamEventRevision,
           );
         })
         .catch((err) => {
@@ -3509,7 +3516,7 @@ class OpenCodeAgentSession implements AgentSession {
               commandName: slashCommand.commandName,
               turnId,
               signal: turnAbortController.signal,
-              dispatchRunnerStatusRevision,
+              dispatchStreamEventRevision,
             });
           }
           this.finishForegroundTurn(
@@ -3812,6 +3819,7 @@ class OpenCodeAgentSession implements AgentSession {
       cwd: this.config.cwd,
     });
     let eventStreamReadyResolved = false;
+    const eventProcessingFailure: { occurred: boolean; error?: unknown } = { occurred: false };
     try {
       const result = await this.client.global.event({
         signal: eventStreamAbortController.signal,
@@ -3824,13 +3832,36 @@ class OpenCodeAgentSession implements AgentSession {
       eventStreamReady.resolve();
 
       let eventCount = 0;
+      let pendingEventProcessing = Promise.resolve();
       for await (const rawEvent of result.stream) {
-        eventCount += 1;
-        await this.consumeOpenCodeStreamEvent({
-          rawEvent,
-          eventCount,
-          signal: eventStreamAbortController.signal,
+        const currentEventCount = ++eventCount;
+        const streamEventRevision = ++this.streamEventRevision;
+        const event = unwrapOpenCodeGlobalEvent(rawEvent);
+        if (event && getOpenCodeRunnerStatusFromEvent(event, this.sessionId) !== null) {
+          this.latestRunnerStatusStreamEventRevision = streamEventRevision;
+        }
+        pendingEventProcessing = pendingEventProcessing.then(async () => {
+          if (eventProcessingFailure.occurred || eventStreamAbortController.signal.aborted) {
+            return;
+          }
+          try {
+            await this.consumeOpenCodeStreamEvent({
+              rawEvent,
+              eventCount: currentEventCount,
+              streamEventRevision,
+              signal: eventStreamAbortController.signal,
+            });
+          } catch (error) {
+            eventProcessingFailure.occurred = true;
+            eventProcessingFailure.error = error;
+            eventStreamAbortController.abort(error);
+          }
+          return undefined;
         });
+      }
+      await pendingEventProcessing;
+      if (eventProcessingFailure.occurred) {
+        throw eventProcessingFailure.error;
       }
 
       this.traceOpenCode("provider.opencode.stream.eof", {
@@ -3870,21 +3901,27 @@ class OpenCodeAgentSession implements AgentSession {
       }
       return null;
     } catch (error) {
+      const effectiveError = eventProcessingFailure.occurred ? eventProcessingFailure.error : error;
       this.traceOpenCode("provider.opencode.subscribe.error", {
         turnId: this.activeForegroundTurnId ?? undefined,
         error:
-          error instanceof Error ? { name: error.name, message: error.message } : String(error),
+          effectiveError instanceof Error
+            ? { name: effectiveError.name, message: effectiveError.message }
+            : String(effectiveError),
       });
       if (!eventStreamReadyResolved) {
-        eventStreamReady.reject(error);
+        eventStreamReady.reject(effectiveError);
       }
       const activeTurnId = this.activeForegroundTurnId;
-      if (!eventStreamAbortController.signal.aborted && activeTurnId) {
+      if (
+        (!eventStreamAbortController.signal.aborted || eventProcessingFailure.occurred) &&
+        activeTurnId
+      ) {
         this.finishForegroundTurn(
           {
             type: "turn_failed",
             provider: "opencode",
-            error: toDiagnosticErrorMessage(error),
+            error: toDiagnosticErrorMessage(effectiveError),
           },
           activeTurnId,
         );
@@ -4277,14 +4314,16 @@ class OpenCodeAgentSession implements AgentSession {
   private async consumeOpenCodeStreamEvent(params: {
     rawEvent: unknown;
     eventCount: number;
+    streamEventRevision: number;
     signal: AbortSignal;
   }): Promise<void> {
-    const { rawEvent, eventCount, signal } = params;
+    const { rawEvent, eventCount, streamEventRevision, signal } = params;
     let turnId = this.activeForegroundTurnId;
     const event = unwrapOpenCodeGlobalEvent(rawEvent);
     this.traceOpenCode("provider.opencode.raw_event", {
       turnId: turnId ?? undefined,
       n: eventCount,
+      streamEventRevision,
       type: event?.type,
       rawType: readOpenCodeRecord(rawEvent)?.type,
       directory: readOpenCodeRecord(rawEvent)?.directory,
@@ -4295,7 +4334,10 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
     this.observeRunnerStatusEvent(event);
-    if (turnId && this.discardEventBeforeSubmissionAcceptance(event, eventCount, turnId)) {
+    if (
+      turnId &&
+      this.discardEventBeforeSubmissionAcceptance(event, eventCount, streamEventRevision, turnId)
+    ) {
       return;
     }
     if (this.discardEventWhileStopping(event, eventCount)) {
@@ -4501,28 +4543,37 @@ class OpenCodeAgentSession implements AgentSession {
   private discardEventBeforeSubmissionAcceptance(
     event: OpenCodeEvent,
     eventCount: number,
+    streamEventRevision: number,
     turnId: string,
   ): boolean {
     return (
       this.discardEventWhileSubmissionPending(event, eventCount, turnId) ||
-      this.discardTerminalUntilSubmissionAccepted(event, eventCount, turnId)
+      this.discardTerminalUntilSubmissionAccepted(event, eventCount, streamEventRevision, turnId)
     );
   }
 
   private discardTerminalUntilSubmissionAccepted(
     event: OpenCodeEvent,
     eventCount: number,
+    streamEventRevision: number,
     turnId: string,
   ): boolean {
-    if (
-      this.isForegroundSubmissionAccepted(turnId) ||
-      !isOpenCodeTerminalEvent(event, this.sessionId)
-    ) {
+    if (!isOpenCodeTerminalEvent(event, this.sessionId)) {
+      return false;
+    }
+    const arrivedBeforeDispatch =
+      this.turnState.status === "running" &&
+      this.turnState.turnId === turnId &&
+      this.turnState.dispatchStreamEventRevision !== null &&
+      streamEventRevision <= this.turnState.dispatchStreamEventRevision;
+    if (!arrivedBeforeDispatch && this.isForegroundSubmissionAccepted(turnId)) {
       return false;
     }
     this.traceOpenCode("provider.opencode.event.skip", {
       n: eventCount,
-      reason: "foreground_submission_unaccepted",
+      reason: arrivedBeforeDispatch
+        ? "foreground_terminal_before_dispatch"
+        : "foreground_submission_unaccepted",
       type: event.type,
     });
     return true;
@@ -4640,6 +4691,7 @@ class OpenCodeAgentSession implements AgentSession {
       status: "running",
       turnId,
       submission: "accepted",
+      dispatchStreamEventRevision: null,
       acceptance: "activity",
       observation: "trusted",
     };
@@ -4658,12 +4710,17 @@ class OpenCodeAgentSession implements AgentSession {
     return turnId;
   }
 
-  private markForegroundSubmissionDispatched(turnId: string, signal: AbortSignal): boolean {
+  private markForegroundSubmissionDispatched(turnId: string, signal: AbortSignal): number | null {
     if (signal.aborted || this.turnState.status !== "running" || this.turnState.turnId !== turnId) {
-      return false;
+      return null;
     }
-    this.turnState = { ...this.turnState, submission: "dispatched" };
-    return true;
+    const dispatchStreamEventRevision = this.streamEventRevision;
+    this.turnState = {
+      ...this.turnState,
+      submission: "dispatched",
+      dispatchStreamEventRevision,
+    };
+    return dispatchStreamEventRevision;
   }
 
   private setSlashCommandAcceptance(
@@ -4682,7 +4739,7 @@ class OpenCodeAgentSession implements AgentSession {
     commandName: string;
     turnId: string;
     signal: AbortSignal;
-    dispatchRunnerStatusRevision: number;
+    dispatchStreamEventRevision: number;
   }): Promise<void> {
     this.logger.warn(
       { err: params.error, commandName: params.commandName, turnId: params.turnId },
@@ -4691,7 +4748,7 @@ class OpenCodeAgentSession implements AgentSession {
     return this.reconcileAcknowledgedSlashCommand(
       params.turnId,
       params.signal,
-      params.dispatchRunnerStatusRevision,
+      params.dispatchStreamEventRevision,
     );
   }
 
@@ -4722,12 +4779,12 @@ class OpenCodeAgentSession implements AgentSession {
   private async reconcileAcknowledgedSlashCommand(
     turnId: string,
     signal: AbortSignal,
-    dispatchRunnerStatusRevision: number,
+    dispatchStreamEventRevision: number,
   ): Promise<void> {
     if (!this.markForegroundSubmissionAccepted(turnId, "command_acknowledgement")) {
       return;
     }
-    if (this.runnerStatusRevision === dispatchRunnerStatusRevision) {
+    if (this.latestRunnerStatusStreamEventRevision <= dispatchStreamEventRevision) {
       return;
     }
     const observedRunnerStatusRevision = this.runnerStatusRevision;
