@@ -375,12 +375,40 @@ export type ACPExtensionCommandsParser = (
   params: Record<string, unknown>,
 ) => AgentSlashCommand[] | null;
 
+/**
+ * Context handed to an {@link ACPCatalogModelResolver} during `fetchCatalog`. It exposes
+ * the already-derived models plus the live probe session so a resolver can refine them
+ * (e.g. switch through each model to read back per-model options) without re-implementing
+ * the catalog plumbing.
+ */
+export interface ACPCatalogModelResolverContext {
+  connection: ClientSideConnection;
+  sessionId: string;
+  models: AgentModelDefinition[];
+  configOptions: SessionConfigOption[] | null | undefined;
+  runRequest: <T>(request: () => Promise<T>) => Promise<T>;
+  transformConfigOptions: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
+  logger: Logger;
+  provider: string;
+}
+
+/**
+ * Optional hook that refines the catalog's model list using the live probe session.
+ * The base client ships no resolver — catalog discovery derives models from the initial
+ * session response and never mutates the probe. Providers that need per-model data (Kimi)
+ * inject a resolver so the extra round trips stay off every other ACP.
+ */
+export type ACPCatalogModelResolver = (
+  context: ACPCatalogModelResolverContext,
+) => Promise<AgentModelDefinition[]>;
+
 interface ACPAgentClientOptions {
   provider: string;
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   defaultCommand: [string, ...string[]];
   defaultModes?: AgentMode[];
+  catalogModelResolver?: ACPCatalogModelResolver;
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
@@ -500,7 +528,7 @@ interface TerminalEntry {
   rejectExit: (error: Error) => void;
 }
 
-interface ConfigOptionSelector {
+export interface ConfigOptionSelector {
   id: string;
   label: string;
   description?: string;
@@ -519,7 +547,7 @@ export interface ACPConfigFeatureOption {
   emptyOptionLabel?: string;
 }
 
-type SelectConfigOption = Extract<SessionConfigOption, { type: "select" }>;
+export type SelectConfigOption = Extract<SessionConfigOption, { type: "select" }>;
 interface SelectConfigChoice {
   value: string;
   name: string;
@@ -763,6 +791,7 @@ export class ACPAgentClient implements AgentClient {
   protected readonly runtimeSettings?: ProviderRuntimeSettings;
   protected readonly defaultCommand: [string, ...string[]];
   protected readonly defaultModes: AgentMode[];
+  private readonly catalogModelResolver?: ACPCatalogModelResolver;
   private readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   private readonly sessionResponseTransformer?: (
     response: SessionStateResponse,
@@ -802,6 +831,7 @@ export class ACPAgentClient implements AgentClient {
     this.runtimeSettings = options.runtimeSettings;
     this.defaultCommand = options.defaultCommand;
     this.defaultModes = options.defaultModes ?? [];
+    this.catalogModelResolver = options.catalogModelResolver;
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
@@ -924,16 +954,26 @@ export class ACPAgentClient implements AgentClient {
           }),
         );
         const transformed = this.transformSessionResponse(response);
-        const models = await this.resolvePerModelThinkingOptions({
-          connection: initializedProbe.connection,
-          sessionId: response.sessionId,
-          models: deriveModelDefinitionsFromACP(
-            this.provider,
-            transformed.models,
-            transformed.configOptions,
-          ),
-          configOptions: transformed.configOptions,
-        });
+        const derivedModels = deriveModelDefinitionsFromACP(
+          this.provider,
+          transformed.models,
+          transformed.configOptions,
+        );
+        const models = this.catalogModelResolver
+          ? await this.catalogModelResolver({
+              connection: initializedProbe.connection,
+              sessionId: response.sessionId,
+              models: derivedModels,
+              configOptions: transformed.configOptions,
+              runRequest: (request) => this.runACPRequest(request),
+              transformConfigOptions: (configOptions) =>
+                this.configOptionsTransformer
+                  ? this.configOptionsTransformer(configOptions)
+                  : configOptions,
+              logger: this.logger,
+              provider: this.provider,
+            })
+          : derivedModels;
         const modeInfo = deriveModesFromACP(
           this.defaultModes,
           transformed.modes,
@@ -955,69 +995,6 @@ export class ACPAgentClient implements AgentClient {
         await this.closeProbe(probe);
       }
     }
-  }
-
-  /**
-   * Some ACP providers (e.g. Kimi) report different thinking-effort levels per model
-   * (a boolean on/off toggle for one model, a multi-level select for another), but only
-   * expose the *currently selected* model's levels through `configOptions` — the model
-   * list itself carries no per-model effort metadata. `deriveModelDefinitionsFromACP`
-   * can only see whichever model the probe session defaulted to, so every other model
-   * would otherwise inherit that one model's thinking options.
-   *
-   * Reuses the single catalog probe session to switch through each candidate model in
-   * turn and read back its real thinking options, rather than spawning a probe per
-   * model. Skipped entirely when the provider has one model or no thinking picker at
-   * all, so providers without per-model effort levels pay no extra round trips.
-   */
-  private async resolvePerModelThinkingOptions({
-    connection,
-    sessionId,
-    models,
-    configOptions,
-  }: {
-    connection: ClientSideConnection;
-    sessionId: string;
-    models: AgentModelDefinition[];
-    configOptions: SessionConfigOption[] | null | undefined;
-  }): Promise<AgentModelDefinition[]> {
-    if (models.length <= 1) {
-      return models;
-    }
-    const modelOption = findSelectConfigOption({ configOptions, category: "model" });
-    if (!modelOption || !findSelectConfigOption({ configOptions, category: "thought_level" })) {
-      return models;
-    }
-
-    const resolved: AgentModelDefinition[] = [];
-    for (const model of models) {
-      try {
-        const response = await this.runACPRequest(() =>
-          connection.setSessionConfigOption({
-            sessionId,
-            configId: modelOption.id,
-            value: model.id,
-          }),
-        );
-        const modelConfigOptions = this.configOptionsTransformer
-          ? this.configOptionsTransformer(response.configOptions ?? [])
-          : (response.configOptions ?? []);
-        const thinkingOptions = deriveSelectorOptions(modelConfigOptions, "thought_level");
-        resolved.push({
-          ...model,
-          thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
-          defaultThinkingOptionId:
-            thinkingOptions.find((option) => option.isDefault)?.id ?? undefined,
-        });
-      } catch (error) {
-        this.logger.warn(
-          { modelId: model.id, error: toDiagnosticErrorMessage(error) },
-          `${this.provider} catalog probe could not resolve thinking options for model "${model.id}"; keeping its default options`,
-        );
-        resolved.push(model);
-      }
-    }
-    return resolved;
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
@@ -2998,7 +2975,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 }
 
-function findSelectConfigOption({
+export function findSelectConfigOption({
   configOptions,
   category,
   id,
@@ -3104,7 +3081,7 @@ function normalizeConfigFeatureValue(value: unknown): string {
   throw new Error(`ACP feature value must be a string`);
 }
 
-function deriveSelectorOptions(
+export function deriveSelectorOptions(
   configOptions: SessionConfigOption[] | null | undefined,
   category: string,
 ): ConfigOptionSelector[] {
