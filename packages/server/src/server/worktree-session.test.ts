@@ -2434,9 +2434,95 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
     ).toMatchObject({ payload: { success: true, error: null } });
   });
 
-  test("settles a retry from persisted archived placement after the worktree is gone", async () => {
+  test("persists deletion readiness for an archived retry without a ready marker", async () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);
+    const paseoHome = path.join(tempDir, ".paseo");
+    const created = await createLegacyWorktreeForTest({
+      branchName: "persist-retry-readiness",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "persist-retry-readiness",
+      runSetup: false,
+      paseoHome,
+    });
+    const workspaceId = "ws-persist-retry-readiness";
+    const archivedWorkspace = createPersistedWorkspaceRecord({
+      workspaceId,
+      projectId: "prj-worktree-test",
+      cwd: created.worktreePath,
+      kind: "worktree",
+      displayName: "persist retry readiness",
+      branch: "persist-retry-readiness",
+      worktreeRoot: created.worktreePath,
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: repoDir,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+      archivedAt: "2026-01-02T00:00:00.000Z",
+    });
+    const emitted: SessionOutboundMessage[] = [];
+    const archiveWorkspaceRecord = vi.fn(async () => {});
+    const deletePaseoWorktree = vi.fn(async () => {
+      throw new Error("intentional deletion failure");
+    });
+
+    await handlePaseoWorktreeArchiveRequest(
+      {
+        paseoHome,
+        github: createGitHubServiceStub(),
+        workspaceGitService: {
+          getSnapshot: vi.fn(async () => null),
+          invalidateWorktreeList: vi.fn(),
+          listWorktrees: vi.fn(async () => {
+            throw new Error("persisted retry placement must bypass live Git membership");
+          }),
+        },
+        projectRegistry: createProjectRegistryForRoot(repoDir),
+        workspaceRegistry: createWorkspaceRegistryForRecords([archivedWorkspace]),
+        agentManager: {
+          listAgents: () => [],
+          archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
+          archiveSnapshot: vi.fn(async () => ({})),
+        },
+        agentStorage: createAgentStorageStub(),
+        findWorkspaceIdForCwd: vi.fn(async () => null),
+        listActiveWorkspaces: vi.fn(async () => []),
+        archiveWorkspaceRecord,
+        deletePaseoWorktree,
+        emit: (message) => emitted.push(message),
+        emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => {}),
+        markWorkspaceArchiving: vi.fn(),
+        clearWorkspaceArchiving: vi.fn(),
+        killTerminalsForWorkspace: vi.fn(async () => {}),
+        sessionLogger: createLogger(),
+      },
+      {
+        type: "paseo_worktree_archive_request",
+        requestId: "req-persist-retry-readiness",
+        projectId: "prj-worktree-test",
+        repoRoot: repoDir,
+        worktreePath: created.worktreePath,
+        branchName: "persist-retry-readiness",
+        scope: "worktree",
+      },
+    );
+
+    expect(archiveWorkspaceRecord).toHaveBeenCalledWith(workspaceId, {
+      archiveCleanupPhase: "ready_to_delete",
+    });
+    expect(deletePaseoWorktree).toHaveBeenCalledTimes(1);
+    expect(existsSync(created.worktreePath)).toBe(true);
+    expect(
+      emitted.find((message) => message.type === "paseo_worktree_archive_response"),
+    ).toMatchObject({ payload: { success: true, error: null } });
+  });
+
+  test("settles a CLI-shaped nested-project retry after the worktree is gone", async () => {
+    const { tempDir, repoDir: mainRepoRoot } = createGitRepo();
+    cleanupPaths.push(tempDir);
+    const projectRoot = path.join(mainRepoRoot, "packages", "app");
+    mkdirSync(projectRoot, { recursive: true });
     const missingWorktreePath = path.join(tempDir, "removed-worktree");
     const archivedWorkspace = createPersistedWorkspaceRecord({
       workspaceId: "ws-removed-retry",
@@ -2447,7 +2533,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
       branch: "removed-retry",
       worktreeRoot: missingWorktreePath,
       isPaseoOwnedWorktree: true,
-      mainRepoRoot: repoDir,
+      mainRepoRoot,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       archivedAt: "2026-01-02T00:00:00.000Z",
@@ -2466,7 +2552,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
           invalidateWorktreeList: vi.fn(),
           listWorktrees,
         },
-        projectRegistry: createProjectRegistryForRoot(repoDir),
+        projectRegistry: createProjectRegistryForRoot(projectRoot),
         workspaceRegistry: createWorkspaceRegistryForRecords([archivedWorkspace]),
         agentManager: {
           listAgents: () => [],
@@ -2487,7 +2573,10 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
       {
         type: "paseo_worktree_archive_request",
         requestId: "req-removed-retry",
+        projectId: "prj-worktree-test",
+        repoRoot: projectRoot,
         worktreePath: missingWorktreePath,
+        branchName: "removed-retry",
         scope: "worktree",
       },
     );

@@ -584,13 +584,14 @@ export async function handlePaseoWorktreeArchiveRequest(
       branchName: msg.branchName,
       workspaceId: msg.workspaceId,
       scope: msg.scope,
-      cleanup:
-        archivedRetryPlacement?.archiveCleanupPhase === "ready_to_delete"
-          ? {
-              state: "ready_to_delete",
-              workspaceIds: archivedRetryPlacement.workspaceIds,
-            }
-          : undefined,
+      cleanup: archivedRetryPlacement
+        ? {
+            ...(archivedRetryPlacement.archiveCleanupPhase === "ready_to_delete"
+              ? { state: archivedRetryPlacement.archiveCleanupPhase }
+              : {}),
+            workspaceIds: archivedRetryPlacement.workspaceIds,
+          }
+        : undefined,
     });
     if (!result.ok) {
       dependencies.emit({
@@ -751,6 +752,7 @@ async function resolvePersistedArchiveRetryPlacement(
     if (msg.projectId && workspace.projectId !== msg.projectId) return false;
     if (msg.branchName && workspace.branch !== msg.branchName) return false;
     if (
+      !selectedProjectId &&
       msg.repoRoot &&
       (!workspace.mainRepoRoot ||
         !createRealpathAwarePathMatcher(workspace.mainRepoRoot)(msg.repoRoot))

@@ -109,7 +109,7 @@ export interface ArchiveCommandInput {
   workspaceId?: string;
   scope?: ArchiveScope["kind"];
   cleanup?: {
-    state: "ready_to_delete";
+    state?: "ready_to_delete";
     workspaceIds: string[];
   };
 }

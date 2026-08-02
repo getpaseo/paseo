@@ -71,7 +71,7 @@ export interface ArchiveByScopeRequest {
   scope: ArchiveScope;
   requestId: string;
   cleanup?: {
-    state: "ready_to_delete";
+    state?: "ready_to_delete";
     workspaceIds: string[];
   };
 }

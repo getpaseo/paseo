@@ -270,14 +270,14 @@ describe("archiveByScope", () => {
     expect(readFileSync(path.join(repoDir, "shared-teardown.log"), "utf8")).toBe("ok");
   });
 
-  test("persists deletion readiness and does not rerun teardown after deletion fails", async () => {
+  test("preserves deletion-only retry state after retry teardown succeeds", async () => {
     const { tempDir, repoDir } = createGitRepo();
     writeFileSync(
       path.join(repoDir, "paseo.json"),
       JSON.stringify({
         worktree: {
           teardown: [
-            "node -e \"const fs=require('fs');const out=process.env.PASEO_SOURCE_CHECKOUT_PATH+'/retry-teardown-count';const count=fs.existsSync(out)?Number(fs.readFileSync(out,'utf8')):0;fs.writeFileSync(out,String(count+1))\"",
+            "node -e \"const fs=require('fs');const out=process.env.PASEO_SOURCE_CHECKOUT_PATH+'/retry-teardown-count';const count=(fs.existsSync(out)?Number(fs.readFileSync(out,'utf8')):0)+1;fs.writeFileSync(out,String(count));if(count===1)process.exit(9)\"",
           ],
         },
       }),
@@ -317,20 +317,34 @@ describe("archiveByScope", () => {
       deletePaseoWorktree: deleteWithFirstFailure,
     });
 
-    const first = await archiveByScope(deps, {
+    const initialArchive = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId },
-      requestId: "req-deletion-failure",
+      requestId: "req-initial-teardown-failure",
     });
-    const retry = await archiveByScope(deps, {
+    expect(initialArchive.removedDirectory).toBe(false);
+    expect(deleteWithFirstFailure).not.toHaveBeenCalled();
+    expect(deps.archiveCleanupPhases.has(workspaceId)).toBe(false);
+    expect(readFileSync(path.join(repoDir, "retry-teardown-count"), "utf8")).toBe("1");
+
+    const teardownRetry = await archiveByScope(deps, {
+      scope: { kind: "worktree", targetPath: worktree.worktreePath },
+      requestId: "req-teardown-retry",
+      cleanup: { workspaceIds: [workspaceId] },
+    });
+    expect(teardownRetry.removedDirectory).toBe(false);
+    expect(deleteWithFirstFailure).toHaveBeenCalledTimes(1);
+    expect(deps.archiveCleanupPhases.get(workspaceId)).toBe("ready_to_delete");
+    expect(readFileSync(path.join(repoDir, "retry-teardown-count"), "utf8")).toBe("2");
+
+    const deletionRetry = await archiveByScope(deps, {
       scope: { kind: "worktree", targetPath: worktree.worktreePath },
       requestId: "req-deletion-retry",
       cleanup: { state: "ready_to_delete", workspaceIds: [workspaceId] },
     });
 
-    expect(first.removedDirectory).toBe(false);
-    expect(retry.removedDirectory).toBe(true);
+    expect(deletionRetry.removedDirectory).toBe(true);
     expect(deleteWithFirstFailure).toHaveBeenCalledTimes(2);
-    expect(readFileSync(path.join(repoDir, "retry-teardown-count"), "utf8")).toBe("1");
+    expect(readFileSync(path.join(repoDir, "retry-teardown-count"), "utf8")).toBe("2");
     expect(existsSync(worktree.worktreePath)).toBe(false);
   }, 15_000);
 
