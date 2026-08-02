@@ -81,6 +81,8 @@ export interface LoopListItem {
   createdAt: string;
   updatedAt: string;
   activeIteration: number | null;
+  activeWorkerAgentId?: string | null;
+  activeVerifierAgentId?: string | null;
 }
 
 export interface LoopLogsResult {

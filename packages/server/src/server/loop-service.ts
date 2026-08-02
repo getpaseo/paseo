@@ -146,6 +146,8 @@ export interface LoopListItem {
   createdAt: string;
   updatedAt: string;
   activeIteration: number | null;
+  activeWorkerAgentId: string | null;
+  activeVerifierAgentId: string | null;
 }
 
 export interface LoopLogsResult {
@@ -492,6 +494,8 @@ export class LoopService {
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
         activeIteration: record.activeIteration,
+        activeWorkerAgentId: record.activeWorkerAgentId,
+        activeVerifierAgentId: record.activeVerifierAgentId,
       }));
   }
 

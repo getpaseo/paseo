@@ -974,6 +974,77 @@ describe("LoopService", () => {
     expect(verifierConfigs[0]?.modeId).toBe("plan");
   });
 
+  test("listLoops includes active worker and verifier agent ids for a running loop", async () => {
+    let releaseWorker: (() => void) | null = null;
+    let releaseVerifier: (() => void) | null = null;
+    const workerBlocker = new Promise<void>((resolve) => {
+      releaseWorker = resolve;
+    });
+    const verifierBlocker = new Promise<void>((resolve) => {
+      releaseVerifier = resolve;
+    });
+    const manager = new AgentManager({
+      clients: {
+        claude: new ScriptedAgentClient("claude", {
+          async onRun({ config }) {
+            if (config.title?.includes("worker")) {
+              await workerBlocker;
+              return "worker finished";
+            }
+            await verifierBlocker;
+            return '{"passed":true,"reason":"ok"}';
+          },
+        }),
+      },
+      registry: storage,
+      logger,
+    });
+    const service = createLoopService({
+      paseoHome,
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    await service.initialize();
+
+    const loop = await service.runLoop({
+      prompt: "Expose active agents on list",
+      cwd: workspaceDir,
+      model: "test-model",
+      verifyPrompt: "Confirm the work is done.",
+      maxIterations: 1,
+    });
+
+    const workerAgentId = await waitForActiveWorkerRun(service, manager, loop.id);
+    const listedWhileWorker = await service.listLoops();
+    expect(listedWhileWorker).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: loop.id,
+          activeWorkerAgentId: workerAgentId,
+          activeVerifierAgentId: null,
+        }),
+      ]),
+    );
+
+    releaseWorker?.();
+
+    const verifierAgentId = await waitForActiveVerifierRun(service, loop.id);
+    const listedWhileVerifier = await service.listLoops();
+    expect(listedWhileVerifier).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: loop.id,
+          activeWorkerAgentId: null,
+          activeVerifierAgentId: verifierAgentId,
+        }),
+      ]),
+    );
+
+    releaseVerifier?.();
+    await waitForLoopCompletion(service, loop.id);
+  });
+
   test("stops a running loop and cancels the active worker", async () => {
     let release: (() => void) | null = null;
     const cancelledAgentIds: string[] = [];
@@ -1345,6 +1416,18 @@ async function waitForActiveWorkerRun(
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error("Timed out waiting for loop worker run to start");
+}
+
+async function waitForActiveVerifierRun(service: LoopService, loopId: string): Promise<string> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const loop = await service.inspectLoop(loopId);
+    if (loop.activeVerifierAgentId) {
+      return loop.activeVerifierAgentId;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for loop verifier to start");
 }
 
 async function waitForLoopIteration(service: LoopService, loopId: string): Promise<void> {

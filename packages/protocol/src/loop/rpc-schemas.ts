@@ -82,6 +82,8 @@ export const LoopListItemSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   activeIteration: z.number().int().positive().nullable(),
+  activeWorkerAgentId: z.string().nullable().optional(),
+  activeVerifierAgentId: z.string().nullable().optional(),
 });
 
 export const LoopRunRequestSchema = z.object({
