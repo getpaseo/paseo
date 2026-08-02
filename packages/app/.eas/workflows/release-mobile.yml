@@ -9,7 +9,7 @@ on:
       release_tag:
         type: string
         required: true
-        description: "Fork release tag, e.g. v0.2.5-fork.3"
+        description: "Fork release tag"
 
 jobs:
   build_ios:
