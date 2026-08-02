@@ -279,6 +279,34 @@ describe("useComposerGithubAutoAttach", () => {
     vi.useRealTimers();
   });
 
+  it("uses the latest pull request order when URLs are reordered during debounce", async () => {
+    vi.useFakeTimers();
+    const client = createSearchClient([pr101, pr202]);
+    const onPullRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      result.current.setText(
+        "Refs https://github.com/acme/paseo/pull/101 and https://github.com/acme/paseo/pull/202",
+      );
+    });
+    act(() => {
+      result.current.setText(
+        "Refs https://github.com/acme/paseo/pull/202 and https://github.com/acme/paseo/pull/101",
+      );
+    });
+    await flushDebounce();
+
+    expect(onPullRequestAdded.mock.calls).toEqual([[pr202], [pr101]]);
+    expect(client.calls).toEqual([
+      { cwd, query: "202", limit: 20 },
+      { cwd, query: "101", limit: 20 },
+    ]);
+    vi.useRealTimers();
+  });
+
   it("does not report a buffered pull request after its URL is removed", async () => {
     vi.useFakeTimers();
     const firstLookup = deferred<ForgeSearchPayload>();

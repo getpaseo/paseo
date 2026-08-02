@@ -180,7 +180,6 @@ function getLookupCandidateKey(
       return !removedRefKeys.has(key) && !hasGithubAttachment(params.attachments, ref);
     })
     .map(githubRefKey)
-    .sort()
     .join("|");
 }
 
