@@ -3,15 +3,16 @@ import { daemonWsRoutePattern } from "./daemon-port";
 
 type WebSocketMessage = string | Buffer;
 
-interface SendAgentMessageRequest {
-  type: "send_agent_message_request";
+interface AgentMessageDispatchRequest {
+  type: "send_agent_message_request" | "queue.agent_message.dispatch.request";
   requestId: string;
   agentId: string;
   /** Absent when the client sends into an idle agent. */
   activeTurnBehavior?: string;
+  queuedMessageId?: string;
 }
 
-function readSendRequest(message: WebSocketMessage): SendAgentMessageRequest | null {
+function readDispatchRequest(message: WebSocketMessage): AgentMessageDispatchRequest | null {
   if (typeof message !== "string") return null;
   try {
     const envelope = JSON.parse(message) as {
@@ -20,18 +21,22 @@ function readSendRequest(message: WebSocketMessage): SendAgentMessageRequest | n
     };
     const request = envelope.type === "session" ? envelope.message : null;
     if (
-      request?.type !== "send_agent_message_request" ||
+      (request?.type !== "send_agent_message_request" &&
+        request?.type !== "queue.agent_message.dispatch.request") ||
       typeof request.requestId !== "string" ||
       typeof request.agentId !== "string"
     ) {
       return null;
     }
     return {
-      type: "send_agent_message_request",
+      type: request.type,
       requestId: request.requestId,
       agentId: request.agentId,
       activeTurnBehavior:
         typeof request.activeTurnBehavior === "string" ? request.activeTurnBehavior : undefined,
+      ...(typeof request.queuedMessageId === "string"
+        ? { queuedMessageId: request.queuedMessageId }
+        : {}),
     };
   } catch {
     return null;
@@ -42,7 +47,7 @@ export async function gateNextAgentMessage(page: Page) {
   let serverSocket: WebSocketRoute | null = null;
   let browserSocket: WebSocketRoute | null = null;
   const heldMessages: Array<WebSocketMessage | null> = [];
-  const requests: SendAgentMessageRequest[] = [];
+  const requests: AgentMessageDispatchRequest[] = [];
   const requestWaiters = new Set<() => void>();
 
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
@@ -51,7 +56,7 @@ export async function gateNextAgentMessage(page: Page) {
     serverSocket = server;
 
     ws.onMessage((message) => {
-      const request = readSendRequest(message);
+      const request = readDispatchRequest(message);
       if (request) {
         heldMessages.push(message);
         requests.push(request);
@@ -65,7 +70,7 @@ export async function gateNextAgentMessage(page: Page) {
     server.onMessage((message) => ws.send(message));
   });
 
-  const waitForRequest = async (count = 1): Promise<SendAgentMessageRequest> => {
+  const waitForRequest = async (count = 1): Promise<AgentMessageDispatchRequest> => {
     while (requests.length < count) {
       await new Promise<void>((resolve) => requestWaiters.add(resolve));
     }
@@ -80,6 +85,33 @@ export async function gateNextAgentMessage(page: Page) {
         throw new Error("No held send-agent-message request to accept");
       }
       serverSocket.send(heldMessage);
+      heldMessages[index] = null;
+    },
+    reject(index = 0) {
+      const request = requests[index];
+      if (
+        !browserSocket ||
+        !request ||
+        request.type !== "queue.agent_message.dispatch.request" ||
+        !request.queuedMessageId
+      ) {
+        throw new Error("No held queued-message dispatch request to reject");
+      }
+      browserSocket.send(
+        JSON.stringify({
+          type: "session",
+          message: {
+            type: "queue.agent_message.dispatch.response",
+            payload: {
+              requestId: request.requestId,
+              agentId: request.agentId,
+              queuedMessageId: request.queuedMessageId,
+              accepted: false,
+              error: "Requested queued-message dispatch rejection",
+            },
+          },
+        }),
+      );
       heldMessages[index] = null;
     },
     async disconnect(): Promise<void> {
