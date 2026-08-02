@@ -7,7 +7,7 @@ export interface GitProcessPolicy {
 }
 
 export const DEFAULT_GIT_PROCESS_POLICY: GitProcessPolicy = {
-  maxProcessesPerSecond: 8,
+  maxProcessesPerSecond: 64,
   maxProcessConcurrency: 8,
 };
 

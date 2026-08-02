@@ -237,13 +237,14 @@ All fields are optional with sensible defaults.
 
 ### Git process limits
 
-Git process limits are global to one daemon. Both values default to `8`:
+Git process limits are global to one daemon. The start-rate limit defaults to `64` processes per
+second, and the concurrency limit defaults to `8`:
 
 ```json
 {
   "daemon": {
     "git": {
-      "maxProcessesPerSecond": 8,
+      "maxProcessesPerSecond": 64,
       "maxProcessConcurrency": 8
     }
   }

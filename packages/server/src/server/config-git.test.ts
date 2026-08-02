@@ -19,11 +19,11 @@ describe("daemon Git process config", () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  test("defaults both global process limits to eight", async () => {
+  test("defaults the global process limits", async () => {
     const home = await createHome();
 
     expect(loadConfig(home, { env: {} }).git).toEqual({
-      maxProcessesPerSecond: 8,
+      maxProcessesPerSecond: 64,
       maxProcessConcurrency: 8,
     });
   });
