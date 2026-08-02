@@ -17,7 +17,6 @@ import { useWorkspaceDirectory, useWorkspaceFields } from "@/stores/session-stor
 
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 
-const FLEX_FILL_STYLE = { flex: 1 } as const;
 const CENTERED_PADDED_STYLE = {
   flex: 1,
   alignItems: "center",
@@ -96,10 +95,6 @@ function TerminalPanel() {
     });
   }, [isGitCheckout, openFileExplorerForCheckout, serverId, workspaceDirectory]);
   invariant(target.kind === "terminal", "TerminalPanel requires terminal target");
-
-  if (!isWorkspaceFocused) {
-    return <View style={FLEX_FILL_STYLE} />;
-  }
 
   if (!workspaceDirectory) {
     return (

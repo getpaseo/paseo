@@ -526,9 +526,9 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
           {sidebarChrome}
         </WindowChromeRegion>
       ) : null}
-      {isCompactLayout && chromeEnabled ? (
+      {isCompactLayout ? (
         <CompactExplorerSidebarHost enabled={chromeEnabled}>
-          <WindowChromeRegion corners="both">
+          <WindowChromeRegion corners={chromeEnabled ? "both" : appChromeLayout.contentCorners}>
             <View style={flexStyle}>{children}</View>
           </WindowChromeRegion>
         </CompactExplorerSidebarHost>
