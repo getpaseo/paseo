@@ -21,6 +21,7 @@ export type AgentRunController = Pick<
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
+  | "getPendingAgentRunStartAcknowledged"
   | "waitForAgentRunStart"
 >;
 
@@ -84,6 +85,13 @@ export interface StartAgentRunResult {
   startAcknowledged: Promise<void>;
 }
 
+function getStartAcknowledged(agentManager: AgentRunController, agentId: string): Promise<void> {
+  return (
+    agentManager.getPendingAgentRunStartAcknowledged(agentId) ??
+    agentManager.waitForAgentRunStart(agentId)
+  );
+}
+
 export async function startAgentRun(
   agentManager: AgentRunController,
   agentId: string,
@@ -126,7 +134,7 @@ export async function startAgentRun(
     },
     "agent.session.start_stream.iterator_returned",
   );
-  const startAcknowledged = agentManager.waitForAgentRunStart(agentId);
+  const startAcknowledged = getStartAcknowledged(agentManager, agentId);
   void startAcknowledged.catch(() => {});
   void (async () => {
     try {

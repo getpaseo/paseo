@@ -2243,6 +2243,7 @@ export class AgentManager {
       }
       const turnStartedAt = new Date();
       pendingRun.started = true;
+      pendingRun.acknowledgeStart();
       pendingRun.turnId = turnId;
       agent.activeForegroundTurnId = turnId;
       this.openActiveTurn(agent, turnId, turnStartedAt);
@@ -2682,6 +2683,10 @@ export class AgentManager {
 
       checkCurrentState();
     });
+  }
+
+  getPendingAgentRunStartAcknowledged(agentId: string): Promise<void> | null {
+    return this.runs.getPendingRun(agentId)?.startAcknowledged ?? null;
   }
 
   async respondToPermission(

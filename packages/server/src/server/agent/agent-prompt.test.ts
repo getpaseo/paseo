@@ -282,6 +282,11 @@ test("sendPromptToAgent forwards the client message id as run options", async ()
   Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
   Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(false));
   Reflect.set(agentManager, "streamAgent", streamAgentSpy);
+  Reflect.set(
+    agentManager,
+    "getPendingAgentRunStartAcknowledged",
+    vi.fn(() => Promise.resolve()),
+  );
 
   const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
   Reflect.set(
@@ -326,8 +331,11 @@ test("startAgentRun registers acknowledgement before consuming a fast iterator",
     hasInFlightRun: () => false,
     replaceAgentRun: async () => (async function* noop() {})(),
     streamAgent,
-    waitForAgentRunStart: async () => {
+    getPendingAgentRunStartAcknowledged: () => {
       acknowledgementRegistered = true;
+      return turnStarted.promise;
+    },
+    waitForAgentRunStart: async () => {
       await turnStarted.promise;
     },
   } satisfies AgentRunController;
