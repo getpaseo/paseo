@@ -1601,6 +1601,8 @@ export class VoiceAssistantWebSocketServer {
         providerSubagents: true,
         // COMPAT(backgroundTasks): added in v0.2.x, remove gate after 2027-02-01.
         backgroundTasks: true,
+        // COMPAT(providerHeartbeats): added in v0.2.x, remove gate after 2027-02-02.
+        providerHeartbeats: true,
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: true,
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
