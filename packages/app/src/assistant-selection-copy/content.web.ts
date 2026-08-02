@@ -22,6 +22,14 @@ const turndown = new TurndownService({
   strongDelimiter: "**",
 });
 turndown.use(gfm);
+turndown.addRule("escapedGfmTableCell", {
+  filter: ["th", "td"],
+  replacement: (content, node) => {
+    const index = node.parentNode ? Array.from(node.parentNode.childNodes).indexOf(node) : 0;
+    const prefix = index === 0 ? "| " : " ";
+    return `${prefix}${content.replace(/\|/g, "\\|")} |`;
+  },
+});
 turndown.addRule("gfmStrikethrough", {
   filter: ["del", "s"],
   replacement: (content) => `~~${content}~~`,

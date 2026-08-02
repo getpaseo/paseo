@@ -24,9 +24,15 @@ const ASSISTANT_MARKDOWN = [
   'const answer = "yes";',
   "```",
   "",
+  "````text",
+  "before",
+  "```",
+  "after",
+  "````",
+  "",
   "| Left | Right | Center |",
   "| :-- | --: | :-: |",
-  "| Current | ~~obsolete~~ | ready |",
+  "| Current \\| active | ~~obsolete~~ | ready |",
 ].join("\n");
 
 interface ClipboardContent {
@@ -163,7 +169,12 @@ test("copying an assistant selection preserves Markdown structure and links", as
       '<a href="https://example.com/generated"><code>https://example.com/generated</code></a>',
     );
     expect(clipboard.html).toContain('<code class="language-typescript">');
+    expect(clipboard.html).toContain(
+      '<pre><code class="language-text">before\n```\nafter\n</code></pre>',
+    );
     expect(clipboard.html).toContain("<table>");
+    expect(clipboard.html).toContain('<td style="text-align:left">Current | active</td>');
+    expect(clipboard.html.match(/<td\b/g)).toHaveLength(3);
     expect(clipboard.html).toContain("<s>obsolete</s>");
     expect(clipboard.html).toContain('<th style="text-align:left">Left</th>');
     expect(clipboard.html).toContain('<th style="text-align:right">Right</th>');
