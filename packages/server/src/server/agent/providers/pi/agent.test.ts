@@ -682,6 +682,71 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("discards held text on close (no late emit)", async t => {
+    const prev = process.env.PI_REASONING_HOLD_MS;
+    process.env.PI_REASONING_HOLD_MS = "10000"; // long hold: only close can cancel it
+    onTestFinished(() => {
+      if (prev === undefined) delete process.env.PI_REASONING_HOLD_MS;
+      else process.env.PI_REASONING_HOLD_MS = prev;
+    });
+
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", content: [], responseId: "r1" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "r1" },
+      assistantMessageEvent: { type: "thinking_delta", delta: "think" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "r1" },
+      assistantMessageEvent: { type: "text_delta", delta: "There are " },
+    });
+    await session.close();
+    await new Promise(r => setTimeout(r, 30)); // a leaked timer would have fired by now
+
+    // Thinking was streamed, but the held text is dropped on close (no late emit).
+    expect(events.timelineItems()).toEqual([{ type: "reasoning", text: "think" }]);
+  });
+
+  test("discards held text on interrupt (no late emit)", async t => {
+    const prev = process.env.PI_REASONING_HOLD_MS;
+    process.env.PI_REASONING_HOLD_MS = "10000"; // long hold: only interrupt can cancel it
+    onTestFinished(() => {
+      if (prev === undefined) delete process.env.PI_REASONING_HOLD_MS;
+      else process.env.PI_REASONING_HOLD_MS = prev;
+    });
+
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", content: [], responseId: "r1" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "r1" },
+      assistantMessageEvent: { type: "thinking_delta", delta: "think" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "r1" },
+      assistantMessageEvent: { type: "text_delta", delta: "There are " },
+    });
+    await session.interrupt();
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(events.timelineItems()).toEqual([{ type: "reasoning", text: "think" }]);
+  });
+
   test("keeps one generated message id when Pi omits message start and response id", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

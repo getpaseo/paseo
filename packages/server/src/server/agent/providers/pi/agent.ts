@@ -1481,6 +1481,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeTurnStarted = false;
         this.activeAssistantMessageId = null;
         this.clearNoTurnBuffers();
+        this.discardReasoningHold();
         this.emit({
           type: "turn_failed",
           provider: this.provider,
@@ -1496,6 +1497,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.activeTurnStarted = false;
       this.activeAssistantMessageId = null;
       this.clearNoTurnBuffers();
+      this.discardReasoningHold();
       this.emit({
         type: "turn_canceled",
         provider: this.provider,
@@ -1544,6 +1546,8 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    // Don't let a pending hold timer emit after the session is closed.
+    this.discardReasoningHold();
     try {
       await this.runtimeSession.close();
     } finally {
@@ -1654,6 +1658,19 @@ export class PiRpcAgentSession implements AgentSession {
     this.flushHeldText();
     this.reasoningPresent = false;
     this.heldTextBuf = "";
+    this.textStreamDirect = false;
+  }
+
+  // Cancel a pending hold WITHOUT emitting: used on interrupt/close where the
+  // turn is being abandoned and the buffered partial text should be dropped, not
+  // emitted later under nulled/empty message ids.
+  private discardReasoningHold(): void {
+    if (this.reasonHoldTimer) {
+      clearTimeout(this.reasonHoldTimer);
+      this.reasonHoldTimer = null;
+    }
+    this.heldTextBuf = "";
+    this.reasoningPresent = false;
     this.textStreamDirect = false;
   }
 
