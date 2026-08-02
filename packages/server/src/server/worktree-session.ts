@@ -56,6 +56,7 @@ import {
 import {
   assertNonEmptyWorktreeRepositorySelectors,
   canonicalizeExistingRoot,
+  type ResolvedWorktreeRepository,
   resolveWorktreeRepositoryIdentity,
 } from "./worktree-repository-identity.js";
 
@@ -539,12 +540,11 @@ export async function handlePaseoWorktreeArchiveRequest(
     }
 
     const repository = explicitWorkspacePlacement
-      ? await resolveWorktreeRepositoryIdentity(
-          {
-            projectId: explicitWorkspacePlacement.projectId,
-          },
-          dependencies.projectRegistry,
-        )
+      ? await resolveExplicitWorkspaceArchiveRepository({
+          placement: explicitWorkspacePlacement,
+          requestedRepoRoot: msg.repoRoot,
+          projectRegistry: dependencies.projectRegistry,
+        })
       : (explicitlySelectedRepository ??
         (await resolveWorktreeRepositoryIdentity(
           archivedRetryPlacement
@@ -637,6 +637,32 @@ interface PersistedArchiveRetryPlacement {
 
 interface ExplicitWorkspaceArchivePlacement extends PersistedArchiveRetryPlacement {
   archivedAt: string | null;
+}
+
+interface ResolveExplicitWorkspaceArchiveRepositoryOptions {
+  placement: ExplicitWorkspaceArchivePlacement;
+  requestedRepoRoot?: string;
+  projectRegistry: Pick<ProjectRegistry, "get" | "list">;
+}
+
+async function resolveExplicitWorkspaceArchiveRepository({
+  placement,
+  requestedRepoRoot,
+  projectRegistry,
+}: ResolveExplicitWorkspaceArchiveRepositoryOptions): Promise<ResolvedWorktreeRepository> {
+  const repository = await resolveWorktreeRepositoryIdentity(
+    { projectId: placement.projectId },
+    projectRegistry,
+  );
+  if (
+    requestedRepoRoot &&
+    ![repository.repoRoot, placement.mainRepoRoot]
+      .filter((candidate): candidate is string => candidate !== null)
+      .some((candidate) => createRealpathAwarePathMatcher(candidate)(requestedRepoRoot))
+  ) {
+    throw new Error("projectId and repoRoot do not identify the same project");
+  }
+  return repository;
 }
 
 interface ResolveArchivedRetryPlacementOptions {

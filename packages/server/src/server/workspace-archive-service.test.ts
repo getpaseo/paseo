@@ -584,6 +584,7 @@ describe("archiveByScope", () => {
     const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "partial-failure");
     const workspaceA = "ws-partial-a";
     const workspaceB = "ws-partial-b";
+    const agentId = "agent-partial-a";
 
     const deps = createArchiveDeps({
       paseoHome,
@@ -593,6 +594,8 @@ describe("archiveByScope", () => {
       ],
     });
     const originalArchiveWorkspaceRecord = deps.archiveWorkspaceRecord;
+    deps.agentManager.listAgents = () =>
+      [{ id: agentId, workspaceId: workspaceA }] as ManagedAgent[];
     deps.archiveWorkspaceRecord = async (workspaceId: string) => {
       if (workspaceId === workspaceA) {
         throw new Error("intentional teardown failure");
@@ -607,6 +610,8 @@ describe("archiveByScope", () => {
 
     expect(result.archivedWorkspaceIds).toEqual([workspaceB]);
     expect(result.archivedWorkspaceIds).not.toContain(workspaceA);
+    expect(result.failedWorkspaceRecordIds).toEqual([workspaceA]);
+    expect(result.archivedAgentIds).toEqual([agentId]);
     expect(result.removedDirectory).toBe(false);
     expect(existsSync(worktree.worktreePath)).toBe(true);
   });

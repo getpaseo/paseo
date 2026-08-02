@@ -249,6 +249,57 @@ test("direct worktree creation rejects empty repository selectors before cwd fal
   });
 });
 
+test("explicit workspace archive rejects a conflicting repository before accepting the matching repository", async () => {
+  const repoA = createGitRepo();
+  const repoB = createGitRepo();
+  const worktreeResult = await ctx.client.createWorkspace({
+    source: {
+      kind: "worktree",
+      cwd: repoA,
+      worktreeSlug: "explicit-repository-assertion",
+      baseBranch: "main",
+    },
+  });
+  const workspaceA = worktreeResult.workspace;
+  if (!workspaceA?.workspaceDirectory) {
+    throw new Error(worktreeResult.error ?? "Failed to create worktree workspace");
+  }
+  const worktreePath = workspaceA.workspaceDirectory;
+  const workspaceB = await createLocalWorkspace(repoB, "repository B");
+
+  const mismatch = await ctx.client.archivePaseoWorktree({
+    workspaceId: workspaceA.id,
+    repoRoot: repoB,
+    scope: "workspace",
+  });
+
+  expect(mismatch).toMatchObject({
+    success: false,
+    removedAgents: [],
+    error: { message: "projectId and repoRoot do not identify the same project" },
+  });
+  const activeAfterMismatch = await activeWorkspaceIds();
+  expect(activeAfterMismatch.has(workspaceA.id)).toBe(true);
+  expect(activeAfterMismatch.has(workspaceB)).toBe(true);
+  expect(existsSync(worktreePath)).toBe(true);
+
+  const matching = await ctx.client.archivePaseoWorktree({
+    workspaceId: workspaceA.id,
+    repoRoot: repoA,
+    scope: "workspace",
+  });
+
+  expect(matching).toMatchObject({ success: true, error: null });
+  await expect
+    .poll(async () => (await activeWorkspaceIds()).has(workspaceA.id), {
+      timeout: 10000,
+      interval: 100,
+    })
+    .toBe(false);
+  expect((await activeWorkspaceIds()).has(workspaceB)).toBe(true);
+  expect(existsSync(worktreePath)).toBe(false);
+}, 60000);
+
 test("renaming a workspace updates every subscribed client", async () => {
   const cwd = makeTempDir("workspace-rename-global-");
   const workspaceId = await createLocalWorkspace(cwd, "shared workspace");

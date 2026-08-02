@@ -5,6 +5,7 @@ import {
   archiveByScope,
   resolveWorkspaceIdAtPath,
   type ArchiveDependencies,
+  type ArchiveResult,
   type ArchiveScope,
 } from "../workspace-archive-service.js";
 import type {
@@ -123,6 +124,12 @@ export type ArchiveCommandResult =
       code: "NOT_ALLOWED";
       message: string;
       removedAgents: [];
+    }
+  | {
+      ok: false;
+      code: "UNKNOWN";
+      message: string;
+      removedAgents: string[];
     };
 
 export async function archiveCommand(
@@ -152,10 +159,7 @@ export async function archiveCommand(
       cleanup: input.cleanup,
     });
 
-    return {
-      ok: true,
-      removedAgents: result.archivedAgentIds,
-    };
+    return archiveResultToCommandResult(result);
   }
 
   const workspaceId =
@@ -176,6 +180,20 @@ export async function archiveCommand(
     scope: { kind: "workspace", workspaceId },
     requestId: input.requestId,
   });
+
+  return archiveResultToCommandResult(result);
+}
+
+function archiveResultToCommandResult(result: ArchiveResult): ArchiveCommandResult {
+  if (result.failedWorkspaceRecordIds.length > 0) {
+    const recordLabel = result.failedWorkspaceRecordIds.length === 1 ? "record" : "records";
+    return {
+      ok: false,
+      code: "UNKNOWN",
+      message: `Failed to archive workspace ${recordLabel}: ${result.failedWorkspaceRecordIds.join(", ")}`,
+      removedAgents: result.archivedAgentIds,
+    };
+  }
 
   return {
     ok: true,

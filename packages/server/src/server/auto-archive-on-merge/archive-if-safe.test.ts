@@ -120,6 +120,7 @@ function createHarness(overrides?: {
         ({
           archivedAgentIds: [],
           archivedWorkspaceIds: [],
+          failedWorkspaceRecordIds: [],
           removedDirectory: false,
         }) satisfies ArchiveResult),
   ) as unknown as ArchiveIfSafeDependencies["archiveByScope"];
@@ -528,6 +529,7 @@ describe("archiveIfSafe", () => {
         return {
           archivedAgentIds: [],
           archivedWorkspaceIds: ["ws-auto-archive"],
+          failedWorkspaceRecordIds: [],
           removedDirectory: false,
         };
       },

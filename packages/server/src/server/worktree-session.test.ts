@@ -33,6 +33,7 @@ import {
 } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
+import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import {
   createPersistedProjectRecord,
@@ -2263,6 +2264,91 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
     expect(
       emitted.find((message) => message.type === "paseo_worktree_archive_response"),
     ).toMatchObject({ payload: { success: true, error: null } });
+  });
+
+  test("reports failure and archived agents when workspace record teardown fails", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+    const workspaceId = "ws-record-teardown-failure";
+    const agentId = "agent-record-teardown-failure";
+    const persistedWorkspace = createPersistedWorkspaceRecord({
+      workspaceId,
+      projectId: "prj-worktree-test",
+      cwd: repoDir,
+      kind: "local_checkout",
+      displayName: "record teardown failure",
+      mainRepoRoot: repoDir,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const activeWorkspaces = [
+      {
+        workspaceId,
+        cwd: repoDir,
+        kind: "local_checkout" as const,
+        worktreeRoot: null,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: repoDir,
+      },
+    ];
+    const archiveAgent = vi.fn(async () => ({ archivedAt: new Date().toISOString() }));
+    const archiveWorkspaceRecord = vi.fn(async () => {
+      throw new Error("forced registry write failure");
+    });
+    const emitted: SessionOutboundMessage[] = [];
+
+    await handlePaseoWorktreeArchiveRequest(
+      {
+        paseoHome: path.join(tempDir, ".paseo"),
+        github: createGitHubServiceStub(),
+        workspaceGitService: {
+          getSnapshot: vi.fn(async () => null),
+          invalidateWorktreeList: vi.fn(),
+          listWorktrees: vi.fn(async () => []),
+        },
+        projectRegistry: createProjectRegistryForRoot(repoDir),
+        workspaceRegistry: createWorkspaceRegistryForRecords([persistedWorkspace]),
+        agentManager: {
+          listAgents: () => [{ id: agentId, workspaceId }] as ManagedAgent[],
+          archiveAgent,
+          archiveSnapshot: vi.fn(async () => ({})),
+        },
+        agentStorage: createAgentStorageStub(),
+        findWorkspaceIdForCwd: vi.fn(async () => workspaceId),
+        listActiveWorkspaces: vi.fn(async () => activeWorkspaces),
+        archiveWorkspaceRecord,
+        emit: (message) => emitted.push(message),
+        emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => {}),
+        markWorkspaceArchiving: vi.fn(),
+        clearWorkspaceArchiving: vi.fn(),
+        killTerminalsForWorkspace: vi.fn(async () => {}),
+        sessionLogger: createLogger(),
+      },
+      {
+        type: "paseo_worktree_archive_request",
+        requestId: "req-record-teardown-failure",
+        workspaceId,
+        repoRoot: repoDir,
+        scope: "workspace",
+      },
+    );
+
+    expect(archiveAgent).toHaveBeenCalledWith(agentId);
+    expect(archiveWorkspaceRecord).toHaveBeenCalledWith(workspaceId);
+    expect(activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([workspaceId]);
+    expect(existsSync(repoDir)).toBe(true);
+    expect(
+      emitted.find((message) => message.type === "paseo_worktree_archive_response"),
+    ).toMatchObject({
+      payload: {
+        success: false,
+        removedAgents: [agentId],
+        error: {
+          code: "UNKNOWN",
+          message: `Failed to archive workspace record: ${workspaceId}`,
+        },
+      },
+    });
   });
 
   test("retries cleanup after Git forgets an archived Paseo worktree", async () => {

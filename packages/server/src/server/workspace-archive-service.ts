@@ -63,6 +63,7 @@ export type ArchiveScope =
 export interface ArchiveResult {
   archivedAgentIds: string[];
   archivedWorkspaceIds: string[];
+  failedWorkspaceRecordIds: string[];
   removedDirectory: boolean;
 }
 
@@ -136,11 +137,8 @@ export async function archiveByScope(
       await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
     }
 
-    const { archivedAgents, archivedWorkspaceIds } = await archiveTargetRecords(
-      dependencies,
-      targetWorkspaceIds,
-      request.requestId,
-    );
+    const { archivedAgents, archivedWorkspaceIds, failedWorkspaceRecordIds } =
+      await archiveTargetRecords(dependencies, targetWorkspaceIds, request.requestId);
 
     if (target.backing?.mainRepoRoot) {
       try {
@@ -168,6 +166,7 @@ export async function archiveByScope(
     return {
       archivedAgentIds: Array.from(archivedAgents),
       archivedWorkspaceIds,
+      failedWorkspaceRecordIds,
       removedDirectory,
     };
   } finally {
@@ -295,33 +294,53 @@ async function archiveTargetRecords(
   dependencies: ArchiveDependencies,
   targetWorkspaceIds: string[],
   requestId: string,
-): Promise<{ archivedAgents: Set<string>; archivedWorkspaceIds: string[] }> {
+): Promise<{
+  archivedAgents: Set<string>;
+  archivedWorkspaceIds: string[];
+  failedWorkspaceRecordIds: string[];
+}> {
   const archivedAgents = new Set<string>();
   const archivedWorkspaceIds: string[] = [];
+  const failedWorkspaceRecordIds: string[] = [];
 
   const results = await Promise.allSettled(
     targetWorkspaceIds.map(async (workspaceId) => {
       const agents = await archiveWorkspaceContents(dependencies, workspaceId);
-      await dependencies.archiveWorkspaceRecord(workspaceId);
-      return { workspaceId, agents };
+      try {
+        await dependencies.archiveWorkspaceRecord(workspaceId);
+        return { status: "archived" as const, workspaceId, agents };
+      } catch (error) {
+        return { status: "record_failed" as const, workspaceId, agents, error };
+      }
     }),
   );
 
-  for (const result of results) {
+  for (const [index, result] of results.entries()) {
     if (result.status === "fulfilled") {
-      archivedWorkspaceIds.push(result.value.workspaceId);
       for (const agentId of result.value.agents) {
         archivedAgents.add(agentId);
       }
-    } else {
+      if (result.value.status === "archived") {
+        archivedWorkspaceIds.push(result.value.workspaceId);
+        continue;
+      }
+      failedWorkspaceRecordIds.push(result.value.workspaceId);
       dependencies.sessionLogger?.warn(
-        { err: result.reason, requestId },
+        { err: result.value.error, requestId, workspaceId: result.value.workspaceId },
         "archiveByScope workspace teardown failed; continuing",
       );
+      continue;
     }
+
+    const workspaceId = targetWorkspaceIds[index];
+    if (workspaceId) failedWorkspaceRecordIds.push(workspaceId);
+    dependencies.sessionLogger?.warn(
+      { err: result.reason, requestId, workspaceId },
+      "archiveByScope workspace teardown failed; continuing",
+    );
   }
 
-  return { archivedAgents, archivedWorkspaceIds };
+  return { archivedAgents, archivedWorkspaceIds, failedWorkspaceRecordIds };
 }
 
 async function runArchiveTargetTeardown(input: {
