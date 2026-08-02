@@ -95,7 +95,7 @@ interface HeadlessTerminalWithCore {
     _bufferService?: {
       buffer?: {
         lines?: {
-          _startIndex?: number;
+          onTrim?: (listener: (amount: number) => void) => { dispose(): void };
         };
       };
     };
@@ -103,17 +103,12 @@ interface HeadlessTerminalWithCore {
 }
 
 interface TerminalCoordinateStorage {
-  lines: object | null;
-  startIndex: number | null;
+  oldestRow: number;
+  trimSubscription: { dispose(): void } | null;
 }
 
-function captureCoordinateStorage(terminal: HeadlessTerminalInstance): TerminalCoordinateStorage {
-  const lines = (terminal as unknown as HeadlessTerminalWithCore)._core?._bufferService?.buffer
-    ?.lines;
-  return {
-    lines: lines ?? null,
-    startIndex: typeof lines?._startIndex === "number" ? lines._startIndex : null,
-  };
+function activeBufferLines(terminal: HeadlessTerminalInstance) {
+  return (terminal as unknown as HeadlessTerminalWithCore)._core?._bufferService?.buffer?.lines;
 }
 
 function blankCell(): NativeTerminalCell {
@@ -201,19 +196,22 @@ function extractScrollback(
 
 function extractBufferWindow(
   terminal: HeadlessTerminalInstance,
+  oldestRow: number,
   input: TerminalBufferWindowInput,
 ): TerminalBufferWindow {
   const rowCount = Math.max(0, Math.floor(input.rowCount));
   const bufferLength = terminal.buffer.active.length;
-  const startRow = Math.min(Math.max(0, Math.floor(input.startRow)), bufferLength);
-  const endRow = Math.min(bufferLength, startRow + rowCount);
+  const newestRow = oldestRow + bufferLength - 1;
+  const startRow = Math.min(Math.max(oldestRow, Math.floor(input.startRow)), newestRow + 1);
+  const endRow = Math.min(newestRow + 1, startRow + rowCount);
   const reusableCell = terminal.buffer.active.getNullCell();
   const rows: TerminalCellRow[] = [];
   const wrappedRows: boolean[] = [];
 
   for (let row = startRow; row < endRow; row += 1) {
-    const line = terminal.buffer.active.getLine(row);
-    rows.push(extractRow(terminal, row, reusableCell));
+    const bufferRow = row - oldestRow;
+    const line = terminal.buffer.active.getLine(bufferRow);
+    rows.push(extractRow(terminal, bufferRow, reusableCell));
     wrappedRows.push(line?.isWrapped === true);
   }
 
@@ -230,13 +228,13 @@ function rowRange(firstRow: number, rowCount: number): TerminalRowRange {
 function extractBufferBounds(
   terminal: HeadlessTerminalInstance,
   coordinateEpoch: number,
+  oldestRow: number,
 ): TerminalBufferBounds {
   const buffer = terminal.buffer.active;
   const length = Math.max(1, buffer.length);
-  const oldestRow = 0;
-  const newestRow = length - 1;
+  const newestRow = oldestRow + length - 1;
   const bottomFirstRow = Math.max(oldestRow, newestRow - terminal.rows + 1);
-  const currentFirstRow = Math.min(Math.max(oldestRow, buffer.baseY), bottomFirstRow);
+  const currentFirstRow = Math.min(Math.max(oldestRow, oldestRow + buffer.baseY), bottomFirstRow);
 
   return {
     rows: terminal.rows,
@@ -246,7 +244,7 @@ function extractBufferBounds(
     coordinateEpoch,
     currentViewport: rowRange(currentFirstRow, terminal.rows),
     bottomViewport: rowRange(bottomFirstRow, terminal.rows),
-    cursorRow: buffer.baseY + buffer.cursorY,
+    cursorRow: oldestRow + buffer.baseY + buffer.cursorY,
     cursorCol: buffer.cursorX,
   };
 }
@@ -254,6 +252,7 @@ function extractBufferBounds(
 function extractCursorState(
   terminal: HeadlessTerminalInstance,
   window?: TerminalViewportStateInput,
+  oldestRow = 0,
 ): TerminalState["cursor"] {
   const coreService = (terminal as unknown as HeadlessTerminalWithCore)._core?.coreService;
   const cursorStyle = coreService?.decPrivateModes?.cursorStyle;
@@ -265,7 +264,7 @@ function extractCursorState(
     typeof coreService?.decPrivateModes?.cursorBlink === "boolean"
       ? coreService.decPrivateModes.cursorBlink
       : undefined;
-  const cursorRow = terminal.buffer.active.baseY + terminal.buffer.active.cursorY;
+  const cursorRow = oldestRow + terminal.buffer.active.baseY + terminal.buffer.active.cursorY;
   const relativeCursorRow = window ? cursorRow - window.firstRow : terminal.buffer.active.cursorY;
   const hiddenByWindow = window
     ? relativeCursorRow < 0 || relativeCursorRow >= Math.max(0, Math.floor(window.rowCount))
@@ -307,12 +306,13 @@ function extractState(
 function extractViewportState(
   terminal: HeadlessTerminalInstance,
   coordinateEpoch: number,
+  oldestRow: number,
   input?: TerminalViewportStateInput,
 ): TerminalViewportState {
-  const bounds = extractBufferBounds(terminal, coordinateEpoch);
+  const bounds = extractBufferBounds(terminal, coordinateEpoch, oldestRow);
   const rowCount = input ? Math.max(0, Math.floor(input.rowCount)) : terminal.rows;
   const firstRow = input ? input.firstRow : bounds.currentViewport.firstRow;
-  const window = extractBufferWindow(terminal, { startRow: firstRow, rowCount });
+  const window = extractBufferWindow(terminal, oldestRow, { startRow: firstRow, rowCount });
   return {
     rows: window.rows.length,
     cols: terminal.cols,
@@ -320,10 +320,14 @@ function extractViewportState(
     oldestRow: bounds.oldestRow,
     newestRow: bounds.newestRow,
     grid: window.rows,
-    cursor: extractCursorState(terminal, {
-      firstRow: window.startRow,
-      rowCount: window.rows.length,
-    }),
+    cursor: extractCursorState(
+      terminal,
+      {
+        firstRow: window.startRow,
+        rowCount: window.rows.length,
+      },
+      oldestRow,
+    ),
   };
 }
 
@@ -338,21 +342,31 @@ export function createNativeHeadlessTerminal(
   });
   const decoder = new TextDecoder();
   let coordinateEpoch = 0;
+  const coordinateStorage = new Map<object, TerminalCoordinateStorage>();
 
-  function updateCoordinateEpochAfterWrite(
-    previousLength: number,
-    previousStorage: TerminalCoordinateStorage,
-  ): void {
-    const nextLength = terminal.buffer.active.length;
-    const nextStorage = captureCoordinateStorage(terminal);
-    if (
-      nextLength < previousLength ||
-      nextStorage.lines !== previousStorage.lines ||
-      nextStorage.startIndex !== previousStorage.startIndex
-    ) {
-      coordinateEpoch += 1;
+  function getActiveCoordinateStorage(): TerminalCoordinateStorage {
+    const lines = activeBufferLines(terminal);
+    if (!lines) {
+      throw new Error("Native terminal buffer storage is unavailable");
     }
+    const existing = coordinateStorage.get(lines);
+    if (existing) {
+      return existing;
+    }
+    const storage: TerminalCoordinateStorage = { oldestRow: 0, trimSubscription: null };
+    storage.trimSubscription =
+      lines.onTrim?.((amount) => {
+        storage.oldestRow += amount;
+      }) ?? null;
+    coordinateStorage.set(lines, storage);
+    return storage;
   }
+
+  getActiveCoordinateStorage();
+  const bufferChangeSubscription = terminal.buffer.onBufferChange(() => {
+    coordinateEpoch += 1;
+    getActiveCoordinateStorage();
+  });
 
   return {
     async write(data: NativeTerminalWriteData): Promise<void> {
@@ -360,11 +374,8 @@ export function createNativeHeadlessTerminal(
       if (text.length === 0) {
         return;
       }
-      const previousLength = terminal.buffer.active.length;
-      const previousStorage = captureCoordinateStorage(terminal);
       await new Promise<void>((resolve) => {
         terminal.write(text, () => {
-          updateCoordinateEpochAfterWrite(previousLength, previousStorage);
           resolve();
         });
       });
@@ -373,16 +384,21 @@ export function createNativeHeadlessTerminal(
       return extractState(terminal, { scrollbackLines: options.scrollbackLines });
     },
     getViewportState(input?: TerminalViewportStateInput): TerminalViewportState {
-      return extractViewportState(terminal, coordinateEpoch, input);
+      return extractViewportState(
+        terminal,
+        coordinateEpoch,
+        getActiveCoordinateStorage().oldestRow,
+        input,
+      );
     },
     getInputModeState(): NativeHeadlessTerminalInputModeState {
       return extractInputModeState(terminal);
     },
     getBufferBounds(): TerminalBufferBounds {
-      return extractBufferBounds(terminal, coordinateEpoch);
+      return extractBufferBounds(terminal, coordinateEpoch, getActiveCoordinateStorage().oldestRow);
     },
     getBufferWindow(input: TerminalBufferWindowInput): TerminalBufferWindow {
-      return extractBufferWindow(terminal, input);
+      return extractBufferWindow(terminal, getActiveCoordinateStorage().oldestRow, input);
     },
     resize(input: { rows: number; cols: number }): void {
       coordinateEpoch += 1;
@@ -392,8 +408,13 @@ export function createNativeHeadlessTerminal(
       coordinateEpoch += 1;
       decoder.decode();
       terminal.reset();
+      getActiveCoordinateStorage().oldestRow = 0;
     },
     dispose(): void {
+      bufferChangeSubscription.dispose();
+      for (const storage of coordinateStorage.values()) {
+        storage.trimSubscription?.dispose();
+      }
       terminal.dispose();
     },
   };

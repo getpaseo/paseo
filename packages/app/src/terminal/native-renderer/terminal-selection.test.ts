@@ -200,12 +200,12 @@ describe("native terminal selection", () => {
     const after = terminal.getBufferBounds();
 
     expect({
-      saturated: after.newestRow === 12,
-      epochChanged: after.coordinateEpoch > before.coordinateEpoch,
+      selectedRowsEvicted: after.oldestRow > before.oldestRow,
+      sameCoordinateSpace: after.coordinateEpoch === before.coordinateEpoch,
       selection: selection.sync({ bounds: after }),
     }).toEqual({
-      saturated: true,
-      epochChanged: true,
+      selectedRowsEvicted: true,
+      sameCoordinateSpace: true,
       selection: { range: null },
     });
   });
@@ -221,6 +221,35 @@ describe("native terminal selection", () => {
     await terminal.write("tail");
 
     expect(selection.sync({ bounds: terminal.getBufferBounds() }).range).not.toBeNull();
+  });
+
+  it("keeps and copies selected rows until those rows are evicted", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 3, cols: 16, scrollbackLines: 10 });
+    await terminal.write(terminalLines({ startLine: 0, lineCount: 13 }));
+    const selection = createTerminalSelectionModel();
+    const selectedRow = rowWithText(terminal, "line-9");
+    const before = terminal.getBufferBounds();
+    selection.begin({ coordinate: { row: selectedRow, col: 0 }, bounds: before });
+    selection.update({ coordinate: { row: selectedRow, col: 5 }, bounds: before });
+
+    await terminal.write(terminalLines({ startLine: 13, lineCount: 3 }));
+    const retained = selection.sync({ bounds: terminal.getBufferBounds() }).range;
+
+    expect({
+      retained,
+      copied: extractTerminalSelectedText({ terminal, selection: retained }),
+    }).toEqual({
+      retained: {
+        start: { row: selectedRow, col: 0 },
+        end: { row: selectedRow, col: 5 },
+        coordinateEpoch: before.coordinateEpoch,
+      },
+      copied: "line-9",
+    });
+
+    await terminal.write(terminalLines({ startLine: 16, lineCount: 10 }));
+
+    expect(selection.sync({ bounds: terminal.getBufferBounds() })).toEqual({ range: null });
   });
 
   it("copies exactly the selected known visible text", async () => {

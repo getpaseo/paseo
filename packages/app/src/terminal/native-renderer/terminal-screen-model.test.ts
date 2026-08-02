@@ -204,6 +204,39 @@ describe("native terminal screen model", () => {
     ]);
   });
 
+  test("keeps a retained viewport anchored across a burst larger than the old search window", async () => {
+    const terminal = createNativeHeadlessTerminal({
+      rows: ROWS,
+      cols: COLS,
+      scrollbackLines: 995,
+    });
+    const initial = Array.from({ length: 999 }, (_, index) =>
+      index === 600 ? "ANCHOR_600\r\n" : "SAME\r\n",
+    ).join("");
+    await terminal.write(initial);
+    const model = createNativeTerminalScreenModel({ terminal });
+    const bottom = model.sync({ visibleRows: ROWS });
+    const before = model.scrollUp({
+      rows: bottom.scroll.bottomViewport.firstRow - 600,
+      visibleRows: ROWS,
+    });
+
+    await terminal.write("SAME\r\n".repeat(300));
+    const after = model.sync({ visibleRows: ROWS });
+
+    expect({
+      firstRowBefore: before.scroll.firstRow,
+      firstRowAfter: after.scroll.firstRow,
+      firstVisibleRowBefore: rowText(before.viewport.grid[0] ?? []),
+      firstVisibleRowAfter: rowText(after.viewport.grid[0] ?? []),
+    }).toEqual({
+      firstRowBefore: 600,
+      firstRowAfter: 600,
+      firstVisibleRowBefore: "ANCHOR_600",
+      firstVisibleRowAfter: "ANCHOR_600",
+    });
+  });
+
   test("reset while scrolled drops the old viewport before restored content is read", async () => {
     const terminal = await createScrolledTerminal(20);
     const model = createNativeTerminalScreenModel({ terminal });

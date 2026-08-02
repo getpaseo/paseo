@@ -97,7 +97,7 @@ describe("native headless terminal state", () => {
     });
   });
 
-  test("changes buffer coordinate epoch when scrollback eviction can shift rows", async () => {
+  test("advances the oldest stable coordinate when scrollback rows are evicted", async () => {
     const terminal = createNativeHeadlessTerminal({ rows: 3, cols: COLS, scrollbackLines: 2 });
 
     await terminal.write(
@@ -110,11 +110,14 @@ describe("native headless terminal state", () => {
     const after = terminal.getBufferBounds();
 
     expect({
-      sameNewestRow: after.newestRow === before.newestRow,
-      epochChanged: after.coordinateEpoch > before.coordinateEpoch,
+      sameRetainedRowCount:
+        after.newestRow - after.oldestRow === before.newestRow - before.oldestRow,
+      oldestRowAdvanced: after.oldestRow > before.oldestRow,
+      sameCoordinateSpace: after.coordinateEpoch === before.coordinateEpoch,
     }).toEqual({
-      sameNewestRow: true,
-      epochChanged: true,
+      sameRetainedRowCount: true,
+      oldestRowAdvanced: true,
+      sameCoordinateSpace: true,
     });
   });
 

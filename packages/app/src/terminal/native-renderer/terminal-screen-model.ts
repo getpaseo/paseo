@@ -1,5 +1,4 @@
 import type {
-  TerminalCellRow,
   NativeHeadlessTerminal,
   TerminalBufferBounds,
   TerminalRowRange,
@@ -43,23 +42,15 @@ export interface TerminalScreenScrollInput extends TerminalScreenSyncInput {
   rows: number;
 }
 
-interface TerminalRowAnchor {
-  offset: number;
-  text: string;
-}
-
 interface TerminalScrollState {
   mode: TerminalScrollMode;
   firstRow: number;
-  anchor: TerminalRowAnchor | null;
 }
-
-const ROW_ANCHOR_SEARCH_RADIUS = 256;
 
 export function createNativeTerminalScreenModel(
   options: TerminalScreenModelOptions,
 ): TerminalScreenModel {
-  let scrollState: TerminalScrollState = { mode: "following", firstRow: 0, anchor: null };
+  let scrollState: TerminalScrollState = { mode: "following", firstRow: 0 };
 
   function render(input: TerminalScreenSyncInput): TerminalScreenState {
     const bounds = options.terminal.getBufferBounds();
@@ -70,18 +61,11 @@ export function createNativeTerminalScreenModel(
     const firstRow =
       mode === "following"
         ? bottomViewport.firstRow
-        : resolveScrolledFirstRow({
-            terminal: options.terminal,
-            bounds,
-            bottomViewport,
-            visibleRows,
-            scrollState,
-          });
+        : clamp(scrollState.firstRow, bounds.oldestRow, bottomViewport.firstRow);
     const viewport = options.terminal.getViewportState({ firstRow, rowCount: visibleRows });
     scrollState = {
       mode,
       firstRow,
-      anchor: mode === "scrolled" ? resolveViewportAnchor(viewport.grid) : null,
     };
 
     return {
@@ -107,7 +91,7 @@ export function createNativeTerminalScreenModel(
       screen.scroll.bottomViewport.firstRow,
     );
     const mode = nextFirstRow >= screen.scroll.bottomViewport.firstRow ? "following" : "scrolled";
-    scrollState = { mode, firstRow: nextFirstRow, anchor: null };
+    scrollState = { mode, firstRow: nextFirstRow };
     return render(input);
   }
 
@@ -120,99 +104,13 @@ export function createNativeTerminalScreenModel(
       return scrollBy({ ...input, direction: 1 });
     },
     returnToBottom(input: TerminalScreenSyncInput): TerminalScreenState {
-      scrollState = { mode: "following", firstRow: 0, anchor: null };
+      scrollState = { mode: "following", firstRow: 0 };
       return render(input);
     },
     reset(): void {
-      scrollState = { mode: "following", firstRow: 0, anchor: null };
+      scrollState = { mode: "following", firstRow: 0 };
     },
   };
-}
-
-function resolveScrolledFirstRow(input: {
-  terminal: NativeHeadlessTerminal;
-  bounds: TerminalBufferBounds;
-  bottomViewport: TerminalRowRange;
-  visibleRows: number;
-  scrollState: TerminalScrollState;
-}): number {
-  const clampedFirstRow = clamp(
-    input.scrollState.firstRow,
-    input.bounds.oldestRow,
-    input.bottomViewport.firstRow,
-  );
-  if (!input.scrollState.anchor) {
-    return clampedFirstRow;
-  }
-
-  const anchoredFirstRow = findAnchoredFirstRow({
-    terminal: input.terminal,
-    bounds: input.bounds,
-    bottomViewport: input.bottomViewport,
-    visibleRows: input.visibleRows,
-    preferredFirstRow: clampedFirstRow,
-    anchor: input.scrollState.anchor,
-  });
-  return anchoredFirstRow ?? clampedFirstRow;
-}
-
-function findAnchoredFirstRow(input: {
-  terminal: NativeHeadlessTerminal;
-  bounds: TerminalBufferBounds;
-  bottomViewport: TerminalRowRange;
-  visibleRows: number;
-  preferredFirstRow: number;
-  anchor: TerminalRowAnchor;
-}): number | null {
-  const preferredAnchorRow = input.preferredFirstRow + input.anchor.offset;
-  const firstSearchRow = Math.max(
-    input.bounds.oldestRow,
-    preferredAnchorRow - ROW_ANCHOR_SEARCH_RADIUS,
-  );
-  const lastSearchRow = Math.min(
-    input.bounds.newestRow,
-    preferredAnchorRow + ROW_ANCHOR_SEARCH_RADIUS,
-  );
-  const window = input.terminal.getBufferWindow({
-    startRow: firstSearchRow,
-    rowCount: lastSearchRow - firstSearchRow + 1,
-  });
-
-  for (let distance = 0; distance <= ROW_ANCHOR_SEARCH_RADIUS; distance += 1) {
-    const rows =
-      distance === 0
-        ? [preferredAnchorRow]
-        : [preferredAnchorRow - distance, preferredAnchorRow + distance];
-    for (const row of rows) {
-      if (row < firstSearchRow || row > lastSearchRow) continue;
-      const text = rowSignature(window.rows[row - firstSearchRow] ?? []);
-      if (text !== input.anchor.text) continue;
-      return clamp(
-        row - input.anchor.offset,
-        input.bounds.oldestRow,
-        input.bottomViewport.firstRow,
-      );
-    }
-  }
-
-  return null;
-}
-
-function resolveViewportAnchor(rows: TerminalCellRow[]): TerminalRowAnchor | null {
-  for (let offset = 0; offset < rows.length; offset += 1) {
-    const text = rowSignature(rows[offset] ?? []);
-    if (text.length > 0) {
-      return { offset, text };
-    }
-  }
-  return null;
-}
-
-function rowSignature(row: TerminalCellRow): string {
-  return row
-    .map((cell) => cell.char)
-    .join("")
-    .trimEnd();
 }
 
 function resolveVisibleRows(input: {
