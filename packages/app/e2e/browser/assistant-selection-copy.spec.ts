@@ -30,6 +30,8 @@ const ASSISTANT_MARKDOWN = [
   "",
   '[docs](https://docs.example.com "Reference") and <https://autolink.example.com>.',
   "",
+  "[workspace file](file:///tmp/paseo%20notes.md#L4)",
+  "",
   "`https://example.com/generated` stays code, not a generated link.",
   "",
   "```typescript",
@@ -213,6 +215,9 @@ test("copying an assistant selection preserves Markdown structure and links", as
     expect(clipboard.html).toContain(
       '<a href="https://autolink.example.com/">https://autolink.example.com</a>',
     );
+    expect(clipboard.html).toContain(
+      '<a href="file:///tmp/paseo%20notes.md#L4">workspace file</a>',
+    );
     expect(clipboard.html).toContain("<code>https://example.com/generated</code>");
     expect(clipboard.html).not.toContain(
       '<a href="https://example.com/generated"><code>https://example.com/generated</code></a>',
@@ -256,6 +261,15 @@ test("copying an assistant selection preserves Markdown structure and links", as
     );
     expect(autolinkClipboard.html).toContain(
       '<a href="https://autolink.example.com/">https://autolink.example.com</a>',
+    );
+
+    await selectAssistantText(page, "workspace file");
+    await copySelection(page);
+
+    const fileLinkClipboard = await readRichClipboard(page);
+    expect(fileLinkClipboard.plainText).toBe("[workspace file](file:///tmp/paseo%20notes.md#L4)");
+    expect(fileLinkClipboard.html).toContain(
+      '<a href="file:///tmp/paseo%20notes.md#L4">workspace file</a>',
     );
 
     await selectAssistantTextRange(page, "Seventh item", "Eighth item");

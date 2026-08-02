@@ -1,10 +1,6 @@
-import MarkdownIt from "markdown-it";
+import { createAssistantMarkdownParser } from "./assistant-markdown-parser";
 
-const markdownRenderer = new MarkdownIt({
-  html: false,
-  linkify: true,
-  typographer: true,
-});
+const markdownRenderer = createAssistantMarkdownParser();
 
 type ClipboardMimeType = "text/plain" | "text/html";
 

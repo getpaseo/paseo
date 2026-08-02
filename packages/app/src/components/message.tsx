@@ -28,7 +28,8 @@ import {
   cloneElement,
 } from "react";
 import type { ComponentType, ReactNode } from "react";
-import { MarkdownIt, type ASTNode, type RenderRules } from "react-native-markdown-display";
+import type MarkdownIt from "markdown-it";
+import { type ASTNode, type RenderRules } from "react-native-markdown-display";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
   Circle,
@@ -71,6 +72,7 @@ import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
@@ -886,10 +888,7 @@ function AssistantMarkdownImage({
   );
 }
 
-function getInlineCodeAutoLinkUrl(
-  markdownParser: ReturnType<typeof MarkdownIt>,
-  content: string,
-): string | null {
+function getInlineCodeAutoLinkUrl(markdownParser: MarkdownIt, content: string): string | null {
   const trimmed = content.trim();
   if (!trimmed) {
     return null;
@@ -1452,18 +1451,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   client,
   spacing = "default",
 }: AssistantMessageProps) {
-  const markdownParser = useMemo(() => {
-    const parser = MarkdownIt({ typographer: true, linkify: true });
-    const defaultValidateLink = parser.validateLink.bind(parser);
-    parser.validateLink = (url: string) => {
-      if (url.trim().toLowerCase().startsWith("file://")) {
-        return true;
-      }
-
-      return defaultValidateLink(url);
-    };
-    return parser;
-  }, []);
+  const markdownParser = useMemo(createAssistantMarkdownParser, []);
 
   const fileLinkActions = useAssistantFileLinkActions();
   const handleMarkdownLinkPress = useStableEvent((url: string) => {
