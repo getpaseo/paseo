@@ -21,9 +21,9 @@ const MAX_TRANSCRIPT_CHARS = 12_000;
 const MAX_MESSAGE_CHARS = 3_000;
 
 interface SummaryCadenceState {
-  completedTurns: number;
   inFlight: boolean;
   lastAttemptAt: number;
+  wakeTimer: ReturnType<typeof setTimeout> | null;
 }
 
 type SummaryAgentManager = Pick<
@@ -90,8 +90,18 @@ export class AgentPurposeSummaryService {
       return;
     }
     for (const agent of this.agentManager.listAgents()) {
-      if (agent.summary && !agent.internal) {
-        this.initializeCadenceState(agent);
+      if (agent.internal || !this.turnConditionMet(agent)) {
+        continue;
+      }
+      // Restore the interval floor across restarts. An agent whose floor has
+      // already elapsed waits for its next completed turn so a daemon boot
+      // doesn't fire a burst of generations.
+      const state = this.getCadenceState(agent);
+      if (state.lastAttemptAt > 0) {
+        const remainingMs = this.minIntervalMs - (this.now() - state.lastAttemptAt);
+        if (remainingMs > 0) {
+          this.scheduleWake(agent.id, state, remainingMs);
+        }
       }
     }
     this.unsubscribe = this.agentManager.subscribe((event) => this.handleAgentEvent(event), {
@@ -107,79 +117,110 @@ export class AgentPurposeSummaryService {
       clearTimeout(timer);
     }
     this.scheduled.clear();
+    for (const state of this.cadenceByAgentId.values()) {
+      this.clearWakeTimer(state);
+    }
   }
 
   private handleAgentEvent(event: AgentManagerEvent): void {
     if (event.type !== "agent_stream" || event.event.type !== "turn_completed" || this.disposed) {
       return;
     }
+    this.maybeGenerate(event.agentId);
+  }
 
-    const agent = this.agentManager.getAgent(event.agentId);
+  /**
+   * Single entry point for the cadence: generate now, or arm a wake timer for the
+   * moment the interval floor passes. Called on completed turns, from wake timers,
+   * and after a generation settles.
+   */
+  private maybeGenerate(agentId: string): void {
+    if (this.disposed) {
+      return;
+    }
+    const agent = this.agentManager.getAgent(agentId);
     if (!agent || agent.internal) {
       return;
     }
+    const state = this.getCadenceState(agent);
 
-    const existingState = this.cadenceByAgentId.get(agent.id);
-    const state = existingState ?? this.initializeCadenceState(agent);
-    if (existingState) {
-      state.completedTurns += 1;
-    }
-    if (!this.shouldGenerate(agent, state)) {
+    if (this.shouldGenerate(agent, state)) {
+      this.clearWakeTimer(state);
+      state.inFlight = true;
+      state.lastAttemptAt = this.now();
+      const turnsAtStart = agent.summaryTurnsSinceUpdate ?? 0;
+      const timer = setTimeout(() => {
+        this.scheduled.delete(timer);
+        void this.generateSummary(agentId, turnsAtStart)
+          .catch((error) => {
+            this.logger.warn(
+              { err: error, agentId, cwd: agent.cwd },
+              "Failed to generate agent purpose summary",
+            );
+          })
+          .finally(() => {
+            state.inFlight = false;
+            this.maybeGenerate(agentId);
+          });
+      }, 0);
+      this.scheduled.add(timer);
       return;
     }
 
-    state.inFlight = true;
-    state.lastAttemptAt = this.now();
-    const turnsAtStart = state.completedTurns;
-    const timer = setTimeout(() => {
-      this.scheduled.delete(timer);
-      void this.generateSummary(agent.id)
-        .then((updated) => {
-          if (updated) {
-            state.completedTurns = Math.max(0, state.completedTurns - turnsAtStart);
-          }
-          return undefined;
-        })
-        .catch((error) => {
-          this.logger.warn(
-            { err: error, agentId: agent.id, cwd: agent.cwd },
-            "Failed to generate agent purpose summary",
-          );
-        })
-        .finally(() => {
-          state.inFlight = false;
-        });
-    }, 0);
-    this.scheduled.add(timer);
+    if (state.inFlight || state.wakeTimer || !this.turnConditionMet(agent)) {
+      return;
+    }
+    const remainingMs = this.minIntervalMs - (this.now() - state.lastAttemptAt);
+    if (remainingMs > 0) {
+      this.scheduleWake(agentId, state, remainingMs);
+    }
   }
 
-  private initializeCadenceState(agent: ManagedAgent): SummaryCadenceState {
+  private getCadenceState(agent: ManagedAgent): SummaryCadenceState {
+    const existing = this.cadenceByAgentId.get(agent.id);
+    if (existing) {
+      return existing;
+    }
     const state: SummaryCadenceState = {
-      completedTurns: this.countCompletedTurnsSinceSummary(agent),
       inFlight: false,
       lastAttemptAt: agent.summaryUpdatedAt?.getTime() ?? 0,
+      wakeTimer: null,
     };
     this.cadenceByAgentId.set(agent.id, state);
     return state;
   }
 
-  private countCompletedTurnsSinceSummary(agent: ManagedAgent): number {
-    return this.getTimelineRowsSinceSummary(agent).filter((row) => row.item.type === "user_message")
-      .length;
+  private scheduleWake(agentId: string, state: SummaryCadenceState, delayMs: number): void {
+    this.clearWakeTimer(state);
+    const timer = setTimeout(() => {
+      if (state.wakeTimer === timer) {
+        state.wakeTimer = null;
+      }
+      this.maybeGenerate(agentId);
+    }, delayMs);
+    state.wakeTimer = timer;
+  }
+
+  private clearWakeTimer(state: SummaryCadenceState): void {
+    if (state.wakeTimer) {
+      clearTimeout(state.wakeTimer);
+      state.wakeTimer = null;
+    }
+  }
+
+  private turnConditionMet(agent: ManagedAgent): boolean {
+    const count = agent.summaryTurnsSinceUpdate ?? 0;
+    return agent.summary ? count >= this.minTurnsBetweenGenerations : count > 0;
   }
 
   private shouldGenerate(agent: ManagedAgent, state: SummaryCadenceState): boolean {
-    if (state.inFlight) {
+    if (state.inFlight || !this.turnConditionMet(agent)) {
       return false;
     }
-    const elapsed = this.now() - state.lastAttemptAt;
-    if (!agent.summary) {
-      return state.lastAttemptAt === 0 || elapsed >= this.minIntervalMs;
-    }
-    return state.completedTurns >= this.minTurnsBetweenGenerations && elapsed >= this.minIntervalMs;
+    return state.lastAttemptAt === 0 || this.now() - state.lastAttemptAt >= this.minIntervalMs;
   }
 
-  private async generateSummary(agentId: string): Promise<boolean> {
+  private async generateSummary(agentId: string, consumedTurns: number): Promise<boolean> {
     if (this.disposed) {
       return false;
     }
@@ -231,6 +272,7 @@ export class AgentPurposeSummaryService {
     return await this.agentManager.setAgentSummary(agentId, result.summary, {
       expectedPreviousSummary,
       summaryCursor: transcript.cursor,
+      consumedTurns,
     });
   }
 
@@ -252,16 +294,6 @@ export class AgentPurposeSummaryService {
         seq: snapshot.window.maxSeq,
       },
     };
-  }
-
-  private getTimelineRowsSinceSummary(agent: ManagedAgent) {
-    const snapshot = this.agentManager.fetchTimeline(
-      agent.id,
-      agent.summaryCursor
-        ? { direction: "after", cursor: agent.summaryCursor, limit: 0 }
-        : { limit: 0 },
-    );
-    return this.filterTimelineRowsSinceSummary(agent, snapshot);
   }
 
   private filterTimelineRowsSinceSummary(

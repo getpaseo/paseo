@@ -60,6 +60,7 @@ const STORED_AGENT_SCHEMA = z.object({
       seq: z.number().int().nonnegative(),
     })
     .optional(),
+  summaryTurnsSinceUpdate: z.number().int().nonnegative().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   lastStatus: AgentStatusSchema.default("closed"),
   lastModeId: z.string().nullable().optional(),
@@ -103,20 +104,30 @@ export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
 }
 
 function resolveSummarySnapshot(
-  agent: Pick<ManagedAgent, "summary" | "summaryUpdatedAt" | "summaryCursor">,
+  agent: Pick<
+    ManagedAgent,
+    "summary" | "summaryUpdatedAt" | "summaryCursor" | "summaryTurnsSinceUpdate"
+  >,
   existing: StoredAgentRecord | null,
-): Pick<StoredAgentRecord, "summary" | "summaryUpdatedAt" | "summaryCursor"> {
+): Pick<
+  StoredAgentRecord,
+  "summary" | "summaryUpdatedAt" | "summaryCursor" | "summaryTurnsSinceUpdate"
+> {
+  const summaryTurnsSinceUpdate =
+    agent.summaryTurnsSinceUpdate ?? existing?.summaryTurnsSinceUpdate;
   if (agent.summary === undefined) {
     return {
       summary: existing?.summary,
       summaryUpdatedAt: existing?.summaryUpdatedAt,
       summaryCursor: existing?.summaryCursor,
+      summaryTurnsSinceUpdate,
     };
   }
   return {
     summary: agent.summary,
     summaryUpdatedAt: agent.summaryUpdatedAt?.toISOString(),
     summaryCursor: agent.summaryCursor,
+    summaryTurnsSinceUpdate,
   };
 }
 

@@ -403,6 +403,11 @@ export interface PaseoDaemonConfig {
     maxProcessConcurrency: number;
   };
   autoArchiveAfterMerge?: boolean;
+  /**
+   * Rolling agent purpose summaries spawn internal generation agents. Tests that
+   * count provider activity disable them with `false`.
+   */
+  agentPurposeSummariesEnabled?: boolean;
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
@@ -1088,34 +1093,37 @@ export async function createPaseoDaemon(
     },
     logger,
   });
-  const agentPurposeSummary = new AgentPurposeSummaryService({
-    agentManager,
-    generation: createAgentStructuredTextGeneration({
-      agentManager,
-      providerSnapshotManager,
-      readDaemonConfig: () => ({
-        metadataGeneration: daemonConfigStore.get().metadataGeneration,
-      }),
-      getFocusedSelection: (cwd) => {
-        const agent = agentManager
-          .listAgents()
-          .filter((candidate) => candidate.cwd === cwd)
-          .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
-        if (!agent) {
-          return undefined;
-        }
-        return {
-          provider: agent.provider,
-          model: agent.runtimeInfo?.model ?? agent.config.model ?? null,
-          thinkingOptionId:
-            agent.runtimeInfo?.thinkingOptionId ?? agent.config.thinkingOptionId ?? null,
-        };
-      },
-    }),
-    workspaceGitService,
-    logger,
-  });
-  agentPurposeSummary.start();
+  const agentPurposeSummary =
+    config.agentPurposeSummariesEnabled === false
+      ? null
+      : new AgentPurposeSummaryService({
+          agentManager,
+          generation: createAgentStructuredTextGeneration({
+            agentManager,
+            providerSnapshotManager,
+            readDaemonConfig: () => ({
+              metadataGeneration: daemonConfigStore.get().metadataGeneration,
+            }),
+            getFocusedSelection: (cwd) => {
+              const agent = agentManager
+                .listAgents()
+                .filter((candidate) => candidate.cwd === cwd)
+                .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
+              if (!agent) {
+                return undefined;
+              }
+              return {
+                provider: agent.provider,
+                model: agent.runtimeInfo?.model ?? agent.config.model ?? null,
+                thinkingOptionId:
+                  agent.runtimeInfo?.thinkingOptionId ?? agent.config.thinkingOptionId ?? null,
+              };
+            },
+          }),
+          workspaceGitService,
+          logger,
+        });
+  agentPurposeSummary?.start();
 
   setupAutoArchiveOnMerge({
     paseoHome: config.paseoHome,
@@ -1811,7 +1819,7 @@ export async function createPaseoDaemon(
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
-    agentPurposeSummary.dispose();
+    agentPurposeSummary?.dispose();
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();

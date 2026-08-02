@@ -11,16 +11,21 @@ import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 
 const AGENT_ID = "11111111-1111-4111-8111-111111111111";
+const BASE_TIME = Date.parse("2026-07-30T12:00:00.000Z");
+
+interface SummaryWrite {
+  summary: string;
+  expectedPreviousSummary: string | null | undefined;
+  summaryCursor?: { epoch: string; seq: number };
+  consumedTurns?: number;
+}
 
 interface Harness {
   agent: ManagedAgent;
-  emit: (event: AgentManagerEvent) => void;
+  /** Mirrors AgentManager: bump the persisted counter, then dispatch the event. */
+  completeTurn: () => void;
   generationRequests: AgentPurposeSummaryGenerationRequest<unknown>[];
-  summaryWrites: Array<{
-    summary: string;
-    expectedPreviousSummary: string | null | undefined;
-    summaryCursor?: { epoch: string; seq: number };
-  }>;
+  summaryWrites: SummaryWrite[];
   appendRow: (row: AgentTimelineRow) => void;
   service: AgentPurposeSummaryService;
 }
@@ -31,7 +36,7 @@ afterEach(() => {
 
 describe("AgentPurposeSummaryService", () => {
   it("generates the first summary after the first completed turn", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ now: BASE_TIME });
     const harness = createHarness({
       timelineRows: [
         row(1, "2026-07-30T12:00:00.000Z", {
@@ -45,7 +50,7 @@ describe("AgentPurposeSummaryService", () => {
       ],
     });
 
-    harness.emit(turnCompletedEvent());
+    harness.completeTurn();
     await vi.runAllTimersAsync();
 
     expect(harness.generationRequests).toHaveLength(1);
@@ -58,49 +63,118 @@ describe("AgentPurposeSummaryService", () => {
         summary: "Adds rolling agent summaries and wires their persistence and UI.",
         expectedPreviousSummary: null,
         summaryCursor: { epoch: "epoch-1", seq: 2 },
+        consumedTurns: 1,
       },
     ]);
+    expect(harness.agent.summaryTurnsSinceUpdate).toBe(0);
     harness.service.dispose();
   });
 
-  it("waits for both the turn and time floors before refreshing an existing summary", async () => {
-    vi.useFakeTimers();
-    let now = Date.parse("2026-07-30T12:10:00.000Z");
-    const summaryUpdatedAt = new Date(now);
+  it("refreshes once the interval floor passes even without another completed turn", async () => {
+    vi.useFakeTimers({ now: BASE_TIME });
     const harness = createHarness({
       summary: "Initial purpose.",
-      summaryUpdatedAt,
-      now: () => now,
+      summaryUpdatedAt: new Date(BASE_TIME),
       minTurnsBetweenGenerations: 3,
       minIntervalMs: 300_000,
       timelineRows: [
-        row(1, "2026-07-30T12:11:00.000Z", {
+        row(1, "2026-07-30T12:01:00.000Z", {
           type: "user_message",
           text: "Continue after the initial summary.",
         }),
       ],
     });
 
-    harness.emit(turnCompletedEvent());
-    harness.emit(turnCompletedEvent());
-    harness.emit(turnCompletedEvent());
-    await vi.runAllTimersAsync();
+    harness.completeTurn();
+    harness.completeTurn();
+    harness.completeTurn();
+    await vi.advanceTimersByTimeAsync(0);
     expect(harness.generationRequests).toHaveLength(0);
 
-    now += 300_000;
-    harness.emit(turnCompletedEvent());
+    // No further turns: the armed wake timer is the only thing that can fire.
+    await vi.advanceTimersByTimeAsync(300_000);
     await vi.runAllTimersAsync();
+
     expect(harness.generationRequests).toHaveLength(1);
     expect(harness.summaryWrites[0]?.expectedPreviousSummary).toBe("Initial purpose.");
+    expect(harness.summaryWrites[0]?.consumedTurns).toBe(3);
+    expect(harness.agent.summaryTurnsSinceUpdate).toBe(0);
     harness.service.dispose();
   });
 
-  it("restores completed-turn cadence from the persisted summary cursor after restart", async () => {
-    vi.useFakeTimers();
+  it("does not stack wake timers when more turns land inside the interval", async () => {
+    vi.useFakeTimers({ now: BASE_TIME });
     const harness = createHarness({
       summary: "Initial purpose.",
-      summaryUpdatedAt: new Date("2026-07-30T12:00:00.000Z"),
+      summaryUpdatedAt: new Date(BASE_TIME),
+      minTurnsBetweenGenerations: 3,
+      minIntervalMs: 300_000,
+    });
+
+    for (let index = 0; index < 6; index += 1) {
+      harness.completeTurn();
+    }
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(harness.generationRequests).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(300_000);
+    await vi.runAllTimersAsync();
+    expect(harness.generationRequests).toHaveLength(1);
+    expect(harness.summaryWrites[0]?.consumedTurns).toBe(6);
+    harness.service.dispose();
+  });
+
+  it("refreshes on the next completed turn when the persisted counter is already past the floor", async () => {
+    vi.useFakeTimers({ now: BASE_TIME });
+    const harness = createHarness({
+      summary: "Initial purpose.",
+      summaryUpdatedAt: new Date(BASE_TIME - 600_000),
+      summaryTurnsSinceUpdate: 3,
+      minTurnsBetweenGenerations: 3,
+      minIntervalMs: 300_000,
+    });
+
+    // Startup alone must not generate, even though both floors are satisfied.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.generationRequests).toHaveLength(0);
+
+    harness.completeTurn();
+    await vi.runAllTimersAsync();
+
+    expect(harness.generationRequests).toHaveLength(1);
+    expect(harness.summaryWrites[0]?.consumedTurns).toBe(4);
+    harness.service.dispose();
+  });
+
+  it("schedules the remaining interval at startup when the persisted counter is already met", async () => {
+    vi.useFakeTimers({ now: BASE_TIME });
+    const harness = createHarness({
+      summary: "Initial purpose.",
+      summaryUpdatedAt: new Date(BASE_TIME - 100_000),
+      summaryTurnsSinceUpdate: 3,
+      minTurnsBetweenGenerations: 3,
+      minIntervalMs: 300_000,
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.generationRequests).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(200_000);
+    await vi.runAllTimersAsync();
+    expect(harness.generationRequests).toHaveLength(1);
+    harness.service.dispose();
+  });
+
+  it("skips content already covered by the persisted summary cursor after restart", async () => {
+    vi.useFakeTimers({ now: BASE_TIME });
+    const harness = createHarness({
+      summary: "Initial purpose.",
+      summaryUpdatedAt: new Date(BASE_TIME),
       summaryCursor: { epoch: "epoch-1", seq: 2 },
+      summaryTurnsSinceUpdate: 2,
       minTurnsBetweenGenerations: 3,
       minIntervalMs: 0,
       timelineRows: [
@@ -143,7 +217,7 @@ describe("AgentPurposeSummaryService", () => {
         text: "Finished the third follow-up.",
       }),
     );
-    harness.emit(turnCompletedEvent());
+    harness.completeTurn();
     await vi.runAllTimersAsync();
 
     expect(harness.generationRequests).toHaveLength(1);
@@ -155,7 +229,7 @@ describe("AgentPurposeSummaryService", () => {
   });
 
   it("uses only messages newer than the persisted summary timestamp", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ now: BASE_TIME });
     const summaryUpdatedAt = new Date("2026-07-30T12:05:00.000Z");
     const harness = createHarness({
       summary: "Old purpose.",
@@ -175,7 +249,7 @@ describe("AgentPurposeSummaryService", () => {
       ],
     });
 
-    harness.emit(turnCompletedEvent());
+    harness.completeTurn();
     await vi.runAllTimersAsync();
 
     const prompt = harness.generationRequests[0]?.prompt ?? "";
@@ -185,7 +259,7 @@ describe("AgentPurposeSummaryService", () => {
   });
 
   it("keeps a turn that completes while generation is in flight for the next summary", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ now: BASE_TIME });
     let resolveFirstGeneration: ((value: { summary: string }) => void) | undefined;
     let generationCount = 0;
     const harness = createHarness({
@@ -208,7 +282,7 @@ describe("AgentPurposeSummaryService", () => {
       },
     });
 
-    harness.emit(turnCompletedEvent());
+    harness.completeTurn();
     await vi.advanceTimersByTimeAsync(0);
     expect(harness.generationRequests).toHaveLength(1);
 
@@ -218,42 +292,40 @@ describe("AgentPurposeSummaryService", () => {
         text: "Also cover the concurrency edge case.",
       }),
     );
-    harness.emit(turnCompletedEvent());
+    harness.completeTurn();
     resolveFirstGeneration?.({ summary: "Implements the initial summary service." });
     await vi.waitFor(() => expect(harness.summaryWrites).toHaveLength(1));
     expect(harness.summaryWrites[0]?.summaryCursor).toEqual({ epoch: "epoch-1", seq: 1 });
+    // Only the turn captured when generation started is consumed.
+    expect(harness.summaryWrites[0]?.consumedTurns).toBe(1);
+    expect(harness.agent.summaryTurnsSinceUpdate).toBe(1);
 
-    harness.appendRow(
-      row(3, "2026-07-30T12:02:00.000Z", {
-        type: "assistant_message",
-        text: "Added the regression test.",
-      }),
-    );
-    harness.emit(turnCompletedEvent());
     await vi.runAllTimersAsync();
 
     expect(harness.generationRequests).toHaveLength(2);
     expect(harness.generationRequests[1]?.prompt).toContain(
       "Also cover the concurrency edge case.",
     );
+    expect(harness.agent.summaryTurnsSinceUpdate).toBe(0);
     harness.service.dispose();
   });
 });
 
-function createHarness(
-  input: {
-    summary?: string | null;
-    summaryUpdatedAt?: Date;
-    summaryCursor?: { epoch: string; seq: number };
-    timelineRows?: AgentTimelineRow[];
-    minTurnsBetweenGenerations?: number;
-    minIntervalMs?: number;
-    now?: () => number;
-    generate?: () => Promise<{ summary: string }>;
-  } = {},
-): Harness {
+interface HarnessInput {
+  summary?: string | null;
+  summaryUpdatedAt?: Date;
+  summaryCursor?: { epoch: string; seq: number };
+  summaryTurnsSinceUpdate?: number;
+  timelineRows?: AgentTimelineRow[];
+  minTurnsBetweenGenerations?: number;
+  minIntervalMs?: number;
+  now?: () => number;
+  generate?: () => Promise<{ summary: string }>;
+}
+
+function createHarness(input: HarnessInput = {}): Harness {
   let subscriber: ((event: AgentManagerEvent) => void) | null = null;
-  const summaryWrites: Harness["summaryWrites"] = [];
+  const summaryWrites: SummaryWrite[] = [];
   const generationRequests: AgentPurposeSummaryGenerationRequest<unknown>[] = [];
   const timelineRows = input.timelineRows ?? [
     row(1, "2026-07-30T12:06:00.000Z", {
@@ -268,6 +340,7 @@ function createHarness(
     summary: input.summary ?? null,
     summaryUpdatedAt: input.summaryUpdatedAt,
     summaryCursor: input.summaryCursor,
+    summaryTurnsSinceUpdate: input.summaryTurnsSinceUpdate ?? 0,
   } as unknown as ManagedAgent;
 
   const agentManager = {
@@ -318,15 +391,27 @@ function createHarness(
       options?: {
         expectedPreviousSummary?: string | null;
         summaryCursor?: { epoch: string; seq: number };
+        consumedTurns?: number;
       },
     ) {
+      if (
+        options &&
+        Object.prototype.hasOwnProperty.call(options, "expectedPreviousSummary") &&
+        (agent.summary ?? null) !== options.expectedPreviousSummary
+      ) {
+        return false;
+      }
       summaryWrites.push({
         summary,
         expectedPreviousSummary: options?.expectedPreviousSummary,
         summaryCursor: options?.summaryCursor,
+        consumedTurns: options?.consumedTurns,
       });
       agent.summary = summary;
+      agent.summaryUpdatedAt = new Date();
       agent.summaryCursor = options?.summaryCursor;
+      const pending = agent.summaryTurnsSinceUpdate ?? 0;
+      agent.summaryTurnsSinceUpdate = Math.max(0, pending - (options?.consumedTurns ?? pending));
       return true;
     },
   } as unknown as AgentPurposeSummaryOptions["agentManager"];
@@ -353,7 +438,10 @@ function createHarness(
 
   return {
     agent,
-    emit: (event) => subscriber?.(event),
+    completeTurn: () => {
+      agent.summaryTurnsSinceUpdate = (agent.summaryTurnsSinceUpdate ?? 0) + 1;
+      subscriber?.(turnCompletedEvent());
+    },
     generationRequests,
     summaryWrites,
     appendRow: (nextRow) => timelineRows.push(nextRow),

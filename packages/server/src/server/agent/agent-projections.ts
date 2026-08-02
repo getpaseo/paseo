@@ -29,6 +29,7 @@ interface ProjectionOptions {
   summary?: string | null;
   summaryUpdatedAt?: string;
   summaryCursor?: ManagedAgent["summaryCursor"];
+  summaryTurnsSinceUpdate?: number;
 }
 
 interface RecentProviderSessionProjectionOptions {
@@ -53,9 +54,15 @@ function normalizeLabels(labels: Record<string, unknown> | undefined): Record<st
 }
 
 function resolveSummaryProjection(
-  agent: Pick<ManagedAgent, "summary" | "summaryCursor" | "summaryUpdatedAt">,
+  agent: Pick<
+    ManagedAgent,
+    "summary" | "summaryCursor" | "summaryUpdatedAt" | "summaryTurnsSinceUpdate"
+  >,
   options: ProjectionOptions | undefined,
-): Pick<StoredAgentRecord, "summary" | "summaryCursor" | "summaryUpdatedAt"> {
+): Pick<
+  StoredAgentRecord,
+  "summary" | "summaryCursor" | "summaryUpdatedAt" | "summaryTurnsSinceUpdate"
+> {
   return {
     summary:
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "summary")
@@ -69,6 +76,11 @@ function resolveSummaryProjection(
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "summaryCursor")
         ? options.summaryCursor
         : agent.summaryCursor,
+    summaryTurnsSinceUpdate:
+      options !== undefined &&
+      Object.prototype.hasOwnProperty.call(options, "summaryTurnsSinceUpdate")
+        ? options.summaryTurnsSinceUpdate
+        : agent.summaryTurnsSinceUpdate,
   };
 }
 

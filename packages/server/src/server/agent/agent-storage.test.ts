@@ -130,6 +130,7 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     summary: overrides.summary ?? null,
     summaryUpdatedAt: overrides.summaryUpdatedAt,
     summaryCursor: overrides.summaryCursor,
+    summaryTurnsSinceUpdate: overrides.summaryTurnsSinceUpdate,
     lastUsage: overrides.lastUsage,
     lastError: overrides.lastError,
   };
@@ -228,6 +229,7 @@ describe("AgentStorage", () => {
         summary: "Adding persisted rolling summaries.",
         summaryUpdatedAt,
         summaryCursor,
+        summaryTurnsSinceUpdate: 2,
       }),
     );
 
@@ -237,6 +239,32 @@ describe("AgentStorage", () => {
     expect(persisted?.summary).toBe("Adding persisted rolling summaries.");
     expect(persisted?.summaryUpdatedAt).toBe(summaryUpdatedAt.toISOString());
     expect(persisted?.summaryCursor).toEqual(summaryCursor);
+    expect(persisted?.summaryTurnsSinceUpdate).toBe(2);
+  });
+
+  test("applySnapshot preserves the stored summary turn counter when a snapshot omits it", async () => {
+    const agentId = "agent-summary-turns";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    const initial = await storage.get(agentId);
+    expect(initial).not.toBeNull();
+    await storage.upsert({ ...initial!, summaryTurnsSinceUpdate: 4 });
+
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+
+    const persisted = await storage.get(agentId);
+    expect(persisted?.summaryTurnsSinceUpdate).toBe(4);
+  });
+
+  test("applySnapshot writes a reset summary turn counter", async () => {
+    const agentId = "agent-summary-turns-reset";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    const initial = await storage.get(agentId);
+    await storage.upsert({ ...initial!, summaryTurnsSinceUpdate: 4 });
+
+    await storage.applySnapshot(createManagedAgent({ id: agentId, summaryTurnsSinceUpdate: 0 }));
+
+    const persisted = await storage.get(agentId);
+    expect(persisted?.summaryTurnsSinceUpdate).toBe(0);
   });
 
   test("applySnapshot preserves a stored summary when a snapshot has no authoritative summary", async () => {
