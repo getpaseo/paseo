@@ -37,17 +37,29 @@ describe("workspace message schemas", () => {
     });
   });
 
-  test("keeps the worktree archive receipt required", () => {
-    expect(
-      SessionOutboundMessageSchema.safeParse({
-        type: "paseo_worktree_archive_response",
-        payload: {
-          success: false,
-          error: { code: "UNKNOWN", message: "Archive failed" },
-          requestId: "req-worktree-archive",
-        },
-      }).success,
-    ).toBe(false);
+  test("parses the legacy worktree archive receipt as an optional extension", () => {
+    const legacy = SessionOutboundMessageSchema.parse({
+      type: "paseo_worktree_archive_response",
+      payload: {
+        success: false,
+        error: { code: "UNKNOWN", message: "Archive failed" },
+        requestId: "req-worktree-archive-legacy",
+      },
+    });
+    const withReceipt = SessionOutboundMessageSchema.parse({
+      type: "paseo_worktree_archive_response",
+      payload: {
+        success: false,
+        removedAgents: ["agent-parent", "agent-child"],
+        error: { code: "UNKNOWN", message: "Archive failed" },
+        requestId: "req-worktree-archive-partial",
+      },
+    });
+
+    expect(legacy).not.toHaveProperty("payload.removedAgents");
+    expect(withReceipt).toMatchObject({
+      payload: { removedAgents: ["agent-parent", "agent-child"] },
+    });
   });
 
   test("parses fetch_workspaces_request", () => {

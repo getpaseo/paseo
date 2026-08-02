@@ -401,7 +401,12 @@ type ForgeSearchPayload = ForgeSearchResponse["payload"];
 type GitHubSearchPayload = GitHubSearchResponse["payload"];
 type DirectorySuggestionsPayload = DirectorySuggestionsResponse["payload"];
 type PaseoWorktreeListPayload = PaseoWorktreeListResponse["payload"];
-type PaseoWorktreeArchivePayload = PaseoWorktreeArchiveResponse["payload"];
+type PaseoWorktreeArchivePayload = Omit<
+  PaseoWorktreeArchiveResponse["payload"],
+  "removedAgents"
+> & {
+  removedAgents: string[];
+};
 type CreatePaseoWorktreePayload = Extract<
   SessionOutboundMessage,
   { type: "create_paseo_worktree_response" }
@@ -3963,7 +3968,7 @@ export class DaemonClient {
     },
     requestId?: string,
   ): Promise<PaseoWorktreeArchivePayload> {
-    return this.sendCorrelatedSessionRequest({
+    const payload = await this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "paseo_worktree_archive_request",
@@ -3975,6 +3980,9 @@ export class DaemonClient {
       },
       responseType: "paseo_worktree_archive_response",
     });
+
+    // COMPAT(worktreeArchiveReceipt): added in v0.2.6; remove after 2027-02-02 once daemon floor >= v0.2.6.
+    return { ...payload, removedAgents: payload.removedAgents ?? [] };
   }
 
   async createPaseoWorktree(

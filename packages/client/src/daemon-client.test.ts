@@ -2341,6 +2341,66 @@ test("sends structured first-agent context attachments with create_paseo_worktre
   });
 });
 
+test("normalizes legacy worktree archive receipts without dropping current receipts", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "worktree_archive_receipt_test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const legacyPromise = client.archivePaseoWorktree(
+    { worktreePath: "/tmp/project-legacy" },
+    "req-worktree-archive-legacy",
+  );
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "paseo_worktree_archive_response",
+      payload: {
+        success: true,
+        error: null,
+        requestId: "req-worktree-archive-legacy",
+      },
+    }),
+  );
+
+  await expect(legacyPromise).resolves.toEqual({
+    success: true,
+    removedAgents: [],
+    error: null,
+    requestId: "req-worktree-archive-legacy",
+  });
+
+  const partialPromise = client.archivePaseoWorktree(
+    { worktreePath: "/tmp/project-partial" },
+    "req-worktree-archive-partial",
+  );
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "paseo_worktree_archive_response",
+      payload: {
+        success: false,
+        removedAgents: ["agent-parent", "agent-child"],
+        error: { code: "UNKNOWN", message: "Archive failed" },
+        requestId: "req-worktree-archive-partial",
+      },
+    }),
+  );
+
+  await expect(partialPromise).resolves.toEqual({
+    success: false,
+    removedAgents: ["agent-parent", "agent-child"],
+    error: { code: "UNKNOWN", message: "Archive failed" },
+    requestId: "req-worktree-archive-partial",
+  });
+});
+
 test("sends project.add.request without creating a workspace", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

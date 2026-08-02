@@ -4735,7 +4735,7 @@ export const PaseoWorktreeArchiveResponseSchema = z.object({
   type: z.literal("paseo_worktree_archive_response"),
   payload: z.object({
     success: z.boolean(),
-    removedAgents: z.array(z.string()),
+    removedAgents: z.array(z.string()).optional(),
     error: CheckoutErrorSchema.nullable(),
     requestId: z.string(),
   }),
