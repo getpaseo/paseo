@@ -2026,11 +2026,9 @@ export function Composer({
 
   const messageInputContainerRef = useRef<View>(null);
 
-  const isSubmitBusy =
-    isProcessing ||
-    isSubmitLoading ||
-    isUploadingFile ||
-    (waitForGithubAutoAttachOnSubmit && githubAutoAttach.isResolving);
+  const isSubmitLoadingVisible = isProcessing || isSubmitLoading || isUploadingFile;
+  const isSubmitDisabled =
+    isSubmitLoadingVisible || (waitForGithubAutoAttachOnSubmit && githubAutoAttach.isResolving);
 
   // Disable drops while submitting/uploading: the submit path clears and restores attachments,
   // so a drop in that window would be lost or land on a locked draft. `disabled` hides the
@@ -2041,7 +2039,7 @@ export function Composer({
       onGenericFiles: handleGenericFilesDropped,
       onWorkspaceFile: handleWorkspaceFileDropped,
     },
-    { disabled: isSubmitBusy },
+    { disabled: isSubmitLoadingVisible },
   );
 
   const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint;
@@ -2089,8 +2087,8 @@ export function Composer({
                 submitButtonAccessibilityLabel={submitButtonAccessibilityLabel}
                 submitButtonTestID={submitButtonTestID}
                 submitIcon={submitIcon}
-                isSubmitDisabled={isSubmitBusy}
-                isSubmitLoading={isSubmitBusy}
+                isSubmitDisabled={isSubmitDisabled}
+                isSubmitLoading={isSubmitLoadingVisible}
                 preserveHeightOnSubmit={submitBehavior === "preserve-and-lock"}
                 attachments={selectedAttachments}
                 cwd={cwd}

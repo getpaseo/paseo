@@ -50,6 +50,13 @@ import {
   waitForSidebarHydration,
   waitForWorkspaceInSidebar,
 } from "../support/helpers/workspace-ui";
+import { dropFileOnComposer, expectAttachmentPill } from "../support/helpers/composer";
+
+const BACKGROUND_RESOLUTION_FILE = {
+  name: "background-context.json",
+  mimeType: "application/json",
+  buffer: Buffer.from(JSON.stringify({ composer: "background-resolution" })),
+};
 
 interface WorkspaceStatusGroupEvent {
   rowTestId: string;
@@ -848,7 +855,13 @@ test.describe("New workspace flow", () => {
 
     await pasteGithubPrUrl(page, context, pr.url);
 
-    await expect(page.getByTestId("workspace-create-submit")).toBeDisabled();
+    const createButton = page.getByTestId("workspace-create-submit");
+    await expect(createButton).toBeDisabled();
+    await expect(createButton.getByRole("progressbar")).toHaveCount(0);
+
+    await dropFileOnComposer(page, BACKGROUND_RESOLUTION_FILE);
+    await expectAttachmentPill(page, "composer-file-attachment-pill");
+
     await expectComposerGithubAttachmentPill(page, {
       number: pr.number,
       title: pr.title,
