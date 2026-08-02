@@ -109,15 +109,25 @@ export const baseColors = {
 
 export type ThemeName = "light" | "dark" | "zinc" | "midnight" | "claude" | "ghostty";
 
-// Diff stat colors — light uses muted tones, dark uses the brighter palette values
+// Diff colors — light uses muted tones, dark uses the brighter palette values.
+//
+// Two tiers, because the +/- serves two jobs. In the diff view the color *is* the signal and
+// has to survive being scanned line by line, so it stays saturated. In a row's metadata the
+// counts are a footnote next to a title and a subtitle; at full saturation they read as the
+// loudest thing in the row. The Stat tier keeps the hue but drops the chroma to roughly the
+// weight of foregroundMuted, so it sits with the subtitle instead of shouting over it.
 const lightDiffColors = {
   diffAddition: "#15803d", // green-700 — readable on white without screaming
   diffDeletion: "#b91c1c", // red-700
+  diffStatAddition: "#32794a", // softened green-700
+  diffStatDeletion: "#a43c39", // softened red-700
 };
 
 const darkDiffColors = {
   diffAddition: "#4ade80", // green-400
   diffDeletion: "#ef4444", // red-500
+  diffStatAddition: "#61bf82",
+  diffStatDeletion: "#d36461",
 };
 
 // Status colors — semantic signals for success/danger/warning/merged. Used by

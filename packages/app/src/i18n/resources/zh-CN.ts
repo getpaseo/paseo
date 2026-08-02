@@ -1916,6 +1916,41 @@ export const zhCN: TranslationResources = {
       },
     },
     host: {
+      appearance: {
+        title: "外观",
+        name: {
+          label: "名称",
+        },
+        color: {
+          label: "颜色",
+          accessibilityLabel: "颜色，{{value}}",
+          options: {
+            none: "默认",
+            violet: "紫罗兰",
+            sky: "天蓝",
+            emerald: "翠绿",
+            orange: "橙色",
+            pink: "粉色",
+            indigo: "靛蓝",
+            teal: "青色",
+            red: "红色",
+            amber: "琥珀",
+            blue: "蓝色",
+          },
+        },
+        badge: {
+          label: "侧边栏徽章",
+          accessibilityLabel: "侧边栏徽章，{{value}}",
+          options: {
+            name: "名称",
+            icon: "仅图标",
+            hidden: "隐藏",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "Host 未找到",
       badges: {
         relay: "Relay",

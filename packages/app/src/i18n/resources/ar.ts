@@ -1938,6 +1938,41 @@ export const ar: TranslationResources = {
       },
     },
     host: {
+      appearance: {
+        title: "المظهر",
+        name: {
+          label: "الاسم",
+        },
+        color: {
+          label: "اللون",
+          accessibilityLabel: "اللون، {{value}}",
+          options: {
+            none: "افتراضي",
+            violet: "بنفسجي",
+            sky: "سماوي",
+            emerald: "زمردي",
+            orange: "برتقالي",
+            pink: "وردي",
+            indigo: "نيلي",
+            teal: "أزرق مخضر",
+            red: "أحمر",
+            amber: "كهرماني",
+            blue: "أزرق",
+          },
+        },
+        badge: {
+          label: "شارة الشريط الجانبي",
+          accessibilityLabel: "شارة الشريط الجانبي، {{value}}",
+          options: {
+            name: "الاسم",
+            icon: "أيقونة فقط",
+            hidden: "مخفي",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "لم يتم العثور على Host",
       badges: {
         relay: "تتابع",

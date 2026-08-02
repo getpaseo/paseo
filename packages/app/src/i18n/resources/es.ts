@@ -1988,6 +1988,41 @@ export const es: TranslationResources = {
       },
     },
     host: {
+      appearance: {
+        title: "Apariencia",
+        name: {
+          label: "Nombre",
+        },
+        color: {
+          label: "Color",
+          accessibilityLabel: "Color, {{value}}",
+          options: {
+            none: "Predeterminado",
+            violet: "Violeta",
+            sky: "Cielo",
+            emerald: "Esmeralda",
+            orange: "Naranja",
+            pink: "Rosa",
+            indigo: "Índigo",
+            teal: "Verde azulado",
+            red: "Rojo",
+            amber: "Ámbar",
+            blue: "Azul",
+          },
+        },
+        badge: {
+          label: "Insignia de la barra lateral",
+          accessibilityLabel: "Insignia de la barra lateral, {{value}}",
+          options: {
+            name: "Nombre",
+            icon: "Solo icono",
+            hidden: "Oculta",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "Hostno encontrado",
       badges: {
         relay: "Relé",

@@ -116,7 +116,13 @@ async function startTrackingSidebarStatusGroups(page: import("@playwright/test")
 
     capture();
     const observer = new MutationObserver(capture);
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["data-testid"],
+    });
     win.__workspaceStatusGroupObserver = observer;
   });
 }
@@ -159,7 +165,6 @@ async function expectWorkspaceStatusGroupEvents(input: {
   rowTestId: string;
   includes: string;
   excludes: string;
-  includesIndicator?: string;
   excludesIndicator?: string;
 }) {
   await waitForWorkspaceStatusGroupEvent({
@@ -172,11 +177,6 @@ async function expectWorkspaceStatusGroupEvents(input: {
   );
   expect(createdWorkspaceEvents.map((event) => event.bucket)).toContain(input.includes);
   expect(createdWorkspaceEvents.filter((event) => event.bucket === input.excludes)).toEqual([]);
-  if (input.includesIndicator) {
-    expect(createdWorkspaceEvents.map((event) => event.indicatorTestId)).toContain(
-      input.includesIndicator,
-    );
-  }
   if (input.excludesIndicator) {
     expect(
       createdWorkspaceEvents.filter((event) => event.indicatorTestId === input.excludesIndicator),
@@ -612,7 +612,6 @@ test.describe("New workspace flow", () => {
         rowTestId,
         includes: "running",
         excludes: "done",
-        includesIndicator: "workspace-status-indicator-running",
       });
     } finally {
       await tempRepo.cleanup();

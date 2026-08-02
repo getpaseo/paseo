@@ -265,7 +265,7 @@ export const en = {
       copyCode: "Copy code",
       copyTurn: "Copy turn",
       copyMessage: "Copy message",
-      forkMenu: "Fork chat",
+      forkMenu: "Fork chat from here",
       forkInNewTab: "Fork in a new tab",
       forkInNewWorkspace: "Fork in a new workspace",
       forkUnavailable: "Update the host to use this.",
@@ -1949,6 +1949,41 @@ export const en = {
       },
     },
     host: {
+      appearance: {
+        title: "Appearance",
+        name: {
+          label: "Name",
+        },
+        color: {
+          label: "Color",
+          accessibilityLabel: "Color, {{value}}",
+          options: {
+            none: "Default",
+            violet: "Violet",
+            sky: "Sky",
+            emerald: "Emerald",
+            orange: "Orange",
+            pink: "Pink",
+            indigo: "Indigo",
+            teal: "Teal",
+            red: "Red",
+            amber: "Amber",
+            blue: "Blue",
+          },
+        },
+        badge: {
+          label: "Sidebar badge",
+          accessibilityLabel: "Sidebar badge, {{value}}",
+          options: {
+            name: "Name",
+            icon: "Icon only",
+            hidden: "Hidden",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "Host not found",
       badges: {
         relay: "Relay",

@@ -1972,6 +1972,41 @@ export const ptBR: TranslationResources = {
       },
     },
     host: {
+      appearance: {
+        title: "Aparência",
+        name: {
+          label: "Nome",
+        },
+        color: {
+          label: "Cor",
+          accessibilityLabel: "Cor, {{value}}",
+          options: {
+            none: "Padrão",
+            violet: "Violeta",
+            sky: "Céu",
+            emerald: "Esmeralda",
+            orange: "Laranja",
+            pink: "Rosa",
+            indigo: "Índigo",
+            teal: "Verde-azulado",
+            red: "Vermelho",
+            amber: "Âmbar",
+            blue: "Azul",
+          },
+        },
+        badge: {
+          label: "Selo da barra lateral",
+          accessibilityLabel: "Selo da barra lateral, {{value}}",
+          options: {
+            name: "Nome",
+            icon: "Somente ícone",
+            hidden: "Oculto",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "Host não encontrado",
       badges: {
         relay: "Relay",

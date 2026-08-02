@@ -102,5 +102,11 @@ function projectRow(page: Page, project: StatusProject) {
 }
 
 function workspaceRow(page: Page, workspaceName: string) {
-  return page.getByRole("button", { name: workspaceName, exact: true });
+  return page.getByRole("button", {
+    name: new RegExp(`^${escapeRegExp(workspaceName)}(?:,|$)`),
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

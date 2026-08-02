@@ -1957,6 +1957,41 @@ export const ja: TranslationResources = {
       },
     },
     host: {
+      appearance: {
+        title: "外観",
+        name: {
+          label: "名前",
+        },
+        color: {
+          label: "色",
+          accessibilityLabel: "色、{{value}}",
+          options: {
+            none: "デフォルト",
+            violet: "バイオレット",
+            sky: "スカイ",
+            emerald: "エメラルド",
+            orange: "オレンジ",
+            pink: "ピンク",
+            indigo: "インディゴ",
+            teal: "ティール",
+            red: "レッド",
+            amber: "アンバー",
+            blue: "ブルー",
+          },
+        },
+        badge: {
+          label: "サイドバーのバッジ",
+          accessibilityLabel: "サイドバーのバッジ、{{value}}",
+          options: {
+            name: "名前",
+            icon: "アイコンのみ",
+            hidden: "非表示",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "ホストが見つかりません",
       badges: {
         relay: "リレー",

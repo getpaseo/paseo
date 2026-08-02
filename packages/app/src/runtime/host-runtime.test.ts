@@ -9,6 +9,7 @@ import type { ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
+import { defaultHostAppearance } from "@/hosts/appearance";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
@@ -348,6 +349,7 @@ function makeHost(input?: Partial<HostProfile>): HostProfile {
   return {
     serverId: input?.serverId ?? "srv_test",
     label: input?.label ?? "test host",
+    appearance: input?.appearance ?? defaultHostAppearance(),
     lifecycle: input?.lifecycle ?? {},
     connections: input?.connections ?? [direct, relay],
     preferredConnectionId: input?.preferredConnectionId ?? direct.id,
@@ -444,6 +446,21 @@ function createMemoryHostRuntimeStorage(entries: Record<string, string> = {}): H
       values.set(key, value);
     },
   };
+}
+
+function createAppearanceStore(storage: HostRuntimeStorage): HostRuntimeStore {
+  return new HostRuntimeStore({
+    storage,
+    deps: {
+      createClient: () => {
+        throw new Error("createClient should not be called");
+      },
+      connectToDaemon: async () => {
+        throw new Error("connectToDaemon should not be called");
+      },
+      getClientId: async () => "cid_test_appearance",
+    },
+  });
 }
 
 function onceHostListMatches(store: HostRuntimeStore, predicate: () => boolean): Promise<void> {
@@ -1475,6 +1492,151 @@ describe("HostRuntimeStore", () => {
         process.env.EXPO_PUBLIC_LOCAL_DAEMON = previousOverride;
       }
     }
+  });
+
+  it("exposes the default appearance for a host stored before the field existed", async () => {
+    const storage = createMemoryHostRuntimeStorage();
+    await storage.setItem(
+      "@paseo:daemon-registry",
+      JSON.stringify([
+        {
+          serverId: "srv_legacy",
+          label: "Legacy",
+          connections: [
+            { id: "socket:/tmp/legacy.sock", type: "directSocket", path: "/tmp/legacy.sock" },
+          ],
+          preferredConnectionId: "socket:/tmp/legacy.sock",
+        },
+      ]),
+    );
+    await storage.setItem("@paseo:e2e", "1");
+    const store = createAppearanceStore(storage);
+
+    const registryLoaded = onceHostListMatches(store, () => store.isHostRegistryLoaded());
+    store.boot();
+    await registryLoaded;
+
+    expect(store.getHosts()[0]?.appearance).toEqual({ color: "none", badgeDisplay: null });
+
+    store.syncHosts([]);
+  });
+
+  it("records a chosen host color and writes it through to storage", async () => {
+    const host = makeHost({ serverId: "srv_appearance", updatedAt: new Date(0).toISOString() });
+    const storage = createMemoryHostRuntimeStorage();
+    await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
+    await storage.setItem("@paseo:e2e", "1");
+    const store = createAppearanceStore(storage);
+
+    const registryLoaded = onceHostListMatches(store, () => store.isHostRegistryLoaded());
+    store.boot();
+    await registryLoaded;
+
+    const hostListChanged = onceHostListMatches(
+      store,
+      () => store.getHosts()[0]?.appearance.color === "teal",
+    );
+    await store.setHostColor("srv_appearance", "teal");
+    await hostListChanged;
+
+    const updated = store.getHosts()[0];
+    expect(updated?.appearance).toEqual({ color: "teal", badgeDisplay: null });
+    expect(updated?.updatedAt).not.toBe(host.updatedAt);
+
+    const persisted = await storage.getItem("@paseo:daemon-registry");
+    expect(JSON.parse(persisted ?? "[]")[0].appearance).toEqual({
+      color: "teal",
+      badgeDisplay: null,
+    });
+
+    store.syncHosts([]);
+  });
+
+  it("records a chosen badge display without disturbing the color", async () => {
+    const host = makeHost({
+      serverId: "srv_appearance",
+      appearance: { color: "amber", badgeDisplay: null },
+    });
+    const storage = createMemoryHostRuntimeStorage();
+    await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
+    await storage.setItem("@paseo:e2e", "1");
+    const store = createAppearanceStore(storage);
+
+    const registryLoaded = onceHostListMatches(store, () => store.isHostRegistryLoaded());
+    store.boot();
+    await registryLoaded;
+
+    const hostListChanged = onceHostListMatches(
+      store,
+      () => store.getHosts()[0]?.appearance.badgeDisplay === "icon",
+    );
+    await store.setHostBadgeDisplay("srv_appearance", "icon");
+    await hostListChanged;
+
+    expect(store.getHosts()[0]?.appearance).toEqual({ color: "amber", badgeDisplay: "icon" });
+
+    const persisted = await storage.getItem("@paseo:daemon-registry");
+    expect(JSON.parse(persisted ?? "[]")[0].appearance).toEqual({
+      color: "amber",
+      badgeDisplay: "icon",
+    });
+
+    store.syncHosts([]);
+  });
+
+  it("keeps host appearance unchanged when persistence fails", async () => {
+    const host = makeHost({ serverId: "srv_appearance" });
+    const storage = createMemoryHostRuntimeStorage();
+    await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
+    await storage.setItem("@paseo:e2e", "1");
+    const store = createAppearanceStore(storage);
+
+    const registryLoaded = onceHostListMatches(store, () => store.isHostRegistryLoaded());
+    store.boot();
+    await registryLoaded;
+
+    storage.setItem = async () => {
+      throw new Error("disk full");
+    };
+
+    await expect(store.setHostColor("srv_appearance", "teal")).rejects.toThrow("disk full");
+    expect(store.getHosts()[0]?.appearance).toEqual(defaultHostAppearance());
+
+    store.syncHosts([]);
+  });
+
+  it("serializes overlapping host appearance writes", async () => {
+    const host = makeHost({ serverId: "srv_appearance" });
+    const storage = createMemoryHostRuntimeStorage();
+    await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
+    await storage.setItem("@paseo:e2e", "1");
+    const store = createAppearanceStore(storage);
+
+    const registryLoaded = onceHostListMatches(store, () => store.isHostRegistryLoaded());
+    store.boot();
+    await registryLoaded;
+
+    const firstWrite = createDeferred<void>();
+    let writeCount = 0;
+    const setItem = storage.setItem.bind(storage);
+    storage.setItem = async (key, value) => {
+      writeCount += 1;
+      if (writeCount === 1) await firstWrite.promise;
+      await setItem(key, value);
+    };
+
+    const color = store.setHostColor("srv_appearance", "teal");
+    const display = store.setHostBadgeDisplay("srv_appearance", "icon");
+    await Promise.resolve();
+    expect(writeCount).toBe(1);
+
+    firstWrite.resolve();
+    await Promise.all([color, display]);
+
+    expect(store.getHosts()[0]?.appearance).toEqual({ color: "teal", badgeDisplay: "icon" });
+    const persistedHosts = JSON.parse((await storage.getItem("@paseo:daemon-registry")) ?? "[]");
+    expect(persistedHosts[0]?.appearance).toEqual({ color: "teal", badgeDisplay: "icon" });
+    store.syncHosts([]);
   });
 
   it("bootstraps agent directory subscription when host transitions online", async () => {
