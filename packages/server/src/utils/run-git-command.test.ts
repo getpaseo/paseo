@@ -6,6 +6,7 @@ interface FakeSpawnBehavior {
   emitError?: Error;
   exitCode?: number | null;
   killCloseDelayMs?: number;
+  killExitDelayMs?: number;
   stderrData?: Buffer | string;
   stdoutData?: Buffer | string;
 }
@@ -44,10 +45,11 @@ class FakeChildProcess extends EventEmitter {
   public readonly stdout = new EventEmitter();
   public killed = false;
   public killSignals: NodeJS.Signals[] = [];
+  public closed = false;
+  public exited = false;
 
   private readonly behavior: FakeSpawnBehavior;
   private readonly timers: NodeJS.Timeout[] = [];
-  private closed = false;
 
   public constructor(behavior: FakeSpawnBehavior) {
     super();
@@ -70,17 +72,31 @@ class FakeChildProcess extends EventEmitter {
     this.killed = true;
     this.killSignals.push(signal);
     this.clearTimers();
+    const exitDelayMs = this.behavior.killExitDelayMs ?? 0;
     this.schedule(() => {
-      this.finishClose({
+      this.finishExit({
         exitCode: null,
         signal,
       });
-    }, this.behavior.killCloseDelayMs ?? 0);
+    }, exitDelayMs);
+    this.schedule(
+      () => {
+        this.finishClose({
+          exitCode: null,
+          signal,
+        });
+      },
+      Math.max(exitDelayMs, this.behavior.killCloseDelayMs ?? exitDelayMs),
+    );
     return true;
   }
 
   public dispose(): void {
     this.clearTimers();
+    if (!this.exited) {
+      fakeSpawnController.activeCount -= 1;
+      this.exited = true;
+    }
     this.closed = true;
   }
 
@@ -126,10 +142,24 @@ class FakeChildProcess extends EventEmitter {
   }): void {
     if (this.closed) return;
 
+    this.finishExit({ exitCode, signal });
     this.closed = true;
     this.clearTimers();
-    fakeSpawnController.activeCount -= 1;
     this.emit("close", exitCode, signal);
+  }
+
+  private finishExit({
+    exitCode,
+    signal,
+  }: {
+    exitCode: number | null;
+    signal: NodeJS.Signals | null;
+  }): void {
+    if (this.exited) return;
+
+    this.exited = true;
+    fakeSpawnController.activeCount -= 1;
+    this.emit("exit", exitCode, signal);
   }
 
   private finishError(error: Error): void {
@@ -230,11 +260,11 @@ describe("runGitCommand", () => {
     });
   });
 
-  it("holds the limiter slot until a timed out process closes", async () => {
+  it("holds the limiter slot until a timed out process exits without waiting for close", async () => {
     const { runGitCommand } = await loadRunGitCommand(1);
 
     enqueueSpawnBehaviors(
-      { delayMs: 5_000, killCloseDelayMs: 100 },
+      { delayMs: 5_000, killExitDelayMs: 100, killCloseDelayMs: 500 },
       { delayMs: 0, stdoutData: "next" },
     );
 
@@ -260,6 +290,11 @@ describe("runGitCommand", () => {
         message: "Git command timed out after 20ms: git status",
       }),
     );
+    await vi.waitFor(() => {
+      expect(fakeSpawnController.processes).toHaveLength(2);
+    });
+    expect(fakeSpawnController.processes[0]?.exited).toBe(true);
+    expect(fakeSpawnController.processes[0]?.closed).toBe(false);
     await expect(next).resolves.toMatchObject({
       exitCode: 0,
       stdout: "next",

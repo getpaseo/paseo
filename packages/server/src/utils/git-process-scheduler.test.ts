@@ -6,15 +6,17 @@ function createConcurrencyTask(
   index: number,
   started: number[],
   releases: Array<() => void>,
-): () => Promise<void> {
+): () => { result: Promise<void>; exited: Promise<void> } {
   return () => {
     started.push(index);
     if (index >= 2) {
-      return Promise.resolve();
+      const completed = Promise.resolve();
+      return { result: completed, exited: completed };
     }
-    return new Promise<void>((resolve) => {
+    const completed = new Promise<void>((resolve) => {
       releases.push(resolve);
     });
+    return { result: completed, exited: completed };
   };
 }
 
@@ -51,8 +53,10 @@ describe("GitProcessScheduler", () => {
       maxProcessConcurrency: 4,
     });
     const startedAt: number[] = [];
-    const recordStart = async () => {
+    const recordStart = () => {
       startedAt.push(Date.now());
+      const completed = Promise.resolve();
+      return { result: completed, exited: completed };
     };
     const tasks = Array.from({ length: 4 }, () => scheduler.run(recordStart));
 

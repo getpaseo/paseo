@@ -11,6 +11,11 @@ export const DEFAULT_GIT_PROCESS_POLICY: GitProcessPolicy = {
   maxProcessConcurrency: 8,
 };
 
+export interface ScheduledGitProcess<T> {
+  result: Promise<T>;
+  exited: Promise<void>;
+}
+
 function parsePositiveInteger(value: string | undefined): number | undefined {
   if (value === undefined) {
     return undefined;
@@ -60,18 +65,24 @@ export class GitProcessScheduler {
     return this.waiting;
   }
 
-  run<T>(task: () => Promise<T>): Promise<T> {
+  run<T>(start: () => ScheduledGitProcess<T>): Promise<T> {
     this.waiting += 1;
-    return this.limit(
-      this.throttle(async () => {
-        this.waiting = Math.max(0, this.waiting - 1);
-        this.running += 1;
-        try {
-          return await task();
-        } finally {
-          this.running = Math.max(0, this.running - 1);
-        }
-      }),
-    );
+    return new Promise<T>((resolve, reject) => {
+      void this.limit(
+        this.throttle(async () => {
+          this.waiting = Math.max(0, this.waiting - 1);
+          this.running += 1;
+          try {
+            const process = start();
+            void process.result.then(resolve, reject);
+            await process.exited;
+          } catch (error) {
+            reject(error);
+          } finally {
+            this.running = Math.max(0, this.running - 1);
+          }
+        }),
+      ).catch(reject);
+    });
   }
 }
