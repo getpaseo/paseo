@@ -54,6 +54,7 @@ import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useLoadOlderAgentHistory } from "@/hooks/use-load-older-agent-history";
 import { useSettings } from "@/hooks/use-settings";
 import type { ToastApi } from "@/components/toast-host";
+import { returnToTimelineTail } from "./timeline-tail-navigation";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { ToolCallDetailsContent } from "@/components/tool-call-details";
 import { QuestionFormCard } from "@/components/question-form-card";
@@ -533,6 +534,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         streamRenderStrategy,
       ],
     );
+    const handleTimelineHistoryLoadError = useCallback(() => {
+      toast?.error(t("agentStream.historyLoadFailed"));
+    }, [t, toast]);
     const chatOutline = useChatOutline({
       agentId,
       serverId: resolvedServerId,
@@ -541,6 +545,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       head: effectiveStreamHead,
       enabled: supportsChatOutline && chatOutlineEnabled,
       viewportRef,
+      onJumpError: handleTimelineHistoryLoadError,
     });
 
     useImperativeHandle(
@@ -561,12 +566,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         viewportRef.current?.scrollToBottom("jump-to-bottom");
         return;
       }
-      void getHostRuntimeStore()
-        .fetchAgentTimeline(resolvedServerId, agentId, {
-          ...planTimelineTailFetch(),
-        })
-        .then(() => viewportRef.current?.scrollToBottom("jump-to-bottom"));
-    }, [agentId, isTimelineDetached, resolvedServerId]);
+      void returnToTimelineTail({
+        fetchTail: () =>
+          getHostRuntimeStore().fetchAgentTimeline(resolvedServerId, agentId, {
+            ...planTimelineTailFetch(),
+          }),
+        scrollToBottom: () => viewportRef.current?.scrollToBottom("jump-to-bottom"),
+        onError: handleTimelineHistoryLoadError,
+      });
+    }, [agentId, handleTimelineHistoryLoadError, isTimelineDetached, resolvedServerId]);
 
     const setInlineDetailsExpanded = useCallback(
       (itemId: string, expanded: boolean) => {

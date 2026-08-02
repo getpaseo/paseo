@@ -2822,6 +2822,125 @@ describe("processTimelineResponse", () => {
     },
   );
 
+  it("does not duplicate a projected tool row that spans a prompt-jump window", () => {
+    const currentTail = hydrateStreamState(
+      [
+        {
+          event: makeToolCallTimelineEvent("call-1"),
+          timestamp: new Date(500),
+          timelineCursor: { epoch: "epoch-1", seq: 500 },
+        },
+      ],
+      { source: "canonical" },
+    );
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 400, endSeq: 500 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        projection: "projected",
+        mergeWindow: true,
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 40 },
+        hasOlder: false,
+        hasNewer: true,
+        entries: [
+          {
+            ...makeToolCallTimelineEntry(1, "call-1", "completed", {
+              type: "read",
+              filePath: "/tmp/example.ts",
+            }),
+            seqEnd: 500,
+            sourceSeqRanges: [
+              { startSeq: 1, endSeq: 1 },
+              { startSeq: 500, endSeq: 500 },
+            ],
+            collapsed: ["tool_lifecycle"],
+          },
+        ],
+      },
+    });
+
+    expect(
+      getAgentToolCalls(result.tail).map((item) => ({
+        callId: item.payload.data.callId,
+        status: item.payload.data.status,
+        timelineCursor: item.timelineCursor,
+      })),
+    ).toEqual([
+      {
+        callId: "call-1",
+        status: "completed",
+        timelineCursor: { epoch: "epoch-1", seq: 500 },
+      },
+    ]);
+  });
+
+  it("does not duplicate a projected assistant row that spans a prompt-jump window", () => {
+    const timestamp = new Date(500);
+    const currentTail: StreamItem[] = [
+      {
+        ...makeAssistantItem("projected response", "loaded-assistant"),
+        messageId: "assistant-message",
+        timestamp,
+        timelineCursor: { epoch: "epoch-1", seq: 500 },
+      },
+    ];
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 400, endSeq: 500 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        projection: "projected",
+        mergeWindow: true,
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 40 },
+        hasOlder: false,
+        hasNewer: true,
+        entries: [
+          {
+            ...makeTimelineEntry(1, "projected response"),
+            item: {
+              type: "assistant_message",
+              text: "projected response",
+              messageId: "assistant-message",
+            },
+            timestamp: timestamp.toISOString(),
+            seqEnd: 500,
+            sourceSeqRanges: [
+              { startSeq: 1, endSeq: 1 },
+              { startSeq: 500, endSeq: 500 },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(
+      result.tail
+        .filter((item) => item.kind === "assistant_message")
+        .map(({ id, text, messageId, timelineCursor }) => ({
+          id,
+          text,
+          messageId,
+          timelineCursor,
+        })),
+    ).toEqual([
+      {
+        id: "loaded-assistant",
+        text: "projected response",
+        messageId: "assistant-message",
+        timelineCursor: { epoch: "epoch-1", seq: 500 },
+      },
+    ]);
+  });
+
   it("drops a stale before page anchored before a resume-tail replacement", () => {
     const currentTail: StreamItem[] = [
       {

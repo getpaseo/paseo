@@ -187,6 +187,7 @@ export const ar: TranslationResources = {
   agentStream: {
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
+    historyLoadFailed: "تعذر تحميل سجل الوكيل",
     permission: {
       plan: "يخطط",
       required: "الإذن مطلوب",

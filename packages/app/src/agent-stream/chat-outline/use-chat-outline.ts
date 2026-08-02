@@ -32,6 +32,7 @@ export interface UseChatOutlineInput {
   head: StreamItem[] | undefined;
   enabled: boolean;
   viewportRef: RefObject<StreamViewportHandle | null>;
+  onJumpError: () => void;
 }
 
 export interface ChatOutline {
@@ -49,12 +50,14 @@ export function useChatOutline({
   head,
   enabled,
   viewportRef,
+  onJumpError,
 }: UseChatOutlineInput): ChatOutline {
   const [index, setIndex] = useState<AgentTimelinePromptIndexPayload | null>(null);
   const [pendingJump, setPendingJump] = useState<PendingPromptJump | null>(null);
   const [activePrompt] = useState(createActivePromptPublisher);
   const readingRowIdRef = useRef<string | null>(null);
   const nextJumpRequestIdRef = useRef(0);
+  const nextIndexRequestIdRef = useRef(0);
   const loadedItems = useMemo(() => [...tail, ...(head ?? NO_STREAM_ITEMS)], [head, tail]);
   const prompts = enabled ? (index?.prompts ?? NO_PROMPTS) : NO_PROMPTS;
 
@@ -68,10 +71,15 @@ export function useChatOutline({
     if (!client) return;
     let active = true;
     const refresh = () => {
+      const requestId = ++nextIndexRequestIdRef.current;
       void client
         .listAgentTimelinePrompts(agentId)
         .then((payload) => {
-          if (active && shouldAcceptPromptIndexEpoch(timelineEpoch, payload.epoch)) {
+          if (
+            active &&
+            requestId === nextIndexRequestIdRef.current &&
+            shouldAcceptPromptIndexEpoch(timelineEpoch, payload.epoch)
+          ) {
             setIndex(payload);
           }
           return undefined;
@@ -152,7 +160,10 @@ export function useChatOutline({
       setPendingJump({ requestId, seq, fetchSettled: false, hasScrolled: false });
       void getHostRuntimeStore()
         .fetchAgentTimeline(serverId, agentId, planTimelinePromptJump({ epoch: index.epoch, seq }))
-        .catch(() => undefined)
+        .catch((error: unknown) => {
+          console.warn("Failed to load a Chat outline window", error);
+          onJumpError();
+        })
         .finally(() => {
           setPendingJump((current) => {
             if (current?.requestId !== requestId) return current;
@@ -160,7 +171,7 @@ export function useChatOutline({
           });
         });
     },
-    [agentId, index, loadedItems, serverId, viewportRef],
+    [agentId, index, loadedItems, onJumpError, serverId, viewportRef],
   );
 
   return { prompts, activePrompt, jumpToPrompt, reportReadingPosition };

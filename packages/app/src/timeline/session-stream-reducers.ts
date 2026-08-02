@@ -187,6 +187,92 @@ interface TimelinePathResult {
   acknowledgedClientMessageIds: string[];
 }
 
+function matchesProjectedRow(existing: StreamItem, incoming: StreamItem): boolean {
+  if (isAgentToolCallItem(existing) && isAgentToolCallItem(incoming)) {
+    return existing.payload.data.callId === incoming.payload.data.callId;
+  }
+  if (existing.kind === "assistant_message" && incoming.kind === "assistant_message") {
+    return (
+      existing.messageId === incoming.messageId &&
+      existing.text === incoming.text &&
+      existing.timestamp.getTime() === incoming.timestamp.getTime()
+    );
+  }
+  return (
+    existing.kind === "thought" &&
+    incoming.kind === "thought" &&
+    existing.text === incoming.text &&
+    existing.timestamp.getTime() === incoming.timestamp.getTime()
+  );
+}
+
+function reconcilePromptWindowItems(input: {
+  hydrated: StreamItem[];
+  tail: StreamItem[];
+  head: StreamItem[];
+}): {
+  page: StreamItem[];
+  tail: StreamItem[];
+  head: StreamItem[];
+  acknowledgedClientMessageIds: string[];
+} {
+  let tail = input.tail;
+  let head = input.head;
+  const page: StreamItem[] = [];
+  const acknowledgedClientMessageIds: string[] = [];
+  for (const item of input.hydrated) {
+    if (item.kind !== "user_message") {
+      const tailIndex = tail.findIndex((candidate) => matchesProjectedRow(candidate, item));
+      const headIndex =
+        tailIndex < 0 ? head.findIndex((candidate) => matchesProjectedRow(candidate, item)) : -1;
+      const lane = tailIndex >= 0 ? tail : head;
+      const index = tailIndex >= 0 ? tailIndex : headIndex;
+      const existing = lane[index];
+      if (index >= 0 && existing) {
+        const next = [...lane];
+        next[index] =
+          isAgentToolCallItem(existing) && isAgentToolCallItem(item)
+            ? mergeAgentToolCallItem(
+                existing,
+                item.payload.data,
+                item.timestamp,
+                item.timelineCursor,
+              )
+            : { ...item, id: existing.id };
+        if (tailIndex >= 0) tail = next;
+        else head = next;
+        continue;
+      }
+      page.push(item);
+      continue;
+    }
+    const reconciled = upsertUserMessageAcrossStream({
+      tail,
+      head,
+      message: item,
+      insert: "none",
+      presentation: "existing",
+    });
+    const location = reconciled.location;
+    if (!location?.matched) {
+      page.push(item);
+      continue;
+    }
+    page.push(location.message);
+    if (item.clientMessageId !== undefined) {
+      acknowledgedClientMessageIds.push(item.clientMessageId);
+    }
+    tail = reconciled.tail;
+    head = reconciled.head;
+    if (location.lane === "tail") {
+      tail = [...tail.slice(0, location.index), ...tail.slice(location.index + 1)];
+    } else {
+      head = [...head.slice(0, location.index), ...head.slice(location.index + 1)];
+    }
+  }
+  return { page, tail, head, acknowledgedClientMessageIds };
+}
+
 function classifySessionTimelineSeq({
   cursor,
   epoch,
@@ -318,11 +404,18 @@ function mergeTimelineWindow(args: {
 
   const startSeq = payload.startCursor.seq;
   const endSeq = payload.endCursor.seq;
-  let retainedTail = currentTail.filter((item) => {
+  const projected = reconcileOverlappingProjectedStreamItems({
+    tail: currentTail,
+    head: currentHead,
+    units: timelineUnits,
+    epoch: payload.epoch,
+    currentEndSeq: currentCursor.endSeq,
+  });
+  const retainedTail = projected.tail.filter((item) => {
     const cursor = item.timelineCursor;
     return cursor?.epoch !== payload.epoch || cursor.seq < startSeq || cursor.seq > endSeq;
   });
-  let retainedHead = currentHead;
+  const retainedHead = projected.head;
   const reservedItemIds = new Set(
     [...retainedTail, ...retainedHead].flatMap((item) =>
       item.kind === "assistant_message" && item.blockGroupId
@@ -330,48 +423,16 @@ function mergeTimelineWindow(args: {
         : [item.id],
     ),
   );
-  const hydrated = hydrateStreamState(toHydratedEvents(timelineUnits), {
-    source: "canonical",
-    reservedItemIds,
+  const hydrated = hydrateStreamState(
+    toHydratedEvents(timelineUnits.filter((unit) => !projected.reconciledUnits.has(unit))),
+    { source: "canonical", reservedItemIds },
+  );
+  const reconciled = reconcilePromptWindowItems({
+    hydrated,
+    tail: retainedTail,
+    head: retainedHead,
   });
-  const acknowledgedClientMessageIds: string[] = [];
-  const page: StreamItem[] = [];
-  for (const item of hydrated) {
-    if (item.kind !== "user_message") {
-      page.push(item);
-      continue;
-    }
-    const reconciled = upsertUserMessageAcrossStream({
-      tail: retainedTail,
-      head: retainedHead,
-      message: item,
-      insert: "none",
-      presentation: "existing",
-    });
-    const location = reconciled.location;
-    if (!location?.matched) {
-      page.push(item);
-      continue;
-    }
-    page.push(location.message);
-    if (item.clientMessageId !== undefined) {
-      acknowledgedClientMessageIds.push(item.clientMessageId);
-    }
-    if (location.lane === "tail") {
-      retainedTail = [
-        ...reconciled.tail.slice(0, location.index),
-        ...reconciled.tail.slice(location.index + 1),
-      ];
-      retainedHead = reconciled.head;
-    } else {
-      retainedTail = reconciled.tail;
-      retainedHead = [
-        ...reconciled.head.slice(0, location.index),
-        ...reconciled.head.slice(location.index + 1),
-      ];
-    }
-  }
-  const tail = [...retainedTail, ...page]
+  const tail = [...reconciled.tail, ...reconciled.page]
     .map((item, order) => ({ item, order }))
     .sort((left, right) => {
       const leftSeq = left.item.timelineCursor?.seq ?? Number.POSITIVE_INFINITY;
@@ -395,12 +456,12 @@ function mergeTimelineWindow(args: {
 
   return {
     tail,
-    head: retainedHead,
+    head: reconciled.head,
     cursor,
     cursorChanged: !timelineCursorEquals(currentCursor, cursor),
     older,
     sideEffects: [],
-    acknowledgedClientMessageIds,
+    acknowledgedClientMessageIds: reconciled.acknowledgedClientMessageIds,
   };
 }
 

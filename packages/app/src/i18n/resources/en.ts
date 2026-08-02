@@ -185,6 +185,7 @@ export const en = {
   agentStream: {
     empty: "Start chatting with this agent...",
     scrollToBottom: "Scroll to bottom",
+    historyLoadFailed: "Couldn't load agent history",
     permission: {
       plan: "Plan",
       required: "Permission Required",
