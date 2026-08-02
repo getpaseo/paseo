@@ -2758,6 +2758,70 @@ describe("processTimelineResponse", () => {
     expect(result.older).toBe("none");
   });
 
+  it.each(["tail", "head"] as const)(
+    "reconciles a pending submission from the %s included in a prompt-jump window",
+    (lane) => {
+      const clientMessageId = "pending-submission";
+      const pending = makeSubmittedUserMessage("local pending prompt", clientMessageId);
+      const result = processTimelineResponse({
+        ...baseTimelineInput,
+        currentTail: [
+          {
+            kind: "user_message",
+            id: "newest",
+            text: "newest",
+            timestamp: new Date(100_000),
+            timelineCursor: { epoch: "epoch-1", seq: 100 },
+          },
+          ...(lane === "tail" ? [pending] : []),
+        ],
+        currentHead: lane === "head" ? [pending] : [],
+        currentCursor: { epoch: "epoch-1", startSeq: 80, endSeq: 100 },
+        sendingClientMessageIds: [clientMessageId],
+        payload: {
+          ...baseTimelineInput.payload,
+          direction: "before",
+          mergeWindow: true,
+          epoch: "epoch-1",
+          startCursor: { seq: 1 },
+          endCursor: { seq: 40 },
+          hasOlder: false,
+          hasNewer: true,
+          entries: [
+            {
+              ...makeTimelineEntry(1, "canonical pending prompt", "user_message"),
+              item: {
+                type: "user_message",
+                text: "canonical pending prompt",
+                messageId: "canonical-message",
+                clientMessageId,
+              },
+            },
+          ],
+        },
+      });
+
+      expect({
+        userMessages: result.tail
+          .filter((item) => item.kind === "user_message")
+          .map(({ text, messageId, timelineCursor }) => ({ text, messageId, timelineCursor })),
+        head: result.head,
+        acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
+      }).toEqual({
+        userMessages: [
+          {
+            text: "local pending prompt",
+            messageId: "canonical-message",
+            timelineCursor: { epoch: "epoch-1", seq: 1 },
+          },
+          { text: "newest", messageId: undefined, timelineCursor: { epoch: "epoch-1", seq: 100 } },
+        ],
+        head: [],
+        acknowledgedClientMessageIds: [clientMessageId],
+      });
+    },
+  );
+
   it("drops a stale before page anchored before a resume-tail replacement", () => {
     const currentTail: StreamItem[] = [
       {

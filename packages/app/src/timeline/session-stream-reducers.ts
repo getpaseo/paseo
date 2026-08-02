@@ -318,12 +318,13 @@ function mergeTimelineWindow(args: {
 
   const startSeq = payload.startCursor.seq;
   const endSeq = payload.endCursor.seq;
-  const retained = currentTail.filter((item) => {
+  let retainedTail = currentTail.filter((item) => {
     const cursor = item.timelineCursor;
     return cursor?.epoch !== payload.epoch || cursor.seq < startSeq || cursor.seq > endSeq;
   });
+  let retainedHead = currentHead;
   const reservedItemIds = new Set(
-    retained.flatMap((item) =>
+    [...retainedTail, ...retainedHead].flatMap((item) =>
       item.kind === "assistant_message" && item.blockGroupId
         ? [item.id, item.blockGroupId]
         : [item.id],
@@ -333,7 +334,44 @@ function mergeTimelineWindow(args: {
     source: "canonical",
     reservedItemIds,
   });
-  const tail = [...retained, ...hydrated]
+  const acknowledgedClientMessageIds: string[] = [];
+  const page: StreamItem[] = [];
+  for (const item of hydrated) {
+    if (item.kind !== "user_message") {
+      page.push(item);
+      continue;
+    }
+    const reconciled = upsertUserMessageAcrossStream({
+      tail: retainedTail,
+      head: retainedHead,
+      message: item,
+      insert: "none",
+      presentation: "existing",
+    });
+    const location = reconciled.location;
+    if (!location?.matched) {
+      page.push(item);
+      continue;
+    }
+    page.push(location.message);
+    if (item.clientMessageId !== undefined) {
+      acknowledgedClientMessageIds.push(item.clientMessageId);
+    }
+    if (location.lane === "tail") {
+      retainedTail = [
+        ...reconciled.tail.slice(0, location.index),
+        ...reconciled.tail.slice(location.index + 1),
+      ];
+      retainedHead = reconciled.head;
+    } else {
+      retainedTail = reconciled.tail;
+      retainedHead = [
+        ...reconciled.head.slice(0, location.index),
+        ...reconciled.head.slice(location.index + 1),
+      ];
+    }
+  }
+  const tail = [...retainedTail, ...page]
     .map((item, order) => ({ item, order }))
     .sort((left, right) => {
       const leftSeq = left.item.timelineCursor?.seq ?? Number.POSITIVE_INFINITY;
@@ -357,12 +395,12 @@ function mergeTimelineWindow(args: {
 
   return {
     tail,
-    head: currentHead,
+    head: retainedHead,
     cursor,
     cursorChanged: !timelineCursorEquals(currentCursor, cursor),
     older,
     sideEffects: [],
-    acknowledgedClientMessageIds: [],
+    acknowledgedClientMessageIds,
   };
 }
 
