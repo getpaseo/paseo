@@ -44,6 +44,8 @@ class FakePermissionAgentManager {
     return this.hasRunInFlight;
   }
 
+  async waitForAgentRunStart(): Promise<void> {}
+
   streamAgent(
     agentId: string,
     prompt: AgentPromptInput,

@@ -7351,11 +7351,15 @@ test("streamAgent marks a run in-flight before the provider turn starts", async 
   });
 
   try {
-    const agent = await manager.createAgent({
-      provider: "codex",
-      cwd: workdir,
-      title: "Pending run marker",
-    });
+    const agent = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        title: "Pending run marker",
+      },
+      undefined,
+      {},
+    );
 
     const stream = manager.streamAgent(agent.id, "hello");
     expect(manager.hasInFlightRun(agent.id)).toBe(true);
