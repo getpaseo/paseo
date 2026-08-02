@@ -320,6 +320,46 @@ describe("useComposerGithubAutoAttach", () => {
     vi.useRealTimers();
   });
 
+  it("keeps resolving when a pending pull request URL is removed and re-added", async () => {
+    vi.useFakeTimers();
+    const lookup = deferred<ForgeSearchPayload>();
+    const client: ForgeSearchClient = {
+      searchForge: vi.fn().mockReturnValue(lookup.promise),
+    };
+    const onPullRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      result.current.setText("Review https://github.com/acme/paseo/pull/101");
+    });
+    await flushDebounce();
+
+    act(() => {
+      result.current.setText("");
+    });
+    expect(result.current.isResolving).toBe(false);
+
+    act(() => {
+      result.current.setText("Review https://github.com/acme/paseo/pull/101");
+    });
+    expect(result.current.isResolving).toBe(true);
+    await flushDebounce();
+    expect(client.searchForge).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      lookup.resolve(githubPayload([pr101], "search-101"));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(result.current.attachments).toEqual([{ kind: "forge_change_request", item: pr101 }]);
+      expect(result.current.isResolving).toBe(false);
+      expect(onPullRequestAdded.mock.calls).toEqual([[pr101]]);
+    });
+    vi.useRealTimers();
+  });
+
   it("releases a removed ref without waiting for its lookup to settle", async () => {
     vi.useFakeTimers();
     const firstLookup = deferred<ForgeSearchPayload>();

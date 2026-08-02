@@ -39,6 +39,7 @@ interface ComposerGithubAutoAttachResult {
 interface ActiveGithubLookup {
   invalidate: (keys: readonly string[]) => void;
   invalidateIrrelevant: (current: ComposerGithubAutoAttachInput) => void;
+  hasPending: (key: string) => boolean;
 }
 
 export function useComposerGithubAutoAttach(
@@ -47,7 +48,6 @@ export function useComposerGithubAutoAttach(
   const queryClient = useQueryClient();
   const latestRef = useRef(params);
   const removedRefKeysRef = useRef(new Set<string>());
-  const pendingRefKeysRef = useRef(new Set<string>());
   const presentPullRequestKeysRef = useRef(new Set<string>());
   const activeLookupsRef = useRef(new Set<ActiveGithubLookup>());
   const previousTargetRef = useRef({ serverId: params.serverId, cwd: params.cwd });
@@ -93,7 +93,7 @@ export function useComposerGithubAutoAttach(
     const refs = refsReadyForLookup({
       params: latestRef.current,
       removedRefKeys,
-      pendingRefKeys: pendingRefKeysRef.current,
+      activeLookups: activeLookupsRef.current,
     });
     if (refs.length === 0) {
       return;
@@ -118,7 +118,6 @@ export function useComposerGithubAutoAttach(
         queryClient,
         latestRef,
         removedRefKeys,
-        pendingRefKeys: pendingRefKeysRef.current,
         onSettled: (key) => releaseResolving([key]),
         onComplete: (completedLookup) => activeLookupsRef.current.delete(completedLookup),
       });
@@ -318,7 +317,6 @@ function attachRefs({
   queryClient,
   latestRef,
   removedRefKeys,
-  pendingRefKeys,
   onSettled,
   onComplete,
 }: {
@@ -327,11 +325,13 @@ function attachRefs({
   queryClient: QueryClient;
   latestRef: RefObject<ComposerGithubAutoAttachInput>;
   removedRefKeys: Set<string>;
-  pendingRefKeys: Set<string>;
   onSettled: (key: string) => void;
   onComplete: (lookup: ActiveGithubLookup) => void;
 }): ActiveGithubLookup {
-  const outcomes = refs.map(() => ({ settled: false, item: null as ForgeSearchItem | null }));
+  const outcomes = refs.map(() => ({
+    settled: false,
+    item: null as ForgeSearchItem | null,
+  }));
   let nextOutcomeIndex = 0;
   let didComplete = false;
   const drainOutcomes = () => {
@@ -367,16 +367,9 @@ function attachRefs({
 
   refs.forEach((ref, index) => {
     const key = githubRefKey(ref);
-    if (pendingRefKeys.has(key)) {
-      onSettled(key);
-      settleOutcome(index, null);
-      return;
-    }
-    pendingRefKeys.add(key);
     void attachRef({ ref, key, queryClient, latestRef, removedRefKeys })
       .then((item) => settleOutcome(index, item))
       .finally(() => {
-        pendingRefKeys.delete(key);
         onSettled(key);
       });
   });
@@ -403,6 +396,10 @@ function attachRefs({
             : [githubRefKey(ref)],
         ),
       );
+    },
+    hasPending(key) {
+      const index = refs.findIndex((ref) => githubRefKey(ref) === key);
+      return index >= 0 && !outcomes[index].settled;
     },
   };
   return lookup;
@@ -450,11 +447,11 @@ async function attachRef({
 function refsReadyForLookup({
   params,
   removedRefKeys,
-  pendingRefKeys,
+  activeLookups,
 }: {
   params: ComposerGithubAutoAttachInput;
   removedRefKeys: Set<string>;
-  pendingRefKeys: Set<string>;
+  activeLookups: ReadonlySet<ActiveGithubLookup>;
 }): GithubRef[] {
   if (!params.client || !params.isConnected || params.cwd.trim().length === 0) {
     return [];
@@ -464,7 +461,7 @@ function refsReadyForLookup({
     const key = githubRefKey(ref);
     return (
       !removedRefKeys.has(key) &&
-      !pendingRefKeys.has(key) &&
+      ![...activeLookups].some((lookup) => lookup.hasPending(key)) &&
       !hasGithubAttachment(params.attachments, ref)
     );
   });
