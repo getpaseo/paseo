@@ -2846,6 +2846,235 @@ describe("OpenCode adapter startTurn error handling", () => {
     },
   );
 
+  test("preserves a queued post-dispatch command error ahead of idle acknowledgement", async () => {
+    const sessionId = "ses_queued_command_error";
+    const commandDispatched = createTestDeferred<void>();
+    const errorQueued = createTestDeferred<void>();
+    const childHydrationStarted = createTestDeferred<void>();
+    const releaseChildHydration = createTestDeferred<void>();
+    async function* eventStream(signal: AbortSignal) {
+      yield { type: "server.connected", properties: {} };
+      yield {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_queued_command_error_blocker",
+            sessionID: "ses_queued_command_error_blocker",
+            role: "assistant",
+          },
+        },
+      };
+      await Promise.race([commandDispatched.promise, waitForAbort(signal)]);
+      if (signal.aborted) return;
+      yield {
+        type: "session.error",
+        properties: {
+          sessionID: sessionId,
+          error: { name: "UnknownError", data: { message: "authoritative command failure" } },
+        },
+      };
+      errorQueued.resolve();
+      await waitForAbort(signal);
+    }
+    const fakeClient = {
+      command: {
+        list: vi.fn().mockResolvedValue({
+          data: [{ name: "review", description: "Review changes", source: "command" }],
+        }),
+      },
+      global: {
+        event: vi.fn().mockImplementation(async (options: { signal: AbortSignal }) => ({
+          stream: eventStream(options.signal),
+        })),
+      },
+      session: {
+        messages: vi.fn().mockResolvedValue({ data: [] }),
+        children: vi.fn().mockImplementation(async () => {
+          childHydrationStarted.resolve();
+          await releaseChildHydration.promise;
+          return { data: [] };
+        }),
+        command: vi.fn().mockImplementation(async () => {
+          commandDispatched.resolve();
+          await errorQueued.promise;
+          return { data: {} };
+        }),
+        status: vi.fn().mockResolvedValue({ data: {} }),
+      },
+    } as never;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      sessionId,
+      createTestLogger(),
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      await childHydrationStarted.promise;
+      await expect(session.startTurn("/review")).resolves.toEqual({
+        turnId: "opencode-turn-0",
+      });
+
+      expect(fakeClient.session.status).not.toHaveBeenCalled();
+      expect(terminalTurnEvents(events)).toEqual([]);
+
+      releaseChildHydration.resolve();
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({
+            type: "turn_failed",
+            provider: "opencode",
+            turnId: "opencode-turn-0",
+            error: '{"name":"UnknownError","data":{"message":"authoritative command failure"}}',
+          }),
+        ]);
+      });
+    } finally {
+      commandDispatched.resolve();
+      releaseChildHydration.resolve();
+      await session.close();
+    }
+  });
+
+  test("does not attribute queued pre-dispatch assistant output to a replacement turn", async () => {
+    const sessionId = "ses_queued_replacement_output";
+    const releaseFirstOutput = createTestDeferred<void>();
+    const releaseQueuedOldOutput = createTestDeferred<void>();
+    const oldOutputQueued = createTestDeferred<void>();
+    const secondBaselineStarted = createTestDeferred<void>();
+    const secondBaselineResponse = createTestDeferred<{ data: unknown[] }>();
+    const childHydrationStarted = createTestDeferred<void>();
+    const releaseChildHydration = createTestDeferred<void>();
+    const releaseCurrentOutput = createTestDeferred<void>();
+    let baselineReadCount = 0;
+    async function* eventStream(signal: AbortSignal) {
+      yield { type: "server.connected", properties: {} };
+      await Promise.race([releaseFirstOutput.promise, waitForAbort(signal)]);
+      if (signal.aborted) return;
+      for (const event of assistantTurnEvents({
+        sessionId,
+        messageId: "msg_first_turn_output",
+        text: "first turn output",
+      })) {
+        yield event;
+      }
+      await Promise.race([releaseQueuedOldOutput.promise, waitForAbort(signal)]);
+      if (signal.aborted) return;
+      yield {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_queued_replacement_blocker",
+            sessionID: "ses_queued_replacement_blocker",
+            role: "assistant",
+          },
+        },
+      };
+      for (const event of assistantMessageEvents({
+        sessionId,
+        messageId: "msg_stale_replacement_output",
+        text: "stale pre-dispatch output",
+      })) {
+        yield event;
+      }
+      oldOutputQueued.resolve();
+      await Promise.race([releaseCurrentOutput.promise, waitForAbort(signal)]);
+      if (signal.aborted) return;
+      yield {
+        type: "message.updated",
+        properties: {
+          info: { id: "msg_replacement_user", sessionID: sessionId, role: "user" },
+        },
+      };
+      for (const event of assistantTurnEvents({
+        sessionId,
+        messageId: "msg_current_replacement_output",
+        text: "current replacement output",
+      })) {
+        yield event;
+      }
+      await waitForAbort(signal);
+    }
+    const { parent, openCode } = await createParentSession(sessionId, (client) => {
+      client.sessionPromptAsyncEvents = [];
+      client.globalEventImplementation = async (options) => ({
+        stream: eventStream((options as { signal: AbortSignal }).signal),
+      });
+      client.sessionMessagesImplementation = async () => {
+        baselineReadCount += 1;
+        if (baselineReadCount === 1) {
+          return { data: [] };
+        }
+        secondBaselineStarted.resolve();
+        return await secondBaselineResponse.promise;
+      };
+      client.sessionChildrenImplementation = async () => {
+        childHydrationStarted.resolve();
+        await releaseChildHydration.promise;
+        return { data: [] };
+      };
+    });
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    try {
+      await expect(parent.startTurn("first prompt")).resolves.toEqual({
+        turnId: "opencode-turn-0",
+      });
+      releaseFirstOutput.resolve();
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({ type: "turn_completed", turnId: "opencode-turn-0" }),
+        ]);
+      });
+
+      const replacement = parent.startTurn("replacement prompt");
+      await secondBaselineStarted.promise;
+      releaseQueuedOldOutput.resolve();
+      await Promise.all([childHydrationStarted.promise, oldOutputQueued.promise]);
+
+      secondBaselineResponse.resolve({ data: [] });
+      await expect(replacement).resolves.toEqual({ turnId: "opencode-turn-1" });
+      releaseCurrentOutput.resolve();
+      releaseChildHydration.resolve();
+
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({ type: "turn_completed", turnId: "opencode-turn-0" }),
+          expect.objectContaining({ type: "turn_completed", turnId: "opencode-turn-1" }),
+        ]);
+      });
+      expect(
+        events.some(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "assistant_message" &&
+            event.item.text === "stale pre-dispatch output",
+        ),
+      ).toBe(false);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          turnId: "opencode-turn-1",
+          item: expect.objectContaining({
+            type: "assistant_message",
+            text: "current replacement output",
+          }),
+        }),
+      );
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
+    } finally {
+      releaseFirstOutput.resolve();
+      releaseQueuedOldOutput.resolve();
+      secondBaselineResponse.resolve({ data: [] });
+      releaseChildHydration.resolve();
+      releaseCurrentOutput.resolve();
+      await parent.close();
+    }
+  });
+
   test.each([
     {
       label: "idle",

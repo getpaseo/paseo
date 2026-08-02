@@ -3049,7 +3049,12 @@ class OpenCodeAgentSession implements AgentSession {
   private externalStatusReconciliationStarted = false;
   private runnerStatusRevision = 0;
   private streamEventRevision = 0;
+  private processedStreamEventRevision = 0;
   private latestRunnerStatusStreamEventRevision = 0;
+  private latestSessionErrorStreamEvent: {
+    readonly revision: number;
+    readonly event: Extract<OpenCodeEvent, { type: "session.error" }>;
+  } | null = null;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private subAgentsByCallId = new Map<string, OpenCodeSubAgentActivityState>();
   private subAgentCallIdByChildSessionId = new Map<string, string>();
@@ -3837,9 +3842,7 @@ class OpenCodeAgentSession implements AgentSession {
         const currentEventCount = ++eventCount;
         const streamEventRevision = ++this.streamEventRevision;
         const event = unwrapOpenCodeGlobalEvent(rawEvent);
-        if (event && getOpenCodeRunnerStatusFromEvent(event, this.sessionId) !== null) {
-          this.latestRunnerStatusStreamEventRevision = streamEventRevision;
-        }
+        this.observeStreamEventArrival(event, streamEventRevision);
         pendingEventProcessing = pendingEventProcessing.then(async () => {
           if (eventProcessingFailure.occurred || eventStreamAbortController.signal.aborted) {
             return;
@@ -3851,6 +3854,7 @@ class OpenCodeAgentSession implements AgentSession {
               streamEventRevision,
               signal: eventStreamAbortController.signal,
             });
+            this.processedStreamEventRevision = streamEventRevision;
           } catch (error) {
             eventProcessingFailure.occurred = true;
             eventProcessingFailure.error = error;
@@ -4333,11 +4337,18 @@ class OpenCodeAgentSession implements AgentSession {
     if (!event) {
       return;
     }
-    this.observeRunnerStatusEvent(event);
     if (
-      turnId &&
-      this.discardEventBeforeSubmissionAcceptance(event, eventCount, streamEventRevision, turnId)
+      await this.discardEventFromBeforeForegroundDispatch({
+        event,
+        eventCount,
+        streamEventRevision,
+        turnId,
+      })
     ) {
+      return;
+    }
+    this.observeRunnerStatusEvent(event);
+    if (turnId && this.discardEventBeforeSubmissionAcceptance(event, eventCount, turnId)) {
       return;
     }
     if (this.discardEventWhileStopping(event, eventCount)) {
@@ -4543,37 +4554,69 @@ class OpenCodeAgentSession implements AgentSession {
   private discardEventBeforeSubmissionAcceptance(
     event: OpenCodeEvent,
     eventCount: number,
-    streamEventRevision: number,
     turnId: string,
   ): boolean {
     return (
       this.discardEventWhileSubmissionPending(event, eventCount, turnId) ||
-      this.discardTerminalUntilSubmissionAccepted(event, eventCount, streamEventRevision, turnId)
+      this.discardTerminalUntilSubmissionAccepted(event, eventCount, turnId)
     );
+  }
+
+  private async discardEventFromBeforeForegroundDispatch(params: {
+    event: OpenCodeEvent;
+    eventCount: number;
+    streamEventRevision: number;
+    turnId: string | null;
+  }): Promise<boolean> {
+    const { event, eventCount, streamEventRevision, turnId } = params;
+    if (
+      !turnId ||
+      this.turnState.status !== "running" ||
+      this.turnState.turnId !== turnId ||
+      this.turnState.dispatchStreamEventRevision === null ||
+      streamEventRevision > this.turnState.dispatchStreamEventRevision ||
+      getOpenCodeEventSessionId(event) !== this.sessionId
+    ) {
+      return false;
+    }
+    if (event.type === "permission.asked" || event.type === "question.asked") {
+      const translated = await this.translateEvent(event);
+      this.emitBackgroundPermissionRequests(this.emitProviderInternalEvents(translated));
+    }
+    this.traceOpenCode("provider.opencode.event.skip", {
+      n: eventCount,
+      reason: "foreground_event_before_dispatch",
+      type: event.type,
+    });
+    return true;
+  }
+
+  private observeStreamEventArrival(
+    event: OpenCodeEvent | null,
+    streamEventRevision: number,
+  ): void {
+    if (event && getOpenCodeRunnerStatusFromEvent(event, this.sessionId) !== null) {
+      this.latestRunnerStatusStreamEventRevision = streamEventRevision;
+    }
+    if (event?.type === "session.error" && getOpenCodeEventSessionId(event) === this.sessionId) {
+      this.latestSessionErrorStreamEvent = { revision: streamEventRevision, event };
+    }
   }
 
   private discardTerminalUntilSubmissionAccepted(
     event: OpenCodeEvent,
     eventCount: number,
-    streamEventRevision: number,
     turnId: string,
   ): boolean {
     if (!isOpenCodeTerminalEvent(event, this.sessionId)) {
       return false;
     }
-    const arrivedBeforeDispatch =
-      this.turnState.status === "running" &&
-      this.turnState.turnId === turnId &&
-      this.turnState.dispatchStreamEventRevision !== null &&
-      streamEventRevision <= this.turnState.dispatchStreamEventRevision;
-    if (!arrivedBeforeDispatch && this.isForegroundSubmissionAccepted(turnId)) {
+    if (this.isForegroundSubmissionAccepted(turnId)) {
       return false;
     }
     this.traceOpenCode("provider.opencode.event.skip", {
       n: eventCount,
-      reason: arrivedBeforeDispatch
-        ? "foreground_terminal_before_dispatch"
-        : "foreground_submission_unaccepted",
+      reason: "foreground_submission_unaccepted",
       type: event.type,
     });
     return true;
@@ -4782,6 +4825,18 @@ class OpenCodeAgentSession implements AgentSession {
     dispatchStreamEventRevision: number,
   ): Promise<void> {
     if (!this.markForegroundSubmissionAccepted(turnId, "command_acknowledgement")) {
+      return;
+    }
+    const sessionError = this.latestSessionErrorStreamEvent;
+    if (sessionError && sessionError.revision > dispatchStreamEventRevision) {
+      if (this.processedStreamEventRevision < sessionError.revision) {
+        return;
+      }
+      const translated = await this.translateEvent(sessionError.event);
+      if (signal.aborted || this.activeForegroundTurnId !== turnId) {
+        return;
+      }
+      this.emitForegroundEvents(this.emitProviderInternalEvents(translated), turnId);
       return;
     }
     if (this.latestRunnerStatusStreamEventRevision <= dispatchStreamEventRevision) {
