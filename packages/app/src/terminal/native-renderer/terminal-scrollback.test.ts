@@ -47,7 +47,7 @@ async function seedLargeOutput(input: {
 }
 
 describe("native terminal scrollback retention", () => {
-  test("large output retains non-zero scrollback matching configured lines", async () => {
+  test("large output retains bounded scrollback with absolute rows advanced past evictions", async () => {
     const terminal = await seedLargeOutput({
       rows: ROWS,
       cols: COLS,
@@ -60,7 +60,10 @@ describe("native terminal scrollback retention", () => {
     expect(state.scrollback.length).toBeGreaterThan(0);
     expect(state.scrollback.length).toBeLessThanOrEqual(SCROLLBACK);
     expect(bounds.newestRow).toBeGreaterThan(ROWS);
-    expect(bounds.oldestRow).toBe(0);
+    expect(bounds.oldestRow).toBeGreaterThan(0);
+    expect(bounds.newestRow - bounds.oldestRow + 1).toBe(
+      state.scrollback.length + state.grid.length,
+    );
   });
 
   test("observable scrollback count is bounded by configured lines", async () => {
