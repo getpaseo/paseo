@@ -236,7 +236,7 @@ describe("terminal emulator runtime in a real browser", () => {
     mounted.runtime.resize({ force: true, shouldClaim: true });
 
     expect(mounted.sizes.filter((size) => size.shouldClaim)).toEqual([
-      { ...settledSize, shouldClaim: true },
+      { ...settledSize, shouldClaim: true, forceClaim: true },
     ]);
   });
 
