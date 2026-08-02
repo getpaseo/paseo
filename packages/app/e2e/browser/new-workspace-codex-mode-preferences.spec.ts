@@ -88,7 +88,7 @@ async function readCodexModePreference(page: Page): Promise<unknown> {
 }
 
 async function selectMode(page: Page, label: string): Promise<void> {
-  const modeControl = page.getByTestId("mode-control").first();
+  const modeControl = page.getByRole("button", { name: /^Select agent mode \(/ });
   await expect(modeControl).toBeVisible({ timeout: 30_000 });
   await modeControl.click();
 
@@ -169,12 +169,14 @@ test.describe("New workspace Codex mode preferences", () => {
         projectDisplayName: seeded.projectDisplayName,
       });
 
-      await expect(page.getByTestId("mode-control").first()).toContainText("Default permissions", {
-        timeout: 30_000,
-      });
+      await expect(
+        page.getByRole("button", { name: "Select agent mode (Default permissions)" }),
+      ).toBeVisible({ timeout: 30_000 });
       await expectThinkingOptionsFit(page);
       await selectMode(page, "Full access");
-      await expect(page.getByTestId("mode-control").first()).toContainText("Full access");
+      await expect(
+        page.getByRole("button", { name: "Select agent mode (Full access)" }),
+      ).toBeVisible();
 
       await submitNewWorkspacePrompt(page, "Keep Codex full access selected globally.");
       const createAgentRequest = await createAgentRecorder.waitForCreateAgentRequest();
@@ -210,14 +212,14 @@ test.describe("New workspace Codex mode preferences", () => {
         workspaceId: seeded.workspaceId,
         agentId: agent.id,
       });
-      await expect(page.getByTestId("mode-control").first()).toContainText("Default permissions", {
-        timeout: 30_000,
-      });
+      await expect(
+        page.getByRole("button", { name: "Select agent mode (Default permissions)" }),
+      ).toBeVisible({ timeout: 30_000 });
 
       await selectMode(page, "Full access");
-      await expect(page.getByTestId("mode-control").first()).toContainText("Full access", {
-        timeout: 30_000,
-      });
+      await expect(
+        page.getByRole("button", { name: "Select agent mode (Full access)" }),
+      ).toBeVisible({ timeout: 30_000 });
 
       await openGlobalNewWorkspaceComposer(page);
       await selectNewWorkspaceProject(page, {
@@ -225,9 +227,9 @@ test.describe("New workspace Codex mode preferences", () => {
         projectDisplayName: seeded.projectDisplayName,
       });
 
-      await expect(page.getByTestId("mode-control").first()).toContainText("Full access", {
-        timeout: 30_000,
-      });
+      await expect(
+        page.getByRole("button", { name: "Select agent mode (Full access)" }),
+      ).toBeVisible({ timeout: 30_000 });
     } finally {
       await seeded.cleanup();
     }
