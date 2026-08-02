@@ -16,6 +16,10 @@ export interface WorktreeArchiveResult {
   removedAgents: string[];
 }
 
+export interface WorktreeArchiveCommandError extends CommandError {
+  removedAgents: string[];
+}
+
 /** Schema for archive command output */
 export const archiveSchema: OutputSchema<WorktreeArchiveResult> = {
   idField: "name",
@@ -109,10 +113,17 @@ export async function runArchiveCommandWithDeps(
 
     await client.close();
 
-    if (response.error) {
-      const error: CommandError = {
+    if (!response.success || response.error) {
+      const removedAgents = Array.from(new Set(response.removedAgents ?? []));
+      const error: WorktreeArchiveCommandError = {
         code: "WORKTREE_ARCHIVE_FAILED",
-        message: `Failed to archive worktree: ${response.error.message}`,
+        message: response.error
+          ? `Failed to archive worktree: ${response.error.message}`
+          : "Failed to archive worktree",
+        removedAgents,
+        ...(removedAgents.length > 0
+          ? { details: `Archived agents before failure: ${removedAgents.join(", ")}` }
+          : {}),
       };
       throw error;
     }

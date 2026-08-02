@@ -107,6 +107,79 @@ export class WorkspaceArchiveScopeChangedError extends Error {
   }
 }
 
+export class WorkspaceArchiveError extends AgentArchiveError {
+  readonly failedWorkspaceIds: string[];
+
+  constructor(options: {
+    archivedAgentIds: Iterable<string>;
+    failedAgentIds: Iterable<string>;
+    indeterminateAgentIds: Iterable<string>;
+    failedWorkspaceIds: Iterable<string>;
+    cause: unknown;
+  }) {
+    super(options);
+    this.name = "WorkspaceArchiveError";
+    this.failedWorkspaceIds = Array.from(new Set(options.failedWorkspaceIds));
+  }
+}
+
+interface AggregatedAgentArchiveResults {
+  archivedAgentIds: Set<string>;
+  failedAgentIds: Set<string>;
+  indeterminateAgentIds: Set<string>;
+  untypedFailureIndexes: number[];
+  failureCause: unknown;
+  failed: boolean;
+}
+
+function aggregateAgentArchiveResults(
+  results: readonly PromiseSettledResult<Iterable<string>>[],
+): AggregatedAgentArchiveResults {
+  const archivedAgentIds = new Set<string>();
+  const failedAgentIds = new Set<string>();
+  const indeterminateAgentIds = new Set<string>();
+  const untypedFailureIndexes: number[] = [];
+  let failureCause: unknown;
+  let failed = false;
+
+  for (const [index, result] of results.entries()) {
+    if (result.status === "fulfilled") {
+      for (const agentId of result.value) {
+        archivedAgentIds.add(agentId);
+      }
+      continue;
+    }
+
+    if (!failed) {
+      failureCause =
+        result.reason instanceof AgentArchiveError ? result.reason.cause : result.reason;
+    }
+    failed = true;
+    if (!(result.reason instanceof AgentArchiveError)) {
+      untypedFailureIndexes.push(index);
+      continue;
+    }
+    for (const agentId of result.reason.archivedAgentIds) {
+      archivedAgentIds.add(agentId);
+    }
+    for (const agentId of result.reason.failedAgentIds) {
+      failedAgentIds.add(agentId);
+    }
+    for (const agentId of result.reason.indeterminateAgentIds) {
+      indeterminateAgentIds.add(agentId);
+    }
+  }
+
+  return {
+    archivedAgentIds,
+    failedAgentIds,
+    indeterminateAgentIds,
+    untypedFailureIndexes,
+    failureCause,
+    failed,
+  };
+}
+
 export async function resolveWorkspaceIdAtPath(
   dependencies: Pick<ArchiveDependencies, "findWorkspaceIdForCwd" | "listActiveWorkspaces">,
   targetPath: string,
@@ -390,7 +463,6 @@ async function archiveTargetRecords(
   archiveWorkspaceIds: readonly string[],
   requestId: string,
 ): Promise<{ archivedAgents: Set<string>; archivedWorkspaceIds: string[] }> {
-  const archivedAgents = new Set<string>();
   const archivedWorkspaceIds: string[] = [];
   const archiveWorkspaceIdSet = new Set(archiveWorkspaceIds);
   const agentWorkspaceIds = new Map<string, string>();
@@ -424,33 +496,31 @@ async function archiveTargetRecords(
     ),
   );
 
-  const failedAgentIds = new Set<string>();
+  const {
+    archivedAgentIds: archivedAgents,
+    failedAgentIds,
+    indeterminateAgentIds,
+    untypedFailureIndexes,
+    failureCause,
+    failed: agentArchiveFailed,
+  } = aggregateAgentArchiveResults(agentResults);
   const unsafeWorkspaceIds = new Set<string>();
-  let failureCause: unknown;
   let canIdentifyFailedWorkspaces = true;
-  for (const result of agentResults) {
-    if (result.status === "fulfilled") {
-      for (const agentId of result.value) {
-        archivedAgents.add(agentId);
-      }
+  for (const index of untypedFailureIndexes) {
+    const unsafeWorkspaceId = targetWorkspaceIds[index];
+    if (unsafeWorkspaceId) {
+      unsafeWorkspaceIds.add(unsafeWorkspaceId);
+    } else {
+      canIdentifyFailedWorkspaces = false;
+    }
+  }
+  for (const unsafeAgentId of [...failedAgentIds, ...indeterminateAgentIds]) {
+    const unsafeWorkspaceId = agentWorkspaceIds.get(unsafeAgentId);
+    if (!unsafeWorkspaceId || !archiveWorkspaceIdSet.has(unsafeWorkspaceId)) {
+      canIdentifyFailedWorkspaces = false;
       continue;
     }
-    if (!(result.reason instanceof AgentArchiveError)) {
-      throw result.reason;
-    }
-    failureCause ??= result.reason.cause;
-    for (const agentId of result.reason.archivedAgentIds) {
-      archivedAgents.add(agentId);
-    }
-    for (const agentId of result.reason.failedAgentIds) {
-      failedAgentIds.add(agentId);
-      const failedWorkspaceId = agentWorkspaceIds.get(agentId);
-      if (!failedWorkspaceId || !archiveWorkspaceIdSet.has(failedWorkspaceId)) {
-        canIdentifyFailedWorkspaces = false;
-        continue;
-      }
-      unsafeWorkspaceIds.add(failedWorkspaceId);
-    }
+    unsafeWorkspaceIds.add(unsafeWorkspaceId);
   }
 
   const safeTargetWorkspaceIds = canIdentifyFailedWorkspaces
@@ -471,6 +541,8 @@ async function archiveTargetRecords(
     }),
   );
 
+  const failedWorkspaceIds: string[] = [];
+  let recordFailureCause: unknown;
   for (const [index, result] of recordResults.entries()) {
     if (result.status === "fulfilled") {
       archivedWorkspaceIds.push(result.value);
@@ -478,14 +550,30 @@ async function archiveTargetRecords(
     }
     dependencies.sessionLogger?.warn(
       { err: result.reason, requestId, workspaceId: safeTargetWorkspaceIds[index] },
-      "archiveByScope workspace teardown failed; continuing",
+      "archiveByScope workspace teardown failed",
     );
+    recordFailureCause ??= result.reason;
+    const failedWorkspaceId = safeTargetWorkspaceIds[index];
+    if (failedWorkspaceId) {
+      failedWorkspaceIds.push(failedWorkspaceId);
+    }
   }
 
-  if (failureCause !== undefined) {
+  if (failedWorkspaceIds.length > 0) {
+    throw new WorkspaceArchiveError({
+      archivedAgentIds: archivedAgents,
+      failedAgentIds,
+      indeterminateAgentIds,
+      failedWorkspaceIds,
+      cause: agentArchiveFailed ? failureCause : recordFailureCause,
+    });
+  }
+
+  if (agentArchiveFailed) {
     throw new AgentArchiveError({
       archivedAgentIds: archivedAgents,
       failedAgentIds,
+      indeterminateAgentIds,
       cause: failureCause,
     });
   }
@@ -593,8 +681,6 @@ export async function archiveWorkspaceContents(
   workspaceId: string,
   archiveWorkspaceIds: ReadonlySet<string> = new Set([workspaceId]),
 ): Promise<Set<string>> {
-  const archivedAgents = new Set<string>();
-
   const allLiveAgents = dependencies.agentManager.listAgents();
   const liveAgents = allLiveAgents.filter((agent) => agent.workspaceId === workspaceId);
 
@@ -632,34 +718,50 @@ export async function archiveWorkspaceContents(
     const parentAgentId = parentAgentIds.get(agentId);
     return !parentAgentId || !archiveCandidateIds.has(parentAgentId);
   };
+  const liveArchiveRoots = liveAgents.filter((agent) => isArchiveRoot(agent.id));
+  const storedArchiveRoots = matchingStoredRecords.filter(
+    (record) => !liveAgentIds.has(record.id) && !record.archivedAt && isArchiveRoot(record.id),
+  );
+  const archiveRootIds = [
+    ...liveArchiveRoots.map((agent) => agent.id),
+    ...storedArchiveRoots.map((record) => record.id),
+  ];
   const archiveResults = await Promise.allSettled([
-    ...liveAgents
-      .filter((agent) => isArchiveRoot(agent.id))
-      .map(async (agent) => {
-        const result = await dependencies.agentManager.archiveAgent(agent.id);
-        return result.archivedAgentIds;
-      }),
-    ...matchingStoredRecords
-      .filter(
-        (record) => !liveAgentIds.has(record.id) && !record.archivedAt && isArchiveRoot(record.id),
-      )
-      .map(async (record) => {
-        const result = await dependencies.agentManager.archiveSnapshotWithReceipt(
-          record.id,
-          archivedAt,
-        );
-        return result.archivedAgentIds;
-      }),
+    ...liveArchiveRoots.map(async (agent) => {
+      const result = await dependencies.agentManager.archiveAgent(agent.id);
+      return result.archivedAgentIds;
+    }),
+    ...storedArchiveRoots.map(async (record) => {
+      const result = await dependencies.agentManager.archiveSnapshotWithReceipt(
+        record.id,
+        archivedAt,
+      );
+      return result.archivedAgentIds;
+    }),
   ]);
 
-  for (const result of archiveResults) {
-    if (result.status === "fulfilled") {
-      for (const agentId of result.value) {
-        archivedAgents.add(agentId);
-      }
-      continue;
+  const {
+    archivedAgentIds,
+    failedAgentIds,
+    indeterminateAgentIds,
+    untypedFailureIndexes,
+    failureCause,
+    failed: archiveFailed,
+  } = aggregateAgentArchiveResults(archiveResults);
+  for (const index of untypedFailureIndexes) {
+    const rootAgentId = archiveRootIds[index];
+    if (rootAgentId) {
+      indeterminateAgentIds.add(rootAgentId);
     }
-    throw result.reason;
+  }
+
+  if (archiveFailed) {
+    throw new AgentArchiveError({
+      archivedAgentIds,
+      failedAgentIds,
+      indeterminateAgentIds,
+      cause: failureCause,
+    });
   }
 
   if (dependencies.killTerminalsForWorkspace) {
@@ -673,7 +775,7 @@ export async function archiveWorkspaceContents(
     }
   }
 
-  return archivedAgents;
+  return archivedAgentIds;
 }
 
 // True when, after archiving

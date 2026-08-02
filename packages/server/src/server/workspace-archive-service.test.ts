@@ -14,6 +14,7 @@ import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { LifecycleMutationCoordinator } from "./lifecycle-mutation-coordinator.js";
 import {
   archiveByScope,
+  archiveWorkspaceContents,
   type ActiveWorkspaceRef,
   type ArchiveDependencies,
   type ArchiveResult,
@@ -187,6 +188,67 @@ function assertArchiveResult(
   expect(result.archivedWorkspaceIds).toEqual(expected.archivedWorkspaceIds);
   expect(result.removedDirectory).toBe(expected.removedDirectory);
 }
+
+test("archiveWorkspaceContents merges fulfilled and typed-rejected root receipts once", async () => {
+  const workspaceId = "ws-sibling-roots";
+  const firstRootId = "agent-root-first";
+  const secondRootId = "agent-root-second";
+  const sharedReceiptId = "agent-shared-receipt";
+  const failedAgentId = "agent-root-failed";
+  const indeterminateAgentId = "agent-root-indeterminate";
+  const agents = [
+    { id: firstRootId, cwd: "/tmp/sibling-roots", workspaceId },
+    { id: secondRootId, cwd: "/tmp/sibling-roots", workspaceId },
+  ] as ManagedAgent[];
+
+  let archiveError: unknown;
+  try {
+    await archiveWorkspaceContents(
+      {
+        agentManager: {
+          listAgents: () => agents,
+          archiveAgent: vi.fn(async (agentId: string) => {
+            if (agentId === firstRootId) {
+              throw new AgentArchiveError({
+                archivedAgentIds: [firstRootId, sharedReceiptId, sharedReceiptId],
+                failedAgentIds: [failedAgentId, failedAgentId],
+                indeterminateAgentIds: [indeterminateAgentId, indeterminateAgentId],
+                cause: new Error("Injected sibling root failure"),
+              });
+            }
+            return {
+              archivedAt: "2026-08-02T00:00:00.000Z",
+              archivedAgentIds: [secondRootId, sharedReceiptId],
+            };
+          }),
+          archiveSnapshotWithReceipt: vi.fn(async () => {
+            throw new Error("not expected for live roots");
+          }),
+        },
+        agentStorage: {
+          list: async () =>
+            agents.map((agent) => ({
+              id: agent.id,
+              cwd: agent.cwd,
+              workspaceId,
+              archivedAt: null,
+            })) as StoredAgentRecord[],
+        },
+      },
+      workspaceId,
+    );
+  } catch (error) {
+    archiveError = error;
+  }
+
+  expect(archiveError).toBeInstanceOf(AgentArchiveError);
+  expect(archiveError).toMatchObject({
+    archivedAgentIds: [firstRootId, sharedReceiptId, secondRootId],
+    failedAgentIds: [failedAgentId],
+    indeterminateAgentIds: [indeterminateAgentId],
+    cause: expect.objectContaining({ message: "Injected sibling root failure" }),
+  });
+});
 
 describe("archiveByScope", () => {
   test("workspace scope archives the record and removes the directory on last reference", async () => {
@@ -574,12 +636,14 @@ describe("archiveByScope", () => {
     expect(existsSync(localCheckoutDir)).toBe(true);
   });
 
-  test("worktree scope keeps the directory when one record teardown fails", async () => {
+  test("fails after a requested workspace record remains active", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
     const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "partial-failure");
     const workspaceA = "ws-partial-a";
     const workspaceB = "ws-partial-b";
+    const agentA = "agent-partial-a";
+    const agentB = "agent-partial-b";
 
     const deps = createArchiveDeps({
       paseoHome,
@@ -588,22 +652,56 @@ describe("archiveByScope", () => {
         { workspaceId: workspaceB, cwd: worktree.worktreePath, kind: "worktree" },
       ],
     });
+    const agents = [
+      { id: agentA, cwd: worktree.worktreePath, workspaceId: workspaceA },
+      { id: agentB, cwd: worktree.worktreePath, workspaceId: workspaceB },
+    ] as ManagedAgent[];
+    deps.agentManager = {
+      listAgents: () => agents,
+      archiveAgent: vi.fn(async (agentId: string) => ({
+        archivedAt: "2026-08-02T00:00:00.000Z",
+        archivedAgentIds: [agentId],
+      })),
+      archiveSnapshotWithReceipt: vi.fn(async () => {
+        throw new Error("not expected for live agents");
+      }),
+    };
+    deps.agentStorage = {
+      list: async () =>
+        agents.map((agent) => ({
+          id: agent.id,
+          cwd: agent.cwd,
+          workspaceId: agent.workspaceId,
+          archivedAt: null,
+        })) as StoredAgentRecord[],
+    };
     const originalArchiveWorkspaceRecord = deps.archiveWorkspaceRecord;
     deps.archiveWorkspaceRecord = async (workspaceId: string) => {
       if (workspaceId === workspaceA) {
-        throw new Error("intentional teardown failure");
+        throw new Error("Injected record teardown failure");
       }
       return originalArchiveWorkspaceRecord(workspaceId);
     };
 
-    const result = await archiveByScope(deps, {
-      scope: { kind: "worktree", targetPath: worktree.worktreePath },
-      requestId: "req-partial-failure",
-    });
+    let archiveError: unknown;
+    try {
+      await archiveByScope(deps, {
+        scope: { kind: "worktree", targetPath: worktree.worktreePath },
+        requestId: "req-partial-failure",
+      });
+    } catch (error) {
+      archiveError = error;
+    }
 
-    expect(result.archivedWorkspaceIds).toEqual([workspaceB]);
-    expect(result.archivedWorkspaceIds).not.toContain(workspaceA);
-    expect(result.removedDirectory).toBe(false);
+    expect(archiveError).toBeInstanceOf(AgentArchiveError);
+    expect(archiveError).toMatchObject({
+      archivedAgentIds: [agentA, agentB],
+      failedAgentIds: [],
+      indeterminateAgentIds: [],
+      failedWorkspaceIds: [workspaceA],
+      cause: expect.objectContaining({ message: "Injected record teardown failure" }),
+    });
+    expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([workspaceA]);
     expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 
@@ -939,7 +1037,7 @@ describe("archiveByScope", () => {
     expect(deps.killTerminalsForWorkspace).not.toHaveBeenCalledWith(middleWorkspaceId);
   });
 
-  test("archives only safe target records when an alternating-workspace cascade rejects", async () => {
+  test("retains an indeterminate descendant workspace conservatively", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
     const worktree = await createPaseoOwnedWorktree(
@@ -984,8 +1082,9 @@ describe("archiveByScope", () => {
         expect(agentId).toBe(rootAgentId);
         throw new AgentArchiveError({
           archivedAgentIds: [rootAgentId, middleAgentId],
-          failedAgentIds: [grandchildAgentId],
-          cause: new Error(`Injected archive failure for ${grandchildAgentId}`),
+          failedAgentIds: [],
+          indeterminateAgentIds: [grandchildAgentId],
+          cause: new Error(`Injected indeterminate archive for ${grandchildAgentId}`),
         });
       }),
       archiveSnapshotWithReceipt: vi.fn(async () => {
@@ -1017,7 +1116,8 @@ describe("archiveByScope", () => {
     expect(archiveError).toBeInstanceOf(AgentArchiveError);
     expect(archiveError).toMatchObject({
       archivedAgentIds: [rootAgentId, middleAgentId],
-      failedAgentIds: [grandchildAgentId],
+      failedAgentIds: [],
+      indeterminateAgentIds: [grandchildAgentId],
     });
     expect(deps.agentManager.archiveAgent).toHaveBeenCalledOnce();
     expect(deps.agentManager.archiveAgent).toHaveBeenCalledWith(rootAgentId);

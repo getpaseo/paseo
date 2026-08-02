@@ -143,4 +143,41 @@ describe("runArchiveCommand", () => {
       code: "WORKTREE_NOT_FOUND",
     });
   });
+
+  it("keeps exact unique partial receipts on a failed archive", async () => {
+    const worktreePath = "/tmp/paseo-home/worktrees/repo/partial-failure";
+    const fakeClient = createFakeDaemonClient({
+      getPaseoWorktreeList: async () => ({
+        worktrees: [
+          {
+            worktreePath,
+            branchName: "partial-failure",
+            head: "abc123",
+            createdAt: "2026-08-02T00:00:00.000Z",
+          },
+        ],
+        error: null,
+        requestId: "req-list",
+      }),
+      archivePaseoWorktree: async () => ({
+        success: false,
+        removedAgents: ["agent-first", "agent-second", "agent-first"],
+        error: { code: "UNKNOWN", message: "Workspace record teardown failed" },
+        requestId: "req-archive",
+      }),
+    });
+
+    await expect(
+      runArchiveCommandWithDeps(
+        "partial-failure",
+        { host: "localhost:6767" },
+        { connectToDaemon: async () => fakeClient },
+      ),
+    ).rejects.toMatchObject({
+      code: "WORKTREE_ARCHIVE_FAILED",
+      message: "Failed to archive worktree: Workspace record teardown failed",
+      removedAgents: ["agent-first", "agent-second"],
+      details: "Archived agents before failure: agent-first, agent-second",
+    });
+  });
 });

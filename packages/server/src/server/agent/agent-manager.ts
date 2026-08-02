@@ -292,17 +292,20 @@ export interface AgentArchiveResult {
 export class AgentArchiveError extends Error {
   readonly archivedAgentIds: string[];
   readonly failedAgentIds: string[];
+  readonly indeterminateAgentIds: string[];
   override readonly cause: unknown;
 
   constructor(options: {
     archivedAgentIds: Iterable<string>;
     failedAgentIds: Iterable<string>;
+    indeterminateAgentIds?: Iterable<string>;
     cause: unknown;
   }) {
     super(options.cause instanceof Error ? options.cause.message : "Agent archive failed");
     this.name = "AgentArchiveError";
     this.archivedAgentIds = Array.from(new Set(options.archivedAgentIds));
     this.failedAgentIds = Array.from(new Set(options.failedAgentIds));
+    this.indeterminateAgentIds = Array.from(new Set(options.indeterminateAgentIds ?? []));
     this.cause = options.cause;
   }
 }
@@ -1528,7 +1531,10 @@ export class AgentManager {
     return close;
   }
 
-  private async closeAgentRuntime(agentId: string): Promise<void> {
+  private async closeAgentRuntime(
+    agentId: string,
+    options: { providerSessionAlreadyClosed?: boolean } = {},
+  ): Promise<void> {
     const agent = this.requireAgent(agentId);
     this.logger.trace(
       {
@@ -1546,10 +1552,12 @@ export class AgentManager {
     this.advanceLiveLifecycleRevision(agentId);
     const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
     let closeError: unknown;
-    try {
-      await agent.session.close();
-    } catch (error) {
-      closeError = error;
+    if (!options.providerSessionAlreadyClosed) {
+      try {
+        await agent.session.close();
+      } catch (error) {
+        closeError = error;
+      }
     }
 
     let persistError: unknown;
@@ -1620,9 +1628,20 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found in storage after snapshot`);
     }
 
+    try {
+      await agent.session.close();
+    } catch (error) {
+      throw new AgentArchiveError({
+        archivedAgentIds: [],
+        failedAgentIds: [],
+        indeterminateAgentIds: [agentId],
+        cause: error,
+      });
+    }
+
     const { archivedAt } = await this.markRecordArchived(stored);
     agent.updatedAt = new Date(archivedAt);
-    await this.closeAgentRuntime(agentId);
+    await this.closeAgentRuntime(agentId, { providerSessionAlreadyClosed: true });
     this.discardRetainedAgentState(agentId);
 
     let archivedChildIds: string[];
@@ -1633,6 +1652,7 @@ export class AgentManager {
         throw new AgentArchiveError({
           archivedAgentIds: [agentId, ...error.archivedAgentIds],
           failedAgentIds: error.failedAgentIds,
+          indeterminateAgentIds: error.indeterminateAgentIds,
           cause: error.cause,
         });
       }
@@ -1723,6 +1743,8 @@ export class AgentManager {
             ...(error instanceof AgentArchiveError ? error.archivedAgentIds : []),
           ],
           failedAgentIds: error instanceof AgentArchiveError ? error.failedAgentIds : [record.id],
+          indeterminateAgentIds:
+            error instanceof AgentArchiveError ? error.indeterminateAgentIds : [],
           cause: error instanceof AgentArchiveError ? error.cause : error,
         });
       }
@@ -2094,6 +2116,7 @@ export class AgentManager {
         throw new AgentArchiveError({
           archivedAgentIds: [agentId, ...error.archivedAgentIds],
           failedAgentIds: error.failedAgentIds,
+          indeterminateAgentIds: error.indeterminateAgentIds,
           cause: error.cause,
         });
       }

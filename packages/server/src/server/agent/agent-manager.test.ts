@@ -6231,6 +6231,74 @@ test("archiveAgent persists archivedAt and updatedAt before emitting closed stat
   expect(lifecycles.slice(-2)).toEqual(["idle", "closed"]);
 });
 
+test("archiveAgent keeps a close-failed provider supervised for a deterministic retry", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-close-retry-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class FailsOnceOnCloseSession extends TestAgentSession {
+    closeAttempts = 0;
+
+    override async close(): Promise<void> {
+      this.closeAttempts += 1;
+      if (this.closeAttempts === 1) {
+        throw new Error("Injected provider close failure");
+      }
+    }
+  }
+
+  class FailsOnceOnCloseClient extends TestAgentClient {
+    readonly sessions: FailsOnceOnCloseSession[] = [];
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new FailsOnceOnCloseSession(config);
+      this.sessions.push(session);
+      return session;
+    }
+  }
+
+  const client = new FailsOnceOnCloseClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000132",
+  });
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Close retry target" },
+    undefined,
+    { workspaceId: "workspace-close-retry" },
+  );
+
+  let archiveError: unknown;
+  try {
+    await manager.archiveAgent(agent.id);
+  } catch (error) {
+    archiveError = error;
+  }
+
+  expect(archiveError).toBeInstanceOf(AgentArchiveError);
+  expect(archiveError).toMatchObject({
+    archivedAgentIds: [],
+    failedAgentIds: [],
+    indeterminateAgentIds: [agent.id],
+    cause: expect.objectContaining({ message: "Injected provider close failure" }),
+  });
+  expect(client.sessions[0]?.closeAttempts).toBe(1);
+  expect(manager.getAgent(agent.id)).toMatchObject({
+    id: agent.id,
+    lifecycle: "idle",
+    session: client.sessions[0],
+  });
+  expect((await storage.get(agent.id))?.archivedAt).toBeUndefined();
+
+  await expect(manager.archiveAgent(agent.id)).resolves.toMatchObject({
+    archivedAgentIds: [agent.id],
+  });
+  expect(client.sessions[0]?.closeAttempts).toBe(2);
+  expect(manager.getAgent(agent.id)).toBeNull();
+  expectArchivedAgentRecord(await storage.get(agent.id), "closed");
+});
+
 test("fires onAgentArchived for archived parent and cascaded children", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-hook-cascade-"));
   const storagePath = join(workdir, "agents");

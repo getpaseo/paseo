@@ -1898,6 +1898,98 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
     });
   });
 
+  test("returns failure receipts when a requested workspace record remains active", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+
+    const paseoHome = path.join(tempDir, ".paseo");
+    const created = await createLegacyWorktreeForTest({
+      branchName: "archive-record-failure",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "archive-record-failure",
+      runSetup: false,
+      paseoHome,
+    });
+    const workspaceId = "ws-public-record-failure";
+    const agentId = "agent-public-record-failure";
+    const activeWorkspaces = [
+      { workspaceId, cwd: created.worktreePath, kind: "worktree" as const },
+    ];
+    const agent = {
+      id: agentId,
+      cwd: created.worktreePath,
+      workspaceId,
+    } as ManagedAgent;
+    const emitted: SessionOutboundMessage[] = [];
+
+    await handlePaseoWorktreeArchiveRequest(
+      {
+        paseoHome,
+        github: createGitHubServiceStub(),
+        workspaceGitService: {
+          getSnapshot: vi.fn(async () => null),
+          listWorktrees: vi.fn(async () => []),
+        },
+        agentManager: {
+          listAgents: () => [agent],
+          archiveAgent: vi.fn(async () => ({
+            archivedAt: "2026-08-02T00:00:00.000Z",
+            archivedAgentIds: [agentId],
+          })),
+          archiveSnapshotWithReceipt: vi.fn(async () => {
+            throw new Error("not expected for a live agent");
+          }),
+        },
+        agentStorage: {
+          list: async () =>
+            [
+              {
+                id: agentId,
+                cwd: created.worktreePath,
+                workspaceId,
+                archivedAt: null,
+              },
+            ] as StoredAgentRecord[],
+        },
+        lifecycleMutationCoordinator: new LifecycleMutationCoordinator(),
+        findWorkspaceIdForCwd: vi.fn(async () => workspaceId),
+        listActiveWorkspaces: vi.fn(async () => activeWorkspaces),
+        archiveWorkspaceRecord: vi.fn(async () => {
+          throw new Error("Injected public record teardown failure");
+        }),
+        emit: (message) => emitted.push(message),
+        emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => {}),
+        markWorkspaceArchiving: vi.fn(),
+        clearWorkspaceArchiving: vi.fn(),
+        killTerminalsForWorkspace: vi.fn(async () => {}),
+        sessionLogger: createLogger(),
+      },
+      {
+        type: "paseo_worktree_archive_request",
+        requestId: "req-public-record-failure",
+        worktreePath: created.worktreePath,
+        repoRoot: repoDir,
+        scope: "worktree",
+      },
+    );
+
+    expect(activeWorkspaces).toHaveLength(1);
+    expect(existsSync(created.worktreePath)).toBe(true);
+    expect(emitted.find((message) => message.type === "paseo_worktree_archive_response")).toEqual({
+      type: "paseo_worktree_archive_response",
+      payload: {
+        success: false,
+        removedAgents: [agentId],
+        error: {
+          code: "UNKNOWN",
+          message: "Injected public record teardown failure",
+        },
+        requestId: "req-public-record-failure",
+      },
+    });
+  });
+
   test("returns partial receipts and keeps a failed descendant workspace active", async () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);
