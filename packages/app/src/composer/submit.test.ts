@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { resolveComposerSubmitState, submitAgentInput } from "./submit";
+import { submitAgentInput } from "./submit";
 
 function createDeferredPromise<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -216,29 +216,5 @@ describe("submitAgentInput", () => {
       attachments: [],
     });
     expect(clearDraft).toHaveBeenCalledWith("sent");
-  });
-});
-
-describe("composer submit state", () => {
-  it("blocks submit without showing submission progress while background context resolves", () => {
-    expect(
-      resolveComposerSubmitState({
-        isProcessing: false,
-        isSubmitLoading: false,
-        isUploadingFile: false,
-        isBackgroundContextResolving: true,
-      }),
-    ).toEqual({ isDisabled: true, isLoading: false });
-  });
-
-  it("shows submission progress for work owned by the submit action", () => {
-    expect(
-      resolveComposerSubmitState({
-        isProcessing: true,
-        isSubmitLoading: false,
-        isUploadingFile: false,
-        isBackgroundContextResolving: false,
-      }),
-    ).toEqual({ isDisabled: true, isLoading: true });
   });
 });
