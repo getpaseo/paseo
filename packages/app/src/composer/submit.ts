@@ -2,6 +2,26 @@ import { i18n } from "@/i18n/i18next";
 
 export type AgentInputSubmitResult = "noop" | "queued" | "submitted" | "failed";
 
+interface ComposerSubmitStateInput {
+  isProcessing: boolean;
+  isSubmitLoading: boolean;
+  isUploadingFile: boolean;
+  isBackgroundContextResolving: boolean;
+}
+
+interface ComposerSubmitState {
+  isDisabled: boolean;
+  isLoading: boolean;
+}
+
+export function resolveComposerSubmitState(input: ComposerSubmitStateInput): ComposerSubmitState {
+  const isLoading = input.isProcessing || input.isSubmitLoading || input.isUploadingFile;
+  return {
+    isDisabled: isLoading || input.isBackgroundContextResolving,
+    isLoading,
+  };
+}
+
 export interface AgentInputSubmitActionInput<TAttachment> {
   message: string;
   attachments: TAttachment[];
