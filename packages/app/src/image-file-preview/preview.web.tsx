@@ -64,6 +64,7 @@ export function ImageFilePreview({ uri }: ImageFilePreviewProps) {
   const [viewport, setViewport] = useState<ImagePreviewSize | null>(null);
   const [imageSize, setImageSize] = useState<ImagePreviewSize | null>(null);
   const [transform, setTransform] = useState<ImagePreviewTransform>(FIT_IMAGE_TRANSFORM);
+  const [isDragging, setIsDragging] = useState(false);
 
   const fittedImage = useMemo(
     () => (imageSize && viewport ? fitImageSize(imageSize, viewport) : null),
@@ -157,6 +158,7 @@ export function ImageFilePreview({ uri }: ImageFilePreviewProps) {
       startPoint: { x: event.clientX, y: event.clientY },
       startTransform: transformRef.current,
     };
+    setIsDragging(true);
   }, []);
 
   const continueDrag = useCallback(
@@ -181,19 +183,23 @@ export function ImageFilePreview({ uri }: ImageFilePreviewProps) {
   const endDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (dragRef.current?.pointerId !== event.pointerId) return;
     dragRef.current = null;
-    event.currentTarget.releasePointerCapture(event.pointerId);
+    setIsDragging(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   }, []);
 
-  const renderedImageStyle = useMemo<CSSProperties>(() => {
+  const renderedCanvasStyle = useMemo<CSSProperties>(() => {
     let cursor: CSSProperties["cursor"] = "default";
-    if (transform.zoom > 1) {
-      cursor = dragRef.current ? "grabbing" : "grab";
-    }
+    if (transform.zoom > 1) cursor = isDragging ? "grabbing" : "grab";
+    return { ...canvasStyle, cursor };
+  }, [isDragging, transform.zoom]);
+
+  const renderedImageStyle = useMemo<CSSProperties>(() => {
     return {
       ...imageStyle,
       width: fittedImage?.width ?? 0,
       height: fittedImage?.height ?? 0,
-      cursor,
       transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.zoom})`,
     };
   }, [fittedImage, transform]);
@@ -222,7 +228,7 @@ export function ImageFilePreview({ uri }: ImageFilePreviewProps) {
         onPointerMove={continueDrag}
         onPointerUp={endDrag}
         ref={canvasRef}
-        style={canvasStyle}
+        style={renderedCanvasStyle}
       >
         <img alt="" draggable={false} onLoad={imageLoaded} src={uri} style={renderedImageStyle} />
       </div>
