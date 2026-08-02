@@ -28,6 +28,7 @@ import { terminalEmulatorWebViewHtml } from "../terminal/webview/terminal-emulat
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
 import { openExternalUrl } from "../utils/open-external-url";
 import type { TerminalEmulatorHandle, TerminalEmulatorProps } from "./terminal-emulator-contract";
+import { shouldHandleTerminalBridgeMessage } from "./terminal-webview-message-routing";
 import { shouldResetForMissingRendererReady } from "./terminal-webview-readiness";
 
 type BridgeInboundMessage =
@@ -554,9 +555,17 @@ export default function WebViewTerminalEmulator({
         handleLifecycleMessage(message);
         return;
       }
+      if (
+        !shouldHandleTerminalBridgeMessage(message, {
+          desiredStreamKey: streamKey,
+          mountedStreamKey: mountRequestedStreamKeyRef.current,
+        })
+      ) {
+        return;
+      }
       handleTerminalMessage(message);
     },
-    [handleLifecycleMessage, handleTerminalMessage],
+    [handleLifecycleMessage, handleTerminalMessage, streamKey],
   );
 
   const handleLoadStart = useCallback<NonNullable<WebViewProps["onLoadStart"]>>(() => {
