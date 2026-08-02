@@ -268,6 +268,7 @@ describe("useComposerGithubAutoAttach", () => {
       await Promise.resolve();
     });
     expect(onPullRequestAdded).not.toHaveBeenCalled();
+    expect(result.current.attachments).toEqual([]);
 
     await act(async () => {
       firstLookup.resolve(githubPayload([pr101], "search-101"));
@@ -275,6 +276,10 @@ describe("useComposerGithubAutoAttach", () => {
     });
     await vi.waitFor(() => {
       expect(onPullRequestAdded.mock.calls).toEqual([[pr101], [pr202]]);
+      expect(result.current.attachments).toEqual([
+        { kind: "forge_change_request", item: pr101 },
+        { kind: "forge_change_request", item: pr202 },
+      ]);
     });
     vi.useRealTimers();
   });

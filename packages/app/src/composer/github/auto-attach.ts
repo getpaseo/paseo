@@ -336,7 +336,19 @@ function attachRefs({
   const drainOutcomes = () => {
     while (outcomes[nextOutcomeIndex]?.settled) {
       const item = outcomes[nextOutcomeIndex].item;
+      const ref = refs[nextOutcomeIndex];
       nextOutcomeIndex += 1;
+      if (item) {
+        latestRef.current.setAttachments((attachments) => {
+          if (
+            removedRefKeys.has(githubRefKey(ref)) ||
+            isAttachmentSelectedForGithubItem(attachments, item)
+          ) {
+            return attachments;
+          }
+          return toggleGithubAttachment(attachments, item);
+        });
+      }
       if (item?.kind === "change_request") {
         latestRef.current.onPullRequestAdded?.(item);
       }
@@ -349,17 +361,6 @@ function attachRefs({
   const settleOutcome = (index: number, item: ForgeSearchItem | null): boolean => {
     if (outcomes[index].settled) return false;
     outcomes[index] = { settled: true, item };
-    if (item) {
-      latestRef.current.setAttachments((attachments) => {
-        if (
-          removedRefKeys.has(githubRefKey(refs[index])) ||
-          isAttachmentSelectedForGithubItem(attachments, item)
-        ) {
-          return attachments;
-        }
-        return toggleGithubAttachment(attachments, item);
-      });
-    }
     drainOutcomes();
     return true;
   };
