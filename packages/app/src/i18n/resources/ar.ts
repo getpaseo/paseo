@@ -1502,6 +1502,9 @@ export const ar: TranslationResources = {
       binaryPreviewUnavailable: "المعاينة الثنائية غير متاحة",
       failedToLoad: "فشل تحميل الملف",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
+      zoomIn: "تكبير",
+      zoomOut: "تصغير",
+      fitToView: "ملاءمة للعرض",
       editor: {
         fileSize: "حجم الملف {{size}}",
         lines: "{{count}} سطر",

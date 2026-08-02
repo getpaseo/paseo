@@ -1531,6 +1531,9 @@ export const ptBR: TranslationResources = {
       binaryPreviewUnavailable: "Prévia binária indisponível",
       failedToLoad: "Falha ao carregar arquivo",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
+      zoomIn: "Ampliar",
+      zoomOut: "Reduzir",
+      fitToView: "Ajustar à visualização",
       editor: {
         fileSize: "Tamanho {{size}}",
         lines: "{{count}} linhas",

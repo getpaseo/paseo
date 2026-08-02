@@ -1513,6 +1513,9 @@ export const en = {
       binaryPreviewUnavailable: "Binary preview unavailable",
       failedToLoad: "Failed to load file",
       failedToLoadPreview: "Failed to load file preview",
+      zoomIn: "Zoom in",
+      zoomOut: "Zoom out",
+      fitToView: "Fit to view",
       editor: {
         fileSize: "File size {{size}}",
         lines: "{{count}} lines",

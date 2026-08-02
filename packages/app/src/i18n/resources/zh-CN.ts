@@ -1482,6 +1482,9 @@ export const zhCN: TranslationResources = {
       binaryPreviewUnavailable: "二进制预览不可用",
       failedToLoad: "加载文件失败",
       failedToLoadPreview: "加载文件预览失败",
+      zoomIn: "放大",
+      zoomOut: "缩小",
+      fitToView: "适应视图",
       editor: {
         fileSize: "文件大小 {{size}}",
         lines: "{{count}} 行",

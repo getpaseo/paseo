@@ -1545,6 +1545,9 @@ export const es: TranslationResources = {
       binaryPreviewUnavailable: "Vista previa binaria no disponible",
       failedToLoad: "No se pudo cargar el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",
+      zoomIn: "Acercar",
+      zoomOut: "Alejar",
+      fitToView: "Ajustar a la vista",
       editor: {
         fileSize: "Tamaño {{size}}",
         lines: "{{count}} líneas",

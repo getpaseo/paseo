@@ -1536,6 +1536,9 @@ export const ru: TranslationResources = {
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",
       failedToLoad: "Не удалось загрузить файл",
       failedToLoadPreview: "Не удалось загрузить предварительный просмотр файла.",
+      zoomIn: "Увеличить",
+      zoomOut: "Уменьшить",
+      fitToView: "Вписать в область просмотра",
       editor: {
         fileSize: "Размер файла {{size}}",
         lines: "Строк: {{count}}",
