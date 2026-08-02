@@ -206,6 +206,8 @@ export function runGitCommand(
 
         let settled = false;
         let metricFinished = false;
+        let processError: Error | null = null;
+        let timeoutError: Error | null = null;
         let truncated = false;
         let stdoutBytes = 0;
         let stderrBytes = 0;
@@ -227,26 +229,8 @@ export function runGitCommand(
         };
 
         const timer = setTimeout(() => {
-          const error = new Error(`Git command timed out after ${timeout}ms: ${command}`);
+          timeoutError = new Error(`Git command timed out after ${timeout}ms: ${command}`);
           child.kill("SIGKILL");
-          settleGitCommandTrace(commandTrace, {
-            outcome: "timed_out",
-            exitCode: null,
-            signal: "SIGKILL",
-          });
-          finishMetricOnce(
-            {
-              args,
-              cwd: options.cwd,
-              startedAtMs: startedAt,
-              durationMs: Date.now() - startedAt,
-              exitCode: null,
-              signal: "SIGKILL",
-              success: false,
-            },
-            true,
-          );
-          settle(() => reject(error));
         }, timeout);
 
         child.stdout!.on("data", (chunk: Buffer | string) => {
@@ -290,20 +274,7 @@ export function runGitCommand(
         });
 
         child.on("error", (error) => {
-          settleGitCommandTrace(commandTrace, {
-            outcome: "spawn_error",
-            exitCode: null,
-            signal: null,
-          });
-          finishMetricOnce({
-            args,
-            cwd: options.cwd,
-            startedAtMs: startedAt,
-            durationMs: Date.now() - startedAt,
-            exitCode: null,
-            signal: null,
-            success: false,
-          });
+          processError = error;
           if (logger && traceContext) {
             logger.trace(
               {
@@ -314,16 +285,9 @@ export function runGitCommand(
               "Git command process error",
             );
           }
-          settle(() => reject(error));
         });
 
         child.on("close", (exitCode, signal) => {
-          settleGitCommandTrace(commandTrace, {
-            outcome: "closed",
-            exitCode,
-            signal,
-            truncated,
-          });
           const result: GitCommandResult = {
             stdout: Buffer.concat(stdoutChunks).toString("utf8"),
             stderr: Buffer.concat(stderrChunks).toString("utf8"),
@@ -345,6 +309,54 @@ export function runGitCommand(
               "Git command closed",
             );
           }
+
+          if (timeoutError) {
+            settleGitCommandTrace(commandTrace, {
+              outcome: "timed_out",
+              exitCode,
+              signal,
+            });
+            finishMetricOnce(
+              {
+                args,
+                cwd: options.cwd,
+                startedAtMs: startedAt,
+                durationMs: Date.now() - startedAt,
+                exitCode,
+                signal,
+                success: false,
+              },
+              true,
+            );
+            settle(() => reject(timeoutError));
+            return;
+          }
+
+          if (processError) {
+            settleGitCommandTrace(commandTrace, {
+              outcome: "spawn_error",
+              exitCode,
+              signal,
+            });
+            finishMetricOnce({
+              args,
+              cwd: options.cwd,
+              startedAtMs: startedAt,
+              durationMs: Date.now() - startedAt,
+              exitCode,
+              signal,
+              success: false,
+            });
+            settle(() => reject(processError));
+            return;
+          }
+
+          settleGitCommandTrace(commandTrace, {
+            outcome: "closed",
+            exitCode,
+            signal,
+            truncated,
+          });
 
           if (!truncated && !acceptExitCodes.includes(exitCode ?? -1)) {
             finishMetricOnce({

@@ -5,6 +5,7 @@ interface FakeSpawnBehavior {
   delayMs?: number;
   emitError?: Error;
   exitCode?: number | null;
+  killCloseDelayMs?: number;
   stderrData?: Buffer | string;
   stdoutData?: Buffer | string;
 }
@@ -74,7 +75,7 @@ class FakeChildProcess extends EventEmitter {
         exitCode: null,
         signal,
       });
-    }, 0);
+    }, this.behavior.killCloseDelayMs ?? 0);
     return true;
   }
 
@@ -134,10 +135,9 @@ class FakeChildProcess extends EventEmitter {
   private finishError(error: Error): void {
     if (this.closed) return;
 
-    this.closed = true;
     this.clearTimers();
-    fakeSpawnController.activeCount -= 1;
     this.emit("error", error);
+    this.finishClose({ exitCode: null, signal: null });
   }
 
   private schedule(callback: () => void, delayMs: number): void {
@@ -228,6 +228,43 @@ describe("runGitCommand", () => {
       exitCode: 0,
       truncated: false,
     });
+  });
+
+  it("holds the limiter slot until a timed out process closes", async () => {
+    const { runGitCommand } = await loadRunGitCommand(1);
+
+    enqueueSpawnBehaviors(
+      { delayMs: 5_000, killCloseDelayMs: 100 },
+      { delayMs: 0, stdoutData: "next" },
+    );
+
+    const timedOut = runGitCommand(["status"], {
+      cwd: process.cwd(),
+      timeout: 20,
+    }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    const next = runGitCommand(["rev-parse", "--show-toplevel"], {
+      cwd: process.cwd(),
+    });
+
+    await vi.waitFor(() => {
+      expect(fakeSpawnController.processes[0]?.killed).toBe(true);
+    });
+    expect(fakeSpawnController.processes).toHaveLength(1);
+    expect(fakeSpawnController.activeCount).toBe(1);
+
+    await expect(timedOut).resolves.toEqual(
+      expect.objectContaining({
+        message: "Git command timed out after 20ms: git status",
+      }),
+    );
+    await expect(next).resolves.toMatchObject({
+      exitCode: 0,
+      stdout: "next",
+    });
+    expect(fakeSpawnController.peakActiveCount).toBe(1);
   });
 
   it("resolves truncated stdout, caps output, and kills the child process", async () => {
