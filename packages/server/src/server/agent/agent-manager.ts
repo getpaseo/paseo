@@ -1641,7 +1641,15 @@ export class AgentManager {
 
     const { archivedAt } = await this.markRecordArchived(stored);
     agent.updatedAt = new Date(archivedAt);
-    await this.closeAgentRuntime(agentId, { providerSessionAlreadyClosed: true });
+    try {
+      await this.closeAgentRuntime(agentId, { providerSessionAlreadyClosed: true });
+    } catch (error) {
+      throw new AgentArchiveError({
+        archivedAgentIds: [agentId],
+        failedAgentIds: [],
+        cause: error,
+      });
+    }
     this.discardRetainedAgentState(agentId);
 
     let archivedChildIds: string[];

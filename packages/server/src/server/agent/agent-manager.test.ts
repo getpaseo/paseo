@@ -6299,6 +6299,68 @@ test("archiveAgent keeps a close-failed provider supervised for a deterministic 
   expectArchivedAgentRecord(await storage.get(agent.id), "closed");
 });
 
+test("archiveAgent preserves its receipt when final closed snapshot persistence fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-final-snapshot-failure-"));
+
+  class FinalSnapshotFailureStorage extends AgentStorage {
+    readonly events: string[] = [];
+
+    override async update(agentId: string, updater: AgentRecordUpdater) {
+      const record = await super.update(agentId, updater);
+      if (record?.archivedAt) {
+        this.events.push("record-archived");
+      }
+      return record;
+    }
+
+    override async applySnapshot(
+      agent: ManagedAgent,
+      options?: Parameters<AgentStorage["applySnapshot"]>[1],
+    ): Promise<void> {
+      const record = await this.get(agent.id);
+      if (record?.archivedAt && agent.lifecycle === "closed") {
+        this.events.push("runtime-closed", "final-snapshot-persistence-failed");
+        throw new Error("Injected final snapshot persistence failure");
+      }
+      await super.applySnapshot(agent, options);
+    }
+  }
+
+  const storage = new FinalSnapshotFailureStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Final snapshot failure target" },
+    undefined,
+    { workspaceId: "workspace-final-snapshot-failure" },
+  );
+
+  let archiveError: unknown;
+  try {
+    await manager.archiveAgent(agent.id);
+  } catch (error) {
+    archiveError = error;
+  }
+
+  expect(archiveError).toBeInstanceOf(AgentArchiveError);
+  expect(archiveError).toMatchObject({
+    archivedAgentIds: [agent.id],
+    failedAgentIds: [],
+    indeterminateAgentIds: [],
+    cause: expect.objectContaining({ message: "Injected final snapshot persistence failure" }),
+  });
+  expect(storage.events).toEqual([
+    "record-archived",
+    "runtime-closed",
+    "final-snapshot-persistence-failed",
+  ]);
+  expect(manager.getAgent(agent.id)).toBeNull();
+  expectArchivedAgentRecord(await storage.get(agent.id), "idle");
+});
+
 test("fires onAgentArchived for archived parent and cascaded children", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-hook-cascade-"));
   const storagePath = join(workdir, "agents");
