@@ -1,30 +1,7 @@
 name: Docker
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "docker/**"
-      - ".dockerignore"
-      - ".github/workflows/docker.yml"
-      - "package.json"
-      - "package-lock.json"
-      - "patches/**"
-      - "scripts/**"
-      - "tsconfig.json"
-      - "tsconfig.base.json"
-      - "packages/app/**"
-      - "packages/cli/**"
-      - "packages/client/**"
-      - "packages/expo-two-way-audio/**"
-      - "packages/highlight/**"
-      - "packages/protocol/**"
-      - "packages/relay/**"
-      - "packages/server/**"
-  push:
-    branches: [main]
-    tags:
-      - "v*"
+  # YOOZ DOWNSTREAM(sync): Docker images are not part of fork CI or releases.
   workflow_dispatch:
     inputs:
       paseo_version:

@@ -37,7 +37,7 @@
     "@types/node": "24.6.0",
     "@types/ws": "^8.5.14",
     "electron": "41.2.0",
-    "electron-builder": "26.8.1",
+    "electron-builder": "26.15.3",
     "typescript": "5.9.3",
     "unzip-crx-3": "^0.2.0",
     "vitest": "^4.1.6",

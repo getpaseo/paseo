@@ -21,7 +21,7 @@ EAS profiles: `development`, `production`, and `production-apk` in `packages/app
 major * 1_000_000 + minor * 1_000 + patch
 ```
 
-Prerelease metadata is ignored, so `0.1.102-beta.1` and `0.1.102` both produce `1102`. The same value is used as the iOS `buildNumber` because `packages/app/eas.json` uses EAS's local app version source. Do not re-enable EAS remote version counters or Android `autoIncrement`; F-Droid and other source-based builders need the native build number to be visible in the repo.
+Without a fork release tag, prerelease metadata is ignored, so `0.1.102-beta.1` and `0.1.102` both produce `1102`. When passed a fork release tag, EAS and the manual GitHub APK workflow derive `base version code * 1000 + fork number` for both Android and iOS; `v0.2.5-fork.1` therefore uses `versionCode` and `buildNumber` `2005001`.
 
 The formula reserves three digits each for minor and patch. If either reaches `1000`, change the formula before cutting that release.
 
@@ -146,16 +146,13 @@ adb exec-out screencap -p > screenshot.png
 
 ## Cloud build + submit (EAS)
 
-Stable tag pushes like `v0.1.0` trigger:
+Fork tag pushes like `v0.2.5-fork.3` trigger:
 
-- The EAS GitHub app on Expo servers (iOS + Android production builds + store submit). There is no workflow file in this repo for it.
-- `.github/workflows/android-apk-release.yml` on GitHub Actions (APK asset on GitHub Release).
+- The EAS GitHub app on Expo servers, using `packages/app/.eas/workflows/release-mobile.yml`, for an iOS production build and TestFlight upload.
 
-iOS auto-submits to App Store review via a Fastlane lane after EAS uploads to TestFlight. Android auto-submits to the Play Store via EAS-managed credentials.
+iOS stops at TestFlight. Submit it for App Store review separately after testing.
 
-Beta tags like `v0.1.1-beta.1` only trigger the GitHub APK workflow. They publish a GitHub prerelease APK for testing and do not submit to the stores.
-
-`android-v*` tags also trigger only the GitHub APK workflow — useful when you want to ship an APK without going through stores. The GitHub APK workflow supports `workflow_dispatch` with an existing `tag` input so you can rebuild without cutting a new tag.
+Android APK publishing is manual-only in this fork. Dispatch `.github/workflows/android-apk-release.yml` with an existing tag when an APK is explicitly needed.
 
 ### Useful commands
 
@@ -165,11 +162,10 @@ cd packages/app
 # Recent builds
 npx eas build:list --limit 10 --non-interactive --json | jq '.[] | {platform, status, appVersion, gitCommitHash}'
 
-# Inspect a build (the printed `Logs` URL opens the build's Expo dashboard page,
-# which has a Submissions section showing the auto-submit to the Play Store).
+# Inspect a build (the printed `Logs` URL opens the build's Expo dashboard page).
 npx eas build:view <build-id>
 ```
 
-The Play Console (Internal testing → Production tracks) is the final confirmation that the binary reached the store.
+App Store Connect is the final confirmation that the binary reached TestFlight.
 
 See [docs/release.md](release.md) for the full mobile-build babysitting flow.

@@ -16,11 +16,24 @@ vi.mock("electron-updater", () => ({
 
 import {
   bucketFromStagingUserId,
+  resolveElectronUpdateChannel,
   resolveStagingUserId,
   rolloutManifestSchema,
   shouldAdmitToRollout,
   shouldInstallAppUpdateOnQuit,
 } from "./auto-updater";
+
+describe("resolveElectronUpdateChannel", () => {
+  it("keeps fork builds on their isolated update channel", () => {
+    expect(resolveElectronUpdateChannel("0.2.5-fork.1", "stable")).toBe("fork");
+    expect(resolveElectronUpdateChannel("0.2.5-fork.1", "beta")).toBe("fork");
+  });
+
+  it("maps upstream builds to the selected release channel", () => {
+    expect(resolveElectronUpdateChannel("0.2.5", "stable")).toBe("latest");
+    expect(resolveElectronUpdateChannel("0.2.6-beta.1", "beta")).toBe("beta");
+  });
+});
 
 describe("shouldInstallAppUpdateOnQuit", () => {
   it("keeps Linux AppImage updates on the manual install path", () => {

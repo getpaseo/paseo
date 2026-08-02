@@ -1,12 +1,7 @@
 name: Deploy App
 
 on:
-  push:
-    tags:
-      - "v*"
-      - "!v*-beta.*"
-      - "app-v*"
-      - "!app-v*-beta.*"
+  # YOOZ DOWNSTREAM(sync): browser web deployment is not part of fork releases.
   workflow_dispatch:
 
 jobs:

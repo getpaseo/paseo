@@ -1,10 +1,7 @@
 name: Android APK Release
 
 on:
-  push:
-    tags:
-      - "v*"
-      - "android-v*"
+  # YOOZ DOWNSTREAM(sync): fork mobile releases ship iOS only through EAS.
   workflow_dispatch:
     inputs:
       tag:
@@ -88,7 +85,7 @@ jobs:
           set -euo pipefail
           cd packages/app
 
-          build_json="$(npx eas build --platform android --profile production-apk --non-interactive --wait --json)"
+          build_json="$(PASEO_RELEASE_TAG="$RELEASE_TAG" npx eas build --platform android --profile production-apk --non-interactive --wait --json)"
           echo "$build_json" > "$RUNNER_TEMP/eas-build.json"
 
           build_id="$(jq -r 'if type == "array" then .[0].id // empty else .id // empty end' "$RUNNER_TEMP/eas-build.json")"
