@@ -112,6 +112,7 @@ export const ar: TranslationResources = {
     },
     attachments: {
       addImage: "أضف صورة",
+      pasteImage: "لصق صورة",
       addFile: "Upload file",
       addIssueOrPr: "أضف مشكلة أو PR",
       addIssueOrPr_mr: "أضف مشكلة أو MR",
@@ -137,6 +138,8 @@ export const ar: TranslationResources = {
       initialPromptRequired: "مطلوب موجه الأولي",
       alreadyLoading: "جارٍ التحميل بالفعل",
       uploadFailed: "Failed to upload file",
+      noClipboardImage: "لا توجد صورة في الحافظة",
+      pasteImageFailed: "تعذر لصق الصورة",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {

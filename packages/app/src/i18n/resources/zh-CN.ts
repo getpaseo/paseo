@@ -112,6 +112,7 @@ export const zhCN: TranslationResources = {
     },
     attachments: {
       addImage: "添加图片",
+      pasteImage: "粘贴图片",
       addFile: "Upload file",
       addIssueOrPr: "添加 issue 或 PR",
       addIssueOrPr_mr: "添加 issue 或 MR",
@@ -137,6 +138,8 @@ export const zhCN: TranslationResources = {
       initialPromptRequired: "初始 prompt 必填",
       alreadyLoading: "正在加载",
       uploadFailed: "Failed to upload file",
+      noClipboardImage: "剪贴板中没有图片",
+      pasteImageFailed: "无法粘贴图片",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {

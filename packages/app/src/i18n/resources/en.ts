@@ -110,6 +110,7 @@ export const en = {
     },
     attachments: {
       addImage: "Add image",
+      pasteImage: "Paste image",
       addFile: "Upload file",
       addIssueOrPr: "Add issue or PR",
       addIssueOrPr_mr: "Add issue or MR",
@@ -135,6 +136,8 @@ export const en = {
       initialPromptRequired: "Initial prompt is required",
       alreadyLoading: "Already loading",
       uploadFailed: "Failed to upload file",
+      noClipboardImage: "No image in clipboard",
+      pasteImageFailed: "Failed to paste image",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {

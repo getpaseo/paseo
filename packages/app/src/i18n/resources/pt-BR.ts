@@ -112,6 +112,7 @@ export const ptBR: TranslationResources = {
     },
     attachments: {
       addImage: "Adicionar imagem",
+      pasteImage: "Colar imagem",
       addFile: "Enviar arquivo",
       addIssueOrPr: "Adicionar issue ou PR",
       addIssueOrPr_mr: "Adicionar issue ou MR",
@@ -137,6 +138,8 @@ export const ptBR: TranslationResources = {
       initialPromptRequired: "O prompt inicial é obrigatório",
       alreadyLoading: "Já está carregando",
       uploadFailed: "Falha ao enviar arquivo",
+      noClipboardImage: "Não há imagem na área de transferência",
+      pasteImageFailed: "Falha ao colar a imagem",
       fileTooLarge: "{{fileName}} é grande demais (máximo {{size}})",
     },
     clientCommands: {
