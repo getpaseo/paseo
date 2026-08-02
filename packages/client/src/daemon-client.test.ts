@@ -4754,6 +4754,7 @@ test("sends input and resize frames for the subscribed terminal slot", async () 
     type: "resize",
     rows: 24,
     cols: 80,
+    intent: "update",
   });
 
   const inputFrame = decodeTerminalStreamFrame(asUint8Array(mock.sent[0])!);
@@ -4767,6 +4768,7 @@ test("sends input and resize frames for the subscribed terminal slot", async () 
   expect(decodeTerminalResizePayload(resizeFrame?.payload ?? new Uint8Array())).toEqual({
     rows: 24,
     cols: 80,
+    intent: "update",
   });
 });
 

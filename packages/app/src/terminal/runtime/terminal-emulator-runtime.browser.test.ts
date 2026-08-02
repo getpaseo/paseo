@@ -302,6 +302,22 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(mounted.sizes.filter((size) => size.shouldClaim)).toEqual([]);
   });
 
+  it("keeps browser window refits passive", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 360, height: 180 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await settleMountRefits();
+    mounted.sizes.length = 0;
+
+    mounted.root.style.width = "720px";
+    mounted.root.style.height = "360px";
+    window.dispatchEvent(new Event("resize"));
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    expect(mounted.sizes.filter((size) => size.shouldClaim)).toEqual([]);
+  });
+
   it("does not force-claim a same-size resize while forwarding ordinary terminal input", async () => {
     await page.viewport(900, 600);
     const mounted = createTerminalHost({ width: 720, height: 360 });

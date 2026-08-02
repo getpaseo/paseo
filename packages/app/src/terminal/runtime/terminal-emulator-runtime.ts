@@ -495,7 +495,7 @@ export class TerminalEmulatorRuntime {
     resizeObserver.observe(input.host);
 
     const windowResizeHandler = () => {
-      fitAndEmitResize({ shouldClaim: true });
+      fitAndEmitResize({ shouldClaim: false });
     };
     window.addEventListener("resize", windowResizeHandler);
     const windowFocusHandler = () => {

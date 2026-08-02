@@ -350,16 +350,22 @@ it("refreshes cached terminal size after worker resize", async () => {
   temporaryDirs.push(cwd);
   manager = createWorkerTerminalManager();
   const session = trackTerminal(await manager.createTerminal({ cwd, workspaceId: "ws-test" }));
+  let output = "";
+  const unsubscribe = session.subscribe((message) => {
+    if (message.type === "output") {
+      output += message.data;
+    }
+  });
 
   session.send({ type: "resize", rows: 10, cols: 40 });
+  session.send({ type: "input", data: "printf '__PTY_SIZE__='; stty size\r" });
 
-  await waitForCondition(() => {
-    const size = session.getSize();
-    return size.rows === 10 && size.cols === 40;
-  }, 10000);
+  await waitForCondition(() => output.includes("__PTY_SIZE__=10 40"), 10000);
 
   expect(session.getState().rows).toBe(10);
   expect(session.getState().cols).toBe(40);
+  expect(output).toContain("__PTY_SIZE__=10 40");
+  unsubscribe();
 });
 
 it("captures terminal output from the worker authority", async () => {

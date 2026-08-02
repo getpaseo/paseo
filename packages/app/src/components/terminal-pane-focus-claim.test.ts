@@ -30,6 +30,7 @@ describe("terminal pane focus claim", () => {
         previousSentSize: null,
         shouldClaim: true,
         forceClaim: false,
+        supportsTerminalSizeOwnership: true,
         readiness: { ...readiness, isPaneFocused: false },
       }),
       resolveTerminalResizeClaim({
@@ -37,14 +38,18 @@ describe("terminal pane focus claim", () => {
         previousSentSize: null,
         shouldClaim: true,
         forceClaim: false,
+        supportsTerminalSizeOwnership: true,
         readiness: { ...readiness, isPaneFocused: true },
       }),
     ];
 
-    expect(candidates.map((candidate) => candidate.shouldSend)).toEqual([false, true]);
+    expect(candidates).toEqual([
+      { shouldSend: false, intent: "claim" },
+      { shouldSend: true, intent: "claim" },
+    ]);
   });
 
-  it("keeps passive refits local and lets explicit interaction reclaim the same size", () => {
+  it("sends passive refits as owner-only updates and lets interaction reclaim the same size", () => {
     const readiness = {
       isWorkspaceFocused: true,
       isPaneFocused: true,
@@ -60,6 +65,7 @@ describe("terminal pane focus claim", () => {
       previousSentSize: size,
       shouldClaim: false,
       forceClaim: false,
+      supportsTerminalSizeOwnership: true,
       readiness,
     });
     const ordinarySameSizeMeasurement = resolveTerminalResizeClaim({
@@ -67,6 +73,7 @@ describe("terminal pane focus claim", () => {
       previousSentSize: size,
       shouldClaim: true,
       forceClaim: false,
+      supportsTerminalSizeOwnership: true,
       readiness,
     });
     const explicitReclaim = resolveTerminalResizeClaim({
@@ -74,14 +81,53 @@ describe("terminal pane focus claim", () => {
       previousSentSize: size,
       shouldClaim: true,
       forceClaim: true,
+      supportsTerminalSizeOwnership: true,
       readiness,
     });
 
-    expect([passiveRefit.shouldSend, ordinarySameSizeMeasurement.shouldSend]).toEqual([
-      false,
-      false,
-    ]);
+    expect(passiveRefit).toEqual({ shouldSend: false, intent: "update" });
+    expect(ordinarySameSizeMeasurement).toEqual({ shouldSend: true, intent: "claim" });
     expect(explicitReclaim.shouldSend).toBe(true);
+  });
+
+  it("lets the current owner update after pane focus moves without transferring ownership", () => {
+    const result = resolveTerminalResizeClaim({
+      size: { rows: 20, cols: 100 },
+      previousSentSize: { rows: 40, cols: 100 },
+      shouldClaim: false,
+      forceClaim: false,
+      supportsTerminalSizeOwnership: true,
+      readiness: {
+        isWorkspaceFocused: true,
+        isPaneFocused: false,
+        isAppActivelyVisible: true,
+        isClientReady: true,
+        isConnected: true,
+        isRendererReady: true,
+      },
+    });
+
+    expect(result).toEqual({ shouldSend: true, intent: "update" });
+  });
+
+  it("keeps passive refits local against legacy daemons", () => {
+    const result = resolveTerminalResizeClaim({
+      size: { rows: 20, cols: 100 },
+      previousSentSize: { rows: 40, cols: 100 },
+      shouldClaim: false,
+      forceClaim: false,
+      supportsTerminalSizeOwnership: false,
+      readiness: {
+        isWorkspaceFocused: true,
+        isPaneFocused: true,
+        isAppActivelyVisible: true,
+        isClientReady: true,
+        isConnected: true,
+        isRendererReady: true,
+      },
+    });
+
+    expect(result).toEqual({ shouldSend: false, intent: "update" });
   });
 
   it("waits for both the client and renderer before requesting a claim", () => {
