@@ -10,6 +10,7 @@ import {
   createNativeTerminalOutputDrain,
   NATIVE_TERMINAL_PARSE_CHUNK_CHARS,
 } from "./headless-terminal-output-drain";
+import { createNativeTerminalScreenModel, type TerminalScreenState } from "./terminal-screen-model";
 import { renderTerminalSnapshotToAnsi } from "../runtime/terminal-snapshot";
 
 const ROWS = 12;
@@ -43,7 +44,7 @@ function createFrameRecorder() {
 function lineCells(line: string, cols: number): TerminalCellRow {
   const cells: TerminalCellRow = [];
   for (let index = 0; index < cols; index += 1) {
-    cells.push({ char: line[index] ?? " " });
+    cells.push({ char: line[index] ?? " ", width: 1 });
   }
   return cells;
 }
@@ -76,6 +77,42 @@ async function runScheduledWork(input: {
     await Promise.resolve();
   }
   await input.flush;
+}
+
+async function benchmarkSnapshot(lineCount: number) {
+  const terminal = createNativeHeadlessTerminal({ rows: ROWS, cols: COLS, scrollbackLines: 100 });
+  await terminal.write(
+    createNativeTerminalBenchmarkPayload({ startLine: 0, lineCount, cols: COLS }),
+  );
+  return terminal.getState();
+}
+
+function createScreenRestorer(
+  terminal: ReturnType<typeof createNativeHeadlessTerminal>,
+  model: ReturnType<typeof createNativeTerminalScreenModel>,
+) {
+  const frameRecorder = createFrameRecorder();
+  let screen: TerminalScreenState | null = null;
+  const drain = createNativeTerminalOutputDrain({
+    write: (chunk) => terminal.write(chunk),
+    reset: () => terminal.reset(),
+    getViewportState: () => {
+      screen = model.sync({ visibleRows: ROWS });
+      return screen.viewport;
+    },
+    onPaint: () => {},
+    scheduleFrame: frameRecorder.scheduleFrame,
+    cancelFrame: frameRecorder.cancelFrame,
+  });
+
+  return {
+    async restore(snapshot: Awaited<ReturnType<typeof benchmarkSnapshot>>) {
+      drain.restoreSnapshot(snapshot);
+      await drain.flush();
+      frameRecorder.frames[0]?.();
+      return screen;
+    },
+  };
 }
 
 describe("native terminal output drain", () => {
@@ -188,5 +225,46 @@ describe("native terminal output drain", () => {
     const state = terminal.getViewportState();
     expect(state.grid.map(rowText)).toEqual(["restored-one", "restored-two", "", ""]);
     expect(state.cursor).toEqual(restoredSnapshot.cursor);
+  });
+
+  test("snapshot restore preserves a scrolled viewport anchor while replacing terminal state", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: ROWS, cols: COLS, scrollbackLines: 100 });
+    await terminal.write(
+      createNativeTerminalBenchmarkPayload({ startLine: 0, lineCount: 30, cols: COLS }),
+    );
+    const model = createNativeTerminalScreenModel({ terminal });
+    const before = model.scrollUp({ rows: 5, visibleRows: ROWS });
+    const beforeTopRow = rowText(before.viewport.grid[0] ?? []);
+
+    const screen = await createScreenRestorer(terminal, model).restore(await benchmarkSnapshot(35));
+
+    expect({
+      paintedMode: screen?.scroll.mode,
+      paintedTopRow: rowText(screen?.viewport.grid[0] ?? []),
+      beforeTopRow,
+      restoredBottomRows: terminal.getState().grid.slice(-2).map(rowText),
+    }).toEqual({
+      paintedMode: "scrolled",
+      paintedTopRow: beforeTopRow,
+      beforeTopRow,
+      restoredBottomRows: [expectedBenchmarkLine(34), ""],
+    });
+  });
+
+  test("snapshot restore keeps a following viewport at the new bottom", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: ROWS, cols: COLS, scrollbackLines: 100 });
+    await terminal.write(
+      createNativeTerminalBenchmarkPayload({ startLine: 0, lineCount: 10, cols: COLS }),
+    );
+    const model = createNativeTerminalScreenModel({ terminal });
+    model.sync({ visibleRows: ROWS });
+
+    const screen = await createScreenRestorer(terminal, model).restore(await benchmarkSnapshot(20));
+    const paintedRows = screen?.viewport.grid.map(rowText).filter((line) => line.length > 0) ?? [];
+
+    expect({ paintedMode: screen?.scroll.mode, bottomRows: paintedRows.slice(-2) }).toEqual({
+      paintedMode: "following",
+      bottomRows: [expectedBenchmarkLine(18), expectedBenchmarkLine(19)],
+    });
   });
 });

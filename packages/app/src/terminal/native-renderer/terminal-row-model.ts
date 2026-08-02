@@ -30,6 +30,8 @@ export interface TerminalRowModel {
   runs: TerminalRun[];
 }
 
+type TerminalRenderableCell = TerminalCell & { width?: number };
+
 function hashStringPart(hash: number, value: string): number {
   let nextHash = hash;
   for (let index = 0; index < value.length; index += 1) {
@@ -49,14 +51,18 @@ function terminalCharWidth(char: string): number {
   return isWide ? 2 : 1;
 }
 
-function shouldSkipSpacerCell(cells: TerminalCell[], col: number, char: string): boolean {
+function shouldSkipSpacerCell(cells: TerminalRenderableCell[], col: number, char: string): boolean {
   if (terminalCharWidth(char) < 2) {
     return false;
   }
   return cells[col + 1]?.char === " ";
 }
 
-function terminalCellCount(cells: TerminalCell[], col: number, char: string): number {
+function terminalCellCount(cells: TerminalRenderableCell[], col: number, char: string): number {
+  const authoritativeWidth = cells[col]?.width;
+  if (authoritativeWidth !== undefined) {
+    return Math.max(1, authoritativeWidth);
+  }
   if (shouldSkipSpacerCell(cells, col, char)) {
     return 2;
   }
@@ -88,7 +94,7 @@ function appendRun(input: {
 }
 
 function buildRowModel(input: {
-  cells: TerminalCell[];
+  cells: TerminalRenderableCell[];
   index: number;
   resolver: TerminalCellStyleResolver;
 }): TerminalRowModel {
@@ -109,6 +115,7 @@ function buildRowModel(input: {
       col,
     });
     hash = hashStringPart(hash, text);
+    hash = hashStringPart(hash, String(cellCount));
     hash = hashStringPart(hash, resolvedStyle.key);
 
     if (cellCount > 1) {
@@ -124,7 +131,7 @@ function buildRowModel(input: {
 }
 
 export function buildRows(input: {
-  grid: TerminalCell[][];
+  grid: TerminalRenderableCell[][];
   resolver: TerminalCellStyleResolver;
 }): TerminalRowModel[] {
   return input.grid.map((cells, index) =>

@@ -1731,6 +1731,11 @@ export const ja: TranslationResources = {
     },
     diagnostics: {
       title: "診断",
+      legacyTerminalRenderer: {
+        label: "以前のターミナルレンダラーを使用",
+        description: "ターミナルを開き直した後、以前の WebView ターミナルを使用します",
+        accessibilityLabel: "以前のターミナルレンダラーを使用",
+      },
       testAudio: "音声をテスト",
       playTest: "テスト再生",
       playing: "再生中...",

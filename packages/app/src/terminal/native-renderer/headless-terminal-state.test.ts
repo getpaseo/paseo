@@ -142,4 +142,18 @@ describe("native headless terminal state", () => {
 
     expect(after.coordinateEpoch > before.coordinateEpoch).toEqual(true);
   });
+
+  test("preserves xterm's authoritative wide-cell metadata", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 2, cols: 8 });
+
+    await terminal.write("A界B");
+    const [row] = terminal.getBufferWindow({ startRow: 0, rowCount: 1 }).rows;
+
+    expect(row.slice(0, 4).map((cell) => ({ char: cell.char, width: cell.width }))).toEqual([
+      { char: "A", width: 1 },
+      { char: "界", width: 2 },
+      { char: " ", width: 0 },
+      { char: "B", width: 1 },
+    ]);
+  });
 });

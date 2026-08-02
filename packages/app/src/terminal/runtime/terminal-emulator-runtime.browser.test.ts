@@ -286,6 +286,18 @@ describe("terminal emulator runtime in a real browser", () => {
     });
   });
 
+  it("pastes through xterm's input producer", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+
+    mounted.runtime.paste("legacy renderer paste");
+
+    await waitFor({ predicate: () => mounted.inputs.length > 0 });
+    expect(mounted.inputs).toEqual(["legacy renderer paste"]);
+  });
+
   it("refreshes visible rows on a forced same-size resize", async () => {
     await page.viewport(900, 600);
     const mounted = createTerminalHost({ width: 720, height: 360 });

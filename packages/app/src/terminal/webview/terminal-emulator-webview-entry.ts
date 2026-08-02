@@ -30,6 +30,7 @@ type InboundMessage =
   | { type: "writeOutput"; streamKey: string; text: string }
   | { type: "restoreOutput"; streamKey: string; text: string }
   | { type: "renderSnapshot"; streamKey: string; state: TerminalState | null }
+  | { type: "paste"; streamKey: string; text: string }
   | { type: "clear"; streamKey: string }
   | { type: "focus"; streamKey: string; forceRefocus?: boolean }
   | { type: "resize"; streamKey: string; shouldClaim?: boolean }
@@ -241,6 +242,9 @@ class TerminalWebViewBridge {
         break;
       case "renderSnapshot":
         this.runtime?.renderSnapshot({ state: message.state });
+        break;
+      case "paste":
+        this.runtime?.paste(message.text);
         break;
       case "clear":
         this.runtime?.clear();

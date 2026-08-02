@@ -7,7 +7,11 @@ import {
 import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
 
 export type NativeTerminalWriteData = Uint8Array | string;
-export type TerminalCellRow = TerminalCell[];
+export interface NativeTerminalCell extends TerminalCell {
+  width?: number;
+}
+
+export type TerminalCellRow = NativeTerminalCell[];
 
 export interface NativeHeadlessTerminalOptions {
   rows: number;
@@ -112,15 +116,15 @@ function captureCoordinateStorage(terminal: HeadlessTerminalInstance): TerminalC
   };
 }
 
-function blankCell(): TerminalCell {
-  return { char: " ", fg: undefined, bg: undefined };
+function blankCell(): NativeTerminalCell {
+  return { char: " ", width: 1, fg: undefined, bg: undefined };
 }
 
 function extractCell(
   line: IBufferLine | undefined,
   col: number,
   reusableCell: IBufferCell,
-): TerminalCell {
+): NativeTerminalCell {
   if (!line) {
     return blankCell();
   }
@@ -139,6 +143,7 @@ function extractCell(
 
   return {
     char: cell.getChars() || " ",
+    width: cell.getWidth(),
     fg,
     bg,
     fgMode: fgMode !== 0 ? fgMode : undefined,
@@ -158,7 +163,7 @@ function extractRow(
   reusableCell: IBufferCell,
 ): TerminalCellRow {
   const line = terminal.buffer.active.getLine(row);
-  const rowCells: TerminalCell[] = [];
+  const rowCells: NativeTerminalCell[] = [];
   for (let col = 0; col < terminal.cols; col += 1) {
     rowCells.push(extractCell(line, col, reusableCell));
   }

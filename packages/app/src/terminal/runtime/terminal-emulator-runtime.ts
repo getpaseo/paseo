@@ -621,6 +621,10 @@ export class TerminalEmulatorRuntime {
     this.processOutputQueue();
   }
 
+  paste(text: string): void {
+    this.terminal?.paste(text);
+  }
+
   renderSnapshot(input: { state: TerminalState | null; onCommitted?: () => void }): void {
     if (!input.state) {
       this.clear(input);

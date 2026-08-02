@@ -1,3 +1,5 @@
+import type { TerminalState } from "@getpaseo/protocol/messages";
+import { renderTerminalSnapshotToAnsi } from "../runtime/terminal-snapshot";
 import type { TerminalViewportState } from "./headless-terminal-state";
 import { nativeTerminalPerformanceNow } from "./terminal-performance";
 
@@ -14,6 +16,7 @@ export interface NativeTerminalParseSample {
 export interface NativeTerminalOutputDrain {
   enqueueText(text: string): void;
   restoreText(text: string): void;
+  restoreSnapshot(snapshot: TerminalState): void;
   clear(): void;
   flush(): Promise<void>;
   dispose(): void;
@@ -116,6 +119,15 @@ export function createNativeTerminalOutputDrain(
     });
   }
 
+  function replacePendingText(text: string): void {
+    generation += 1;
+    pendingText = text;
+    resetBeforeNextWrite = true;
+    cancelPendingPaint();
+    scheduleDrain();
+    resolveIdleIfReady();
+  }
+
   async function drainPending(): Promise<void> {
     if (disposed || draining) {
       return;
@@ -171,12 +183,14 @@ export function createNativeTerminalOutputDrain(
       if (disposed) {
         return;
       }
-      generation += 1;
-      pendingText = text;
-      resetBeforeNextWrite = true;
-      cancelPendingPaint();
-      scheduleDrain();
-      resolveIdleIfReady();
+      replacePendingText(text);
+    },
+
+    restoreSnapshot(snapshot: TerminalState): void {
+      if (disposed) {
+        return;
+      }
+      replacePendingText(renderTerminalSnapshotToAnsi(snapshot));
     },
 
     clear(): void {
