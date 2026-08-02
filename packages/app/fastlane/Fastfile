@@ -1,6 +1,6 @@
 default_platform(:ios)
 
-APP_IDENTIFIER = "sh.paseo"
+APP_IDENTIFIER = "com.yooztech.paseo"
 
 platform :ios do
   desc "Submit the latest TestFlight build to App Store Review"

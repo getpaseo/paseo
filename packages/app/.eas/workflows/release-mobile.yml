@@ -3,53 +3,23 @@ name: Release Mobile
 on:
   push:
     tags:
-      - "v*"
-      - "!v*-rc.*"
-      - "!v*-beta.*"
+      - "v*-fork.*"
   workflow_dispatch: {}
 
 jobs:
   build_ios:
     name: Build iOS
     type: build
+    env:
+      PASEO_RELEASE_TAG: ${{ github.ref_name }}
     params:
       platform: ios
       profile: production
 
-  build_android:
-    name: Build Android
-    type: build
-    params:
-      platform: android
-      profile: production
-
   submit_ios:
-    name: Submit iOS
+    name: Upload iOS to TestFlight
     needs: [build_ios]
     type: submit
     params:
       build_id: ${{ needs.build_ios.outputs.build_id }}
       profile: production
-
-  submit_android:
-    name: Submit Android
-    needs: [build_android]
-    type: submit
-    params:
-      build_id: ${{ needs.build_android.outputs.build_id }}
-      profile: production
-
-  submit_ios_for_review:
-    name: Submit iOS for App Store review
-    needs: [build_ios, submit_ios]
-    environment: production
-    runs_on: macos-medium
-    steps:
-      - uses: eas/checkout
-      - name: Install fastlane
-        run: bundle install
-      - name: Submit for review
-        run: |
-          export APP_VERSION="${{ needs.build_ios.outputs.app_version }}"
-          export APP_BUILD_VERSION="${{ needs.build_ios.outputs.app_build_version }}"
-          bundle exec fastlane ios submit_review
