@@ -1532,6 +1532,19 @@ export const fr: TranslationResources = {
   menu: {
     backdrop: "Toile de fond du menu",
   },
+  loops: {
+    header: "Boucles",
+    headerCount: "Boucles ({{count}})",
+    stopAction: "Arrêter {{label}}",
+    stopTooltip: "Arrêter",
+    stopFailed: "Échec de l'arrêt de la boucle",
+    noLiveLog: "Aucun journal en direct disponible",
+    statusRunning: "En cours",
+    statusUnknown: "Inconnu",
+    roleWorker: "Worker",
+    roleVerifier: "Vérificateur",
+    iteration: "Itération {{count}}",
+  },
   backgroundTasks: {
     header: "Background Tasks",
     headerCount: "Background Tasks ({{count}})",

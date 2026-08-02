@@ -1528,6 +1528,19 @@ export const es: TranslationResources = {
   menu: {
     backdrop: "Fondo del menú",
   },
+  loops: {
+    header: "Bucles",
+    headerCount: "Bucles ({{count}})",
+    stopAction: "Detener {{label}}",
+    stopTooltip: "Detener",
+    stopFailed: "Error al detener el bucle",
+    noLiveLog: "No hay registro en vivo disponible",
+    statusRunning: "En ejecución",
+    statusUnknown: "Desconocido",
+    roleWorker: "Trabajador",
+    roleVerifier: "Verificador",
+    iteration: "Iteración {{count}}",
+  },
   backgroundTasks: {
     header: "Background Tasks",
     headerCount: "Background Tasks ({{count}})",

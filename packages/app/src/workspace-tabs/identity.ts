@@ -32,6 +32,10 @@ export function normalizeWorkspaceTabTarget(
     const taskId = trimNonEmpty(value.taskId);
     return parentAgentId && taskId ? { kind: "background_task", parentAgentId, taskId } : null;
   }
+  if (value.kind === "loop") {
+    const loopId = trimNonEmpty(value.loopId);
+    return loopId ? { kind: "loop", loopId } : null;
+  }
   if (value.kind === "file") {
     return normalizeFileTabTarget(value);
   }
@@ -115,6 +119,9 @@ export function workspaceTabTargetsEqual(
   if (left.kind === "background_task" && right.kind === "background_task") {
     return left.parentAgentId === right.parentAgentId && left.taskId === right.taskId;
   }
+  if (left.kind === "loop" && right.kind === "loop") {
+    return left.loopId === right.loopId;
+  }
   if (left.kind === "terminal" && right.kind === "terminal") {
     return left.terminalId === right.terminalId;
   }
@@ -191,6 +198,9 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   }
   if (target.kind === "background_task") {
     return `background_task_${target.parentAgentId.length}_${target.parentAgentId}_${target.taskId.length}_${target.taskId}`;
+  }
+  if (target.kind === "loop") {
+    return `loop_${target.loopId}`;
   }
   if (target.kind === "terminal") {
     return `terminal_${target.terminalId}`;

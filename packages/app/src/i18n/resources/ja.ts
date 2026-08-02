@@ -1502,6 +1502,19 @@ export const ja: TranslationResources = {
   menu: {
     backdrop: "メニューの背景",
   },
+  loops: {
+    header: "ループ",
+    headerCount: "ループ ({{count}})",
+    stopAction: "{{label}} を停止",
+    stopTooltip: "停止",
+    stopFailed: "ループの停止に失敗しました",
+    noLiveLog: "ライブログはありません",
+    statusRunning: "実行中",
+    statusUnknown: "不明",
+    roleWorker: "Worker",
+    roleVerifier: "Verifier",
+    iteration: "イテレーション {{count}}",
+  },
   backgroundTasks: {
     header: "Background Tasks",
     headerCount: "Background Tasks ({{count}})",

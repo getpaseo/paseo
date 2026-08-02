@@ -1519,6 +1519,19 @@ export const ru: TranslationResources = {
   menu: {
     backdrop: "Фон меню",
   },
+  loops: {
+    header: "Циклы",
+    headerCount: "Циклы ({{count}})",
+    stopAction: "Остановить {{label}}",
+    stopTooltip: "Остановить",
+    stopFailed: "Не удалось остановить цикл",
+    noLiveLog: "Журнал в реальном времени недоступен",
+    statusRunning: "Выполняется",
+    statusUnknown: "Неизвестно",
+    roleWorker: "Worker",
+    roleVerifier: "Verifier",
+    iteration: "Итерация {{count}}",
+  },
   backgroundTasks: {
     header: "Background Tasks",
     headerCount: "Background Tasks ({{count}})",

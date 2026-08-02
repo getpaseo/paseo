@@ -1466,6 +1466,19 @@ export const zhCN: TranslationResources = {
   menu: {
     backdrop: "菜单背景",
   },
+  loops: {
+    header: "循环",
+    headerCount: "循环 ({{count}})",
+    stopAction: "停止 {{label}}",
+    stopTooltip: "停止",
+    stopFailed: "停止循环失败",
+    noLiveLog: "没有可用的实时日志",
+    statusRunning: "运行中",
+    statusUnknown: "未知",
+    roleWorker: "Worker",
+    roleVerifier: "Verifier",
+    iteration: "迭代 {{count}}",
+  },
   backgroundTasks: {
     header: "Background Tasks",
     headerCount: "Background Tasks ({{count}})",

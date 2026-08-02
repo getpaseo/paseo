@@ -1514,6 +1514,19 @@ export const ptBR: TranslationResources = {
   menu: {
     backdrop: "Fundo do menu",
   },
+  loops: {
+    header: "Loops",
+    headerCount: "Loops ({{count}})",
+    stopAction: "Parar {{label}}",
+    stopTooltip: "Parar",
+    stopFailed: "Falha ao parar o loop",
+    noLiveLog: "Nenhum log ao vivo disponível",
+    statusRunning: "Em execução",
+    statusUnknown: "Desconhecido",
+    roleWorker: "Worker",
+    roleVerifier: "Verifier",
+    iteration: "Iteração {{count}}",
+  },
   backgroundTasks: {
     header: "Background Tasks",
     headerCount: "Background Tasks ({{count}})",

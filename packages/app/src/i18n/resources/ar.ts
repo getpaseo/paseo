@@ -1485,6 +1485,19 @@ export const ar: TranslationResources = {
   menu: {
     backdrop: "خلفية القائمة",
   },
+  loops: {
+    header: "الحلقات",
+    headerCount: "الحلقات ({{count}})",
+    stopAction: "إيقاف {{label}}",
+    stopTooltip: "إيقاف",
+    stopFailed: "فشل إيقاف الحلقة",
+    noLiveLog: "لا يتوفر سجل مباشر",
+    statusRunning: "قيد التشغيل",
+    statusUnknown: "غير معروف",
+    roleWorker: "Worker",
+    roleVerifier: "Verifier",
+    iteration: "التكرار {{count}}",
+  },
   backgroundTasks: {
     header: "Background Tasks",
     headerCount: "Background Tasks ({{count}})",
