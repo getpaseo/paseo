@@ -2290,10 +2290,11 @@ export class PiRpcAgentSession implements AgentSession {
 
   private handleMessageStart(event: Extract<PiAgentSessionEvent, { type: "message_start" }>): void {
     if (event.message.role === "assistant") {
-      this.activeAssistantMessageId = event.message.responseId || null;
-    }
-    if (event.message.role === "assistant") {
+      // Flush any stale held text under the PREVIOUS message id before adopting the
+      // new responseId, so buffered text from an un-terminated prior message isn't
+      // emitted under the wrong message id.
       this.resetReasoningCoalescing();
+      this.activeAssistantMessageId = event.message.responseId || null;
     }
   }
 
@@ -2375,6 +2376,10 @@ export class PiRpcAgentSession implements AgentSession {
       this.lastInterruptedTurnId = null;
       return;
     }
+    // Flush any buffered text from this turn before its ids are cleared, so the
+    // fragment is emitted under the correct turn/message and doesn't outlive the
+    // turn (or attach to the next one) when a turn ends without assistant message_end.
+    this.flushHeldText();
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
