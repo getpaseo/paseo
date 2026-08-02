@@ -336,6 +336,11 @@ export interface AgentTimelineCursorState {
   epoch: string;
   startSeq: number;
   endSeq: number;
+  retainedRanges?: Array<{
+    startSeq: number;
+    endSeq: number;
+    hasOlder?: boolean;
+  }>;
 }
 
 export interface SessionReplicaTimeline {

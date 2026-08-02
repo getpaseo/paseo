@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   createActivePromptPublisher,
+  shouldAcceptPromptIndexEpoch,
   promptTickMagnification,
   resolveActivePromptSeq,
   OUTLINE_MAGNIFY_RADIUS,
   type ChatOutlinePrompt,
 } from "./model";
+
+describe("chat outline prompt index epoch", () => {
+  it("accepts only the authoritative timeline epoch", () => {
+    expect(shouldAcceptPromptIndexEpoch("epoch-2", "epoch-2")).toBe(true);
+    expect(shouldAcceptPromptIndexEpoch("epoch-2", "epoch-1")).toBe(false);
+    expect(shouldAcceptPromptIndexEpoch(null, "epoch-1")).toBe(true);
+  });
+});
 
 function prompt(seq: number): ChatOutlinePrompt {
   return { seq, timestamp: new Date(seq).toISOString(), preview: `prompt ${seq}` };

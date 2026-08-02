@@ -9,6 +9,7 @@ import type { StreamViewportHandle } from "../strategy";
 import {
   createActivePromptPublisher,
   resolveActivePromptSeq,
+  shouldAcceptPromptIndexEpoch,
   type ActivePromptSource,
   type ChatOutlinePrompt,
 } from "./model";
@@ -26,6 +27,7 @@ interface PendingPromptJump {
 export interface UseChatOutlineInput {
   agentId: string;
   serverId: string;
+  timelineEpoch: string | null;
   tail: StreamItem[];
   head: StreamItem[] | undefined;
   enabled: boolean;
@@ -42,6 +44,7 @@ export interface ChatOutline {
 export function useChatOutline({
   agentId,
   serverId,
+  timelineEpoch,
   tail,
   head,
   enabled,
@@ -60,6 +63,7 @@ export function useChatOutline({
       setIndex(null);
       return;
     }
+    setIndex(null);
     const client = getHostRuntimeStore().getClient(serverId);
     if (!client) return;
     let active = true;
@@ -67,7 +71,9 @@ export function useChatOutline({
       void client
         .listAgentTimelinePrompts(agentId)
         .then((payload) => {
-          if (active) setIndex(payload);
+          if (active && shouldAcceptPromptIndexEpoch(timelineEpoch, payload.epoch)) {
+            setIndex(payload);
+          }
           return undefined;
         })
         .catch(() => undefined);
@@ -87,7 +93,7 @@ export function useChatOutline({
       active = false;
       unsubscribe();
     };
-  }, [agentId, enabled, serverId]);
+  }, [agentId, enabled, serverId, timelineEpoch]);
 
   // The transcript names the row it is showing; the outline turns that into a prompt using the
   // complete index, so unloaded rows never have to exist in the DOM to be marked.
@@ -110,7 +116,7 @@ export function useChatOutline({
     setPendingJump(null);
     readingRowIdRef.current = null;
     activePrompt.publish(null);
-  }, [activePrompt, agentId]);
+  }, [activePrompt, agentId, timelineEpoch]);
 
   // The transcript reports its reading position long before the index arrives, and a reader
   // who never scrolls would otherwise sit on an unmarked rail.

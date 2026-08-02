@@ -2705,8 +2705,57 @@ describe("processTimelineResponse", () => {
     });
 
     expect(getUserTexts(result.tail)).toEqual(["oldest", "newest", "pending submission"]);
-    expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 1, endSeq: 100 });
+    expect(result.cursor).toEqual({
+      epoch: "epoch-1",
+      startSeq: 80,
+      endSeq: 100,
+      retainedRanges: [{ startSeq: 1, endSeq: 40, hasOlder: false }],
+    });
+    expect(result.older).toBe("none");
     expect(result.sideEffects).not.toContainEqual(expect.objectContaining({ type: "catch_up" }));
+  });
+
+  it("fills the gap between a retained prompt window and the contiguous tail", () => {
+    const currentTail: StreamItem[] = [
+      {
+        kind: "user_message",
+        id: "oldest",
+        text: "oldest",
+        timestamp: new Date(1000),
+        timelineCursor: { epoch: "epoch-1", seq: 1 },
+      },
+      {
+        kind: "user_message",
+        id: "newest",
+        text: "newest",
+        timestamp: new Date(100_000),
+        timelineCursor: { epoch: "epoch-1", seq: 100 },
+      },
+    ];
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: {
+        epoch: "epoch-1",
+        startSeq: 80,
+        endSeq: 100,
+        retainedRanges: [{ startSeq: 1, endSeq: 40, hasOlder: false }],
+      },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        epoch: "epoch-1",
+        startCursor: { seq: 40 },
+        endCursor: { seq: 79 },
+        hasOlder: true,
+        entries: [makeTimelineEntry(50, "bridge", "user_message")],
+      },
+    });
+
+    expect(getUserTexts(result.tail)).toEqual(["oldest", "bridge", "newest"]);
+    expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 1, endSeq: 100 });
+    expect(result.older).toBe("none");
   });
 
   it("drops a stale before page anchored before a resume-tail replacement", () => {

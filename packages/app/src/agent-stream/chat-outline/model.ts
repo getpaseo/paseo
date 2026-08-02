@@ -2,6 +2,13 @@ import type { AgentTimelinePromptIndexPayload } from "@getpaseo/client/internal/
 
 export type ChatOutlinePrompt = AgentTimelinePromptIndexPayload["prompts"][number];
 
+export function shouldAcceptPromptIndexEpoch(
+  timelineEpoch: string | null,
+  indexEpoch: string,
+): boolean {
+  return timelineEpoch === null || timelineEpoch === indexEpoch;
+}
+
 /**
  * Slots further than this from the pointer keep their resting size, so a long rail
  * magnifies a local band instead of swelling the whole column.
