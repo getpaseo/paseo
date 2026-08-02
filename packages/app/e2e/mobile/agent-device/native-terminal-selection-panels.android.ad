@@ -2,8 +2,6 @@ context platform=android timeout=60000 retries=1
 env APP_ID=sh.paseo.debug
 
 open "${APP_ID}"
-back
-open "${APP_ID}"
 wait "id=\"workspace-header-menu-trigger\"" 20000
 press "id=\"workspace-header-menu-trigger\""
 wait "role=\"button\" label=\"New terminal\"" 10000

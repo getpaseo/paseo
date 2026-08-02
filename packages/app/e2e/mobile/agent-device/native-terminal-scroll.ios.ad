@@ -9,11 +9,11 @@ wait "id=\"terminal-surface\"" 10000
 press "id=\"terminal-surface\""
 type "clear; yes SAME | head -41; echo AD_SCROLL_MARKER; yes SAME | head -38" --delay-ms 0
 press "id=\"terminal-key-enter\""
-wait "id=\"terminal-row-0\" label=\"AD_SCROLL_MARKER\"" 10000
+wait "id=\"terminal-row-1\" label=\"AD_SCROLL_MARKER\"" 10000
 gesture pan 200 380 0 28 600
-wait "id=\"terminal-row-2\" label=\"AD_SCROLL_MARKER\"" 10000
+wait "id=\"terminal-row-3\" label=\"AD_SCROLL_MARKER\"" 10000
 gesture pan 200 380 0 28 600
-wait "id=\"terminal-row-4\" label=\"AD_SCROLL_MARKER\"" 10000
+wait "id=\"terminal-row-5\" label=\"AD_SCROLL_MARKER\"" 10000
 gesture pan 200 380 0 28 600
-wait "id=\"terminal-row-6\" label=\"AD_SCROLL_MARKER\"" 10000
+wait "id=\"terminal-row-7\" label=\"AD_SCROLL_MARKER\"" 10000
 close
