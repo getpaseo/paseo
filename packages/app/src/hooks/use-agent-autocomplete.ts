@@ -359,7 +359,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   } = useAgentCommandsQuery({
     serverId,
     agentId,
-    enabled: mode === "command" && canLoadCommands,
+    enabled: active && mode === "command" && canLoadCommands,
     draftConfig: queryDraftConfig,
   });
 

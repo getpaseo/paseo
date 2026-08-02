@@ -272,13 +272,14 @@ function CommitDiffPanel() {
   const { t } = useTranslation();
   const { serverId, workspaceId, target } = usePaneContext();
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
+  const isActive = useRetainedPanelActive();
   const panelPreferences = useDiffPanelPreferences();
   invariant(target.kind === "commit_diff", "CommitDiffPanel requires commit_diff target");
   const { files, isLoading, error, capabilityMissing } = useCommitDiffFiles({
     serverId,
     cwd: cwd ?? "",
     sha: target.sha,
-    enabled: Boolean(cwd),
+    enabled: isActive && Boolean(cwd),
   });
   const mode = useMemo(() => ({ kind: "commit" as const }), []);
 

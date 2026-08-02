@@ -1083,7 +1083,11 @@ export function Composer({
     onOpenWorkspaceAttachment,
   });
   const setSelectedAttachments = onChangeAttachments;
-  const checkoutStatusQuery = useCheckoutStatusQuery({ serverId, cwd });
+  const checkoutStatusQuery = useCheckoutStatusQuery({
+    serverId,
+    cwd,
+    enabled: retainedPanelActive,
+  });
   const supportsForgeSearch = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.forgeSearch === true,
   );
