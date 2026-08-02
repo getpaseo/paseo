@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.918 - 2026-08-02
+
+### Fixed
+
+- History and Backlog screens no longer full-screen crash on compact native with `useBottomSheetInternal cannot be used without BottomSheet` — search fields reused `AdaptiveTextInput`, which always mounted `BottomSheetTextInput` outside a Gorhom sheet; inputs now use `BottomSheetTextInput` only under `IsolatedBottomSheetModal`
+
 ## 0.2.917 - 2026-08-02
 
 ### Added
