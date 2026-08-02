@@ -284,6 +284,57 @@ describe("useComposerGithubAutoAttach", () => {
     vi.useRealTimers();
   });
 
+  it("preserves pull request order across lookup batches", async () => {
+    vi.useFakeTimers();
+    const firstLookup = deferred<ForgeSearchPayload>();
+    const secondLookup = deferred<ForgeSearchPayload>();
+    const client: ForgeSearchClient = {
+      searchForge: vi
+        .fn()
+        .mockReturnValueOnce(firstLookup.promise)
+        .mockReturnValueOnce(secondLookup.promise),
+    };
+    const onPullRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      result.current.setText("Review https://github.com/acme/paseo/pull/101");
+    });
+    await flushDebounce();
+    act(() => {
+      result.current.setText(
+        "Review https://github.com/acme/paseo/pull/101 and https://github.com/acme/paseo/pull/202",
+      );
+    });
+    expect(result.current.isResolving).toBe(true);
+    await flushDebounce();
+
+    await act(async () => {
+      secondLookup.resolve(githubPayload([pr202], "search-202"));
+      await Promise.resolve();
+    });
+    expect(onPullRequestAdded).not.toHaveBeenCalled();
+    expect(result.current.attachments).toEqual([]);
+    expect(result.current.isResolving).toBe(true);
+
+    await act(async () => {
+      firstLookup.resolve(githubPayload([pr101], "search-101"));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(onPullRequestAdded.mock.calls).toEqual([[pr101], [pr202]]);
+      expect(result.current.attachments).toEqual([
+        { kind: "forge_change_request", item: pr101 },
+        { kind: "forge_change_request", item: pr202 },
+      ]);
+      expect(result.current.isResolving).toBe(false);
+    });
+    expect(client.searchForge).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
   it("uses the latest pull request order when URLs are reordered during debounce", async () => {
     vi.useFakeTimers();
     const client = createSearchClient([pr101, pr202]);
@@ -309,6 +360,58 @@ describe("useComposerGithubAutoAttach", () => {
       { cwd, query: "202", limit: 20 },
       { cwd, query: "101", limit: 20 },
     ]);
+    vi.useRealTimers();
+  });
+
+  it("uses the latest pull request order when active lookups are reordered", async () => {
+    vi.useFakeTimers();
+    const firstLookup = deferred<ForgeSearchPayload>();
+    const secondLookup = deferred<ForgeSearchPayload>();
+    const client: ForgeSearchClient = {
+      searchForge: vi
+        .fn()
+        .mockReturnValueOnce(firstLookup.promise)
+        .mockReturnValueOnce(secondLookup.promise),
+    };
+    const onPullRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      result.current.setText(
+        "Refs https://github.com/acme/paseo/pull/101 and https://github.com/acme/paseo/pull/202",
+      );
+    });
+    await flushDebounce();
+    act(() => {
+      result.current.setText(
+        "Refs https://github.com/acme/paseo/pull/202 and https://github.com/acme/paseo/pull/101",
+      );
+    });
+    await flushDebounce();
+
+    await act(async () => {
+      firstLookup.resolve(githubPayload([pr101], "search-101"));
+      await Promise.resolve();
+    });
+    expect(onPullRequestAdded).not.toHaveBeenCalled();
+    expect(result.current.attachments).toEqual([]);
+    expect(result.current.isResolving).toBe(true);
+
+    await act(async () => {
+      secondLookup.resolve(githubPayload([pr202], "search-202"));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(onPullRequestAdded.mock.calls).toEqual([[pr202], [pr101]]);
+      expect(result.current.attachments).toEqual([
+        { kind: "forge_change_request", item: pr202 },
+        { kind: "forge_change_request", item: pr101 },
+      ]);
+      expect(result.current.isResolving).toBe(false);
+    });
+    expect(client.searchForge).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
   });
 

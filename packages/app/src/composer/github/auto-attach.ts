@@ -131,18 +131,11 @@ export function useComposerGithubAutoAttach(
         return;
       }
       const current = latestRef.current;
-      const invalidRefKeys = refs.flatMap((ref) =>
-        isLookupStillRelevant({
-          ref,
-          initial,
-          current,
-          removedRefKeys,
-        })
-          ? []
-          : [githubRefKey(ref)],
-      );
-      lookup?.invalidateIrrelevant(current);
-      releaseResolving(invalidRefKeys);
+      if (didLookupSourceOrderChange(refKeys, current, removedRefKeys)) {
+        lookup?.invalidate(refKeys);
+      } else {
+        lookup?.invalidateIrrelevant(current);
+      }
     };
   }, [
     lookupCandidateKey,
@@ -174,13 +167,28 @@ function getLookupCandidateKey(
   params: ComposerGithubAutoAttachInput,
   removedRefKeys: ReadonlySet<string>,
 ): string {
-  return extractGithubRefs(params.text, params.remoteUrl)
-    .filter((ref) => {
-      const key = githubRefKey(ref);
-      return !removedRefKeys.has(key) && !hasGithubAttachment(params.attachments, ref);
-    })
-    .map(githubRefKey)
-    .join("|");
+  return getLookupCandidateRefs(params, removedRefKeys).map(githubRefKey).join("|");
+}
+
+function getLookupCandidateRefs(
+  params: ComposerGithubAutoAttachInput,
+  removedRefKeys: ReadonlySet<string>,
+): GithubRef[] {
+  return extractGithubRefs(params.text, params.remoteUrl).filter((ref) => {
+    const key = githubRefKey(ref);
+    return !removedRefKeys.has(key) && !hasGithubAttachment(params.attachments, ref);
+  });
+}
+
+function didLookupSourceOrderChange(
+  originalKeys: readonly string[],
+  current: ComposerGithubAutoAttachInput,
+  removedRefKeys: ReadonlySet<string>,
+): boolean {
+  const currentKeys = getLookupCandidateRefs(current, removedRefKeys).map(githubRefKey);
+  const currentKeySet = new Set(currentKeys);
+  const retainedOriginalKeys = originalKeys.filter((key) => currentKeySet.has(key));
+  return currentKeys.join("|") !== retainedOriginalKeys.join("|");
 }
 
 function getLookupRelevanceKey(
@@ -200,23 +208,6 @@ function getPresentPullRequestKey(params: ComposerGithubAutoAttachInput): string
     .map(githubRefKey)
     .sort()
     .join("|");
-}
-
-function isLookupStillRelevant({
-  ref,
-  initial,
-  current,
-  removedRefKeys,
-}: {
-  ref: GithubRef;
-  initial: ComposerGithubAutoAttachInput;
-  current: ComposerGithubAutoAttachInput;
-  removedRefKeys: ReadonlySet<string>;
-}): boolean {
-  return (
-    isLookupContextStillRelevant({ ref, initial, current, removedRefKeys }) &&
-    !hasGithubAttachment(current.attachments, ref)
-  );
 }
 
 function isLookupContextStillRelevant({
