@@ -4,6 +4,7 @@ import { expect, test } from "../support/fixtures";
 import { createIdleAgent } from "../support/helpers/archive-tab";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { clickNewTerminal, terminalSurfaceLocator } from "../support/helpers/launcher";
+import { renameModalInput } from "../support/helpers/rename";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { clickSettingsBackToWorkspace, openCompactSettings } from "../support/helpers/settings";
@@ -77,7 +78,9 @@ test.describe("Workspace pane mounting", () => {
     }
   });
 
-  test("opening Settings and returning keeps the agent composer mounted", async ({ page }) => {
+  test("opening Settings hides workspace overlays and keeps the agent composer mounted", async ({
+    page,
+  }) => {
     test.setTimeout(90_000);
     const serverId = getServerId();
     const workspace = await seedWorkspace({ repoPrefix: "settings-pane-retention-" });
@@ -94,7 +97,18 @@ test.describe("Workspace pane mounting", () => {
       const composer = page.getByTestId("message-input-root").filter({ visible: true }).first();
       const originalComposer = await captureRenderedNode(composer);
 
-      await openSettings(page);
+      const tab = page.getByTestId(`workspace-tab-agent_${agent.id}`).first();
+      await tab.click({ button: "right" });
+      await page.getByTestId(`workspace-tab-context-agent_${agent.id}-rename`).click();
+      const renameInput = renameModalInput(page, `workspace-tab-rename-modal-agent-${agent.id}`);
+      await expect(renameInput).toBeVisible();
+
+      const settingsShortcut = await page.evaluate(() =>
+        navigator.platform.toLowerCase().includes("mac") ? "Meta+," : "Control+,",
+      );
+      await page.keyboard.press(settingsShortcut);
+      await expect(page).toHaveURL(/\/settings\/general$/);
+      await expect(renameInput).not.toBeVisible();
       await clickSettingsBackToWorkspace(page);
       await expectSameRenderedNode(originalComposer, composer);
     } finally {

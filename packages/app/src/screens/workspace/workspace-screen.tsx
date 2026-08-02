@@ -3887,7 +3887,7 @@ function WorkspaceScreenContent({
               {workspaceCenterColumn}
             </WorkspaceChromeRow>
             <ImportSessionSheet
-              visible={isImportSheetVisible}
+              visible={isRouteFocused && isImportSheetVisible}
               client={client}
               serverId={normalizedServerId}
               cwd={workspaceDirectory}
@@ -3896,7 +3896,7 @@ function WorkspaceScreenContent({
               onImportedAgent={handleImportedAgent}
             />
             <WorkspaceTabRenameModal
-              renamingTab={renamingTab}
+              renamingTab={isRouteFocused ? renamingTab : null}
               onSubmit={handleRenameModalSubmit}
               onClose={handleRenameModalClose}
             />
