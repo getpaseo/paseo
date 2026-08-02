@@ -565,6 +565,7 @@ function NativeTerminalEmulator({
         terminalRef.current?.reset();
         schedulePaint();
       },
+      claimSize: claimActiveTerminalSize,
       showKeyboard: () => {
         inputRef.current?.showKeyboard();
         claimActiveTerminalSizeForAction("showKeyboard");
@@ -576,6 +577,7 @@ function NativeTerminalEmulator({
     }),
     [
       enqueueOutputText,
+      claimActiveTerminalSize,
       claimActiveTerminalSizeForAction,
       clearSelection,
       resetInputModeTracker,
@@ -637,8 +639,8 @@ function NativeTerminalEmulator({
 
   useEffect(() => {
     if (resizeRequestToken <= 0) return;
-    claimActiveTerminalSizeForAction("resizeRequest");
-  }, [claimActiveTerminalSizeForAction, resizeRequestToken]);
+    emitMeasuredSize({ source: "measure" });
+  }, [emitMeasuredSize, resizeRequestToken]);
 
   useEffect(() => {
     emitMeasuredSize({ source: "measure" });

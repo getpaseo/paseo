@@ -47,6 +47,7 @@ export interface TerminalEmulatorHandle {
   paste: (text: string) => void;
   copySelection: (clipboard: TerminalClipboardWriter) => Promise<string>;
   clear: () => void;
+  claimSize: () => void;
   showKeyboard: () => void;
   blur: () => void;
 }
@@ -265,6 +266,9 @@ export default function TerminalEmulator({
       clear: () => {
         runtimeRef.current?.clear();
       },
+      claimSize: () => {
+        runtimeRef.current?.resize({ forceClaim: true, shouldClaim: true });
+      },
       showKeyboard: () => {
         runtimeRef.current?.resize({ forceClaim: true, shouldClaim: true });
         runtimeRef.current?.focus();
@@ -293,6 +297,9 @@ export default function TerminalEmulator({
       copySelection: async () => "",
       clear: () => {
         runtimeRef.current?.clear();
+      },
+      claimSize: () => {
+        runtimeRef.current?.resize({ forceClaim: true, shouldClaim: true });
       },
       showKeyboard: () => {
         runtimeRef.current?.resize({ forceClaim: true, shouldClaim: true });
@@ -522,7 +529,7 @@ export default function TerminalEmulator({
     if (resizeRequestToken <= 0) {
       return;
     }
-    runtimeRef.current?.resize({ forceClaim: true, shouldClaim: true });
+    runtimeRef.current?.resize({ forceClaim: false, shouldClaim: false });
   }, [resizeRequestToken]);
 
   const showTerminalContextMenu = useCallback(() => {

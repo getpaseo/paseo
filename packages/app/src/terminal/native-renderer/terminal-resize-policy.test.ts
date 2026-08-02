@@ -15,8 +15,8 @@ describe("terminal resize policy", () => {
       state: {
         measuredSize: { rows: 41, cols: 48 },
         claimedSize: null,
-        ownsTerminalSize: false,
         lastClaimToken: null,
+        pendingClaim: false,
         pendingForceClaim: false,
       },
       measuredSize: { rows: 41, cols: 48 },
@@ -43,8 +43,8 @@ describe("terminal resize policy", () => {
       state: {
         measuredSize: { rows: 41, cols: 48 },
         claimedSize: { rows: 41, cols: 48 },
-        ownsTerminalSize: true,
         lastClaimToken: null,
+        pendingClaim: false,
         pendingForceClaim: false,
       },
       measuredSize: { rows: 41, cols: 48 },
@@ -71,8 +71,8 @@ describe("terminal resize policy", () => {
       state: {
         measuredSize: { rows: 24, cols: 80 },
         claimedSize: null,
-        ownsTerminalSize: true,
         lastClaimToken: null,
+        pendingClaim: true,
         pendingForceClaim: false,
       },
       measuredSize: { rows: 24, cols: 80 },
@@ -83,8 +83,8 @@ describe("terminal resize policy", () => {
       state: {
         measuredSize: { rows: 41, cols: 48 },
         claimedSize: { rows: 41, cols: 48 },
-        ownsTerminalSize: true,
         lastClaimToken: null,
+        pendingClaim: false,
         pendingForceClaim: false,
       },
       measuredSize: { rows: 41, cols: 48 },
@@ -113,8 +113,8 @@ describe("terminal resize policy", () => {
       state: {
         measuredSize: { rows: 41, cols: 48 },
         claimedSize: { rows: 41, cols: 48 },
-        ownsTerminalSize: true,
         lastClaimToken: 1,
+        pendingClaim: false,
         pendingForceClaim: false,
       },
       measuredSize: { rows: 41, cols: 48 },
@@ -143,8 +143,8 @@ describe("terminal resize policy", () => {
       state: {
         measuredSize: { rows: 21, cols: 55 },
         claimedSize: { rows: 21, cols: 55 },
-        ownsTerminalSize: true,
         lastClaimToken: 2,
+        pendingClaim: false,
         pendingForceClaim: false,
       },
       measuredSize: { rows: 21, cols: 55 },
@@ -166,8 +166,8 @@ describe("terminal resize policy", () => {
       state: {
         measuredSize: { rows: 21, cols: 55 },
         claimedSize: { rows: 21, cols: 55 },
-        ownsTerminalSize: true,
         lastClaimToken: 2,
+        pendingClaim: false,
         pendingForceClaim: false,
       },
       measuredSize: { rows: 21, cols: 55 },
@@ -195,8 +195,8 @@ describe("terminal resize policy", () => {
       state: {
         measuredSize: { rows: 21, cols: 55 },
         claimedSize: { rows: 21, cols: 55 },
-        ownsTerminalSize: true,
         lastClaimToken: 2,
+        pendingClaim: false,
         pendingForceClaim: false,
       },
       measuredSize: { rows: 21, cols: 55 },
@@ -224,8 +224,8 @@ describe("terminal resize policy", () => {
       state: {
         measuredSize: { rows: 21, cols: 55 },
         claimedSize: { rows: 21, cols: 55 },
-        ownsTerminalSize: true,
         lastClaimToken: 1,
+        pendingClaim: false,
         pendingForceClaim: false,
       },
       measuredSize: { rows: 21, cols: 55 },
@@ -234,7 +234,7 @@ describe("terminal resize policy", () => {
     });
   });
 
-  test("layout after claim only claims changed sizes while ownership is active", () => {
+  test("passive layout changes never reuse an earlier explicit claim", () => {
     const firstClaim = updateTerminalResizePolicy(
       createTerminalResizePolicy({ rows: 24, cols: 80 }),
       {
@@ -253,21 +253,11 @@ describe("terminal resize policy", () => {
     });
 
     expect(duplicateLayout.resizeClaim).toEqual(null);
-    expect(changedLayout).toEqual({
-      state: {
-        measuredSize: { rows: 43, cols: 50 },
-        claimedSize: { rows: 43, cols: 50 },
-        ownsTerminalSize: true,
-        lastClaimToken: null,
-        pendingForceClaim: false,
-      },
-      measuredSize: { rows: 43, cols: 50 },
-      resizeClaim: { rows: 43, cols: 50, force: false },
-      measuredSizeChanged: true,
-    });
+    expect(changedLayout.resizeClaim).toEqual(null);
+    expect(changedLayout.measuredSize).toEqual({ rows: 43, cols: 50 });
   });
 
-  test("keyboard measurement after focus claims the smaller focused viewport", () => {
+  test("keyboard measurement stays passive until the interaction explicitly reclaims", () => {
     const focused = updateTerminalResizePolicy(createTerminalResizePolicy({ rows: 24, cols: 80 }), {
       source: "claim",
       size: { rows: 41, cols: 53 },
@@ -281,14 +271,22 @@ describe("terminal resize policy", () => {
     expect(keyboardOpen).toEqual({
       state: {
         measuredSize: { rows: 26, cols: 53 },
-        claimedSize: { rows: 26, cols: 53 },
-        ownsTerminalSize: true,
+        claimedSize: { rows: 41, cols: 53 },
         lastClaimToken: null,
+        pendingClaim: false,
         pendingForceClaim: false,
       },
       measuredSize: { rows: 26, cols: 53 },
-      resizeClaim: { rows: 26, cols: 53, force: false },
+      resizeClaim: null,
       measuredSizeChanged: true,
     });
+
+    const settledKeyboardClaim = updateTerminalResizePolicy(keyboardOpen.state, {
+      source: "claim",
+      size: { rows: 26, cols: 53 },
+      claimToken: 1,
+    });
+
+    expect(settledKeyboardClaim.resizeClaim).toEqual({ rows: 26, cols: 53, force: true });
   });
 });

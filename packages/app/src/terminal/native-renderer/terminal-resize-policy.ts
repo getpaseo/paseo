@@ -8,8 +8,8 @@ export type TerminalResizeSource = "measure" | "claim";
 export interface TerminalResizePolicyState {
   measuredSize: TerminalSize;
   claimedSize: TerminalSize | null;
-  ownsTerminalSize: boolean;
   lastClaimToken: number | null;
+  pendingClaim: boolean;
   pendingForceClaim: boolean;
 }
 
@@ -34,8 +34,8 @@ export function createTerminalResizePolicy(initialSize: TerminalSize): TerminalR
   return {
     measuredSize: initialSize,
     claimedSize: null,
-    ownsTerminalSize: false,
     lastClaimToken: null,
+    pendingClaim: false,
     pendingForceClaim: false,
   };
 }
@@ -45,10 +45,11 @@ export function updateTerminalResizePolicy(
   input: TerminalResizePolicyInput,
 ): TerminalResizePolicyResult {
   if (!input.size) {
+    const claimRequested = isNewClaim(state, input);
     const nextState = {
       ...state,
-      ownsTerminalSize: state.ownsTerminalSize || input.source === "claim",
       lastClaimToken: nextClaimToken(state, input),
+      pendingClaim: state.pendingClaim || claimRequested,
       pendingForceClaim: state.pendingForceClaim || hasNewClaimToken(state, input),
     };
 
@@ -61,18 +62,16 @@ export function updateTerminalResizePolicy(
   }
 
   const measuredSizeChanged = !terminalSizesEqual(state.measuredSize, input.size);
-  const ownsTerminalSize = state.ownsTerminalSize || input.source === "claim";
   const claimToken = nextClaimToken(state, input);
   const forceReclaim = state.pendingForceClaim || hasNewClaimToken(state, input);
-  const sizeClaimChanged = !terminalSizesEqual(state.claimedSize, input.size);
-  const shouldClaim = ownsTerminalSize && (sizeClaimChanged || forceReclaim);
+  const shouldClaim = state.pendingClaim || isNewClaim(state, input);
   const resizeClaim = shouldClaim ? { ...input.size, force: forceReclaim } : null;
   const claimedSize = resizeClaim ? input.size : state.claimedSize;
   const nextState = {
     measuredSize: input.size,
     claimedSize,
-    ownsTerminalSize,
     lastClaimToken: claimToken,
+    pendingClaim: shouldClaim ? false : state.pendingClaim,
     pendingForceClaim: shouldClaim ? false : state.pendingForceClaim,
   };
 
@@ -107,4 +106,14 @@ function hasNewClaimToken(
   }
   const claimToken = nextClaimToken(state, input);
   return claimToken !== state.lastClaimToken;
+}
+
+function isNewClaim(state: TerminalResizePolicyState, input: TerminalResizePolicyInput): boolean {
+  if (input.source !== "claim") {
+    return false;
+  }
+  if (input.claimToken !== undefined) {
+    return hasNewClaimToken(state, input);
+  }
+  return input.size === null || !terminalSizesEqual(state.claimedSize, input.size);
 }

@@ -361,6 +361,7 @@ export function TerminalPane({
     if (step.shouldRequest) {
       lastSentTerminalSizeRef.current = null;
       requestTerminalReflow();
+      emulatorRef.current?.claimSize();
     }
   }, [
     client,
@@ -381,6 +382,7 @@ export function TerminalPane({
     }
     lastSentTerminalSizeRef.current = null;
     requestTerminalReflow();
+    emulatorRef.current?.claimSize();
   }, [
     isPaneFocused,
     isWorkspaceFocused,
@@ -403,9 +405,12 @@ export function TerminalPane({
   const pulseKeyboardRefits = useCallback(() => {
     clearKeyboardRefitTimeouts();
     requestTerminalReflow();
-    keyboardRefitTimeoutsRef.current = TERMINAL_REFIT_DELAYS_MS.map((delayMs) =>
+    keyboardRefitTimeoutsRef.current = TERMINAL_REFIT_DELAYS_MS.map((delayMs, index) =>
       setTimeout(() => {
         requestTerminalReflow();
+        if (index === TERMINAL_REFIT_DELAYS_MS.length - 1) {
+          emulatorRef.current?.claimSize();
+        }
       }, delayMs),
     );
   }, [clearKeyboardRefitTimeouts, requestTerminalReflow]);

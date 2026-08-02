@@ -489,12 +489,14 @@ export class TerminalEmulatorRuntime {
       terminal,
     });
     const resizeObserver = new ResizeObserver(() => {
-      fitAndEmitResize({ shouldClaim: true });
+      fitAndEmitResize({ shouldClaim: false });
     });
     resizeObserver.observe(input.root);
     resizeObserver.observe(input.host);
 
-    const windowResizeHandler = () => fitAndEmitResize({ shouldClaim: true });
+    const windowResizeHandler = () => {
+      fitAndEmitResize({ shouldClaim: true });
+    };
     window.addEventListener("resize", windowResizeHandler);
     const windowFocusHandler = () => {
       this.handleVisibilityRestore();
@@ -507,7 +509,9 @@ export class TerminalEmulatorRuntime {
     document.addEventListener("visibilitychange", documentVisibilityChangeHandler);
 
     const visualViewport = window.visualViewport;
-    const visualViewportResizeHandler = () => fitAndEmitResize({ shouldClaim: true });
+    const visualViewportResizeHandler = () => {
+      fitAndEmitResize({ shouldClaim: false });
+    };
     visualViewport?.addEventListener("resize", visualViewportResizeHandler);
 
     const fitTimeouts = FIT_TIMEOUT_DELAYS_MS.map((delayMs) =>

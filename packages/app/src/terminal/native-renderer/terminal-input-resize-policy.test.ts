@@ -12,6 +12,5 @@ describe("native terminal input resize policy", () => {
     expect(shouldClaimNativeTerminalSize("focus")).toEqual(true);
     expect(shouldClaimNativeTerminalSize("showKeyboard")).toEqual(true);
     expect(shouldClaimNativeTerminalSize("paste")).toEqual(true);
-    expect(shouldClaimNativeTerminalSize("resizeRequest")).toEqual(true);
   });
 });

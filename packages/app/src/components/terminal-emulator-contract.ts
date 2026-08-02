@@ -18,6 +18,7 @@ export interface TerminalEmulatorHandle {
   paste: (text: string) => void;
   copySelection: (clipboard: TerminalClipboardWriter) => Promise<string>;
   clear: () => void;
+  claimSize: () => void;
   showKeyboard: () => void;
   blur: () => void;
 }

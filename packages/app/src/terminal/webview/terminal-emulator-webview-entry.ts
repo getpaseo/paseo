@@ -33,7 +33,7 @@ type InboundMessage =
   | { type: "paste"; streamKey: string; text: string }
   | { type: "clear"; streamKey: string }
   | { type: "focus"; streamKey: string; forceRefocus?: boolean }
-  | { type: "resize"; streamKey: string; forceClaim: boolean }
+  | { type: "resize"; streamKey: string; forceClaim: boolean; shouldClaim?: boolean }
   | { type: "setTheme"; streamKey: string; theme: ITheme }
   | { type: "setScrollback"; streamKey: string; lines: number }
   | { type: "setFont"; streamKey: string; fontFamily?: string; fontSize?: number }
@@ -260,7 +260,10 @@ class TerminalWebViewBridge {
         this.runtime?.focus({ forceRefocus: message.forceRefocus });
         break;
       case "resize":
-        this.runtime?.resize({ shouldClaim: true, forceClaim: message.forceClaim });
+        this.runtime?.resize({
+          shouldClaim: message.shouldClaim ?? true,
+          forceClaim: message.forceClaim,
+        });
         break;
     }
   }
