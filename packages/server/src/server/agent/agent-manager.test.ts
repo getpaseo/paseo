@@ -24,6 +24,7 @@ import type {
   AgentClient,
   AgentCreateSessionOptions,
   AgentFeature,
+  AgentHistoryStreamOptions,
   AgentLaunchContext,
   AgentPromptInput,
   AgentProvider,
@@ -4456,6 +4457,68 @@ test("closing an agent cancels hydration, clears its gate, and does not replay",
     expect(hydrationState.activeHistoryHydrations.has(agentId)).toBe(false);
     expect(hydrationState.historyHydrationTails.has(agentId)).toBe(false);
     expect(hydrationState.coalescerHistoryHydrationTokens.has(agentId)).toBe(false);
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("closing an agent releases native provider history work through cancellation", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-native-history-cancel-"));
+  const agentId = "00000000-0000-4000-8000-000000000174";
+  const historyStarted = deferred<void>();
+  const historyReleased = deferred<void>();
+
+  class NativeStallingHistorySession extends TestAgentSession {
+    override async *streamHistory(
+      options?: AgentHistoryStreamOptions,
+    ): AsyncGenerator<AgentStreamEvent> {
+      const signal = options?.signal;
+      if (!signal) {
+        throw new Error("History cancellation signal was not provided");
+      }
+      historyStarted.resolve();
+      try {
+        await new Promise<void>((_resolve, reject) => {
+          const onAbort = () => reject(signal.reason);
+          if (signal.aborted) {
+            onAbort();
+          } else {
+            signal.addEventListener("abort", onAbort, { once: true });
+          }
+        });
+      } finally {
+        historyReleased.resolve();
+      }
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "unreachable stalled history" },
+      };
+    }
+  }
+
+  const session = new NativeStallingHistorySession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: { codex: new SingleSessionAgentClient(session) },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const hydrationFailure = manager
+      .hydrateTimelineFromProvider(created.id, { force: true })
+      .catch((error: unknown) => error);
+    await historyStarted.promise;
+
+    await manager.closeAgent(agentId);
+    await historyReleased.promise;
+    const error = await hydrationFailure;
+    expect(error).toBeInstanceOf(AgentHistoryHydrationError);
+    expect(error).toMatchObject({ agentId, reason: "cancelled" });
   } finally {
     await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });

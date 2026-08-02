@@ -3703,7 +3703,9 @@ export class AgentManager {
     activeHydration: ActiveHistoryHydration,
   ): Promise<ProviderHistoryEvents> {
     this.throwIfHistoryHydrationCancelled(activeHydration);
-    const iterator = agent.session.streamHistory();
+    const iterator = agent.session.streamHistory({
+      signal: activeHydration.abortController.signal,
+    });
     activeHydration.historyIterator = iterator;
     activeHydration.historyIteratorReturnRequested = false;
     const timeline: ProviderHistoryEvents["timeline"] = [];

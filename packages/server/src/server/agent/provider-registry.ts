@@ -358,8 +358,8 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     run: (prompt, options) => inner.run(prompt, options),
     startTurn: (prompt, options) => inner.startTurn(prompt, options),
     subscribe: (callback) => inner.subscribe((event) => callback(mapStreamEvent(provider, event))),
-    async *streamHistory() {
-      for await (const event of inner.streamHistory()) {
+    async *streamHistory(options) {
+      for await (const event of inner.streamHistory(options)) {
         yield mapStreamEvent(provider, event);
       }
     },

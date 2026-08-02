@@ -1663,6 +1663,32 @@ describe("OpenCode adapter startTurn error handling", () => {
     ]);
   });
 
+  test("streamHistory forwards one cancellation signal to every history request", async () => {
+    const get = vi.fn().mockResolvedValue({ data: { revert: undefined }, error: undefined });
+    const messages = vi.fn().mockResolvedValue({ data: [], error: undefined });
+    const fakeClient = { session: { get, messages } } as never;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+    const signal = new AbortController().signal;
+
+    await expect(session.streamHistory({ signal }).next()).resolves.toEqual({
+      done: true,
+      value: undefined,
+    });
+    expect(get).toHaveBeenCalledWith(
+      { sessionID: "ses_unit_test", directory: "/tmp/test" },
+      { signal },
+    );
+    expect(messages).toHaveBeenCalledWith(
+      { sessionID: "ses_unit_test", directory: "/tmp/test" },
+      { signal },
+    );
+  });
+
   test("streamHistory omits replay timestamps when OpenCode omits times", async () => {
     const fakeClient = {
       session: {

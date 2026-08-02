@@ -23,6 +23,7 @@ import {
   type AgentClient,
   type AgentCreateSessionOptions,
   type AgentFeature,
+  type AgentHistoryStreamOptions,
   type AgentLaunchContext,
   type AgentMode,
   type AgentModelDefinition,
@@ -4002,15 +4003,22 @@ class OpenCodeAgentSession implements AgentSession {
     );
   }
 
-  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    const sessionResponse = await this.client.session.get({
-      sessionID: this.sessionId,
-      directory: this.config.cwd,
-    });
-    const response = await this.client.session.messages({
-      sessionID: this.sessionId,
-      directory: this.config.cwd,
-    });
+  async *streamHistory(options?: AgentHistoryStreamOptions): AsyncGenerator<AgentStreamEvent> {
+    const requestOptions = options?.signal ? { signal: options.signal } : undefined;
+    const sessionResponse = await this.client.session.get(
+      {
+        sessionID: this.sessionId,
+        directory: this.config.cwd,
+      },
+      requestOptions,
+    );
+    const response = await this.client.session.messages(
+      {
+        sessionID: this.sessionId,
+        directory: this.config.cwd,
+      },
+      requestOptions,
+    );
 
     if (response.error || !response.data) {
       return;

@@ -5,12 +5,9 @@ import path from "node:path";
 import pino from "pino";
 
 import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
+import { claudeProjectDirSync } from "../agent/providers/claude/project-dir.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-
-function sanitizeClaudeProjectPath(cwd: string): string {
-  return cwd.replace(/[\\/._:]/g, "-");
-}
 
 interface ClaudeJsonlEntry {
   type: "user" | "assistant";
@@ -70,7 +67,7 @@ describe("daemon E2E - refresh rehydrates timeline from on-disk session", () => 
     process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 
     cwd = mkdtempSync(path.join(tmpdir(), "claude-cwd-refresh-"));
-    const projectsDir = path.join(claudeConfigDir, "projects", sanitizeClaudeProjectPath(cwd));
+    const projectsDir = claudeProjectDirSync(cwd, { configDir: claudeConfigDir });
     mkdirSync(projectsDir, { recursive: true });
     sessionFile = path.join(projectsDir, `${sessionId}.jsonl`);
 

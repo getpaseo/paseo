@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import type {
   AgentCapabilityFlags,
+  AgentHistoryStreamOptions,
   AgentPromptInput,
   AgentSession,
   AgentStreamEvent,
@@ -60,6 +61,7 @@ class FakeSession implements AgentSession {
   readonly capabilities = CAPABILITIES;
   readonly features = [];
   readonly recordedCalls: string[] = [];
+  readonly historySignals: Array<AbortSignal | undefined> = [];
 
   async run() {
     this.recordedCalls.push("run");
@@ -76,8 +78,9 @@ class FakeSession implements AgentSession {
     return () => {};
   }
 
-  async *streamHistory() {
+  async *streamHistory(options?: AgentHistoryStreamOptions) {
     this.recordedCalls.push("streamHistory");
+    this.historySignals.push(options?.signal);
     yield* emptyHistory();
   }
 
@@ -168,6 +171,19 @@ async function* emptyHistory(): AsyncGenerator<AgentStreamEvent> {
 }
 
 describe("wrapSessionProvider", () => {
+  test("forwards stream history cancellation", async () => {
+    const session = new FakeSession();
+    const wrapped = wrapSessionProvider("custom-claude", session);
+    const signal = new AbortController().signal;
+
+    await expect(wrapped.streamHistory({ signal }).next()).resolves.toEqual({
+      done: true,
+      value: undefined,
+    });
+
+    expect(session.historySignals).toEqual([signal]);
+  });
+
   test("forwards every optional AgentSession method", async () => {
     const session = new FakeSession();
     const wrapped = wrapSessionProvider("custom-claude", session);
