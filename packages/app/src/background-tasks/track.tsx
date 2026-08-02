@@ -5,9 +5,11 @@ import { ChevronDown, ChevronRight, Square } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { BackgroundTaskDescriptorPayload } from "@getpaseo/protocol/messages";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { useIsCompactFormFactor, MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
+import { normalizeBackgroundTaskDisplayType, type BackgroundTaskDisplayType } from "./type-badge";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
@@ -49,6 +51,22 @@ function statusLabel(
       return t("backgroundTasks.statusCompleted");
     default:
       return t("backgroundTasks.statusUnknown");
+  }
+}
+
+function typeBadgeLabel(
+  displayType: BackgroundTaskDisplayType,
+  t: (key: string) => string,
+): string {
+  switch (displayType) {
+    case "shell":
+      return t("backgroundTasks.typeShell");
+    case "monitor":
+      return t("backgroundTasks.typeMonitor");
+    case "workflow":
+      return t("backgroundTasks.typeWorkflow");
+    case "other":
+      return t("backgroundTasks.typeOther");
   }
 }
 
@@ -151,6 +169,8 @@ function BackgroundTasksTrackRow({
   const isCompact = useIsCompactFormFactor();
   const [hovered, setHovered] = useState(false);
   const label = rowLabel(row);
+  const displayType = normalizeBackgroundTaskDisplayType(row.type);
+  const typeLabel = typeBadgeLabel(displayType, t);
   const handlePress = useCallback(() => {
     onOpenTask(row.taskId);
   }, [onOpenTask, row.taskId]);
@@ -167,16 +187,19 @@ function BackgroundTasksTrackRow({
     <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={label}
+        accessibilityLabel={`${typeLabel} ${label}`}
         testID={`background-tasks-track-row-${row.taskId}`}
         onPress={handlePress}
       >
         {({ pressed }) => (
           <View style={hovered || pressed ? styles.rowActive : styles.row}>
             <View style={styles.rowText}>
-              <Text style={styles.rowLabel} numberOfLines={1}>
-                {label}
-              </Text>
+              <View style={styles.rowTitle}>
+                <StatusBadge label={typeLabel} variant="muted" />
+                <Text style={styles.rowLabel} numberOfLines={1}>
+                  {label}
+                </Text>
+              </View>
               <Text style={styles.rowMeta} numberOfLines={1}>
                 {statusLabel(row.status, t)}
               </Text>
@@ -327,7 +350,15 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     gap: 2,
   },
+  rowTitle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    minWidth: 0,
+  },
   rowLabel: {
+    flexShrink: 1,
+    minWidth: 0,
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
   },

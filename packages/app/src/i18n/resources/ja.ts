@@ -1514,6 +1514,10 @@ export const ja: TranslationResources = {
     statusFailed: "Failed",
     statusCompleted: "Completed",
     statusUnknown: "Unknown",
+    typeShell: "Shell",
+    typeMonitor: "Monitor",
+    typeWorkflow: "Workflow",
+    typeOther: "Other",
   },
   subagents: {
     detachAction: "{{label}}を切り離す",

@@ -1478,6 +1478,10 @@ export const zhCN: TranslationResources = {
     statusFailed: "Failed",
     statusCompleted: "Completed",
     statusUnknown: "Unknown",
+    typeShell: "Shell",
+    typeMonitor: "Monitor",
+    typeWorkflow: "Workflow",
+    typeOther: "Other",
   },
   subagents: {
     detachAction: "分离 {{label}}",

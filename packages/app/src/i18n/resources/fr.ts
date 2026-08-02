@@ -1544,6 +1544,10 @@ export const fr: TranslationResources = {
     statusFailed: "Failed",
     statusCompleted: "Completed",
     statusUnknown: "Unknown",
+    typeShell: "Shell",
+    typeMonitor: "Monitor",
+    typeWorkflow: "Workflow",
+    typeOther: "Other",
   },
   subagents: {
     detachAction: "Detacher {{label}}",

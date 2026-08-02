@@ -1531,6 +1531,10 @@ export const ru: TranslationResources = {
     statusFailed: "Failed",
     statusCompleted: "Completed",
     statusUnknown: "Unknown",
+    typeShell: "Shell",
+    typeMonitor: "Monitor",
+    typeWorkflow: "Workflow",
+    typeOther: "Other",
   },
   subagents: {
     detachAction: "Отсоединить {{label}}",

@@ -1516,6 +1516,10 @@ export const en = {
     statusFailed: "Failed",
     statusCompleted: "Completed",
     statusUnknown: "Unknown",
+    typeShell: "Shell",
+    typeMonitor: "Monitor",
+    typeWorkflow: "Workflow",
+    typeOther: "Other",
   },
   panels: {
     draft: {
