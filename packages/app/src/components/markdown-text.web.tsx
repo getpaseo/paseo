@@ -36,8 +36,11 @@ export function MarkdownTextSpan({
   accessibilityRole,
 }: MarkdownTextSpanProps) {
   const dataSet = useMemo(() => {
-    if (copyTag) {
+    if (copyTag && (monoSurface || copyTag === "code")) {
       return { ...CODE_SURFACE_DATASET, ...markdownCopyDataSet[copyTag] };
+    }
+    if (copyTag) {
+      return markdownCopyDataSet[copyTag];
     }
     return monoSurface ? CODE_SURFACE_DATASET : undefined;
   }, [copyTag, monoSurface]);

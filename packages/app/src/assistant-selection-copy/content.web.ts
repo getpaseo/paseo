@@ -37,7 +37,10 @@ turndown.addRule("gfmStrikethrough", {
 turndown.addRule("compactListItem", {
   filter: "li",
   replacement: (content, node, options) => {
-    const item = content.replace(/^\n+/, "").replace(/\n+$/, "\n").replace(/\n/gm, "\n    ");
+    const item = content
+      .replace(/^\n+/, "")
+      .replace(/\n+$/, "\n")
+      .replace(/\n(?=\S)/g, "\n    ");
     const parent = node.parentElement;
     if (parent?.nodeName !== "OL") {
       return `${options.bulletListMarker} ${item}\n`;

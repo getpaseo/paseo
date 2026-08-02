@@ -5,6 +5,8 @@ import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-
 const ASSISTANT_MARKDOWN = [
   "Direct matches:",
   "",
+  "Formatted **strong prose**, _emphasized prose_, and ~~struck prose~~.",
+  "",
   "- **[First issue](https://example.com/issues/1)**: exact `apply_patch` failure.",
   "- [Second issue](https://example.com/issues/2): repeated sandbox setup.",
   "",
@@ -12,6 +14,14 @@ const ASSISTANT_MARKDOWN = [
   "6. Sixth item",
   "7. Seventh item",
   "8. Eighth item",
+  "",
+  "Nested list:",
+  "",
+  "3. Outer three",
+  "",
+  "   7. Inner seven",
+  "   8. Inner eight",
+  "   9. Inner nine",
   "",
   "A hard break  ",
   "stays hard.",
@@ -40,6 +50,9 @@ const ASSISTANT_MARKDOWN = [
 const EXPECTED_WHOLE_SELECTION_MARKDOWN = ASSISTANT_MARKDOWN.replace(
   "<https://autolink.example.com>",
   "[https://autolink.example.com](https://autolink.example.com)",
+).replace(
+  "3. Outer three\n\n   7. Inner seven\n   8. Inner eight\n   9. Inner nine",
+  "3. Outer three\n    7. Inner seven\n    8. Inner eight\n    9. Inner nine",
 );
 
 interface ClipboardContent {
@@ -141,6 +154,9 @@ test("copying an assistant selection preserves Markdown structure and links", as
   context,
   page,
 }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("@paseo:app-settings", JSON.stringify({ uiFontFamily: "serif" }));
+  });
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "assistant-selection-copy-",
     title: "Assistant selection copy",
@@ -156,6 +172,26 @@ test("copying an assistant selection preserves Markdown structure and links", as
       30_000,
     );
     await openAgentRoute(page, agent);
+
+    const assistantMessage = page.getByTestId("assistant-message").filter({
+      hasText: "Direct matches:",
+    });
+    for (const [tag, text] of [
+      ["strong", "strong prose"],
+      ["em", "emphasized prose"],
+      ["s", "struck prose"],
+    ]) {
+      const formattedProse = assistantMessage
+        .locator(`[data-paseo-markdown-tag="${tag}"]`)
+        .filter({ hasText: text });
+      await expect(formattedProse).toHaveCSS("font-family", "serif");
+      await expect(formattedProse).not.toHaveAttribute("data-pmono");
+    }
+    const inlineCode = assistantMessage
+      .locator('[data-paseo-markdown-tag="code"]')
+      .filter({ hasText: "apply_patch" });
+    await expect(inlineCode).toHaveAttribute("data-pmono", "");
+
     await selectAssistantMessage(page);
     await copySelection(page);
 
@@ -229,11 +265,18 @@ test("copying an assistant selection preserves Markdown structure and links", as
     expect(midListClipboard.plainText).toBe("7. Seventh item\n8. Eighth item");
     expect(midListClipboard.html).toContain('<ol start="7">');
 
-    await selectAssistantTextRange(page, "Seventh item", "A hard break");
+    await selectAssistantTextRange(page, "Inner eight", "Inner nine");
+    await copySelection(page);
+
+    const nestedListClipboard = await readRichClipboard(page);
+    expect(nestedListClipboard.plainText).toBe("3. 8. Inner eight\n    9. Inner nine");
+    expect(nestedListClipboard.html).toContain('<ol start="8">');
+
+    await selectAssistantTextRange(page, "Seventh item", "Nested list:");
     await copySelection(page);
 
     const crossBlockClipboard = await readRichClipboard(page);
-    expect(crossBlockClipboard.plainText).toBe("7. Seventh item\n8. Eighth item\n\nA hard break");
+    expect(crossBlockClipboard.plainText).toBe("7. Seventh item\n8. Eighth item\n\nNested list:");
     expect(crossBlockClipboard.html).toContain('<ol start="7">');
 
     await selectAssistantText(page, "Current");
