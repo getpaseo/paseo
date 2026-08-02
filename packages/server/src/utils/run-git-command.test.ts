@@ -9,6 +9,7 @@ interface FakeSpawnBehavior {
   exitCode?: number | null;
   killCloseDelayMs?: number;
   killExitDelayMs?: number;
+  spawnError?: Error;
   stderrData?: Buffer | string;
   stdoutData?: Buffer | string;
 }
@@ -202,6 +203,9 @@ vi.mock("node:child_process", async () => {
     ...actual,
     spawn: vi.fn(() => {
       const behavior = fakeSpawnController.queue.shift() ?? {};
+      if (behavior.spawnError) {
+        throw behavior.spawnError;
+      }
       const child = new FakeChildProcess(behavior);
       fakeSpawnController.processes.push(child);
       return child as unknown as ReturnType<typeof actual.spawn>;
@@ -382,6 +386,21 @@ describe("runGitCommand", () => {
       truncated: false,
     });
   });
+
+  it("releases the limiter after a synchronous spawn failure", async () => {
+    const { runGitCommand } = await loadRunGitCommand(1);
+
+    enqueueSpawnBehaviors(
+      { spawnError: new Error("spawn threw") },
+      { delayMs: 0, stdoutData: "ok" },
+    );
+
+    await expect(runGitCommand(["status"], { cwd: process.cwd() })).rejects.toThrow("spawn threw");
+    await expect(runGitCommand(["status"], { cwd: process.cwd() })).resolves.toMatchObject({
+      exitCode: 0,
+      stdout: "ok",
+    });
+  }, 1_000);
 
   it("traces git command spawn and close metadata when a logger is provided", async () => {
     const { runGitCommand } = await loadRunGitCommand(1);

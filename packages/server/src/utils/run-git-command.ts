@@ -197,16 +197,6 @@ export function runGitCommand(
         logger.trace(traceContext, "Spawning git command");
       }
 
-      // `core.quotepath=false` makes git emit raw UTF-8 paths instead of
-      // octal-escaping non-ASCII bytes (e.g. `测试文件.txt` vs `"\346\265\213..."`).
-      const child = spawnProcess("git", ["-c", "core.quotepath=false", ...args], {
-        cwd: options.cwd,
-        envOverlay,
-        shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      spawnGitCommandTrace(commandTrace, child.pid);
-
       let settled = false;
       let metricFinished = false;
       let processError: Error | null = null;
@@ -217,11 +207,12 @@ export function runGitCommand(
       let stderrBytes = 0;
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
+      let timer: NodeJS.Timeout | undefined;
 
       const settle = (callback: () => void) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         callback();
       };
 
@@ -263,7 +254,42 @@ export function runGitCommand(
         }
       };
 
-      const timer = setTimeout(() => {
+      const rejectSpawnFailure = (error: unknown) => {
+        processError = error instanceof Error ? error : new Error(String(error));
+        markProcessExited(null, null);
+        settleGitCommandTrace(commandTrace, {
+          outcome: "spawn_error",
+          exitCode: null,
+          signal: null,
+        });
+        settle(() => reject(processError));
+      };
+
+      let child: ReturnType<typeof spawnProcess>;
+      try {
+        // `core.quotepath=false` makes git emit raw UTF-8 paths instead of
+        // octal-escaping non-ASCII bytes (e.g. `测试文件.txt` vs `"\346\265\213..."`).
+        child = spawnProcess("git", ["-c", "core.quotepath=false", ...args], {
+          cwd: options.cwd,
+          envOverlay,
+          shell: false,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        spawnGitCommandTrace(commandTrace, child.pid);
+      } catch (error) {
+        rejectSpawnFailure(error);
+        return;
+      }
+
+      const stdout = child.stdout;
+      const stderr = child.stderr;
+      if (!stdout || !stderr) {
+        child.kill("SIGKILL");
+        rejectSpawnFailure(new Error("Git process did not expose piped stdout and stderr"));
+        return;
+      }
+
+      timer = setTimeout(() => {
         timeoutError = new Error(`Git command timed out after ${timeout}ms: ${command}`);
         child.kill("SIGKILL");
         settle(() => reject(timeoutError));
@@ -272,7 +298,7 @@ export function runGitCommand(
         }
       }, timeout);
 
-      child.stdout!.on("data", (chunk: Buffer | string) => {
+      stdout.on("data", (chunk: Buffer | string) => {
         if (settled || truncated) return;
 
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -296,7 +322,7 @@ export function runGitCommand(
         stdoutBytes += buffer.length;
       });
 
-      child.stderr!.on("data", (chunk: Buffer | string) => {
+      stderr.on("data", (chunk: Buffer | string) => {
         if (settled || stderrBytes >= DEFAULT_STDERR_LIMIT) return;
 
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);

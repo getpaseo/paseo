@@ -1153,12 +1153,13 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
   test("settled GitHub self-heal reads stay on the slow poll window without refreshing git", async () => {
     let nowMs = 0;
     const githubReadCalls: Array<{ reason: string | undefined; tickMs: number }> = [];
+    const runner = vi.fn(async () => ({
+      stdout: currentPullRequestJson(),
+      stderr: "",
+    }));
     const github = createGitHubService({
       ttlMs: 0,
-      runner: vi.fn(async () => ({
-        stdout: currentPullRequestJson(),
-        stderr: "",
-      })),
+      runner,
       resolveGhPath: async () => "/usr/bin/gh",
       now: () => nowMs,
     });
@@ -1180,6 +1181,9 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await flushPromises();
     await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => {
+      expect(runner).toHaveBeenCalledTimes(1);
+    });
     await flushPromises();
     const gitReadsAfterInitialSnapshot = getCheckoutStatus.mock.calls.length;
 
