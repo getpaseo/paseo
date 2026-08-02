@@ -265,7 +265,7 @@ export default function TerminalEmulator({
         runtimeRef.current?.clear();
       },
       showKeyboard: () => {
-        runtimeRef.current?.resize({ force: true, shouldClaim: true });
+        runtimeRef.current?.resize({ forceClaim: true, shouldClaim: true });
         runtimeRef.current?.focus();
       },
       blur: () => {
@@ -294,7 +294,7 @@ export default function TerminalEmulator({
         runtimeRef.current?.clear();
       },
       showKeyboard: () => {
-        runtimeRef.current?.resize({ force: true, shouldClaim: true });
+        runtimeRef.current?.resize({ forceClaim: true, shouldClaim: true });
         runtimeRef.current?.focus();
       },
       blur: () => {
@@ -501,7 +501,7 @@ export default function TerminalEmulator({
     if (focusRequestToken <= 0) {
       return () => {};
     }
-    runtimeRef.current?.resize({ force: true, shouldClaim: true });
+    runtimeRef.current?.resize({ forceClaim: true, shouldClaim: true });
     return focusWithRetries({
       focus: () => {
         runtimeRef.current?.focus();
@@ -521,7 +521,7 @@ export default function TerminalEmulator({
     if (resizeRequestToken <= 0) {
       return;
     }
-    runtimeRef.current?.resize({ force: true, shouldClaim: true });
+    runtimeRef.current?.resize({ forceClaim: true, shouldClaim: true });
   }, [resizeRequestToken]);
 
   const showTerminalContextMenu = useCallback(() => {

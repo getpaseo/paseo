@@ -233,7 +233,7 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(mounted.sizes.filter((size) => size.shouldClaim)).toEqual([]);
 
     const settledSize = latestSize(mounted.sizes);
-    mounted.runtime.resize({ force: true, shouldClaim: true });
+    mounted.runtime.resize({ forceClaim: true, shouldClaim: true });
 
     expect(mounted.sizes.filter((size) => size.shouldClaim)).toEqual([
       { ...settledSize, shouldClaim: true, forceClaim: true },
@@ -250,7 +250,7 @@ describe("terminal emulator runtime in a real browser", () => {
     mounted.root.style.width = "720px";
     mounted.root.style.height = "360px";
     await nextFrame();
-    mounted.runtime.resize({ force: true });
+    mounted.runtime.resize({ forceRefresh: true, shouldClaim: true });
 
     await waitFor({
       predicate: () => {
@@ -312,7 +312,7 @@ describe("terminal emulator runtime in a real browser", () => {
       originalRefresh(start, end);
     };
 
-    mounted.runtime.resize({ force: true });
+    mounted.runtime.resize({ forceRefresh: true, shouldClaim: false });
 
     await waitFor({ predicate: () => refreshCalls.length > 0 });
     expect(refreshCalls.at(-1)).toEqual([0, terminal.rows - 1]);

@@ -71,17 +71,23 @@ export interface TerminalResizeEvent {
   forceClaim?: boolean;
 }
 
+export interface TerminalResizeRequest {
+  forceRefresh?: boolean;
+  shouldClaim?: boolean;
+  forceClaim?: boolean;
+}
+
 export function createTerminalResizeEvent(input: {
   rows: number;
   cols: number;
   shouldClaim: boolean;
-  force: boolean;
+  forceClaim: boolean;
 }): TerminalResizeEvent {
   return {
     rows: input.rows,
     cols: input.cols,
     shouldClaim: input.shouldClaim,
-    forceClaim: input.shouldClaim && input.force,
+    forceClaim: input.shouldClaim && input.forceClaim,
   };
 }
 
@@ -167,8 +173,7 @@ export class TerminalEmulatorRuntime {
   };
   private terminal: Terminal | null = null;
   private fitAddon: FitAddon | null = null;
-  private fitAndEmitResize: ((input?: { force?: boolean; shouldClaim?: boolean }) => void) | null =
-    null;
+  private fitAndEmitResize: ((input?: TerminalResizeRequest) => void) | null = null;
   private lastSize: { rows: number; cols: number } | null = null;
   private cleanup: (() => void) | null = null;
   private outputOperations: TerminalOutputOperation[] = [];
@@ -194,10 +199,10 @@ export class TerminalEmulatorRuntime {
       return;
     }
 
-    this.fitAndEmitResize?.({ force: true, shouldClaim: false });
+    this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
     if (typeof window.requestAnimationFrame === "function") {
       window.requestAnimationFrame(() => {
-        this.fitAndEmitResize?.({ force: true, shouldClaim: false });
+        this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
       });
     }
   };
@@ -298,7 +303,7 @@ export class TerminalEmulatorRuntime {
       webglAddon = null;
       disposeImageAddon();
       // WebGL and DOM renderers can have different cell dimensions.
-      this.fitAndEmitResize?.({ force: true, shouldClaim: false });
+      this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
     };
 
     // Browser xterm is a renderer only; it never replies to terminal protocol queries.
@@ -336,7 +341,7 @@ export class TerminalEmulatorRuntime {
         imageAddon = new ImageAddon();
         terminal.loadAddon(imageAddon);
         registerProtocolQuerySuppression();
-        this.fitAndEmitResize?.({ force: true, shouldClaim: false });
+        this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
       } catch {
         disposeWebglRenderer();
       }
@@ -353,9 +358,10 @@ export class TerminalEmulatorRuntime {
     this.fitAddon = fitAddon;
     window.__paseoTerminal = terminal;
 
-    const fitAndEmitResize = (resizeInput?: { force?: boolean; shouldClaim?: boolean }): void => {
-      const force = resizeInput?.force ?? false;
+    const fitAndEmitResize = (resizeInput?: TerminalResizeRequest): void => {
+      const forceRefresh = resizeInput?.forceRefresh ?? false;
       const shouldClaim = resizeInput?.shouldClaim ?? true;
+      const forceClaim = resizeInput?.forceClaim ?? false;
       const currentTerminal = this.terminal;
       const currentFitAddon = this.fitAddon;
       if (!currentTerminal || !currentFitAddon) {
@@ -375,7 +381,13 @@ export class TerminalEmulatorRuntime {
       const nextRows = currentTerminal.rows;
       const nextCols = currentTerminal.cols;
       const previous = this.lastSize;
-      if (!force && previous && previous.rows === nextRows && previous.cols === nextCols) {
+      if (
+        !forceRefresh &&
+        !forceClaim &&
+        previous &&
+        previous.rows === nextRows &&
+        previous.cols === nextCols
+      ) {
         return;
       }
 
@@ -386,13 +398,13 @@ export class TerminalEmulatorRuntime {
           rows: nextRows,
           cols: nextCols,
           shouldClaim,
-          force,
+          forceClaim,
         }),
       );
     };
     this.fitAndEmitResize = fitAndEmitResize;
 
-    fitAndEmitResize({ force: true, shouldClaim: false });
+    fitAndEmitResize({ forceRefresh: true, shouldClaim: false });
 
     const inputDisposable = terminal.onData((data) => {
       if (this.suppressInput) {
@@ -500,18 +512,18 @@ export class TerminalEmulatorRuntime {
 
     const fitTimeouts = FIT_TIMEOUT_DELAYS_MS.map((delayMs) =>
       window.setTimeout(() => {
-        fitAndEmitResize({ force: true, shouldClaim: false });
+        fitAndEmitResize({ forceRefresh: true, shouldClaim: false });
       }, delayMs),
     );
 
     const fontSet = document.fonts;
     const fontReadyHandler = () => {
-      fitAndEmitResize({ force: true, shouldClaim: false });
+      fitAndEmitResize({ forceRefresh: true, shouldClaim: false });
     };
     fontSet?.addEventListener?.("loadingdone", fontReadyHandler);
     void fontSet?.ready
       .then(() => {
-        fitAndEmitResize({ force: true, shouldClaim: false });
+        fitAndEmitResize({ forceRefresh: true, shouldClaim: false });
         return;
       })
       .catch(() => {
@@ -519,7 +531,7 @@ export class TerminalEmulatorRuntime {
       });
 
     window.setTimeout(() => {
-      fitAndEmitResize({ force: true, shouldClaim: false });
+      fitAndEmitResize({ forceRefresh: true, shouldClaim: false });
     }, 0);
 
     if (input.initialSnapshot) {
@@ -655,7 +667,7 @@ export class TerminalEmulatorRuntime {
     this.processOutputQueue();
   }
 
-  resize(input?: { force?: boolean; shouldClaim?: boolean }): void {
+  resize(input?: TerminalResizeRequest): void {
     this.fitAndEmitResize?.(input);
   }
 
@@ -706,7 +718,7 @@ export class TerminalEmulatorRuntime {
       return;
     }
 
-    this.fitAndEmitResize?.({ force: true });
+    this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
     this.refreshVisibleRows();
   }
 

@@ -96,7 +96,11 @@ interface StubTerminal {
 }
 
 interface RuntimeFitProbe {
-  fitAndEmitResize: (input?: { force?: boolean; shouldClaim?: boolean }) => void;
+  fitAndEmitResize: (input?: {
+    forceRefresh?: boolean;
+    shouldClaim?: boolean;
+    forceClaim?: boolean;
+  }) => void;
 }
 
 function createRuntimeWithTerminal(): {
@@ -500,10 +504,13 @@ describe("terminal-emulator-runtime", () => {
     (runtime as unknown as RuntimeFitProbe).fitAndEmitResize = fitAndEmitResize;
 
     runtime.resize();
-    runtime.resize({ force: true });
+    runtime.resize({ forceRefresh: true, shouldClaim: false });
 
     expect(fitAndEmitResize).toHaveBeenNthCalledWith(1, undefined);
-    expect(fitAndEmitResize).toHaveBeenNthCalledWith(2, { force: true });
+    expect(fitAndEmitResize).toHaveBeenNthCalledWith(2, {
+      forceRefresh: true,
+      shouldClaim: false,
+    });
   });
 
   it("marks explicit resize claims as forced so another client can reclaim the same size", () => {
@@ -512,7 +519,7 @@ describe("terminal-emulator-runtime", () => {
         rows: 34,
         cols: 181,
         shouldClaim: true,
-        force: true,
+        forceClaim: true,
       }),
     ).toEqual({
       rows: 34,
@@ -579,14 +586,16 @@ describe("terminal-emulator-runtime", () => {
       cols: 40,
     };
     (runtime as unknown as { terminal: StubTerminal }).terminal = terminal;
-    (runtime as unknown as { fitAndEmitResize: (force: boolean) => void }).fitAndEmitResize =
-      fitAndEmitResize;
+    (runtime as unknown as RuntimeFitProbe).fitAndEmitResize = fitAndEmitResize;
 
     runtime.setFont({ fontFamily: "  Menlo  ", fontSize: 18 });
 
     expect(terminal.options?.fontFamily).toBe("Menlo");
     expect(terminal.options?.fontSize).toBe(18);
-    expect(fitAndEmitResize).toHaveBeenCalledWith({ force: true });
+    expect(fitAndEmitResize).toHaveBeenCalledWith({
+      forceRefresh: true,
+      shouldClaim: false,
+    });
     expect(refresh).toHaveBeenCalledWith(0, 11);
   });
 
@@ -605,7 +614,10 @@ describe("terminal-emulator-runtime", () => {
       }
     ).handleVisibilityRestore();
 
-    expect(fitAndEmitResize).toHaveBeenCalledWith({ force: true, shouldClaim: false });
+    expect(fitAndEmitResize).toHaveBeenCalledWith({
+      forceRefresh: true,
+      shouldClaim: false,
+    });
   });
 
   it("does not refit while the page is still hidden", () => {

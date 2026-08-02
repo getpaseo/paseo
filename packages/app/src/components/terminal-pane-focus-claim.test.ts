@@ -3,6 +3,7 @@ import {
   EMPTY_FOCUS_CLAIM_STATE,
   canRequestFocusClaim,
   reconcileFocusClaim,
+  resolveTerminalResizeClaim,
   settleFocusClaim,
   type FocusClaimState,
 } from "./terminal-pane-focus-claim";
@@ -15,9 +16,78 @@ function request(
 }
 
 describe("terminal pane focus claim", () => {
+  it("forwards resize callbacks only from the active focused ready candidate", () => {
+    const readiness = {
+      isWorkspaceFocused: true,
+      isAppActivelyVisible: true,
+      isClientReady: true,
+      isConnected: true,
+      isRendererReady: true,
+    };
+    const candidates = [
+      resolveTerminalResizeClaim({
+        size: { rows: 30, cols: 90 },
+        previousSentSize: null,
+        shouldClaim: true,
+        forceClaim: false,
+        readiness: { ...readiness, isPaneFocused: false },
+      }),
+      resolveTerminalResizeClaim({
+        size: { rows: 42, cols: 120 },
+        previousSentSize: null,
+        shouldClaim: true,
+        forceClaim: false,
+        readiness: { ...readiness, isPaneFocused: true },
+      }),
+    ];
+
+    expect(candidates.map((candidate) => candidate.shouldSend)).toEqual([false, true]);
+  });
+
+  it("keeps passive refits local and lets explicit interaction reclaim the same size", () => {
+    const readiness = {
+      isWorkspaceFocused: true,
+      isPaneFocused: true,
+      isAppActivelyVisible: true,
+      isClientReady: true,
+      isConnected: true,
+      isRendererReady: true,
+    };
+    const size = { rows: 42, cols: 120 };
+
+    const passiveRefit = resolveTerminalResizeClaim({
+      size,
+      previousSentSize: size,
+      shouldClaim: false,
+      forceClaim: false,
+      readiness,
+    });
+    const ordinarySameSizeMeasurement = resolveTerminalResizeClaim({
+      size,
+      previousSentSize: size,
+      shouldClaim: true,
+      forceClaim: false,
+      readiness,
+    });
+    const explicitReclaim = resolveTerminalResizeClaim({
+      size,
+      previousSentSize: size,
+      shouldClaim: true,
+      forceClaim: true,
+      readiness,
+    });
+
+    expect([passiveRefit.shouldSend, ordinarySameSizeMeasurement.shouldSend]).toEqual([
+      false,
+      false,
+    ]);
+    expect(explicitReclaim.shouldSend).toBe(true);
+  });
+
   it("waits for both the client and renderer before requesting a claim", () => {
     const withoutClient = canRequestFocusClaim({
       isWorkspaceFocused: true,
+      isPaneFocused: true,
       isAppActivelyVisible: true,
       isClientReady: false,
       isConnected: true,
@@ -25,6 +95,7 @@ describe("terminal pane focus claim", () => {
     });
     const withoutRenderer = canRequestFocusClaim({
       isWorkspaceFocused: true,
+      isPaneFocused: true,
       isAppActivelyVisible: true,
       isClientReady: true,
       isConnected: true,
@@ -37,6 +108,7 @@ describe("terminal pane focus claim", () => {
   it("does not deliver a requested claim after the host disconnects", () => {
     const disconnected = canRequestFocusClaim({
       isWorkspaceFocused: true,
+      isPaneFocused: true,
       isAppActivelyVisible: true,
       isClientReady: true,
       isConnected: false,

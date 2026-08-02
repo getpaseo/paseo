@@ -48,7 +48,7 @@ type BridgeInboundMessage =
   | { type: "paste"; streamKey: string; text: string }
   | { type: "clear"; streamKey: string }
   | { type: "focus"; streamKey: string; forceRefocus?: boolean }
-  | { type: "resize"; streamKey: string; shouldClaim?: boolean }
+  | { type: "resize"; streamKey: string; forceClaim: boolean }
   | { type: "setTheme"; streamKey: string; theme: ITheme }
   | { type: "setScrollback"; streamKey: string; lines: number }
   | { type: "setFont"; streamKey: string; fontFamily?: string; fontSize?: number }
@@ -65,7 +65,14 @@ type BridgeOutboundMessage =
   | { type: "bridgeReady" }
   | { type: "rendererReady"; streamKey: string; isReady: boolean }
   | { type: "input"; streamKey: string; data: string }
-  | { type: "resize"; streamKey: string; rows: number; cols: number; shouldClaim?: boolean }
+  | {
+      type: "resize";
+      streamKey: string;
+      rows: number;
+      cols: number;
+      shouldClaim?: boolean;
+      forceClaim?: boolean;
+    }
   | {
       type: "terminalKey";
       streamKey: string;
@@ -387,14 +394,14 @@ export default function WebViewTerminalEmulator({
 
   useEffect(() => {
     if (focusRequestToken <= 0) return;
-    sendToWebView({ type: "resize", streamKey, shouldClaim: true });
+    sendToWebView({ type: "resize", streamKey, forceClaim: true });
     sendToWebView({ type: "focus", streamKey });
     webViewRef.current?.requestFocus();
   }, [focusRequestToken, sendToWebView, streamKey]);
 
   useEffect(() => {
     if (resizeRequestToken <= 0) return;
-    sendToWebView({ type: "resize", streamKey, shouldClaim: true });
+    sendToWebView({ type: "resize", streamKey, forceClaim: true });
   }, [resizeRequestToken, sendToWebView, streamKey]);
 
   useEffect(() => {
@@ -485,6 +492,7 @@ export default function WebViewTerminalEmulator({
             rows: message.rows,
             cols: message.cols,
             shouldClaim: message.shouldClaim !== false,
+            forceClaim: message.forceClaim,
           });
           break;
         case "terminalKey":

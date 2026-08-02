@@ -8,12 +8,37 @@ export interface FocusClaimStep {
   shouldRequest: boolean;
 }
 
-interface FocusClaimReadiness {
+export interface FocusClaimReadiness {
   isWorkspaceFocused: boolean;
+  isPaneFocused: boolean;
   isAppActivelyVisible: boolean;
   isClientReady: boolean;
   isConnected: boolean;
   isRendererReady: boolean;
+}
+
+interface TerminalSize {
+  rows: number;
+  cols: number;
+}
+
+export function resolveTerminalResizeClaim(input: {
+  size: TerminalSize;
+  previousSentSize: TerminalSize | null;
+  shouldClaim: boolean;
+  forceClaim: boolean;
+  readiness: FocusClaimReadiness;
+}): { shouldSend: boolean } {
+  if (!input.shouldClaim || !canRequestFocusClaim(input.readiness)) {
+    return { shouldSend: false };
+  }
+  return {
+    shouldSend:
+      input.forceClaim ||
+      input.previousSentSize === null ||
+      input.previousSentSize.rows !== input.size.rows ||
+      input.previousSentSize.cols !== input.size.cols,
+  };
 }
 
 export const EMPTY_FOCUS_CLAIM_STATE: FocusClaimState = {
@@ -24,6 +49,7 @@ export const EMPTY_FOCUS_CLAIM_STATE: FocusClaimState = {
 export function canRequestFocusClaim(input: FocusClaimReadiness): boolean {
   return (
     input.isWorkspaceFocused &&
+    input.isPaneFocused &&
     input.isAppActivelyVisible &&
     input.isClientReady &&
     input.isConnected &&

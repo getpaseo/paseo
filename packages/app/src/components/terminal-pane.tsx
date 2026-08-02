@@ -39,6 +39,7 @@ import {
   EMPTY_FOCUS_CLAIM_STATE,
   canRequestFocusClaim,
   reconcileFocusClaim,
+  resolveTerminalResizeClaim,
   settleFocusClaim,
 } from "./terminal-pane-focus-claim";
 import {
@@ -341,7 +342,8 @@ export function TerminalPane({
 
   useEffect(() => {
     const canRequest = canRequestFocusClaim({
-      isWorkspaceFocused,
+      isWorkspaceFocused: isTerminalActive,
+      isPaneFocused,
       isAppActivelyVisible,
       isClientReady: client !== null,
       isConnected,
@@ -361,7 +363,7 @@ export function TerminalPane({
     isAppActivelyVisible,
     isConnected,
     isPaneFocused,
-    isWorkspaceFocused,
+    isTerminalActive,
     rendererReadyStreamKey,
     requestTerminalReflow,
     scopeKey,
@@ -730,29 +732,28 @@ export function TerminalPane({
       if (!input.shouldClaim) {
         return;
       }
-      let sent = false;
-      const canSend = canRequestFocusClaim({
-        isWorkspaceFocused,
-        isAppActivelyVisible,
-        isClientReady: client !== null,
-        isConnected,
-        isRendererReady: true,
+      const claim = resolveTerminalResizeClaim({
+        size: nextSize,
+        previousSentSize: lastSentTerminalSizeRef.current,
+        shouldClaim: input.shouldClaim,
+        forceClaim: input.forceClaim ?? false,
+        readiness: {
+          isWorkspaceFocused: isTerminalActive,
+          isPaneFocused,
+          isAppActivelyVisible,
+          isClientReady: client !== null,
+          isConnected,
+          isRendererReady: rendererReadyStreamKey === terminalStreamKey,
+        },
       });
-      if (client && terminalId && canSend) {
-        const previousSent = lastSentTerminalSizeRef.current;
-        if (
-          input.forceClaim ||
-          !previousSent ||
-          previousSent.rows !== normalizedRows ||
-          previousSent.cols !== normalizedCols
-        ) {
-          lastSentTerminalSizeRef.current = nextSize;
-          client.sendTerminalInput(terminalId, {
-            type: "resize",
-            rows: normalizedRows,
-            cols: normalizedCols,
-          });
-        }
+      let sent = false;
+      if (client && terminalId && claim.shouldSend) {
+        lastSentTerminalSizeRef.current = nextSize;
+        client.sendTerminalInput(terminalId, {
+          type: "resize",
+          rows: normalizedRows,
+          cols: normalizedCols,
+        });
         sent = true;
       }
       const requestedKey = paneFocusResizeClaimRef.current.requestedKey;
