@@ -108,6 +108,18 @@ export function useWearBridge(): void {
       void bridge.publish();
     });
 
+    // Live Voice availability also depends on connection status and the host
+    // list, which live in the host runtime store and change without any
+    // session-store write — a host flipping online or offline must reach the
+    // wrist, or the watch keeps showing the availability from app launch.
+    const hostRuntimeStore = getHostRuntimeStore();
+    const unsubscribeHostRuntime = hostRuntimeStore.subscribeAll(() => {
+      void bridge.publish();
+    });
+    const unsubscribeHostList = hostRuntimeStore.subscribeHostList(() => {
+      void bridge.publish();
+    });
+
     const interval = setInterval(() => {
       void bridge.publish();
     }, AGE_REFRESH_MS);
@@ -115,6 +127,8 @@ export function useWearBridge(): void {
     return () => {
       clearInterval(interval);
       unsubscribeStore();
+      unsubscribeHostRuntime();
+      unsubscribeHostList();
       bridge.stop();
       bridgeRef.current = null;
     };

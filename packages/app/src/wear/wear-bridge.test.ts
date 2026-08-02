@@ -440,6 +440,73 @@ describe("WearBridge", () => {
     bridge.stop();
   });
 
+  it("serializes overlapping publishes so a same-tick pair writes once", async () => {
+    // A session-store write and the host-runtime emit for the same event both
+    // call publish() in the same tick. The second run must see what the first
+    // published, not race it to the unchanged-payload check.
+    const transport = makeTransport();
+    const releaseSnapshot = { current: null as (() => void) | null };
+    transport.publishSnapshot = (payload) =>
+      new Promise((resolve) => {
+        releaseSnapshot.current = () => {
+          transport.published.push(payload);
+          resolve(true);
+        };
+      });
+    const bridge = new WearBridge({
+      transport,
+      readState: baseState,
+      getClient: () => null,
+      resolveNewAgentConfig: () => null,
+      now: () => NOW,
+    });
+
+    const first = bridge.publish();
+    const second = bridge.publish();
+    await vi.waitFor(() => expect(releaseSnapshot.current).not.toBeNull());
+    releaseSnapshot.current?.();
+    await first;
+    await second;
+
+    expect(transport.published).toHaveLength(1);
+    bridge.stop();
+  });
+
+  it("drops a queued publish once the bridge is stopped", async () => {
+    const transport = makeTransport();
+    const releaseSnapshot = { current: null as (() => void) | null };
+    transport.publishSnapshot = (payload) =>
+      new Promise((resolve) => {
+        releaseSnapshot.current = () => {
+          transport.published.push(payload);
+          resolve(true);
+        };
+      });
+    let status: Agent["status"] = "running";
+    const bridge = new WearBridge({
+      transport,
+      readState: () => [
+        { serverId: "srv-1", agents: [agent({ status })], workspaces: workspaceMap(workspace()) },
+      ],
+      getClient: () => null,
+      resolveNewAgentConfig: () => null,
+      now: () => NOW,
+    });
+
+    const first = bridge.publish();
+    await vi.waitFor(() => expect(releaseSnapshot.current).not.toBeNull());
+    status = "idle";
+    const queued = bridge.publish();
+    // stop() lands while the first write is in flight; the queued run must not
+    // write the dead bridge's state over a replacement bridge's item.
+    bridge.stop();
+    releaseSnapshot.current?.();
+    await first;
+    await queued;
+
+    expect(transport.published).toHaveLength(1);
+  });
+
   it("republishes when the snapshot content actually changes", async () => {
     const transport = makeTransport();
     let status: Agent["status"] = "running";
@@ -1521,10 +1588,11 @@ describe("WearBridge live voice", () => {
     closedCause: null,
   };
 
-  function makeLiveVoiceBridge() {
+  function makeLiveVoiceBridge(initialAvailability: LiveVoiceAvailability = AVAILABLE) {
     const transport = makeTransport();
     const listeners = new Set<() => void>();
     let snapshot = IDLE_SNAPSHOT;
+    let availability = initialAvailability;
 
     const calls = {
       start: vi.fn(async (_serverId: string) => {}),
@@ -1538,13 +1606,22 @@ describe("WearBridge live voice", () => {
       for (const listener of listeners) listener();
     };
 
+    /**
+     * Change what the stores would answer, without notifying anyone — that is
+     * the real shape of an availability change: the Live Voice runtime stays
+     * silent and only a store-driven publish() can surface it.
+     */
+    const setAvailability = (next: LiveVoiceAvailability) => {
+      availability = next;
+    };
+
     const liveVoice: WearLiveVoiceController = {
       subscribe: (listener) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
       getSnapshot: () => snapshot,
-      readAvailability: () => AVAILABLE,
+      readAvailability: () => availability,
       start: calls.start,
       stop: calls.stop,
       toggleMute: calls.toggleMute,
@@ -1564,7 +1641,7 @@ describe("WearBridge live voice", () => {
 
     const last = () => JSON.parse(transport.liveVoice.at(-1) ?? "null");
 
-    return { bridge, transport, emit, calls, last };
+    return { bridge, transport, emit, setAvailability, calls, last };
   }
 
   it("publishes the current state on start, so a call already up is on the wrist", async () => {
@@ -1635,6 +1712,40 @@ describe("WearBridge live voice", () => {
 
     emit({});
     await vi.advanceTimersByTimeAsync(LIVE_VOICE_COALESCE_MS);
+
+    expect(transport.liveVoice).toHaveLength(initial);
+    bridge.stop();
+  });
+
+  it("publishes availability a store change reveals, with no runtime event at all", async () => {
+    // The app always starts before its hosts have connected, so the first
+    // published state says unavailable. The runtime never speaks again unless a
+    // call starts — the host coming online has to arrive through publish().
+    const { bridge, setAvailability, last } = makeLiveVoiceBridge({
+      kind: "unavailable",
+      reason: "hosts_connecting",
+      hosts: [],
+    });
+    await bridge.start();
+    expect(last()).toMatchObject({ unavailableReason: "hosts_connecting", hosts: [] });
+
+    setAvailability(AVAILABLE);
+    await bridge.publish();
+
+    expect(last()).toMatchObject({
+      unavailableReason: null,
+      hosts: [{ serverId: "srv-1", label: "workstation" }],
+    });
+    bridge.stop();
+  });
+
+  it("does not republish live voice on a publish that changed nothing", async () => {
+    const { bridge, transport } = makeLiveVoiceBridge();
+    await bridge.start();
+    const initial = transport.liveVoice.length;
+
+    await bridge.publish();
+    await bridge.publish({ force: true });
 
     expect(transport.liveVoice).toHaveLength(initial);
     bridge.stop();

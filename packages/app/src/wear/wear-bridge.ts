@@ -139,6 +139,8 @@ export class WearBridge {
   private readonly deps: WearBridgeDeps;
   private subscription: { remove(): void } | null = null;
   private lastPublished: string | null = null;
+  /** Tail of the publish chain; see [publish] for why runs are serialized. */
+  private publishQueue: Promise<void> = Promise.resolve();
   // All three are keyed by serverScopedKey(), not by agent id: ids are only unique within a
   // server, so two daemons running the same id would otherwise share a lease, cancel
   // each other's timers, and have one fetch discarded by the other's generation.
@@ -184,16 +186,15 @@ export class WearBridge {
     // than waiting for the next change to reveal it.
     this.liveVoiceSubscription =
       this.deps.liveVoice?.subscribe(() => {
-        this.handleLiveVoiceChange();
+        void this.syncLiveVoice();
       }) ?? null;
 
     // Commands can arrive while the app process is dead — Play Services starts only
     // the native listener service, which persists them. Drain before the first
     // publish so a queued approval isn't overwritten by a snapshot that still shows
-    // it pending.
+    // it pending. publish() also carries the first Live Voice state out.
     await this.drainQueued();
     await this.publish();
-    await this.publishLiveVoice();
   }
 
   stop(): void {
@@ -214,13 +215,14 @@ export class WearBridge {
   }
 
   /**
-   * Decide whether a runtime change goes out now or waits.
+   * Decide whether a Live Voice change goes out now or waits.
    *
    * The split is by what the change means to someone looking at their wrist: a
-   * phase, mute, host or error change moves a control and must land immediately;
-   * a new phrase can wait out the coalescing window with the phrases behind it.
+   * phase, mute, host, availability or error change moves a control and must
+   * land immediately; a new phrase can wait out the coalescing window with the
+   * phrases behind it.
    */
-  private handleLiveVoiceChange(): void {
+  private async syncLiveVoice(): Promise<void> {
     if (this.disposed || !this.deps.liveVoice) return;
 
     const next = this.buildLiveVoiceState();
@@ -233,7 +235,7 @@ export class WearBridge {
         clearTimeout(this.liveVoiceTimer);
         this.liveVoiceTimer = null;
       }
-      void this.publishLiveVoice();
+      await this.publishLiveVoice();
       return;
     }
 
@@ -293,8 +295,26 @@ export class WearBridge {
    * Publish the current state. Skips the native call when the JSON is byte-identical
    * to the last publish, because building the payload is cheap but waking the Data
    * Layer is not.
+   *
+   * Runs are serialized through [publishQueue]: a session-store write and the
+   * host-runtime emit for the same underlying event both land here in the same
+   * tick, and only serialization lets the second run see what the first one
+   * published — otherwise both pass the unchanged-payload check and the Data
+   * Layer is woken twice for identical state.
    */
-  async publish(options?: { force?: boolean }): Promise<void> {
+  publish(options?: { force?: boolean }): Promise<void> {
+    const run = this.publishQueue.then(() => this.publishNow(options));
+    this.publishQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async publishNow(options?: { force?: boolean }): Promise<void> {
+    // Re-checked here rather than in publish(): a queued run can be dequeued
+    // after stop(), and publishing then would write the dead bridge's state over
+    // whatever a replacement bridge has already put on the wrist.
     if (this.disposed) return;
     const now = this.deps.now?.() ?? Date.now();
     const state = this.deps.readState();
@@ -308,21 +328,28 @@ export class WearBridge {
     const snapshot = buildWearSnapshot(state, now);
     const payload = stableSnapshotKey(snapshot);
 
-    if (!options?.force && payload === this.lastPublished) return;
-
-    const ok = await this.deps.transport
-      .publishSnapshot(JSON.stringify(snapshot))
-      .catch((error: unknown) => {
-        this.deps.logger?.warn("Failed to publish wear snapshot", error);
-        return false;
-      });
-    if (ok) {
-      this.lastPublished = payload;
-      // Only after a payload that actually landed: the set of projects can only have
-      // changed if the snapshot did. Deliberately not awaited — an icon is decoration,
-      // and a slow daemon must never hold up the next snapshot.
-      void this.syncProjectIcons();
+    if (options?.force || payload !== this.lastPublished) {
+      const ok = await this.deps.transport
+        .publishSnapshot(JSON.stringify(snapshot))
+        .catch((error: unknown) => {
+          this.deps.logger?.warn("Failed to publish wear snapshot", error);
+          return false;
+        });
+      if (ok) {
+        this.lastPublished = payload;
+        // Only after a payload that actually landed: the set of projects can only have
+        // changed if the snapshot did. Deliberately not awaited — an icon is decoration,
+        // and a slow daemon must never hold up the next snapshot.
+        void this.syncProjectIcons();
+      }
     }
+
+    // Availability is read from the host and session stores at build time, and
+    // those stores never tick the Live Voice runtime's own subscription — a host
+    // coming online only surfaces through a publish. After the snapshot write so
+    // a wrist tap's ack is never queued behind a Live Voice Data Layer item, and
+    // past the short-circuit above, which knows nothing about Live Voice.
+    await this.syncLiveVoice();
   }
 
   /**
