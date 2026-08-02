@@ -118,7 +118,10 @@ export function createGitMutationService(deps: {
       }
 
       await ensureCleanWorkingTree(cwd);
-      await runGitCommand(["checkout", "-b", newBranchName, baseBranch], { cwd });
+      await runGitCommand(["checkout", "-b", newBranchName, baseBranch], {
+        cwd,
+        timeout: 120_000,
+      });
       await notifyGitMutation(cwd, "create-branch");
     },
 

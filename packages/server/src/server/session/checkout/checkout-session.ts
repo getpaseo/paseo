@@ -616,6 +616,7 @@ export class CheckoutSession {
         : `${CheckoutSession.PASEO_STASH_PREFIX} unnamed`;
       await runGitCommand(["stash", "push", "--include-untracked", "-m", message], {
         cwd,
+        timeout: 120_000,
       });
       await this.gitMutation.notifyGitMutation(cwd, "stash-push");
       this.scheduleDiffRefresh(cwd);
@@ -638,6 +639,7 @@ export class CheckoutSession {
     try {
       await runGitCommand(["stash", "pop", `stash@{${stashIndex}}`], {
         cwd,
+        timeout: 120_000,
       });
       await this.gitMutation.notifyGitMutation(cwd, "stash-pop");
       this.scheduleDiffRefresh(cwd);

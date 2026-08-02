@@ -232,12 +232,18 @@ export function runGitCommand(
         gitRuntimeMetrics.finish(runtimeMetric, { success: metric.success, timedOut });
       };
 
-      const finishTimeoutOnce = (exitCode: number | null, signal: NodeJS.Signals | null) => {
+      const settleTimeoutTrace = (exitCode: number | null, signal: NodeJS.Signals | null) => {
         settleGitCommandTrace(commandTrace, {
           outcome: "timed_out",
           exitCode,
           signal,
         });
+      };
+
+      const markProcessExited = (exitCode: number | null, signal: NodeJS.Signals | null) => {
+        if (processExit) return;
+        processExit = { exitCode, signal };
+        const timedOut = timeoutError !== null;
         finishMetricOnce(
           {
             args,
@@ -246,18 +252,14 @@ export function runGitCommand(
             durationMs: Date.now() - startedAt,
             exitCode,
             signal,
-            success: false,
+            success:
+              !timedOut && !processError && (truncated || acceptExitCodes.includes(exitCode ?? -1)),
           },
-          true,
+          timedOut,
         );
-      };
-
-      const markProcessExited = (exitCode: number | null, signal: NodeJS.Signals | null) => {
-        if (processExit) return;
-        processExit = { exitCode, signal };
         releaseProcessSlot();
-        if (timeoutError) {
-          finishTimeoutOnce(exitCode, signal);
+        if (timedOut) {
+          settleTimeoutTrace(exitCode, signal);
         }
       };
 
@@ -266,7 +268,7 @@ export function runGitCommand(
         child.kill("SIGKILL");
         settle(() => reject(timeoutError));
         if (processExit) {
-          finishTimeoutOnce(processExit.exitCode, processExit.signal);
+          settleTimeoutTrace(processExit.exitCode, processExit.signal);
         }
       }, timeout);
 
@@ -360,15 +362,6 @@ export function runGitCommand(
             exitCode,
             signal,
           });
-          finishMetricOnce({
-            args,
-            cwd: options.cwd,
-            startedAtMs: startedAt,
-            durationMs: Date.now() - startedAt,
-            exitCode,
-            signal,
-            success: false,
-          });
           settle(() => reject(processError));
           return;
         }
@@ -381,15 +374,6 @@ export function runGitCommand(
         });
 
         if (!truncated && !acceptExitCodes.includes(exitCode ?? -1)) {
-          finishMetricOnce({
-            args,
-            cwd: options.cwd,
-            startedAtMs: startedAt,
-            durationMs: Date.now() - startedAt,
-            exitCode,
-            signal,
-            success: false,
-          });
           const stderrPreview = result.stderr.trim() || "(no stderr)";
           const truncationNote = result.truncated ? " (stdout truncated)" : "";
 
@@ -403,15 +387,6 @@ export function runGitCommand(
           return;
         }
 
-        finishMetricOnce({
-          args,
-          cwd: options.cwd,
-          startedAtMs: startedAt,
-          durationMs: Date.now() - startedAt,
-          exitCode,
-          signal,
-          success: true,
-        });
         settle(() => resolve(result));
       });
     });

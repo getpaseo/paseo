@@ -2,8 +2,10 @@ import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 interface FakeSpawnBehavior {
+  closeDelayMs?: number;
   delayMs?: number;
   emitError?: Error;
+  exitDelayMs?: number;
   exitCode?: number | null;
   killCloseDelayMs?: number;
   killExitDelayMs?: number;
@@ -125,12 +127,22 @@ class FakeChildProcess extends EventEmitter {
       return;
     }
 
+    const exitDelayMs = this.behavior.exitDelayMs ?? this.behavior.delayMs ?? 0;
     this.schedule(() => {
-      this.finishClose({
+      this.finishExit({
         exitCode: this.behavior.exitCode ?? 0,
         signal: null,
       });
-    }, this.behavior.delayMs ?? 0);
+    }, exitDelayMs);
+    this.schedule(
+      () => {
+        this.finishClose({
+          exitCode: this.behavior.exitCode ?? 0,
+          signal: null,
+        });
+      },
+      Math.max(exitDelayMs, this.behavior.closeDelayMs ?? this.behavior.delayMs ?? exitDelayMs),
+    );
   }
 
   private finishClose({
@@ -300,6 +312,30 @@ describe("runGitCommand", () => {
       stdout: "next",
     });
     expect(fakeSpawnController.peakActiveCount).toBe(1);
+  });
+
+  it("finishes process metrics at exit without waiting for close", async () => {
+    const { runGitCommand, startGitCommandMetrics, stopGitCommandMetrics } =
+      await loadRunGitCommand(1);
+
+    enqueueSpawnBehaviors(
+      { exitDelayMs: 0, closeDelayMs: 500 },
+      { delayMs: 0, stdoutData: "next" },
+    );
+    startGitCommandMetrics();
+
+    void runGitCommand(["status"], { cwd: process.cwd() });
+    await expect(
+      runGitCommand(["rev-parse", "--show-toplevel"], { cwd: process.cwd() }),
+    ).resolves.toMatchObject({ stdout: "next" });
+
+    expect(fakeSpawnController.processes[0]?.exited).toBe(true);
+    expect(fakeSpawnController.processes[0]?.closed).toBe(false);
+    expect(stopGitCommandMetrics()).toMatchObject({
+      total: 2,
+      failed: 0,
+      maxConcurrent: 1,
+    });
   });
 
   it("resolves truncated stdout, caps output, and kills the child process", async () => {

@@ -4065,7 +4065,7 @@ describe("session stash mutation handling", () => {
 
     expect(gitCommandMocks.runGitCommand).toHaveBeenCalledWith(
       ["stash", "push", "--include-untracked", "-m", "paseo-auto-stash: feature"],
-      { cwd: "/tmp/repo" },
+      { cwd: "/tmp/repo", timeout: 120_000 },
     );
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo", {
       force: true,
@@ -4103,6 +4103,7 @@ describe("session stash mutation handling", () => {
 
     expect(gitCommandMocks.runGitCommand).toHaveBeenCalledWith(["stash", "pop", "stash@{0}"], {
       cwd: "/tmp/repo",
+      timeout: 120_000,
     });
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo", {
       force: true,
