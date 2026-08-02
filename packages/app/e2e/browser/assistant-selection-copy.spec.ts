@@ -300,6 +300,15 @@ test("copying an assistant selection preserves Markdown structure and links", as
     expect(partialTableClipboard.plainText).toBe("Current");
     expect(partialTableClipboard.html).toContain("<p>Current</p>");
     expect(partialTableClipboard.html).not.toContain("&lt;table");
+
+    await selectAssistantTextRange(page, "Right", "ready");
+    await copySelection(page);
+
+    const columnSliceClipboard = await readRichClipboard(page);
+    expect(columnSliceClipboard.plainText).toContain("ready");
+    expect(columnSliceClipboard.html).not.toContain("<table>");
+    expect(columnSliceClipboard.html).toContain("ready");
+    expect(columnSliceClipboard.html).toContain("<s>obsolete</s>");
   } finally {
     await agent.cleanup();
   }

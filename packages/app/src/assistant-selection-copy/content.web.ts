@@ -186,7 +186,7 @@ function restoreMarkdownElements(container: HTMLElement): void {
 
 function unwrapIncompleteTables(container: HTMLElement): void {
   for (const table of container.querySelectorAll("table")) {
-    if (table.querySelector("thead th")) {
+    if (hasUsableTableColumnContract(table)) {
       continue;
     }
     const cells = Array.from(table.querySelectorAll("th, td"));
@@ -199,4 +199,14 @@ function unwrapIncompleteTables(container: HTMLElement): void {
     });
     table.replaceWith(selectedContent);
   }
+}
+
+function hasUsableTableColumnContract(table: Element): boolean {
+  const headerWidth = table.querySelectorAll("thead th").length;
+  return (
+    headerWidth > 0 &&
+    Array.from(table.querySelectorAll("tbody tr")).every(
+      (row) => row.children.length <= headerWidth,
+    )
+  );
 }
