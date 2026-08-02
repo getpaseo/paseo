@@ -24,9 +24,9 @@ const ASSISTANT_MARKDOWN = [
   'const answer = "yes";',
   "```",
   "",
-  "| Status | Result |",
-  "| --- | --- |",
-  "| Current | ~~obsolete~~ |",
+  "| Left | Right | Center |",
+  "| :-- | --: | :-: |",
+  "| Current | ~~obsolete~~ | ready |",
 ].join("\n");
 
 interface ClipboardContent {
@@ -165,6 +165,9 @@ test("copying an assistant selection preserves Markdown structure and links", as
     expect(clipboard.html).toContain('<code class="language-typescript">');
     expect(clipboard.html).toContain("<table>");
     expect(clipboard.html).toContain("<s>obsolete</s>");
+    expect(clipboard.html).toContain('<th style="text-align:left">Left</th>');
+    expect(clipboard.html).toContain('<th style="text-align:right">Right</th>');
+    expect(clipboard.html).toContain('<th style="text-align:center">Center</th>');
 
     await selectAssistantText(page, "First");
     await copySelection(page);
@@ -181,6 +184,21 @@ test("copying an assistant selection preserves Markdown structure and links", as
     const midListClipboard = await readRichClipboard(page);
     expect(midListClipboard.plainText).toBe("7. Seventh item\n8. Eighth item");
     expect(midListClipboard.html).toContain('<ol start="7">');
+
+    await selectAssistantTextRange(page, "Seventh item", "A hard break");
+    await copySelection(page);
+
+    const crossBlockClipboard = await readRichClipboard(page);
+    expect(crossBlockClipboard.plainText).toBe("7. Seventh item\n8. Eighth item\n\nA hard break");
+    expect(crossBlockClipboard.html).toContain('<ol start="7">');
+
+    await selectAssistantText(page, "Current");
+    await copySelection(page);
+
+    const partialTableClipboard = await readRichClipboard(page);
+    expect(partialTableClipboard.plainText).toBe("Current");
+    expect(partialTableClipboard.html).toContain("<p>Current</p>");
+    expect(partialTableClipboard.html).not.toContain("&lt;table");
   } finally {
     await agent.cleanup();
   }

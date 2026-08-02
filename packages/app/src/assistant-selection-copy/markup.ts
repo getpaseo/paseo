@@ -3,6 +3,7 @@ export const MARKDOWN_COPY_IGNORE_ATTRIBUTE = "data-paseo-markdown-ignore";
 export const MARKDOWN_COPY_UNWRAP_ATTRIBUTE = "data-paseo-markdown-unwrap";
 export const MARKDOWN_COPY_LIST_START_ATTRIBUTE = "data-paseo-markdown-list-start";
 export const MARKDOWN_COPY_LANGUAGE_ATTRIBUTE = "data-paseo-markdown-language";
+export const MARKDOWN_COPY_ALIGN_ATTRIBUTE = "data-paseo-markdown-align";
 
 export const markdownCopyDataSet = {
   blockquote: { paseoMarkdownTag: "blockquote" },
@@ -47,5 +48,16 @@ export function markdownCopyCodeBlockDataSet(language: string | null | undefined
   return {
     ...markdownCopyDataSet.pre,
     ...(fenceLanguage ? { paseoMarkdownLanguage: fenceLanguage } : {}),
+  } as const;
+}
+
+export function markdownCopyTableCellDataSet(tag: "td" | "th", style: unknown) {
+  const alignment =
+    typeof style === "string"
+      ? style.match(/(?:^|;)\s*text-align\s*:\s*(left|right|center)/i)?.[1]
+      : null;
+  return {
+    ...markdownCopyDataSet[tag],
+    ...(alignment ? { paseoMarkdownAlign: alignment.toLowerCase() } : {}),
   } as const;
 }

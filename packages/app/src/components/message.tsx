@@ -106,6 +106,7 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import {
   markdownCopyDataSet,
   markdownCopyOrderedListDataSet,
+  markdownCopyTableCellDataSet,
   type MarkdownCopyInlineTag,
 } from "@/assistant-selection-copy/markup";
 export type { InlinePathTarget } from "@/assistant-file-links";
@@ -1827,14 +1828,20 @@ export const AssistantMessage = memo(function AssistantMessage({
       },
       th: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
         <MarkdownTableCellText key={node.key}>
-          <View style={styles._VIEW_SAFE_th} dataSet={markdownCopyDataSet.th}>
+          <View
+            style={styles._VIEW_SAFE_th}
+            dataSet={markdownCopyTableCellDataSet("th", node.attributes?.style)}
+          >
             {children}
           </View>
         </MarkdownTableCellText>
       ),
       td: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
         <MarkdownTableCellText key={node.key}>
-          <View style={styles._VIEW_SAFE_td} dataSet={markdownCopyDataSet.td}>
+          <View
+            style={styles._VIEW_SAFE_td}
+            dataSet={markdownCopyTableCellDataSet("td", node.attributes?.style)}
+          >
             {children}
           </View>
         </MarkdownTableCellText>

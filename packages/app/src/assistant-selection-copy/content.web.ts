@@ -5,6 +5,7 @@ import {
   type MarkdownClipboardContent,
 } from "@/utils/rich-clipboard";
 import {
+  MARKDOWN_COPY_ALIGN_ATTRIBUTE,
   MARKDOWN_COPY_IGNORE_ATTRIBUTE,
   MARKDOWN_COPY_LANGUAGE_ATTRIBUTE,
   MARKDOWN_COPY_LIST_START_ATTRIBUTE,
@@ -54,7 +55,9 @@ export function createAssistantSelectionClipboardContent(
   }
 
   const container = document.createElement("div");
-  container.append(wrapSelectionWithAncestors(range, startMessage));
+  const selected = wrapSelectionWithAncestors(range, startMessage);
+  normalizeOrderedListStarts(selected, range, startMessage);
+  container.append(selected);
   restoreMarkdownElements(container);
 
   const markdown = turndown.turndown(container.innerHTML).trim();
@@ -70,7 +73,6 @@ function wrapSelectionWithAncestors(range: Range, message: Element): Node {
 
   while (ancestor && ancestor !== message) {
     const wrapper = ancestor.cloneNode(false) as Element;
-    adjustOrderedListStart(wrapper, ancestor, range);
     wrapper.append(selected);
     selected = wrapper;
     ancestor = ancestor.parentElement;
@@ -79,40 +81,39 @@ function wrapSelectionWithAncestors(range: Range, message: Element): Node {
   return selected;
 }
 
-function adjustOrderedListStart(wrapper: Element, original: Element, range: Range): void {
-  if (original.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE) !== "ol") {
-    return;
-  }
+function normalizeOrderedListStarts(selected: Node, range: Range, message: Element): void {
+  const selector = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="ol"]`;
+  const originals = Array.from(message.querySelectorAll(selector)).filter((list) =>
+    range.intersectsNode(list),
+  );
+  const copies = markedElements(selected, selector);
 
-  const firstSelectedChild = directChildContainingRangeStart(original, range);
-  if (!firstSelectedChild) {
-    return;
-  }
-
-  let omittedItems = 0;
-  for (const child of original.childNodes) {
-    if (child === firstSelectedChild) {
-      break;
+  for (let index = 0; index < Math.min(originals.length, copies.length); index += 1) {
+    const original = originals[index];
+    const firstSelectedItem = Array.from(original.children).find(
+      (child) =>
+        child.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE) === "li" && range.intersectsNode(child),
+    );
+    if (!firstSelectedItem) {
+      continue;
     }
-    if (child instanceof Element && child.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE) === "li") {
-      omittedItems += 1;
-    }
+    const omittedItems = Array.from(original.children)
+      .slice(0, Array.from(original.children).indexOf(firstSelectedItem))
+      .filter((child) => child.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE) === "li").length;
+    const originalStart = Number(original.getAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE) ?? 1);
+    copies[index].setAttribute(
+      MARKDOWN_COPY_LIST_START_ATTRIBUTE,
+      String(originalStart + omittedItems),
+    );
   }
-
-  const originalStart = Number(original.getAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE) ?? 1);
-  wrapper.setAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE, String(originalStart + omittedItems));
 }
 
-function directChildContainingRangeStart(ancestor: Element, range: Range): Node | null {
-  if (range.startContainer === ancestor) {
-    return ancestor.childNodes[range.startOffset] ?? null;
+function markedElements(root: Node, selector: string): Element[] {
+  const elements = root instanceof Element && root.matches(selector) ? [root] : [];
+  if ("querySelectorAll" in root) {
+    elements.push(...Array.from((root as ParentNode).querySelectorAll(selector)));
   }
-
-  let child = range.startContainer;
-  while (child.parentNode && child.parentNode !== ancestor) {
-    child = child.parentNode;
-  }
-  return child.parentNode === ancestor ? child : null;
+  return elements;
 }
 
 function closestAssistantMessage(node: Node): Element | null {
@@ -148,8 +149,16 @@ function restoreMarkdownElements(container: HTMLElement): void {
         code.className = `language-${language}`;
       }
     }
+    if (tagName === "th" || tagName === "td") {
+      const alignment = element.getAttribute(MARKDOWN_COPY_ALIGN_ATTRIBUTE);
+      if (alignment) {
+        semanticElement.setAttribute("align", alignment);
+      }
+    }
     element.replaceWith(semanticElement);
   }
+
+  unwrapIncompleteTables(container);
 
   const generatedLinks = Array.from(
     container.querySelectorAll(`[${MARKDOWN_COPY_UNWRAP_ATTRIBUTE}]`),
@@ -161,5 +170,22 @@ function restoreMarkdownElements(container: HTMLElement): void {
   const presentational = Array.from(container.querySelectorAll("div, span"));
   for (const element of presentational.toReversed()) {
     element.replaceWith(...element.childNodes);
+  }
+}
+
+function unwrapIncompleteTables(container: HTMLElement): void {
+  for (const table of container.querySelectorAll("table")) {
+    if (table.querySelector("thead th")) {
+      continue;
+    }
+    const cells = Array.from(table.querySelectorAll("th, td"));
+    const selectedContent = document.createDocumentFragment();
+    cells.forEach((cell, index) => {
+      if (index > 0) {
+        selectedContent.append("\n");
+      }
+      selectedContent.append(...cell.childNodes);
+    });
+    table.replaceWith(selectedContent);
   }
 }
