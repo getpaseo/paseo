@@ -2120,7 +2120,7 @@ export const zhCN: TranslationResources = {
         },
         hideHostNames: {
           label: "隐藏主机名",
-          description: "按状态分组时隐藏机器名称",
+          description: "在工作区行中隐藏机器名称徽标",
         },
         recentlyDone: {
           label: "最近完成",

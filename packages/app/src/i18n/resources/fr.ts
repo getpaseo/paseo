@@ -2201,7 +2201,7 @@ export const fr: TranslationResources = {
         },
         hideHostNames: {
           label: "Masquer les noms d'hôte",
-          description: "Masquer le nom de la machine lors du regroupement par statut",
+          description: "Masquer le badge du nom de la machine sur les lignes d'espace de travail",
         },
         recentlyDone: {
           label: "Terminé récemment",

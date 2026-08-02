@@ -2179,7 +2179,7 @@ export const ptBR: TranslationResources = {
         },
         hideHostNames: {
           label: "Ocultar nomes de host",
-          description: "Oculta o nome da máquina ao agrupar por status",
+          description: "Oculta o selo com o nome da máquina nas linhas de workspace",
         },
         recentlyDone: {
           label: "Concluído há pouco",

@@ -2196,7 +2196,8 @@ export const es: TranslationResources = {
         },
         hideHostNames: {
           label: "Ocultar nombres de host",
-          description: "Oculta el nombre de la máquina al agrupar por estado",
+          description:
+            "Oculta la insignia con el nombre de la máquina en las filas de espacios de trabajo",
         },
         recentlyDone: {
           label: "Terminado hace poco",

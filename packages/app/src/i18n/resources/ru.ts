@@ -2181,7 +2181,7 @@ export const ru: TranslationResources = {
         },
         hideHostNames: {
           label: "Скрыть имена хостов",
-          description: "Скрыть имя машины при группировке по статусу",
+          description: "Скрыть значок с именем машины в строках рабочих пространств",
         },
         recentlyDone: {
           label: "Недавно завершённые",

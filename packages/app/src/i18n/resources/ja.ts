@@ -2161,7 +2161,7 @@ export const ja: TranslationResources = {
         },
         hideHostNames: {
           label: "ホスト名を非表示",
-          description: "ステータスでグループ化するときにマシン名を非表示にする",
+          description: "ワークスペース行のマシン名バッジを非表示にする",
         },
         recentlyDone: {
           label: "最近完了",
