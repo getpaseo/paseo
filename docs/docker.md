@@ -203,15 +203,11 @@ docker build \
   .
 ```
 
-The Docker workflow builds the image on pull requests and on `main` as a
-non-publishing check. Stable `vX.Y.Z` tag pushes publish
-`ghcr.io/getpaseo/paseo:X.Y.Z` and `ghcr.io/getpaseo/paseo:latest`. Beta tags
-publish only the exact prerelease tag, such as
-`ghcr.io/getpaseo/paseo:0.1.102-beta.1`, and do not update `latest`.
+The Docker workflow is manual-only in this fork. Pull requests, `main`, and
+release tags do not build or publish container images.
 
-To replace a Docker image in place without rebuilding desktop, APK, or EAS
-mobile release artifacts, dispatch the Docker workflow manually instead of
-pushing a `v*` release tag:
+To publish a Docker image without rebuilding desktop or EAS mobile release
+artifacts, dispatch the Docker workflow manually:
 
 ```bash
 gh workflow run docker.yml \

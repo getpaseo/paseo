@@ -82,7 +82,7 @@ npm run release:patch
 npm run release:minor
 ```
 
-This bumps the version across all workspaces, runs checks, publishes to npm, and pushes the branch + tag. The tag push triggers `Desktop Release`, `Android APK Release`, `Docker`, and `Release Notes Sync` on GitHub Actions. Fork tags also trigger the EAS workflow in `packages/app/.eas/workflows/release-mobile.yml` (see "Mobile builds (EAS)" below).
+This bumps the version across all workspaces, runs checks, publishes to npm, and pushes the branch + tag. In this fork, the tag push triggers `Desktop Release` and `Release Notes Sync` on GitHub Actions, plus the EAS workflow in `packages/app/.eas/workflows/release-mobile.yml` (see "Mobile builds (EAS)" below). Web app deployment, Docker publishing, and Android APK publishing are manual-only.
 
 After the stable release succeeds, move npm's `beta` pointer to the new stable
 version for every published package. This changes dist-tags only; do not
@@ -98,7 +98,7 @@ done
 Verify both npm tags now resolve to `PASEO_VERSION` before considering the
 stable release complete.
 
-The Docker workflow builds images from the checked-out source tree on pull requests and on `main` as non-publishing checks. Stable `vX.Y.Z` tag pushes publish `ghcr.io/getpaseo/paseo:X.Y.Z` and `ghcr.io/getpaseo/paseo:latest`; beta `vX.Y.Z-beta.N` tag pushes publish only `ghcr.io/getpaseo/paseo:X.Y.Z-beta.N` and never move `latest`.
+The Docker workflow is manual-only in this fork. Fork CI and release tags do not build or publish container images.
 
 The production relay is the Elixir service in [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay), with its own deployment process. Paseo releases and pushes to this repository do not deploy it. The Cloudflare relay code and workflow in this repository are legacy and are not used in production.
 
@@ -235,7 +235,7 @@ If N+1 is a hotfix for a bug in N, dispatch `desktop-rollout.yml -f tag=v0.1.<N+
 iOS store builds are not in `.github/workflows`. The EAS GitHub app runs `packages/app/.eas/workflows/release-mobile.yml` when a `v*-fork.*` tag is pushed:
 
 - **iOS (TestFlight)** — EAS builds with profile `production` and uploads to TestFlight. App Store review is a separate manual action.
-- **Android APK (GitHub Release asset)** — separate, via `.github/workflows/android-apk-release.yml`. This is the only Android-related workflow that lives in this repo.
+- **Android APK** — not part of fork releases. `.github/workflows/android-apk-release.yml` is manual-only.
 
 `packages/app/app.config.js` derives the base native version code as `major * 1_000_000 + minor * 1_000 + patch`. For fork releases, the EAS and GitHub APK workflows pass the tag and both Android `versionCode` and iOS `buildNumber` use `base version code * 1_000 + fork number`; `v0.2.5-fork.1` uses `2005001`. Fork numbers must be between 1 and 999. EAS uses the local version source so the value in each binary is deterministic from the tag.
 
@@ -320,9 +320,7 @@ The GitHub Release body is populated automatically by the `Release Notes Sync` w
 
 **Do not rely on `workflow_dispatch` for tagged code fixes.** The `workflow_dispatch` trigger runs the workflow file from the default branch but checks out the code at the tag ref (`ref: ${{ inputs.tag }}`). That means fixes committed to `main` won't change the tagged source tree being built. `workflow_dispatch` only helps when the fix lives in the workflow file itself.
 
-For Docker-only retries, **do not push or force-push a `v*` release tag**.
-`v*` tag pushes rebuild desktop assets, the Android APK, Docker, release notes,
-and EAS mobile release builds. Use the Docker workflow dispatch instead:
+Docker publishing is manual-only. Use workflow dispatch if a container image is needed:
 
 ```bash
 gh workflow run docker.yml \
@@ -331,19 +329,14 @@ gh workflow run docker.yml \
   -f publish=true
 ```
 
-This replaces `ghcr.io/getpaseo/paseo:X.Y.Z-beta.N` in place without touching
-desktop, APK, or EAS release builders. The Docker exception is safe because the
-dispatch runs from `--ref main` and uses the explicit `paseo_version`; it does
-not check out or move the `v*` release tag.
+This publishes `ghcr.io/yooztech/paseo:X.Y.Z-beta.N` without touching desktop or EAS release builders. The dispatch runs from `--ref main` and uses the explicit `paseo_version`.
 
-To retry a failed non-Docker release workflow, push a retry tag on the commit
+To retry a failed release workflow, push a retry tag on the commit
 you want to build. Reusing the same tag name is expected: move it with
 `git tag -f ...` and push it with `--force` so the workflow rebuilds the commit
 you actually want.
 
-Prefer a tag push over `workflow_dispatch` when rebuilding desktop or APK
-release assets. Prefer Docker workflow dispatch when rebuilding only the Docker
-image.
+Prefer a tag push over `workflow_dispatch` when rebuilding desktop release assets. Use Docker workflow dispatch only when explicitly publishing a container image.
 
 The retry tag patterns below still work and remain the supported way to rebuild specific release targets:
 
@@ -356,9 +349,6 @@ git tag -f desktop-macos-v0.1.28 HEAD && git push origin desktop-macos-v0.1.28 -
 git tag -f desktop-linux-v0.1.28 HEAD && git push origin desktop-linux-v0.1.28 --force
 git tag -f desktop-windows-v0.1.28 HEAD && git push origin desktop-windows-v0.1.28 --force
 
-# Android APK
-git tag -f android-v0.1.28 HEAD && git push origin android-v0.1.28 --force
-
 # Beta
 git tag -f v0.1.29-beta.2 HEAD && git push origin v0.1.29-beta.2 --force
 ```
@@ -368,7 +358,6 @@ This ensures the checkout ref matches the actual code on `main` with the fix inc
 - `vX.Y.Z` or `vX.Y.Z-beta.N` rebuilds the full tagged release
 - `desktop-vX.Y.Z` rebuilds desktop for all desktop platforms only
 - `desktop-macos-vX.Y.Z`, `desktop-linux-vX.Y.Z`, and `desktop-windows-vX.Y.Z` rebuild only that desktop platform
-- `android-vX.Y.Z` rebuilds the Android APK release only
 
 ## Notes
 
@@ -510,7 +499,6 @@ Betas are checkpoints along the way; the entry is the single record for the jump
 - [ ] `npm run release:beta:patch`, `npm run release:beta:minor`, or `npm run release:beta:next` completes successfully
 - [ ] npm shows the version under the `beta` dist-tag, not `latest`
 - [ ] GitHub `Desktop Release` workflow for the `v*-beta.N` tag is green
-- [ ] GitHub `Android APK Release` workflow for the same tag is green
 - [ ] GitHub `Release Notes Sync` mirrored the beta entry into the prerelease body
 
 ### Fork release
@@ -523,7 +511,6 @@ Betas are checkpoints along the way; the entry is the single record for the jump
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
 - [ ] The fork release command completes successfully
 - [ ] GitHub `Desktop Release` workflow for the `v*-fork.N` tag is green
-- [ ] GitHub `Android APK Release` workflow for the same tag is green
 - [ ] EAS `Release Mobile` workflow for the same tag is green
 - [ ] EAS iOS `build_ios` completes for the same tag
 - [ ] EAS iOS `submit_ios` succeeds, uploading the build to App Store Connect/TestFlight

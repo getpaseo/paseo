@@ -1,10 +1,7 @@
 name: Android APK Release
 
 on:
-  push:
-    tags:
-      - "v*"
-      - "android-v*"
+  # YOOZ DOWNSTREAM(sync): fork mobile releases ship iOS only through EAS.
   workflow_dispatch:
     inputs:
       tag:
