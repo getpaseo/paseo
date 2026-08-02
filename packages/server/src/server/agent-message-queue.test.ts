@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -995,25 +995,24 @@ test("dispatchNow durably restores a message after an asynchronous turn-start fa
 
 test("a failed persist leaves no phantom record in memory", async () => {
   const { dir, store } = await createStore();
+  const filePath = path.join(dir, "agent-message-queue.json");
   await store.enqueue({ agentId: "agent-a", messageId: "queued-1", text: "first" });
 
-  // A read-only directory makes the next persist fail after the in-memory
-  // draft was already mutated.
-  await chmod(dir, 0o555);
-  try {
-    await expect(
-      store.enqueue({ agentId: "agent-a", messageId: "queued-2", text: "second" }),
-    ).rejects.toThrow();
+  // Replacing the persisted file with a directory makes the atomic rename
+  // fail on every platform after the in-memory draft has been mutated.
+  await rm(filePath);
+  await mkdir(filePath);
 
-    await expect(store.listQueues("agent-a")).resolves.toMatchObject([
-      { messages: [{ id: "queued-1" }] },
-    ]);
-    await expect(store.listQueues("agent-a")).resolves.toMatchObject([
-      { agentId: "agent-a", revision: 1 },
-    ]);
-  } finally {
-    await chmod(dir, 0o755);
-  }
+  await expect(
+    store.enqueue({ agentId: "agent-a", messageId: "queued-2", text: "second" }),
+  ).rejects.toThrow();
+
+  await expect(store.listQueues("agent-a")).resolves.toMatchObject([
+    { messages: [{ id: "queued-1" }] },
+  ]);
+  await expect(store.listQueues("agent-a")).resolves.toMatchObject([
+    { agentId: "agent-a", revision: 1 },
+  ]);
 });
 
 test("auto drain stops retrying after consecutive dispatch failures", async () => {
