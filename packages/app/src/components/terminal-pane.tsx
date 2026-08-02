@@ -280,7 +280,7 @@ export function TerminalPane({
 
   useEffect(() => {
     void refreshClipboardAvailability();
-  }, [refreshClipboardAvailability, isAppVisible]);
+  }, [refreshClipboardAvailability, isAppActivelyVisible]);
 
   useEffect(() => {
     void refreshClipboardAvailability();
