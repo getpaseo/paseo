@@ -3,7 +3,13 @@ import {
   createMarkdownClipboardContent,
   type MarkdownClipboardContent,
 } from "@/utils/rich-clipboard";
-import { MARKDOWN_COPY_IGNORE_ATTRIBUTE, MARKDOWN_COPY_TAG_ATTRIBUTE } from "./markup";
+import {
+  MARKDOWN_COPY_IGNORE_ATTRIBUTE,
+  MARKDOWN_COPY_LANGUAGE_ATTRIBUTE,
+  MARKDOWN_COPY_LIST_START_ATTRIBUTE,
+  MARKDOWN_COPY_TAG_ATTRIBUTE,
+  MARKDOWN_COPY_UNWRAP_ATTRIBUTE,
+} from "./markup";
 
 const ASSISTANT_MESSAGE_SELECTOR = '[data-testid="assistant-message"]';
 
@@ -66,8 +72,30 @@ function restoreMarkdownElements(container: HTMLElement): void {
       continue;
     }
     const semanticElement = document.createElement(tagName);
-    semanticElement.append(...element.childNodes);
+    if (tagName !== "br") {
+      semanticElement.append(...element.childNodes);
+    }
+    if (tagName === "ol") {
+      const start = element.getAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE);
+      if (start) {
+        semanticElement.setAttribute("start", start);
+      }
+    }
+    if (tagName === "pre") {
+      const language = element.getAttribute(MARKDOWN_COPY_LANGUAGE_ATTRIBUTE);
+      const code = semanticElement.querySelector(":scope > code");
+      if (language && code) {
+        code.className = `language-${language}`;
+      }
+    }
     element.replaceWith(semanticElement);
+  }
+
+  const generatedLinks = Array.from(
+    container.querySelectorAll(`[${MARKDOWN_COPY_UNWRAP_ATTRIBUTE}]`),
+  );
+  for (const element of generatedLinks.toReversed()) {
+    element.replaceWith(...element.childNodes);
   }
 
   const presentational = Array.from(container.querySelectorAll("div, span"));

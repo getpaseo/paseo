@@ -7,6 +7,18 @@ const ASSISTANT_MARKDOWN = [
   "",
   "- [First issue](https://example.com/issues/1): exact `apply_patch` failure.",
   "- [Second issue](https://example.com/issues/2): repeated sandbox setup.",
+  "",
+  "5. Fifth item",
+  "6. Sixth item",
+  "",
+  "A hard break  ",
+  "stays hard.",
+  "",
+  "`https://example.com/generated` stays code, not a generated link.",
+  "",
+  "```typescript",
+  'const answer = "yes";',
+  "```",
 ].join("\n");
 
 interface ClipboardContent {
@@ -77,6 +89,13 @@ test("copying an assistant selection preserves Markdown structure and links", as
     expect(clipboard.html).toContain("<ul>");
     expect(clipboard.html).toContain('<a href="https://example.com/issues/1">First issue</a>');
     expect(clipboard.html).toContain("<code>apply_patch</code>");
+    expect(clipboard.html).toContain('<ol start="5">');
+    expect(clipboard.html).toContain("A hard break<br>");
+    expect(clipboard.html).toContain("<code>https://example.com/generated</code>");
+    expect(clipboard.html).not.toContain(
+      '<a href="https://example.com/generated"><code>https://example.com/generated</code></a>',
+    );
+    expect(clipboard.html).toContain('<code class="language-typescript">');
   } finally {
     await agent.cleanup();
   }

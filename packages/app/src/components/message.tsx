@@ -103,7 +103,11 @@ import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import { markdownCopyDataSet, type MarkdownCopyInlineTag } from "@/assistant-selection-copy/markup";
+import {
+  markdownCopyDataSet,
+  markdownCopyOrderedListDataSet,
+  type MarkdownCopyInlineTag,
+} from "@/assistant-selection-copy/markup";
 export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
 
@@ -1415,14 +1419,23 @@ function MarkdownListItemContent({ contentStyle, children }: MarkdownListItemCon
 interface MarkdownListViewProps {
   baseStyle: ViewStyle;
   copyTag: "ol" | "ul";
+  orderedStart?: unknown;
   spacing: { marginTop: number; marginBottom: number };
   children: ReactNode;
 }
 
-function MarkdownListView({ baseStyle, copyTag, spacing, children }: MarkdownListViewProps) {
+function MarkdownListView({
+  baseStyle,
+  copyTag,
+  orderedStart,
+  spacing,
+  children,
+}: MarkdownListViewProps) {
   const style = useMemo(() => [baseStyle, spacing], [baseStyle, spacing]);
+  const copyDataSet =
+    copyTag === "ol" ? markdownCopyOrderedListDataSet(orderedStart) : markdownCopyDataSet.ul;
   return (
-    <View style={style} dataSet={markdownCopyDataSet[copyTag]}>
+    <View style={style} dataSet={copyDataSet}>
       {children}
     </View>
   );
@@ -1656,7 +1669,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         _parent: ASTNode[],
         styles: MarkdownStyles,
       ) => (
-        <MarkdownTextSpan key={node.key} style={styles.hardbreak}>
+        <MarkdownTextSpan key={node.key} style={styles.hardbreak} copyTag="br">
           {"\n"}
         </MarkdownTextSpan>
       ),
@@ -1785,6 +1798,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           key={node.key}
           baseStyle={styles.ordered_list}
           copyTag="ol"
+          orderedStart={node.attributes?.start}
           spacing={getMarkdownListSpacing(node, parent)}
         >
           {children}

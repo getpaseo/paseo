@@ -106,6 +106,7 @@ export function AssistantMarkdownLink({
 
   const anchor = (
     <a
+      {...(monoSurface ? { "data-paseo-markdown-unwrap": "true" } : {})}
       href={source.href}
       onClickCapture={handleAnchorClickCapture}
       onAuxClickCapture={preventAnchorNavigation}

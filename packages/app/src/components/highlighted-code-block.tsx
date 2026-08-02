@@ -11,7 +11,10 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { highlightToKeyedLines, type KeyedLine } from "@/utils/highlight-cache";
-import { markdownCopyDataSet } from "@/assistant-selection-copy/markup";
+import {
+  markdownCopyCodeBlockDataSet,
+  markdownCopyDataSet,
+} from "@/assistant-selection-copy/markup";
 
 interface HighlightedCodeBlockProps {
   code: string;
@@ -37,11 +40,6 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   markdown: "md",
   elixir: "ex",
 };
-
-const MARKDOWN_CODE_BLOCK_DATASET = {
-  ...CODE_SURFACE_DATASET,
-  ...markdownCopyDataSet.pre,
-} as const;
 
 function fenceLanguageToExtension(info: string | null | undefined): string | null {
   if (!info) return null;
@@ -69,6 +67,10 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
     [inheritedStyles, textStyle],
   );
   const renderedCode = useMemo(() => stripTerminalFenceNewline(code), [code]);
+  const copyDataSet = useMemo(
+    () => ({ ...CODE_SURFACE_DATASET, ...markdownCopyCodeBlockDataSet(language) }),
+    [language],
+  );
 
   const keyedLines = useMemo<KeyedLine[] | null>(
     () => highlightToKeyedLines(renderedCode, fenceLanguageToExtension(language)),
@@ -85,7 +87,7 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   return (
     <View
       style={containerStyle}
-      dataSet={MARKDOWN_CODE_BLOCK_DATASET}
+      dataSet={copyDataSet}
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
     >
