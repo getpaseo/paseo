@@ -1,0 +1,10 @@
+context platform=ios timeout=90000 retries=0
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "id=\"terminal-surface\"" 30000
+press "id=\"terminal-surface\""
+type "echo __AD_IOS_HARDWARE_OK__" --delay-ms 0
+press "id=\"terminal-key-enter\""
+wait "text" "__AD_IOS_HARDWARE_OK__" 10000
+close

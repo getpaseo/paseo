@@ -1,15 +1,37 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  TERMINAL_GESTURE_HORIZONTAL_NAVIGATION_THRESHOLD_PX,
   TERMINAL_GESTURE_LONG_PRESS_MS,
   TERMINAL_GESTURE_TAP_TOLERANCE_PX,
   TERMINAL_GESTURE_VERTICAL_SCROLL_THRESHOLD_PX,
+  advanceTerminalScrollGesture,
   classifyTerminalGestureIntent,
   resolveTerminalGestureReleaseAction,
 } from "./terminal-selection-gesture";
 
 describe("native terminal gesture policy", () => {
+  describe("advanceTerminalScrollGesture", () => {
+    it("keeps consuming a slow drag after scroll intent arms below one row", () => {
+      let state = { lastDy: 0, rowRemainder: 0, didScroll: false };
+      const rowDeltas: number[] = [];
+
+      for (const currentDy of [13, 15, 18, 22, 28]) {
+        const update = advanceTerminalScrollGesture({
+          state,
+          currentDy,
+          cellHeight: 14,
+        });
+        state = update.state;
+        rowDeltas.push(update.rowDelta);
+      }
+
+      expect({ rowDeltas, state }).toEqual({
+        rowDeltas: [0, 1, 0, 0, 1],
+        state: { lastDy: 28, rowRemainder: 0, didScroll: true },
+      });
+    });
+  });
+
   describe("classifyTerminalGestureIntent", () => {
     it("treats a motionless press as a tap", () => {
       expect(
@@ -35,29 +57,29 @@ describe("native terminal gesture policy", () => {
       ).toEqual("tap");
     });
 
-    it("treats horizontal movement beyond tap tolerance as navigation", () => {
+    it("leaves horizontal movement available to terminal selection", () => {
       expect(
         classifyTerminalGestureIntent({
           status: "pressing",
-          dx: TERMINAL_GESTURE_HORIZONTAL_NAVIGATION_THRESHOLD_PX + 1,
+          dx: TERMINAL_GESTURE_TAP_TOLERANCE_PX + 20,
           dy: 4,
           vx: 0,
           vy: 0,
         }),
-      ).toEqual("swipeRight");
+      ).toEqual("pending");
     });
 
     it("does not infer selection from slow horizontal drag dwell", () => {
       expect(
         classifyTerminalGestureIntent({
           status: "pressing",
-          dx: TERMINAL_GESTURE_HORIZONTAL_NAVIGATION_THRESHOLD_PX + 20,
+          dx: TERMINAL_GESTURE_TAP_TOLERANCE_PX + 40,
           dy: 3,
           vx: 0,
           vy: 0,
           elapsedMs: TERMINAL_GESTURE_LONG_PRESS_MS + 50,
         }),
-      ).toEqual("swipeRight");
+      ).toEqual("pending");
     });
 
     it("keeps tiny horizontal jitter inside tap tolerance as a tap", () => {
@@ -77,7 +99,7 @@ describe("native terminal gesture policy", () => {
       expect(
         classifyTerminalGestureIntent({
           status: "pressing",
-          dx: TERMINAL_GESTURE_HORIZONTAL_NAVIGATION_THRESHOLD_PX - 1,
+          dx: TERMINAL_GESTURE_TAP_TOLERANCE_PX + 10,
           dy: 2,
           vx: 0,
           vy: 0,
@@ -97,40 +119,40 @@ describe("native terminal gesture policy", () => {
       ).toEqual("scroll");
     });
 
-    it("treats a fast rightward swipe as sidebar navigation", () => {
+    it("does not navigate on a fast rightward swipe", () => {
       expect(
         classifyTerminalGestureIntent({
           status: "pressing",
-          dx: TERMINAL_GESTURE_HORIZONTAL_NAVIGATION_THRESHOLD_PX + 20,
+          dx: TERMINAL_GESTURE_TAP_TOLERANCE_PX + 40,
           dy: 4,
           vx: 2,
           vy: 0,
         }),
-      ).toEqual("swipeRight");
+      ).toEqual("pending");
     });
 
-    it("treats a slow rightward swipe as sidebar navigation", () => {
+    it("does not navigate on a slow rightward swipe", () => {
       expect(
         classifyTerminalGestureIntent({
           status: "pressing",
-          dx: TERMINAL_GESTURE_HORIZONTAL_NAVIGATION_THRESHOLD_PX + 20,
+          dx: TERMINAL_GESTURE_TAP_TOLERANCE_PX + 40,
           dy: 4,
           vx: 0,
           vy: 0,
         }),
-      ).toEqual("swipeRight");
+      ).toEqual("pending");
     });
 
-    it("treats a fast leftward swipe as explorer navigation", () => {
+    it("does not navigate on a fast leftward swipe", () => {
       expect(
         classifyTerminalGestureIntent({
           status: "pressing",
-          dx: -(TERMINAL_GESTURE_HORIZONTAL_NAVIGATION_THRESHOLD_PX + 20),
+          dx: -(TERMINAL_GESTURE_TAP_TOLERANCE_PX + 40),
           dy: -4,
           vx: -2,
           vy: 0,
         }),
-      ).toEqual("swipeLeft");
+      ).toEqual("pending");
     });
 
     it("does not navigate while movement stays inside tap tolerance", () => {
@@ -201,6 +223,34 @@ describe("native terminal gesture policy", () => {
       ).toEqual("select");
     });
 
+    it("starts selection after a 500ms hold", () => {
+      expect(
+        resolveTerminalGestureReleaseAction({
+          status: "pressing",
+          didScroll: false,
+          didNavigate: false,
+          movedBeyondTapTolerance: false,
+          pressDurationMs: 500,
+          longPressMs: TERMINAL_GESTURE_LONG_PRESS_MS,
+          scrollMode: "following",
+        }),
+      ).toEqual("select");
+    });
+
+    it("keeps a 400ms press as a tap", () => {
+      expect(
+        resolveTerminalGestureReleaseAction({
+          status: "pressing",
+          didScroll: false,
+          didNavigate: false,
+          movedBeyondTapTolerance: false,
+          pressDurationMs: 400,
+          longPressMs: TERMINAL_GESTURE_LONG_PRESS_MS,
+          scrollMode: "following",
+        }),
+      ).toEqual("focus");
+    });
+
     it("does nothing after a scroll gesture", () => {
       expect(
         resolveTerminalGestureReleaseAction({
@@ -237,6 +287,36 @@ describe("native terminal gesture policy", () => {
           didNavigate: false,
           movedBeyondTapTolerance: true,
           pressDurationMs: 80,
+          longPressMs: TERMINAL_GESTURE_LONG_PRESS_MS,
+          scrollMode: "following",
+        }),
+      ).toEqual("none");
+    });
+
+    it("clears an existing selection after a short tap", () => {
+      expect(
+        resolveTerminalGestureReleaseAction({
+          status: "selecting",
+          startedWithSelection: true,
+          didScroll: false,
+          didNavigate: false,
+          movedBeyondTapTolerance: false,
+          pressDurationMs: 80,
+          longPressMs: TERMINAL_GESTURE_LONG_PRESS_MS,
+          scrollMode: "following",
+        }),
+      ).toEqual("clear");
+    });
+
+    it("preserves a word selection created by the current long press", () => {
+      expect(
+        resolveTerminalGestureReleaseAction({
+          status: "selecting",
+          startedWithSelection: false,
+          didScroll: false,
+          didNavigate: false,
+          movedBeyondTapTolerance: false,
+          pressDurationMs: TERMINAL_GESTURE_LONG_PRESS_MS + 50,
           longPressMs: TERMINAL_GESTURE_LONG_PRESS_MS,
           scrollMode: "following",
         }),

@@ -1,0 +1,19 @@
+context platform=ios timeout=60000 retries=1
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "id=\"workspace-header-menu-trigger\"" 20000
+press "id=\"workspace-header-menu-trigger\""
+press "id=\"workspace-header-new-terminal\""
+wait "id=\"terminal-surface\"" 10000
+press "id=\"terminal-surface\""
+type "clear; yes SAME | head -41; echo AD_SCROLL_MARKER; yes SAME | head -38" --delay-ms 0
+press "id=\"terminal-key-enter\""
+wait "id=\"terminal-row-0\" label=\"AD_SCROLL_MARKER\"" 10000
+gesture pan 200 380 0 28 600
+wait "id=\"terminal-row-2\" label=\"AD_SCROLL_MARKER\"" 10000
+gesture pan 200 380 0 28 600
+wait "id=\"terminal-row-4\" label=\"AD_SCROLL_MARKER\"" 10000
+gesture pan 200 380 0 28 600
+wait "id=\"terminal-row-6\" label=\"AD_SCROLL_MARKER\"" 10000
+close

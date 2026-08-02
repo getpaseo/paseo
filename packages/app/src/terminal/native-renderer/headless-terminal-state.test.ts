@@ -118,6 +118,19 @@ describe("native headless terminal state", () => {
     });
   });
 
+  test("keeps buffer coordinates stable for writes that do not evict a saturated buffer", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 3, cols: COLS, scrollbackLines: 2 });
+
+    await terminal.write(
+      createNativeTerminalBenchmarkPayload({ startLine: 0, lineCount: 8, cols: COLS }),
+    );
+    const before = terminal.getBufferBounds();
+    await terminal.write("still on the current row");
+    const after = terminal.getBufferBounds();
+
+    expect(after.coordinateEpoch).toEqual(before.coordinateEpoch);
+  });
+
   test("changes buffer coordinate epoch on reset", async () => {
     const terminal = createNativeHeadlessTerminal({ rows: 5, cols: COLS, scrollbackLines: 100 });
 

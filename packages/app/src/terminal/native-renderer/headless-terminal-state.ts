@@ -88,6 +88,27 @@ interface XtermCoreService {
 interface HeadlessTerminalWithCore {
   _core?: {
     coreService?: XtermCoreService;
+    _bufferService?: {
+      buffer?: {
+        lines?: {
+          _startIndex?: number;
+        };
+      };
+    };
+  };
+}
+
+interface TerminalCoordinateStorage {
+  lines: object | null;
+  startIndex: number | null;
+}
+
+function captureCoordinateStorage(terminal: HeadlessTerminalInstance): TerminalCoordinateStorage {
+  const lines = (terminal as unknown as HeadlessTerminalWithCore)._core?._bufferService?.buffer
+    ?.lines;
+  return {
+    lines: lines ?? null,
+    startIndex: typeof lines?._startIndex === "number" ? lines._startIndex : null,
   };
 }
 
@@ -313,13 +334,17 @@ export function createNativeHeadlessTerminal(
   const decoder = new TextDecoder();
   let coordinateEpoch = 0;
 
-  function maxBufferLength(): number {
-    return terminal.rows + (options.scrollbackLines ?? 1000);
-  }
-
-  function updateCoordinateEpochAfterWrite(previousLength: number): void {
+  function updateCoordinateEpochAfterWrite(
+    previousLength: number,
+    previousStorage: TerminalCoordinateStorage,
+  ): void {
     const nextLength = terminal.buffer.active.length;
-    if (nextLength < previousLength || nextLength >= maxBufferLength()) {
+    const nextStorage = captureCoordinateStorage(terminal);
+    if (
+      nextLength < previousLength ||
+      nextStorage.lines !== previousStorage.lines ||
+      nextStorage.startIndex !== previousStorage.startIndex
+    ) {
       coordinateEpoch += 1;
     }
   }
@@ -331,9 +356,10 @@ export function createNativeHeadlessTerminal(
         return;
       }
       const previousLength = terminal.buffer.active.length;
+      const previousStorage = captureCoordinateStorage(terminal);
       await new Promise<void>((resolve) => {
         terminal.write(text, () => {
-          updateCoordinateEpochAfterWrite(previousLength);
+          updateCoordinateEpochAfterWrite(previousLength, previousStorage);
           resolve();
         });
       });

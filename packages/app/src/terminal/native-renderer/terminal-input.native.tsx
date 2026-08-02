@@ -8,7 +8,6 @@ import {
   useState,
 } from "react";
 import {
-  Keyboard,
   StyleSheet,
   TextInput,
   type NativeSyntheticEvent,
@@ -184,16 +183,6 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
 
       showNativeKeyboard();
     }, [clearPendingFocus, showNativeKeyboard]);
-
-    useEffect(() => {
-      const subscription = Keyboard.addListener("keyboardDidHide", () => {
-        if (!isFocusedRef.current) {
-          return;
-        }
-        blurNativeInput();
-      });
-      return () => subscription.remove();
-    }, [blurNativeInput]);
 
     useEffect(() => clearPendingFocus, [clearPendingFocus]);
 

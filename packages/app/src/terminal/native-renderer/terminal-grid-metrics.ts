@@ -26,9 +26,19 @@ export function resolveMeasuredTerminalCellMetrics(
 ): TerminalGridCellMetrics {
   const textLength = Math.max(1, input.measureTextLength);
   return {
-    cellWidth: Math.max(1, input.measuredTextWidth / textLength),
-    cellHeight: snapCellHeight(input.measuredTextHeight, input.roundToNearestPixel),
+    cellWidth: snapCellMetric(input.measuredTextWidth / textLength, input.roundToNearestPixel),
+    cellHeight: snapCellMetric(input.measuredTextHeight, input.roundToNearestPixel),
   };
+}
+
+export function resolveTerminalGridMetricsMeasurement(
+  previous: TerminalGridCellMetrics | null,
+  next: TerminalGridCellMetrics,
+): TerminalGridCellMetrics | null {
+  if (previous?.cellWidth === next.cellWidth && previous.cellHeight === next.cellHeight) {
+    return null;
+  }
+  return next;
 }
 
 export function resolveTerminalCursorOffset(
@@ -40,6 +50,6 @@ export function resolveTerminalCursorOffset(
   };
 }
 
-function snapCellHeight(value: number, roundToNearestPixel: (value: number) => number): number {
-  return Math.max(1, Math.ceil(roundToNearestPixel(value)));
+function snapCellMetric(value: number, roundToNearestPixel: (value: number) => number): number {
+  return Math.max(1, roundToNearestPixel(value));
 }

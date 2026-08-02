@@ -1,0 +1,15 @@
+context platform=android timeout=90000 retries=1
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+back
+open "${APP_ID}"
+wait "id=\"workspace-header-menu-trigger\"" 45000
+press "id=\"workspace-header-menu-trigger\""
+press "id=\"workspace-header-new-terminal\""
+wait "id=\"terminal-keyboard-toggle\"" 10000
+press "id=\"terminal-keyboard-toggle\""
+type "echo __AD_OUTPUT_OK__" --delay-ms 0
+press "id=\"terminal-key-enter\""
+wait "text" "__AD_OUTPUT_OK__" 10000
+close

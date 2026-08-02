@@ -81,6 +81,11 @@ export interface TerminalSelectedTextInput {
   selection: TerminalSelectionRange | null;
 }
 
+export interface TerminalWordSelectionInput {
+  terminal: NativeHeadlessTerminal;
+  coordinate: TerminalBufferCoordinate;
+}
+
 export interface TerminalClipboardWriter {
   writeText: (text: string) => Promise<void>;
 }
@@ -93,6 +98,8 @@ interface TerminalSelectionState {
   anchor: TerminalBufferCoordinate | null;
   range: TerminalSelectionRange | null;
 }
+
+const TERMINAL_WORD_SEPARATORS = " ()[]{}',\"`";
 
 function compareCoordinates(
   left: TerminalBufferCoordinate,
@@ -161,6 +168,47 @@ export function hitTestTerminalSelectionCell(
   return {
     row: input.viewport.firstRow + localRow,
     col,
+  };
+}
+
+export function resolveTerminalWordSelection(
+  input: TerminalWordSelectionInput,
+): TerminalSelectionRange | null {
+  const bounds = input.terminal.getBufferBounds();
+  if (input.coordinate.row < bounds.oldestRow || input.coordinate.row > bounds.newestRow) {
+    return null;
+  }
+  const window = input.terminal.getBufferWindow({ startRow: input.coordinate.row, rowCount: 1 });
+  const cells = window.rows[0];
+  if (!cells || input.coordinate.col < 0 || input.coordinate.col >= cells.length) {
+    return null;
+  }
+  const target = cells[input.coordinate.col]?.char || " ";
+  if (TERMINAL_WORD_SEPARATORS.includes(target)) {
+    return {
+      start: input.coordinate,
+      end: input.coordinate,
+      coordinateEpoch: bounds.coordinateEpoch,
+    };
+  }
+
+  let startCol = input.coordinate.col;
+  let endCol = input.coordinate.col;
+  while (startCol > 0) {
+    const previous = cells[startCol - 1]?.char || " ";
+    if (TERMINAL_WORD_SEPARATORS.includes(previous)) break;
+    startCol -= 1;
+  }
+  while (endCol + 1 < cells.length) {
+    const next = cells[endCol + 1]?.char || " ";
+    if (TERMINAL_WORD_SEPARATORS.includes(next)) break;
+    endCol += 1;
+  }
+
+  return {
+    start: { row: input.coordinate.row, col: startCol },
+    end: { row: input.coordinate.row, col: endCol },
+    coordinateEpoch: bounds.coordinateEpoch,
   };
 }
 

@@ -179,7 +179,7 @@ describe("native terminal typed input", () => {
     });
   });
 
-  it("refocuses after the keyboard hides while the hidden input stayed focused", () => {
+  it("refocuses an already-focused hidden input without relying on software-keyboard state", () => {
     expect(resolveTerminalInputFocusRequest({ isInputFocused: true })).toEqual("refocus");
     expect(resolveTerminalInputFocusRequest({ isInputFocused: false })).toEqual("focus");
   });

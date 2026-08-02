@@ -1,11 +1,5 @@
 export type TerminalGestureStatus = "idle" | "pressing" | "selecting";
-export type TerminalGestureIntent =
-  | "tap"
-  | "pending"
-  | "select"
-  | "scroll"
-  | "swipeLeft"
-  | "swipeRight";
+export type TerminalGestureIntent = "tap" | "pending" | "select" | "scroll";
 export type TerminalGestureScrollMode = "following" | "scrolled";
 
 export interface TerminalGestureMoveInput {
@@ -19,6 +13,7 @@ export interface TerminalGestureMoveInput {
 
 export interface TerminalGestureReleaseInput {
   status: TerminalGestureStatus;
+  startedWithSelection?: boolean;
   didScroll: boolean;
   didNavigate: boolean;
   movedBeyondTapTolerance: boolean;
@@ -27,12 +22,22 @@ export interface TerminalGestureReleaseInput {
   scrollMode: TerminalGestureScrollMode;
 }
 
-export type TerminalGestureAction = "none" | "focus" | "select";
+export interface TerminalScrollGestureState {
+  lastDy: number;
+  rowRemainder: number;
+  didScroll: boolean;
+}
+
+export interface TerminalScrollGestureUpdate {
+  state: TerminalScrollGestureState;
+  rowDelta: number;
+}
+
+export type TerminalGestureAction = "none" | "focus" | "select" | "clear";
 
 export const TERMINAL_GESTURE_TAP_TOLERANCE_PX = 8;
-export const TERMINAL_GESTURE_LONG_PRESS_MS = 650;
+export const TERMINAL_GESTURE_LONG_PRESS_MS = 450;
 export const TERMINAL_GESTURE_VERTICAL_SCROLL_THRESHOLD_PX = 12;
-export const TERMINAL_GESTURE_HORIZONTAL_NAVIGATION_THRESHOLD_PX = 24;
 
 export function classifyTerminalGestureIntent(
   input: TerminalGestureMoveInput,
@@ -49,24 +54,42 @@ export function classifyTerminalGestureIntent(
   }
 
   if (Math.hypot(input.dx, input.dy) > TERMINAL_GESTURE_TAP_TOLERANCE_PX) {
-    if (absDx > absDy) {
-      if (absDx <= TERMINAL_GESTURE_HORIZONTAL_NAVIGATION_THRESHOLD_PX) {
-        return "pending";
-      }
-      return input.dx > 0 ? "swipeRight" : "swipeLeft";
-    }
-
     return "pending";
   }
 
   return "tap";
 }
 
+export function advanceTerminalScrollGesture(input: {
+  state: TerminalScrollGestureState;
+  currentDy: number;
+  cellHeight: number;
+}): TerminalScrollGestureUpdate {
+  const deltaY = input.currentDy - input.state.lastDy;
+  const accumulatedRows = input.state.rowRemainder + deltaY;
+  const rowDelta = Math.trunc(accumulatedRows / input.cellHeight);
+  return {
+    state: {
+      lastDy: input.currentDy,
+      rowRemainder: accumulatedRows - rowDelta * input.cellHeight,
+      didScroll: input.state.didScroll || rowDelta !== 0,
+    },
+    rowDelta,
+  };
+}
+
 export function resolveTerminalGestureReleaseAction(
   input: TerminalGestureReleaseInput,
 ): TerminalGestureAction {
-  if (input.status === "selecting" || input.didScroll || input.didNavigate) {
+  if (input.didScroll || input.didNavigate) {
     return "none";
+  }
+
+  if (input.status === "selecting") {
+    if (!input.startedWithSelection) {
+      return "none";
+    }
+    return input.movedBeyondTapTolerance ? "none" : "clear";
   }
 
   if (input.status !== "pressing") {

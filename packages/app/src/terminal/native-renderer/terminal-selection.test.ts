@@ -7,6 +7,7 @@ import {
   extractTerminalSelectedText,
   hitTestTerminalSelectionCell,
   normalizeTerminalSelection,
+  resolveTerminalWordSelection,
   resolveTerminalSelectionRects,
 } from "./terminal-selection";
 
@@ -40,6 +41,29 @@ function rowWithText(
 }
 
 describe("native terminal selection", () => {
+  it("expands a long-press coordinate to the whole terminal word", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 32, scrollbackLines: 20 });
+    await terminal.write("before PASEO_TARGET after\r\n");
+    const row = rowWithText(terminal, "before PASEO_TARGET after");
+
+    const selection = resolveTerminalWordSelection({
+      terminal,
+      coordinate: { row, col: 12 },
+    });
+
+    expect({
+      selection,
+      text: extractTerminalSelectedText({ terminal, selection }),
+    }).toEqual({
+      selection: {
+        start: { row, col: 7 },
+        end: { row, col: 18 },
+        coordinateEpoch: terminal.getBufferBounds().coordinateEpoch,
+      },
+      text: "PASEO_TARGET",
+    });
+  });
+
   it("maps screen coordinates through the current visible window", () => {
     expect(
       hitTestTerminalSelectionCell({
@@ -184,6 +208,19 @@ describe("native terminal selection", () => {
       epochChanged: true,
       selection: { range: null },
     });
+  });
+
+  it("keeps a selection when saturated-buffer output does not evict rows", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 3, cols: 16, scrollbackLines: 2 });
+    await terminal.write(terminalLines({ startLine: 0, lineCount: 8 }));
+    const selection = createTerminalSelectionModel();
+    const before = terminal.getBufferBounds();
+    selection.begin({ coordinate: { row: 1, col: 0 }, bounds: before });
+    selection.update({ coordinate: { row: 1, col: 3 }, bounds: before });
+
+    await terminal.write("tail");
+
+    expect(selection.sync({ bounds: terminal.getBufferBounds() }).range).not.toBeNull();
   });
 
   it("copies exactly the selected known visible text", async () => {

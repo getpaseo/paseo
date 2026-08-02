@@ -173,11 +173,20 @@ function findAnchoredFirstRow(input: {
     input.bounds.newestRow,
     preferredAnchorRow + ROW_ANCHOR_SEARCH_RADIUS,
   );
+  const window = input.terminal.getBufferWindow({
+    startRow: firstSearchRow,
+    rowCount: lastSearchRow - firstSearchRow + 1,
+  });
 
-  for (let row = firstSearchRow; row <= lastSearchRow; row += 1) {
-    const window = input.terminal.getBufferWindow({ startRow: row, rowCount: 1 });
-    const text = rowSignature(window.rows[0] ?? []);
-    if (text === input.anchor.text) {
+  for (let distance = 0; distance <= ROW_ANCHOR_SEARCH_RADIUS; distance += 1) {
+    const rows =
+      distance === 0
+        ? [preferredAnchorRow]
+        : [preferredAnchorRow - distance, preferredAnchorRow + distance];
+    for (const row of rows) {
+      if (row < firstSearchRow || row > lastSearchRow) continue;
+      const text = rowSignature(window.rows[row - firstSearchRow] ?? []);
+      if (text !== input.anchor.text) continue;
       return clamp(
         row - input.anchor.offset,
         input.bounds.oldestRow,

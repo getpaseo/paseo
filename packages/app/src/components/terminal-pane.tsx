@@ -47,6 +47,7 @@ import {
 } from "@/terminal/runtime/terminal-stream-controller";
 import { resolveTerminalRestoreOptions } from "@/terminal/runtime/terminal-restore-options";
 import { usePanelStore } from "@/stores/panel-store";
+import { useBlockMobilePanelOpenGestures } from "@/mobile-panels/provider";
 import { useSessionStore } from "@/stores/session-store";
 import { toXtermTheme } from "@/utils/to-xterm-theme";
 import TerminalEmulator, { type TerminalEmulatorHandle } from "./terminal-emulator";
@@ -55,6 +56,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import {
   applyTerminalRendererReadyChange,
+  resolveTerminalStreamTarget,
   shouldReplayTerminalSnapshotForRenderer,
   shouldShowTerminalLoadingOverlay,
   type TerminalRendererReadyChange,
@@ -248,6 +250,7 @@ export function TerminalPane({
   const [isKeyboardToggleVisible, setIsKeyboardToggleVisible] = useState(false);
   const [focusRequestToken, setFocusRequestToken] = useState(0);
   const [resizeRequestToken, setResizeRequestToken] = useState(0);
+  useBlockMobilePanelOpenGestures(isMobile && isWorkspaceFocused && isPaneFocused && hasSelection);
   const emulatorRef = useRef<TerminalEmulatorHandle>(null);
   const terminalIdRef = useRef<string>(terminalId);
   const terminalActiveRef = useRef(isTerminalActive);
@@ -503,9 +506,6 @@ export function TerminalPane({
     });
 
     streamControllerRef.current = controller;
-    controller.setTerminal({
-      terminalId: terminalActiveRef.current ? terminalIdRef.current : null,
-    });
 
     return () => {
       controller.dispose();
@@ -523,11 +523,23 @@ export function TerminalPane({
 
   useEffect(() => {
     pendingTerminalInputRef.current = [];
-    const nextTerminalId = isTerminalActive ? terminalId : null;
+    const nextTerminalId = resolveTerminalStreamTarget({
+      terminalId,
+      terminalStreamKey,
+      rendererReadyStreamKey,
+      isWorkspaceFocused: isTerminalActive,
+    });
     streamControllerRef.current?.setTerminal({
       terminalId: nextTerminalId,
     });
-  }, [isTerminalActive, terminalId]);
+  }, [
+    client,
+    isConnected,
+    isTerminalActive,
+    rendererReadyStreamKey,
+    terminalId,
+    terminalStreamKey,
+  ]);
 
   const enqueuePendingTerminalInput = useCallback((entry: PendingTerminalInput) => {
     const queue = pendingTerminalInputRef.current;

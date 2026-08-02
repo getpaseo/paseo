@@ -1,6 +1,47 @@
 # Mobile Testing
 
-## Maestro
+## Agent Device
+
+Agent Device `.ad` scripts are the primary mobile E2E format. An agent discovers a working flow interactively, saves the successful commands, then the replay runner executes the same typed plan locally or in CI.
+
+Record a flow while driving the app normally:
+
+```bash
+agent-device open sh.paseo.debug \
+  --platform ios \
+  --session terminal-author \
+  --save-script ./packages/app/e2e/mobile/agent-device/terminal.ios.ad
+agent-device snapshot -i --session terminal-author
+agent-device press 'id="workspace-header-menu-trigger"' --session terminal-author
+# Continue the flow and verify its result with wait/get/is/find.
+agent-device close --session terminal-author
+```
+
+`close` writes the script. Keep selectors based on stable app IDs. Keep assertions as `wait`, `get`, `is`, or `find` commands; screenshots are evidence, not assertions.
+
+Run the Paseo mobile suite:
+
+```bash
+npm run test:e2e:mobile
+```
+
+The runner uses an isolated Agent Device state directory, verifies or starts Metro for this checkout, prewarms the iOS runner, discovers each script's platform from its `context` header, and cleans its sessions, runner lease, daemon, and any Metro process it started. Attempt results, timings, logs, and failure artifacts go under `.dev/agent-device-artifacts`.
+
+Set `PASEO_MOBILE_E2E_METRO_PORT` when this worktree already has Metro on a non-default port:
+
+```bash
+PASEO_MOBILE_E2E_METRO_PORT=62093 npm run test:e2e:mobile
+```
+
+[native-terminal-basic.ios.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.ios.ad) and [native-terminal-basic.android.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.android.ad) are the smallest examples. Each opens a fresh terminal, types a command at zero delay, submits it, and asserts its distinct output. The app must be connected to a daemon with an active workspace.
+
+When replay diverges, read its ranked selector suggestions. Edit the script deliberately and rerun it from the beginning. `--update` is retained for compatibility but no longer rewrites scripts.
+
+## Maestro compatibility
+
+Existing Maestro flows live in `packages/app/maestro/`. Agent Device can execute its supported subset with `agent-device test <path> --maestro`, which provides a migration path while `.ad` coverage replaces these flows.
+
+### Existing flows
 
 Maestro flows live in `packages/app/maestro/`. Reusable sub-flows live in `packages/app/maestro/flows/`.
 

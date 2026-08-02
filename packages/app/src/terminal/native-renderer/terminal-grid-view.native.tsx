@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import {
   PixelRatio,
   Text,
@@ -16,6 +16,7 @@ import { resolveNativeTerminalFontFamily } from "./font.native";
 import type { TerminalViewportState } from "./headless-terminal-state";
 import {
   resolveMeasuredTerminalCellMetrics,
+  resolveTerminalGridMetricsMeasurement,
   resolveTerminalCursorOffset,
   type TerminalGridCellMetrics,
 } from "./terminal-grid-metrics";
@@ -80,7 +81,7 @@ function estimateCellMetrics(fontSize: number): CellMetrics {
 }
 
 function snapPixel(value: number): number {
-  return Math.max(1, Math.ceil(PixelRatio.roundToNearestPixel(value)));
+  return Math.max(1, PixelRatio.roundToNearestPixel(value));
 }
 
 function resolveVisibleCols(input: {
@@ -187,6 +188,7 @@ function TerminalGridRow({
       accessibilityLabel={accessibilityLabel}
       accessible={accessibilityLabel.length > 0}
       style={rowStyle}
+      testID={`terminal-row-${row.index}`}
     >
       {row.runs.map((run) => (
         <MemoTerminalGridRun
@@ -222,6 +224,7 @@ export function TerminalGridView({
   onCellMetricsChange,
 }: TerminalGridViewProps) {
   const [metrics, setMetrics] = useState<CellMetrics>(() => estimateCellMetrics(fontSize));
+  const measuredMetricsRef = useRef<TerminalGridCellMetrics | null>(null);
   const [viewport, setViewport] = useState<TerminalGridViewport | null>(null);
   const resolvedFontFamily = useMemo(
     () => resolveNativeTerminalFontFamily(fontFamily),
@@ -302,17 +305,16 @@ export function TerminalGridView({
         measureTextLength: MEASURE_TEXT.length,
         roundToNearestPixel: (value) => PixelRatio.roundToNearestPixel(value),
       });
-      setMetrics((current) => {
-        if (
-          current.cellWidth === nextMetrics.cellWidth &&
-          current.cellHeight === nextMetrics.cellHeight
-        ) {
-          onCellMetricsChange?.(nextMetrics);
-          return current;
-        }
-        onCellMetricsChange?.(nextMetrics);
-        return nextMetrics;
-      });
+      const changedMetrics = resolveTerminalGridMetricsMeasurement(
+        measuredMetricsRef.current,
+        nextMetrics,
+      );
+      if (!changedMetrics) {
+        return;
+      }
+      measuredMetricsRef.current = changedMetrics;
+      setMetrics(changedMetrics);
+      onCellMetricsChange?.(changedMetrics);
     },
     [onCellMetricsChange],
   );

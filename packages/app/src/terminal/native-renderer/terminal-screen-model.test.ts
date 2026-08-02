@@ -181,6 +181,29 @@ describe("native terminal screen model", () => {
     });
   });
 
+  test("repeated rows do not jump to an older matching anchor on consecutive slow scrolls", async () => {
+    const terminal = createNativeHeadlessTerminal({
+      rows: ROWS,
+      cols: COLS,
+      scrollbackLines: 100,
+    });
+    const output = Array.from({ length: 8 }, (_, blockIndex) => {
+      return `BLOCK_${blockIndex + 1}\r\n${"SAME\r\n".repeat(8)}`;
+    }).join("");
+    await terminal.write(output);
+    const model = createNativeTerminalScreenModel({ terminal });
+
+    const first = model.scrollUp({ rows: 2, visibleRows: ROWS });
+    const second = model.scrollUp({ rows: 2, visibleRows: ROWS });
+    const third = model.scrollUp({ rows: 2, visibleRows: ROWS });
+
+    expect([first.scroll.firstRow, second.scroll.firstRow, third.scroll.firstRow]).toEqual([
+      first.scroll.bottomViewport.firstRow - 2,
+      first.scroll.bottomViewport.firstRow - 4,
+      first.scroll.bottomViewport.firstRow - 6,
+    ]);
+  });
+
   test("reset while scrolled drops the old viewport before restored content is read", async () => {
     const terminal = await createScrolledTerminal(20);
     const model = createNativeTerminalScreenModel({ terminal });

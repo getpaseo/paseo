@@ -54,6 +54,7 @@ import {
   copyTerminalSelection,
   createTerminalSelectionModel,
   hitTestTerminalSelectionCell,
+  resolveTerminalWordSelection,
   type TerminalBufferCoordinate,
   type TerminalClipboardWriter,
   type TerminalSelectionModel,
@@ -63,10 +64,12 @@ import {
 import {
   TERMINAL_GESTURE_LONG_PRESS_MS,
   TERMINAL_GESTURE_TAP_TOLERANCE_PX,
+  advanceTerminalScrollGesture,
   classifyTerminalGestureIntent,
   resolveTerminalGestureReleaseAction,
   type TerminalGestureIntent,
 } from "../terminal/native-renderer/terminal-selection-gesture";
+import { resolveNativeTerminalMountAction } from "../terminal/native-renderer/terminal-mount-policy";
 import {
   forwardNativeTerminalKey,
   type NativeTerminalKey,
@@ -75,6 +78,10 @@ import {
   TerminalInput,
   type TerminalInputHandle,
 } from "../terminal/native-renderer/terminal-input.native";
+import {
+  shouldClaimNativeTerminalSize,
+  type NativeTerminalSizeClaimAction,
+} from "../terminal/native-renderer/terminal-input-resize-policy";
 import { encodeTerminalPaste } from "../terminal/runtime/terminal-paste";
 import { renderTerminalSnapshotToAnsi } from "../terminal/runtime/terminal-snapshot";
 import {
@@ -164,6 +171,7 @@ interface NativeTerminalSelectionPress {
   startX: number;
   startY: number;
   startedAt: number;
+  startedWithSelection: boolean;
   status: "pressing" | "selecting";
 }
 
@@ -242,8 +250,6 @@ function NativeTerminalEmulator({
   onInput,
   onTerminalKey,
   onResize,
-  onSwipeLeft,
-  onSwipeRight,
   onInputModeChange,
   onSelectionChange,
   onRendererReadyChange,
@@ -252,6 +258,15 @@ function NativeTerminalEmulator({
   resizeRequestToken = 0,
 }: TerminalEmulatorProps) {
   const terminalRef = useRef<NativeHeadlessTerminal | null>(null);
+  const mountInputRef = useRef({ streamKey, initialSnapshot });
+  if (
+    resolveNativeTerminalMountAction({
+      mountedStreamKey: mountInputRef.current.streamKey,
+      nextStreamKey: streamKey,
+    }) === "mount"
+  ) {
+    mountInputRef.current = { streamKey, initialSnapshot };
+  }
   const inputRef = useRef<TerminalInputHandle>(null);
   const terminalSizeRef = useRef<TerminalMeasuredSize>(initialNativeTerminalSize(initialSnapshot));
   const resizePolicyRef = useRef(
@@ -289,6 +304,7 @@ function NativeTerminalEmulator({
   });
   const [selectionRange, setSelectionRange] = useState<TerminalSelectionRange | null>(null);
   const selectionRangeRef = useRef<TerminalSelectionRange | null>(null);
+  const hasNotifiedSelectionRef = useRef(false);
   const terminalScreenRef = useRef<TerminalScreenState | null>(terminalScreen);
   const callbacksRef = useRef({
     onFocus,
@@ -298,8 +314,6 @@ function NativeTerminalEmulator({
     onSelectionChange,
     onRendererReadyChange,
     onResize,
-    onSwipeLeft,
-    onSwipeRight,
   });
   callbacksRef.current = {
     onFocus,
@@ -309,8 +323,6 @@ function NativeTerminalEmulator({
     onSelectionChange,
     onRendererReadyChange,
     onResize,
-    onSwipeLeft,
-    onSwipeRight,
   };
 
   const getInputModeState = useCallback((): TerminalInputModeState => {
@@ -339,6 +351,11 @@ function NativeTerminalEmulator({
 
   const commitSelectionRange = useCallback((range: TerminalSelectionRange | null) => {
     selectionRangeRef.current = range;
+    const hasSelection = range !== null;
+    if (hasNotifiedSelectionRef.current !== hasSelection) {
+      hasNotifiedSelectionRef.current = hasSelection;
+      callbacksRef.current.onSelectionChange?.(hasSelection);
+    }
     setSelectionRange((current) => {
       if (current === range) {
         return current;
@@ -346,10 +363,6 @@ function NativeTerminalEmulator({
       return range;
     });
   }, []);
-
-  useEffect(() => {
-    callbacksRef.current.onSelectionChange?.(selectionRange !== null);
-  }, [selectionRange]);
 
   const clearSelection = useCallback(() => {
     const snapshot = selectionModelRef.current.clear();
@@ -570,6 +583,15 @@ function NativeTerminalEmulator({
     emitMeasuredSize({ source: "claim", claimToken: activeResizeClaimTokenRef.current });
   }, [emitMeasuredSize]);
 
+  const claimActiveTerminalSizeForAction = useCallback(
+    (action: NativeTerminalSizeClaimAction) => {
+      if (shouldClaimNativeTerminalSize(action)) {
+        claimActiveTerminalSize();
+      }
+    },
+    [claimActiveTerminalSize],
+  );
+
   useImperativeHandle(
     ref,
     (): TerminalEmulatorHandle => ({
@@ -599,7 +621,7 @@ function NativeTerminalEmulator({
         if (text.length === 0) {
           return;
         }
-        claimActiveTerminalSize();
+        claimActiveTerminalSizeForAction("paste");
         callbacksRef.current.onInput?.(
           encodeTerminalPaste({
             text,
@@ -630,7 +652,7 @@ function NativeTerminalEmulator({
       },
       showKeyboard: () => {
         inputRef.current?.showKeyboard();
-        claimActiveTerminalSize();
+        claimActiveTerminalSizeForAction("showKeyboard");
       },
       blur: () => {
         inputRef.current?.blur();
@@ -639,7 +661,7 @@ function NativeTerminalEmulator({
     }),
     [
       enqueueOutputText,
-      claimActiveTerminalSize,
+      claimActiveTerminalSizeForAction,
       clearSelection,
       resetInputModeTracker,
       resetTerminal,
@@ -649,7 +671,7 @@ function NativeTerminalEmulator({
 
   useEffect(() => {
     hasNotifiedMeasuredSizeRef.current = false;
-    resetTerminal(initialSnapshot);
+    resetTerminal(mountInputRef.current.initialSnapshot);
     callbacksRef.current.onRendererReadyChange?.({ streamKey, isReady: true });
     return () => {
       callbacksRef.current.onRendererReadyChange?.({ streamKey, isReady: false });
@@ -664,7 +686,7 @@ function NativeTerminalEmulator({
       terminalRef.current?.dispose();
       terminalRef.current = null;
     };
-  }, [clearSelectionLongPressTimeout, initialSnapshot, resetTerminal, streamKey]);
+  }, [clearSelectionLongPressTimeout, resetTerminal, streamKey]);
 
   useEffect(() => {
     if (focusRequestToken <= 0) return;
@@ -673,35 +695,35 @@ function NativeTerminalEmulator({
 
   const handleTerminalFocus = useCallback(() => {
     callbacksRef.current.onFocus?.();
-    claimActiveTerminalSize();
-  }, [claimActiveTerminalSize]);
+    claimActiveTerminalSizeForAction("focus");
+  }, [claimActiveTerminalSizeForAction]);
 
   const handleTerminalInput = useCallback(
     (data: string) => {
-      claimActiveTerminalSize();
+      claimActiveTerminalSizeForAction("text");
       callbacksRef.current.onInput?.(data);
     },
-    [claimActiveTerminalSize],
+    [claimActiveTerminalSizeForAction],
   );
 
   const handleNativeTerminalKey = useCallback(
     (key: NativeTerminalKey) => {
-      claimActiveTerminalSize();
+      claimActiveTerminalSizeForAction("key");
       forwardNativeTerminalKey({ key, onTerminalKey: callbacksRef.current.onTerminalKey });
     },
-    [claimActiveTerminalSize],
+    [claimActiveTerminalSizeForAction],
   );
 
   const focusTerminalFromTap = useCallback(() => {
     clearSelection();
     inputRef.current?.focus();
-    claimActiveTerminalSize();
-  }, [claimActiveTerminalSize, clearSelection]);
+    claimActiveTerminalSizeForAction("focus");
+  }, [claimActiveTerminalSizeForAction, clearSelection]);
 
   useEffect(() => {
     if (resizeRequestToken <= 0) return;
-    claimActiveTerminalSize();
-  }, [claimActiveTerminalSize, resizeRequestToken]);
+    claimActiveTerminalSizeForAction("resizeRequest");
+  }, [claimActiveTerminalSizeForAction, resizeRequestToken]);
 
   useEffect(() => {
     emitMeasuredSize({ source: "measure" });
@@ -793,16 +815,23 @@ function NativeTerminalEmulator({
       if (!coordinate) {
         return;
       }
+      const existingPress = selectionPressRef.current;
       selectionPressRef.current = {
         startX: point.x,
         startY: point.y,
-        startedAt: Date.now(),
+        startedAt: existingPress?.startedAt ?? Date.now(),
+        startedWithSelection: existingPress?.startedWithSelection ?? false,
         status: "selecting",
       };
-      const snapshot = selectionModelRef.current.begin({
-        coordinate,
-        bounds: terminal.getBufferBounds(),
+      const bounds = terminal.getBufferBounds();
+      const wordSelection = resolveTerminalWordSelection({ terminal, coordinate });
+      let snapshot = selectionModelRef.current.begin({
+        coordinate: wordSelection?.start ?? coordinate,
+        bounds,
       });
+      if (wordSelection && wordSelection.end.col !== wordSelection.start.col) {
+        snapshot = selectionModelRef.current.update({ coordinate: wordSelection.end, bounds });
+      }
       commitSelectionRange(snapshot.range);
     },
     [commitSelectionRange, resolveSelectionCoordinate],
@@ -834,15 +863,18 @@ function NativeTerminalEmulator({
         return;
       }
       const panState = panStateRef.current;
-      const deltaY = currentDy - panState.lastDy;
-      panState.lastDy = currentDy;
-      panState.rowRemainder += deltaY;
-      const rowDelta = Math.trunc(panState.rowRemainder / cellHeight);
+      const update = advanceTerminalScrollGesture({
+        state: panState,
+        currentDy,
+        cellHeight,
+      });
+      panState.lastDy = update.state.lastDy;
+      panState.rowRemainder = update.state.rowRemainder;
+      panState.didScroll = update.state.didScroll;
+      const { rowDelta } = update;
       if (rowDelta === 0) {
         return;
       }
-      panState.didScroll = true;
-      panState.rowRemainder -= rowDelta * cellHeight;
       if (rowDelta > 0) {
         applyScroll("up", rowDelta);
         return;
@@ -895,6 +927,7 @@ function NativeTerminalEmulator({
             startX: point.x,
             startY: point.y,
             startedAt: Date.now(),
+            startedWithSelection: pressStatus === "selecting",
             status: pressStatus,
           };
           clearSelectionLongPressTimeout();
@@ -912,16 +945,16 @@ function NativeTerminalEmulator({
         },
         onPanResponderMove: (event, gesture) => {
           const selectionPress = selectionPressRef.current;
+          const panState = panStateRef.current;
+          if (Math.hypot(gesture.dx, gesture.dy) > TERMINAL_GESTURE_TAP_TOLERANCE_PX) {
+            panState.movedBeyondTapTolerance = true;
+          }
           if (selectionPress?.status === "selecting") {
             updateSelectionAtPoint(resolvePanResponderPoint(selectionPress, event, gesture));
             return;
           }
 
-          const panState = panStateRef.current;
-          if (Math.hypot(gesture.dx, gesture.dy) > TERMINAL_GESTURE_TAP_TOLERANCE_PX) {
-            panState.movedBeyondTapTolerance = true;
-          }
-          if (panState.didScroll) {
+          if (panState.intent === "scroll") {
             handlePanResponderScroll(gesture.dy);
             return;
           }
@@ -959,20 +992,6 @@ function NativeTerminalEmulator({
               updateSelectionAtPoint(point);
               return;
             }
-
-            if (intent === "swipeRight") {
-              panState.didNavigate = true;
-              selectionPressRef.current = null;
-              callbacksRef.current.onSwipeRight?.();
-              return;
-            }
-
-            if (intent === "swipeLeft") {
-              panState.didNavigate = true;
-              selectionPressRef.current = null;
-              callbacksRef.current.onSwipeLeft?.();
-              return;
-            }
           }
         },
         onPanResponderRelease: (event, gesture) => {
@@ -993,6 +1012,7 @@ function NativeTerminalEmulator({
           };
           const releaseAction = resolveTerminalGestureReleaseAction({
             status: selectionPress?.status ?? "idle",
+            startedWithSelection: selectionPress?.startedWithSelection,
             didScroll,
             didNavigate,
             movedBeyondTapTolerance,
@@ -1004,7 +1024,7 @@ function NativeTerminalEmulator({
             beginSelectionAtPoint({ x: selectionPress.startX, y: selectionPress.startY });
             return;
           }
-          if (releaseAction === "focus") {
+          if (releaseAction === "focus" || releaseAction === "clear") {
             focusTerminalFromTap();
           }
         },
