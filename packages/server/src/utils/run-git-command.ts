@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import pLimit from "p-limit";
 import type { Logger } from "pino";
 import type { ProcessEnvRecord } from "../server/paseo-env.js";
 import {
@@ -13,14 +12,30 @@ import {
   submitGitCommandTrace,
 } from "./git-command-trace.js";
 import { spawnProcess } from "./spawn.js";
+import {
+  GitProcessScheduler,
+  resolveGitProcessPolicy,
+  type GitProcessPolicy,
+} from "./git-process-scheduler.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 20 * 1024 * 1024; // 20MB
 const DEFAULT_STDERR_LIMIT = 2048;
 
-const gitConcurrency = parseInt(process.env.PASEO_GIT_CONCURRENCY ?? "8", 10) || 8;
-const gitLimit = pLimit(gitConcurrency);
-const gitRuntimeMetrics = new GitCommandRuntimeMetricsWindow(gitConcurrency);
+let gitProcessScheduler = new GitProcessScheduler(resolveGitProcessPolicy({ env: process.env }));
+let gitRuntimeMetrics = createGitCommandRuntimeMetricsWindow(gitProcessScheduler.policy);
+
+function createGitCommandRuntimeMetricsWindow(policy: GitProcessPolicy) {
+  return new GitCommandRuntimeMetricsWindow({
+    concurrencyLimit: policy.maxProcessConcurrency,
+    maxProcessesPerSecond: policy.maxProcessesPerSecond,
+  });
+}
+
+export function configureGitProcessPolicy(policy: GitProcessPolicy): void {
+  gitProcessScheduler = new GitProcessScheduler(policy);
+  gitRuntimeMetrics = createGitCommandRuntimeMetricsWindow(policy);
+}
 
 export interface GitCommandOptions {
   cwd: string;
@@ -94,8 +109,8 @@ export function stopGitCommandMetrics(): GitCommandMetricsSnapshot {
 
 export function snapshotGitCommandRuntimeMetrics(): GitCommandRuntimeMetricsSnapshot {
   return gitRuntimeMetrics.snapshotAndReset({
-    active: gitLimit.activeCount,
-    pending: gitLimit.pendingCount,
+    active: gitProcessScheduler.activeCount,
+    pending: gitProcessScheduler.pendingCount,
   });
 }
 
@@ -142,16 +157,16 @@ export function runGitCommand(
   options: GitCommandOptions,
 ): Promise<GitCommandResult> {
   const commandTrace = submitGitCommandTrace(args, options.cwd, {
-    active: gitLimit.activeCount,
-    pending: gitLimit.pendingCount,
+    active: gitProcessScheduler.activeCount,
+    pending: gitProcessScheduler.pendingCount,
   });
   const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args));
-  const promise = gitLimit(
+  const promise = gitProcessScheduler.run(
     () =>
       new Promise<GitCommandResult>((resolve, reject) => {
         startGitCommandTrace(commandTrace, {
-          active: gitLimit.activeCount,
-          pending: gitLimit.pendingCount,
+          active: gitProcessScheduler.activeCount,
+          pending: gitProcessScheduler.pendingCount,
         });
         gitRuntimeMetrics.start(runtimeMetric);
         const timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
@@ -367,7 +382,10 @@ export function runGitCommand(
         });
       }),
   );
-  gitRuntimeMetrics.observeLimiter(gitLimit.activeCount, gitLimit.pendingCount);
+  gitRuntimeMetrics.observeLimiter(
+    gitProcessScheduler.activeCount,
+    gitProcessScheduler.pendingCount,
+  );
   return promise;
 }
 
