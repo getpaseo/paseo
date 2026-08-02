@@ -974,6 +974,12 @@ export const zhCN: TranslationResources = {
         archiveFailed: "归档工作区失败",
       },
     },
+    tree: {
+      expandWorkspace: "展开工作区树",
+      collapseWorkspace: "折叠工作区树",
+      expandAgent: "展开 {{label}}",
+      collapseAgent: "折叠 {{label}}",
+    },
   },
   newWorkspace: {
     title: "新建 workspace",

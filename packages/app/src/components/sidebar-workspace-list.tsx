@@ -83,6 +83,7 @@ import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reor
 import { confirmDialog } from "@/utils/confirm-dialog";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { SidebarStatusWorkspaceList } from "@/components/sidebar/sidebar-status-list";
+import { SidebarWorkspaceTreeItem } from "@/components/sidebar/workspace-tree/workspace-tree-item";
 import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
 import { SidebarWorkspaceMenu } from "@/components/sidebar/sidebar-workspace-menu";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
@@ -1478,25 +1479,35 @@ function ProjectBlock({
       },
     ) => {
       return (
-        <MemoWorkspaceRowItem
-          workspace={item}
-          workspaceEntry={workspaceEntriesByKey.get(item.workspaceKey) ?? null}
-          subtitle={
-            showHostLabels ? (hostLabelByServerId.get(item.serverId) ?? item.serverId) : null
+        <SidebarWorkspaceTreeItem
+          workspaceKey={item.workspaceKey}
+          serverId={item.serverId}
+          workspaceId={item.workspaceId}
+          workspaceDirectory={
+            workspaceEntriesByKey.get(item.workspaceKey)?.workspaceDirectory ?? undefined
           }
-          shortcutNumber={shortcutIndexByWorkspaceKey.get(item.workspaceKey) ?? null}
-          showShortcutBadge={showShortcutBadges}
-          canCopyBranchName={project.projectKind === "git"}
-          canPin={supportsPinningByServerId.get(item.serverId) === true}
-          onToggleWorkspacePin={onToggleWorkspacePin}
-          isCreating={creatingWorkspaceIds.has(item.workspaceId)}
-          selectionEnabled={selectionEnabled}
-          activeWorkspaceSelection={activeWorkspaceSelection}
           onWorkspacePress={onWorkspacePress}
-          drag={input?.drag}
-          isDragging={input?.isDragging}
-          dragHandleProps={input?.dragHandleProps}
-        />
+        >
+          <MemoWorkspaceRowItem
+            workspace={item}
+            workspaceEntry={workspaceEntriesByKey.get(item.workspaceKey) ?? null}
+            subtitle={
+              showHostLabels ? (hostLabelByServerId.get(item.serverId) ?? item.serverId) : null
+            }
+            shortcutNumber={shortcutIndexByWorkspaceKey.get(item.workspaceKey) ?? null}
+            showShortcutBadge={showShortcutBadges}
+            canCopyBranchName={project.projectKind === "git"}
+            canPin={supportsPinningByServerId.get(item.serverId) === true}
+            onToggleWorkspacePin={onToggleWorkspacePin}
+            isCreating={creatingWorkspaceIds.has(item.workspaceId)}
+            selectionEnabled={selectionEnabled}
+            activeWorkspaceSelection={activeWorkspaceSelection}
+            onWorkspacePress={onWorkspacePress}
+            drag={input?.drag}
+            isDragging={input?.isDragging}
+            dragHandleProps={input?.dragHandleProps}
+          />
+        </SidebarWorkspaceTreeItem>
       );
     },
     [
@@ -2139,22 +2150,35 @@ function ProjectModeList({
       const hostLabel = showHostLabels
         ? (hostLabelByServerId.get(workspace.serverId) ?? workspace.serverId)
         : null;
+      // Pinned chats sit directly above the project-grouped rows, so they take
+      // the same tree wrapper — otherwise they would lack the chevron column and
+      // their titles would sit one column left of every row below them.
       return (
-        <MemoWorkspaceRowItem
+        <SidebarWorkspaceTreeItem
           key={workspace.workspaceKey}
-          workspace={workspace}
-          workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
-          subtitle={hostLabel ? `${workspace.projectName} · ${hostLabel}` : workspace.projectName}
-          shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
-          showShortcutBadge={showShortcutBadges}
-          canCopyBranchName={workspace.projectKind === "git"}
-          canPin={supportsPinningByServerId.get(workspace.serverId) === true}
-          onToggleWorkspacePin={onToggleWorkspacePin}
-          isCreating={creatingWorkspaceIds.has(workspace.workspaceId)}
-          selectionEnabled={selectionEnabled}
-          activeWorkspaceSelection={activeWorkspaceSelection}
+          workspaceKey={workspace.workspaceKey}
+          serverId={workspace.serverId}
+          workspaceId={workspace.workspaceId}
+          workspaceDirectory={
+            workspaceEntriesByKey.get(workspace.workspaceKey)?.workspaceDirectory ?? undefined
+          }
           onWorkspacePress={onWorkspacePress}
-        />
+        >
+          <MemoWorkspaceRowItem
+            workspace={workspace}
+            workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
+            subtitle={hostLabel ? `${workspace.projectName} · ${hostLabel}` : workspace.projectName}
+            shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
+            showShortcutBadge={showShortcutBadges}
+            canCopyBranchName={workspace.projectKind === "git"}
+            canPin={supportsPinningByServerId.get(workspace.serverId) === true}
+            onToggleWorkspacePin={onToggleWorkspacePin}
+            isCreating={creatingWorkspaceIds.has(workspace.workspaceId)}
+            selectionEnabled={selectionEnabled}
+            activeWorkspaceSelection={activeWorkspaceSelection}
+            onWorkspacePress={onWorkspacePress}
+          />
+        </SidebarWorkspaceTreeItem>
       );
     },
     [

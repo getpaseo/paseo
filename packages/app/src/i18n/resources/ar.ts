@@ -985,6 +985,12 @@ export const ar: TranslationResources = {
         archiveFailed: "فشل في أرشفة مساحة العمل",
       },
     },
+    tree: {
+      expandWorkspace: "توسيع شجرة مساحة العمل",
+      collapseWorkspace: "طي شجرة مساحة العمل",
+      expandAgent: "توسيع {{label}}",
+      collapseAgent: "طي {{label}}",
+    },
   },
   newWorkspace: {
     title: "مساحة عمل جديدة",
