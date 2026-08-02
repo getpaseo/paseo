@@ -924,11 +924,16 @@ export class ACPAgentClient implements AgentClient {
           }),
         );
         const transformed = this.transformSessionResponse(response);
-        const models = deriveModelDefinitionsFromACP(
-          this.provider,
-          transformed.models,
-          transformed.configOptions,
-        );
+        const models = await this.resolvePerModelThinkingOptions({
+          connection: initializedProbe.connection,
+          sessionId: response.sessionId,
+          models: deriveModelDefinitionsFromACP(
+            this.provider,
+            transformed.models,
+            transformed.configOptions,
+          ),
+          configOptions: transformed.configOptions,
+        });
         const modeInfo = deriveModesFromACP(
           this.defaultModes,
           transformed.modes,
@@ -950,6 +955,69 @@ export class ACPAgentClient implements AgentClient {
         await this.closeProbe(probe);
       }
     }
+  }
+
+  /**
+   * Some ACP providers (e.g. Kimi) report different thinking-effort levels per model
+   * (a boolean on/off toggle for one model, a multi-level select for another), but only
+   * expose the *currently selected* model's levels through `configOptions` — the model
+   * list itself carries no per-model effort metadata. `deriveModelDefinitionsFromACP`
+   * can only see whichever model the probe session defaulted to, so every other model
+   * would otherwise inherit that one model's thinking options.
+   *
+   * Reuses the single catalog probe session to switch through each candidate model in
+   * turn and read back its real thinking options, rather than spawning a probe per
+   * model. Skipped entirely when the provider has one model or no thinking picker at
+   * all, so providers without per-model effort levels pay no extra round trips.
+   */
+  private async resolvePerModelThinkingOptions({
+    connection,
+    sessionId,
+    models,
+    configOptions,
+  }: {
+    connection: ClientSideConnection;
+    sessionId: string;
+    models: AgentModelDefinition[];
+    configOptions: SessionConfigOption[] | null | undefined;
+  }): Promise<AgentModelDefinition[]> {
+    if (models.length <= 1) {
+      return models;
+    }
+    const modelOption = findSelectConfigOption({ configOptions, category: "model" });
+    if (!modelOption || !findSelectConfigOption({ configOptions, category: "thought_level" })) {
+      return models;
+    }
+
+    const resolved: AgentModelDefinition[] = [];
+    for (const model of models) {
+      try {
+        const response = await this.runACPRequest(() =>
+          connection.setSessionConfigOption({
+            sessionId,
+            configId: modelOption.id,
+            value: model.id,
+          }),
+        );
+        const modelConfigOptions = this.configOptionsTransformer
+          ? this.configOptionsTransformer(response.configOptions ?? [])
+          : (response.configOptions ?? []);
+        const thinkingOptions = deriveSelectorOptions(modelConfigOptions, "thought_level");
+        resolved.push({
+          ...model,
+          thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
+          defaultThinkingOptionId:
+            thinkingOptions.find((option) => option.isDefault)?.id ?? undefined,
+        });
+      } catch (error) {
+        this.logger.warn(
+          { modelId: model.id, error: toDiagnosticErrorMessage(error) },
+          `${this.provider} catalog probe could not resolve thinking options for model "${model.id}"; keeping its default options`,
+        );
+        resolved.push(model);
+      }
+    }
+    return resolved;
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
