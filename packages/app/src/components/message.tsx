@@ -373,6 +373,7 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     alignSelf: "flex-end",
     flexDirection: "row",
     alignItems: "center",
+    height: 24,
     gap: theme.spacing[2],
     marginTop: theme.spacing[2],
   },
