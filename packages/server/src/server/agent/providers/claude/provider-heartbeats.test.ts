@@ -145,6 +145,53 @@ describe("mapClaudeProviderHeartbeatToolEvent", () => {
       ),
     ).toBeNull();
   });
+
+  it("returns null for failed schedule tools", () => {
+    expect(
+      mapClaudeProviderHeartbeatToolEvent(
+        {
+          toolName: "CronDelete",
+          toolInput: { id: "job-1" },
+          toolOutput: { error: "failed" },
+          isError: true,
+        },
+        NOW,
+      ),
+    ).toBeNull();
+    expect(
+      mapClaudeProviderHeartbeatToolEvent(
+        {
+          toolName: "CronCreate",
+          toolInput: { cron: "* * * * *", prompt: "x", recurring: true },
+          toolOutput: { id: "job-1" },
+          isError: true,
+        },
+        NOW,
+      ),
+    ).toBeNull();
+    expect(
+      mapClaudeProviderHeartbeatToolEvent(
+        {
+          toolName: "CronList",
+          toolInput: {},
+          toolOutput: [],
+          isError: true,
+        },
+        NOW,
+      ),
+    ).toBeNull();
+    expect(
+      mapClaudeProviderHeartbeatToolEvent(
+        {
+          toolName: "ScheduleWakeup",
+          toolInput: { stop: true },
+          toolOutput: null,
+          isError: true,
+        },
+        NOW,
+      ),
+    ).toBeNull();
+  });
 });
 
 describe("applyClaudeProviderHeartbeatToolEvent", () => {
@@ -252,5 +299,159 @@ describe("applyClaudeProviderHeartbeatToolEvent", () => {
     const cleared = applyClaudeProviderHeartbeatToolEvent(store, PARENT, { kind: "clear" }, NOW);
     expect(cleared.changed).toBe(true);
     expect(cleared.heartbeats).toEqual([]);
+  });
+
+  it("preserves dynamic ScheduleWakeup when CronList replaces cron membership", () => {
+    const store = new ProviderHeartbeatStore();
+    applyClaudeProviderHeartbeatToolEvent(
+      store,
+      PARENT,
+      {
+        toolName: "ScheduleWakeup",
+        toolInput: { delaySeconds: 120, reason: "watching CI", prompt: "loop" },
+        toolOutput: null,
+      },
+      NOW,
+    );
+    applyClaudeProviderHeartbeatToolEvent(
+      store,
+      PARENT,
+      {
+        toolName: "CronCreate",
+        toolInput: { cron: "0 * * * *", prompt: "hourly", recurring: true },
+        toolOutput: { id: "cron-old" },
+      },
+      NOW,
+    );
+
+    const result = applyClaudeProviderHeartbeatToolEvent(
+      store,
+      PARENT,
+      {
+        toolName: "CronList",
+        toolInput: {},
+        toolOutput: [{ id: "cron-new", cron: "*/5 * * * *", prompt: "check CI", recurring: true }],
+      },
+      NOW,
+    );
+
+    expect(result.heartbeats.map((h) => h.taskId).sort()).toEqual(["cron-new", "dynamic"]);
+    expect(result.heartbeats.find((h) => h.taskId === "dynamic")?.mode).toBe("dynamic");
+    expect(result.heartbeats.find((h) => h.taskId === "cron-old")).toBeUndefined();
+  });
+
+  it("keeps dynamic rows when CronList is empty", () => {
+    const store = new ProviderHeartbeatStore();
+    applyClaudeProviderHeartbeatToolEvent(
+      store,
+      PARENT,
+      {
+        toolName: "ScheduleWakeup",
+        toolInput: { delaySeconds: 60, prompt: "loop" },
+        toolOutput: null,
+      },
+      NOW,
+    );
+    applyClaudeProviderHeartbeatToolEvent(
+      store,
+      PARENT,
+      {
+        toolName: "CronCreate",
+        toolInput: { cron: "0 * * * *", prompt: "hourly", recurring: true },
+        toolOutput: { id: "cron-1" },
+      },
+      NOW,
+    );
+
+    const result = applyClaudeProviderHeartbeatToolEvent(
+      store,
+      PARENT,
+      {
+        toolName: "CronList",
+        toolInput: {},
+        toolOutput: [],
+      },
+      NOW,
+    );
+
+    expect(result.heartbeats).toHaveLength(1);
+    expect(result.heartbeats[0]?.taskId).toBe("dynamic");
+    expect(result.heartbeats[0]?.mode).toBe("dynamic");
+  });
+
+  it("does not remove on failed CronDelete", () => {
+    const store = new ProviderHeartbeatStore();
+    applyClaudeProviderHeartbeatToolEvent(
+      store,
+      PARENT,
+      {
+        toolName: "CronCreate",
+        toolInput: { cron: "*/5 * * * *", prompt: "check CI", recurring: true },
+        toolOutput: { id: "job-1" },
+      },
+      NOW,
+    );
+
+    const failed = applyClaudeProviderHeartbeatToolEvent(
+      store,
+      PARENT,
+      {
+        toolName: "CronDelete",
+        toolInput: { id: "job-1" },
+        toolOutput: { error: "not found" },
+        isError: true,
+      },
+      NOW,
+    );
+
+    expect(failed.changed).toBe(false);
+    expect(failed.heartbeats.map((h) => h.taskId)).toEqual(["job-1"]);
+  });
+
+  it("does not upsert on failed CronCreate", () => {
+    const store = new ProviderHeartbeatStore();
+    const failed = applyClaudeProviderHeartbeatToolEvent(
+      store,
+      PARENT,
+      {
+        toolName: "CronCreate",
+        toolInput: { cron: "*/5 * * * *", prompt: "check CI", recurring: true },
+        toolOutput: { id: "job-err" },
+        isError: true,
+      },
+      NOW,
+    );
+
+    expect(failed.changed).toBe(false);
+    expect(failed.heartbeats).toEqual([]);
+  });
+
+  it("does not replace on failed CronList", () => {
+    const store = new ProviderHeartbeatStore();
+    applyClaudeProviderHeartbeatToolEvent(
+      store,
+      PARENT,
+      {
+        toolName: "CronCreate",
+        toolInput: { cron: "0 * * * *", prompt: "hourly", recurring: true },
+        toolOutput: { id: "job-1" },
+      },
+      NOW,
+    );
+
+    const failed = applyClaudeProviderHeartbeatToolEvent(
+      store,
+      PARENT,
+      {
+        toolName: "CronList",
+        toolInput: {},
+        toolOutput: [],
+        isError: true,
+      },
+      NOW,
+    );
+
+    expect(failed.changed).toBe(false);
+    expect(failed.heartbeats.map((h) => h.taskId)).toEqual(["job-1"]);
   });
 });

@@ -4690,6 +4690,7 @@ class ClaudeAgentSession implements AgentSession {
       toolName,
       toolInput: entry?.input ?? null,
       toolOutput: output ?? block.content ?? null,
+      isError: block.is_error === true,
     });
     this.appendToolResultImages(images, items);
 
@@ -4746,6 +4747,7 @@ class ClaudeAgentSession implements AgentSession {
     toolName: string;
     toolInput: unknown;
     toolOutput: unknown;
+    isError?: boolean;
   }): void {
     this.emitBashBackgroundTaskCorrelation(input);
     this.emitProviderHeartbeatToolCorrelation(input);
@@ -4777,12 +4779,14 @@ class ClaudeAgentSession implements AgentSession {
     toolName: string;
     toolInput: unknown;
     toolOutput: unknown;
+    isError?: boolean;
   }): void {
     const event = mapClaudeProviderHeartbeatToolEvent(
       {
         toolName: input.toolName,
         toolInput: input.toolInput,
         toolOutput: input.toolOutput,
+        isError: input.isError === true,
       },
       new Date().toISOString(),
     );

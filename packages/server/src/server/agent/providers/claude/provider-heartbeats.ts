@@ -30,6 +30,8 @@ export interface ClaudeProviderHeartbeatToolPayload {
   toolName: string | null | undefined;
   toolInput: unknown;
   toolOutput: unknown;
+  /** When true, the tool_result was an error — do not mutate membership. */
+  isError?: boolean;
 }
 
 const DYNAMIC_TASK_ID = "dynamic";
@@ -298,6 +300,18 @@ export function mapClaudeProviderHeartbeatToolEvent(
   const name = normalizeToolName(payload.toolName);
   if (!name) return null;
 
+  // Failed tool_results must not drive store mutations (create/delete/list/wakeup).
+  if (payload.isError === true) {
+    if (
+      name === "croncreate" ||
+      name === "crondelete" ||
+      name === "cronlist" ||
+      name === "schedulewakeup"
+    ) {
+      return null;
+    }
+  }
+
   if (name === "croncreate") {
     return mapCronCreate(payload.toolInput, payload.toolOutput, nowIso);
   }
@@ -336,10 +350,18 @@ export function applyProviderHeartbeatInputEvent(
   }
 
   if (event.kind === "replace") {
-    const tasks = event.tasks.map((task) => ({
-      ...task,
-      parentAgentId,
-    }));
+    // CronList is cron-only membership. Preserve active ScheduleWakeup dynamics
+    // (mode === "dynamic") that CronList never returns.
+    const preservedDynamic = before.filter((task) => task.mode === "dynamic");
+    const cronTaskIds = new Set(event.tasks.map((task) => task.taskId));
+    const dynamicsToKeep = preservedDynamic.filter((task) => !cronTaskIds.has(task.taskId));
+    const tasks: ProviderHeartbeatDescriptor[] = [];
+    for (const task of event.tasks) {
+      tasks.push(Object.assign({}, task, { parentAgentId }));
+    }
+    for (const task of dynamicsToKeep) {
+      tasks.push(Object.assign({}, task, { parentAgentId }));
+    }
     const heartbeats = store.replaceLiveSet(parentAgentId, tasks);
     return {
       changed: JSON.stringify(before) !== JSON.stringify(heartbeats),
