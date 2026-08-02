@@ -2664,6 +2664,22 @@ export async function getCheckoutShortstat(
   return getOrLoadCheckoutShortstat(cwd, context, options);
 }
 
+export interface CheckoutWorktreeState {
+  isDirty: boolean;
+  diffStat: CheckoutShortstat | null;
+}
+
+export async function getCheckoutWorktreeState(
+  cwd: string,
+  context: CheckoutContext,
+): Promise<CheckoutWorktreeState> {
+  const [isDirty, diffStat] = await Promise.all([
+    isWorkingTreeDirty(cwd, context),
+    getCheckoutShortstat(cwd, context, { force: true }),
+  ]);
+  return { isDirty, diffStat };
+}
+
 export function getCachedCheckoutShortstat(cwd: string): CheckoutShortstat | null | undefined {
   return shortstatCache.get(getShortstatCacheKey(cwd));
 }

@@ -112,6 +112,7 @@ export const es: TranslationResources = {
     },
     attachments: {
       addImage: "Agregar imagen",
+      pasteImage: "Pegar imagen",
       addFile: "Upload file",
       addIssueOrPr: "Agregar problema oPR",
       addIssueOrPr_mr: "Agregar problema o MR",
@@ -137,6 +138,8 @@ export const es: TranslationResources = {
       initialPromptRequired: "Se requiere aviso inicial",
       alreadyLoading: "Ya cargando",
       uploadFailed: "Failed to upload file",
+      noClipboardImage: "No hay ninguna imagen en el portapapeles",
+      pasteImageFailed: "No se pudo pegar la imagen",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
@@ -187,6 +190,7 @@ export const es: TranslationResources = {
   agentStream: {
     empty: "Comience a chatear con este agente...",
     scrollToBottom: "Desplazarse hacia abajo",
+    historyLoadFailed: "No se pudo cargar el historial del agente",
     permission: {
       plan: "Plan",
       required: "Permiso requerido",
@@ -1824,6 +1828,10 @@ export const es: TranslationResources = {
       },
       detailLevel: {
         title: "Nivel de detalle",
+      },
+      chatOutline: {
+        title: "Esquema del chat",
+        description: "Muestra un esquema para saltar entre instrucciones",
       },
       fonts: {
         title: "Fuentes",

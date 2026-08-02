@@ -367,6 +367,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     paseoHome: options.paseoHome ?? "/tmp/paseo-home",
     agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
+      listProviderSubagentActivity: vi.fn(() => []),
       subscribe: vi.fn(() => () => {}),
       ...options.agentManager,
     }),

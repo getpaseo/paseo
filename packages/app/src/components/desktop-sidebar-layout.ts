@@ -8,6 +8,22 @@ import {
 
 export const MIN_DESKTOP_CENTER_WIDTH = 400;
 
+export function resolveDesktopSidebarVisibility(input: {
+  chromeEnabled: boolean;
+  isCompactLayout: boolean;
+  isMounted: boolean;
+  isOpen: boolean;
+  canShare: boolean;
+}): boolean {
+  return (
+    input.chromeEnabled &&
+    !input.isCompactLayout &&
+    input.isMounted &&
+    input.isOpen &&
+    input.canShare
+  );
+}
+
 export function resolveDesktopAppChromeLayout(input: {
   desktopSidebarRendered: boolean;
   hasTopLeftWindowControls: boolean;

@@ -562,9 +562,15 @@ export interface FetchAgentTimelineOptions {
   cursor?: FetchAgentTimelineCursor;
   limit?: number;
   projection?: FetchAgentTimelineProjection;
+  mergeWindow?: boolean;
   requestId?: string;
   timeout?: number;
 }
+
+export type AgentTimelinePromptIndexPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.timeline.list_prompts.response" }
+>["payload"];
 
 export type ProviderSubagentListPayload = Extract<
   SessionOutboundMessage,
@@ -2738,6 +2744,7 @@ export class DaemonClient {
       ...(options.cursor ? { cursor: options.cursor } : {}),
       ...(typeof options.limit === "number" ? { limit: options.limit } : {}),
       ...(options.projection ? { projection: options.projection } : {}),
+      ...(options.mergeWindow === true ? { mergeWindow: true } : {}),
     });
 
     const payload = await this.sendRequest({
@@ -2760,6 +2767,33 @@ export class DaemonClient {
       throw new Error(payload.error);
     }
 
+    return payload;
+  }
+
+  async listAgentTimelinePrompts(
+    agentId: string,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<AgentTimelinePromptIndexPayload> {
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.timeline.list_prompts.request",
+      agentId,
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.timeline.list_prompts.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
     return payload;
   }
 

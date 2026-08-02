@@ -97,7 +97,7 @@ test.describe("Agent timeline pagination", () => {
       await expectTimelinePromptVisible(page, agent.newestPrompt);
 
       await scrollThroughOlderHistoryPages(page, 3, history);
-      history.expectNoRepeatedAssistantEntries();
+      history.expectNoRepeatedEntries();
     } finally {
       await agent.cleanup();
     }

@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { daemonWsRoutePattern } from "./daemon-port";
+import { daemonWsRoutePattern, wsRoutePatternForPort } from "./daemon-port";
 
 type WebSocketMessage = string | Buffer;
 
@@ -17,13 +17,49 @@ export interface AgentTimelineResponseGate {
 
 export interface OlderTimelinePagesGate {
   getRequestCount(): number;
-  getRepeatedAssistantEntryCount(): number;
+  getRepeatedEntryCount(): number;
+  getOwnedEntryCountContaining(text: string): number;
   releasePage(pageNumber: number): void;
   waitForRequestCount(count: number): Promise<void>;
 }
 
 export interface DaemonHydrationGate {
   release(): void;
+}
+
+export interface PromptJumpRequestTracker {
+  requests(): Array<{ cursorSeq: number | null; limit: number | null; mergeWindow: boolean }>;
+}
+
+export async function trackPromptJumpRequests(
+  page: Page,
+  agentId: string,
+): Promise<PromptJumpRequestTracker> {
+  const seen: Array<{ cursorSeq: number | null; limit: number | null; mergeWindow: boolean }> = [];
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => {
+      const sessionMessage = getSessionMessage(message);
+      if (
+        sessionMessage?.type === "fetch_agent_timeline_request" &&
+        sessionMessage.agentId === agentId &&
+        sessionMessage.direction === "before" &&
+        sessionMessage.mergeWindow === true
+      ) {
+        const cursor = sessionMessage.cursor as { seq?: unknown } | undefined;
+        seen.push({
+          cursorSeq: typeof cursor?.seq === "number" ? cursor.seq : null,
+          limit: typeof sessionMessage.limit === "number" ? sessionMessage.limit : null,
+          mergeWindow: true,
+        });
+      }
+      server.send(message);
+    });
+    server.onMessage((message) => ws.send(message));
+  });
+  return {
+    requests: () => [...seen],
+  };
 }
 
 export interface BootstrapTimelineGate extends AgentTimelineResponseGate {
@@ -59,6 +95,62 @@ function getPayload(message: Record<string, unknown>): Record<string, unknown> |
   return message.payload && typeof message.payload === "object"
     ? (message.payload as Record<string, unknown>)
     : null;
+}
+
+interface ObservedTimelineEntry {
+  seqStart: number;
+  seqEnd: number;
+  item: { type: string };
+}
+
+function readTimelineEntries(payload: Record<string, unknown>): ObservedTimelineEntry[] {
+  if (!Array.isArray(payload.entries)) return [];
+  return payload.entries.filter((entry): entry is ObservedTimelineEntry => {
+    if (!entry || typeof entry !== "object") return false;
+    const candidate = entry as Partial<ObservedTimelineEntry>;
+    return (
+      typeof candidate.seqStart === "number" &&
+      typeof candidate.seqEnd === "number" &&
+      typeof candidate.item?.type === "string"
+    );
+  });
+}
+
+function readCursorSeq(cursor: unknown): number | undefined {
+  if (!cursor || typeof cursor !== "object") return undefined;
+  const seq = (cursor as { seq?: unknown }).seq;
+  return typeof seq === "number" ? seq : undefined;
+}
+
+function recordOwnedTimelineEntries(
+  payload: Record<string, unknown>,
+  ownedEntries: Map<string, string>,
+): void {
+  const pageStartSeq = readCursorSeq(payload.startCursor);
+  const pageEndSeq = readCursorSeq(payload.endCursor);
+  for (const entry of readTimelineEntries(payload)) {
+    const belongsToPage =
+      payload.direction === "tail" ||
+      (pageStartSeq !== undefined &&
+        pageEndSeq !== undefined &&
+        entry.seqStart >= pageStartSeq &&
+        entry.seqStart <= pageEndSeq);
+    if (!belongsToPage) continue;
+    ownedEntries.set(`${entry.seqStart}:${entry.seqEnd}`, JSON.stringify(entry.item));
+  }
+}
+
+function recordRepeatedTimelineEntries(
+  payload: Record<string, unknown>,
+  entryKeys: Set<string>,
+): number {
+  let repeats = 0;
+  for (const entry of readTimelineEntries(payload)) {
+    const key = `${entry.seqStart}:${entry.seqEnd}:${entry.item.type}`;
+    if (entryKeys.has(key)) repeats += 1;
+    else entryKeys.add(key);
+  }
+  return repeats;
 }
 
 export async function holdDaemonHydration(page: Page): Promise<DaemonHydrationGate> {
@@ -176,11 +268,13 @@ export async function delayAgentOlderTimelineResponse(
 export async function holdAgentOlderTimelinePages(
   page: Page,
   agentId: string,
+  daemonPort?: number,
 ): Promise<OlderTimelinePagesGate> {
   let requestCount = 0;
   let responseCount = 0;
-  let repeatedAssistantEntryCount = 0;
-  const assistantEntryKeys = new Set<string>();
+  let repeatedEntryCount = 0;
+  const entryKeys = new Set<string>();
+  const ownedEntries = new Map<string, string>();
   const releasedPages = new Set<number>();
   const delayedForwards = new Map<number, Array<() => void>>();
   const requestWaiters = new Map<number, Array<() => void>>();
@@ -193,7 +287,9 @@ export async function holdAgentOlderTimelinePages(
     }
   };
 
-  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+  const routePattern =
+    daemonPort === undefined ? daemonWsRoutePattern() : wsRoutePatternForPort(String(daemonPort));
+  await page.routeWebSocket(routePattern, (ws) => {
     const server = ws.connectToServer();
     ws.onMessage((message) => {
       const sessionMessage = getSessionMessage(message);
@@ -213,29 +309,17 @@ export async function holdAgentOlderTimelinePages(
       if (
         sessionMessage?.type === "fetch_agent_timeline_response" &&
         payload?.agentId === agentId &&
+        (payload.direction === "tail" || payload.direction === "before")
+      ) {
+        recordOwnedTimelineEntries(payload, ownedEntries);
+      }
+      if (
+        sessionMessage?.type === "fetch_agent_timeline_response" &&
+        payload?.agentId === agentId &&
         payload.direction === "before"
       ) {
         responseCount += 1;
-        const entries = Array.isArray(payload.entries) ? payload.entries : [];
-        for (const entry of entries) {
-          if (!entry || typeof entry !== "object") continue;
-          const projectedEntry = entry as {
-            seqStart?: unknown;
-            seqEnd?: unknown;
-            item?: { type?: unknown };
-          };
-          if (
-            typeof projectedEntry.seqStart !== "number" ||
-            typeof projectedEntry.seqEnd !== "number" ||
-            typeof projectedEntry.item?.type !== "string"
-          ) {
-            continue;
-          }
-          if (projectedEntry.item.type !== "assistant_message") continue;
-          const key = `${projectedEntry.seqStart}:${projectedEntry.seqEnd}:${projectedEntry.item.type}`;
-          if (assistantEntryKeys.has(key)) repeatedAssistantEntryCount += 1;
-          else assistantEntryKeys.add(key);
-        }
+        repeatedEntryCount += recordRepeatedTimelineEntries(payload, entryKeys);
         const pageNumber = responseCount;
         if (releasedPages.has(pageNumber)) {
           ws.send(message);
@@ -252,7 +336,9 @@ export async function holdAgentOlderTimelinePages(
 
   return {
     getRequestCount: () => requestCount,
-    getRepeatedAssistantEntryCount: () => repeatedAssistantEntryCount,
+    getRepeatedEntryCount: () => repeatedEntryCount,
+    getOwnedEntryCountContaining: (value) =>
+      [...ownedEntries.values()].filter((text) => text.includes(value)).length,
     releasePage(pageNumber) {
       releasedPages.add(pageNumber);
       for (const forward of delayedForwards.get(pageNumber) ?? []) forward();
