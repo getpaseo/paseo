@@ -10,9 +10,13 @@ const ASSISTANT_MARKDOWN = [
   "",
   "5. Fifth item",
   "6. Sixth item",
+  "7. Seventh item",
+  "8. Eighth item",
   "",
   "A hard break  ",
   "stays hard.",
+  "",
+  "www.example.com stays plain Markdown text.",
   "",
   "`https://example.com/generated` stays code, not a generated link.",
   "",
@@ -49,27 +53,57 @@ async function selectAssistantMessage(page: Page): Promise<void> {
 }
 
 async function selectAssistantText(page: Page, text: string): Promise<void> {
+  await selectAssistantTextRange(page, text, text);
+}
+
+async function selectAssistantTextRange(
+  page: Page,
+  startText: string,
+  endText: string,
+): Promise<void> {
   const assistantMessage = page.getByTestId("assistant-message").filter({
     hasText: "Direct matches:",
   });
-  await assistantMessage.evaluate((element, selectedText) => {
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-    let textNode = walker.nextNode();
-    while (textNode) {
-      const start = textNode.textContent?.indexOf(selectedText) ?? -1;
-      if (start >= 0) {
-        const range = document.createRange();
-        range.setStart(textNode, start);
-        range.setEnd(textNode, start + selectedText.length);
-        const selection = window.getSelection();
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-        return;
+  await assistantMessage.evaluate(
+    (element, selectedRange) => {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let startNode: Node | null = null;
+      let startOffset = -1;
+      let endNode: Node | null = null;
+      let endOffset = -1;
+      let textNode = walker.nextNode();
+      while (textNode) {
+        if (!startNode) {
+          const offset = textNode.textContent?.indexOf(selectedRange.startText) ?? -1;
+          if (offset >= 0) {
+            startNode = textNode;
+            startOffset = offset;
+          }
+        }
+        if (startNode) {
+          const offset = textNode.textContent?.indexOf(selectedRange.endText) ?? -1;
+          if (offset >= 0) {
+            endNode = textNode;
+            endOffset = offset + selectedRange.endText.length;
+            break;
+          }
+        }
+        textNode = walker.nextNode();
       }
-      textNode = walker.nextNode();
-    }
-    throw new Error(`Could not find assistant text: ${selectedText}`);
-  }, text);
+      if (!startNode || !endNode) {
+        throw new Error(
+          `Could not find assistant text range: ${selectedRange.startText} — ${selectedRange.endText}`,
+        );
+      }
+      const range = document.createRange();
+      range.setStart(startNode, startOffset);
+      range.setEnd(endNode, endOffset);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    },
+    { startText, endText },
+  );
 }
 
 async function copySelection(page: Page): Promise<void> {
@@ -121,6 +155,9 @@ test("copying an assistant selection preserves Markdown structure and links", as
     expect(clipboard.html).toContain("<code>apply_patch</code>");
     expect(clipboard.html).toContain('<ol start="5">');
     expect(clipboard.html).toContain("A hard break<br>");
+    expect(clipboard.html).toContain(
+      '<a href="http://www.example.com/">www.example.com</a> stays plain Markdown text.',
+    );
     expect(clipboard.html).toContain("<code>https://example.com/generated</code>");
     expect(clipboard.html).not.toContain(
       '<a href="https://example.com/generated"><code>https://example.com/generated</code></a>',
@@ -137,6 +174,13 @@ test("copying an assistant selection preserves Markdown structure and links", as
     expect(partialClipboard.html).toContain(
       '<li><strong><a href="https://example.com/issues/1">First</a></strong></li>',
     );
+
+    await selectAssistantTextRange(page, "Seventh item", "Eighth item");
+    await copySelection(page);
+
+    const midListClipboard = await readRichClipboard(page);
+    expect(midListClipboard.plainText).toBe("7. Seventh item\n8. Eighth item");
+    expect(midListClipboard.html).toContain('<ol start="7">');
   } finally {
     await agent.cleanup();
   }

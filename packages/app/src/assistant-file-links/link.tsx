@@ -68,6 +68,8 @@ export function AssistantMarkdownLink({
     () => ({ onPress, accessibilityRole: "link" }),
     [onPress],
   );
+  const unwrapForMarkdownCopy =
+    monoSurface || source.markup === "linkify" || source.sourceInfo === "auto";
 
   if (isNative) {
     // Must be a MarkdownTextSpan, not a plain <Text>: on iOS the link renders
@@ -106,7 +108,7 @@ export function AssistantMarkdownLink({
 
   const anchor = (
     <a
-      {...(monoSurface ? { "data-paseo-markdown-unwrap": "true" } : {})}
+      {...(unwrapForMarkdownCopy ? { "data-paseo-markdown-unwrap": "true" } : {})}
       href={source.href}
       onClickCapture={handleAnchorClickCapture}
       onAuxClickCapture={preventAnchorNavigation}

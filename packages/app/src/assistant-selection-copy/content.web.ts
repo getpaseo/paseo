@@ -70,12 +70,49 @@ function wrapSelectionWithAncestors(range: Range, message: Element): Node {
 
   while (ancestor && ancestor !== message) {
     const wrapper = ancestor.cloneNode(false) as Element;
+    adjustOrderedListStart(wrapper, ancestor, range);
     wrapper.append(selected);
     selected = wrapper;
     ancestor = ancestor.parentElement;
   }
 
   return selected;
+}
+
+function adjustOrderedListStart(wrapper: Element, original: Element, range: Range): void {
+  if (original.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE) !== "ol") {
+    return;
+  }
+
+  const firstSelectedChild = directChildContainingRangeStart(original, range);
+  if (!firstSelectedChild) {
+    return;
+  }
+
+  let omittedItems = 0;
+  for (const child of original.childNodes) {
+    if (child === firstSelectedChild) {
+      break;
+    }
+    if (child instanceof Element && child.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE) === "li") {
+      omittedItems += 1;
+    }
+  }
+
+  const originalStart = Number(original.getAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE) ?? 1);
+  wrapper.setAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE, String(originalStart + omittedItems));
+}
+
+function directChildContainingRangeStart(ancestor: Element, range: Range): Node | null {
+  if (range.startContainer === ancestor) {
+    return ancestor.childNodes[range.startOffset] ?? null;
+  }
+
+  let child = range.startContainer;
+  while (child.parentNode && child.parentNode !== ancestor) {
+    child = child.parentNode;
+  }
+  return child.parentNode === ancestor ? child : null;
 }
 
 function closestAssistantMessage(node: Node): Element | null {
