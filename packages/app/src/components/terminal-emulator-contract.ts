@@ -26,6 +26,7 @@ export interface TerminalEmulatorProps {
   dom?: unknown;
   ref: Ref<TerminalEmulatorHandle>;
   streamKey: string;
+  supportsTerminalInputModeReplay: boolean;
   testId?: string;
   xtermTheme?: ITheme;
   scrollbackLines: number;

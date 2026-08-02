@@ -485,6 +485,7 @@ export const ja: TranslationResources = {
     },
     terminal: {
       hostDisconnected: "ホストが接続されていません",
+      updateHost: "ネイティブターミナルを使用するにはホストを更新してください。",
       unableToSubscribe: "ターミナルに接続できません",
     },
     tabs: {

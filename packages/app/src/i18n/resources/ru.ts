@@ -485,6 +485,7 @@ export const ru: TranslationResources = {
     },
     terminal: {
       hostDisconnected: "Host не подключен",
+      updateHost: "Обновите хост, чтобы использовать нативный терминал.",
       unableToSubscribe: "Невозможно подписаться на терминал",
     },
     tabs: {

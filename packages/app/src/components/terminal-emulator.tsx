@@ -98,6 +98,7 @@ interface TerminalEmulatorProps {
   dom?: DOMProps;
   ref: Ref<TerminalEmulatorHandle>;
   streamKey: string;
+  supportsTerminalInputModeReplay: boolean;
   testId?: string;
   xtermTheme?: ITheme;
   scrollbackLines: number;
