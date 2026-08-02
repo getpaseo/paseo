@@ -553,6 +553,57 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("coalesces trailing reasoning so the answer text does not split the reasoning run", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", content: [], responseId: "r1" },
+    });
+    // Long thinking block.
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "r1" },
+      assistantMessageEvent: { type: "thinking_delta", delta: "think1" },
+    });
+    // Answer begins... but text is held so trailing reasoning stays in the same run.
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "r1" },
+      assistantMessageEvent: { type: "text_delta", delta: "There are " },
+    });
+    // Trailing reasoning tail after the answer has started.
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "r1" },
+      assistantMessageEvent: { type: "thinking_delta", delta: " reasoning" },
+    });
+    // More answer text (still held until the reasoning run closes).
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "r1" },
+      assistantMessageEvent: { type: "text_delta", delta: "3 r's" },
+    });
+    fakeSession.emit({
+      type: "message_end",
+      message: { role: "assistant", content: [], responseId: "r1" },
+    });
+    fakeSession.finishTurn();
+
+    await events.nextTurnCompletion();
+
+    // Both reasoning deltas are adjacent (no assistant_message between them), so
+    // the trailing " reasoning" merges into the same reasoning block instead of
+    // forming a second one. The held answer text is flushed after it.
+    expect(events.timelineItems()).toEqual([
+      { type: "reasoning", text: "think1" },
+      { type: "reasoning", text: " reasoning" },
+      { type: "assistant_message", text: "There are 3 r's", messageId: "r1" },
+    ]);
+  });
+
   test("keeps one generated message id when Pi omits message start and response id", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

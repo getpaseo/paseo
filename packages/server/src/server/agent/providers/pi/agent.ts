@@ -1230,6 +1230,24 @@ export class PiRpcAgentSession implements AgentSession {
   private activeClientMessageId: string | null = null;
   private activeAssistantMessageId: string | null = null;
   private activeTurnStarted = false;
+
+  // ---- Reasoning coalescing ----
+  // pi can stream a trailing reasoning delta AFTER the final answer has begun
+  // (inherited from the provider). The TUI renders one merged thinking block;
+  // this provider was relaying raw reasoning/text deltas in arrival order, so
+  // clients saw [reasoning][text][reasoning][text]. We hold the first text chunk
+  // briefly after thinking so a trailing reasoning delta stays in the same
+  // reasoning run (clients merge adjacent reasoning items into one block),
+  // mirroring the replay path (history-mapper) which emits one reasoning item
+  // per thinking block. Tune via PI_REASONING_HOLD_MS.
+  private readonly reasoningHoldMs = (() => {
+    const n = Number(process.env.PI_REASONING_HOLD_MS);
+    return Number.isFinite(n) && n > 0 ? n : 150;
+  })();
+  private reasoningPresent = false;
+  private textStreamDirect = false;
+  private heldTextBuf = "";
+  private reasonHoldTimer: ReturnType<typeof setTimeout> | null = null;
   private activeNoTurnPromptText: string | null = null;
   private readonly pendingNoTurnOutputs: Array<{ turnId: string; message: string }> = [];
   private activePromptRequestId: string | null = null;
@@ -1603,6 +1621,35 @@ export class PiRpcAgentSession implements AgentSession {
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }
+  }
+
+  private flushHeldText(): void {
+    if (this.reasonHoldTimer) {
+      clearTimeout(this.reasonHoldTimer);
+      this.reasonHoldTimer = null;
+    }
+    const text = this.heldTextBuf;
+    this.heldTextBuf = "";
+    this.textStreamDirect = true;
+    if (text) {
+      this.emit({
+        type: "timeline",
+        provider: this.provider,
+        turnId: this.activeTurnId ?? undefined,
+        item: {
+          type: "assistant_message",
+          text,
+          messageId: this.activeAssistantMessageId ?? "",
+        },
+      });
+    }
+  }
+
+  private resetReasoningCoalescing(): void {
+    this.flushHeldText();
+    this.reasoningPresent = false;
+    this.heldTextBuf = "";
+    this.textStreamDirect = false;
   }
 
   private currentTurnIdForEvent(): string | undefined {
@@ -2197,19 +2244,32 @@ export class PiRpcAgentSession implements AgentSession {
     if (event.assistantMessageEvent.type === "text_delta") {
       // Pi-compatible runtimes may emit updates without a preceding message_start.
       this.activeAssistantMessageId ??= event.message.responseId || randomUUID();
-      this.emit({
-        type: "timeline",
-        provider: this.provider,
-        turnId,
-        item: {
-          type: "assistant_message",
-          text: event.assistantMessageEvent.delta ?? "",
-          messageId: this.activeAssistantMessageId,
-        },
-      });
+      const delta = event.assistantMessageEvent.delta ?? "";
+      if (this.textStreamDirect || !this.reasoningPresent) {
+        if (!this.reasoningPresent) this.textStreamDirect = true;
+        this.emit({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: {
+            type: "assistant_message",
+            text: delta,
+            messageId: this.activeAssistantMessageId,
+          },
+        });
+      } else {
+        // Reasoning is in flight: hold the text briefly so a trailing reasoning
+        // delta stays in the same reasoning run instead of splitting into a
+        // second reasoning block.
+        this.heldTextBuf += delta;
+        if (!this.reasonHoldTimer) {
+          this.reasonHoldTimer = setTimeout(() => this.flushHeldText(), this.reasoningHoldMs);
+        }
+      }
       return;
     }
     if (event.assistantMessageEvent.type === "thinking_delta") {
+      this.reasoningPresent = true;
       this.emit({
         type: "timeline",
         provider: this.provider,
@@ -2219,12 +2279,21 @@ export class PiRpcAgentSession implements AgentSession {
           text: event.assistantMessageEvent.delta ?? "",
         },
       });
+      if (this.reasonHoldTimer) {
+        // Trailing reasoning while we hold text: keep it in the same reasoning
+        // run and postpone the text flush.
+        clearTimeout(this.reasonHoldTimer);
+        this.reasonHoldTimer = setTimeout(() => this.flushHeldText(), this.reasoningHoldMs);
+      }
     }
   }
 
   private handleMessageStart(event: Extract<PiAgentSessionEvent, { type: "message_start" }>): void {
     if (event.message.role === "assistant") {
       this.activeAssistantMessageId = event.message.responseId || null;
+    }
+    if (event.message.role === "assistant") {
+      this.resetReasoningCoalescing();
     }
   }
 
@@ -2233,6 +2302,7 @@ export class PiRpcAgentSession implements AgentSession {
     turnId: string | undefined,
   ): void {
     if (event.message.role === "assistant") {
+      this.resetReasoningCoalescing();
       this.activeAssistantMessageId = null;
       return;
     }
@@ -2258,6 +2328,8 @@ export class PiRpcAgentSession implements AgentSession {
     result: PiToolResult,
     error: unknown,
   ): boolean {
+    // Don't let held text fall after a tool call that closes the reasoning run.
+    this.flushHeldText();
     const turnId = this.currentTurnIdForEvent();
     const detail = this.mapToolDetail(toolCallId, toolCall, result);
     if (!detail) {
