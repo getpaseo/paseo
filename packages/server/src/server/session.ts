@@ -6222,6 +6222,13 @@ export class Session {
     // selected with.
     const effectiveDirection = input.controlTimeline.reset ? "tail" : input.direction;
     const cursorSeq = input.cursor?.seq;
+    // Project the store once and reuse it for every candidate limit. Each candidate
+    // otherwise re-projects the whole store (~log2(N) times under the byte search),
+    // which is the dominant per-request cost on large timelines.
+    const projectedEntries = projectTimelineRows({
+      rows: selectedTimeline.rows,
+      mode: "projected",
+    });
     const pageCache = new Map<number, ProjectedTimelinePageSelection>();
     const selectPage = (limit: number): ProjectedTimelinePageSelection => {
       const cached = pageCache.get(limit);
@@ -6234,9 +6241,22 @@ export class Session {
         direction: effectiveDirection,
         ...(cursorSeq !== undefined ? { cursorSeq } : {}),
         limit,
+        projectedEntries,
       });
       pageCache.set(limit, selected);
       return selected;
+    };
+    // Memoize measured bytes per limit so the base check and the search never
+    // serialize the same page twice.
+    const byteCache = new Map<number, number>();
+    const measurePageBytes = (limit: number): number => {
+      const cached = byteCache.get(limit);
+      if (cached !== undefined) {
+        return cached;
+      }
+      const bytes = outboundFrameByteLength(JSON.stringify(selectPage(limit).entries));
+      byteCache.set(limit, bytes);
+      return bytes;
     };
 
     // Keep the response frame under the outbound byte bound. Projection can expand
@@ -6246,15 +6266,11 @@ export class Session {
     // stay contiguity-aware — never recomputed from a trimmed slice, which would
     // skip rows a wide entry spans (non-monotonic seqEnd).
     let page = selectPage(input.pageLimit);
-    if (
-      page.entries.length > 1 &&
-      outboundFrameByteLength(JSON.stringify(page.entries)) > TIMELINE_PAGE_BYTE_BUDGET
-    ) {
+    if (page.entries.length > 1 && measurePageBytes(input.pageLimit) > TIMELINE_PAGE_BYTE_BUDGET) {
       const fitLimit = largestFittingProjectedLimit({
         maxLimit: input.pageLimit === 0 ? page.entries.length : input.pageLimit,
         budgetBytes: TIMELINE_PAGE_BYTE_BUDGET,
-        measurePageBytes: (limit) =>
-          outboundFrameByteLength(JSON.stringify(selectPage(limit).entries)),
+        measurePageBytes,
       });
       page = selectPage(fitLimit);
     }

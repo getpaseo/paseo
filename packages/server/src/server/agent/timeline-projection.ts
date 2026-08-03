@@ -274,11 +274,13 @@ export function selectTimelineWindowByProjectedLimit(input: {
   rows: readonly AgentTimelineRow[];
   direction: TimelineLimitDirection;
   limit: number;
+  // Optional pre-projected entries so callers that select many windows from the
+  // same rows (e.g. byte-bounded paging) can project once instead of per call.
+  projectedEntries?: TimelineProjectionEntry[];
 }): ProjectedWindowSelection {
   const { rows, direction } = input;
   const limit = Math.max(0, Math.floor(input.limit));
-  const canonical = makeCanonicalEntries(rows);
-  const projectedAll = mergeReasoningChunks(mergeAssistantChunks(collapseToolLifecycle(canonical)));
+  const projectedAll = input.projectedEntries ?? projectTimelineRows({ rows, mode: "projected" });
 
   if (projectedAll.length === 0) {
     return {
@@ -289,16 +291,16 @@ export function selectTimelineWindowByProjectedLimit(input: {
     };
   }
 
-  let projectedEntries: typeof projectedAll;
+  let windowEntries: typeof projectedAll;
   if (limit === 0 || limit >= projectedAll.length) {
-    projectedEntries = projectedAll;
+    windowEntries = projectedAll;
   } else if (direction === "after") {
-    projectedEntries = projectedAll.slice(0, limit);
+    windowEntries = projectedAll.slice(0, limit);
   } else {
-    projectedEntries = projectedAll.slice(projectedAll.length - limit);
+    windowEntries = projectedAll.slice(projectedAll.length - limit);
   }
 
-  if (projectedEntries.length === 0) {
+  if (windowEntries.length === 0) {
     return {
       projectedEntries: [],
       selectedRows: [],
@@ -321,8 +323,8 @@ export function selectTimelineWindowByProjectedLimit(input: {
     return { minSeq, maxSeq };
   };
 
-  let { minSeq, maxSeq } = computeWindowBounds(projectedEntries);
-  let expandedEntries = projectedEntries;
+  let { minSeq, maxSeq } = computeWindowBounds(windowEntries);
+  let expandedEntries = windowEntries;
 
   // Expand to include any projected entries that overlap the selected canonical
   // range. Tool lifecycle collapse can produce non-monotonic seqEnd values,
@@ -456,10 +458,14 @@ export function selectProjectedTimelinePage(input: {
   direction: TimelineLimitDirection;
   cursorSeq?: number;
   limit?: number;
+  // Optional pre-projected entries so byte-bounded paging can project the store
+  // once and reuse it across every candidate limit instead of re-projecting.
+  projectedEntries?: TimelineProjectionEntry[];
 }): ProjectedTimelinePageSelection {
   const limit = input.limit === undefined ? 0 : Math.max(0, Math.floor(input.limit));
   const bounds = input.bounds ?? getTimelineBounds(input.rows);
-  const projectedAll = projectTimelineRows({ rows: input.rows, mode: "projected" });
+  const projectedAll =
+    input.projectedEntries ?? projectTimelineRows({ rows: input.rows, mode: "projected" });
   if (!bounds) {
     return {
       entries: [],
@@ -505,6 +511,7 @@ export function selectProjectedTimelinePage(input: {
       rows: input.rows,
       direction: "tail",
       limit,
+      projectedEntries: projectedAll,
     });
     return {
       entries: selected.projectedEntries,

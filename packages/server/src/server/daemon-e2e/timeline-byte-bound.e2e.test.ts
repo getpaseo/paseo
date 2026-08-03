@@ -164,4 +164,46 @@ describe("daemon E2E - timeline byte bound (#2610)", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   }, 60_000);
+
+  test("bounds a before page and never returns an empty page for a cursor past the window", async () => {
+    const cwd = tmpCwd();
+    try {
+      const agent = await ctx.client.createAgent({
+        provider: "codex",
+        cwd,
+        title: "Before bound test",
+        modeId: "full-access",
+      });
+      await appendLargeTimeline(ctx, agent.id, 400);
+
+      // Anchor an epoch, then page `before` from a cursor well past the newest seq
+      // with an unbounded limit. The window clamps to the newest content, so this
+      // must return a bounded, non-empty page (older history reachable) rather than
+      // an empty page with hasOlder — the failure mode when a before cursor lands
+      // outside the window.
+      const anchor = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "tail",
+        limit: 1,
+        projection: "projected",
+      });
+      const beyondWindow = {
+        epoch: anchor.endCursor!.epoch,
+        seq: anchor.endCursor!.seq + 1_000_000,
+      };
+
+      const older = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "before",
+        cursor: beyondWindow,
+        limit: 0,
+        projection: "projected",
+      });
+
+      expect(older.entries.length).toBeGreaterThan(0);
+      expect(older.entries.length).toBeLessThan(400);
+      expect(older.hasOlder).toBe(true);
+      expect(projectedPageBytes(older.entries)).toBeLessThanOrEqual(TIMELINE_PAGE_BYTE_BUDGET);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
