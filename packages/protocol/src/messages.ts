@@ -1748,6 +1748,29 @@ export const CheckoutCommitsListRequestSchema = z.object({
   requestId: z.string(),
 });
 
+const RepositoryGraphRefSchema = z.object({
+  name: z.string(),
+  kind: z.enum(["head", "remote", "tag"]),
+  current: z.boolean(),
+});
+
+const RepositoryGraphCommitSchema = z.object({
+  sha: z.string(),
+  shortSha: z.string(),
+  parents: z.array(z.string()),
+  subject: z.string(),
+  authorName: z.string(),
+  authorDate: z.string(),
+  refs: z.array(RepositoryGraphRefSchema),
+});
+
+export const CheckoutRepositoryGraphGetHistoryRequestSchema = z.object({
+  type: z.literal("checkout.repository_graph.get_history.request"),
+  cwd: z.string(),
+  limit: z.number().int().min(1).max(500).optional(),
+  requestId: z.string(),
+});
+
 export const CheckoutCommitFileDiffRequestSchema = z.object({
   type: z.literal("checkout.commits.file_diff.request"),
   cwd: z.string(),
@@ -2521,6 +2544,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutForgeSetAutoMergeRequestSchema,
   CheckoutGithubSetAutoMergeRequestSchema,
   CheckoutCommitsListRequestSchema,
+  CheckoutRepositoryGraphGetHistoryRequestSchema,
   CheckoutCommitFileDiffRequestSchema,
   CheckoutForgeGetCheckDetailsRequestSchema,
   CheckoutGithubGetCheckDetailsRequestSchema,
@@ -2826,6 +2850,8 @@ export const ServerInfoStatusPayloadSchema = z
         commitsList: z.boolean().optional(),
         // COMPAT(commitBaseClassification): added in v0.2.0, remove gate after 2027-01-23.
         commitBaseClassification: z.boolean().optional(),
+        // COMPAT(repositoryGraph): added in v0.2.5, remove gate after 2027-02-03.
+        repositoryGraph: z.boolean().optional(),
         // COMPAT(providerRemoval): added in v0.1.105, drop the gate when floor >= v0.1.105.
         providerRemoval: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
@@ -4278,6 +4304,17 @@ export const CheckoutCommitsListResponseSchema = z.object({
   }),
 });
 
+export const CheckoutRepositoryGraphGetHistoryResponseSchema = z.object({
+  type: z.literal("checkout.repository_graph.get_history.response"),
+  payload: z.object({
+    cwd: z.string(),
+    commits: z.array(RepositoryGraphCommitSchema),
+    hasMore: z.boolean(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const CheckoutCommitFileDiffResponseSchema = z.object({
   type: z.literal("checkout.commits.file_diff.response"),
   payload: z.object({
@@ -5283,6 +5320,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutForgeSetAutoMergeResponseSchema,
   CheckoutGithubSetAutoMergeResponseSchema,
   CheckoutCommitsListResponseSchema,
+  CheckoutRepositoryGraphGetHistoryResponseSchema,
   CheckoutCommitFileDiffResponseSchema,
   CheckoutForgeGetCheckDetailsResponseSchema,
   CheckoutGithubGetCheckDetailsResponseSchema,
@@ -5622,6 +5660,13 @@ export type CheckoutCommitFile = z.infer<typeof CheckoutCommitFileSchema>;
 export type CheckoutCommit = z.infer<typeof CheckoutCommitSchema>;
 export type CheckoutCommitsListRequest = z.infer<typeof CheckoutCommitsListRequestSchema>;
 export type CheckoutCommitsListResponse = z.infer<typeof CheckoutCommitsListResponseSchema>;
+export type CheckoutRepositoryGraphGetHistoryRequest = z.infer<
+  typeof CheckoutRepositoryGraphGetHistoryRequestSchema
+>;
+export type CheckoutRepositoryGraphGetHistoryResponse = z.infer<
+  typeof CheckoutRepositoryGraphGetHistoryResponseSchema
+>;
+export type RepositoryGraphCommit = z.infer<typeof RepositoryGraphCommitSchema>;
 export type CheckoutCommitFileDiffRequest = z.infer<typeof CheckoutCommitFileDiffRequestSchema>;
 export type CheckoutCommitFileDiffResponse = z.infer<typeof CheckoutCommitFileDiffResponseSchema>;
 export type ParsedDiffFile = z.infer<typeof ParsedDiffFileSchema>;

@@ -473,6 +473,14 @@ export const fr: TranslationResources = {
       hostDisconnected: "Hostn'est pas connecté",
       unableToSubscribe: "Impossible de s'abonner au terminal",
     },
+    repositoryGraph: {
+      loading: "Chargement de l'historique du dépôt...",
+      loadError: "Impossible de charger l'historique du dépôt",
+      retry: "Réessayer",
+      empty: "Aucun commit trouvé",
+      updateHost: "Mettez à jour l'hôte pour afficher le graphe du dépôt",
+      limit: "Affichage des {{count}} derniers commits",
+    },
     tabs: {
       loading: "Chargement...",
       modified: "Modifications non enregistrées",
@@ -530,6 +538,7 @@ export const fr: TranslationResources = {
         close: "Fermer l'explorateur",
         toggle: "Basculer l'explorateur",
         changes: "Changements",
+        repositoryGraph: "Graphe du dépôt",
         files: "Fichiers",
       },
       toasts: {

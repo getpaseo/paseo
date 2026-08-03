@@ -28,6 +28,7 @@ import { useCloseFileExplorerGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import { HEADER_INNER_HEIGHT } from "@/constants/layout";
 import { GitDiffPane } from "@/git/diff-pane";
+import { RepositoryGraphPane } from "@/git/repository-graph/pane";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useHasOwnedWindowChromeObstruction, WindowChromeSafeArea } from "@/utils/desktop-window";
@@ -279,6 +280,10 @@ interface SidebarContentProps {
   onOpenFile?: (filePath: string) => void;
 }
 
+function resolveExplorerTab(activeTab: ExplorerTab, isGit: boolean): ExplorerTab {
+  return isGit || activeTab === "files" ? activeTab : "files";
+}
+
 function ExplorerSidebarContent({
   activeTab,
   onTabPress,
@@ -303,8 +308,7 @@ function ExplorerSidebarContent({
   });
   const hasPullRequest = prPane.prNumber !== null;
   const showPrTab = hasPullRequest || (activeTab === "pr" && prPane.isLoading);
-  const requestedTab: ExplorerTab =
-    !isGit && (activeTab === "changes" || activeTab === "pr") ? "files" : activeTab;
+  const requestedTab = resolveExplorerTab(activeTab, isGit);
   const resolvedTab: ExplorerTab = requestedTab === "pr" && !showPrTab ? "changes" : requestedTab;
   const prTabLabel = formatPrTabLabel(prPane.prNumber);
   const refreshGitActions = useCheckoutGitActionsStore((s) => s.refresh);
@@ -336,6 +340,15 @@ function ExplorerSidebarContent({
               label={t("workspace.tabs.explorer.changes")}
               onTabPress={onTabPress}
               testID="explorer-tab-changes"
+            />
+          )}
+          {isGit && (
+            <ExplorerTabButton
+              tab="repository_graph"
+              active={resolvedTab === "repository_graph"}
+              label={t("workspace.tabs.explorer.repositoryGraph")}
+              onTabPress={onTabPress}
+              testID="explorer-tab-repository-graph"
             />
           )}
           <ExplorerTabButton
@@ -405,6 +418,13 @@ function ExplorerSidebarContent({
             workspaceId={workspaceId}
             workspaceRoot={workspaceRoot}
             onOpenFile={onOpenFile}
+          />
+        )}
+        {resolvedTab === "repository_graph" && (
+          <RepositoryGraphPane
+            serverId={serverId}
+            cwd={workspaceRoot}
+            enabled={isOpen && resolvedTab === "repository_graph"}
           />
         )}
         {resolvedTab === "pr" && (

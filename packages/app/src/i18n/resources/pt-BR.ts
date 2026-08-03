@@ -473,6 +473,14 @@ export const ptBR: TranslationResources = {
       hostDisconnected: "Host não está conectado",
       unableToSubscribe: "Não foi possível assinar o terminal",
     },
+    repositoryGraph: {
+      loading: "Carregando histórico do repositório...",
+      loadError: "Não foi possível carregar o histórico do repositório",
+      retry: "Tentar novamente",
+      empty: "Nenhum commit encontrado",
+      updateHost: "Atualize o host para ver o gráfico do repositório",
+      limit: "Mostrando os {{count}} commits mais recentes",
+    },
     tabs: {
       loading: "Carregando...",
       modified: "Alterações não salvas",
@@ -529,6 +537,7 @@ export const ptBR: TranslationResources = {
         close: "Fechar explorador",
         toggle: "Alternar explorador",
         changes: "Alterações",
+        repositoryGraph: "Gráfico do repositório",
         files: "Arquivos",
       },
       toasts: {

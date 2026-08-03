@@ -7,6 +7,7 @@ import type {
   BranchSuggestionsRequest,
   CheckoutCommitsListRequest,
   CheckoutCommitFileDiffRequest,
+  CheckoutRepositoryGraphGetHistoryRequest,
   CheckoutRefreshRequest,
   CheckoutRenameBranchRequest,
   CheckoutStatusRequest,
@@ -49,6 +50,7 @@ import {
   pullCurrentBranch,
   pushCurrentBranch,
   listCheckoutCommits,
+  getRepositoryGraphHistory,
   getCommitFileDiff,
 } from "../../../utils/checkout-git.js";
 import { execCommand } from "../../../utils/spawn.js";
@@ -278,6 +280,25 @@ export class CheckoutSession {
       this.host.emit({
         type: "checkout.commits.list.response",
         payload: { cwd, baseRef: null, commits: [], error: toCheckoutError(error), requestId },
+      });
+    }
+  }
+
+  async handleRepositoryGraphGetHistoryRequest(
+    msg: CheckoutRepositoryGraphGetHistoryRequest,
+  ): Promise<void> {
+    const { cwd, limit, requestId } = msg;
+
+    try {
+      const history = await getRepositoryGraphHistory({ cwd: expandTilde(cwd), limit });
+      this.host.emit({
+        type: "checkout.repository_graph.get_history.response",
+        payload: { cwd, ...history, error: null, requestId },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "checkout.repository_graph.get_history.response",
+        payload: { cwd, commits: [], hasMore: false, error: toCheckoutError(error), requestId },
       });
     }
   }

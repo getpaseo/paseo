@@ -33,6 +33,7 @@ import type {
   GitSetupOptions,
   CheckoutStatusResponse,
   CheckoutCommit,
+  RepositoryGraphCommit,
   ParsedDiffFile,
   CheckoutCommitResponse,
   CheckoutMergeResponse,
@@ -3679,6 +3680,29 @@ export class DaemonClient {
       throw new Error(payload.error.message);
     }
     return { baseRef: payload.baseRef, commits: payload.commits };
+  }
+
+  async getRepositoryGraphHistory(
+    cwd: string,
+    limit?: number,
+    requestId?: string,
+  ): Promise<{ commits: RepositoryGraphCommit[]; hasMore: boolean }> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"checkout.repository_graph.get_history.response">(
+        {
+          requestId,
+          message: {
+            type: "checkout.repository_graph.get_history.request",
+            cwd,
+            limit,
+          },
+          timeout: 60000,
+        },
+      );
+    if (payload.error) {
+      throw new Error(payload.error.message);
+    }
+    return { commits: payload.commits, hasMore: payload.hasMore };
   }
 
   async getCommitFileDiff(

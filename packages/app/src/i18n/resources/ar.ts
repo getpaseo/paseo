@@ -469,6 +469,14 @@ export const ar: TranslationResources = {
       hostDisconnected: "Host غير متصل",
       unableToSubscribe: "غير قادر على الاشتراك في المحطة",
     },
+    repositoryGraph: {
+      loading: "جارٍ تحميل سجل المستودع...",
+      loadError: "تعذر تحميل سجل المستودع",
+      retry: "إعادة المحاولة",
+      empty: "لم يتم العثور على التزامات",
+      updateHost: "حدّث المضيف لعرض مخطط المستودع",
+      limit: "عرض أحدث {{count}} التزامات",
+    },
     tabs: {
       loading: "تحميل...",
       modified: "تغييرات غير محفوظة",
@@ -525,6 +533,7 @@ export const ar: TranslationResources = {
         close: "إغلاق المستكشف",
         toggle: "تبديل المستكشف",
         changes: "التغييرات",
+        repositoryGraph: "مخطط المستودع",
         files: "ملفات",
       },
       toasts: {

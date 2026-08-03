@@ -2,7 +2,11 @@ import { resolve, dirname, basename } from "path";
 import { existsSync, realpathSync } from "fs";
 import { open as openFile, readFile, stat as statFile } from "fs/promises";
 import { TTLCache } from "@isaacs/ttlcache";
-import type { CheckoutCommit, CheckoutCommitFile } from "@getpaseo/protocol/messages";
+import type {
+  CheckoutCommit,
+  CheckoutCommitFile,
+  RepositoryGraphCommit,
+} from "@getpaseo/protocol/messages";
 import { maxBase64EncryptedPlaintextByteLength } from "@getpaseo/relay";
 import type { Logger } from "pino";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
@@ -2040,6 +2044,8 @@ const COMMIT_RECORD_SEPARATOR = "\x1e";
 // `%x1e`/`%x00` are git placeholders (literal text in the arg, real bytes in the
 // output) — passing actual NUL bytes as a process arg is rejected by Node.
 const COMMIT_LOG_FORMAT = "%x1e%H%x00%h%x00%an%x00%aI%x00%s";
+const REPOSITORY_GRAPH_LOG_FORMAT = "%x1e%H%x00%h%x00%P%x00%an%x00%aI%x00%s";
+const REPOSITORY_GRAPH_DEFAULT_LIMIT = 200;
 
 type CheckoutCommitFileStatus = NonNullable<CheckoutCommitFile["status"]>;
 
@@ -2223,6 +2229,104 @@ async function getCheckoutCommitRecords({
 export interface CheckoutCommitsResult {
   baseRef: string | null;
   commits: CheckoutCommit[];
+}
+
+interface RepositoryGraphRef {
+  name: string;
+  kind: "head" | "remote" | "tag";
+  current: boolean;
+}
+
+function parseRepositoryGraphRefs(stdout: string): Map<string, RepositoryGraphRef[]> {
+  const refsBySha = new Map<string, RepositoryGraphRef[]>();
+  for (const line of stdout.split("\n")) {
+    const [objectSha = "", peeledSha = "", fullName = "", head = ""] = line.split("\x00");
+    const sha = peeledSha || objectSha;
+    let ref: RepositoryGraphRef | null = null;
+    if (fullName.startsWith("refs/heads/")) {
+      ref = { name: fullName.slice("refs/heads/".length), kind: "head", current: head === "*" };
+    } else if (fullName.startsWith("refs/remotes/") && !fullName.endsWith("/HEAD")) {
+      ref = { name: fullName.slice("refs/remotes/".length), kind: "remote", current: false };
+    } else if (fullName.startsWith("refs/tags/")) {
+      ref = { name: fullName.slice("refs/tags/".length), kind: "tag", current: false };
+    }
+    if (!sha || !ref) {
+      continue;
+    }
+    const refs = refsBySha.get(sha) ?? [];
+    refs.push(ref);
+    refsBySha.set(sha, refs);
+  }
+  return refsBySha;
+}
+
+function parseRepositoryGraphCommits(
+  stdout: string,
+  refsBySha: Map<string, RepositoryGraphRef[]>,
+): RepositoryGraphCommit[] {
+  const commits: RepositoryGraphCommit[] = [];
+  for (const record of stdout.split(COMMIT_RECORD_SEPARATOR)) {
+    if (!record) {
+      continue;
+    }
+    const fields = record.replace(/^\n/, "").split(COMMIT_FIELD_SEPARATOR);
+    const sha = (fields[0] ?? "").trim();
+    if (!sha || fields.length < 6) {
+      continue;
+    }
+    commits.push({
+      sha,
+      shortSha: (fields[1] ?? "").trim(),
+      parents: (fields[2] ?? "").trim().split(" ").filter(Boolean),
+      authorName: fields[3] ?? "",
+      authorDate: (fields[4] ?? "").trim(),
+      subject: (fields[5] ?? "").replace(/\n$/, ""),
+      refs: refsBySha.get(sha) ?? [],
+    });
+  }
+  return commits;
+}
+
+export async function getRepositoryGraphHistory({
+  cwd,
+  limit = REPOSITORY_GRAPH_DEFAULT_LIMIT,
+}: {
+  cwd: string;
+  limit?: number;
+}): Promise<{ commits: RepositoryGraphCommit[]; hasMore: boolean }> {
+  const boundedLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
+  const [logResult, refsResult] = await Promise.all([
+    runGitCommand(
+      [
+        "log",
+        `--max-count=${boundedLimit + 1}`,
+        `--format=${REPOSITORY_GRAPH_LOG_FORMAT}`,
+        "--date-order",
+        "--branches",
+        "--tags",
+        "--remotes",
+        "HEAD",
+        "--",
+      ],
+      { cwd, envOverlay: READ_ONLY_GIT_ENV },
+    ),
+    runGitCommand(
+      [
+        "for-each-ref",
+        "--format=%(objectname)%00%(*objectname)%00%(refname)%00%(HEAD)",
+        "refs/heads",
+        "refs/remotes",
+        "refs/tags",
+      ],
+      { cwd, envOverlay: READ_ONLY_GIT_ENV },
+    ),
+  ]);
+  if (logResult.truncated || refsResult.truncated) {
+    throw new Error("Repository graph exceeded the git output limit");
+  }
+  const refsBySha = parseRepositoryGraphRefs(refsResult.stdout);
+  const commits = parseRepositoryGraphCommits(logResult.stdout, refsBySha);
+  return { commits: commits.slice(0, boundedLimit), hasMore: commits.length > boundedLimit };
 }
 
 async function tryResolveCheckoutCommitsBaseRef(
