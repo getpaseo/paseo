@@ -3046,8 +3046,10 @@ const WorkspaceGitRuntimePayloadSchema = z
       })
       .nullable()
       .optional(),
+    hasChangesFromBase: z.boolean().nullable().optional(),
     aheadOfOrigin: z.number().nullable().optional(),
     behindOfOrigin: z.number().nullable().optional(),
+    hasChangesFromOrigin: z.boolean().nullable().optional(),
   })
   .optional()
   .nullable();
@@ -3962,8 +3964,10 @@ const CheckoutStatusNotGitSchema = CheckoutStatusCommonSchema.extend({
   isDirty: z.null(),
   baseRef: z.null(),
   aheadBehind: z.null(),
+  hasChangesFromBase: z.null().optional(),
   aheadOfOrigin: z.null(),
   behindOfOrigin: z.null(),
+  hasChangesFromOrigin: z.null().optional(),
   hasRemote: z.boolean(),
   remoteUrl: z.null(),
 });
@@ -3977,8 +3981,10 @@ const CheckoutStatusGitNonPaseoSchema = CheckoutStatusCommonSchema.extend({
   isDirty: z.boolean(),
   baseRef: z.string().nullable(),
   aheadBehind: AheadBehindSchema.nullable(),
+  hasChangesFromBase: z.boolean().nullable().optional(),
   aheadOfOrigin: z.number().nullable(),
   behindOfOrigin: z.number().nullable(),
+  hasChangesFromOrigin: z.boolean().nullable().optional(),
   hasRemote: z.boolean(),
   remoteUrl: z.string().nullable(),
 });
@@ -3992,8 +3998,10 @@ const CheckoutStatusGitPaseoSchema = CheckoutStatusCommonSchema.extend({
   isDirty: z.boolean(),
   baseRef: z.string(),
   aheadBehind: AheadBehindSchema.nullable(),
+  hasChangesFromBase: z.boolean().nullable().optional(),
   aheadOfOrigin: z.number().nullable(),
   behindOfOrigin: z.number().nullable(),
+  hasChangesFromOrigin: z.boolean().nullable().optional(),
   hasRemote: z.boolean(),
   remoteUrl: z.string().nullable(),
 });

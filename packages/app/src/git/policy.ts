@@ -72,9 +72,11 @@ export interface BuildGitActionsInput {
   baseRefAvailable: boolean;
   baseRefLabel: string;
   aheadCount: number;
+  hasChangesFromBase: boolean;
   behindBaseCount: number;
   aheadOfOrigin: number | null;
   behindOfOrigin: number | null;
+  hasChangesFromOrigin: boolean | null;
   shouldPromoteArchive: boolean;
   shipDefault: "merge" | "pr";
   runtime: Record<GitActionId, GitActionRuntimeState>;
@@ -337,7 +339,7 @@ function getPrimaryActionId(input: BuildGitActionsInput): GitActionId | null {
   if (input.shipDefault === "pr" && canUsePullRequestActionAsShipDefault(input)) {
     return "pr";
   }
-  if (!input.isOnBaseBranch && input.aheadCount > 0) {
+  if (!input.isOnBaseBranch && input.hasChangesFromBase) {
     return "merge-branch";
   }
   if (!input.isOnBaseBranch && canMergeFromBase(input)) {
@@ -519,11 +521,11 @@ function canPush(input: BuildGitActionsInput): boolean {
 
 function hasPushableCommits(input: BuildGitActionsInput): boolean {
   if ((input.aheadOfOrigin ?? 0) > 0) {
-    return true;
+    return input.hasChangesFromOrigin !== false;
   }
   // No-upstream Paseo worktrees are first-pushable: the daemon push sets upstream with `git push -u`.
   // Do not fold this into aheadOfOrigin; null also covers deleted/pruned upstream branches.
-  return input.isPaseoOwnedWorktree && input.aheadOfOrigin === null && input.aheadCount > 0;
+  return input.isPaseoOwnedWorktree && input.aheadOfOrigin === null && input.hasChangesFromBase;
 }
 
 function canMergeFromBase(input: BuildGitActionsInput): boolean {
@@ -542,7 +544,7 @@ function canUsePullRequestActionAsShipDefault(input: BuildGitActionsInput): bool
   if (input.hasPullRequest) {
     return input.pullRequestUrl !== null;
   }
-  return input.aheadCount > 0;
+  return input.hasChangesFromBase;
 }
 
 function canMergePr(input: BuildGitActionsInput): boolean {
@@ -554,7 +556,7 @@ function canMergePr(input: BuildGitActionsInput): boolean {
     !input.pullRequestIsDraft &&
     !input.pullRequestIsMerged &&
     input.pullRequestMergeable !== "CONFLICTING" &&
-    input.aheadCount > 0 &&
+    input.hasChangesFromBase &&
     !input.hasUncommittedChanges;
 
   if (!canMergeFromPullRequestStatus) {
@@ -663,7 +665,7 @@ function getCreatePrUnavailableMessage(input: BuildGitActionsInput): string | un
       noun: input.forgeChangeRequestNoun,
     });
   }
-  if (input.aheadCount === 0) {
+  if (!input.hasChangesFromBase) {
     return i18n.t("workspace.git.actions.unavailable.createPrNoCommits");
   }
   return undefined;
@@ -676,7 +678,7 @@ function getMergeBranchUnavailableMessage(input: BuildGitActionsInput): string |
   if (input.hasUncommittedChanges) {
     return i18n.t("workspace.git.actions.unavailable.mergeDirty");
   }
-  if (input.aheadCount === 0) {
+  if (!input.hasChangesFromBase) {
     return i18n.t("workspace.git.actions.unavailable.mergeNothing");
   }
   return undefined;
