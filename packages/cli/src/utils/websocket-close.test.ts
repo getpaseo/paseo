@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import type { AddressInfo, Socket } from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
 
-import { boundCloseHandshake } from "./websocket-close.js";
+import { boundCloseHandshake, CLOSE_HANDSHAKE_TIMEOUT_MS } from "./websocket-close.js";
 
 /**
  * `ws` waits 30s for a close frame to be answered before it drops the socket, so a peer
@@ -46,8 +46,8 @@ async function startServer(options: { answersClose: boolean }): Promise<string> 
   return `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
-async function connect(url: string): Promise<WebSocket> {
-  const socket = boundCloseHandshake(new WebSocket(url), BOUND_MS);
+async function connect(url: string, timeoutMs: number): Promise<WebSocket> {
+  const socket = boundCloseHandshake(new WebSocket(url), timeoutMs);
   sockets.push(socket);
   await new Promise<void>((resolve) => socket.once("open", resolve));
   return socket;
@@ -59,7 +59,7 @@ function whenClosed(socket: WebSocket): Promise<{ code: number }> {
 
 describe("boundCloseHandshake", () => {
   test("drops the socket when the peer never answers the close frame", async () => {
-    const socket = await connect(await startServer({ answersClose: false }));
+    const socket = await connect(await startServer({ answersClose: false }), BOUND_MS);
     const closed = whenClosed(socket);
 
     socket.close(1000, "Client closed");
@@ -70,7 +70,12 @@ describe("boundCloseHandshake", () => {
   }, 5000);
 
   test("completes the normal close handshake untouched", async () => {
-    const socket = await connect(await startServer({ answersClose: true }));
+    // Exercise the production deadline here. Reusing the deliberately tiny failure-test
+    // bound makes a healthy loopback handshake compete with routine CI scheduling jitter.
+    const socket = await connect(
+      await startServer({ answersClose: true }),
+      CLOSE_HANDSHAKE_TIMEOUT_MS,
+    );
     const closed = whenClosed(socket);
 
     socket.close(1000, "Client closed");
