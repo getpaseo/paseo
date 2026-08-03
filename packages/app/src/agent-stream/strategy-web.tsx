@@ -251,14 +251,17 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return value;
   };
   const lastKnownScrollTopRef = useRef(0);
-  const mouseScrollGestureRef = useRef<{
-    pointerId: number;
-    button: 0 | 1;
-    lastClientY: number;
-    startedInScrollbarGutter: boolean;
-    hasUpwardContentDragEvidence: boolean;
-    evidenceExpiryFrame: number | null;
-  } | null>(null);
+  const mouseScrollGestureRef = useRef<
+    | { kind: "scrollbar"; pointerId: number }
+    | {
+        kind: "autoscroll";
+        pointerId: number;
+        lastClientY: number;
+        hasUpwardEvidence: boolean;
+        evidenceExpiryFrame: number | null;
+      }
+    | null
+  >(null);
   const upwardInputEvidenceUntilRef = useRef(0);
   const lastTouchClientYRef = useRef<number | null>(null);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
@@ -523,7 +526,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, []);
 
   const clearMouseScrollGesture = useCallback(() => {
-    const evidenceExpiryFrame = mouseScrollGestureRef.current?.evidenceExpiryFrame;
+    const gesture = mouseScrollGestureRef.current;
+    const evidenceExpiryFrame = gesture?.kind === "autoscroll" ? gesture.evidenceExpiryFrame : null;
     if (evidenceExpiryFrame !== null && evidenceExpiryFrame !== undefined) {
       window.cancelAnimationFrame(evidenceExpiryFrame);
     }
@@ -675,8 +679,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       currentScrollTop > lastKnownScrollTopRef.current + USER_SCROLL_DELTA_EPSILON;
     const mouseGesture = mouseScrollGestureRef.current;
     const hasUpwardInputEvidence =
-      mouseGesture?.startedInScrollbarGutter === true ||
-      mouseGesture?.hasUpwardContentDragEvidence === true ||
+      mouseGesture?.kind === "scrollbar" ||
+      (mouseGesture?.kind === "autoscroll" && mouseGesture.hasUpwardEvidence) ||
       window.performance.now() < upwardInputEvidenceUntilRef.current;
 
     if (!followOutputRef.current && isAtBottom && scrolledDown && !isJumpSettling()) {
@@ -873,40 +877,33 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       ) {
         return;
       }
+      if (event.button === 0) {
+        if (isVerticalScrollbarGutterPress(event, scrollContainer)) {
+          mouseScrollGestureRef.current = { kind: "scrollbar", pointerId: event.pointerId };
+        }
+        return;
+      }
       mouseScrollGestureRef.current = {
+        kind: "autoscroll",
         pointerId: event.pointerId,
-        button: event.button,
         lastClientY: event.clientY,
-        startedInScrollbarGutter: isVerticalScrollbarGutterPress(event, scrollContainer),
-        hasUpwardContentDragEvidence: false,
+        hasUpwardEvidence: false,
         evidenceExpiryFrame: null,
       };
     };
     const handlePointerMove = (event: PointerEvent) => {
       const gesture = mouseScrollGestureRef.current;
-      if (!gesture || gesture.pointerId !== event.pointerId) {
+      if (!gesture || gesture.kind !== "autoscroll" || gesture.pointerId !== event.pointerId) {
         return;
       }
-      if (gesture.button === 0 && (event.buttons & 1) === 0) {
-        clearMouseScrollGesture();
-        return;
-      }
-      if (
-        !gesture.startedInScrollbarGutter &&
-        event.clientY < gesture.lastClientY - USER_SCROLL_DELTA_EPSILON
-      ) {
-        gesture.hasUpwardContentDragEvidence = true;
+      if (event.clientY < gesture.lastClientY - USER_SCROLL_DELTA_EPSILON) {
+        gesture.hasUpwardEvidence = true;
         if (gesture.evidenceExpiryFrame !== null) {
           window.cancelAnimationFrame(gesture.evidenceExpiryFrame);
         }
         gesture.evidenceExpiryFrame = window.requestAnimationFrame(() => {
           if (mouseScrollGestureRef.current === gesture) {
-            if (gesture.button === 1) {
-              mouseScrollGestureRef.current = null;
-            } else {
-              gesture.hasUpwardContentDragEvidence = false;
-              gesture.evidenceExpiryFrame = null;
-            }
+            mouseScrollGestureRef.current = null;
           }
         });
       }
@@ -914,7 +911,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     };
     const handlePointerEnd = (event: PointerEvent) => {
       const gesture = mouseScrollGestureRef.current;
-      if (gesture?.pointerId === event.pointerId && gesture.button === 0) {
+      if (gesture?.pointerId === event.pointerId && gesture.kind === "scrollbar") {
         clearMouseScrollGesture();
       }
     };
