@@ -348,6 +348,23 @@ export async function searchAndSelectBranchInPicker(page: Page, name: string): P
   await selectBranchInPicker(page, name);
 }
 
+// Ref picker rows are named for a user: "main, origin branch" is the upstream copy and
+// "main, local branch, 2 commits ahead of origin main" is the local one.
+export function startingRefRow(page: Page, accessibleName: string) {
+  return page.getByRole("button", { name: accessibleName, exact: true });
+}
+
+export async function expectStartingRefRows(page: Page, accessibleNames: string[]): Promise<void> {
+  for (const name of accessibleNames) {
+    await expect(startingRefRow(page, name)).toBeVisible({ timeout: 30_000 });
+  }
+}
+
+export async function captureStartingRefPicker(page: Page, screenshotPath: string): Promise<void> {
+  await expect(page.getByTestId("combobox-desktop-container")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("combobox-desktop-container").screenshot({ path: screenshotPath });
+}
+
 export async function selectGitHubPrInPicker(page: Page, number: number): Promise<void> {
   const prRow = page.getByTestId(`new-workspace-ref-picker-pr-${number}`);
   await expect(prRow).toBeVisible({ timeout: 30_000 });

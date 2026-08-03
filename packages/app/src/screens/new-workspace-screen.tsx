@@ -61,7 +61,6 @@ import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
-import { getForgePresentation } from "@/git/forge";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { generateMessageId } from "@/types/stream";
 import { toErrorMessage } from "@/utils/error-messages";
@@ -90,12 +89,14 @@ import {
   remapDraftCwdToWorkspace,
 } from "./new-workspace-fork-context";
 import {
-  branchPickerOptionId,
-  buildBranchPickerItems,
-  resolveCheckoutRequest,
+  buildPickerOptionData,
+  defaultBasePickerItem,
+  pickerItemLabel,
+  pickerItemToCheckoutRequest,
   type BranchPickerDetail,
   type PickerCheckoutRequest,
   type PickerItem,
+  type PickerOptionData,
 } from "./new-workspace-picker-item";
 import {
   clearPickerPrAttachmentForTargetChange,
@@ -169,12 +170,6 @@ interface NewWorkspaceScreenProps {
   draftId?: string;
 }
 
-interface PickerOptionData {
-  options: ComboboxOptionType[];
-  itemById: Map<string, PickerItem>;
-}
-
-const PR_OPTION_PREFIX = "github-pr:";
 const PROJECT_ICON_FALLBACK_FONT_SIZE = 10;
 // Stable reference so the keyboard-action handler doesn't re-register each render.
 const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.project.pick"];
@@ -477,10 +472,6 @@ function ProjectOptionItem({
   );
 }
 
-function prOptionId(number: number): string {
-  return `${PR_OPTION_PREFIX}${number}`;
-}
-
 function NewWorkspacePickerOption({
   option,
   selected,
@@ -592,55 +583,8 @@ function AddProjectPickerAction({ onPress }: { onPress: () => void }) {
   );
 }
 
-function formatPrLabel(item: Pick<ForgeSearchItem, "forge" | "number" | "title">): string {
-  const presentation = getForgePresentation(item.forge ?? "github");
-  return `${presentation.numberPrefix}${item.number} ${item.title}`;
-}
-
-function pickerItemLabel(item: PickerItem): string {
-  return item.kind === "branch" ? item.name : formatPrLabel(item.item);
-}
-
-function pickerItemTriggerLabel(item: PickerItem): string {
-  return item.kind === "branch" ? item.name : formatPrLabel(item.item);
-}
-
 function newWorkspaceHostOptionTestID(serverId: string): string {
   return `new-workspace-host-picker-option-${serverId}`;
-}
-
-function computePickerOptionData(
-  branchDetails: readonly BranchPickerDetail[],
-  prItems: ReadonlyArray<ForgeSearchItem>,
-): PickerOptionData {
-  const idMap = new Map<string, PickerItem>();
-
-  interface TimedOption {
-    option: ComboboxOptionType;
-    timestamp: number;
-  }
-  const timedOptions: TimedOption[] = [];
-
-  for (const branch of buildBranchPickerItems(branchDetails)) {
-    if (branch.kind !== "branch") continue;
-    const id = branchPickerOptionId(branch.refName);
-    const option = { id, label: branch.name };
-    idMap.set(id, branch);
-    timedOptions.push({ option, timestamp: branch.committerDate ?? 0 });
-  }
-
-  for (const pr of prItems) {
-    if (!pr.headRefName) continue;
-    const id = prOptionId(pr.number);
-    const option = { id, label: formatPrLabel(pr) };
-    idMap.set(id, { kind: "github-pr", item: pr });
-    const updatedAtMs = pr.updatedAt ? Date.parse(pr.updatedAt) : 0;
-    const timestamp = Number.isNaN(updatedAtMs) ? 0 : Math.floor(updatedAtMs / 1000);
-    timedOptions.push({ option, timestamp });
-  }
-
-  timedOptions.sort((a, b) => b.timestamp - a.timestamp);
-  return { options: timedOptions.map((t) => t.option), itemById: idMap };
 }
 
 function IsolationPickerTrigger({
@@ -1657,7 +1601,6 @@ export function NewWorkspaceScreen({
     cwd: selectedSourceDirectory ?? "",
   });
 
-  const currentBranch = checkoutStatus?.currentBranch ?? null;
   const worktreeSupport = selectedProject
     ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
     : "unsupported";
@@ -1711,25 +1654,23 @@ export function NewWorkspaceScreen({
     return githubPrSearchQuery.data?.items ?? [];
   }, [forgeSearchAuthenticated, githubPrSearchQuery.data?.items]);
 
-  const { options, itemById }: PickerOptionData = useMemo(
-    () => computePickerOptionData(branchDetails, prItems),
-    [branchDetails, prItems],
+  const baseItem = useMemo(
+    () => selectedItem ?? (checkoutStatus ? defaultBasePickerItem(checkoutStatus) : null),
+    [checkoutStatus, selectedItem],
+  );
+  const { options, itemById, selectedOptionId }: PickerOptionData = useMemo(
+    () =>
+      buildPickerOptionData({
+        branchDetails,
+        prItems,
+        baseItem,
+      }),
+    [baseItem, branchDetails, prItems],
   );
   const triggerLabel = useMemo(() => {
-    if (selectedItem) return pickerItemTriggerLabel(selectedItem);
-    return currentBranch ?? "main";
-  }, [currentBranch, selectedItem]);
-
-  const selectedOptionId = useMemo(() => {
-    if (!selectedItem) {
-      if (!currentBranch) return "";
-      const exactLocalId = branchPickerOptionId(`refs/heads/${currentBranch}`);
-      return itemById.has(exactLocalId) ? exactLocalId : branchPickerOptionId(currentBranch);
-    }
-    return selectedItem.kind === "branch"
-      ? branchPickerOptionId(selectedItem.refName)
-      : prOptionId(selectedItem.item.number);
-  }, [currentBranch, itemById, selectedItem]);
+    const displayItem = itemById.get(selectedOptionId);
+    return displayItem ? pickerItemLabel(displayItem) : "main";
+  }, [itemById, selectedOptionId]);
   const selectPickerItem = useCallback(
     (item: PickerItem) => {
       const nextAttachments = syncPickerPrAttachment({
@@ -1931,15 +1872,17 @@ export function NewWorkspaceScreen({
       }
       const connectedClient = withConnectedClient();
       const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
-      const checkoutRequest = createsWorktree
-        ? resolveCheckoutRequest(
-            selectedItem,
-            await ensureCheckoutStatus({
-              queryClient,
-              client: connectedClient,
-              serverId: selectedServerId,
-              cwd: selectedSourceDirectory,
-            }),
+      const checkoutStatusForCreate = createsWorktree
+        ? await ensureCheckoutStatus({
+            queryClient,
+            client: connectedClient,
+            serverId: selectedServerId,
+            cwd: selectedSourceDirectory,
+          })
+        : null;
+      const checkoutRequest = checkoutStatusForCreate
+        ? pickerItemToCheckoutRequest(
+            selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
           )
         : undefined;
       const normalizedWorkspace = supportsWorkspaceMultiplicity
