@@ -993,6 +993,7 @@ function NativeTerminalEmulator({
         {terminalGrid}
         <TerminalInput
           ref={inputRef}
+          isKeyboardVisible={keyboardInset > 0}
           onFocus={handleTerminalFocus}
           onInput={handleTerminalInput}
           onTerminalKey={handleNativeTerminalKey}

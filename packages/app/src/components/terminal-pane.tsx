@@ -842,9 +842,8 @@ export function TerminalPane({
 
     setIsKeyboardToggleVisible(true);
     emulatorRef.current?.showKeyboard();
-    requestTerminalFocus();
     requestTerminalReflow();
-  }, [isKeyboardToggleVisible, requestTerminalFocus, requestTerminalReflow]);
+  }, [isKeyboardToggleVisible, requestTerminalReflow]);
 
   const handleInputModeChange = useCallback((state: TerminalInputModeState) => {
     inputModeRef.current = state;

@@ -1,6 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import {
-  Keyboard,
   StyleSheet,
   TextInput,
   type NativeSyntheticEvent,
@@ -34,6 +33,7 @@ export interface TerminalInputHandle {
 }
 
 interface TerminalInputProps {
+  isKeyboardVisible: boolean;
   onFocus?: () => void;
   onInput?: (data: string) => void;
   onTerminalKey?: (key: NativeTerminalKey) => void;
@@ -120,10 +120,9 @@ export function createTerminalTextInputState(): TerminalTextInputState {
 }
 
 export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>(
-  function TerminalInput({ onFocus, onInput, onTerminalKey, style }, ref) {
+  function TerminalInput({ isKeyboardVisible, onFocus, onInput, onTerminalKey, style }, ref) {
     const inputRef = useRef<TextInput>(null);
     const isFocusedRef = useRef(false);
-    const isKeyboardRequestedRef = useRef(false);
     const pendingFocusFrameRef = useRef<number | null>(null);
     const inputState = useMemo(() => createTerminalTextInputState(), []);
     const inputStyle = useMemo(() => [styles.input, style], [style]);
@@ -155,13 +154,12 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
 
       const focusRequest = resolveTerminalInputFocusRequest({
         isInputFocused: isFocusedRef.current || input.isFocused(),
-        isKeyboardVisible: isKeyboardRequestedRef.current || Keyboard.isVisible(),
+        isKeyboardVisible,
       });
       if (focusRequest === "none") {
         return;
       }
 
-      isKeyboardRequestedRef.current = true;
       if (focusRequest === "focus") {
         input.focus();
         return;
@@ -174,13 +172,12 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
         pendingFocusFrameRef.current = null;
         inputRef.current?.focus();
       });
-    }, [clearPendingFocus, resetNativeInput]);
+    }, [clearPendingFocus, isKeyboardVisible, resetNativeInput]);
 
     const blurNativeInput = useCallback(() => {
       clearPendingFocus();
       inputRef.current?.blur();
       isFocusedRef.current = false;
-      isKeyboardRequestedRef.current = false;
       resetNativeInput();
     }, [clearPendingFocus, resetNativeInput]);
 
@@ -189,19 +186,6 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
     }, [showNativeKeyboard]);
 
     useEffect(() => clearPendingFocus, [clearPendingFocus]);
-
-    useEffect(() => {
-      const showSubscription = Keyboard.addListener("keyboardDidShow", () => {
-        isKeyboardRequestedRef.current = true;
-      });
-      const hideSubscription = Keyboard.addListener("keyboardDidHide", () => {
-        isKeyboardRequestedRef.current = false;
-      });
-      return () => {
-        showSubscription.remove();
-        hideSubscription.remove();
-      };
-    }, []);
 
     useImperativeHandle(
       ref,
