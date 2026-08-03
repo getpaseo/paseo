@@ -53,11 +53,22 @@ export function groupProviderAccounts<T extends { id: string }>(
   items: readonly T[],
   providers: Record<string, Record<string, unknown>> | undefined,
 ): T[] {
+  return groupProviderAccountsBy(items, (item) => resolveProviderAccountBaseId(item.id, providers));
+}
+
+/**
+ * Orders each provider account immediately after the base provider it extends.
+ * Accounts whose base is missing from the list keep their original order at the end.
+ */
+export function groupProviderAccountsBy<T extends { id: string }>(
+  items: readonly T[],
+  getBaseId: (item: T) => string | null | undefined,
+): T[] {
   const accountsByBase = new Map<string, T[]>();
   const accountIds = new Set<string>();
 
   for (const item of items) {
-    const baseProviderId = resolveProviderAccountBaseId(item.id, providers);
+    const baseProviderId = getBaseId(item);
     if (!baseProviderId) continue;
     accountIds.add(item.id);
     const accounts = accountsByBase.get(baseProviderId) ?? [];
@@ -266,7 +277,10 @@ export function buildProviderAccountConfigPatch(input: {
     return {
       replaceProviders: { [providerId]: providerConfig },
       ...(providerId !== input.originalProviderId
-        ? { removeProviders: [input.originalProviderId] }
+        ? {
+            removeProviders: [input.originalProviderId],
+            renameProviders: { [input.originalProviderId]: providerId },
+          }
         : {}),
     };
   }

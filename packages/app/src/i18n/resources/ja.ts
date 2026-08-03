@@ -2568,6 +2568,10 @@ export const ja: TranslationResources = {
           addVariable: "変数を追加",
           removeVariable: "変数を削除",
         },
+        warnings: {
+          renameUnsupported:
+            "このホストは既存のチャットを新しい ID に移行できません。ホストを更新するか元の ID に戻すまで、このアカウントを使うチャットは利用できません。",
+        },
         errors: {
           labelRequired: "名前を入力してください。",
           idRequired: "プロバイダー ID を入力してください。",

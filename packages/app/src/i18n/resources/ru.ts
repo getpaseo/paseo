@@ -2590,6 +2590,10 @@ export const ru: TranslationResources = {
           addVariable: "Добавить переменную",
           removeVariable: "Удалить переменную",
         },
+        warnings: {
+          renameUnsupported:
+            "Этот хост не может перенести существующие чаты на новый ID. Чаты, использующие эту учётную запись, будут недоступны, пока вы не обновите хост или не вернёте прежний ID.",
+        },
         errors: {
           labelRequired: "Введите название.",
           idRequired: "Введите ID провайдера.",

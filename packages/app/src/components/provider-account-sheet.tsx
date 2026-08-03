@@ -37,6 +37,8 @@ export interface ProviderAccountSheetProps {
     providerId: string;
     config: MutableDaemonConfig["providers"][string];
   };
+  /** Daemons without this migrate nothing on rename, so the sheet warns before you save. */
+  supportsProviderConfigRename?: boolean;
   onClose: () => void;
   /** Resolves true when the account was written; the sheet then closes. */
   onSave: (input: ProviderAccountSaveInput) => Promise<boolean>;
@@ -53,6 +55,7 @@ function OpenProviderAccountSheet({
   baseProviderLabel,
   existingProviderIds,
   account,
+  supportsProviderConfigRename = false,
   onClose,
   onSave,
 }: ProviderAccountSheetProps): ReactElement {
@@ -90,6 +93,13 @@ function OpenProviderAccountSheet({
   const handleSubmitPress = useCallback(() => {
     void handleSubmit();
   }, [handleSubmit]);
+
+  // Renaming an account on a daemon that can't migrate agents leaves those chats orphaned.
+  const showRenameWarning =
+    !supportsProviderConfigRename &&
+    account !== undefined &&
+    state.providerId.trim().length > 0 &&
+    state.providerId.trim() !== account.providerId;
 
   const header = useMemo<SheetHeader>(
     () => ({
@@ -184,6 +194,11 @@ function OpenProviderAccountSheet({
           editable={!state.isSubmitting}
         />
       </Field>
+      {showRenameWarning ? (
+        <Text style={styles.renameWarning} testID="provider-account-id-rename-warning">
+          {t("settings.providers.account.warnings.renameUnsupported")}
+        </Text>
+      ) : null}
 
       <Field
         label={t("settings.providers.account.fields.description")}
@@ -378,6 +393,12 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.borderRadius.lg,
+  },
+  renameWarning: {
+    color: theme.colors.palette.amber[500],
+    fontSize: theme.fontSize.xs,
+    lineHeight: Math.round(theme.fontSize.xs * 1.4),
+    marginTop: -theme.spacing[1],
   },
   envRowError: {
     color: theme.colors.palette.red[300],

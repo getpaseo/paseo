@@ -273,6 +273,38 @@ export class AgentStorage {
     await this.upsert({ ...record, title });
   }
 
+  /**
+   * Rewrites every stored record that points at `fromProviderId` so it points at
+   * `toProviderId`. Used when a provider account is renamed: without it the records keep
+   * referencing an id that no longer exists and the agents drop out of listings.
+   * Returns the ids of the migrated agents.
+   */
+  async renameProvider(fromProviderId: string, toProviderId: string): Promise<string[]> {
+    await this.load();
+    const candidates = Array.from(this.cache.values())
+      .filter((record) => recordReferencesProvider(record, fromProviderId))
+      .map((record) => record.id);
+
+    const migrated: string[] = [];
+    for (const agentId of candidates) {
+      await this.waitForPendingWrite(agentId);
+      const record = this.cache.get(agentId);
+      if (!record || !recordReferencesProvider(record, fromProviderId)) {
+        continue;
+      }
+      await this.upsert(withRenamedProvider(record, fromProviderId, toProviderId));
+      migrated.push(agentId);
+    }
+
+    if (migrated.length > 0) {
+      this.logger.info(
+        { fromProviderId, toProviderId, agentCount: migrated.length },
+        "Migrated agent records to renamed provider",
+      );
+    }
+    return migrated;
+  }
+
   async flush(): Promise<void> {
     await this.load().catch(() => undefined);
     const writes = Array.from(this.pendingWrites.values());
@@ -425,6 +457,32 @@ export class AgentStorage {
   private async waitForPendingWrite(agentId: string): Promise<void> {
     await (this.pendingWrites.get(agentId) ?? Promise.resolve()).catch(() => undefined);
   }
+}
+
+function recordReferencesProvider(record: StoredAgentRecord, providerId: string): boolean {
+  return (
+    record.provider === providerId ||
+    record.runtimeInfo?.provider === providerId ||
+    record.persistence?.provider === providerId
+  );
+}
+
+// The provider id is stored in three places on a record; a rename has to move all of them.
+function withRenamedProvider(
+  record: StoredAgentRecord,
+  fromProviderId: string,
+  toProviderId: string,
+): StoredAgentRecord {
+  return {
+    ...record,
+    ...(record.provider === fromProviderId ? { provider: toProviderId } : {}),
+    ...(record.runtimeInfo?.provider === fromProviderId
+      ? { runtimeInfo: { ...record.runtimeInfo, provider: toProviderId } }
+      : {}),
+    ...(record.persistence?.provider === fromProviderId
+      ? { persistence: { ...record.persistence, provider: toProviderId } }
+      : {}),
+  };
 }
 
 function projectDirNameFromCwd(cwd: string): string {

@@ -2512,6 +2512,10 @@ export const zhCN: TranslationResources = {
           addVariable: "添加变量",
           removeVariable: "移除变量",
         },
+        warnings: {
+          renameUnsupported:
+            "此主机无法将现有对话迁移到新 ID。在你更新主机或恢复原 ID 之前，使用该账户的对话将不可用。",
+        },
         errors: {
           labelRequired: "请输入名称。",
           idRequired: "请输入 Provider ID。",

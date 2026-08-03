@@ -2543,6 +2543,10 @@ export const ar: TranslationResources = {
           addVariable: "إضافة متغير",
           removeVariable: "إزالة المتغير",
         },
+        warnings: {
+          renameUnsupported:
+            "لا يستطيع هذا المضيف نقل المحادثات الحالية إلى المعرّف الجديد. ستصبح المحادثات التي تستخدم هذا الحساب غير متاحة حتى تحدّث المضيف أو تستعيد المعرّف السابق.",
+        },
         errors: {
           labelRequired: "أدخل اسمًا.",
           idRequired: "أدخل معرّف المزود.",

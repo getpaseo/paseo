@@ -2652,6 +2652,10 @@ export const en = {
           addVariable: "Add variable",
           removeVariable: "Remove variable",
         },
+        warnings: {
+          renameUnsupported:
+            "This host can't move existing chats to the new ID. Chats using this account will be unavailable until you update the host or restore the old ID.",
+        },
         errors: {
           labelRequired: "Enter a name.",
           idRequired: "Enter a provider ID.",

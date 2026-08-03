@@ -3,6 +3,7 @@ import {
   canAddProviderAccount,
   deriveProviderAccountId,
   groupProviderAccounts,
+  groupProviderAccountsBy,
   openProviderAccountForm,
   resolveProviderAccountBaseId,
   type ProviderAccountFormSnapshot,
@@ -69,6 +70,20 @@ describe("provider account presentation", () => {
       "copilot",
       "catalog",
     ]);
+  });
+
+  it("groups by an explicit base accessor", () => {
+    const items = [
+      { id: "claude" },
+      { id: "codex" },
+      { id: "claude-work", baseProviderId: "claude" },
+      { id: "orphan", baseProviderId: "missing" },
+    ];
+    expect(
+      groupProviderAccountsBy(items, (item) =>
+        "baseProviderId" in item ? item.baseProviderId : null,
+      ).map((item) => item.id),
+    ).toEqual(["claude", "claude-work", "codex", "orphan"]);
   });
 });
 
@@ -279,6 +294,7 @@ describe("provider account form model", () => {
         "claude-company": { extends: "claude", label: "Work", env: {} },
       },
       removeProviders: ["claude-work"],
+      renameProviders: { "claude-work": "claude-company" },
     });
   });
 });

@@ -2607,6 +2607,10 @@ export const fr: TranslationResources = {
           addVariable: "Ajouter une variable",
           removeVariable: "Supprimer la variable",
         },
+        warnings: {
+          renameUnsupported:
+            "Cet hôte ne peut pas déplacer les conversations existantes vers le nouvel ID. Les conversations utilisant ce compte seront indisponibles tant que vous n'aurez pas mis à jour l'hôte ou restauré l'ancien ID.",
+        },
         errors: {
           labelRequired: "Saisissez un nom.",
           idRequired: "Saisissez un ID de fournisseur.",

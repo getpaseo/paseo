@@ -2584,6 +2584,10 @@ export const ptBR: TranslationResources = {
           addVariable: "Adicionar variável",
           removeVariable: "Remover variável",
         },
+        warnings: {
+          renameUnsupported:
+            "Este host não consegue mover as conversas existentes para o novo ID. As conversas que usam esta conta ficarão indisponíveis até você atualizar o host ou restaurar o ID anterior.",
+        },
         errors: {
           labelRequired: "Digite um nome.",
           idRequired: "Digite um ID de provedor.",

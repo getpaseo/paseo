@@ -323,6 +323,39 @@ describe("AgentStorage", () => {
     );
   });
 
+  test("renameProvider migrates every provider reference and survives reload", async () => {
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "agent-renamed",
+        provider: "claude-work",
+        persistence: { provider: "claude-work", sessionId: "session-abc" },
+      }),
+    );
+    await storage.applySnapshot(
+      createManagedAgent({ id: "agent-untouched", provider: "claude-personal" }),
+    );
+
+    const migrated = await storage.renameProvider("claude-work", "claude-job");
+    expect(migrated).toEqual(["agent-renamed"]);
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    const record = await reloaded.get("agent-renamed");
+    expect(record?.provider).toBe("claude-job");
+    expect(record?.runtimeInfo?.provider).toBe("claude-job");
+    expect(record?.persistence?.provider).toBe("claude-job");
+
+    const untouched = await reloaded.get("agent-untouched");
+    expect(untouched?.provider).toBe("claude-personal");
+    expect(untouched?.runtimeInfo?.provider).toBe("claude-personal");
+  });
+
+  test("renameProvider is a no-op when no record references the old provider", async () => {
+    await storage.applySnapshot(createManagedAgent({ id: "agent-1", provider: "claude" }));
+
+    expect(await storage.renameProvider("claude-work", "claude-job")).toEqual([]);
+    expect((await storage.get("agent-1"))?.provider).toBe("claude");
+  });
+
   test("applySnapshot accepts explicit title overrides", async () => {
     const agentId = "agent-override";
     await storage.applySnapshot(createManagedAgent({ id: agentId }), { title: "Provided Title" });
