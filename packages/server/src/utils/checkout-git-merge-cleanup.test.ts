@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { isPlatform } from "../test-utils/platform.js";
 
 type GitFailureMode =
   | "none"
@@ -35,33 +36,39 @@ function resolveRealGitPath(): string {
   throw new Error("Unable to find Git for merge cleanup tests");
 }
 
-const realGitPath = resolveRealGitPath();
+// Resolved lazily so module collection cannot throw on platforms (Windows)
+// where these POSIX shell-shim tests are skipped.
+let cachedRealGitPath: string | null = null;
+function realGitPath(): string {
+  cachedRealGitPath ??= resolveRealGitPath();
+  return cachedRealGitPath;
+}
 
 function createMergeRepository(conflicting: boolean): string {
   const repoDir = mkdtempSync(join(tmpdir(), "checkout-merge-cleanup-"));
-  execFileSync(realGitPath, ["init", "-b", "main"], { cwd: repoDir });
-  execFileSync(realGitPath, ["config", "user.email", "test@example.com"], { cwd: repoDir });
-  execFileSync(realGitPath, ["config", "user.name", "Test"], { cwd: repoDir });
-  execFileSync(realGitPath, ["config", "commit.gpgsign", "false"], { cwd: repoDir });
+  execFileSync(realGitPath(), ["init", "-b", "main"], { cwd: repoDir });
+  execFileSync(realGitPath(), ["config", "user.email", "test@example.com"], { cwd: repoDir });
+  execFileSync(realGitPath(), ["config", "user.name", "Test"], { cwd: repoDir });
+  execFileSync(realGitPath(), ["config", "commit.gpgsign", "false"], { cwd: repoDir });
   writeFileSync(join(repoDir, "base.txt"), "base\n");
   if (conflicting) {
     writeFileSync(join(repoDir, "conflict.txt"), "base\n");
   }
-  execFileSync(realGitPath, ["add", "."], { cwd: repoDir });
-  execFileSync(realGitPath, ["commit", "-m", "base"], { cwd: repoDir });
-  execFileSync(realGitPath, ["checkout", "-b", "feature"], { cwd: repoDir });
+  execFileSync(realGitPath(), ["add", "."], { cwd: repoDir });
+  execFileSync(realGitPath(), ["commit", "-m", "base"], { cwd: repoDir });
+  execFileSync(realGitPath(), ["checkout", "-b", "feature"], { cwd: repoDir });
   if (conflicting) {
     writeFileSync(join(repoDir, "conflict.txt"), "feature\n");
-    execFileSync(realGitPath, ["commit", "-am", "feature"], { cwd: repoDir });
-    execFileSync(realGitPath, ["checkout", "main"], { cwd: repoDir });
+    execFileSync(realGitPath(), ["commit", "-am", "feature"], { cwd: repoDir });
+    execFileSync(realGitPath(), ["checkout", "main"], { cwd: repoDir });
     writeFileSync(join(repoDir, "conflict.txt"), "main\n");
-    execFileSync(realGitPath, ["commit", "-am", "main"], { cwd: repoDir });
+    execFileSync(realGitPath(), ["commit", "-am", "main"], { cwd: repoDir });
   } else {
     writeFileSync(join(repoDir, "feature.txt"), "feature\n");
-    execFileSync(realGitPath, ["add", "feature.txt"], { cwd: repoDir });
-    execFileSync(realGitPath, ["commit", "-m", "feature"], { cwd: repoDir });
+    execFileSync(realGitPath(), ["add", "feature.txt"], { cwd: repoDir });
+    execFileSync(realGitPath(), ["commit", "-m", "feature"], { cwd: repoDir });
   }
-  execFileSync(realGitPath, ["checkout", "feature"], { cwd: repoDir });
+  execFileSync(realGitPath(), ["checkout", "feature"], { cwd: repoDir });
   return repoDir;
 }
 
@@ -70,7 +77,7 @@ function createMergeRepository(conflicting: boolean): string {
 function installGitFailureWrapper(mode: GitFailureMode): string {
   const binDir = mkdtempSync(join(tmpdir(), "checkout-git-wrapper-"));
   const wrapperPath = join(binDir, "git");
-  const quotedGitPath = realGitPath.replaceAll("'", "'\\''");
+  const quotedGitPath = realGitPath().replaceAll("'", "'\\''");
   writeFileSync(
     wrapperPath,
     `#!/bin/sh
@@ -114,18 +121,18 @@ exec '${quotedGitPath}' "$@"
 }
 
 function readBranch(repoDir: string): string {
-  return execFileSync(realGitPath, ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoDir })
+  return execFileSync(realGitPath(), ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoDir })
     .toString()
     .trim();
 }
 
 function readStatus(repoDir: string): string {
-  return execFileSync(realGitPath, ["status", "--porcelain"], { cwd: repoDir }).toString().trim();
+  return execFileSync(realGitPath(), ["status", "--porcelain"], { cwd: repoDir }).toString().trim();
 }
 
 function hasMergeHead(repoDir: string): boolean {
   try {
-    execFileSync(realGitPath, ["rev-parse", "-q", "--verify", "MERGE_HEAD"], { cwd: repoDir });
+    execFileSync(realGitPath(), ["rev-parse", "-q", "--verify", "MERGE_HEAD"], { cwd: repoDir });
     return true;
   } catch {
     return false;
@@ -170,7 +177,8 @@ async function withMergeRepository(
 
 const TEST_TIMEOUT = 30_000;
 
-describe("checkout merge cleanup", () => {
+// The failure shims are POSIX shell scripts, so these tests are POSIX-only.
+describe.skipIf(isPlatform("win32"))("checkout merge cleanup", () => {
   afterEach(() => {
     vi.resetModules();
   });
@@ -244,8 +252,12 @@ describe("checkout merge cleanup", () => {
   );
 
   it(
-    "types cleanup failure after a generic merge failure",
+    "preserves the ordinary merge error when cleanup is proven despite an abort failure",
     async () => {
+      // The merge fails before any merge state exists, so the follow-up
+      // `merge --abort` also fails — but verification proves the checkout is
+      // clean, so the original error must survive with the abort failure kept
+      // only as diagnostic context.
       await withMergeRepository(
         { conflicting: false, failureMode: "generic-cleanup" },
         async (repoDir) => {
@@ -255,31 +267,25 @@ describe("checkout merge cleanup", () => {
 
           const failure = await captureFailure(mergeToBase(repoDir, { baseRef: "main" }));
 
-          expect(failure).toBeInstanceOf(MergeCleanupError);
+          expect(failure).toBeInstanceOf(AggregateError);
+          expect(failure).not.toBeInstanceOf(MergeCleanupError);
           expect(failure).not.toBeInstanceOf(MergeConflictError);
-          if (!(failure instanceof MergeCleanupError)) throw failure;
-          expect(failure.conflictFiles).toEqual([]);
-          expect(failure.operationErrors).toEqual([
+          if (!(failure instanceof AggregateError)) throw failure;
+          expect(failure.message).toContain("diagnostic or cleanup operation(s) also failed");
+          expect(failure.errors).toEqual([
             expect.objectContaining({ message: expect.stringContaining("generic merge blocked") }),
-          ]);
-          expect(failure.diagnosticErrors).toEqual([]);
-          expect(failure.cleanupErrors).toEqual([
             expect.objectContaining({
               message: expect.stringContaining("generic cleanup blocked"),
             }),
           ]);
-          expect(failure.errors).toEqual([
-            ...failure.operationErrors,
-            ...failure.diagnosticErrors,
-            ...failure.cleanupErrors,
-          ]);
-          expect(failure.cause).toBe(failure.operationErrors[0]);
+          expect(failure.cause).toBe(failure.errors[0]);
           expect(toCheckoutError(failure)).toEqual({
             code: "UNKNOWN",
-            message: expect.stringContaining("checkout may require manual recovery"),
+            message: expect.stringContaining("diagnostic or cleanup operation(s) also failed"),
           });
           expect(readBranch(repoDir)).toBe("feature");
           expect(readStatus(repoDir)).toBe("");
+          expect(hasMergeHead(repoDir)).toBe(false);
         },
       );
     },
@@ -334,7 +340,7 @@ describe("checkout merge cleanup", () => {
     async () => {
       await withMergeRepository({ conflicting: true, failureMode: "none" }, async (repoDir) => {
         writeFileSync(join(repoDir, "staged.txt"), "staged\n");
-        execFileSync(realGitPath, ["add", "staged.txt"], { cwd: repoDir });
+        execFileSync(realGitPath(), ["add", "staged.txt"], { cwd: repoDir });
         const { mergeToBase } = await import("./checkout-git.js");
 
         await expect(mergeToBase(repoDir, { baseRef: "main", mode: "squash" })).rejects.toThrow(

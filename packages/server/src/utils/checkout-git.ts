@@ -3442,18 +3442,25 @@ async function verifyMergeCleanup(cwd: string): Promise<unknown[]> {
   return errors;
 }
 
-async function cleanupFailedMerge(cwd: string, mode: "merge" | "squash"): Promise<unknown[]> {
-  const errors: unknown[] = [];
+interface MergeCleanupOutcome {
+  commandErrors: unknown[];
+  verificationErrors: unknown[];
+}
+
+async function cleanupFailedMerge(
+  cwd: string,
+  mode: "merge" | "squash",
+): Promise<MergeCleanupOutcome> {
+  const commandErrors: unknown[] = [];
   try {
     // A failed squash merge leaves conflicted index entries without MERGE_HEAD,
     // so `merge --abort` cannot clean it; `reset --merge` can.
     const cleanupArgs = mode === "squash" ? ["reset", "--merge", "HEAD"] : ["merge", "--abort"];
     await runGitCommand(cleanupArgs, { cwd, timeout: 120_000 });
   } catch (error) {
-    errors.push(error);
+    commandErrors.push(error);
   }
-  errors.push(...(await verifyMergeCleanup(cwd)));
-  return errors;
+  return { commandErrors, verificationErrors: await verifyMergeCleanup(cwd) };
 }
 
 async function handleFailedMerge(input: HandleFailedMergeInput): Promise<never> {
@@ -3463,20 +3470,23 @@ async function handleFailedMerge(input: HandleFailedMergeInput): Promise<never> 
       ? `${error.message}\n${getErrorStderr(error)}\n${getErrorStdout(error)}`
       : String(error);
   const diagnostics = await collectMergeConflictDiagnostics(cwd);
-  const cleanupErrors = await cleanupFailedMerge(cwd, mode);
+  const cleanup = await cleanupFailedMerge(cwd, mode);
 
   const conflictDetected =
     diagnostics.conflictFiles.length > 0 || /CONFLICT|Automatic merge failed/i.test(errorDetails);
-  if (cleanupErrors.length > 0) {
+  if (cleanup.verificationErrors.length > 0) {
     throw new MergeCleanupError({
       baseRef,
       currentBranch,
       conflictFiles: diagnostics.conflictFiles,
       diagnosticErrors: diagnostics.errors,
-      cleanupErrors,
+      cleanupErrors: [...cleanup.commandErrors, ...cleanup.verificationErrors],
       operationErrors: [error],
     });
   }
+  // Verification proved MERGE_HEAD absent and the index free of unmerged
+  // entries, so a failed abort/reset command (e.g. no merge was ever in
+  // progress) is diagnostic context, not a cleanup failure.
   if (conflictDetected) {
     if (direction === "to-base") {
       throw new MergeConflictError({
@@ -3492,7 +3502,7 @@ async function handleFailedMerge(input: HandleFailedMergeInput): Promise<never> 
     });
   }
 
-  const relatedErrors = diagnostics.errors;
+  const relatedErrors = [...diagnostics.errors, ...cleanup.commandErrors];
   if (relatedErrors.length > 0) {
     throw new AggregateError(
       [error, ...relatedErrors],
