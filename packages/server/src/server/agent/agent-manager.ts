@@ -1089,6 +1089,13 @@ export class AgentManager {
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
+    if (
+      Object.keys(providerLaunchConfig.mcpServers ?? {}).length > 0 &&
+      session.capabilities.supportsMcpServers !== true
+    ) {
+      await this.closeUnregisteredSession(session);
+      throw new Error(`Provider '${storedConfig.provider}' does not support MCP servers`);
+    }
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options.labels,
       initialTitle: options.initialTitle,
