@@ -24,10 +24,11 @@ export interface ProjectHostEntry {
   workspaces: WorkspaceSummary[];
   gitRuntime?: WorkspaceDescriptor["gitRuntime"];
   githubRuntime?: WorkspaceDescriptor["githubRuntime"];
+  customIconRevision?: string | null;
 }
 
 export interface ProjectSummary {
-  projectKey: string;
+  viewKey: string;
   projectName: string;
   projectCustomName?: string | null;
   hosts: ProjectHostEntry[];
@@ -85,13 +86,14 @@ interface HostGroup {
   serverName: string;
   isOnline: boolean;
   workspaces: WorkspaceDescriptor[];
+  customIconRevision?: string | null;
   // Repo root for a project parent that has no workspaces yet. Without it the
   // host's repoRoot resolves to "" and the project reads as non-editable.
   fallbackRepoRoot: string;
 }
 
 interface ProjectGroup {
-  projectKey: string;
+  viewKey: string;
   projectName: string;
   projectCustomName: string | null;
   hostsByServerId: Map<string, HostGroup>;
@@ -99,10 +101,10 @@ interface ProjectGroup {
 
 function findProjectMetadata(
   host: ProjectHost,
-  projectKey: string,
+  projectId: string,
 ): { customName: string | null; displayName: string } | null {
   for (const project of host.projects) {
-    if (project.projectId === projectKey) {
+    if (project.projectId === projectId) {
       return {
         customName: project.projectCustomName ?? null,
         displayName: project.projectDisplayName,
@@ -156,6 +158,7 @@ function toHostEntry(group: HostGroup): ProjectHostEntry {
     workspaces: group.workspaces.map(toWorkspaceSummary),
     gitRuntime: canonical?.gitRuntime,
     githubRuntime: canonical?.githubRuntime,
+    customIconRevision: canonical?.projectCustomIconRevision ?? group.customIconRevision,
   };
 }
 
@@ -172,7 +175,7 @@ function toProjectSummary(draft: ProjectGroup): ProjectSummary {
   const totalWorkspaceCount = hosts.reduce((sum, host) => sum + host.workspaceCount, 0);
   const onlineHostCount = hosts.filter((host) => host.isOnline).length;
   return {
-    projectKey: draft.projectKey,
+    viewKey: draft.viewKey,
     projectName: draft.projectName,
     projectCustomName: draft.projectCustomName,
     hosts,
@@ -196,15 +199,15 @@ function addHostProjects(
     if (!placement) continue;
     const projectId = placement.projectId;
     const customName = findProjectMetadata(host, projectId);
-    let group = groups.get(hostProject.projectKey);
+    let group = groups.get(hostProject.viewKey);
     if (!group) {
       group = {
-        projectKey: hostProject.projectKey,
+        viewKey: hostProject.viewKey,
         projectName: customName?.displayName ?? hostProject.projectName,
         projectCustomName: customName?.customName ?? null,
         hostsByServerId: new Map(),
       };
-      groups.set(hostProject.projectKey, group);
+      groups.set(hostProject.viewKey, group);
     } else if (customName?.customName && !group.projectCustomName) {
       group.projectCustomName = customName.customName;
       group.projectName = customName.displayName;
@@ -219,6 +222,7 @@ function addHostProjects(
         serverName: host.serverName,
         isOnline: host.isOnline,
         workspaces: [],
+        customIconRevision: placement.customIconRevision,
         fallbackRepoRoot: repoRootByProjectId.get(projectId) ?? "",
       });
     }
@@ -230,16 +234,16 @@ function attachHostWorkspaces(
   host: ProjectHost,
   hostProjects: HostProjectListItem[],
 ): void {
-  const projectKeyByProjectId = new Map(
+  const projectViewKeyByProjectId = new Map(
     hostProjects.flatMap((project) =>
       project.hosts
         .filter((placement) => placement.serverId === host.serverId && placement.projectId)
-        .map((placement) => [placement.projectId!, project.projectKey] as const),
+        .map((placement) => [placement.projectId!, project.viewKey] as const),
     ),
   );
 
   for (const workspace of host.workspaces) {
-    const key = projectKeyByProjectId.get(workspace.projectId);
+    const key = projectViewKeyByProjectId.get(workspace.projectId);
     if (key) groups.get(key)?.hostsByServerId.get(host.serverId)?.workspaces.push(workspace);
   }
 }
@@ -262,7 +266,7 @@ export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
     if (name !== 0) {
       return name;
     }
-    return left.projectKey.localeCompare(right.projectKey);
+    return left.viewKey.localeCompare(right.viewKey);
   });
 
   return { projects };

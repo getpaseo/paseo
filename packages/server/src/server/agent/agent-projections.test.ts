@@ -79,6 +79,8 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     currentModeId: "plan",
     pendingPermissions: pendingPermissionsOverride ?? new Map<string, AgentPermissionRequest>(),
     activeForegroundTurnId: activeForegroundTurnIdValue,
+    activeTurnId: activeForegroundTurnIdValue,
+    activeTurnStartedAt: lifecycle === "running" ? new Date("2025-01-01T00:00:01.000Z") : null,
     foregroundTurnWaiters: new Set(),
     unsubscribeSession: null,
     timeline: [],
@@ -104,6 +106,13 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     pendingPermissions: agent.pendingPermissions,
   };
 }
+
+it("projects the daemon-owned active turn identity", () => {
+  expect(toAgentPayload(createManagedAgent({ lifecycle: "running" })).activeTurn).toEqual({
+    turnId: "test-turn-id",
+    startedAt: "2025-01-01T00:00:01.000Z",
+  });
+});
 
 function createPermission(overrides: Partial<AgentPermissionRequest> = {}): AgentPermissionRequest {
   const base: AgentPermissionRequest = {

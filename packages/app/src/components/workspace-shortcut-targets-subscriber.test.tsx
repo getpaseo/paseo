@@ -16,6 +16,7 @@ import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import type { HostProfile } from "@/types/host-connection";
 import { WorkspaceShortcutTargetsSubscriber } from "./workspace-shortcut-targets-subscriber";
 import { SidebarModelProvider } from "./sidebar/sidebar-model";
+import { defaultHostAppearance } from "@/hosts/appearance";
 
 vi.hoisted(() => {
   (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
@@ -51,6 +52,7 @@ function hostProfile(serverId = "srv"): HostProfile {
   return {
     serverId,
     label: "Shortcut Host",
+    appearance: defaultHostAppearance(),
     lifecycle: {},
     connections: [],
     preferredConnectionId: null,

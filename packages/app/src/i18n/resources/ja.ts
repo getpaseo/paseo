@@ -64,6 +64,16 @@ export const ja: TranslationResources = {
       home: "ホーム",
       modelGroupLabel: "モデル",
       modelSearchKeywords: "モデルを切り替え モデルを変更 モデルを設定 モデルを選択",
+      thinkingGroupLabel: "思考",
+      thinkingSearchKeywords: "推論 思考レベル 考える",
+      modeGroupLabel: "モード",
+      modeSearchKeywords: "アクセス 権限 承認 モード",
+      planModeGroupLabel: "プランモード",
+      planModeSearchKeywords: "プラン 計画 プランモード",
+      fastModeGroupLabel: "高速",
+      fastModeSearchKeywords: "高速 速度 低遅延",
+      settingOn: "オン",
+      settingOff: "オフ",
     },
   },
   composer: {
@@ -102,6 +112,7 @@ export const ja: TranslationResources = {
     },
     attachments: {
       addImage: "画像を追加",
+      pasteImage: "画像を貼り付け",
       addFile: "ファイルをアップロード",
       addIssueOrPr: "イシューまたはPRを追加",
       addIssueOrPr_mr: "イシューまたはMRを追加",
@@ -127,6 +138,8 @@ export const ja: TranslationResources = {
       initialPromptRequired: "初期プロンプトが必要です",
       alreadyLoading: "すでに読み込み中です",
       uploadFailed: "ファイルのアップロードに失敗しました",
+      noClipboardImage: "クリップボードに画像がありません",
+      pasteImageFailed: "画像を貼り付けられませんでした",
       fileTooLarge: "{{fileName}}が大きすぎます（最大{{size}}）",
     },
     clientCommands: {
@@ -177,6 +190,7 @@ export const ja: TranslationResources = {
   agentStream: {
     empty: "このエージェントとチャットを始めましょう...",
     scrollToBottom: "下にスクロール",
+    historyLoadFailed: "エージェントの履歴を読み込めませんでした",
     permission: {
       plan: "プラン",
       required: "権限が必要です",
@@ -1173,6 +1187,7 @@ export const ja: TranslationResources = {
         installFailed: "オーケストレーションスキルをインストールできません。",
         updateFailed: "オーケストレーションスキルを更新できません。",
         uninstallFailed: "オーケストレーションスキルをアンインストールできません。",
+        saveSelectionFailed: "オーケストレーションスキルの選択を保存できません。",
       },
     },
   },
@@ -1427,9 +1442,21 @@ export const ja: TranslationResources = {
       failedToLoadOffer: "ペアリングオファーの読み込みに失敗しました。",
       relayDisabled:
         "リレーが有効になっていません。デバイスをペアリングするにはリレーを有効にしてください。",
+      enableTitle: "リレーを有効にしますか？",
+      enableDescription:
+        "リレーを使うと、このデバイスからどこでも接続できます。ペアリング通信はエンドツーエンドで暗号化されます。",
+      relayDocs: "リレーの仕組み",
+      relayDocsAccessibility: "Paseo リレーの仕組みを読む",
+      enableRelay: "リレーを有効にする",
+      enablingRelay: "有効化中...",
+      notNow: "今はしない",
+      directConnectionHint:
+        "リレーを使わない場合は、TCP、Tailscale、または別の VPN で直接接続してください。QR コードは作成されません。",
+      updateRequired: "Paseo Desktop からリレーを有効にするにはホストを更新してください。",
       unavailable: "ペアリングオファーが利用できません。",
       hint: "スマートフォンのPaseoでこのQRコードをスキャンするか、以下のリンクをコピーしてください。",
       qrUnavailable: "QRコードが利用できません。",
+      qrAccessibility: "ペアリング QR コード",
       retry: "再試行",
       copy: "コピー",
       copied: "コピーしました",
@@ -1507,7 +1534,9 @@ export const ja: TranslationResources = {
         cursor: "{{line}} 行、{{column}} 列",
         preview: "プレビュー",
         source: "ソース",
-        unavailableTitle: "ディスク上のファイルを利用できません",
+        deletedTitle: "ファイルはディスク上から削除されました",
+        checkFailedTitle: "ディスク上のファイルを確認できませんでした",
+        preservedDescription: "開いているコピーは保持されています。",
         conflictDescription: "ローカルの内容は保持されています。残すバージョンを選択してください。",
         overwrite: "上書き",
         reload: "再読み込み",
@@ -1624,6 +1653,7 @@ export const ja: TranslationResources = {
       vimHint: "Web とデスクトップのソースファイルに適用されます。",
     },
     hostSections: {
+      projects: "プロジェクト",
       connections: "接続",
       agents: "エージェント",
       workspaces: "ワークスペース",
@@ -1767,6 +1797,10 @@ export const ja: TranslationResources = {
       detailLevel: {
         title: "詳細レベル",
       },
+      chatOutline: {
+        title: "チャットのアウトライン",
+        description: "プロンプト間を移動するためのアウトラインを表示します",
+      },
       fonts: {
         title: "フォント",
         systemDefault: "システムデフォルト",
@@ -1879,6 +1913,16 @@ export const ja: TranslationResources = {
         uninstallTitle: "Paseoスキルをアンインストールしますか？",
         uninstallMessage:
           "~/.agents、~/.claude、~/.codexからすべてのPaseoオーケストレーションスキルを削除します。",
+        choose: "スキルを選択",
+        chooseAll: "すべてのスキル",
+        chooseAllHint:
+          "後から追加されるものも含め、バンドルされたスキルをすべてインストールしたままにします。",
+        chooseList: "バンドルされたスキル",
+        chooseEmpty: "このビルドにはスキルが含まれていません。",
+        removeTitle: "選択を外したスキルを削除しますか？",
+        removeMessage:
+          "{{skills}} を ~/.agents、~/.claude、~/.codex から削除します。それらのスキルフォルダー内に追加したものもすべて削除されます。",
+        saveFailed: "スキルの選択を保存できませんでした。",
       },
       actions: {
         install: "インストール",
@@ -1886,7 +1930,10 @@ export const ja: TranslationResources = {
         installed: "インストール済み",
         update: "更新",
         working: "処理中...",
+        remove: "削除",
         uninstall: "アンインストール",
+        save: "保存",
+        saving: "保存中...",
       },
       operations: {
         add: "スキルを追加",
@@ -1910,6 +1957,41 @@ export const ja: TranslationResources = {
       },
     },
     host: {
+      appearance: {
+        title: "外観",
+        name: {
+          label: "名前",
+        },
+        color: {
+          label: "色",
+          accessibilityLabel: "色、{{value}}",
+          options: {
+            none: "デフォルト",
+            violet: "バイオレット",
+            sky: "スカイ",
+            emerald: "エメラルド",
+            orange: "オレンジ",
+            pink: "ピンク",
+            indigo: "インディゴ",
+            teal: "ティール",
+            red: "レッド",
+            amber: "アンバー",
+            blue: "ブルー",
+          },
+        },
+        badge: {
+          label: "サイドバーのバッジ",
+          accessibilityLabel: "サイドバーのバッジ、{{value}}",
+          options: {
+            name: "名前",
+            icon: "アイコンのみ",
+            hidden: "非表示",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "ホストが見つかりません",
       badges: {
         relay: "リレー",
@@ -2117,25 +2199,23 @@ export const ja: TranslationResources = {
       },
     },
     project: {
-      noEditableTarget:
-        "接続されているホストのどれにもこのプロジェクトの編集可能なコピーがありません。",
+      noEditableTarget: "このホストではこのプロジェクトを編集できません。",
       backToProjects: "プロジェクトに戻る",
-      switchHost: "ホストを切り替え",
-      rename: {
-        renamedToast: "プロジェクト名を変更しました",
-        errorFallback: "プロジェクト名を変更できませんでした",
-        renameLabel: "プロジェクトの名前を変更",
-        resetLabel: "プロジェクト名をデフォルトにリセット",
-        projectNameLabel: "プロジェクト名",
-        saveLabel: "プロジェクト名を保存",
-        cancelLabel: "名前変更をキャンセル",
-        reset: "リセット",
+      edit: {
+        title: "プロジェクトを編集",
+        name: "名前",
+        nameLabel: "プロジェクト名",
+        icon: "アイコン",
+        chooseImage: "画像を選択",
+        useAutomatic: "自動を使う",
+        imageUrl: "画像またはサイトのURL",
+        save: "変更を保存",
+        savedToast: "プロジェクトを更新しました",
       },
       readFailures: {
         invalidTitle: "paseo.jsonを解析できませんでした",
         invalidDescription: "ディスク上のファイルを修正してから再読み込みしてください。",
         missingTitle: "このホストにはこのプロジェクトがありません",
-        missingWithHosts: "上で別のホストに切り替えるか、再読み込みしてください。",
         missingSingleHost: "選択したホストにはこのプロジェクトの記録がありません。",
         transportTitle: "paseo.jsonを読み込めませんでした",
         transportFallback: "ホストが応答しませんでした。",

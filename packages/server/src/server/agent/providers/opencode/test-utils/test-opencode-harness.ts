@@ -124,6 +124,7 @@ export class TestOpenCodeClient {
   sessionPromptAsyncEvents: unknown[] = [idleEvent()];
   sessionPromptAsyncResponse: OpenCodeResponse = {};
   sessionStatusResponse: OpenCodeResponse = { data: {} };
+  sessionStatusImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
   sessionSummarizeEvents: unknown[] = [idleEvent()];
   sessionSummarizeResponse: OpenCodeResponse = { data: {} };
   sessionUpdateResponse: OpenCodeResponse = {};
@@ -260,7 +261,9 @@ export class TestOpenCodeClient {
         },
         status: async (parameters: unknown) => {
           this.calls.sessionStatus.push(parameters);
-          return this.sessionStatusResponse;
+          return this.sessionStatusImplementation
+            ? await this.sessionStatusImplementation(parameters)
+            : this.sessionStatusResponse;
         },
         summarize: async (parameters: unknown) => {
           this.calls.sessionSummarize.push(parameters);

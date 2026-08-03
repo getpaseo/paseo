@@ -1507,6 +1507,22 @@ describe("ClaudeAgentSession context window usage", () => {
     };
   }
 
+  test("emits turn_started before the submitted user message", async () => {
+    const session = await createSessionForTurns([[]]);
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("turn", { clientMessageId: "client-message-1" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(events.slice(0, 2).map((event) => event.type)).toEqual(["turn_started", "timeline"]);
+    expect(events[1]).toMatchObject({
+      type: "timeline",
+      item: { type: "user_message", clientMessageId: "client-message-1" },
+    });
+    await session.close();
+  });
+
   test("passes persistSession through to the Claude SDK query options", async () => {
     const createResultTurn = (sessionId: string) => [
       {

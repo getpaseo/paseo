@@ -79,6 +79,7 @@ function createLogger(): Logger {
 
 function createHarness(overrides?: {
   autoArchiveAfterMerge?: boolean;
+  autoArchivedChangeRequestUrl?: string | null;
   getSnapshot?: () => Promise<WorkspaceGitRuntimeSnapshot | null>;
   isPaseoOwnedWorktreeCwd?: ArchiveIfSafeDependencies["isPaseoOwnedWorktreeCwd"];
   archiveByScope?: ArchiveIfSafeDependencies["archiveByScope"];
@@ -105,6 +106,9 @@ function createHarness(overrides?: {
     terminalManager: {} as AutoArchiveArchiveOptions["terminalManager"],
     findWorkspaceIdForCwd: vi.fn(async () => "ws-auto-archive"),
     listActiveWorkspaces: vi.fn(async () => []),
+    getAutoArchivedChangeRequestUrl: vi.fn(
+      async () => overrides?.autoArchivedChangeRequestUrl ?? null,
+    ),
     archiveWorkspaceRecord: vi.fn(),
     markWorkspaceArchiving: vi.fn(),
     clearWorkspaceArchiving: vi.fn(),
@@ -316,6 +320,7 @@ function createRealOutcomeHarness(input: {
     },
     listActiveWorkspaces: async () =>
       active.filter((workspace) => !input.archivedWorkspaceIds.has(workspace.workspaceId)),
+    getAutoArchivedChangeRequestUrl: async () => null,
     archiveWorkspaceRecord: async (workspaceId: string) => {
       input.archivedWorkspaceIds.add(workspaceId);
       const index = active.findIndex((workspace) => workspace.workspaceId === workspaceId);
@@ -494,6 +499,45 @@ describe("archiveIfSafe", () => {
       "Auto-archived worktree after PR merge",
     );
     expect(harness.inFlight.has(CWD)).toBe(false);
+  });
+
+  test("does not archive a merge event already consumed by this workspace", async () => {
+    const harness = createHarness({
+      autoArchivedChangeRequestUrl: "https://github.com/acme/repo/pull/123",
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+  });
+
+  test("archives a different merged change request", async () => {
+    const harness = createHarness({
+      autoArchivedChangeRequestUrl: "https://github.com/acme/repo/pull/122",
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).toHaveBeenCalledTimes(1);
+  });
+
+  test("records the consumed change request in the workspace archive mutation", async () => {
+    const harness = createHarness({
+      archiveByScope: async (dependencies) => {
+        await dependencies.archiveWorkspaceRecord("ws-auto-archive");
+        return {
+          archivedAgentIds: [],
+          archivedWorkspaceIds: ["ws-auto-archive"],
+          removedDirectory: false,
+        };
+      },
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.options.archiveWorkspaceRecord).toHaveBeenCalledWith("ws-auto-archive", {
+      autoArchivedChangeRequestUrl: "https://github.com/acme/repo/pull/123",
+    });
   });
 
   test("resolves the merged cwd to a single workspace and does not iterate siblings", async () => {
