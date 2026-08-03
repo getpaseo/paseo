@@ -737,14 +737,14 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private createWebSocketServer(
-    server: HTTPServer,
+    _server: HTTPServer,
     wsConfig: WebSocketServerConfig,
     auth: DaemonAuthConfig | undefined,
   ): WebSocketServer {
     const { allowedOrigins, hostnames } = wsConfig;
     const password = auth?.password;
     const wss = new WebSocketServer({
-      server,
+      noServer: true,
       path: "/ws",
       handleProtocols: (protocols) => selectWebSocketProtocol(protocols, password),
       verifyClient: ({ req }, callback) => {
@@ -755,6 +755,12 @@ export class VoiceAssistantWebSocketServer {
       void this.attachAuthenticatedSocket(ws, request, password);
     });
     return wss;
+  }
+
+  public handleUpgrade(req: IncomingMessage, socket: import("stream").Duplex, head: Buffer): void {
+    this.wss.handleUpgrade(req, socket, head, (ws, request) => {
+      this.wss.emit("connection", ws, request);
+    });
   }
 
   private startRuntimeMetricsInterval(): void {
