@@ -76,9 +76,11 @@ function createInput(
     baseRefAvailable: true,
     baseRefLabel: "main",
     aheadCount: 0,
+    hasChangesFromBase: overrides.hasChangesFromBase ?? (overrides.aheadCount ?? 0) > 0,
     behindBaseCount: 0,
     aheadOfOrigin: 0,
     behindOfOrigin: 0,
+    hasChangesFromOrigin: overrides.hasChangesFromOrigin ?? (overrides.aheadOfOrigin ?? 0) > 0,
     shouldPromoteArchive: false,
     shipDefault: "pr",
     runtime: {
@@ -232,6 +234,7 @@ describe("git-actions-policy", () => {
         hasRemote: true,
         isOnBaseBranch: false,
         aheadCount: 2,
+        hasChangesFromBase: true,
         aheadOfOrigin: 2,
         hasPullRequest: true,
         pullRequestUrl: "https://example.com/pr/456",
@@ -243,6 +246,29 @@ describe("git-actions-policy", () => {
     );
 
     expect(actions.primary).toMatchObject({ id: "push", label: "Push" });
+  });
+
+  it("does not suggest push or creating a change request for commits with no base changes", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isPaseoOwnedWorktree: true,
+        isOnBaseBranch: false,
+        aheadCount: 1,
+        hasChangesFromBase: false,
+        aheadOfOrigin: 1,
+        hasChangesFromOrigin: false,
+        shipDefault: "pr",
+      }),
+    );
+
+    expect(actions.primary).toMatchObject({ id: "archive-workspace" });
+    expect(actions.secondary.find((action) => action.id === "push")?.unavailableMessage).toBe(
+      "Push isn't available because there is nothing new to send",
+    );
+    expect(actions.secondary.find((action) => action.id === "pr")?.unavailableMessage).toBe(
+      "Create PR isn't available because this branch doesn't have any new commits yet",
+    );
   });
 
   it("shows update-from-base only on feature branches that are behind the base branch", () => {

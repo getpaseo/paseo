@@ -727,6 +727,10 @@ export interface AheadBehind {
   behind: number;
 }
 
+interface RefComparison extends AheadBehind {
+  hasChanges: boolean;
+}
+
 export interface CheckoutStatus {
   isGit: false;
 }
@@ -739,8 +743,10 @@ export interface CheckoutStatusGitNonPaseo {
   isDirty: boolean;
   baseRef: string | null;
   aheadBehind: AheadBehind | null;
+  hasChangesFromBase: boolean | null;
   aheadOfOrigin: number | null;
   behindOfOrigin: number | null;
+  hasChangesFromOrigin: boolean | null;
   hasRemote: boolean;
   remoteUrl: string | null;
   isPaseoOwnedWorktree: false;
@@ -754,8 +760,10 @@ export interface CheckoutStatusGitPaseo {
   isDirty: boolean;
   baseRef: string;
   aheadBehind: AheadBehind | null;
+  hasChangesFromBase: boolean | null;
   aheadOfOrigin: number | null;
   behindOfOrigin: number | null;
+  hasChangesFromOrigin: boolean | null;
   hasRemote: boolean;
   remoteUrl: string | null;
   isPaseoOwnedWorktree: true;
@@ -1484,7 +1492,7 @@ async function getAheadBehind(
   baseRef: string,
   currentBranch: string,
   context?: CheckoutContext,
-): Promise<AheadBehind | null> {
+): Promise<RefComparison | null> {
   const normalizedBaseRef = normalizeLocalBranchRefName(baseRef);
   if (!normalizedBaseRef || !currentBranch || normalizedBaseRef === currentBranch) {
     return null;
@@ -1496,17 +1504,25 @@ async function getAheadBehind(
   if (!comparisonBaseRef) {
     return null;
   }
-  const { stdout } = await runGitCommand(
-    ["rev-list", "--left-right", "--count", `${comparisonBaseRef}...${currentBranch}`],
-    { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
-  );
+  const [{ stdout }, diffResult] = await Promise.all([
+    runGitCommand(
+      ["rev-list", "--left-right", "--count", `${comparisonBaseRef}...${currentBranch}`],
+      { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
+    ),
+    runGitCommand(["diff", "--quiet", comparisonBaseRef, currentBranch], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+      acceptExitCodes: [0, 1],
+      logger: context?.logger,
+    }),
+  ]);
   const [behindRaw, aheadRaw] = stdout.trim().split(/\s+/);
   const behind = Number.parseInt(behindRaw ?? "0", 10);
   const ahead = Number.parseInt(aheadRaw ?? "0", 10);
   if (Number.isNaN(behind) || Number.isNaN(ahead)) {
     return null;
   }
-  return { ahead, behind };
+  return { ahead, behind, hasChanges: diffResult.exitCode === 1 };
 }
 
 async function getConfiguredUpstreamRef(
@@ -1534,7 +1550,7 @@ async function getOriginAheadBehind(
   cwd: string,
   currentBranch: string,
   context?: CheckoutContext,
-): Promise<AheadBehind | null> {
+): Promise<RefComparison | null> {
   if (!currentBranch) {
     return null;
   }
@@ -1543,14 +1559,25 @@ async function getOriginAheadBehind(
     return null;
   }
   try {
-    const { stdout } = await runGitCommand(
-      ["rev-list", "--left-right", "--count", `${currentBranch}...${upstreamRef}`],
-      { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
-    );
+    const [{ stdout }, diffResult] = await Promise.all([
+      runGitCommand(["rev-list", "--left-right", "--count", `${currentBranch}...${upstreamRef}`], {
+        cwd,
+        envOverlay: READ_ONLY_GIT_ENV,
+        logger: context?.logger,
+      }),
+      runGitCommand(["diff", "--quiet", upstreamRef, currentBranch], {
+        cwd,
+        envOverlay: READ_ONLY_GIT_ENV,
+        acceptExitCodes: [0, 1],
+        logger: context?.logger,
+      }),
+    ]);
     const [aheadRaw, behindRaw] = stdout.trim().split(/\s+/);
     const ahead = Number.parseInt(aheadRaw ?? "", 10);
     const behind = Number.parseInt(behindRaw ?? "", 10);
-    return Number.isNaN(ahead) || Number.isNaN(behind) ? null : { ahead, behind };
+    return Number.isNaN(ahead) || Number.isNaN(behind)
+      ? null
+      : { ahead, behind, hasChanges: diffResult.exitCode === 1 };
   } catch {
     return null;
   }
@@ -1995,6 +2022,8 @@ export async function getCheckoutStatus(
   ]);
   const aheadOfOrigin = originAheadBehind?.ahead ?? null;
   const behindOfOrigin = originAheadBehind?.behind ?? null;
+  const hasChangesFromBase = aheadBehind?.hasChanges ?? null;
+  const hasChangesFromOrigin = originAheadBehind?.hasChanges ?? null;
 
   if (paseoWorktree.isPaseoOwnedWorktree && baseRef) {
     return {
@@ -2005,8 +2034,10 @@ export async function getCheckoutStatus(
       isDirty,
       baseRef,
       aheadBehind,
+      hasChangesFromBase,
       aheadOfOrigin,
       behindOfOrigin,
+      hasChangesFromOrigin,
       hasRemote,
       remoteUrl,
       isPaseoOwnedWorktree: true,
@@ -2022,8 +2053,10 @@ export async function getCheckoutStatus(
     isDirty,
     baseRef,
     aheadBehind,
+    hasChangesFromBase,
     aheadOfOrigin,
     behindOfOrigin,
+    hasChangesFromOrigin,
     hasRemote,
     remoteUrl,
     isPaseoOwnedWorktree: false,

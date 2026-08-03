@@ -98,9 +98,11 @@ interface DeriveGitActionsStateArgs {
 interface DerivedGitActionsState {
   actionsDisabled: boolean;
   aheadCount: number;
+  hasChangesFromBase: boolean;
   behindBaseCount: number;
   aheadOfOrigin: number | null;
   behindOfOrigin: number | null;
+  hasChangesFromOrigin: boolean | null;
   hasPullRequest: boolean;
   hasRemote: boolean;
   isPaseoOwnedWorktree: boolean;
@@ -110,17 +112,25 @@ interface DerivedGitActionsState {
 
 interface GitCommitCounts {
   aheadCount: number;
+  hasChangesFromBase: boolean;
   behindBaseCount: number;
   aheadOfOrigin: number | null;
   behindOfOrigin: number | null;
+  hasChangesFromOrigin: boolean | null;
 }
 
 function extractGitCommitCounts(gitStatus: CheckoutStatusPayload | null): GitCommitCounts {
+  const aheadCount = gitStatus?.aheadBehind?.ahead ?? 0;
+  const aheadOfOrigin = gitStatus?.aheadOfOrigin ?? null;
   return {
-    aheadCount: gitStatus?.aheadBehind?.ahead ?? 0,
+    aheadCount,
+    // COMPAT(gitContentDifference): added in v0.2.6, remove after 2027-02-03 once daemon floor >= v0.2.6.
+    hasChangesFromBase: gitStatus?.hasChangesFromBase ?? aheadCount > 0,
     behindBaseCount: gitStatus?.aheadBehind?.behind ?? 0,
-    aheadOfOrigin: gitStatus?.aheadOfOrigin ?? null,
+    aheadOfOrigin,
     behindOfOrigin: gitStatus?.behindOfOrigin ?? null,
+    hasChangesFromOrigin:
+      gitStatus?.hasChangesFromOrigin ?? (aheadOfOrigin === null ? null : aheadOfOrigin > 0),
   };
 }
 
@@ -634,9 +644,11 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const {
     actionsDisabled,
     aheadCount,
+    hasChangesFromBase,
     behindBaseCount,
     aheadOfOrigin,
     behindOfOrigin,
+    hasChangesFromOrigin,
     hasPullRequest,
     hasRemote,
     isPaseoOwnedWorktree,
@@ -675,9 +687,11 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       baseRefAvailable: Boolean(baseRef),
       baseRefLabel,
       aheadCount,
+      hasChangesFromBase,
       behindBaseCount,
       aheadOfOrigin,
       behindOfOrigin,
+      hasChangesFromOrigin,
       shouldPromoteArchive,
       shipDefault,
       runtime: {
@@ -785,6 +799,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     prStatus?.forgeSpecific,
     prStatus?.github,
     aheadCount,
+    hasChangesFromBase,
     behindBaseCount,
     isPaseoOwnedWorktree,
     isOnBaseBranch,
@@ -794,6 +809,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     hasUncommittedChanges,
     aheadOfOrigin,
     behindOfOrigin,
+    hasChangesFromOrigin,
     shipDefault,
     baseRefLabel,
     shouldPromoteArchive,

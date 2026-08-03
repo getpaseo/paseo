@@ -80,8 +80,10 @@ export interface WorkspaceGitRuntimeSnapshot {
     isDirty: boolean | null;
     baseRef: string | null;
     aheadBehind: { ahead: number; behind: number } | null;
+    hasChangesFromBase?: boolean | null;
     aheadOfOrigin: number | null;
     behindOfOrigin: number | null;
+    hasChangesFromOrigin?: boolean | null;
     hasRemote: boolean;
     diffStat: { additions: number; deletions: number } | null;
   };
@@ -1837,8 +1839,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       isDirty: checkoutStatus.isDirty,
       baseRef: checkoutStatus.baseRef,
       aheadBehind: checkoutStatus.aheadBehind,
+      hasChangesFromBase: checkoutStatus.hasChangesFromBase,
       aheadOfOrigin: checkoutStatus.aheadOfOrigin,
       behindOfOrigin: checkoutStatus.behindOfOrigin,
+      hasChangesFromOrigin: checkoutStatus.hasChangesFromOrigin,
       hasRemote: checkoutStatus.hasRemote,
       diffStat,
     };
