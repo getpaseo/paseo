@@ -228,7 +228,7 @@ class ControlledAgentClient implements AgentClient {
   readonly capabilities;
   private gate: Deferred<void> | null = null;
   private heldCreationCwd: string | null = null;
-  private creationObserved = deferred<void>();
+  private creationChanged = deferred<void>();
   private creationFailure: Error | null = null;
   creations = 0;
   resumes = 0;
@@ -248,17 +248,17 @@ class ControlledAgentClient implements AgentClient {
   }
 
   async creationAt(count: number): Promise<void> {
-    while (this.creations < count) {
-      await waitForHarnessSignal(this.creationObserved.promise, `provider creation ${count}`);
-      this.creationObserved = deferred<void>();
-    }
+    await this.waitForCreationCondition(
+      () => this.creations >= count,
+      `provider creation ${count}`,
+    );
   }
 
   async creationAtCwd(cwd: string, after: number): Promise<void> {
-    while (!this.createdConfigs.slice(after).some((config) => config.cwd === cwd)) {
-      await waitForHarnessSignal(this.creationObserved.promise, `provider creation at ${cwd}`);
-      this.creationObserved = deferred<void>();
-    }
+    await this.waitForCreationCondition(
+      () => this.createdConfigs.slice(after).some((config) => config.cwd === cwd),
+      `provider creation at ${cwd}`,
+    );
   }
 
   finishCreation(): void {
@@ -282,7 +282,9 @@ class ControlledAgentClient implements AgentClient {
     }
     this.creations++;
     this.createdConfigs.push({ ...config });
-    this.creationObserved.resolve();
+    const creationChanged = this.creationChanged;
+    this.creationChanged = deferred<void>();
+    creationChanged.resolve();
     if (this.gate && (!this.heldCreationCwd || this.heldCreationCwd === config.cwd)) {
       await this.gate.promise;
     }
@@ -292,6 +294,19 @@ class ControlledAgentClient implements AgentClient {
       throw error;
     }
     return this.client.createSession(config, launchContext, options);
+  }
+
+  private async waitForCreationCondition(
+    condition: () => boolean,
+    description: string,
+  ): Promise<void> {
+    while (!condition()) {
+      const changed = this.creationChanged.promise;
+      if (condition()) {
+        continue;
+      }
+      await waitForHarnessSignal(changed, description);
+    }
   }
 
   resumeSession(

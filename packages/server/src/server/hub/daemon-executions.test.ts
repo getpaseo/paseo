@@ -27,6 +27,38 @@ test("sequential replay after reconstruction keeps one durable owned agent", asy
   expect(reconstructed.durableAgentCount).toBe(1);
 });
 
+test("concurrent creation-count waiters observe three sequential provider creations", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("creation-broadcast-1", "creation-broadcast-execution-1");
+  const first = await hub.ownedCreateResult("creation-broadcast-1");
+  expect(first).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, executionId: "creation-broadcast-execution-1" },
+  });
+
+  // Subscribe the higher threshold first. With one shared resettable deferred,
+  // its continuation could install a new signal that the lower threshold then
+  // replaced, leaving the first waiter orphaned after the third creation.
+  const thirdCreation = hub.agentCreationAttempts(3);
+  const secondCreation = hub.agentCreationAttempts(2);
+
+  hub.beginOwnedCreate("creation-broadcast-2", "creation-broadcast-execution-2");
+  await secondCreation;
+  const second = await hub.ownedCreateResult("creation-broadcast-2");
+  expect(second).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, executionId: "creation-broadcast-execution-2" },
+  });
+
+  hub.beginOwnedCreate("creation-broadcast-3", "creation-broadcast-execution-3");
+  await thirdCreation;
+  const third = await hub.ownedCreateResult("creation-broadcast-3");
+  expect(third).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, executionId: "creation-broadcast-execution-3" },
+  });
+});
+
 test("Hub MCP configuration reaches the provider alongside Paseo MCP without entering snapshots", async () => {
   const hub = await HubRelationshipHarness.startWithAgentMcp();
   await hub.beginConnect().result;
