@@ -70,6 +70,8 @@ import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
+import { MathFormula, type MathFormulaProps } from "@/components/math-formula";
+import { markdownMath } from "@/utils/markdown-math";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
@@ -942,6 +944,42 @@ function getMarkdownNodeText(node: ASTNode): string {
   return node.children.map(getMarkdownNodeText).join("");
 }
 
+function getMathFormulaProps(node: AssistantMarkdownAstNode): MathFormulaProps {
+  const content = node.content ?? "";
+  const sourceInfo = node.sourceInfo?.trim() ?? "";
+  const fenceLanguage = sourceInfo.split(/\s+/, 1)[0]?.toLowerCase();
+  const isMathFence =
+    node.type === "math_block" &&
+    fenceLanguage === "math" &&
+    (node.markup.startsWith("`") || node.markup.startsWith("~"));
+
+  if (isMathFence) {
+    const terminatedContent = content.endsWith("\n") ? content : `${content}\n`;
+    return {
+      expression: content.trim(),
+      source: `${node.markup}${sourceInfo}\n${terminatedContent}${node.markup}`,
+      displayMode: true,
+    };
+  }
+
+  let closingDelimiter = "$";
+  if (node.markup === "\\(") {
+    closingDelimiter = "\\)";
+  } else if (node.markup === "\\[") {
+    closingDelimiter = "\\]";
+  } else if (node.markup === "$$") {
+    closingDelimiter = "$$";
+  }
+
+  const displayMode = node.type === "math_block";
+  const separator = node.type === "math_block" ? "\n" : "";
+  return {
+    expression: content,
+    source: `${node.markup}${separator}${content}${separator}${closingDelimiter}`,
+    displayMode,
+  };
+}
+
 function nodeHasParentType(parent: unknown, type: string): boolean {
   if (Array.isArray(parent)) {
     return parent.some((entry) => entry?.type === type);
@@ -1429,7 +1467,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   spacing = "default",
 }: AssistantMessageProps) {
   const markdownParser = useMemo(() => {
-    const parser = MarkdownIt({ typographer: true, linkify: true });
+    const parser = MarkdownIt({ typographer: true, linkify: true }).use(markdownMath);
     const defaultValidateLink = parser.validateLink.bind(parser);
     parser.validateLink = (url: string) => {
       if (url.trim().toLowerCase().startsWith("file://")) {
@@ -1560,6 +1598,30 @@ export const AssistantMessage = memo(function AssistantMessage({
         <MarkdownTextSpan key={node.key} style={styles.softbreak}>
           {"\n"}
         </MarkdownTextSpan>
+      ),
+      math_inline: (
+        node: ASTNode,
+        _children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
+        <MathFormula
+          key={node.key}
+          {...getMathFormulaProps(node as AssistantMarkdownAstNode)}
+          textStyle={styles.text}
+        />
+      ),
+      math_block: (
+        node: ASTNode,
+        _children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
+        <MathFormula
+          key={node.key}
+          {...getMathFormulaProps(node as AssistantMarkdownAstNode)}
+          textStyle={styles.text}
+        />
       ),
       code_block: (
         node: ASTNode,

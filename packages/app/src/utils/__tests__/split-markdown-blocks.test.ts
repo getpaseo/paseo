@@ -50,6 +50,70 @@ describe("splitMarkdownBlocks", () => {
     ]);
   });
 
+  it("keeps display math with internal blank lines in one block", () => {
+    expect(
+      splitMarkdownBlocks(
+        "Before\n\n$$\n\\begin{aligned}\na &= b\n\nc &= d\n\\end{aligned}\n$$\n\nAfter",
+      ),
+    ).toEqual(["Before", "$$\n\\begin{aligned}\na &= b\n\nc &= d\n\\end{aligned}\n$$", "After"]);
+  });
+
+  it("keeps bracket-delimited display math with internal blank lines in one block", () => {
+    expect(splitMarkdownBlocks("Before\n\n\\[\na^2 + b^2\n\n= c^2\n\\]\n\nAfter")).toEqual([
+      "Before",
+      "\\[\na^2 + b^2\n\n= c^2\n\\]",
+      "After",
+    ]);
+  });
+
+  it("splits after a punctuated same-line display formula", () => {
+    expect(splitMarkdownBlocks("$$x$$.\n\ntext\n\n$$y$$")).toEqual(["$$x$$.", "text", "$$y$$"]);
+  });
+
+  it("splits after a multiline display formula with trailing content", () => {
+    expect(splitMarkdownBlocks("$$\nx\n$$.\n\ntext\n\n\\[\ny\n\\] and then\n\nafter")).toEqual([
+      "$$\nx\n$$.",
+      "text",
+      "\\[\ny\n\\] and then",
+      "after",
+    ]);
+  });
+
+  it("ignores escaped display delimiters on interior lines", () => {
+    expect(
+      splitMarkdownBlocks("Before\n\n$$\n\\$$ is literal\n\nstill math\n$$.\n\nAfter"),
+    ).toEqual(["Before", "$$\n\\$$ is literal\n\nstill math\n$$.", "After"]);
+    expect(
+      splitMarkdownBlocks("Before\n\n\\[\n\\\\] is literal\n\nstill math\n\\] and then\n\nAfter"),
+    ).toEqual(["Before", "\\[\n\\\\] is literal\n\nstill math\n\\] and then", "After"]);
+  });
+
+  it("keeps an unclosed streamed display expression together", () => {
+    expect(splitMarkdownBlocks("Before\n\n$$\na^2 + b^2\n\n= c^2")).toEqual([
+      "Before",
+      "$$\na^2 + b^2\n\n= c^2",
+    ]);
+  });
+
+  it("keeps display math nested in a list together across blank lines", () => {
+    expect(
+      splitMarkdownBlocks(
+        "Before\n\n- $$\n  \\begin{aligned}\n  a &= b\n\n  c &= d\n  \\end{aligned}\n  $$\n\nAfter",
+      ),
+    ).toEqual([
+      "Before",
+      "- $$\n  \\begin{aligned}\n  a &= b\n\n  c &= d\n  \\end{aligned}\n  $$",
+      "After",
+    ]);
+  });
+
+  it("keeps streamed display math nested in a blockquote together", () => {
+    expect(splitMarkdownBlocks("Before\n\n> \\[\n> a^2 + b^2\n\n> = c^2")).toEqual([
+      "Before",
+      "> \\[\n> a^2 + b^2\n\n> = c^2",
+    ]);
+  });
+
   it("returns an empty array for empty input", () => {
     expect(splitMarkdownBlocks("")).toEqual([]);
   });
