@@ -33,7 +33,11 @@ import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
-import { isStoredAgentProviderAvailable, toAgentPersistenceHandle } from "./persistence-hooks.js";
+import {
+  buildConfigOverrides,
+  isStoredAgentProviderAvailable,
+  toAgentPersistenceHandle,
+} from "./persistence-hooks.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
 import {
   formatSystemNotificationPrompt,
@@ -2535,7 +2539,9 @@ export class Session {
     });
   }
 
-  private async unarchiveAgentByHandle(handle: AgentPersistenceHandle): Promise<void> {
+  private async unarchiveAgentByHandle(
+    handle: AgentPersistenceHandle,
+  ): Promise<StoredAgentRecord | null> {
     const records = await this.agentStorage.list();
     const matched = records.find(
       (record) =>
@@ -2543,9 +2549,10 @@ export class Session {
         record.persistence?.sessionId === handle.sessionId,
     );
     if (!matched) {
-      return;
+      return null;
     }
     await unarchiveAgentState(this.agentStorage, this.agentManager, matched.id);
+    return matched;
   }
 
   private async handleUpdateAgentRequest(
@@ -3304,8 +3311,14 @@ export class Session {
       `Resuming agent ${handle.sessionId} (${handle.provider})`,
     );
     try {
-      await this.unarchiveAgentByHandle(handle);
-      const snapshot = await this.agentManager.resumeAgentFromPersistence(handle, overrides);
+      const storedRecord = await this.unarchiveAgentByHandle(handle);
+      const effectiveOverrides = storedRecord
+        ? { ...buildConfigOverrides(storedRecord), ...overrides }
+        : overrides;
+      const snapshot = await this.agentManager.resumeAgentFromPersistence(
+        handle,
+        effectiveOverrides,
+      );
       await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);
       await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
       await this.agentUpdates.forwardLiveAgent(snapshot);

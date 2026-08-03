@@ -13,6 +13,7 @@ import {
   DaemonClient,
 } from "./test-utils/index.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import { getFullAccessConfig, getAskModeConfig } from "./daemon-e2e/agent-configs.js";
 import { parsePcm16MonoWav, wordSimilarity } from "./test-utils/dictation-e2e.js";
 import type {
@@ -312,6 +313,37 @@ class StubAgentClient implements AgentClient {
       models: [{ id: "gpt-5.4-mini", label: "GPT-5.4 mini", provider: this.provider }],
       modes: [{ id: "full-access", label: "Full access", description: "No prompts" }],
     };
+  }
+}
+
+class RecordingMcpResumeClient implements AgentClient {
+  readonly provider = "codex" as const;
+  readonly capabilities;
+  readonly resumeOverrides: Array<Partial<AgentSessionConfig> | undefined> = [];
+  private readonly inner = createTestAgentClients({ supportsMcpServers: true }).codex;
+
+  constructor() {
+    this.capabilities = this.inner.capabilities;
+  }
+
+  isAvailable() {
+    return this.inner.isAvailable();
+  }
+
+  createSession(config: AgentSessionConfig) {
+    return this.inner.createSession(config);
+  }
+
+  resumeSession(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    this.resumeOverrides.push(overrides);
+    return this.inner.resumeSession(handle, overrides);
+  }
+
+  fetchCatalog(...args: Parameters<AgentClient["fetchCatalog"]>) {
+    return this.inner.fetchCatalog(...args);
   }
 }
 
@@ -859,6 +891,49 @@ test("resume_agent auto-unarchives archived agents", async () => {
     rmSync(cwd, { recursive: true, force: true });
   }
 }, 180000);
+
+test("resume_agent rehydrates private MCP config from a redacted persistence handle", async () => {
+  const cwd = tmpCwd();
+  const provider = new RecordingMcpResumeClient();
+  const localCtx = await createDaemonTestContext({
+    agentClients: { codex: provider },
+  });
+  const bearer = "durable-resume-bearer";
+  const externalMcp = {
+    hub: {
+      type: "http" as const,
+      url: "https://hub.test/mcp/executions/durable-resume",
+      headers: { Authorization: `Bearer ${bearer}` },
+    },
+  };
+
+  try {
+    const created = await localCtx.client.createAgent({
+      config: {
+        provider: "codex",
+        cwd,
+        mcpServers: externalMcp,
+      },
+    });
+    const projectedHandle = created.persistence;
+    if (!projectedHandle) {
+      throw new Error("Expected a projected persistence handle");
+    }
+    expect(projectedHandle.metadata).not.toHaveProperty("mcpServers");
+    expect(JSON.stringify(projectedHandle)).not.toContain(bearer);
+
+    await localCtx.client.archiveAgent(created.id);
+    const resumed = await localCtx.client.resumeAgent(projectedHandle);
+
+    expect(provider.resumeOverrides).toHaveLength(1);
+    expect(provider.resumeOverrides[0]?.mcpServers?.hub).toEqual(externalMcp.hub);
+    expect(resumed.persistence?.metadata).not.toHaveProperty("mcpServers");
+    expect(JSON.stringify(resumed)).not.toContain(bearer);
+  } finally {
+    await localCtx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
 
 test("update_agent persists unloaded title and labels across auto-unarchive", async () => {
   const cwd = tmpCwd();
