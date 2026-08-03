@@ -1219,10 +1219,10 @@ async function resolveBaseRefForCwd(
 }
 
 // The worktree stores the exact ref it was cut from ("refs/remotes/upstream/main") while
-// callers still send display names ("main"). They name the same base when their branch names
-// agree, which is the identity every base action operates on.
+// callers still send its display name ("main"). A different qualified ref retains its own
+// identity even when it has the same branch name.
 function isSameBaseRef(stored: string, requested: string): boolean {
-  return stored === requested || branchNameFromRef(stored) === branchNameFromRef(requested);
+  return stored === requested || branchNameFromRef(stored) === requested;
 }
 
 // Names both refs rather than labelling either one correct: a caller's ref can be stale, but the

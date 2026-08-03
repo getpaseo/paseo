@@ -517,6 +517,15 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       // which is why an untouched child reports no work of its own.
       expect(status.baseRef).toBe("main");
       expect(status.aheadBehind).toEqual({ ahead: 0, behind: 0 });
+      await expect(
+        getCheckoutDiff(
+          result.worktreePath,
+          { mode: "base", baseRef: "refs/remotes/origin/main" },
+          { paseoHome },
+        ),
+      ).rejects.toThrow(
+        "Base ref mismatch: stored refs/remotes/upstream/main, requested refs/remotes/origin/main",
+      );
       expect(
         await getCheckoutDiff(
           result.worktreePath,
