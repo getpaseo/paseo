@@ -632,6 +632,89 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
+  test("isolates fanout and cleanup for distinct CLI process sessions", async () => {
+    const server = createServer();
+    const firstSocket = new MockSocket();
+    const secondSocket = new MockSocket();
+
+    await attachRelayAndHello({
+      server,
+      socket: firstSocket,
+      clientId: "cid-cli-process-1",
+    });
+    await attachRelayAndHello({
+      server,
+      socket: secondSocket,
+      clientId: "cid-cli-process-2",
+    });
+
+    expect(sessionMock.instances).toHaveLength(2);
+    const [firstSession, secondSession] = sessionMock.instances;
+    const firstBaseline = firstSocket.sent.length;
+    const secondBaseline = secondSocket.sent.length;
+    const firstOnMessage = firstSession.args.onMessage;
+    expect(firstOnMessage).toBeTypeOf("function");
+    if (typeof firstOnMessage === "function") {
+      firstOnMessage({
+        type: "agent_stream",
+        payload: {
+          agentId: "agent-first-process",
+          event: { type: "assistant_message", text: "first process only" },
+          timestamp: "2026-08-03T00:00:00.000Z",
+        },
+      });
+    }
+
+    expect(sentEnvelopes(firstSocket).slice(firstBaseline)).toContainEqual({
+      type: "session",
+      message: {
+        type: "agent_stream",
+        payload: {
+          agentId: "agent-first-process",
+          event: { type: "assistant_message", text: "first process only" },
+          timestamp: "2026-08-03T00:00:00.000Z",
+        },
+      },
+    });
+    expect(sentEnvelopes(secondSocket).slice(secondBaseline)).toEqual([]);
+
+    firstSocket.emit("close", 1006, "");
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(firstSession.cleanup).toHaveBeenCalledTimes(1);
+    expect(secondSession.cleanup).not.toHaveBeenCalled();
+
+    const secondOnMessage = secondSession.args.onMessage;
+    expect(secondOnMessage).toBeTypeOf("function");
+    if (typeof secondOnMessage === "function") {
+      secondOnMessage({
+        type: "agent_stream",
+        payload: {
+          agentId: "agent-second-process",
+          event: { type: "assistant_message", text: "second process still live" },
+          timestamp: "2026-08-03T00:00:01.000Z",
+        },
+      });
+    }
+    expect(sentEnvelopes(secondSocket).slice(secondBaseline)).toContainEqual({
+      type: "session",
+      message: {
+        type: "agent_stream",
+        payload: {
+          agentId: "agent-second-process",
+          event: { type: "assistant_message", text: "second process still live" },
+          timestamp: "2026-08-03T00:00:01.000Z",
+        },
+      },
+    });
+
+    secondSocket.emit("close", 1006, "");
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(firstSession.cleanup).toHaveBeenCalledTimes(1);
+    expect(secondSession.cleanup).toHaveBeenCalledTimes(1);
+
+    await server.close();
+  });
+
   test("rejects session messages before hello", async () => {
     const server = createServer();
     const socket = new MockSocket();
