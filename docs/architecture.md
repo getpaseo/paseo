@@ -413,3 +413,12 @@ Two fences enforce it, because clients reach the daemon two ways:
 - `paseo daemon stop` refuses from `paseo.pid` before it connects. Without this the unreachable-daemon fallback would signal the supervisor process itself.
 
 The maintenance route is an explicit opt-in, not a privilege: `paseo daemon stop --service-maintenance`, or `serviceMaintenance: true` on the RPC. Routine callers omit it, so they get the refusal. `--force` escalates a stop that was allowed; it does not authorize one that was refused. `paseo daemon restart` has no opt-in — restart a service-managed daemon through its service manager.
+
+### The supervisor backstop
+
+A client released before the fence does not understand `shutdown_rejected`. It waits out its RPC timeout and falls back to signalling the pid-lock owner, which is the supervisor. Signals carry no sender identity, so the supervisor cannot refuse one without also refusing its own service manager — which stops the daemon exactly that way. It therefore never fights the signal; it refuses to let an unauthorized stop look clean:
+
+- A worker killed by a signal the supervisor did not ask for is respawned instead of ending the daemon. This fully covers anything that signals the worker, including the tree-kill that reaches both processes.
+- A supervisor stopped without an authorized request still stops gracefully, but exits `75` and logs `Unauthorized stop of a service-managed daemon`, so `Restart=on-failure` and equivalent policies bring the host back instead of reading exit 0 as success.
+
+Only a worker-relayed `paseo:shutdown` counts as authorized, and the session fence gates that. A service manager stopping its own service does not restart it regardless of exit code, so the backstop costs a non-zero code in the log and nothing else. Give a unit an `ExecStop` that runs `paseo daemon stop --service-maintenance` to keep even that clean.

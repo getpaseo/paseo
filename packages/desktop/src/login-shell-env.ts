@@ -497,6 +497,15 @@ function resolveShellEnv({ deps, timeoutMs }: ResolveShellEnvInput): ResolvedShe
  *
  * Approach borrowed from VS Code (src/vs/platform/shell/node/shellEnv.ts).
  */
+/**
+ * `PASEO_SERVICE_MANAGED` declares that a service manager owns a daemon. The
+ * desktop must never carry that claim into a daemon it starts itself, or it
+ * loses the ability to stop it again on quit.
+ */
+function scrubServiceManagedOwnership(env: NodeJS.ProcessEnv): void {
+  delete env.PASEO_SERVICE_MANAGED;
+}
+
 export function inheritLoginShellEnv(input: LoginShellEnvDependencies = {}): void {
   const deps: Required<LoginShellEnvDependencies> = {
     env: input.env ?? process.env,
@@ -513,6 +522,10 @@ export function inheritLoginShellEnv(input: LoginShellEnvDependencies = {}): voi
   try {
     const { env, attemptKind } = resolveShellEnv({ deps, timeoutMs });
     Object.assign(deps.env, env);
+    // Object.assign only adds and overwrites. A login profile that exports a
+    // runtime-control key reintroduces it here, and a key already inherited
+    // survives an env that simply omits it.
+    scrubServiceManagedOwnership(deps.env);
     deps.logger.info("[login-shell-env] applied", {
       attemptKind,
       durationMs: deps.now() - startedAt,
@@ -539,6 +552,8 @@ export function inheritLoginShellEnv(input: LoginShellEnvDependencies = {}): voi
       afterPath: pathEnv(deps.env),
       pathChanged: beforePath !== pathEnv(deps.env),
     });
-    // Keep inherited environment if shell lookup fails.
+    // Keep inherited environment if shell lookup fails, minus ownership claims
+    // the desktop must not inherit.
+    scrubServiceManagedOwnership(deps.env);
   }
 }

@@ -45,7 +45,19 @@ interface SupervisorOptions {
   restartOnCrash?: boolean;
   onSupervisorExit?: () => Promise<void> | void;
   logFile?: SupervisorLogFileOptions;
+  /**
+   * An external service manager owns this daemon. The pid lock names the
+   * supervisor, so any client that falls back to signalling the lock owner —
+   * including a released CLI that predates the shutdown fence — aims at this
+   * process. Signals carry no sender identity, so the supervisor cannot refuse
+   * one without also refusing its own service manager. It instead refuses to
+   * turn an unauthorized stop into a silent clean exit.
+   */
+  serviceManaged?: boolean;
 }
+
+/** Exit code for a service-managed daemon stopped without going through the authorized route. */
+export const UNAUTHORIZED_SERVICE_MANAGED_STOP_EXIT_CODE = 75;
 
 export interface SupervisorController {
   requestShutdown(reason: string): void;
@@ -116,10 +128,16 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
   const workerExecArgv = options.workerExecArgv ?? ["--import", "tsx"];
   const resolveWorkerSpawnSpec = options.resolveWorkerSpawnSpec;
 
+  const serviceManaged = options.serviceManaged ?? false;
+
   let child: ChildProcess | null = null;
   let restarting = false;
   let shuttingDown = false;
   let exiting = false;
+  // Only a worker-relayed `paseo:shutdown` proves the stop cleared the session
+  // fence, which means the daemon is unmanaged or an operator passed
+  // serviceMaintenance. A signal proves nothing about who sent it.
+  let stopAuthorized = false;
   const logStream = createSupervisorLogStream(options.logFile);
 
   const writeDurableChunk = (chunk: string | Buffer): void => {
@@ -247,7 +265,8 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
       if (lifecycleMessage.type === "paseo:shutdown") {
         const reason = lifecycleMessage.reason ?? "worker_requested_shutdown";
         writeLifecycleLog("Worker requested shutdown", { reason });
-        requestShutdown(reason);
+        // The worker only relays this after the session shutdown fence passed.
+        requestShutdown(reason, true);
         return;
       }
 
@@ -262,14 +281,41 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
       writeLifecycleLog("Worker exited", { code, signal, exit: exitDescriptor });
 
       if (shuttingDown) {
+        if (serviceManaged && !stopAuthorized) {
+          log(
+            `Worker exited (${exitDescriptor}). Supervisor stopping without an authorized service maintenance request.`,
+          );
+          writeLifecycleLog("Unauthorized stop of a service-managed daemon", {
+            exit: exitDescriptor,
+          });
+          exitSupervisor(UNAUTHORIZED_SERVICE_MANAGED_STOP_EXIT_CODE);
+          return;
+        }
         log(`Worker exited (${exitDescriptor}). Supervisor shutting down.`);
         exitSupervisor(0);
         return;
       }
 
+      // A service-managed daemon must survive a signal aimed at its worker. The
+      // default rule treats a SIGTERM death as an intentional stop and lets the
+      // supervisor exit, which hands any client a way to take the host down.
+      const workerStoppedByStraySignal = serviceManaged && signal !== null;
+
       const crashed =
         restartOnCrash &&
         ((code !== 0 && code !== null) || (signal !== null && signal !== "SIGTERM"));
+
+      if (workerStoppedByStraySignal && !restarting && !crashed) {
+        log(
+          `Worker was signalled (${exitDescriptor}) without a stop request. Restarting worker...`,
+        );
+        writeLifecycleLog("Restarting worker after an unrequested signal", {
+          signal,
+          exit: exitDescriptor,
+        });
+        spawnWorker();
+        return;
+      }
 
       if (restarting || crashed) {
         restarting = false;
@@ -310,21 +356,27 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     signalWorker("SIGTERM", reason);
   };
 
-  const requestShutdown = (reason: string) => {
+  const requestShutdown = (reason: string, authorized = false) => {
     if (shuttingDown) {
       return;
     }
     shuttingDown = true;
     restarting = false;
-    writeLifecycleLog("Supervisor shutdown requested", { reason });
+    stopAuthorized = authorized;
+    writeLifecycleLog("Supervisor shutdown requested", { reason, authorized });
     log(`${reason}. Stopping worker...`);
     if (!child) {
-      exitSupervisor(0);
+      exitSupervisor(
+        serviceManaged && !authorized ? UNAUTHORIZED_SERVICE_MANAGED_STOP_EXIT_CODE : 0,
+      );
       return;
     }
     signalWorker("SIGTERM", reason);
   };
 
+  // Stop gracefully either way — fighting the service manager would only earn a
+  // SIGKILL and lose the agents. The exit code is what carries the refusal, so a
+  // restart policy brings the host back instead of leaving it down.
   const forwardSignal = (signal: NodeJS.Signals) => {
     requestShutdown(`supervisor_received_${signal}`);
   };

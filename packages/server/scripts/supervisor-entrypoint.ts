@@ -173,6 +173,7 @@ async function main(): Promise<void> {
         })
       : undefined,
     restartOnCrash: true,
+    serviceManaged: workerEnv.PASEO_SERVICE_MANAGED === "1",
     logFile: supervisorLogFile,
     onWorkerReady: async ({ listen }) => {
       await updatePidLock(paseoHome, { listen }, { ownerPid: process.pid });
