@@ -1549,10 +1549,6 @@ export class AgentManager {
     try {
       await this.workspaceAgentRegistrations.get(workspaceId)?.settled;
 
-      if (this.hasOtherLiveAgentInWorkspace(workspaceId, finishedAgentId)) {
-        return false;
-      }
-
       const records = await this.requireRegistry().list();
       const finishedRecord = records.find((record) => record.id === finishedAgentId);
       if (
@@ -1567,6 +1563,21 @@ export class AgentManager {
       ) {
         return false;
       }
+
+      // Archived agents may be loaded back into memory solely to serve history
+      // requests. Durable archive state, not in-memory presence, determines
+      // workspace ownership. Close those history-only runtimes before removing
+      // the workspace so they do not retain a session whose cwd no longer
+      // exists.
+      const archivedRuntimeIds = records
+        .filter(
+          (record) =>
+            record.workspaceId === workspaceId &&
+            Boolean(record.archivedAt) &&
+            this.agents.has(record.id),
+        )
+        .map((record) => record.id);
+      await Promise.all(archivedRuntimeIds.map((agentId) => this.closeAgent(agentId)));
 
       await options.release();
       return true;
@@ -4376,15 +4387,6 @@ export class AgentManager {
       this.workspaceAgentRegistrations.delete(workspaceId);
       state.resolveSettled();
     }
-  }
-
-  private hasOtherLiveAgentInWorkspace(workspaceId: string, finishedAgentId: string): boolean {
-    for (const agent of this.agents.values()) {
-      if (agent.id !== finishedAgentId && agent.workspaceId === workspaceId) {
-        return true;
-      }
-    }
-    return false;
   }
 
   /**
