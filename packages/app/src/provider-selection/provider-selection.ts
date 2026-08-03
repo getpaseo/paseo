@@ -7,6 +7,7 @@ import type {
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import { i18n } from "@/i18n/i18next";
+import { groupProviderAccountsBy } from "@/provider-accounts/provider-account-form-model";
 import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
 import { filterSelectableModels } from "./model-catalog";
 
@@ -23,6 +24,8 @@ export interface ProviderSelectionModelRow {
   modelLabel: string;
   description?: string;
   isDefault?: boolean;
+  /** Provider whose icon this row shows; differs from `provider` for provider accounts. */
+  iconProviderId?: string;
 }
 
 function buildModelRowKey(provider: string, modelId: string): string {
@@ -37,7 +40,17 @@ export type ProviderModelSelection =
 export interface ProviderSelectorProvider {
   id: string;
   label: string;
+  /** Builtin provider this account extends; drives grouping and the row icon. */
+  baseProviderId?: string;
   modelSelection: ProviderModelSelection;
+}
+
+/** The provider whose icon represents `providerId` — an account borrows its base provider's icon. */
+export function resolveProviderIconId(
+  providers: readonly ProviderSelectorProvider[],
+  providerId: string,
+): string {
+  return providers.find((entry) => entry.id === providerId)?.baseProviderId ?? providerId;
 }
 
 export interface ProviderSelectionState {
@@ -58,11 +71,13 @@ function buildModelRows(
   provider: string,
   providerLabel: string,
   models: AgentModelDefinition[],
+  iconProviderId?: string,
 ): ProviderSelectionModelRow[] {
   return models.map((model) => ({
     favoriteKey: buildModelRowKey(provider, model.id),
     provider,
     providerLabel,
+    iconProviderId,
     modelId: model.id,
     modelLabel: model.label,
     description: model.description ?? model.id,
@@ -73,11 +88,13 @@ function buildModelRows(
 function buildSyntheticDefaultRow(
   provider: string,
   providerLabel: string,
+  iconProviderId?: string,
 ): ProviderSelectionModelRow {
   return {
     favoriteKey: buildModelRowKey(provider, ""),
     provider,
     providerLabel,
+    iconProviderId,
     modelId: "",
     modelLabel: i18n.t("providerSelection.defaultModel"),
     description: undefined,
@@ -89,26 +106,34 @@ function buildModelSelection(
   provider: string,
   providerLabel: string,
   models: AgentModelDefinition[] | null,
+  iconProviderId?: string,
 ): ProviderModelSelection {
   if (models === null) {
     return { kind: "loading" };
   }
   const selectableModels = filterSelectableModels(models) ?? [];
   if (selectableModels.length === 0) {
-    return { kind: "models", rows: [buildSyntheticDefaultRow(provider, providerLabel)] };
+    return {
+      kind: "models",
+      rows: [buildSyntheticDefaultRow(provider, providerLabel, iconProviderId)],
+    };
   }
-  return { kind: "models", rows: buildModelRows(provider, providerLabel, selectableModels) };
+  return {
+    kind: "models",
+    rows: buildModelRows(provider, providerLabel, selectableModels, iconProviderId),
+  };
 }
 
 function buildEntryModelSelection(
   entry: ProviderSnapshotEntry,
   label: string,
+  iconProviderId?: string,
 ): ProviderModelSelection {
   if ((entry.models?.length ?? 0) > 0) {
-    return buildModelSelection(entry.provider, label, entry.models ?? null);
+    return buildModelSelection(entry.provider, label, entry.models ?? null, iconProviderId);
   }
   if (entry.status === "ready") {
-    return buildModelSelection(entry.provider, label, entry.models ?? null);
+    return buildModelSelection(entry.provider, label, entry.models ?? null, iconProviderId);
   }
   if (entry.status === "loading") {
     return { kind: "loading" };
@@ -127,32 +152,41 @@ export function buildProviderSelectorProviders(input: {
   providerDefinitions: AgentProviderDefinition[];
   modelsByProvider: Map<string, AgentModelDefinition[]>;
 }): ProviderSelectorProvider[] {
-  return input.providerDefinitions.map((definition) => ({
-    id: definition.id,
-    label: definition.label,
-    modelSelection: buildModelSelection(
-      definition.id,
-      definition.label,
-      input.modelsByProvider.has(definition.id)
-        ? (input.modelsByProvider.get(definition.id) ?? [])
-        : null,
-    ),
-  }));
+  return groupProviderAccountsBy(
+    input.providerDefinitions.map((definition) => ({
+      id: definition.id,
+      label: definition.label,
+      baseProviderId: definition.baseProviderId,
+      modelSelection: buildModelSelection(
+        definition.id,
+        definition.label,
+        input.modelsByProvider.has(definition.id)
+          ? (input.modelsByProvider.get(definition.id) ?? [])
+          : null,
+        definition.baseProviderId,
+      ),
+    })),
+    (provider) => provider.baseProviderId,
+  );
 }
 
 export function buildSelectableProviderSelectorProviders(
   entries: ProviderSnapshotEntry[] | undefined,
 ): ProviderSelectorProvider[] {
-  return (entries ?? [])
-    .filter((entry) => entry.enabled)
-    .map((entry) => {
-      const label = entry.label ?? entry.provider;
-      return {
-        id: entry.provider,
-        label,
-        modelSelection: buildEntryModelSelection(entry, label),
-      };
-    });
+  return groupProviderAccountsBy(
+    (entries ?? [])
+      .filter((entry) => entry.enabled)
+      .map((entry) => {
+        const label = entry.label ?? entry.provider;
+        return {
+          id: entry.provider,
+          label,
+          baseProviderId: entry.baseProviderId,
+          modelSelection: buildEntryModelSelection(entry, label, entry.baseProviderId),
+        };
+      }),
+    (provider) => provider.baseProviderId,
+  );
 }
 
 export function getProviderModelRows(

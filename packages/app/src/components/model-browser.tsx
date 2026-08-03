@@ -48,6 +48,7 @@ import {
   filterAndRankModelRows,
   getAllProviderModelRows,
   getProviderModelRows,
+  resolveProviderIconId,
   resolveSelectedModelLabel,
   type ProviderSelectionModelRow,
   type ProviderSelectorProvider,
@@ -338,7 +339,7 @@ export function useModelBrowser({
       title: view.providerLabel,
       leading: (
         <ModelProviderGlyph
-          provider={view.providerId}
+          provider={resolveProviderIconId(providers, view.providerId)}
           serverId={serverId}
           size={ICON_SIZE.md}
           tone="foreground"
@@ -369,6 +370,7 @@ export function useModelBrowser({
   }, [
     autoFocusSearch,
     handleSearchQueryChange,
+    providers,
     searchResetKey,
     serverId,
     singleProviderView,
@@ -687,8 +689,14 @@ function ModelRow({
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const leadingSlot = useMemo(
-    () => <ModelProviderGlyph provider={row.provider} serverId={serverId} size={ICON_SIZE.sm} />,
-    [row.provider, serverId],
+    () => (
+      <ModelProviderGlyph
+        provider={row.iconProviderId ?? row.provider}
+        serverId={serverId}
+        size={ICON_SIZE.sm}
+      />
+    ),
+    [row.iconProviderId, row.provider, serverId],
   );
 
   const description = showProviderLabel ? buildProviderQualifiedDescription(row) : row.description;
@@ -1008,8 +1016,14 @@ function GroupProviderButton({
     );
   }, [selection, t]);
   const leadingSlot = useMemo(
-    () => <ModelProviderGlyph provider={provider.id} serverId={serverId} size={ICON_SIZE.sm} />,
-    [provider.id, serverId],
+    () => (
+      <ModelProviderGlyph
+        provider={provider.baseProviderId ?? provider.id}
+        serverId={serverId}
+        size={ICON_SIZE.sm}
+      />
+    ),
+    [provider.baseProviderId, provider.id, serverId],
   );
   const trailingSlot = useMemo(
     () => (
