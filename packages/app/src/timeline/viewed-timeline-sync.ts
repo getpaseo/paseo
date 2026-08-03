@@ -39,7 +39,7 @@ export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
 }
 
 const RETRY_DELAY_MS = 1_000;
-export const VIEWED_TIMELINE_UNSUBSCRIBE_GRACE_MS = 30_000;
+const VIEWED_TIMELINE_HOT_AGENT_LIMIT = 5;
 
 type CatchUpStatus = "running" | "complete" | "error";
 
@@ -99,7 +99,6 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   // Authoritative fetch owed but not runnable yet: disconnected, unacknowledged, or parked.
   // Acknowledgement and tail completion are the only drain points.
   const pendingCatchUps = new Map<string, ProjectedTimelineForwardFetchPlan>();
-  const lingeringRemovals = new Map<string, () => void>();
   const visibilityCatchUpPending = new Set<string>();
   const visibilityCatchUpErrors = new Set<string>();
   const listeners = new Set<() => void>();
@@ -114,10 +113,27 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   let reconcileRequested = false;
   let membershipNeedsRetry = false;
   let cancelMembershipRetry: (() => void) | null = null;
+  let recentlyViewedAgentIds: string[] = [];
 
-  const visibleAgentIds = () => (active ? normalizeAgentIds([...sources.values()].flat()) : []);
-  const effectiveAgentIds = () =>
-    normalizeAgentIds([...visibleAgentIds(), ...lingeringRemovals.keys()]);
+  const visibleAgentIds = () => normalizeAgentIds([...sources.values()].flat());
+
+  const selectHotAgentIds = (visible: string[]) => {
+    const visibleSet = new Set(visible);
+    recentlyViewedAgentIds = [
+      ...visible,
+      ...recentlyViewedAgentIds.filter((agentId) => !visibleSet.has(agentId)),
+    ];
+    const hiddenBudget = Math.max(0, VIEWED_TIMELINE_HOT_AGENT_LIMIT - visible.length);
+    const desiredAgentIds = normalizeAgentIds([
+      ...visible,
+      ...recentlyViewedAgentIds
+        .filter((agentId) => !visibleSet.has(agentId))
+        .slice(0, hiddenBudget),
+    ]);
+    const desiredSet = new Set(desiredAgentIds);
+    recentlyViewedAgentIds = recentlyViewedAgentIds.filter((agentId) => desiredSet.has(agentId));
+    return desiredAgentIds;
+  };
 
   const isAcknowledged = (agentId: string) => acknowledged.includes(agentId);
   const isDesired = (agentId: string) => desired.includes(agentId);
@@ -361,32 +377,16 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     void reconcileMembership();
   };
 
-  const clearLingeringRemovals = () => {
-    for (const cancel of lingeringRemovals.values()) cancel();
-    lingeringRemovals.clear();
-  };
-
-  const publishVisibleMembership = (allowGrace: boolean) => {
+  const publishVisibleMembership = () => {
     const visible = visibleAgentIds();
-    for (const agentId of visible) {
-      lingeringRemovals.get(agentId)?.();
-      lingeringRemovals.delete(agentId);
+    if (!connected || deliveryMode !== "selective") {
+      const activeVisible = active ? visible : [];
+      recentlyViewedAgentIds = activeVisible;
+      commitDesiredMembership(activeVisible);
+      return;
     }
-
-    if (allowGrace && connected && deliveryMode === "selective") {
-      for (const agentId of desired) {
-        if (visible.includes(agentId) || lingeringRemovals.has(agentId)) continue;
-        const cancel = ports.schedule(() => {
-          lingeringRemovals.delete(agentId);
-          commitDesiredMembership(effectiveAgentIds());
-        }, VIEWED_TIMELINE_UNSUBSCRIBE_GRACE_MS);
-        lingeringRemovals.set(agentId, cancel);
-      }
-    } else {
-      clearLingeringRemovals();
-    }
-
-    commitDesiredMembership(effectiveAgentIds());
+    if (!active) return;
+    commitDesiredMembership(selectHotAgentIds(visible));
   };
 
   return {
@@ -403,19 +403,20 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       const normalized = normalizeAgentIds(agentIds);
       if (normalized.length === 0) sources.delete(sourceId);
       else sources.set(sourceId, normalized);
-      publishVisibleMembership(true);
+      publishVisibleMembership();
     },
     setActive(nextActive) {
       if (active === nextActive) return;
       active = nextActive;
-      publishVisibleMembership(true);
+      publishVisibleMembership();
     },
     setConnected(nextConnected) {
       if (connected === nextConnected) return;
       connected = nextConnected;
       if (!connected) {
-        clearLingeringRemovals();
-        commitDesiredMembership(visibleAgentIds(), { resetCatchUpStatus: true });
+        const visible = active ? visibleAgentIds() : [];
+        recentlyViewedAgentIds = visible;
+        commitDesiredMembership(visible, { resetCatchUpStatus: true });
         cancelMembershipRetry?.();
         cancelMembershipRetry = null;
         acknowledged = [];
@@ -434,13 +435,14 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     setDeliveryMode(nextMode) {
       if (deliveryMode === nextMode) return;
       deliveryMode = nextMode;
-      clearLingeringRemovals();
       cancelMembershipRetry?.();
       cancelMembershipRetry = null;
       membershipNeedsRetry = false;
       membershipGeneration += 1;
       for (const agentId of desired) cancelCatchUp(agentId);
-      desired = visibleAgentIds();
+      const visible = active ? visibleAgentIds() : [];
+      recentlyViewedAgentIds = visible;
+      desired = visible;
       visibilityCatchUpPending.clear();
       visibilityCatchUpErrors.clear();
       for (const agentId of desired) visibilityCatchUpPending.add(agentId);
@@ -467,7 +469,6 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     },
     dispose() {
       disposed = true;
-      clearLingeringRemovals();
       cancelMembershipRetry?.();
       cancelMembershipRetry = null;
       sources.clear();
@@ -475,6 +476,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       for (const agentId of desired) cancelCatchUp(agentId);
       desired = [];
       acknowledged = [];
+      recentlyViewedAgentIds = [];
       visibilityCatchUpPending.clear();
       visibilityCatchUpErrors.clear();
       notifyListeners();
