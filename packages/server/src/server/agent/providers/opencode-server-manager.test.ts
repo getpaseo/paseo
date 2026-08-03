@@ -15,6 +15,7 @@ import type {
   ManagedProcessReapResult,
 } from "../../managed-processes/managed-processes.js";
 import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
+import type { ProviderRuntimeSettings } from "../provider-launch-config.js";
 import {
   OpenCodeServerManager,
   type OpenCodeCommandPrefixResolver,
@@ -24,6 +25,99 @@ import {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+test("uses role-specific command and environment when empty settings initialize first", async () => {
+  const logger = createTestLogger();
+  const builtinRuntime = new FakeOpenCodeServerRuntime([4080], { autoAnnounce: true });
+  const builtinManager = OpenCodeServerManager.getInstance(logger, undefined, {
+    managedProcesses: builtinRuntime.managedProcesses,
+    portAllocator: builtinRuntime.allocatePort,
+    resolveHomeDir: () => os.tmpdir(),
+    spawnServerProcess: builtinRuntime.spawnServerProcess,
+    terminateProcess: builtinRuntime.terminateProcess,
+  });
+  const profiles: Array<{
+    provider: string;
+    port: number;
+    runtimeSettings: ProviderRuntimeSettings;
+  }> = [
+    {
+      provider: "opencode-lead",
+      port: 4081,
+      runtimeSettings: {
+        command: { mode: "replace", argv: ["/roles/lead/opencode", "--role", "lead"] },
+        env: { OPENCODE_CONFIG_DIR: "/roles/lead/config" },
+      },
+    },
+    {
+      provider: "opencode-supervision",
+      port: 4082,
+      runtimeSettings: {
+        command: {
+          mode: "replace",
+          argv: ["/roles/supervision/opencode", "--role", "supervision"],
+        },
+        env: { OPENCODE_CONFIG_DIR: "/roles/supervision/config" },
+      },
+    },
+    {
+      provider: "opencode-peer",
+      port: 4083,
+      runtimeSettings: {
+        command: { mode: "replace", argv: ["/roles/peer/opencode", "--role", "peer"] },
+        env: { OPENCODE_CONFIG_DIR: "/roles/peer/config" },
+      },
+    },
+  ];
+  const managers = profiles.map(({ port, runtimeSettings }) => {
+    const runtime = new FakeOpenCodeServerRuntime([port], { autoAnnounce: true });
+    return {
+      manager: OpenCodeServerManager.getInstance(logger, runtimeSettings, {
+        managedProcesses: runtime.managedProcesses,
+        portAllocator: runtime.allocatePort,
+        resolveHomeDir: () => os.tmpdir(),
+        spawnServerProcess: runtime.spawnServerProcess,
+        terminateProcess: runtime.terminateProcess,
+      }),
+      runtime,
+    };
+  });
+
+  try {
+    expect(managers.every(({ manager }) => manager !== builtinManager)).toBe(true);
+
+    const acquisitions = await Promise.all(managers.map(({ manager }) => manager.acquireCurrent()));
+
+    for (const [index, { runtime }] of managers.entries()) {
+      const profile = profiles[index]!;
+      expect(runtime.spawnCalls).toEqual([
+        expect.objectContaining({
+          command:
+            profile.runtimeSettings.command?.mode === "replace"
+              ? profile.runtimeSettings.command.argv[0]
+              : undefined,
+          args: [
+            "--role",
+            profile.provider.replace("opencode-", ""),
+            "serve",
+            "--port",
+            String(profile.port),
+          ],
+          options: expect.objectContaining({
+            envOverlay: expect.objectContaining(profile.runtimeSettings.env),
+          }),
+        }),
+      ]);
+    }
+
+    await Promise.all(acquisitions.map((acquisition) => acquisition.release()));
+  } finally {
+    await Promise.all([
+      builtinManager.shutdown(),
+      ...managers.map(({ manager }) => manager.shutdown()),
+    ]);
+  }
 });
 
 describe("OpenCodeServerManager generations", () => {
