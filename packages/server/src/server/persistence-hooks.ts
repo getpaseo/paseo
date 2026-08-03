@@ -1,4 +1,4 @@
-import type { AgentManager } from "./agent/agent-manager.js";
+import type { AgentManager, ManagedAgent } from "./agent/agent-manager.js";
 import { stripInternalPaseoMcpServer } from "./agent/runtime-mcp-config.js";
 import type {
   AgentPersistenceHandle,
@@ -113,7 +113,17 @@ export function extractTimestamps(record: StoredAgentRecord): {
   labels?: Record<string, string>;
   workspaceId?: string;
   owner?: StoredAgentRecord["owner"];
+  attention: ManagedAgent["attention"];
 } {
+  let attention: ManagedAgent["attention"] = { requiresAttention: false };
+  if (record.requiresAttention && record.attentionReason && record.attentionTimestamp) {
+    attention = {
+      requiresAttention: true,
+      attentionReason: record.attentionReason,
+      attentionTimestamp: new Date(record.attentionTimestamp),
+    };
+  }
+
   return {
     createdAt: new Date(record.createdAt),
     updatedAt: new Date(record.lastActivityAt ?? record.updatedAt),
@@ -121,6 +131,7 @@ export function extractTimestamps(record: StoredAgentRecord): {
     labels: record.labels,
     workspaceId: record.workspaceId,
     owner: record.owner,
+    attention,
   };
 }
 

@@ -9,6 +9,7 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentFeature,
+  type AgentHistoryLoader,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -2302,6 +2303,30 @@ export class OmpAgentClient implements AgentClient {
       await runtimeSession.close().catch(() => undefined);
       throw error;
     }
+  }
+
+  async loadHistorySession(handle: AgentPersistenceHandle): Promise<AgentHistoryLoader> {
+    const sessionFile = handle.nativeHandle;
+    if (typeof sessionFile !== "string" || sessionFile.length === 0) {
+      throw new Error("OMP history loading requires a native session file handle");
+    }
+    if (!existsSync(sessionFile)) {
+      throw new Error(`OMP history session file does not exist: ${sessionFile}`);
+    }
+
+    return {
+      provider: this.provider,
+      id: handle.sessionId,
+      capabilities: this.capabilities,
+      features: [],
+      streamHistory: () =>
+        streamOmpHistory({
+          sessionFile,
+          provider: this.provider,
+        }),
+      describePersistence: () => handle,
+      close: async () => {},
+    };
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {

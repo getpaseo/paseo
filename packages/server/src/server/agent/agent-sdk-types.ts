@@ -607,10 +607,21 @@ export interface AgentCreateSessionOptions {
   persistSession?: boolean;
 }
 
-/** Runtime-only intent for a persisted-session resume. Never persist this option. */
-export interface AgentResumeSessionOptions {
-  /** Defaults to interactive. History loading may be read-only for archived native sessions. */
-  purpose?: "interactive" | "history";
+/**
+ * Read-only access to persisted provider history.
+ *
+ * Implementations must not create or resume an interactive provider runtime.
+ * The deliberately narrow surface prevents history hydration from being
+ * mistaken for a runnable session.
+ */
+export interface AgentHistoryLoader {
+  readonly provider: AgentProvider;
+  readonly id: string | null;
+  readonly capabilities: AgentCapabilityFlags;
+  readonly features?: AgentFeature[];
+  streamHistory(): AsyncGenerator<AgentStreamEvent>;
+  describePersistence(): AgentPersistenceHandle | null;
+  close(): Promise<void>;
 }
 
 /**
@@ -699,8 +710,16 @@ export interface AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
-    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession>;
+  /**
+   * Load persisted history without creating or resuming a runnable provider
+   * runtime. Providers without this explicit capability fail closed when an
+   * archived timeline needs provider-backed hydration.
+   */
+  loadHistorySession?(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+  ): Promise<AgentHistoryLoader>;
   /**
    * Discover models and modes together. Implementations may use one upstream
    * process, separate upstream calls, static modes, or private helpers; callers

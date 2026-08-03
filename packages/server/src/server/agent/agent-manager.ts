@@ -20,7 +20,7 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
-  type AgentResumeSessionOptions,
+  type AgentHistoryLoader,
   type AgentFeature,
   type AgentLaunchContext,
   type AgentSlashCommand,
@@ -73,6 +73,7 @@ import {
   type ProviderSubagentDescriptor,
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
+import { runAgentInteractiveTransition } from "./agent-load-coordinator.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -126,8 +127,19 @@ interface PreparedSessionConfig {
   launchConfig: AgentSessionConfig;
 }
 
+interface PersistenceRegistrationOptions {
+  createdAt?: Date;
+  updatedAt?: Date;
+  lastUserMessageAt?: Date | null;
+  labels?: Record<string, string>;
+  workspaceId?: string;
+  owner?: AgentOwner;
+  attention?: AttentionState;
+}
+
 interface NormalizeConfigOptions {
   resolveDefaultModel?: boolean;
+  validateCwd?: boolean;
   env?: Record<string, string>;
 }
 
@@ -139,6 +151,60 @@ interface TimeoutOptions {
 
 function formatProviderList(providers: readonly string[]): string {
   return providers.length > 0 ? providers.join(", ") : "none";
+}
+
+async function validateWorkingDirectory(cwd: string): Promise<void> {
+  try {
+    const cwdStats = await stat(cwd);
+    if (!cwdStats.isDirectory()) {
+      throw new Error(`Working directory is not a directory: ${cwd}`);
+    }
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      throw new Error(`Working directory does not exist: ${cwd}`, { cause: error });
+    }
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error(`Failed to access working directory: ${cwd}`, { cause: error });
+  }
+}
+
+function historyOnlySession(agentId: string, loader: AgentHistoryLoader): AgentSession {
+  const rejectInteractiveAction = (): never => {
+    throw new Error(`Agent '${agentId}' is loaded for history only`);
+  };
+
+  return {
+    provider: loader.provider,
+    id: loader.id,
+    capabilities: STORED_AGENT_CAPABILITIES,
+    get features() {
+      return loader.features;
+    },
+    run: async () => rejectInteractiveAction(),
+    startTurn: async () => rejectInteractiveAction(),
+    subscribe: () => () => {},
+    streamHistory: () => loader.streamHistory(),
+    getRuntimeInfo: async () => ({
+      provider: loader.provider,
+      sessionId: loader.id,
+      model: null,
+      modeId: null,
+    }),
+    getAvailableModes: async () => [],
+    getCurrentMode: async () => null,
+    setMode: async () => rejectInteractiveAction(),
+    getPendingPermissions: () => [],
+    respondToPermission: async () => rejectInteractiveAction(),
+    describePersistence: () => loader.describePersistence(),
+    interrupt: async () => rejectInteractiveAction(),
+    close: () => loader.close(),
+  };
 }
 
 function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
@@ -336,6 +402,8 @@ interface ManagedAgentBase {
   workspaceId?: string;
   owner?: AgentOwner;
   capabilities: AgentCapabilityFlags;
+  /** History-only loaders are deliberately non-runnable and must be replaced before interaction. */
+  sessionExecutionMode?: "interactive" | "history-only";
   config: AgentSessionConfig;
   runtimeInfo?: AgentRuntimeInfo;
   createdAt: Date;
@@ -469,6 +537,7 @@ interface WriteLabelsResult {
 interface AgentMetadataPatch {
   title?: string;
   labels?: AgentLabelPatch;
+  attention?: AttentionState;
 }
 
 const SYSTEM_ERROR_PREFIX = "[System Error]";
@@ -1127,18 +1196,10 @@ export class AgentManager {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     agentId?: string,
-    options?: {
-      createdAt?: Date;
-      updatedAt?: Date;
-      lastUserMessageAt?: Date | null;
-      labels?: Record<string, string>;
-      workspaceId?: string;
-      owner?: AgentOwner;
-    },
-    resumeOptions?: AgentResumeSessionOptions,
+    options?: PersistenceRegistrationOptions,
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
-      this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
+      this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options),
     );
   }
 
@@ -1146,15 +1207,7 @@ export class AgentManager {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     agentId?: string,
-    options?: {
-      createdAt?: Date;
-      updatedAt?: Date;
-      lastUserMessageAt?: Date | null;
-      labels?: Record<string, string>;
-      workspaceId?: string;
-      owner?: AgentOwner;
-    },
-    resumeOptions?: AgentResumeSessionOptions,
+    options?: PersistenceRegistrationOptions,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(
@@ -1181,17 +1234,67 @@ export class AgentManager {
     }
     const launchContext = await this.buildLaunchContext(resolvedAgentId, client, storedConfig.cwd);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    const session = await client.resumeSession(
-      handle,
-      providerLaunchConfig,
-      launchContext,
-      resumeOptions,
-    );
+    const session = await client.resumeSession(handle, providerLaunchConfig, launchContext);
     await this.requireExternalMcpSupport(session, storedConfig);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
       persistence: handle,
     });
+  }
+
+  loadAgentHistoryFromPersistence(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+    agentId?: string,
+    options?: PersistenceRegistrationOptions,
+  ): Promise<ManagedAgent> {
+    return this.trackAgentRegistrationOperation(
+      this.loadAgentHistoryFromPersistenceInternal(handle, overrides, agentId, options),
+    );
+  }
+
+  private async loadAgentHistoryFromPersistenceInternal(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+    agentId?: string,
+    options?: PersistenceRegistrationOptions,
+  ): Promise<ManagedAgent> {
+    this.assertAcceptingAgentRegistrations();
+    const resolvedAgentId = validateAgentId(
+      agentId ?? this.idFactory(),
+      "loadAgentHistoryFromPersistence",
+    );
+    const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+    const storedConfig = await this.normalizeConfig(
+      stripInternalPaseoMcpServer({
+        ...metadata,
+        ...overrides,
+        provider: handle.provider,
+      } as AgentSessionConfig),
+      {
+        validateCwd: false,
+        resolveDefaultModel: false,
+      },
+    );
+
+    const client = this.requireClient(handle.provider);
+    if (!client.loadHistorySession) {
+      throw new Error(
+        `Provider '${handle.provider}' does not support non-runnable history loading`,
+      );
+    }
+
+    const loader = await client.loadHistorySession(handle, storedConfig);
+    return this.registerSession(
+      historyOnlySession(resolvedAgentId, loader),
+      storedConfig,
+      resolvedAgentId,
+      {
+        ...options,
+        persistence: handle,
+        sessionExecutionMode: "history-only",
+      },
+    );
   }
 
   importProviderSession(input: {
@@ -1499,12 +1602,27 @@ export class AgentManager {
       throw new Error("Agent storage is not configured");
     }
 
-    await this.registry.applySnapshot(agent, {
-      internal: agent.internal,
-    });
+    if (agent.sessionExecutionMode !== "history-only") {
+      await this.registry.applySnapshot(agent, {
+        internal: agent.internal,
+      });
+    }
     const stored = await this.registry.get(agentId);
     if (!stored) {
       throw new Error(`Agent ${agentId} not found in storage after snapshot`);
+    }
+    if (agent.sessionExecutionMode === "history-only") {
+      if (stored.archivedAt) {
+        await this.closeAgent(agentId);
+        this.discardRetainedAgentState(agentId);
+        return { archivedAt: stored.archivedAt };
+      }
+      await validateWorkingDirectory(resolve(stored.cwd));
+      await this.closeAgent(agentId);
+      const { archivedAt } = await this.markRecordArchived(stored);
+      this.discardRetainedAgentState(agentId);
+      await this.cascadeArchiveChildren(agentId);
+      return { archivedAt };
     }
 
     const { archivedAt } = await this.markRecordArchived(stored);
@@ -1679,7 +1797,7 @@ export class AgentManager {
   }
 
   async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
-    const agent = this.requireAgent(agentId);
+    const agent = this.requireSessionAgent(agentId);
 
     if (!agent.session.setFeature) {
       throw new Error("Agent session does not support setting features");
@@ -1696,6 +1814,12 @@ export class AgentManager {
     const agent = this.requireAgent(agentId);
     const normalizedTitle = title.trim();
     if (!normalizedTitle) {
+      return;
+    }
+    if (agent.sessionExecutionMode === "history-only") {
+      const record = await this.writeStoredMetadata(agent.id, { title: normalizedTitle });
+      agent.updatedAt = new Date(record.updatedAt);
+      this.emitState(agent, { persist: false });
       return;
     }
     if (
@@ -1719,6 +1843,12 @@ export class AgentManager {
     const liveAgent = this.agents.get(agentId);
     if (liveAgent) {
       liveAgent.labels = applyLabelPatch(liveAgent.labels, patch);
+      if (liveAgent.sessionExecutionMode === "history-only") {
+        const record = await this.writeStoredMetadata(agentId, { labels: patch });
+        liveAgent.updatedAt = new Date(record.updatedAt);
+        this.emitState(liveAgent, { persist: false });
+        return { record, live: true };
+      }
       this.touchUpdatedAt(liveAgent);
       await this.persistSnapshot(liveAgent);
       this.emitState(liveAgent, { persist: false });
@@ -1740,10 +1870,24 @@ export class AgentManager {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
+    const attentionPatch: Partial<
+      Pick<StoredAgentRecord, "requiresAttention" | "attentionReason" | "attentionTimestamp">
+    > = {};
+    if (patch.attention) {
+      attentionPatch.requiresAttention = patch.attention.requiresAttention;
+      attentionPatch.attentionReason = patch.attention.requiresAttention
+        ? patch.attention.attentionReason
+        : null;
+      attentionPatch.attentionTimestamp = patch.attention.requiresAttention
+        ? patch.attention.attentionTimestamp.toISOString()
+        : null;
+    }
+
     const nextRecord = {
       ...record,
       ...(patch.title ? { title: patch.title } : {}),
       ...(patch.labels ? { labels: applyLabelPatch(record.labels, patch.labels) } : {}),
+      ...attentionPatch,
       updatedAt: this.nextStoredUpdatedAt(record),
     };
     await registry.upsert(nextRecord);
@@ -1804,6 +1948,14 @@ export class AgentManager {
     const agent = this.requireAgent(agentId);
     if (agent.attention.requiresAttention) {
       agent.attention = { requiresAttention: false };
+      if (agent.sessionExecutionMode === "history-only") {
+        const record = await this.writeStoredMetadata(agent.id, {
+          attention: agent.attention,
+        });
+        agent.updatedAt = new Date(record.updatedAt);
+        this.emitState(agent, { persist: false });
+        return;
+      }
       await this.persistSnapshot(agent);
       this.emitState(agent, { persist: false });
     }
@@ -1821,6 +1973,15 @@ export class AgentManager {
     const record = await registry.get(agentId);
     if (!record) {
       throw new Error(`Agent not found: ${agentId}`);
+    }
+    if (liveAgent?.sessionExecutionMode === "history-only") {
+      if (record.archivedAt) {
+        await this.closeAgent(agentId);
+        this.discardRetainedAgentState(agentId);
+        return record;
+      }
+      await validateWorkingDirectory(resolve(record.cwd));
+      await this.closeAgent(agentId);
     }
 
     const nextRecord = buildArchivedAgentRecord(record, { archivedAt });
@@ -1843,7 +2004,16 @@ export class AgentManager {
     return nextRecord;
   }
 
-  async unarchiveSnapshot(
+  unarchiveSnapshot(
+    agentId: string,
+    updates?: { workspaceId?: string; labels?: AgentLabelPatch },
+  ): Promise<boolean> {
+    return runAgentInteractiveTransition(agentId, () =>
+      this.unarchiveSnapshotInternal(agentId, updates),
+    );
+  }
+
+  private async unarchiveSnapshotInternal(
     agentId: string,
     updates?: { workspaceId?: string; labels?: AgentLabelPatch },
   ): Promise<boolean> {
@@ -1851,6 +2021,13 @@ export class AgentManager {
     const record = await registry.get(agentId);
     if (!record || !record.archivedAt) {
       return false;
+    }
+
+    await validateWorkingDirectory(resolve(record.cwd));
+
+    const loaded = this.agents.get(agentId);
+    if (loaded?.sessionExecutionMode === "history-only") {
+      await this.closeAgent(agentId);
     }
 
     await this.unarchiveNativeSession(record.provider, record.persistence);
@@ -2370,7 +2547,7 @@ export class AgentManager {
     requestId: string,
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void> {
-    const agent = this.requireAgent(agentId);
+    const agent = this.requireSessionAgent(agentId);
     agent.inFlightPermissionResponses.add(requestId);
 
     try {
@@ -2509,7 +2686,7 @@ export class AgentManager {
     agentId: string,
     options?: HydrateTimelineOptions,
   ): Promise<void> {
-    const agent = this.requireSessionAgent(agentId);
+    const agent = this.requireAgent(agentId);
     await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
   }
 
@@ -2831,6 +3008,7 @@ export class AgentManager {
       publishWhenReady?: boolean;
       workspaceId?: string;
       owner?: AgentOwner;
+      sessionExecutionMode?: "interactive" | "history-only";
     },
   ): Promise<ManagedAgent> {
     let registered = false;
@@ -2859,6 +3037,7 @@ export class AgentManager {
         config,
         now,
         durableTimelineHasRows,
+        sessionExecutionMode: options?.sessionExecutionMode ?? "interactive",
         options,
       });
 
@@ -2867,7 +3046,9 @@ export class AgentManager {
       registered = true;
       // Initialize previousStatus to track transitions
       this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
-      await this.refreshRuntimeInfo(managed, { emit: false });
+      if (managed.sessionExecutionMode !== "history-only") {
+        await this.refreshRuntimeInfo(managed, { emit: false });
+      }
       this.assertAgentRegistrationActive(managed);
       await this.persistSnapshot(managed, {
         title: initialPersistedTitle,
@@ -2877,14 +3058,20 @@ export class AgentManager {
         this.emitState(managed, { persist: false });
       }
 
-      await this.refreshSessionState(managed, { emit: false });
+      if (managed.sessionExecutionMode !== "history-only") {
+        await this.refreshSessionState(managed, { emit: false });
+      }
       this.assertAgentRegistrationActive(managed);
       managed.lifecycle = "idle";
-      this.touchUpdatedAt(managed);
+      if (managed.sessionExecutionMode !== "history-only") {
+        this.touchUpdatedAt(managed);
+      }
       await this.persistSnapshot(managed);
       this.assertAgentRegistrationActive(managed);
       this.emitState(managed, { persist: false });
-      this.subscribeToSession(managed);
+      if (managed.sessionExecutionMode !== "history-only") {
+        this.subscribeToSession(managed);
+      }
       return { ...managed };
     } catch (error) {
       if (!registered) {
@@ -2971,6 +3158,7 @@ export class AgentManager {
     config: AgentSessionConfig;
     now: Date;
     durableTimelineHasRows: boolean;
+    sessionExecutionMode: "interactive" | "history-only";
     options:
       | {
           createdAt?: Date;
@@ -2987,7 +3175,15 @@ export class AgentManager {
         }
       | undefined;
   }): ActiveManagedAgent {
-    const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
+    const {
+      resolvedAgentId,
+      session,
+      config,
+      now,
+      durableTimelineHasRows,
+      sessionExecutionMode,
+      options,
+    } = params;
     return {
       id: resolvedAgentId,
       provider: config.provider,
@@ -2996,6 +3192,7 @@ export class AgentManager {
       owner: options?.owner,
       session,
       capabilities: session.capabilities,
+      sessionExecutionMode,
       config,
       runtimeInfo: undefined,
       lifecycle: "initializing",
@@ -3240,6 +3437,12 @@ export class AgentManager {
     if (!this.registry) {
       return;
     }
+    // Archived history readers are a read-only view over an existing record.
+    // Persisting their intentionally minimal runtime state would erase the
+    // interactive session's runtime metadata and feature configuration.
+    if (agent.sessionExecutionMode === "history-only") {
+      return;
+    }
     // Don't persist internal agents - they're ephemeral system tasks
     if (agent.internal) {
       return;
@@ -3378,7 +3581,9 @@ export class AgentManager {
         });
       }
     }
-    this.touchUpdatedAt(agent);
+    if (agent.sessionExecutionMode !== "history-only") {
+      this.touchUpdatedAt(agent);
+    }
     this.emitState(agent);
   }
 
@@ -4363,24 +4568,9 @@ export class AgentManager {
     // Always resolve cwd to absolute path for consistent history file lookup
     if (normalized.cwd) {
       normalized.cwd = resolve(normalized.cwd);
-      try {
-        const cwdStats = await stat(normalized.cwd);
-        if (!cwdStats.isDirectory()) {
-          throw new Error(`Working directory is not a directory: ${normalized.cwd}`);
-        }
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          "code" in error &&
-          (error as NodeJS.ErrnoException).code === "ENOENT"
-        ) {
-          throw new Error(`Working directory does not exist: ${normalized.cwd}`, { cause: error });
-        }
-        if (error instanceof Error) {
-          throw error;
-        }
-        throw new Error(`Failed to access working directory: ${normalized.cwd}`, { cause: error });
-      }
+    }
+    if (normalized.cwd && options.validateCwd !== false) {
+      await validateWorkingDirectory(normalized.cwd);
     }
 
     if (typeof normalized.model === "string") {
@@ -4599,6 +4789,9 @@ export class AgentManager {
     const agent = this.requireAgent(id);
     if (agent.session === null) {
       throw new Error(`Agent '${agent.id}' has no managed session`);
+    }
+    if (agent.sessionExecutionMode === "history-only") {
+      throw new Error(`Agent '${agent.id}' is loaded for history only`);
     }
     return agent;
   }

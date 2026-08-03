@@ -85,10 +85,11 @@ History navigation preserves the selected agent as an explicit recovery target. 
 and its workspace are archived, the workspace recovery action restores the workspace and unarchives
 the selected agent as one user action. Other archived agents in the restored workspace remain
 recoverable from History. Opening one pins its tab and renders the archived-agent callout. Authoritative
-timeline catch-up may load provider history with a runtime-only `history` resume purpose, which must
-leave both Paseo's `archivedAt` and the provider's native archive state unchanged. **Unarchive** remains
-the only transition back to an interactive runtime: it runs the provider's native unarchive hook
-(including Codex `thread/unarchive`) before the normal agent resume and timeline hydration flow.
+timeline catch-up uses a provider's explicit read-only history loader. The loader must not start or
+resume an interactive provider runtime. Providers without this loader fail closed. The load leaves
+both Paseo's `archivedAt` and the provider's native archive state unchanged. **Unarchive** remains the
+only transition back to an interactive runtime. It closes the history loader, runs the provider's
+native unarchive hook, and then uses the normal agent resume and timeline hydration flow.
 
 Provider session connection owns every process it spawns until the session is registered with
 `AgentManager`. If initialization, persisted-session resume, or initial history hydration fails,

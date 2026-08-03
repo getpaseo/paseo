@@ -4,6 +4,7 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentFeature,
+  AgentHistoryLoader,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
@@ -598,6 +599,13 @@ export class MockLoadTestAgentClient implements AgentClient {
       sessionId: handle.sessionId,
       logger: this.logger,
     });
+  }
+
+  async loadHistorySession(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+  ): Promise<AgentHistoryLoader> {
+    return await this.resumeSession(handle, overrides);
   }
 
   async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {

@@ -15,6 +15,7 @@ import type {
   AgentSlashCommand,
   AgentStreamEvent,
 } from "../agent-sdk-types.js";
+import { AgentManager } from "../agent-manager.js";
 import {
   buildCodexAppServerEnv,
   CodexAppServerAgentClient,
@@ -1055,31 +1056,24 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
-  test("loads archived Codex history without resuming the native thread", async () => {
-    const threadRequests: string[] = [];
-    const appServer = createFakeCodexAppServer({
-      "thread/loaded/list": () => {
-        threadRequests.push("thread/loaded/list");
-        return { data: [] };
-      },
-      "thread/resume": () => {
-        threadRequests.push("thread/resume");
-        return Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id")));
-      },
-      "thread/read": () => {
-        threadRequests.push("thread/read");
-        return { thread: { turns: [] } };
-      },
+  test("fails archived Codex history closed without spawning app-server", async () => {
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    const spawnAppServer = vi.fn(async () => {
+      throw new Error("Codex app-server must not spawn for history loading");
     });
-    const provider = createProviderWithFakeAppServer(appServer);
+    castInternals<{ spawnAppServer: typeof spawnAppServer }>(provider).spawnAppServer =
+      spawnAppServer;
+    const manager = new AgentManager({ clients: { codex: provider }, logger: createTestLogger() });
 
-    const session = await provider.resumeSession(archivedThreadHandle(), undefined, undefined, {
-      purpose: "history",
-    });
+    await expect(
+      manager.loadAgentHistoryFromPersistence(
+        { ...archivedThreadHandle(), provider: "codex" },
+        { cwd: "/removed/codex-workspace", modeId: "auto" },
+        "00000000-0000-4000-8000-000000000309",
+      ),
+    ).rejects.toThrow("Provider 'codex' does not support non-runnable history loading");
 
-    expect(threadRequests).toEqual(["thread/loaded/list", "thread/resume", "thread/read"]);
-    await session.close();
-    appServer.assertNoErrors();
+    expect(spawnAppServer).not.toHaveBeenCalled();
   });
 
   test("closes Codex app-server when an interactive resume fails", async () => {
@@ -1093,23 +1087,6 @@ describe("Codex app-server provider", () => {
     await expect(provider.resumeSession(archivedThreadHandle())).rejects.toThrow(
       archivedThreadErrorMessage("archived-thread-id"),
     );
-
-    expect(killSpy).toHaveBeenCalledWith("SIGTERM");
-    appServer.assertNoErrors();
-  });
-
-  test("closes Codex app-server when archived history hydration fails", async () => {
-    const appServer = createFakeCodexAppServer({
-      "thread/resume": () =>
-        Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id"))),
-      "thread/read": () => Promise.reject(new Error("thread history is unavailable")),
-    });
-    const killSpy = vi.spyOn(appServer.child, "kill");
-    const provider = createProviderWithFakeAppServer(appServer);
-
-    await expect(
-      provider.resumeSession(archivedThreadHandle(), undefined, undefined, { purpose: "history" }),
-    ).rejects.toThrow("thread history is unavailable");
 
     expect(killSpy).toHaveBeenCalledWith("SIGTERM");
     appServer.assertNoErrors();
