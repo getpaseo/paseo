@@ -746,7 +746,7 @@ describe("PiRpcAgentSession", () => {
 
   test("discards held text on close (no late emit)", async () => {
     const prev = process.env.PI_REASONING_HOLD_MS;
-    process.env.PI_REASONING_HOLD_MS = "10000"; // long hold: only close can cancel it
+    process.env.PI_REASONING_HOLD_MS = "30"; // short hold: an uncancelled timer fires within the wait, so only a real cancel passes
     onTestFinished(() => {
       if (prev === undefined) delete process.env.PI_REASONING_HOLD_MS;
       else process.env.PI_REASONING_HOLD_MS = prev;
@@ -771,7 +771,7 @@ describe("PiRpcAgentSession", () => {
       assistantMessageEvent: { type: "text_delta", delta: "There are " },
     });
     await session.close();
-    await new Promise((r) => setTimeout(r, 30)); // a leaked timer would have fired by now
+    await new Promise((r) => setTimeout(r, 100)); // a leaked 30ms timer fires here and would emit the held text
 
     // Thinking was streamed, but the held text is dropped on close (no late emit).
     expect(events.timelineItems()).toEqual([{ type: "reasoning", text: "think" }]);
@@ -779,7 +779,7 @@ describe("PiRpcAgentSession", () => {
 
   test("discards held text on interrupt (no late emit)", async () => {
     const prev = process.env.PI_REASONING_HOLD_MS;
-    process.env.PI_REASONING_HOLD_MS = "10000"; // long hold: only interrupt can cancel it
+    process.env.PI_REASONING_HOLD_MS = "30"; // short hold: an uncancelled timer fires within the wait, so only a real cancel passes
     onTestFinished(() => {
       if (prev === undefined) delete process.env.PI_REASONING_HOLD_MS;
       else process.env.PI_REASONING_HOLD_MS = prev;
@@ -804,7 +804,7 @@ describe("PiRpcAgentSession", () => {
       assistantMessageEvent: { type: "text_delta", delta: "There are " },
     });
     await session.interrupt();
-    await new Promise((r) => setTimeout(r, 30));
+    await new Promise((r) => setTimeout(r, 100)); // a leaked 30ms timer fires here and would emit the held text
 
     expect(events.timelineItems()).toEqual([{ type: "reasoning", text: "think" }]);
   });
