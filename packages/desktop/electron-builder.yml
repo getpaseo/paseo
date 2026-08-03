@@ -6,6 +6,7 @@ protocols:
   - name: Paseo agent link
     schemes:
       - paseo
+beforePack: ./scripts/before-pack.js
 afterPack: ./scripts/after-pack.js
 afterSign: ./scripts/after-sign.js
 directories:

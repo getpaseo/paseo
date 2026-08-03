@@ -14,6 +14,21 @@ const RIPGREP_PLATFORM_DIR = {
   win32: { arm64: "arm64-win32", x64: "x64-win32" },
 };
 
+const PARCEL_WATCHER_PLATFORM_DIRS = {
+  darwin: { arm64: ["watcher-darwin-arm64"], x64: ["watcher-darwin-x64"] },
+  linux: {
+    arm64: ["watcher-linux-arm64-glibc", "watcher-linux-arm64-musl"],
+    x64: ["watcher-linux-x64-glibc", "watcher-linux-x64-musl"],
+  },
+  win32: { arm64: ["watcher-win32-arm64"], x64: ["watcher-win32-x64"] },
+};
+
+const SHERPA_PLATFORM_DIR = {
+  darwin: { arm64: "sherpa-onnx-darwin-arm64", x64: "sherpa-onnx-darwin-x64" },
+  linux: { arm64: "sherpa-onnx-linux-arm64", x64: "sherpa-onnx-linux-x64" },
+  win32: { ia32: "sherpa-onnx-win-ia32", x64: "sherpa-onnx-win-x64" },
+};
+
 function rmSafe(target) {
   fs.rmSync(target, { recursive: true, force: true });
 }
@@ -22,6 +37,15 @@ function pruneChildrenExcept(parent, keep) {
   if (!fs.existsSync(parent)) return;
   for (const entry of fs.readdirSync(parent)) {
     if (!keep.has(entry)) {
+      rmSafe(path.join(parent, entry));
+    }
+  }
+}
+
+function pruneMatchingChildrenExcept(parent, prefix, keep) {
+  if (!fs.existsSync(parent)) return;
+  for (const entry of fs.readdirSync(parent)) {
+    if (entry.startsWith(prefix) && !keep.has(entry)) {
       rmSafe(path.join(parent, entry));
     }
   }
@@ -73,6 +97,45 @@ function pruneSharpLibvips(nodeModules, platform, arch) {
   }
 }
 
+function pruneParcelWatcher(nodeModules, platform, arch) {
+  const keep = new Set(PARCEL_WATCHER_PLATFORM_DIRS[platform]?.[arch] || []);
+  pruneMatchingChildrenExcept(path.join(nodeModules, "@parcel"), "watcher-", keep);
+}
+
+function pruneSherpaOnnx(nodeModules, platform, arch) {
+  const keep = new Set(["sherpa-onnx-node"]);
+  const platformPackage = SHERPA_PLATFORM_DIR[platform]?.[arch];
+  if (platformPackage) keep.add(platformPackage);
+  pruneMatchingChildrenExcept(nodeModules, "sherpa-onnx-", keep);
+}
+
+function assertFile(filePath, label) {
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    throw new Error(`${label} is missing from the packaged app: ${filePath}`);
+  }
+}
+
+function validateWindowsNativeModules(nodeModules, arch) {
+  const watcherDir = PARCEL_WATCHER_PLATFORM_DIRS.win32[arch]?.[0];
+  if (!watcherDir) {
+    throw new Error(`Unsupported Windows architecture for @parcel/watcher: ${arch}`);
+  }
+
+  assertFile(
+    path.join(nodeModules, "@parcel", watcherDir, "watcher.node"),
+    "Parcel watcher binding",
+  );
+  assertFile(
+    path.join(nodeModules, "node-pty", "prebuilds", `win32-${arch}`, "conpty.node"),
+    "node-pty binding",
+  );
+
+  const sherpaDir = SHERPA_PLATFORM_DIR.win32[arch];
+  if (sherpaDir) {
+    assertFile(path.join(nodeModules, sherpaDir, "sherpa-onnx.node"), "sherpa-onnx binding");
+  }
+}
+
 function pruneNativeModules(appOutDir, platform, arch) {
   const resourcesDir =
     platform === "darwin"
@@ -80,13 +143,24 @@ function pruneNativeModules(appOutDir, platform, arch) {
       : path.join(appOutDir, "resources");
 
   const nodeModules = path.join(resourcesDir, "app.asar.unpacked", "node_modules");
-  if (!fs.existsSync(nodeModules)) return;
+  if (!fs.existsSync(nodeModules)) {
+    if (platform === "win32") {
+      throw new Error(`Packaged native modules directory is missing: ${nodeModules}`);
+    }
+    return;
+  }
 
   const before = dirSizeSync(nodeModules);
 
   pruneClaudeAgentSdk(nodeModules, platform, arch);
   pruneNodePty(nodeModules, platform, arch);
   pruneSharpLibvips(nodeModules, platform, arch);
+  pruneParcelWatcher(nodeModules, platform, arch);
+  pruneSherpaOnnx(nodeModules, platform, arch);
+
+  if (platform === "win32") {
+    validateWindowsNativeModules(nodeModules, arch);
+  }
 
   const after = dirSizeSync(nodeModules);
   const savedMB = ((before - after) / 1024 / 1024).toFixed(1);
@@ -135,3 +209,5 @@ async function smokeUnpackedAppIfRequested(appOutDir) {
     appPath: appOutDir,
   });
 }
+
+exports.pruneNativeModules = pruneNativeModules;
