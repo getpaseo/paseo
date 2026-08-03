@@ -215,7 +215,7 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
         url,
         ...(clientId ? { clientId } : {}),
         clientType: "browser",
-        connectTimeoutMs: 5_000,
+        connectTimeoutMs: 500,
         reconnect: { enabled: false },
         capabilities: options.capabilities ?? browserHostCapabilities(),
       });
