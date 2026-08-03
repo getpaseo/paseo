@@ -2502,6 +2502,85 @@ describe("ACPAgentClient fetchCatalog", () => {
       vi.useRealTimers();
     }
   });
+
+  test("stalled probes run concurrently, so many stalled models stay within one per-model budget", async () => {
+    // Both model probes never answer; the whole catalog must still finish
+    // after a single PER_MODEL_THINKING_PROBE_TIMEOUT_MS, not N × that.
+    const setSessionConfigOption = vi.fn(() => new Promise(() => {}));
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "sess-1",
+              modes: null,
+              models: null,
+              configOptions: [
+                {
+                  id: "model",
+                  name: "Model",
+                  category: "model",
+                  type: "select",
+                  currentValue: "model-a",
+                  options: [
+                    { value: "model-a", name: "Model A" },
+                    { value: "model-b", name: "Model B" },
+                  ],
+                },
+                {
+                  id: "thinking",
+                  name: "Thinking",
+                  category: "thought_level",
+                  type: "select",
+                  currentValue: "high",
+                  options: [
+                    { value: "off", name: "Off" },
+                    { value: "low", name: "Low" },
+                    { value: "high", name: "High" },
+                    { value: "max", name: "Max" },
+                  ],
+                },
+              ],
+            }),
+            setSessionConfigOption,
+          },
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "pi",
+      logger: createTestLogger(),
+      defaultCommand: ["test-acp"],
+      defaultModes: [],
+    });
+
+    vi.useFakeTimers();
+    try {
+      const catalogPromise = client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/tmp/acp-per-model-concurrent",
+        force: false,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      // One per-model budget fires both stalled probes at once.
+      await vi.advanceTimersByTimeAsync(PER_MODEL_THINKING_PROBE_TIMEOUT_MS);
+      const catalog = await catalogPromise;
+
+      expect(setSessionConfigOption).toHaveBeenCalledTimes(2);
+      // Both models fell back to the shared options, and the catalog survived.
+      for (const model of catalog.models) {
+        expect(model.thinkingOptions?.map((o) => o.id)).toEqual(["off", "low", "high", "max"]);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("ACPAgentClient listImportableSessions", () => {

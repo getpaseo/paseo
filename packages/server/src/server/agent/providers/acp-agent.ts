@@ -999,6 +999,12 @@ export class ACPAgentClient implements AgentClient {
    * shared options). Each probe is bounded by
    * PER_MODEL_THINKING_PROBE_TIMEOUT_MS so a stalled probe cannot hang the
    * whole catalog probe.
+   *
+   * Probes run concurrently: ACP is JSON-RPC, so requests carry ids and
+   * responses are matched per request; local agents process the writes
+   * sequentially anyway. Parallel probes keep the worst case at one
+   * per-model timeout instead of models × timeout, so a provider that
+   * advertises many models cannot exhaust the catalog budget.
    */
   private async collectPerModelThinkingOptions({
     connection,
@@ -1015,30 +1021,41 @@ export class ACPAgentClient implements AgentClient {
       return undefined;
     }
 
+    const probed = await Promise.all(
+      flattenSelectOptions(modelOption.options).map(async (choice) => {
+        try {
+          const response = await withTimeout(
+            this.runACPRequest(() =>
+              connection.setSessionConfigOption({
+                sessionId,
+                configId: modelOption.id,
+                value: choice.value,
+              }),
+            ),
+            PER_MODEL_THINKING_PROBE_TIMEOUT_MS,
+            `ACP thinking-options probe for model "${choice.value}" timed out after ${PER_MODEL_THINKING_PROBE_TIMEOUT_MS}ms`,
+          );
+          const transformedConfigOptions = this.configOptionsTransformer
+            ? this.configOptionsTransformer(response.configOptions)
+            : response.configOptions;
+          return {
+            modelId: choice.value,
+            options: deriveSelectorOptions(transformedConfigOptions, "thought_level"),
+          };
+        } catch (error) {
+          this.logger.warn(
+            { err: error, provider: this.provider, model: choice.value },
+            "Failed to probe ACP thinking options for model",
+          );
+          return null;
+        }
+      }),
+    );
+
     const perModel = new Map<string, ConfigOptionSelector[]>();
-    for (const choice of flattenSelectOptions(modelOption.options)) {
-      try {
-        const response = await withTimeout(
-          this.runACPRequest(() =>
-            connection.setSessionConfigOption({
-              sessionId,
-              configId: modelOption.id,
-              value: choice.value,
-            }),
-          ),
-          PER_MODEL_THINKING_PROBE_TIMEOUT_MS,
-          `ACP thinking-options probe for model "${choice.value}" timed out after ${PER_MODEL_THINKING_PROBE_TIMEOUT_MS}ms`,
-        );
-        const transformedConfigOptions = this.configOptionsTransformer
-          ? this.configOptionsTransformer(response.configOptions)
-          : response.configOptions;
-        const options = deriveSelectorOptions(transformedConfigOptions, "thought_level");
-        perModel.set(choice.value, options);
-      } catch (error) {
-        this.logger.warn(
-          { err: error, provider: this.provider, model: choice.value },
-          "Failed to probe ACP thinking options for model",
-        );
+    for (const entry of probed) {
+      if (entry) {
+        perModel.set(entry.modelId, entry.options);
       }
     }
     return perModel.size > 0 ? perModel : undefined;
