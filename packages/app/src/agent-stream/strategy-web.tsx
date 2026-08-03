@@ -112,7 +112,25 @@ function isScrollContainerMeasurable(
   return scrollContainer.clientHeight > 0 && scrollContainer.scrollHeight > 0;
 }
 
-function isUpwardScrollKey(event: KeyboardEvent): boolean {
+function isEditableEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+  const editableRoot = target.closest("input, textarea, [contenteditable]");
+  if (!editableRoot) {
+    return false;
+  }
+  const tagName = editableRoot.tagName.toLowerCase();
+  if (tagName === "input" || tagName === "textarea") {
+    return true;
+  }
+  return editableRoot.getAttribute("contenteditable")?.toLowerCase() !== "false";
+}
+
+function isUpwardViewportScrollKey(event: KeyboardEvent): boolean {
+  if (isEditableEventTarget(event.target)) {
+    return false;
+  }
   return (
     event.key === "ArrowUp" ||
     event.key === "PageUp" ||
@@ -748,7 +766,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!isUpwardScrollKey(event)) {
+      if (!isUpwardViewportScrollKey(event)) {
         return;
       }
       stopFollowingOutputFromUserIntent();

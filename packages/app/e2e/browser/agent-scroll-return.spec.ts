@@ -6,6 +6,12 @@ import {
 } from "../support/helpers/agent-bottom-anchor";
 import { getServerId } from "../support/helpers/server-id";
 import { seedMockAgentWorkspace, type MockAgentWorkspace } from "../support/helpers/mock-agent";
+import {
+  continueToNextQuestion,
+  fillQuestionAnswer,
+  submitQuestionAnswers,
+  waitForQuestionPrompt,
+} from "../support/helpers/questions";
 import { openMobileAgentSidebar } from "../support/helpers/sidebar";
 import {
   expectTimelinePromptVisible,
@@ -174,5 +180,44 @@ test("a retained chat preserves an intentional reading position", async ({ page 
       .toBeLessThanOrEqual(24);
   } finally {
     await Promise.allSettled([longChat.cleanup(), otherWorkspace.cleanup()]);
+  }
+});
+
+test("editing keys in an embedded question keep output following", async ({ page }) => {
+  test.setTimeout(240_000);
+  const longChat = await seedLongMockAgentTimeline({ turns: 30 });
+  const questionPrompt = "Emit synthetic questions: two free-write questions.";
+  const firstQuestion = "What is the GitHub private repo URL to push to?";
+  const secondQuestion = "What should the first commit message be?";
+
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openAgentTimeline(page, longChat);
+    await expectTimelinePromptVisible(page, longChat.newestPrompt);
+    await expectChatAtBottom(page);
+
+    await longChat.client.sendAgentMessage(longChat.agentId, questionPrompt);
+    await waitForQuestionPrompt(page, 30_000);
+    await fillQuestionAnswer(page, {
+      question: firstQuestion,
+      answer: "git@github.com:user/private-repo.git",
+    });
+    const firstInput = page
+      .getByTestId("question-form-card")
+      .first()
+      .getByRole("textbox", { name: firstQuestion });
+    await firstInput.press("Home");
+    await firstInput.press("ArrowUp");
+    await continueToNextQuestion(page);
+    await fillQuestionAnswer(page, {
+      question: secondQuestion,
+      answer: "Initialize private repo",
+    });
+    await submitQuestionAnswers(page);
+    await longChat.client.waitForFinish(longChat.agentId, 20_000);
+
+    await expectChatAtBottom(page);
+  } finally {
+    await longChat.cleanup();
   }
 });
