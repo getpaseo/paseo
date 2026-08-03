@@ -1,9 +1,10 @@
 import type React from "react";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import type { Virtualizer } from "@tanstack/react-virtual";
 import { createPromptJumpSettleController, PROMPT_JUMP_TOP_INSET_PX } from "./prompt-jump-settle";
 
 interface UseScrollToMessageInput {
+  active: boolean;
   scrollContainerRef: React.RefObject<HTMLElement | null>;
   rowVirtualizer: Virtualizer<HTMLElement, Element>;
   historyVirtualized: readonly { id: string }[];
@@ -23,6 +24,7 @@ const SCROLL_AFFECTING_KEYS = new Set([
 ]);
 
 export function useScrollToMessage({
+  active,
   scrollContainerRef,
   rowVirtualizer,
   historyVirtualized,
@@ -79,9 +81,15 @@ export function useScrollToMessage({
   );
 
   useEffect(() => () => settleController.cancel(), [settleController]);
+  useLayoutEffect(() => {
+    if (!active) {
+      settleController.cancel();
+    }
+  }, [active, settleController]);
 
   const scrollToMessage = useCallback(
     (itemId: string) => {
+      if (!active) return;
       const container = scrollContainerRef.current;
       if (!container) return;
       cancelPendingStickToBottom();
@@ -109,6 +117,7 @@ export function useScrollToMessage({
       }
     },
     [
+      active,
       cancelPendingStickToBottom,
       historyVirtualized,
       onNearBottomChange,
