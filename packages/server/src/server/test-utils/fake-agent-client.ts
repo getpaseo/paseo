@@ -857,10 +857,14 @@ class FakeAgentSession implements AgentSession {
   }
 
   describePersistence(): AgentPersistenceHandle | null {
+    const metadata = {
+      ...(this.memoryMarker ? { marker: this.memoryMarker } : {}),
+      ...(this.config.mcpServers ? { mcpServers: this.config.mcpServers } : {}),
+    };
     return buildPersistence(
       this.providerName,
       this.id,
-      this.memoryMarker ? { marker: this.memoryMarker } : undefined,
+      Object.keys(metadata).length > 0 ? metadata : undefined,
     );
   }
 

@@ -59,6 +59,11 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
   });
   expect(response.payload.agent).not.toHaveProperty("config");
   expect(response.payload.agent).not.toHaveProperty("mcpServers");
+  expect(response.payload.agent.persistence?.metadata).toEqual({
+    conversationId: response.payload.agent.persistence?.sessionId,
+    cwd: response.payload.agent.cwd,
+  });
+  expect(JSON.stringify(response.payload.agent)).not.toContain(bearer);
 
   const update = hub.hubMessages().find((message) => message.type === "hub.execution.agent.update");
   expect(update).toMatchObject({
@@ -70,6 +75,11 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
   }
   expect(update.payload.agent).not.toHaveProperty("config");
   expect(update.payload.agent).not.toHaveProperty("mcpServers");
+  expect(update.payload.agent.persistence?.metadata).toEqual({
+    conversationId: update.payload.agent.persistence?.sessionId,
+    cwd: update.payload.agent.cwd,
+  });
+  expect(JSON.stringify(update.payload.agent)).not.toContain(bearer);
 });
 
 test("new Hub executions cannot override the daemon-owned Paseo MCP server", async () => {

@@ -350,6 +350,14 @@ describe("forwardLiveAgent", () => {
         headers: { Authorization: "Bearer execution-secret" },
       },
     };
+    agent.persistence = {
+      provider: "codex",
+      sessionId: "session-a",
+      metadata: {
+        conversationId: "conversation-a",
+        mcpServers: agent.config.mcpServers,
+      },
+    };
     expect(agent.config).toMatchObject({
       provider: "codex",
       mcpServers: {
@@ -374,6 +382,8 @@ describe("forwardLiveAgent", () => {
     }
     expect(update.agent).not.toHaveProperty("config");
     expect(update.agent).not.toHaveProperty("mcpServers");
+    expect(update.agent.persistence?.metadata).toEqual({ conversationId: "conversation-a" });
+    expect(JSON.stringify(update.agent)).not.toContain("execution-secret");
   });
 
   test("emits a remove when the agent's workspace resolves to no project", async () => {
