@@ -13,6 +13,7 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { Theme } from "@/styles/theme";
+import { WEB_SCROLLBAR_SIZE_PX } from "@/styles/web-scrollbar";
 import { estimateStreamItemHeight } from "./web-virtualization";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import { createStreamStrategy } from "./strategy";
@@ -146,10 +147,13 @@ function isVerticalScrollbarGutterPress(
   if (event.target !== scrollContainer) {
     return false;
   }
-  const scrollbarWidth = scrollContainer.offsetWidth - scrollContainer.clientWidth;
-  if (scrollbarWidth <= 0) {
+  if (scrollContainer.scrollHeight <= scrollContainer.clientHeight) {
     return false;
   }
+  const scrollbarWidth = Math.max(
+    scrollContainer.offsetWidth - scrollContainer.clientWidth,
+    WEB_SCROLLBAR_SIZE_PX,
+  );
   const bounds = scrollContainer.getBoundingClientRect();
   return window.getComputedStyle(scrollContainer).direction === "rtl"
     ? event.clientX <= bounds.left + scrollbarWidth

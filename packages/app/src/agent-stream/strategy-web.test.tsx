@@ -989,6 +989,53 @@ describe("createWebStreamStrategy", () => {
 
     Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1300 });
     act(() => scrollContainer.dispatchEvent(new Event("scroll")));
+    Object.defineProperty(scrollContainer, "offsetWidth", { configurable: true, value: 500 });
+    scrollContainer.getBoundingClientRect = () =>
+      ({
+        bottom: 500,
+        height: 500,
+        left: 0,
+        right: 500,
+        top: 0,
+        width: 500,
+        x: 0,
+        y: 0,
+        toJSON: () => {},
+      }) as DOMRect;
+    const overlayScrollbarPointerDown = new MouseEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      clientX: 495,
+      clientY: 400,
+    });
+    Object.defineProperties(overlayScrollbarPointerDown, {
+      isPrimary: { value: true },
+      pointerId: { value: 2 },
+      pointerType: { value: "mouse" },
+    });
+    act(() => scrollContainer.dispatchEvent(overlayScrollbarPointerDown));
+    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 900 });
+    act(() => scrollContainer.dispatchEvent(new Event("scroll")));
+    scrollTo.mockClear();
+
+    Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1900 });
+    act(() => {
+      root?.render(
+        strategy.render({
+          ...renderInput,
+          segments: {
+            ...renderInput.segments,
+            liveHead: [userMessage(3), userMessage(4)],
+          },
+          boundary: { ...renderInput.boundary, hasLiveHead: true },
+        }),
+      );
+    });
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1400 });
+    act(() => scrollContainer.dispatchEvent(new Event("scroll")));
     const pointerDown = new MouseEvent("pointerdown", {
       bubbles: true,
       button: 0,
@@ -998,7 +1045,7 @@ describe("createWebStreamStrategy", () => {
     });
     Object.defineProperties(pointerDown, {
       isPrimary: { value: true },
-      pointerId: { value: 2 },
+      pointerId: { value: 3 },
       pointerType: { value: "mouse" },
     });
     const pointerMove = new MouseEvent("pointermove", {
@@ -1009,7 +1056,7 @@ describe("createWebStreamStrategy", () => {
     });
     Object.defineProperties(pointerMove, {
       isPrimary: { value: true },
-      pointerId: { value: 2 },
+      pointerId: { value: 3 },
       pointerType: { value: "mouse" },
     });
     act(() => {
