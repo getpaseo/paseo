@@ -68,6 +68,8 @@ services:
       - ./workspace:/workspace
 ```
 
+The image sets `PASEO_SERVICE_MANAGED=1`, so the daemon refuses a client shutdown and Docker stays the only thing that stops it. Use `docker stop`. See [architecture.md](architecture.md#service-managed-ownership).
+
 ## Installing Agents
 
 The base image does not preinstall Claude Code, Codex, OpenCode, Copilot, Pi, or

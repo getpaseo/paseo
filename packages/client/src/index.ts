@@ -18,7 +18,7 @@ import type {
   SessionOutboundMessage,
   WorkspaceDescriptorPayload,
 } from "@getpaseo/protocol/messages";
-import { DaemonClient } from "./daemon-client.js";
+import { DaemonClient, DaemonShutdownRejectedError } from "./daemon-client.js";
 import type {
   FetchAgentTimelineCursor,
   FetchAgentTimelineDirection,
@@ -26,7 +26,7 @@ import type {
   FetchAgentTimelineProjection,
 } from "./daemon-client.js";
 
-export { DaemonClient };
+export { DaemonClient, DaemonShutdownRejectedError };
 export type {
   DaemonClientConfig,
   DaemonEvent,

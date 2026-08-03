@@ -12,6 +12,7 @@ export const pidLockInfoSchema = z.object({
   uid: z.number(),
   listen: z.string().nullable(),
   desktopManaged: z.boolean().optional(),
+  serviceManaged: z.boolean().optional(),
   heartbeat: z.literal(true).optional(),
 });
 
@@ -199,6 +200,9 @@ export async function acquirePidLock(
     listen,
     heartbeat: true,
     ...(process.env.PASEO_DESKTOP_MANAGED === "1" ? { desktopManaged: true } : {}),
+    // Local tooling reads this to refuse a stop before it ever signals the owner
+    // process, so the fence holds even when the daemon websocket is unreachable.
+    ...(process.env.PASEO_SERVICE_MANAGED === "1" ? { serviceManaged: true } : {}),
   };
 
   await writeNewPidLock(pidPath, lockInfo);

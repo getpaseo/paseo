@@ -16,6 +16,8 @@ import type { PushNotificationSender } from "../push/notifications.js";
 interface TestPaseoDaemonOptions {
   daemonVersion?: string;
   desktopManaged?: boolean;
+  serviceManaged?: boolean;
+  onLifecycleIntent?: PaseoDaemonConfig["onLifecycleIntent"];
   downloadTokenTtlMs?: number;
   corsAllowedOrigins?: string[];
   listen?: string;
@@ -168,6 +170,8 @@ async function prepareTestDaemonConfig(
     paseoHome,
     daemonVersion: options.daemonVersion,
     desktopManaged: options.desktopManaged,
+    serviceManaged: options.serviceManaged,
+    onLifecycleIntent: options.onLifecycleIntent,
     corsAllowedOrigins: options.corsAllowedOrigins ?? [],
     hostnames: true,
     mcpEnabled: options.mcpEnabled ?? true,

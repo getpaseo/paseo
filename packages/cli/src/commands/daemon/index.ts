@@ -29,6 +29,10 @@ export function createDaemonCommand(): Command {
     .option("--timeout <seconds>", "Wait timeout before failing (default: 15)")
     .option("--force", "Send SIGKILL if graceful stop times out")
     .option("--kill-timeout <seconds>", "Wait after SIGKILL before failing (default: 3)")
+    .option(
+      "--service-maintenance",
+      "Stop a daemon owned by an external service manager (launchd, systemd, Docker)",
+    )
     .action(withOutput(runStopCommand));
 
   addJsonOption(daemon.command("restart").description("Restart the local daemon"))

@@ -408,6 +408,7 @@ function resolveShellEnv({ deps, timeoutMs }: ResolveShellEnvInput): ResolvedShe
   const shellEnv = { ...deps.env };
   delete shellEnv.PASEO_NODE_ENV;
   delete shellEnv.PASEO_DESKTOP_MANAGED;
+  delete shellEnv.PASEO_SERVICE_MANAGED;
   delete shellEnv.PASEO_SUPERVISED;
 
   deps.logger.info("[login-shell-env] start", {

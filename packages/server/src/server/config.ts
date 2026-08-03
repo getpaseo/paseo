@@ -508,6 +508,7 @@ export function loadConfig(
     listen,
     paseoHome,
     desktopManaged: env.PASEO_DESKTOP_MANAGED === "1",
+    serviceManaged: env.PASEO_SERVICE_MANAGED === "1",
     worktreesRoot: resolveWorktreesRoot(paseoHome, persisted),
     corsAllowedOrigins: resolveCorsAllowedOrigins(env, persisted),
     hostnames,

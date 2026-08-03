@@ -17,6 +17,8 @@ export interface DaemonRuntimeConfig {
   worktreesRoot?: string;
   appBaseUrl?: string;
   desktopManaged?: boolean;
+  /** An external service manager owns this daemon's lifecycle. See PaseoDaemonConfig. */
+  serviceManaged?: boolean;
   getRelayConfig(): {
     enabled: boolean;
     endpoint: string;

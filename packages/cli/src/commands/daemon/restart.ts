@@ -3,6 +3,7 @@ import {
   startLocalDaemonDetached,
   stopLocalDaemon,
   DEFAULT_STOP_TIMEOUT_MS,
+  ServiceManagedDaemonError,
   type DaemonStartOptions,
 } from "./local-daemon.js";
 import type {
@@ -121,6 +122,14 @@ export async function runRestartCommand(
       schema: restartResultSchema,
     };
   } catch (err) {
+    if (err instanceof ServiceManagedDaemonError) {
+      const refusal: CommandError = {
+        code: err.code,
+        message: err.message,
+        details: "Restart it through that service manager.",
+      };
+      throw refusal;
+    }
     const message = err instanceof Error ? err.message : String(err);
     const error: CommandError = {
       code: "RESTART_FAILED",

@@ -10,6 +10,7 @@ import {
   parseServerInfoStatusPayload,
   RenameTerminalResponseSchema,
   RestartRequestedStatusPayloadSchema,
+  ShutdownRejectedStatusPayloadSchema,
   ShutdownRequestedStatusPayloadSchema,
   DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
@@ -624,9 +625,29 @@ export interface AgentForkContextOptions {
 type AgentRefreshedStatusPayload = z.infer<typeof AgentRefreshedStatusPayloadSchema>;
 type RestartRequestedStatusPayload = z.infer<typeof RestartRequestedStatusPayloadSchema>;
 type ShutdownRequestedStatusPayload = z.infer<typeof ShutdownRequestedStatusPayloadSchema>;
+type ShutdownRejectedStatusPayload = z.infer<typeof ShutdownRejectedStatusPayloadSchema>;
 export interface ShutdownServerOptions {
   requestId?: string;
   timeout?: number;
+  /**
+   * Declare that an operator is deliberately taking a service-managed daemon
+   * down. Routine callers leave this unset so the daemon can refuse.
+   */
+  serviceMaintenance?: boolean;
+}
+
+/**
+ * The daemon refused the shutdown because something other than the caller owns
+ * its lifecycle. Callers must not escalate to signals — the refusal is the answer.
+ */
+export class DaemonShutdownRejectedError extends Error {
+  constructor(
+    readonly reason: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "DaemonShutdownRejectedError";
+  }
 }
 export interface DaemonStatusOptions {
   requestId?: string;
@@ -3169,8 +3190,11 @@ export class DaemonClient {
     const message = SessionInboundMessageSchema.parse({
       type: "shutdown_server_request",
       requestId: resolvedRequestId,
+      ...(options?.serviceMaintenance === true ? { serviceMaintenance: true } : {}),
     });
-    return this.sendRequest({
+    const outcome = await this.sendRequest<
+      ShutdownRequestedStatusPayload | ShutdownRejectedStatusPayload
+    >({
       requestId: resolvedRequestId,
       message,
       timeout: options?.timeout,
@@ -3180,15 +3204,20 @@ export class DaemonClient {
           return null;
         }
         const shutdown = ShutdownRequestedStatusPayloadSchema.safeParse(msg.payload);
-        if (!shutdown.success) {
-          return null;
+        if (shutdown.success && shutdown.data.requestId === resolvedRequestId) {
+          return shutdown.data;
         }
-        if (shutdown.data.requestId !== resolvedRequestId) {
-          return null;
+        const rejected = ShutdownRejectedStatusPayloadSchema.safeParse(msg.payload);
+        if (rejected.success && rejected.data.requestId === resolvedRequestId) {
+          return rejected.data;
         }
-        return shutdown.data;
+        return null;
       },
     });
+    if (outcome.status === "shutdown_rejected") {
+      throw new DaemonShutdownRejectedError(outcome.reason, outcome.message);
+    }
+    return outcome;
   }
 
   async updateDaemon(requestId?: string): Promise<DaemonUpdateResponse["payload"]> {

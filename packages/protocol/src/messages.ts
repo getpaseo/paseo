@@ -1387,6 +1387,9 @@ export const RestartServerRequestMessageSchema = z.object({
 export const ShutdownServerRequestMessageSchema = z.object({
   type: z.literal("shutdown_server_request"),
   requestId: z.string(),
+  // A service-managed daemon refuses shutdown unless the caller declares that an
+  // operator is deliberately taking the service down. Routine clients omit it.
+  serviceMaintenance: z.boolean().optional(),
 });
 
 export const DaemonUpdateRequestMessageSchema = z.object({
@@ -3007,6 +3010,25 @@ export const ShutdownRequestedStatusPayloadSchema = z.object({
   requestId: z.string(),
 });
 
+/**
+ * Rejection code for a shutdown refused because an external service manager owns
+ * the daemon's lifecycle. `reason` stays an open string so later fences can add
+ * codes without narrowing the schema for existing clients.
+ */
+export const SERVICE_MANAGED_SHUTDOWN_REJECTION = "service_managed";
+
+/** Client-agnostic copy for the rejection above. Callers may add transport-specific detail. */
+export const SERVICE_MANAGED_SHUTDOWN_MESSAGE =
+  "This daemon's lifecycle is owned by an external service manager. Stop it through that service manager, or repeat the request as an explicit service maintenance shutdown.";
+
+export const ShutdownRejectedStatusPayloadSchema = z.object({
+  status: z.literal("shutdown_rejected"),
+  clientId: z.string(),
+  requestId: z.string(),
+  reason: z.string(),
+  message: z.string(),
+});
+
 export const DaemonConfigChangedStatusPayloadSchema = z
   .object({
     status: z.literal("daemon_config_changed"),
@@ -3020,6 +3042,9 @@ export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   AgentResumedStatusPayloadSchema,
   AgentRefreshedStatusPayloadSchema,
   ShutdownRequestedStatusPayloadSchema,
+  // Clients that predate this status still parse the message — the wire schema for
+  // `status` is passthrough — they just don't recognize it and time out instead.
+  ShutdownRejectedStatusPayloadSchema,
   RestartRequestedStatusPayloadSchema,
   DaemonConfigChangedStatusPayloadSchema,
 ]);

@@ -1,6 +1,11 @@
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
-import { DaemonClient, type DaemonTransport, type Logger } from "./daemon-client";
+import {
+  DaemonClient,
+  DaemonShutdownRejectedError,
+  type DaemonTransport,
+  type Logger,
+} from "./daemon-client";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
@@ -2842,6 +2847,85 @@ test("sends explicit shutdown_server_request via shutdownServer", async () => {
     clientId: "clsk_unit_test",
     requestId: "req-shutdown-1",
   });
+});
+
+test("shutdownServer rejects with a typed error when a service-managed daemon refuses", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.shutdownServer({ requestId: "req-shutdown-refused" });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "shutdown_rejected",
+        clientId: "clsk_unit_test",
+        requestId: "req-shutdown-refused",
+        reason: "service_managed",
+        message: "This daemon's lifecycle is owned by an external service manager.",
+      },
+    }),
+  );
+
+  // Callers must be able to tell a refusal from an unreachable daemon, so this
+  // settles as a typed rejection rather than timing out.
+  await expect(promise).rejects.toBeInstanceOf(DaemonShutdownRejectedError);
+});
+
+test("shutdownServer forwards an explicit service maintenance opt-in", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.shutdownServer({
+    requestId: "req-shutdown-maintenance",
+    serviceMaintenance: true,
+  });
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "shutdown_server_request",
+    requestId: "req-shutdown-maintenance",
+    serviceMaintenance: true,
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "shutdown_requested",
+        clientId: "clsk_unit_test",
+        requestId: "req-shutdown-maintenance",
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toMatchObject({ status: "shutdown_requested" });
 });
 
 test("restartServer remains restart-only and sends restart_server_request", async () => {

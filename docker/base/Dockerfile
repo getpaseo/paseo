@@ -31,6 +31,7 @@ FROM ${NODE_IMAGE}
 ENV HOME=/home/paseo \
     PASEO_HOME=/home/paseo/.paseo \
     PASEO_LISTEN=0.0.0.0:6767 \
+    PASEO_SERVICE_MANAGED=1 \
     PASEO_WEB_UI_ENABLED=true \
     PASEO_LOG_FORMAT=json \
     PASEO_LOG_LEVEL=info \

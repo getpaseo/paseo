@@ -3,6 +3,7 @@ import {
   stopLocalDaemon,
   DEFAULT_STOP_TIMEOUT_MS,
   DEFAULT_KILL_TIMEOUT_MS,
+  ServiceManagedDaemonError,
 } from "./local-daemon.js";
 import type {
   CommandOptions,
@@ -69,7 +70,13 @@ export async function runStopCommand(
   );
 
   try {
-    const result = await stopLocalDaemon({ home, force, timeoutMs, killTimeoutMs });
+    const result = await stopLocalDaemon({
+      home,
+      force,
+      timeoutMs,
+      killTimeoutMs,
+      serviceMaintenance: options.serviceMaintenance === true,
+    });
     return {
       type: "single",
       data: {
@@ -84,6 +91,15 @@ export async function runStopCommand(
       schema: stopResultSchema,
     };
   } catch (err) {
+    if (err instanceof ServiceManagedDaemonError) {
+      const refusal: CommandError = {
+        code: err.code,
+        message: err.message,
+        details:
+          "Stop it through that service manager, or re-run with --service-maintenance to take it down deliberately.",
+      };
+      throw refusal;
+    }
     const message = err instanceof Error ? err.message : String(err);
     const error: CommandError = {
       code: "STOP_FAILED",

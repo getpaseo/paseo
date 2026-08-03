@@ -399,3 +399,17 @@ $PASEO_HOME/
 1. **Local daemon** (default): `paseo daemon start` on `127.0.0.1:6767`
 2. **Managed desktop**: Electron app spawns daemon as subprocess, and stops it again on quit so that "restart the app" is a complete reset. Settings > Host > "Keep daemon running after quit" opts out. Only a daemon the desktop started is stopped — a daemon you started yourself with `paseo daemon start` is left alone (`paseo.pid` records `desktopManaged`).
 3. **Remote + relay**: Daemon behind firewall, relay bridges with E2E encryption
+4. **Service-managed**: An external service manager (launchd, systemd, Docker) owns the daemon. Set `PASEO_SERVICE_MANAGED=1` in the unit, plist, or image. The shipped NixOS module and Docker image already do.
+
+### Service-managed ownership
+
+`PASEO_SERVICE_MANAGED=1` declares that something outside Paseo starts and stops this daemon. It is independent of `desktopManaged`, which only records who spawned the process — the desktop CLI shim sets `PASEO_DESKTOP_MANAGED=1` on anything launched through it, including a daemon a service manager owns.
+
+A service-managed daemon refuses `shutdown_server_request` and answers `status: "shutdown_rejected"` with `reason: "service_managed"`. No lifecycle intent is emitted, so the worker never asks its supervisor to stop. This exists because one routine client — an orchestration script, a stale tab, a desktop quit — could otherwise take down a fleet host, and a supervisor with `Restart=on-failure` treats the clean exit as success and leaves it down.
+
+Two fences enforce it, because clients reach the daemon two ways:
+
+- The daemon refuses the RPC. This is authoritative for every client.
+- `paseo daemon stop` refuses from `paseo.pid` before it connects. Without this the unreachable-daemon fallback would signal the supervisor process itself.
+
+The maintenance route is an explicit opt-in, not a privilege: `paseo daemon stop --service-maintenance`, or `serviceMaintenance: true` on the RPC. Routine callers omit it, so they get the refusal. `--force` escalates a stop that was allowed; it does not authorize one that was refused. `paseo daemon restart` has no opt-in — restart a service-managed daemon through its service manager.

@@ -6,6 +6,8 @@ import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import {
   serializeAgentStreamEvent,
+  SERVICE_MANAGED_SHUTDOWN_MESSAGE,
+  SERVICE_MANAGED_SHUTDOWN_REJECTION,
   type AgentSnapshotPayload,
   type AgentAttachment,
   type FirstAgentContext,
@@ -502,6 +504,10 @@ export type SessionLifecycleIntent =
       reason: string;
     };
 
+function isServiceManagedDaemon(config: DaemonRuntimeConfig | undefined): boolean {
+  return config?.serviceManaged === true;
+}
+
 function parseClientCapabilities(
   capabilities: Record<string, unknown> | null | undefined,
 ): ReadonlySet<ClientCapability> {
@@ -595,6 +601,7 @@ export class Session {
     | null;
   private readonly getTransportBufferedAmount: () => number | null;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
+  private readonly serviceManaged: boolean;
   private readonly onWorkspaceRecovered:
     | ((workspace: PersistedWorkspaceRecord) => Promise<void>)
     | null;
@@ -728,6 +735,7 @@ export class Session {
     this.onBinaryMessageToSource = onBinaryMessageToSource ?? null;
     this.getTransportBufferedAmount = getTransportBufferedAmount ?? (() => 0);
     this.onLifecycleIntent = onLifecycleIntent ?? null;
+    this.serviceManaged = isServiceManagedDaemon(daemonRuntimeConfig);
     this.onWorkspaceRecovered = onWorkspaceRecovered ?? null;
     this.pushTokenStore = pushTokenStore;
     this.paseoHome = paseoHome;
@@ -1866,7 +1874,7 @@ export class Session {
       case "restart_server_request":
         return this.handleRestartServerRequest(msg.requestId, msg.reason);
       case "shutdown_server_request":
-        return this.handleShutdownServerRequest(msg.requestId);
+        return this.handleShutdownServerRequest(msg.requestId, msg.serviceMaintenance);
       case "client_heartbeat":
         this.handleClientHeartbeat(msg);
         return undefined;
@@ -2335,7 +2343,31 @@ export class Session {
     });
   }
 
-  private async handleShutdownServerRequest(requestId: string): Promise<void> {
+  private async handleShutdownServerRequest(
+    requestId: string,
+    serviceMaintenance?: boolean,
+  ): Promise<void> {
+    // A service-managed daemon is owned by launchd/systemd/Docker, not by whoever
+    // happens to be connected. Refusing here is the single fence: no lifecycle
+    // intent means the worker never asks its supervisor to stop.
+    if (this.serviceManaged && serviceMaintenance !== true) {
+      this.sessionLogger.warn(
+        { reason: SERVICE_MANAGED_SHUTDOWN_REJECTION },
+        "Shutdown refused: this daemon is managed by an external service manager",
+      );
+      this.emit({
+        type: "status",
+        payload: {
+          status: "shutdown_rejected",
+          clientId: this.clientId,
+          requestId,
+          reason: SERVICE_MANAGED_SHUTDOWN_REJECTION,
+          message: SERVICE_MANAGED_SHUTDOWN_MESSAGE,
+        },
+      });
+      return;
+    }
+
     const reason = CLIENT_SHUTDOWN_RPC_REASON;
     this.sessionLogger.warn({ reason }, "Shutdown requested via websocket");
     this.emit({
