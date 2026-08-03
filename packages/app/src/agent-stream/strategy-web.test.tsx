@@ -26,6 +26,10 @@ vi.hoisted(() => {
   });
 });
 
+vi.mock("react-native-unistyles", () => ({
+  withUnistyles: (Component: React.ComponentType) => Component,
+}));
+
 function userMessage(index: number): StreamItem {
   return {
     kind: "user_message",
@@ -534,6 +538,7 @@ describe("createWebStreamStrategy", () => {
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
     const viewportRef = React.createRef<StreamViewportHandle>();
     const historyMounted = Array.from({ length: 20 }, (_, index) => userMessage(index));
+    const onNearHistoryStart = vi.fn().mockReturnValue(false);
     const routeBottomAnchorRequest = {
       agentId: "agent",
       reason: "initial-entry" as const,
@@ -556,10 +561,10 @@ describe("createWebStreamStrategy", () => {
       viewportRef,
       routeBottomAnchorRequest,
       onNearBottomChange: vi.fn(),
-      onNearHistoryStart: vi.fn().mockReturnValue(true),
+      onNearHistoryStart,
       isLoadingOlderHistory: false,
-      hasOlderHistory: false,
-      olderHistoryProgressKey: null,
+      hasOlderHistory: true,
+      olderHistoryProgressKey: "epoch-1:20",
       scrollEnabled: true,
       listStyle: null,
       baseListContentContainerStyle: null,
@@ -596,7 +601,7 @@ describe("createWebStreamStrategy", () => {
     act(() => {
       scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -240 }));
     });
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 520 });
+    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 0 });
     act(() => {
       scrollContainer.dispatchEvent(new Event("scroll"));
     });
@@ -612,6 +617,14 @@ describe("createWebStreamStrategy", () => {
     });
 
     expect(scrollTo).not.toHaveBeenCalled();
+    await act(async () => Promise.resolve());
+    expect(onNearHistoryStart).toHaveBeenCalledOnce();
+
+    act(() => {
+      scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -240 }));
+    });
+    await act(async () => Promise.resolve());
+    expect(onNearHistoryStart).toHaveBeenCalledTimes(2);
   });
 
   it("does not force bottom after upward wheel when cached scroll top is stale", async () => {

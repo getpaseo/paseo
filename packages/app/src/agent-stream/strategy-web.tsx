@@ -838,13 +838,19 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       return;
     }
 
+    const markUpwardViewportInput = () => {
+      markUpwardInputEvidence();
+      if (scrollContainer.scrollTop <= USER_SCROLL_DELTA_EPSILON) {
+        rearmHistoryStartFromUserIntent();
+      }
+    };
     const handleWheel = (event: WheelEvent) => {
       if (
         !event.ctrlKey &&
         event.deltaY < 0 &&
         !canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
       ) {
-        markUpwardInputEvidence();
+        markUpwardViewportInput();
       }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -854,7 +860,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       if (canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)) {
         return;
       }
-      markUpwardInputEvidence();
+      markUpwardViewportInput();
     };
     const handlePointerDown = (event: PointerEvent) => {
       clearMouseScrollGesture();
@@ -923,7 +929,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         touch.clientY > previousTouchY + 1 &&
         !canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
       ) {
-        markUpwardInputEvidence();
+        markUpwardViewportInput();
       }
       lastTouchClientYRef.current = touch.clientY;
     };
@@ -965,6 +971,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     handleDomScroll,
     isActive,
     markUpwardInputEvidence,
+    rearmHistoryStartFromUserIntent,
   ]);
 
   useEffect(() => {
