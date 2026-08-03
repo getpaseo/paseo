@@ -649,33 +649,49 @@ export function deriveModelDefinitionsFromACP(
   provider: string,
   models: SessionModelState | null | undefined,
   configOptions?: SessionConfigOption[] | null,
+  perModelThinkingOptions?: Map<string, ConfigOptionSelector[]> | null,
 ): AgentModelDefinition[] {
   const thinkingOptions = deriveSelectorOptions(configOptions, "thought_level");
   const defaultThinkingOptionId = thinkingOptions.find((option) => option.isDefault)?.id ?? null;
 
+  const resolveThinkingOptions = (modelId: string): ConfigOptionSelector[] =>
+    perModelThinkingOptions?.get(modelId) ?? thinkingOptions;
+
   if (models?.availableModels?.length) {
-    return models.availableModels.map((model) => ({
-      provider,
-      id: model.modelId,
-      label: model.name,
-      description: model.description ?? undefined,
-      isDefault: model.modelId === models.currentModelId,
-      thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
-      defaultThinkingOptionId: defaultThinkingOptionId ?? undefined,
-    }));
+    return models.availableModels.map((model) => {
+      const modelThinkingOptions = resolveThinkingOptions(model.modelId);
+      return {
+        provider,
+        id: model.modelId,
+        label: model.name,
+        description: model.description ?? undefined,
+        isDefault: model.modelId === models.currentModelId,
+        thinkingOptions: modelThinkingOptions.length > 0 ? modelThinkingOptions : undefined,
+        defaultThinkingOptionId:
+          modelThinkingOptions.find((option) => option.isDefault)?.id ??
+          defaultThinkingOptionId ??
+          undefined,
+      };
+    });
   }
 
   const modelOptions = deriveSelectorOptions(configOptions, "model");
-  return modelOptions.map((option) => ({
-    provider,
-    id: option.id,
-    label: option.label,
-    description: option.description,
-    isDefault: option.isDefault,
-    thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
-    defaultThinkingOptionId: defaultThinkingOptionId ?? undefined,
-    metadata: option.metadata,
-  }));
+  return modelOptions.map((option) => {
+    const modelThinkingOptions = resolveThinkingOptions(option.id);
+    return {
+      provider,
+      id: option.id,
+      label: option.label,
+      description: option.description,
+      isDefault: option.isDefault,
+      thinkingOptions: modelThinkingOptions.length > 0 ? modelThinkingOptions : undefined,
+      defaultThinkingOptionId:
+        modelThinkingOptions.find((entry) => entry.isDefault)?.id ??
+        defaultThinkingOptionId ??
+        undefined,
+      metadata: option.metadata,
+    };
+  });
 }
 
 export function deriveFeaturesFromACP(
@@ -924,10 +940,16 @@ export class ACPAgentClient implements AgentClient {
           }),
         );
         const transformed = this.transformSessionResponse(response);
+        const perModelThinkingOptions = await this.collectPerModelThinkingOptions({
+          connection: initializedProbe.connection,
+          sessionId: response.sessionId,
+          configOptions: transformed.configOptions,
+        });
         const models = deriveModelDefinitionsFromACP(
           this.provider,
           transformed.models,
           transformed.configOptions,
+          perModelThinkingOptions,
         );
         const modeInfo = deriveModesFromACP(
           this.defaultModes,
@@ -950,6 +972,64 @@ export class ACPAgentClient implements AgentClient {
         await this.closeProbe(probe);
       }
     }
+  }
+
+  /**
+   * Probe the `thought_level` options of every selectable model so the
+   * catalog can advertise per-model thinking levels instead of only the
+   * levels of the model that was current during `session/new`.
+   *
+   * ACP agents expose `thought_level` rows for the current session model
+   * only (e.g. Kimi Code CLI emits `off` plus the current model's
+   * `support_efforts`), so without this probe every catalog model shares
+   * one model's options and switching models shows stale levels. Each
+   * round-trip is a local stdio request on the already-spawned probe
+   * process and is closed right after, so this is cheap and
+   * side-effect free.
+   *
+   * Returns undefined when the agent exposes no `thought_level` category
+   * (the caller keeps the previous shared-options behavior), and skips
+   * individual models whose probe fails (they fall back to the shared
+   * options).
+   */
+  private async collectPerModelThinkingOptions({
+    connection,
+    sessionId,
+    configOptions,
+  }: {
+    connection: ClientSideConnection;
+    sessionId: string;
+    configOptions: SessionConfigOption[] | null | undefined;
+  }): Promise<Map<string, ConfigOptionSelector[]> | undefined> {
+    const thinkingOption = findSelectConfigOption({ configOptions, category: "thought_level" });
+    const modelOption = findSelectConfigOption({ configOptions, category: "model" });
+    if (!thinkingOption || !modelOption) {
+      return undefined;
+    }
+
+    const perModel = new Map<string, ConfigOptionSelector[]>();
+    for (const choice of flattenSelectOptions(modelOption.options)) {
+      try {
+        const response = await this.runACPRequest(() =>
+          connection.setSessionConfigOption({
+            sessionId,
+            configId: modelOption.id,
+            value: choice.value,
+          }),
+        );
+        const transformedConfigOptions = this.configOptionsTransformer
+          ? this.configOptionsTransformer(response.configOptions)
+          : response.configOptions;
+        const options = deriveSelectorOptions(transformedConfigOptions, "thought_level");
+        perModel.set(choice.value, options);
+      } catch (error) {
+        this.logger.warn(
+          { err: error, provider: this.provider, model: choice.value },
+          "Failed to probe ACP thinking options for model",
+        );
+      }
+    }
+    return perModel.size > 0 ? perModel : undefined;
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {

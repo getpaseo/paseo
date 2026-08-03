@@ -1732,6 +1732,104 @@ describe("deriveModelDefinitionsFromACP", () => {
       },
     ]);
   });
+
+  test("uses per-model thinking options when provided", () => {
+    const result = deriveModelDefinitionsFromACP(
+      "claude-acp",
+      {
+        availableModels: [
+          { modelId: "haiku", name: "Haiku" },
+          { modelId: "sonnet", name: "Sonnet" },
+        ],
+        currentModelId: "haiku",
+      },
+      [
+        {
+          id: "reasoning",
+          name: "Reasoning",
+          category: "thought_level",
+          type: "select",
+          currentValue: "high",
+          options: [
+            { value: "low", name: "Low" },
+            { value: "high", name: "High" },
+          ],
+        },
+      ],
+      new Map([
+        [
+          "haiku",
+          [
+            { id: "low", label: "Low", isDefault: false },
+            { id: "high", label: "High", isDefault: true },
+          ],
+        ],
+        [
+          "sonnet",
+          [
+            { id: "medium", label: "Medium", isDefault: false },
+            { id: "high", label: "High", isDefault: false },
+            { id: "max", label: "Max", isDefault: false },
+          ],
+        ],
+      ]),
+    );
+
+    expect(result).toEqual([
+      {
+        provider: "claude-acp",
+        id: "haiku",
+        label: "Haiku",
+        description: undefined,
+        isDefault: true,
+        thinkingOptions: [
+          { id: "low", label: "Low", isDefault: false },
+          { id: "high", label: "High", isDefault: true },
+        ],
+        defaultThinkingOptionId: "high",
+      },
+      {
+        provider: "claude-acp",
+        id: "sonnet",
+        label: "Sonnet",
+        description: undefined,
+        isDefault: false,
+        thinkingOptions: [
+          { id: "medium", label: "Medium", isDefault: false },
+          { id: "high", label: "High", isDefault: false },
+          { id: "max", label: "Max", isDefault: false },
+        ],
+        defaultThinkingOptionId: "high",
+      },
+    ]);
+  });
+
+  test("falls back to shared thinking options for models missing from the per-model map", () => {
+    const result = deriveModelDefinitionsFromACP(
+      "claude-acp",
+      {
+        availableModels: [{ modelId: "haiku", name: "Haiku" }],
+        currentModelId: "haiku",
+      },
+      [
+        {
+          id: "reasoning",
+          name: "Reasoning",
+          category: "thought_level",
+          type: "select",
+          currentValue: "medium",
+          options: [
+            { value: "low", name: "Low" },
+            { value: "medium", name: "Medium" },
+          ],
+        },
+      ],
+      new Map([["other-model", [{ id: "max", label: "Max", isDefault: true }]]]),
+    );
+
+    expect(result[0]?.thinkingOptions?.map((option) => option.id)).toEqual(["low", "medium"]);
+    expect(result[0]?.defaultThinkingOptionId).toBe("medium");
+  });
 });
 
 describe("ACPAgentClient modelTransformer", () => {
@@ -2075,6 +2173,219 @@ describe("ACPAgentClient fetchCatalog", () => {
       models: [],
       modes: [],
     });
+  });
+
+  test("probes per-model thinking options and returns them in the catalog", async () => {
+    const setSessionConfigOption = vi.fn().mockImplementation(({ value }: { value: string }) => ({
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: value,
+          options: [
+            { value: "model-a", name: "Model A" },
+            { value: "model-b", name: "Model B" },
+          ],
+        },
+        {
+          id: "thinking",
+          name: "Thinking",
+          category: "thought_level",
+          type: "select",
+          currentValue: "high",
+          options:
+            value === "model-a"
+              ? [
+                  { value: "off", name: "Off" },
+                  { value: "low", name: "Low" },
+                  { value: "high", name: "High" },
+                  { value: "max", name: "Max" },
+                ]
+              : [
+                  { value: "off", name: "Off" },
+                  { value: "medium", name: "Medium" },
+                  { value: "high", name: "High" },
+                  { value: "xhigh", name: "XHigh" },
+                  { value: "max", name: "Max" },
+                ],
+        },
+      ],
+    }));
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "sess-1",
+              modes: null,
+              models: null,
+              configOptions: [
+                {
+                  id: "model",
+                  name: "Model",
+                  category: "model",
+                  type: "select",
+                  currentValue: "model-a",
+                  options: [
+                    { value: "model-a", name: "Model A" },
+                    { value: "model-b", name: "Model B" },
+                  ],
+                },
+                {
+                  id: "thinking",
+                  name: "Thinking",
+                  category: "thought_level",
+                  type: "select",
+                  currentValue: "high",
+                  options: [
+                    { value: "off", name: "Off" },
+                    { value: "low", name: "Low" },
+                    { value: "high", name: "High" },
+                    { value: "max", name: "Max" },
+                  ],
+                },
+              ],
+            }),
+            setSessionConfigOption,
+          },
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "pi",
+      logger: createTestLogger(),
+      defaultCommand: ["test-acp"],
+      defaultModes: [],
+    });
+
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-per-model",
+      force: false,
+    });
+
+    expect(setSessionConfigOption).toHaveBeenCalledTimes(2);
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "sess-1",
+      configId: "model",
+      value: "model-a",
+    });
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "sess-1",
+      configId: "model",
+      value: "model-b",
+    });
+    expect(
+      catalog.models.find((model) => model.id === "model-a")?.thinkingOptions?.map((o) => o.id),
+    ).toEqual(["off", "low", "high", "max"]);
+    expect(
+      catalog.models.find((model) => model.id === "model-b")?.thinkingOptions?.map((o) => o.id),
+    ).toEqual(["off", "medium", "high", "xhigh", "max"]);
+  });
+
+  test("skips failed per-model probes and falls back to shared thinking options", async () => {
+    const setSessionConfigOption = vi
+      .fn()
+      .mockResolvedValueOnce({
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "model-a",
+            options: [
+              { value: "model-a", name: "Model A" },
+              { value: "model-b", name: "Model B" },
+            ],
+          },
+          {
+            id: "thinking",
+            name: "Thinking",
+            category: "thought_level",
+            type: "select",
+            currentValue: "high",
+            options: [
+              { value: "off", name: "Off" },
+              { value: "low", name: "Low" },
+              { value: "high", name: "High" },
+              { value: "max", name: "Max" },
+            ],
+          },
+        ],
+      })
+      .mockRejectedValueOnce(new Error("probe failed"));
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "sess-1",
+              modes: null,
+              models: null,
+              configOptions: [
+                {
+                  id: "model",
+                  name: "Model",
+                  category: "model",
+                  type: "select",
+                  currentValue: "model-a",
+                  options: [
+                    { value: "model-a", name: "Model A" },
+                    { value: "model-b", name: "Model B" },
+                  ],
+                },
+                {
+                  id: "thinking",
+                  name: "Thinking",
+                  category: "thought_level",
+                  type: "select",
+                  currentValue: "high",
+                  options: [
+                    { value: "off", name: "Off" },
+                    { value: "low", name: "Low" },
+                    { value: "high", name: "High" },
+                    { value: "max", name: "Max" },
+                  ],
+                },
+              ],
+            }),
+            setSessionConfigOption,
+          },
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "pi",
+      logger: createTestLogger(),
+      defaultCommand: ["test-acp"],
+      defaultModes: [],
+    });
+
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-per-model-fallback",
+      force: false,
+    });
+
+    // model-b probe failed: it falls back to the shared (session/new) options.
+    expect(
+      catalog.models.find((model) => model.id === "model-b")?.thinkingOptions?.map((o) => o.id),
+    ).toEqual(["off", "low", "high", "max"]);
   });
 });
 
