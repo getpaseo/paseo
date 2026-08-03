@@ -53,6 +53,7 @@ const AUTO_SCROLL_RESUME_THRESHOLD_PX = 1;
 const HISTORY_START_SETTLE_FRAMES = 2;
 const HISTORY_START_SLOT_HEIGHT_PX = 32;
 const CONTENT_PADDING_TOP_PX = 16;
+const UPWARD_INPUT_EVIDENCE_TIMEOUT_MS = 100;
 const VIRTUALIZER_SCROLL_MARGIN_PX = HISTORY_START_SLOT_HEIGHT_PX + CONTENT_PADDING_TOP_PX;
 // A row has to clear this much of the viewport top before the next one takes over as the
 // reading position, so a row resting exactly on the edge does not flip back and forth.
@@ -138,6 +139,24 @@ function isUpwardViewportScrollKey(event: KeyboardEvent): boolean {
     event.key === "Home" ||
     (event.key === " " && event.shiftKey)
   );
+}
+
+function canNestedScrollerConsumeUpwardInput(
+  target: EventTarget | null,
+  scrollContainer: HTMLElement,
+): boolean {
+  let element = target instanceof Element ? target : null;
+  while (element && element !== scrollContainer) {
+    if (element instanceof HTMLElement) {
+      const overflowY = window.getComputedStyle(element).overflowY;
+      const canScroll = overflowY === "auto" || overflowY === "scroll";
+      if (canScroll && element.scrollHeight > element.clientHeight && element.scrollTop > 0) {
+        return true;
+      }
+    }
+    element = element.parentElement;
+  }
+  return false;
 }
 
 function isVerticalScrollbarGutterPress(
@@ -239,6 +258,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     hasUpwardContentDragEvidence: boolean;
     evidenceExpiryFrame: number | null;
   } | null>(null);
+  const upwardInputEvidenceUntilRef = useRef(0);
   const lastTouchClientYRef = useRef<number | null>(null);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
   const pendingAutoScrollTimeoutRef = useRef<number | null>(null);
@@ -509,6 +529,15 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     mouseScrollGestureRef.current = null;
   }, []);
 
+  const clearUpwardInputEvidence = useCallback(() => {
+    upwardInputEvidenceUntilRef.current = 0;
+  }, []);
+
+  const markUpwardInputEvidence = useCallback(() => {
+    upwardInputEvidenceUntilRef.current =
+      window.performance.now() + UPWARD_INPUT_EVIDENCE_TIMEOUT_MS;
+  }, []);
+
   useLayoutEffect(() => {
     if (isActive) {
       return;
@@ -520,8 +549,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     }
     pendingVirtualRowMeasureFramesRef.current.clear();
     clearMouseScrollGesture();
+    clearUpwardInputEvidence();
     lastTouchClientYRef.current = null;
-  }, [cancelPendingStickToBottom, clearMouseScrollGesture, isActive]);
+  }, [cancelPendingStickToBottom, clearMouseScrollGesture, clearUpwardInputEvidence, isActive]);
 
   const scrollMessagesToBottom = useCallback(
     (behavior: ScrollBehaviorLike = "auto") => {
@@ -643,13 +673,14 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const scrolledDown =
       currentScrollTop > lastKnownScrollTopRef.current + USER_SCROLL_DELTA_EPSILON;
     const mouseGesture = mouseScrollGestureRef.current;
-    const hasPointerScrollIntent =
+    const hasUpwardInputEvidence =
       mouseGesture?.startedInScrollbarGutter === true ||
-      mouseGesture?.hasUpwardContentDragEvidence === true;
+      mouseGesture?.hasUpwardContentDragEvidence === true ||
+      window.performance.now() < upwardInputEvidenceUntilRef.current;
 
     if (!followOutputRef.current && isAtBottom && scrolledDown && !isJumpSettling()) {
       setFollowOutput(true);
-    } else if (followOutputRef.current && scrolledUp && hasPointerScrollIntent) {
+    } else if (followOutputRef.current && scrolledUp && hasUpwardInputEvidence) {
       stopFollowingOutputFromUserIntent();
     }
 
@@ -808,15 +839,22 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     }
 
     const handleWheel = (event: WheelEvent) => {
-      if (!event.ctrlKey && event.deltaY < 0) {
-        stopFollowingOutputFromUserIntent();
+      if (
+        !event.ctrlKey &&
+        event.deltaY < 0 &&
+        !canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
+      ) {
+        markUpwardInputEvidence();
       }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!isUpwardViewportScrollKey(event)) {
         return;
       }
-      stopFollowingOutputFromUserIntent();
+      if (canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)) {
+        return;
+      }
+      markUpwardInputEvidence();
     };
     const handlePointerDown = (event: PointerEvent) => {
       clearMouseScrollGesture();
@@ -880,8 +918,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         return;
       }
       const previousTouchY = lastTouchClientYRef.current;
-      if (previousTouchY !== null && touch.clientY > previousTouchY + 1) {
-        stopFollowingOutputFromUserIntent();
+      if (
+        previousTouchY !== null &&
+        touch.clientY > previousTouchY + 1 &&
+        !canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
+      ) {
+        markUpwardInputEvidence();
       }
       lastTouchClientYRef.current = touch.clientY;
     };
@@ -915,8 +957,15 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       scrollContainer.removeEventListener("touchmove", handleTouchMove);
       scrollContainer.removeEventListener("touchend", handleTouchEnd);
       scrollContainer.removeEventListener("touchcancel", handleTouchEnd);
+      clearUpwardInputEvidence();
     };
-  }, [clearMouseScrollGesture, handleDomScroll, isActive, stopFollowingOutputFromUserIntent]);
+  }, [
+    clearMouseScrollGesture,
+    clearUpwardInputEvidence,
+    handleDomScroll,
+    isActive,
+    markUpwardInputEvidence,
+  ]);
 
   useEffect(() => {
     const handle: StreamViewportHandle = {

@@ -823,7 +823,7 @@ describe("createWebStreamStrategy", () => {
     expect(scrollTo).toHaveBeenCalled();
   });
 
-  it("keeps following output after an upward geometry displacement without user intent", () => {
+  it("keeps following output after geometry, nested-scroll, and zoom wheel events", () => {
     const scrollTo = vi.fn(function (this: HTMLElement, options?: ScrollToOptions | number) {
       const top = typeof options === "object" ? (options.top ?? 0) : 0;
       Object.defineProperty(this, "scrollTop", { configurable: true, value: top });
@@ -877,7 +877,16 @@ describe("createWebStreamStrategy", () => {
     act(() => scrollContainer.dispatchEvent(new Event("scroll")));
     scrollTo.mockClear();
 
+    const nestedScroller = document.createElement("div");
+    nestedScroller.style.overflowY = "auto";
+    Object.defineProperty(nestedScroller, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(nestedScroller, "scrollHeight", { configurable: true, value: 300 });
+    Object.defineProperty(nestedScroller, "scrollTop", { configurable: true, value: 100 });
+    scrollContainer.append(nestedScroller);
     act(() => {
+      nestedScroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -100 }));
+      Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 700 });
+      scrollContainer.dispatchEvent(new Event("scroll"));
       scrollContainer.dispatchEvent(
         new WheelEvent("wheel", { bubbles: true, ctrlKey: true, deltaY: -100 }),
       );
