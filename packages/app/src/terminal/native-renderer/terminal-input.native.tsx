@@ -1,13 +1,6 @@
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import {
-  forwardRef,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import {
+  Keyboard,
   StyleSheet,
   TextInput,
   type NativeSyntheticEvent,
@@ -32,7 +25,7 @@ export interface TerminalTextInputState {
   reset: () => void;
 }
 
-export type TerminalInputFocusRequest = "focus" | "refocus";
+export type TerminalInputFocusRequest = "focus" | "refocus" | "none";
 
 export interface TerminalInputHandle {
   focus: () => void;
@@ -53,8 +46,12 @@ function isPrintableKey(key: string): boolean {
 
 export function resolveTerminalInputFocusRequest(input: {
   isInputFocused: boolean;
+  isKeyboardVisible: boolean;
 }): TerminalInputFocusRequest {
-  return input.isInputFocused ? "refocus" : "focus";
+  if (!input.isInputFocused) {
+    return "focus";
+  }
+  return input.isKeyboardVisible ? "none" : "refocus";
 }
 
 export function createTerminalTextInputState(): TerminalTextInputState {
@@ -110,7 +107,10 @@ export function createTerminalTextInputState(): TerminalTextInputState {
       previousText = text;
       return {
         data: appendedText,
-        shouldClear: false,
+        // Treat multi-character IME commits as complete units. Clearing lets
+        // the keyboard commit the same clipboard item again without needing
+        // a different intermediate value.
+        shouldClear: appendedText.length > 1,
       };
     },
     reset(): void {
@@ -123,11 +123,10 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
   function TerminalInput({ onFocus, onInput, onTerminalKey, style }, ref) {
     const inputRef = useRef<TextInput>(null);
     const isFocusedRef = useRef(false);
+    const isKeyboardRequestedRef = useRef(false);
     const pendingFocusFrameRef = useRef<number | null>(null);
-    const shouldRefocusAfterClearRef = useRef(false);
     const inputState = useMemo(() => createTerminalTextInputState(), []);
     const inputStyle = useMemo(() => [styles.input, style], [style]);
-    const [inputEpoch, setInputEpoch] = useState(0);
 
     const clearPendingFocus = useCallback(() => {
       if (pendingFocusFrameRef.current === null) {
@@ -149,9 +148,27 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
         return;
       }
 
+      // Keep the native IME buffer aligned with the terminal. Some keyboards
+      // do not emit a text change when a clipboard item replaces identical
+      // stale input, so clear the buffer even when focus is already correct.
+      resetNativeInput();
+
+      const focusRequest = resolveTerminalInputFocusRequest({
+        isInputFocused: isFocusedRef.current || input.isFocused(),
+        isKeyboardVisible: isKeyboardRequestedRef.current || Keyboard.isVisible(),
+      });
+      if (focusRequest === "none") {
+        return;
+      }
+
+      isKeyboardRequestedRef.current = true;
+      if (focusRequest === "focus") {
+        input.focus();
+        return;
+      }
+
       input.blur();
       isFocusedRef.current = false;
-      resetNativeInput();
       input.focus();
       pendingFocusFrameRef.current = requestAnimationFrame(() => {
         pendingFocusFrameRef.current = null;
@@ -163,41 +180,28 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
       clearPendingFocus();
       inputRef.current?.blur();
       isFocusedRef.current = false;
+      isKeyboardRequestedRef.current = false;
       resetNativeInput();
     }, [clearPendingFocus, resetNativeInput]);
 
     const focusNativeInput = useCallback(() => {
-      clearPendingFocus();
-      const input = inputRef.current;
-      if (!input) {
-        return;
-      }
-
-      const focusRequest = resolveTerminalInputFocusRequest({
-        isInputFocused: isFocusedRef.current || input.isFocused(),
-      });
-      if (focusRequest === "focus") {
-        input.focus();
-        return;
-      }
-
       showNativeKeyboard();
-    }, [clearPendingFocus, showNativeKeyboard]);
+    }, [showNativeKeyboard]);
 
     useEffect(() => clearPendingFocus, [clearPendingFocus]);
 
     useEffect(() => {
-      if (!shouldRefocusAfterClearRef.current) {
-        return;
-      }
-      shouldRefocusAfterClearRef.current = false;
-      const frame = requestAnimationFrame(() => {
-        inputRef.current?.focus();
+      const showSubscription = Keyboard.addListener("keyboardDidShow", () => {
+        isKeyboardRequestedRef.current = true;
+      });
+      const hideSubscription = Keyboard.addListener("keyboardDidHide", () => {
+        isKeyboardRequestedRef.current = false;
       });
       return () => {
-        cancelAnimationFrame(frame);
+        showSubscription.remove();
+        hideSubscription.remove();
       };
-    }, [inputEpoch]);
+    }, []);
 
     useImperativeHandle(
       ref,
@@ -232,12 +236,10 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
           onInput?.(change.data);
         }
         if (change.shouldClear) {
-          inputState.reset();
-          shouldRefocusAfterClearRef.current = true;
-          setInputEpoch((current) => current + 1);
+          resetNativeInput();
         }
       },
-      [inputState, onInput],
+      [inputState, onInput, resetNativeInput],
     );
 
     const handleKeyPress = useCallback(
@@ -250,17 +252,14 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
           onInput?.(change.data);
         }
         if (change.shouldClear) {
-          inputState.reset();
-          shouldRefocusAfterClearRef.current = true;
-          setInputEpoch((current) => current + 1);
+          resetNativeInput();
         }
       },
-      [inputState, onInput, onTerminalKey],
+      [inputState, onInput, onTerminalKey, resetNativeInput],
     );
 
     return (
       <TextInput
-        key={inputEpoch}
         ref={inputRef}
         accessibilityLabel="Terminal input"
         accessible={true}
