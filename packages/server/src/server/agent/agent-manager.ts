@@ -1090,7 +1090,7 @@ export class AgentManager {
     const createOptions = this.buildCreateSessionOptions(options);
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     if (
-      Object.keys(providerLaunchConfig.mcpServers ?? {}).length > 0 &&
+      Object.keys(storedConfig.mcpServers ?? {}).length > 0 &&
       session.capabilities.supportsMcpServers !== true
     ) {
       await this.closeUnregisteredSession(session);

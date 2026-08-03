@@ -2059,7 +2059,7 @@ test("createAgent passes native Paseo tools through launch context without inter
   });
 });
 
-test("createAgent injects the MCP auth token as a bearer header into the launch config", async () => {
+test("createAgent allows best-effort internal MCP when the provider session reports no support", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -2069,7 +2069,7 @@ test("createAgent injects the MCP auth token as a bearer header into the launch 
 
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       this.lastConfig = config;
-      return new McpCapableTestAgentSession(config);
+      return new TestAgentSession(config);
     }
   }
 

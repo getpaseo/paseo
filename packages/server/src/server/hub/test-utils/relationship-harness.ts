@@ -463,27 +463,30 @@ export class HubRelationshipHarness {
   private failNextSessionClose = false;
   private observedEnrollments = 0;
   private observedSockets = 0;
-  private readonly codex = new ControlledAgentClient(
-    createTestAgentClients({
-      closeSession: async () => {
-        if (!this.failNextSessionClose) return;
-        this.failNextSessionClose = false;
-        throw new Error("Requested provider session close failure");
-      },
-      onStartTurn: (prompt) => {
-        const promptText = typeof prompt === "string" ? prompt : JSON.stringify(prompt);
-        if (this.promptsToFail.delete(promptText)) {
-          throw new Error("Requested provider prompt startup failure");
-        }
-        this.providerPrompts.push(prompt);
-      },
-    }).codex,
-  );
+  private readonly codex: ControlledAgentClient;
 
   private constructor(
     private readonly archiveWatchFiles: ArchiveWatchFiles,
     private readonly mcpEnabled: boolean,
-  ) {}
+  ) {
+    this.codex = new ControlledAgentClient(
+      createTestAgentClients({
+        supportsMcpServers: mcpEnabled,
+        closeSession: async () => {
+          if (!this.failNextSessionClose) return;
+          this.failNextSessionClose = false;
+          throw new Error("Requested provider session close failure");
+        },
+        onStartTurn: (prompt) => {
+          const promptText = typeof prompt === "string" ? prompt : JSON.stringify(prompt);
+          if (this.promptsToFail.delete(promptText)) {
+            throw new Error("Requested provider prompt startup failure");
+          }
+          this.providerPrompts.push(prompt);
+        },
+      }).codex,
+    );
+  }
 
   static async start(
     archiveWatchFiles: ArchiveWatchFiles = nodeArchiveWatchFiles,
