@@ -269,6 +269,12 @@ export function buildACPClientCapabilities(
 const PROBE_ENV: Record<string, string> = { NO_BROWSER: "true" };
 const ACP_CATALOG_TIMEOUT_MS = 60_000;
 const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
+// Per-model thinking-option probe budget. Each probe is a local stdio
+// JSON-RPC round-trip that normally completes in milliseconds; the timeout
+// only guards against an agent that never answers a model-switch request.
+// Keeping it far below ACP_CATALOG_TIMEOUT_MS lets several stalled probes
+// fall back to shared options instead of failing the whole catalog.
+export const PER_MODEL_THINKING_PROBE_TIMEOUT_MS = 5_000;
 
 function summarizeMalformedACPStdoutError(error: unknown): { type: string; message: string } {
   return {
@@ -989,8 +995,10 @@ export class ACPAgentClient implements AgentClient {
    *
    * Returns undefined when the agent exposes no `thought_level` category
    * (the caller keeps the previous shared-options behavior), and skips
-   * individual models whose probe fails (they fall back to the shared
-   * options).
+   * individual models whose probe fails or stalls (they fall back to the
+   * shared options). Each probe is bounded by
+   * PER_MODEL_THINKING_PROBE_TIMEOUT_MS so a stalled probe cannot hang the
+   * whole catalog probe.
    */
   private async collectPerModelThinkingOptions({
     connection,
@@ -1010,12 +1018,16 @@ export class ACPAgentClient implements AgentClient {
     const perModel = new Map<string, ConfigOptionSelector[]>();
     for (const choice of flattenSelectOptions(modelOption.options)) {
       try {
-        const response = await this.runACPRequest(() =>
-          connection.setSessionConfigOption({
-            sessionId,
-            configId: modelOption.id,
-            value: choice.value,
-          }),
+        const response = await withTimeout(
+          this.runACPRequest(() =>
+            connection.setSessionConfigOption({
+              sessionId,
+              configId: modelOption.id,
+              value: choice.value,
+            }),
+          ),
+          PER_MODEL_THINKING_PROBE_TIMEOUT_MS,
+          `ACP thinking-options probe for model "${choice.value}" timed out after ${PER_MODEL_THINKING_PROBE_TIMEOUT_MS}ms`,
         );
         const transformedConfigOptions = this.configOptionsTransformer
           ? this.configOptionsTransformer(response.configOptions)

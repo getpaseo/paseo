@@ -18,6 +18,7 @@ import {
 import {
   ACPAgentClient,
   ACPAgentSession,
+  PER_MODEL_THINKING_PROBE_TIMEOUT_MS,
   type SpawnedACPProcess,
   type SessionStateResponse,
   buildACPClientCapabilities,
@@ -2386,6 +2387,120 @@ describe("ACPAgentClient fetchCatalog", () => {
     expect(
       catalog.models.find((model) => model.id === "model-b")?.thinkingOptions?.map((o) => o.id),
     ).toEqual(["off", "low", "high", "max"]);
+  });
+
+  test("a stalled per-model probe times out and falls back without failing the catalog", async () => {
+    const setSessionConfigOption = vi
+      .fn()
+      .mockResolvedValueOnce({
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "model-a",
+            options: [
+              { value: "model-a", name: "Model A" },
+              { value: "model-b", name: "Model B" },
+            ],
+          },
+          {
+            id: "thinking",
+            name: "Thinking",
+            category: "thought_level",
+            type: "select",
+            currentValue: "high",
+            options: [
+              { value: "off", name: "Off" },
+              { value: "low", name: "Low" },
+              { value: "high", name: "High" },
+              { value: "max", name: "Max" },
+            ],
+          },
+        ],
+      })
+      // model-b never answers: neither a result nor an error.
+      .mockImplementationOnce(() => new Promise(() => {}));
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "sess-1",
+              modes: null,
+              models: null,
+              configOptions: [
+                {
+                  id: "model",
+                  name: "Model",
+                  category: "model",
+                  type: "select",
+                  currentValue: "model-a",
+                  options: [
+                    { value: "model-a", name: "Model A" },
+                    { value: "model-b", name: "Model B" },
+                  ],
+                },
+                {
+                  id: "thinking",
+                  name: "Thinking",
+                  category: "thought_level",
+                  type: "select",
+                  currentValue: "high",
+                  options: [
+                    { value: "off", name: "Off" },
+                    { value: "low", name: "Low" },
+                    { value: "high", name: "High" },
+                    { value: "max", name: "Max" },
+                  ],
+                },
+              ],
+            }),
+            setSessionConfigOption,
+          },
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "pi",
+      logger: createTestLogger(),
+      defaultCommand: ["test-acp"],
+      defaultModes: [],
+    });
+
+    vi.useFakeTimers();
+    try {
+      const catalogPromise = client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/tmp/acp-per-model-stall",
+        force: false,
+      });
+      // Run the microtask chain up to the stalled model-b probe, which
+      // registers the per-model timeout.
+      await vi.advanceTimersByTimeAsync(0);
+      // The stalled probe times out; the catalog must still complete.
+      await vi.advanceTimersByTimeAsync(PER_MODEL_THINKING_PROBE_TIMEOUT_MS);
+      const catalog = await catalogPromise;
+
+      expect(setSessionConfigOption).toHaveBeenCalledTimes(2);
+      // model-a was probed successfully and keeps its own options.
+      expect(
+        catalog.models.find((model) => model.id === "model-a")?.thinkingOptions?.map((o) => o.id),
+      ).toEqual(["off", "low", "high", "max"]);
+      // model-b stalled: it falls back to the shared (session/new) options.
+      expect(
+        catalog.models.find((model) => model.id === "model-b")?.thinkingOptions?.map((o) => o.id),
+      ).toEqual(["off", "low", "high", "max"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
