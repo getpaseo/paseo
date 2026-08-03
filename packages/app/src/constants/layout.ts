@@ -1,5 +1,7 @@
+import { useWindowDimensions } from "react-native";
 import { useUnistyles } from "react-native-unistyles";
-import { isWeb } from "@/constants/platform";
+import { computeIsCompactFormFactor, isLargeScreenShortestSide } from "@/constants/form-factor";
+import { isNative, isWeb } from "@/constants/platform";
 
 export const FOOTER_HEIGHT = 75;
 
@@ -37,12 +39,31 @@ export {
 } from "./platform";
 
 /**
+ * Reactive hook — true when the device is in a large-screen form factor
+ * (tablet, or an unfolded foldable/tri-fold). Uses the usable-area shortest
+ * side so it is orientation-insensitive and shrinks under split-screen.
+ * Re-renders when window dimensions change (fold/unfold, rotate, resize).
+ */
+export function useIsLargeScreenForm(): boolean {
+  const { width, height } = useWindowDimensions();
+  return isLargeScreenShortestSide(Math.min(width, height));
+}
+
+/**
  * Reactive hook — re-renders the component when the breakpoint changes.
  * Always use this instead of reading UnistylesRuntime.breakpoint directly.
+ *
+ * On native, an unfolded foldable in a large-screen form factor stays
+ * two-pane even while portrait (narrow window); a phone stays compact.
  */
 export function useIsCompactFormFactor(): boolean {
   const { rt } = useUnistyles();
-  return rt.breakpoint === "xs" || rt.breakpoint === "sm";
+  const isLargeScreen = useIsLargeScreenForm();
+  return computeIsCompactFormFactor({
+    compactBreakpoint: rt.breakpoint === "xs" || rt.breakpoint === "sm",
+    largeScreenForm: isLargeScreen,
+    native: isNative,
+  });
 }
 
 // SplitContainer relies on dnd-kit and DOM-backed accessibility helpers.

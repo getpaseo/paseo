@@ -118,7 +118,10 @@ export default {
     name: variant.name,
     slug: "voice-mobile",
     version: pkg.version,
-    orientation: "portrait",
+    // Static lock removed so foldables/tablets can rotate into landscape.
+    // Per-device orientation is controlled at runtime by useAdaptiveOrientation:
+    // phones stay portrait, large-screen/unfolded devices unlock rotation.
+    orientation: "default",
     icon: "./assets/images/icon.png",
     scheme: "paseo",
     userInterfaceStyle: "automatic",
