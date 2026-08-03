@@ -347,6 +347,57 @@ class RecordingMcpResumeClient implements AgentClient {
   }
 }
 
+class UnsupportedMcpResumeSession extends StubAgentSession {
+  closed = false;
+
+  constructor() {
+    super({
+      sessionId: "unsupported-mcp-resume-session",
+      supportsStreaming: false,
+    });
+  }
+
+  override async close(): Promise<void> {
+    this.closed = true;
+  }
+}
+
+class RejectingMcpResumeClient implements AgentClient {
+  readonly provider = "codex" as const;
+  readonly capabilities;
+  readonly nativeArchiveCalls: string[] = [];
+  readonly replacement = new UnsupportedMcpResumeSession();
+  private readonly inner = createTestAgentClients({ supportsMcpServers: true }).codex;
+
+  constructor() {
+    this.capabilities = this.inner.capabilities;
+  }
+
+  isAvailable() {
+    return this.inner.isAvailable();
+  }
+
+  createSession(config: AgentSessionConfig) {
+    return this.inner.createSession(config);
+  }
+
+  async resumeSession(): Promise<AgentSession> {
+    return this.replacement;
+  }
+
+  fetchCatalog(...args: Parameters<AgentClient["fetchCatalog"]>) {
+    return this.inner.fetchCatalog(...args);
+  }
+
+  async archiveNativeSession(): Promise<void> {
+    this.nativeArchiveCalls.push("archive");
+  }
+
+  async unarchiveNativeSession(): Promise<void> {
+    this.nativeArchiveCalls.push("unarchive");
+  }
+}
+
 test("createAgent fails when the initial turn cannot start", async () => {
   const testAgent = new StubAgentClient({
     sessionId: "start-turn-failure-session",
@@ -950,6 +1001,52 @@ test("resume_agent rehydrates the newest private MCP config from a redacted pers
     expect(resumedNewest.persistence?.metadata).not.toHaveProperty("mcpServers");
     expect(JSON.stringify(resumedNewest)).not.toContain(bearerA);
     expect(JSON.stringify(resumedNewest)).not.toContain(bearerB);
+  } finally {
+    await localCtx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("resume_agent restores archive state when an MCP-capable provider returns an unsupported session", async () => {
+  const cwd = tmpCwd();
+  const provider = new RejectingMcpResumeClient();
+  const localCtx = await createDaemonTestContext({
+    agentClients: { codex: provider },
+  });
+
+  try {
+    const created = await localCtx.client.createAgent({
+      config: {
+        provider: "codex",
+        cwd,
+        mcpServers: {
+          hub: {
+            type: "http",
+            url: "https://hub.test/mcp/executions/rejected-resume",
+            headers: { Authorization: "Bearer rejected-resume-secret" },
+          },
+        },
+      },
+    });
+    const handle = created.persistence;
+    if (!handle) {
+      throw new Error("Expected a projected persistence handle");
+    }
+    const archived = await localCtx.client.archiveAgent(created.id);
+
+    await expect(localCtx.client.resumeAgent(handle)).rejects.toMatchObject({
+      name: "DaemonRpcError",
+      code: "agent_resume_failed",
+      requestType: "resume_agent_request",
+    });
+
+    const archivedAgents = await localCtx.client.fetchAgents({
+      filter: { includeArchived: true },
+    });
+    const original = archivedAgents.entries.find((entry) => entry.agent.id === created.id)?.agent;
+    expect(original?.archivedAt).toBe(archived.archivedAt);
+    expect(provider.nativeArchiveCalls).toEqual(["archive", "unarchive", "archive"]);
+    expect(provider.replacement.closed).toBe(true);
   } finally {
     await localCtx.cleanup();
     rmSync(cwd, { recursive: true, force: true });

@@ -2543,9 +2543,11 @@ export class Session {
     });
   }
 
-  private async unarchiveAgentByHandle(
-    handle: AgentPersistenceHandle,
-  ): Promise<StoredAgentRecord | null> {
+  private async unarchiveAgentByHandle(handle: AgentPersistenceHandle): Promise<{
+    record: StoredAgentRecord;
+    didUnarchive: boolean;
+    originalArchivedAt: string | null;
+  } | null> {
     const records = await this.agentStorage.list();
     const matched = records
       .filter(
@@ -2568,8 +2570,16 @@ export class Session {
     if (!matched) {
       return null;
     }
-    await unarchiveAgentState(this.agentStorage, this.agentManager, matched.id);
-    return matched;
+    const didUnarchive = await unarchiveAgentState(
+      this.agentStorage,
+      this.agentManager,
+      matched.id,
+    );
+    return {
+      record: matched,
+      didUnarchive,
+      originalArchivedAt: matched.archivedAt ?? null,
+    };
   }
 
   private async handleUpdateAgentRequest(
@@ -3328,14 +3338,19 @@ export class Session {
       `Resuming agent ${handle.sessionId} (${handle.provider})`,
     );
     try {
-      const storedRecord = await this.unarchiveAgentByHandle(handle);
-      const effectiveOverrides = storedRecord
-        ? { ...buildConfigOverrides(storedRecord), ...overrides }
+      const matched = await this.unarchiveAgentByHandle(handle);
+      const effectiveOverrides = matched
+        ? { ...buildConfigOverrides(matched.record), ...overrides }
         : overrides;
-      const snapshot = await this.agentManager.resumeAgentFromPersistence(
-        handle,
-        effectiveOverrides,
-      );
+      let snapshot: ManagedAgent;
+      try {
+        snapshot = await this.agentManager.resumeAgentFromPersistence(handle, effectiveOverrides);
+      } catch (error) {
+        if (matched?.didUnarchive && matched.originalArchivedAt) {
+          await this.agentManager.archiveSnapshot(matched.record.id, matched.originalArchivedAt);
+        }
+        throw error;
+      }
       await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);
       await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
       await this.agentUpdates.forwardLiveAgent(snapshot);
