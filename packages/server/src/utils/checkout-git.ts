@@ -3533,16 +3533,58 @@ interface HandleFailedSquashCommitInput {
   error: unknown;
   baseRef: string;
   currentBranch: string;
+  preCommitTargetSha: string | null;
+}
+
+async function verifyMergeTargetHead(cwd: string, expectedHeadSha: string): Promise<unknown[]> {
+  try {
+    const { stdout } = await runGitCommand(["rev-parse", "--verify", "HEAD"], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
+    const actualHeadSha = stdout.trim();
+    if (actualHeadSha !== expectedHeadSha) {
+      return [
+        new Error(
+          `Merge cleanup invariant failed: target HEAD advanced from ${expectedHeadSha} to ${actualHeadSha || "an unknown revision"}`,
+        ),
+      ];
+    }
+    return [];
+  } catch (error) {
+    return [error];
+  }
 }
 
 async function handleFailedSquashCommit(input: HandleFailedSquashCommitInput): Promise<never> {
+  if (input.preCommitTargetSha) {
+    const preCleanupHeadErrors = await verifyMergeTargetHead(input.cwd, input.preCommitTargetSha);
+    if (preCleanupHeadErrors.length > 0) {
+      throw new MergeCleanupError({
+        baseRef: input.baseRef,
+        currentBranch: input.currentBranch,
+        conflictFiles: [],
+        cleanupErrors: preCleanupHeadErrors,
+        operationErrors: [input.error],
+      });
+    }
+  }
+
   const cleanup = await cleanupFailedMerge(input.cwd, "squash");
-  if (cleanup.verificationErrors.length > 0) {
+  const postCleanupHeadErrors = input.preCommitTargetSha
+    ? await verifyMergeTargetHead(input.cwd, input.preCommitTargetSha)
+    : [];
+  const cleanupErrors = [
+    ...cleanup.commandErrors,
+    ...cleanup.verificationErrors,
+    ...postCleanupHeadErrors,
+  ];
+  if (cleanupErrors.length > 0) {
     throw new MergeCleanupError({
       baseRef: input.baseRef,
       currentBranch: input.currentBranch,
       conflictFiles: [],
-      cleanupErrors: [...cleanup.commandErrors, ...cleanup.verificationErrors],
+      cleanupErrors,
       operationErrors: [input.error],
     });
   }
@@ -3617,6 +3659,25 @@ async function executeMergeToBase(input: ExecuteMergeToBaseInput): Promise<void>
   if (mode !== "squash") return;
 
   const message = input.commitMessage ?? `Squash merge ${currentBranch} into ${baseRef}`;
+  let preCommitTargetSha: string | null = null;
+  try {
+    const { stdout } = await runGitCommand(["rev-parse", "--verify", "HEAD"], {
+      cwd: operationCwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
+    preCommitTargetSha = stdout.trim() || null;
+    if (!preCommitTargetSha) {
+      throw new Error("Unable to capture target HEAD before squash commit");
+    }
+  } catch (error) {
+    await handleFailedSquashCommit({
+      cwd: operationCwd,
+      error,
+      baseRef,
+      currentBranch,
+      preCommitTargetSha,
+    });
+  }
   try {
     await runGitCommand(["-c", "commit.gpgsign=false", "commit", "-m", message], {
       cwd: operationCwd,
@@ -3628,6 +3689,7 @@ async function executeMergeToBase(input: ExecuteMergeToBaseInput): Promise<void>
       error,
       baseRef,
       currentBranch,
+      preCommitTargetSha,
     });
   }
 }

@@ -5,6 +5,7 @@ import {
   constants,
   existsSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -21,7 +22,9 @@ type GitFailureMode =
   | "generic-restore"
   | "restore"
   | "restore-noop"
-  | "squash-reset-noop";
+  | "squash-commit-advanced"
+  | "squash-reset-noop"
+  | "squash-reset-reports-failure";
 
 function resolveRealGitPath(): string {
   for (const directory of (process.env.PATH ?? "").split(delimiter)) {
@@ -112,11 +115,29 @@ fi
 if [ "$PASEO_TEST_GIT_FAILURE" = "restore-noop" ] && [ "$3" = "checkout" ] && [ "$4" = "feature" ]; then
   exit 0
 fi
+if [ "$PASEO_TEST_GIT_FAILURE" = "squash-commit-advanced" ] && [ "$5" = "commit" ]; then
+  '${quotedGitPath}' "$@"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    exit "$status"
+  fi
+  echo "commit completed before transport failure" >&2
+  exit 82
+fi
 if [ "$3" = "reset" ] && [ "$4" = "--merge" ]; then
   : > "$PASEO_TEST_RESET_MARKER"
 fi
 if [ "$PASEO_TEST_GIT_FAILURE" = "squash-reset-noop" ] && [ "$3" = "reset" ] && [ "$4" = "--merge" ]; then
   exit 0
+fi
+if [ "$PASEO_TEST_GIT_FAILURE" = "squash-reset-reports-failure" ] && [ "$3" = "reset" ] && [ "$4" = "--merge" ]; then
+  '${quotedGitPath}' "$@"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    exit "$status"
+  fi
+  echo "reset cleaned checkout before transport failure" >&2
+  exit 83
 fi
 exec '${quotedGitPath}' "$@"
 `,
@@ -424,6 +445,127 @@ describe.skipIf(isPlatform("win32"))("checkout merge cleanup", () => {
         ]);
         expect(readBranch(repoDir)).toBe("main");
         expect(readStatus(repoDir)).toBe("");
+      });
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "types an ambiguous squash commit failure when the target ref advanced",
+    async () => {
+      await withMergeRepository(
+        { conflicting: false, failureMode: "squash-commit-advanced" },
+        async (repoDir) => {
+          const resetMarker = process.env.PASEO_TEST_RESET_MARKER;
+          if (!resetMarker) throw new Error("Missing reset marker path");
+          const baseHeadBefore = execFileSync(realGitPath(), ["rev-parse", "main"], {
+            cwd: repoDir,
+          })
+            .toString()
+            .trim();
+          const { mergeToBase, MergeCleanupError } = await import("./checkout-git.js");
+
+          const failure = await captureFailure(
+            mergeToBase(repoDir, { baseRef: "main", mode: "squash" }),
+          );
+
+          expect(failure).toBeInstanceOf(MergeCleanupError);
+          if (!(failure instanceof MergeCleanupError)) throw failure;
+          expect(failure.operationErrors).toEqual([
+            expect.objectContaining({
+              message: expect.stringContaining("commit completed before transport failure"),
+            }),
+          ]);
+          expect(failure.cleanupErrors).toEqual([
+            expect.objectContaining({ message: expect.stringContaining("target HEAD advanced") }),
+          ]);
+          expect(existsSync(resetMarker)).toBe(false);
+          expect(readBranch(repoDir)).toBe("feature");
+          expect(readStatus(repoDir)).toBe("");
+          expect(
+            execFileSync(realGitPath(), ["rev-parse", "main"], { cwd: repoDir }).toString().trim(),
+          ).not.toBe(baseHeadBefore);
+          expect(
+            execFileSync(realGitPath(), ["show", "main:feature.txt"], { cwd: repoDir }).toString(),
+          ).toBe("feature\n");
+        },
+      );
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "types cleanup uncertainty when reset cleans the checkout but reports failure",
+    async () => {
+      await withMergeRepository(
+        { conflicting: false, failureMode: "squash-reset-reports-failure" },
+        async (repoDir) => {
+          installRejectingCommitHook(repoDir);
+          const { mergeToBase, MergeCleanupError } = await import("./checkout-git.js");
+
+          const failure = await captureFailure(
+            mergeToBase(repoDir, { baseRef: "main", mode: "squash" }),
+          );
+
+          expect(failure).toBeInstanceOf(MergeCleanupError);
+          if (!(failure instanceof MergeCleanupError)) throw failure;
+          expect(failure.operationErrors).toEqual([
+            expect.objectContaining({
+              message: expect.stringContaining("commit blocked after populated squash index"),
+            }),
+          ]);
+          expect(failure.cleanupErrors).toEqual([
+            expect.objectContaining({
+              message: expect.stringContaining("reset cleaned checkout before transport failure"),
+            }),
+          ]);
+          expect(readBranch(repoDir)).toBe("feature");
+          expect(readStatus(repoDir)).toBe("");
+          expect(hasMergeHead(repoDir)).toBe(false);
+        },
+      );
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "cleans a failed squash commit in a linked base worktree and reuses that checkout",
+    async () => {
+      await withMergeRepository({ conflicting: false, failureMode: "none" }, async (repoDir) => {
+        const baseWorktreePath = `${repoDir}-base-worktree`;
+        execFileSync(realGitPath(), ["worktree", "add", baseWorktreePath, "main"], {
+          cwd: repoDir,
+        });
+        const hookPath = installRejectingCommitHook(repoDir);
+        try {
+          const { mergeToBase, MergeCleanupError } = await import("./checkout-git.js");
+
+          const failure = await captureFailure(
+            mergeToBase(repoDir, { baseRef: "main", mode: "squash" }),
+          );
+
+          expect(failure).toBeInstanceOf(Error);
+          expect(failure).not.toBeInstanceOf(MergeCleanupError);
+          expect(readBranch(repoDir)).toBe("feature");
+          expect(readBranch(baseWorktreePath)).toBe("main");
+          expect(readStatus(baseWorktreePath)).toBe("");
+
+          rmSync(hookPath);
+          const mutatedCwd = await mergeToBase(repoDir, { baseRef: "main", mode: "squash" });
+
+          expect(realpathSync.native(mutatedCwd)).toBe(realpathSync.native(baseWorktreePath));
+          expect(readBranch(repoDir)).toBe("feature");
+          expect(readBranch(baseWorktreePath)).toBe("main");
+          expect(readStatus(baseWorktreePath)).toBe("");
+          expect(
+            execFileSync(realGitPath(), ["show", "main:feature.txt"], {
+              cwd: baseWorktreePath,
+            }).toString(),
+          ).toBe("feature\n");
+        } finally {
+          rmSync(hookPath, { force: true });
+          rmSync(baseWorktreePath, { recursive: true, force: true });
+        }
       });
     },
     TEST_TIMEOUT,
