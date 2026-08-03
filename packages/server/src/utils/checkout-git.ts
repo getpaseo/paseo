@@ -2024,6 +2024,9 @@ export async function getCheckoutStatus(
   const behindOfOrigin = originAheadBehind?.behind ?? null;
   const hasChangesFromBase = aheadBehind?.hasChanges ?? null;
   const hasChangesFromOrigin = originAheadBehind?.hasChanges ?? null;
+  const baseAheadBehind = aheadBehind
+    ? { ahead: aheadBehind.ahead, behind: aheadBehind.behind }
+    : null;
 
   if (paseoWorktree.isPaseoOwnedWorktree && baseRef) {
     return {
@@ -2033,7 +2036,7 @@ export async function getCheckoutStatus(
       currentBranch,
       isDirty,
       baseRef,
-      aheadBehind,
+      aheadBehind: baseAheadBehind,
       hasChangesFromBase,
       aheadOfOrigin,
       behindOfOrigin,
@@ -2052,7 +2055,7 @@ export async function getCheckoutStatus(
     currentBranch,
     isDirty,
     baseRef,
-    aheadBehind,
+    aheadBehind: baseAheadBehind,
     hasChangesFromBase,
     aheadOfOrigin,
     behindOfOrigin,

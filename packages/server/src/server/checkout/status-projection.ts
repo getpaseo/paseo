@@ -33,10 +33,8 @@ export function buildCheckoutStatusPayloadFromSnapshot({
       isDirty: null,
       baseRef: null,
       aheadBehind: null,
-      hasChangesFromBase: null,
       aheadOfOrigin: null,
       behindOfOrigin: null,
-      hasChangesFromOrigin: null,
       hasRemote: false,
       remoteUrl: null,
       isPaseoOwnedWorktree: false,
@@ -63,10 +61,14 @@ export function buildCheckoutStatusPayloadFromSnapshot({
       isDirty: snapshot.git.isDirty,
       baseRef: snapshot.git.baseRef,
       aheadBehind: snapshot.git.aheadBehind ?? null,
-      hasChangesFromBase: snapshot.git.hasChangesFromBase ?? null,
+      ...(snapshot.git.hasChangesFromBase !== undefined
+        ? { hasChangesFromBase: snapshot.git.hasChangesFromBase }
+        : {}),
       aheadOfOrigin: snapshot.git.aheadOfOrigin ?? null,
       behindOfOrigin: snapshot.git.behindOfOrigin ?? null,
-      hasChangesFromOrigin: snapshot.git.hasChangesFromOrigin ?? null,
+      ...(snapshot.git.hasChangesFromOrigin !== undefined
+        ? { hasChangesFromOrigin: snapshot.git.hasChangesFromOrigin }
+        : {}),
       hasRemote: snapshot.git.hasRemote,
       remoteUrl: snapshot.git.remoteUrl,
       isPaseoOwnedWorktree: true,
@@ -84,10 +86,14 @@ export function buildCheckoutStatusPayloadFromSnapshot({
     isDirty: snapshot.git.isDirty,
     baseRef: snapshot.git.baseRef ?? null,
     aheadBehind: snapshot.git.aheadBehind ?? null,
-    hasChangesFromBase: snapshot.git.hasChangesFromBase ?? null,
+    ...(snapshot.git.hasChangesFromBase !== undefined
+      ? { hasChangesFromBase: snapshot.git.hasChangesFromBase }
+      : {}),
     aheadOfOrigin: snapshot.git.aheadOfOrigin ?? null,
     behindOfOrigin: snapshot.git.behindOfOrigin ?? null,
-    hasChangesFromOrigin: snapshot.git.hasChangesFromOrigin ?? null,
+    ...(snapshot.git.hasChangesFromOrigin !== undefined
+      ? { hasChangesFromOrigin: snapshot.git.hasChangesFromOrigin }
+      : {}),
     hasRemote: snapshot.git.hasRemote,
     remoteUrl: snapshot.git.remoteUrl,
     isPaseoOwnedWorktree: false,
