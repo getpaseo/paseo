@@ -892,18 +892,25 @@ test("resume_agent auto-unarchives archived agents", async () => {
   }
 }, 180000);
 
-test("resume_agent rehydrates private MCP config from a redacted persistence handle", async () => {
+test("resume_agent rehydrates the newest private MCP config from a redacted persistence handle", async () => {
   const cwd = tmpCwd();
   const provider = new RecordingMcpResumeClient();
   const localCtx = await createDaemonTestContext({
     agentClients: { codex: provider },
   });
-  const bearer = "durable-resume-bearer";
-  const externalMcp = {
+  const bearerA = "durable-resume-bearer-a";
+  const bearerB = "durable-resume-bearer-b";
+  const externalMcpA = {
     hub: {
       type: "http" as const,
       url: "https://hub.test/mcp/executions/durable-resume",
-      headers: { Authorization: `Bearer ${bearer}` },
+      headers: { Authorization: `Bearer ${bearerA}` },
+    },
+  };
+  const externalMcpB = {
+    hub: {
+      ...externalMcpA.hub,
+      headers: { Authorization: `Bearer ${bearerB}` },
     },
   };
 
@@ -912,7 +919,7 @@ test("resume_agent rehydrates private MCP config from a redacted persistence han
       config: {
         provider: "codex",
         cwd,
-        mcpServers: externalMcp,
+        mcpServers: externalMcpA,
       },
     });
     const projectedHandle = created.persistence;
@@ -920,15 +927,29 @@ test("resume_agent rehydrates private MCP config from a redacted persistence han
       throw new Error("Expected a projected persistence handle");
     }
     expect(projectedHandle.metadata).not.toHaveProperty("mcpServers");
-    expect(JSON.stringify(projectedHandle)).not.toContain(bearer);
+    expect(JSON.stringify(projectedHandle)).not.toContain(bearerA);
 
     await localCtx.client.archiveAgent(created.id);
-    const resumed = await localCtx.client.resumeAgent(projectedHandle);
+    const resumedWithOverride = await localCtx.client.resumeAgent(projectedHandle, {
+      mcpServers: externalMcpB,
+    });
+    const newestProjectedHandle = resumedWithOverride.persistence;
+    if (!newestProjectedHandle) {
+      throw new Error("Expected a projected persistence handle after resume");
+    }
+    expect(provider.resumeOverrides[0]?.mcpServers?.hub).toEqual(externalMcpB.hub);
+    expect(JSON.stringify(resumedWithOverride)).not.toContain(bearerA);
+    expect(JSON.stringify(resumedWithOverride)).not.toContain(bearerB);
 
-    expect(provider.resumeOverrides).toHaveLength(1);
-    expect(provider.resumeOverrides[0]?.mcpServers?.hub).toEqual(externalMcp.hub);
-    expect(resumed.persistence?.metadata).not.toHaveProperty("mcpServers");
-    expect(JSON.stringify(resumed)).not.toContain(bearer);
+    await localCtx.client.archiveAgent(resumedWithOverride.id);
+    const resumedNewest = await localCtx.client.resumeAgent(newestProjectedHandle);
+
+    expect(provider.resumeOverrides).toHaveLength(2);
+    expect(provider.resumeOverrides[1]?.mcpServers?.hub).toEqual(externalMcpB.hub);
+    expect(provider.resumeOverrides[1]?.mcpServers?.hub).not.toEqual(externalMcpA.hub);
+    expect(resumedNewest.persistence?.metadata).not.toHaveProperty("mcpServers");
+    expect(JSON.stringify(resumedNewest)).not.toContain(bearerA);
+    expect(JSON.stringify(resumedNewest)).not.toContain(bearerB);
   } finally {
     await localCtx.cleanup();
     rmSync(cwd, { recursive: true, force: true });

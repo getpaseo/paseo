@@ -91,7 +91,11 @@ import {
   setAgentModeCommand,
   updateAgentCommand,
 } from "./agent/lifecycle-command.js";
-import { buildStoredAgentPayload, toAgentPayload } from "./agent/agent-projections.js";
+import {
+  buildStoredAgentPayload,
+  resolveStoredAgentPayloadUpdatedAt,
+  toAgentPayload,
+} from "./agent/agent-projections.js";
 import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
@@ -2543,11 +2547,24 @@ export class Session {
     handle: AgentPersistenceHandle,
   ): Promise<StoredAgentRecord | null> {
     const records = await this.agentStorage.list();
-    const matched = records.find(
-      (record) =>
-        record.persistence?.provider === handle.provider &&
-        record.persistence?.sessionId === handle.sessionId,
-    );
+    const matched = records
+      .filter(
+        (record) =>
+          record.persistence?.provider === handle.provider &&
+          record.persistence?.sessionId === handle.sessionId,
+      )
+      .reduce<StoredAgentRecord | null>((latest, candidate) => {
+        if (!latest) {
+          return candidate;
+        }
+        const updatedDelta =
+          Date.parse(resolveStoredAgentPayloadUpdatedAt(candidate)) -
+          Date.parse(resolveStoredAgentPayloadUpdatedAt(latest));
+        if (updatedDelta !== 0) {
+          return updatedDelta > 0 ? candidate : latest;
+        }
+        return Date.parse(candidate.createdAt) > Date.parse(latest.createdAt) ? candidate : latest;
+      }, null);
     if (!matched) {
       return null;
     }
