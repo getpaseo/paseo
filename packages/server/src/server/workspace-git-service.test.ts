@@ -9,6 +9,8 @@ import type {
   PullRequestStatusResult,
 } from "../utils/checkout-git.js";
 import {
+  WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
+  WORKSPACE_GIT_REFRESH_CONCURRENCY,
   WorkspaceGitServiceImpl,
   type WorkspaceGitRuntimeSnapshot,
 } from "./workspace-git-service.js";
@@ -504,6 +506,113 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
 
+    service.dispose();
+  });
+
+  test("bounds refresh generations and re-enqueues hot workspace successors fairly", async () => {
+    const hotCwds = Array.from(
+      { length: WORKSPACE_GIT_REFRESH_CONCURRENCY },
+      (_, index) => `/tmp/hot-repo-${index}`,
+    );
+    const fifthCwd = "/tmp/fifth-repo";
+    const firstReadGates = new Map(
+      [...hotCwds, fifthCwd].map((cwd) => [cwd, createDeferred<CheckoutStatusGit>()]),
+    );
+    const pendingFirstReads = new Set(firstReadGates.keys());
+    const startedReads: string[] = [];
+    const getCheckoutStatus = vi.fn((cwd: string) => {
+      startedReads.push(cwd);
+      const firstRead = firstReadGates.get(cwd);
+      if (firstRead && pendingFirstReads.delete(cwd)) {
+        return firstRead.promise;
+      }
+      return Promise.resolve(createCheckoutStatus(cwd, { currentBranch: "successor" }));
+    });
+    const service = createService({ getCheckoutStatus });
+
+    const hotInitialReads = hotCwds.map((cwd) => service.getSnapshot(cwd, { includeForge: false }));
+    await vi.waitFor(() => {
+      expect(startedReads).toEqual(hotCwds);
+    });
+
+    const fifthRead = service.getSnapshot(fifthCwd, { includeForge: false });
+    const hotSuccessorReads = hotCwds.map((cwd) =>
+      service.getSnapshot(cwd, {
+        force: true,
+        includeForge: false,
+        reason: "hot-successor",
+      }),
+    );
+    expect(service.getMetrics()).toMatchObject({
+      workspaceRefreshAdmissionActiveCount: WORKSPACE_GIT_REFRESH_CONCURRENCY,
+      workspaceRefreshAdmissionPendingCount: 1,
+      workspaceRefreshQueuedCount: WORKSPACE_GIT_REFRESH_CONCURRENCY,
+    });
+
+    firstReadGates.get(hotCwds[0])?.resolve(createCheckoutStatus(hotCwds[0]));
+    await vi.waitFor(() => {
+      expect(startedReads).toContain(fifthCwd);
+    });
+    expect(startedReads.filter((cwd) => cwd === hotCwds[0])).toHaveLength(1);
+
+    for (const [cwd, gate] of firstReadGates) {
+      gate.resolve(createCheckoutStatus(cwd));
+    }
+    await Promise.all([...hotInitialReads, fifthRead, ...hotSuccessorReads]);
+
+    for (const cwd of hotCwds) {
+      expect(startedReads.filter((startedCwd) => startedCwd === cwd)).toHaveLength(2);
+    }
+    expect(startedReads.filter((cwd) => cwd === fifthCwd)).toHaveLength(1);
+
+    service.dispose();
+  });
+
+  test("bounds workspace observation setup pipelines", async () => {
+    const cwds = Array.from(
+      { length: WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY + 2 },
+      (_, index) => `/tmp/observation-repo-${index}`,
+    );
+    const setupGate = createDeferred<void>();
+    let activeSetups = 0;
+    let maxActiveSetups = 0;
+    const subscribe = vi.fn(async () => {
+      activeSetups += 1;
+      maxActiveSetups = Math.max(maxActiveSetups, activeSetups);
+      await setupGate.promise;
+      activeSetups -= 1;
+      return createAsyncSubscription();
+    });
+    const runGitCommand = vi.fn(async (_args: string[], options: { cwd: string }) => ({
+      stdout: `${options.cwd}\n`,
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    }));
+    const service = createService({ subscribe, runGitCommand });
+
+    await Promise.all(cwds.map((cwd) => service.getSnapshot(cwd, { includeForge: false })));
+    const subscriptions = cwds.map((cwd) => service.registerWorkspace({ cwd }, vi.fn()));
+
+    await vi.waitFor(() => {
+      expect(subscribe).toHaveBeenCalledTimes(WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY);
+    });
+    expect(maxActiveSetups).toBe(WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY);
+    expect(service.getMetrics()).toMatchObject({
+      workspaceObservationSetupAdmissionActiveCount: WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
+      workspaceObservationSetupAdmissionPendingCount: 2,
+    });
+
+    setupGate.resolve();
+    await vi.waitFor(() => {
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+    });
+    expect(maxActiveSetups).toBe(WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY);
+
+    for (const subscription of subscriptions) {
+      subscription.unsubscribe();
+    }
     service.dispose();
   });
 

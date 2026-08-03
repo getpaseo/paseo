@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import parcelWatcher from "@parcel/watcher";
 import { LRUCache } from "lru-cache";
+import pLimit from "p-limit";
 import type pino from "pino";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
@@ -53,6 +54,10 @@ const FORGE_PR_STATUS_POLL_FAST_INTERVAL_MS = 20_000;
 const FORGE_PR_STATUS_POLL_SLOW_INTERVAL_MS = 120_000;
 const FORGE_PR_STATUS_POLL_ERROR_BACKOFF_CAP_MS = 300_000;
 const DEGRADED_GIT_POLL_INTERVAL_MS = 5_000;
+// Keep whole workspace pipelines below the lower-level Git process pool so daemon control work
+// retains subprocess and event-loop headroom during large workspace reconciliation bursts.
+export const WORKSPACE_GIT_REFRESH_CONCURRENCY = 4;
+export const WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY = 2;
 // Auxiliary reads may reuse cached values within this window; snapshots do not expire on read.
 const WORKSPACE_GIT_AUXILIARY_READ_TTL_MS = 15_000;
 // Non-forced refresh triggers share this minimum gap to absorb watcher/self-heal bursts; force bypasses it.
@@ -188,6 +193,10 @@ export interface WorkspaceGitServiceMetrics {
   workingTreeWatchSetupInFlightCount: number;
   workspaceRefreshInFlightCount: number;
   workspaceRefreshQueuedCount: number;
+  workspaceRefreshAdmissionActiveCount: number;
+  workspaceRefreshAdmissionPendingCount: number;
+  workspaceObservationSetupAdmissionActiveCount: number;
+  workspaceObservationSetupAdmissionPendingCount: number;
   fetchInFlightCount: number;
   snapshotUpdatedListenerCount: number;
 }
@@ -406,6 +415,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly worktreesRoot: string | undefined;
   private readonly deps: WorkspaceGitServiceDependencies;
   private readonly forgeResolver: ForgeResolver;
+  private readonly workspaceRefreshLimit = pLimit(WORKSPACE_GIT_REFRESH_CONCURRENCY);
+  private readonly workspaceObservationSetupLimit = pLimit(
+    WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
+  );
   private readonly snapshotUpdatedListeners = new Set<WorkspaceGitSnapshotUpdatedListener>();
   private readonly workspaceTargets = new Map<string, WorkspaceGitTarget>();
   private readonly repoTargets = new Map<string, RepoGitTarget>();
@@ -528,6 +541,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       workingTreeWatchSetupInFlightCount: this.workingTreeWatchSetups.size,
       workspaceRefreshInFlightCount,
       workspaceRefreshQueuedCount,
+      workspaceRefreshAdmissionActiveCount: this.workspaceRefreshLimit.activeCount,
+      workspaceRefreshAdmissionPendingCount: this.workspaceRefreshLimit.pendingCount,
+      workspaceObservationSetupAdmissionActiveCount:
+        this.workspaceObservationSetupLimit.activeCount,
+      workspaceObservationSetupAdmissionPendingCount:
+        this.workspaceObservationSetupLimit.pendingCount,
       fetchInFlightCount,
       snapshotUpdatedListenerCount: this.snapshotUpdatedListeners.size,
     };
@@ -1011,8 +1030,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
 
-    target.observationSetupPromise = Promise.resolve()
-      .then(() => this.setupWorkspaceObservation(target))
+    target.observationSetupPromise = this.workspaceObservationSetupLimit(async () => {
+      if (!this.isActiveObservedWorkspaceTarget(target)) {
+        return;
+      }
+      await this.setupWorkspaceObservation(target);
+    })
       .catch((error) => {
         this.logger.warn(
           { err: error, cwd: target.cwd },
@@ -2058,7 +2081,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         });
       }
       try {
-        snapshot = await this.refreshSnapshot(target, request);
+        const admittedSnapshot = await this.workspaceRefreshLimit(() => {
+          if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
+            return null;
+          }
+          return this.refreshSnapshot(target, request);
+        });
+        if (!admittedSnapshot) {
+          break;
+        }
+        snapshot = admittedSnapshot;
         this.rememberSnapshot(target, snapshot, {
           notify: request.notify,
           forceEmit: request.force,
