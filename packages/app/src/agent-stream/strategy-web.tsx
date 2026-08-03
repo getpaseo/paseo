@@ -253,6 +253,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const lastKnownScrollTopRef = useRef(0);
   const mouseScrollGestureRef = useRef<{
     pointerId: number;
+    button: 0 | 1;
     lastClientY: number;
     startedInScrollbarGutter: boolean;
     hasUpwardContentDragEvidence: boolean;
@@ -867,13 +868,14 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       if (
         event.pointerType !== "mouse" ||
         !event.isPrimary ||
-        event.button !== 0 ||
+        (event.button !== 0 && event.button !== 1) ||
         isEditableEventTarget(event.target)
       ) {
         return;
       }
       mouseScrollGestureRef.current = {
         pointerId: event.pointerId,
+        button: event.button,
         lastClientY: event.clientY,
         startedInScrollbarGutter: isVerticalScrollbarGutterPress(event, scrollContainer),
         hasUpwardContentDragEvidence: false,
@@ -885,7 +887,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       if (!gesture || gesture.pointerId !== event.pointerId) {
         return;
       }
-      if ((event.buttons & 1) === 0) {
+      if (gesture.button === 0 && (event.buttons & 1) === 0) {
         clearMouseScrollGesture();
         return;
       }
@@ -899,14 +901,24 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         }
         gesture.evidenceExpiryFrame = window.requestAnimationFrame(() => {
           if (mouseScrollGestureRef.current === gesture) {
-            gesture.hasUpwardContentDragEvidence = false;
-            gesture.evidenceExpiryFrame = null;
+            if (gesture.button === 1) {
+              mouseScrollGestureRef.current = null;
+            } else {
+              gesture.hasUpwardContentDragEvidence = false;
+              gesture.evidenceExpiryFrame = null;
+            }
           }
         });
       }
       gesture.lastClientY = event.clientY;
     };
     const handlePointerEnd = (event: PointerEvent) => {
+      const gesture = mouseScrollGestureRef.current;
+      if (gesture?.pointerId === event.pointerId && gesture.button === 0) {
+        clearMouseScrollGesture();
+      }
+    };
+    const handlePointerCancel = (event: PointerEvent) => {
       if (mouseScrollGestureRef.current?.pointerId === event.pointerId) {
         clearMouseScrollGesture();
       }
@@ -943,7 +955,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     scrollContainer.addEventListener("pointerdown", handlePointerDown, { passive: true });
     window.addEventListener("pointermove", handlePointerMove, { passive: true });
     window.addEventListener("pointerup", handlePointerEnd, { passive: true });
-    window.addEventListener("pointercancel", handlePointerEnd, { passive: true });
+    window.addEventListener("pointercancel", handlePointerCancel, { passive: true });
     window.addEventListener("blur", clearMouseScrollGesture);
     scrollContainer.addEventListener("touchstart", handleTouchStart, { passive: true });
     scrollContainer.addEventListener("touchmove", handleTouchMove, { passive: true });
@@ -957,7 +969,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       scrollContainer.removeEventListener("pointerdown", handlePointerDown);
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerEnd);
-      window.removeEventListener("pointercancel", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerCancel);
       window.removeEventListener("blur", clearMouseScrollGesture);
       scrollContainer.removeEventListener("touchstart", handleTouchStart);
       scrollContainer.removeEventListener("touchmove", handleTouchMove);
