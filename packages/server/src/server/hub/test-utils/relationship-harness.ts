@@ -62,6 +62,24 @@ const execFileAsync = promisify(execFile);
 const HUB_ORIGIN = "https://hub.test";
 const SOCKET_URL = "wss://hub.test/daemon";
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, "../../../../../..");
+const HARNESS_WAIT_TIMEOUT_MS = 10_000;
+
+async function waitForHarnessSignal(signal: Promise<void>, description: string): Promise<void> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      signal,
+      new Promise<void>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`Timed out waiting for ${description}`)),
+          HARNESS_WAIT_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 interface PersistedRelationship {
   version: number;
@@ -140,13 +158,12 @@ class MemoryHubSocket extends EventEmitter implements WebSocketLike, HubSocketCo
   sent: SessionOutboundMessage[] = [];
   closed = false;
   closeCode: number | null = null;
-  private messageObserved = deferred<void>();
 
   send(data: string | Uint8Array | ArrayBuffer): void {
     if (typeof data !== "string") return;
     const frame = JSON.parse(data) as { type: "session"; message: SessionOutboundMessage };
     this.sent.push(frame.message);
-    this.messageObserved.resolve();
+    this.emit("sent");
   }
 
   close(code = 1000): void {
@@ -177,8 +194,7 @@ class MemoryHubSocket extends EventEmitter implements WebSocketLike, HubSocketCo
           candidate.payload.requestId === requestId,
       );
       if (message) return message;
-      await this.messageObserved.promise;
-      this.messageObserved = deferred<void>();
+      await this.waitForSentMessage(requestId);
     }
   }
 
@@ -188,9 +204,22 @@ class MemoryHubSocket extends EventEmitter implements WebSocketLike, HubSocketCo
     while (true) {
       const message = this.sent.find(predicate);
       if (message) return message;
-      await this.messageObserved.promise;
-      this.messageObserved = deferred<void>();
+      await this.waitForSentMessage("matching predicate");
     }
+  }
+
+  private waitForSentMessage(description: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const observed = () => {
+        clearTimeout(timeout);
+        resolve();
+      };
+      const timeout = setTimeout(() => {
+        this.off("sent", observed);
+        reject(new Error(`Timed out waiting for Hub message: ${description}`));
+      }, HARNESS_WAIT_TIMEOUT_MS);
+      this.once("sent", observed);
+    });
   }
 }
 
@@ -200,6 +229,7 @@ class ControlledAgentClient implements AgentClient {
   private gate: Deferred<void> | null = null;
   private heldCreationCwd: string | null = null;
   private creationObserved = deferred<void>();
+  private creationFailure: Error | null = null;
   creations = 0;
   resumes = 0;
   createdConfigs: AgentSessionConfig[] = [];
@@ -219,14 +249,14 @@ class ControlledAgentClient implements AgentClient {
 
   async creationAt(count: number): Promise<void> {
     while (this.creations < count) {
-      await this.creationObserved.promise;
+      await waitForHarnessSignal(this.creationObserved.promise, `provider creation ${count}`);
       this.creationObserved = deferred<void>();
     }
   }
 
   async creationAtCwd(cwd: string, after: number): Promise<void> {
     while (!this.createdConfigs.slice(after).some((config) => config.cwd === cwd)) {
-      await this.creationObserved.promise;
+      await waitForHarnessSignal(this.creationObserved.promise, `provider creation at ${cwd}`);
       this.creationObserved = deferred<void>();
     }
   }
@@ -236,6 +266,10 @@ class ControlledAgentClient implements AgentClient {
     this.gate.resolve();
     this.gate = null;
     this.heldCreationCwd = null;
+  }
+
+  failNextCreation(error: Error): void {
+    this.creationFailure = error;
   }
 
   async createSession(
@@ -251,6 +285,11 @@ class ControlledAgentClient implements AgentClient {
     this.creationObserved.resolve();
     if (this.gate && (!this.heldCreationCwd || this.heldCreationCwd === config.cwd)) {
       await this.gate.promise;
+    }
+    if (this.creationFailure) {
+      const error = this.creationFailure;
+      this.creationFailure = null;
+      throw error;
     }
     return this.client.createSession(config, launchContext, options);
   }
@@ -614,6 +653,10 @@ export class HubRelationshipHarness {
 
   failNextProviderSessionClose(): void {
     this.failNextSessionClose = true;
+  }
+
+  failNextProviderCreation(): void {
+    this.codex.failNextCreation(new Error("Requested provider creation failure"));
   }
 
   async socketDialed(): Promise<void> {
@@ -1347,8 +1390,13 @@ export class HubRelationshipHarness {
   }
 
   private async stopDaemon(): Promise<void> {
-    await this.daemon?.stop();
-    this.daemon = null;
+    const daemon = this.daemon;
+    if (!daemon) return;
+    try {
+      await waitForHarnessSignal(daemon.stop(), "Hub relationship harness daemon shutdown");
+    } finally {
+      this.daemon = null;
+    }
   }
 
   private runCli(args: string[]): Promise<Record<string, unknown>> {

@@ -343,11 +343,17 @@ test("finishing an execution preserves a workspace being acquired by a rival", a
   const rivalCreation = hub.createAgentInWorkspace(workspaceId!, worktreeCwd!);
 
   let archiveResult;
+  let creationReleased = false;
   try {
     await hub.agentCreationAtCwd(worktreeCwd!, priorProviderCreations);
-    archiveResult = await hub.archiveExecution("first-execution");
-  } finally {
+    const archive = hub.archiveExecution("first-execution");
     hub.finishAgentCreation();
+    creationReleased = true;
+    archiveResult = await archive;
+  } finally {
+    if (!creationReleased) {
+      hub.finishAgentCreation();
+    }
   }
   const rival = await rivalCreation;
 
@@ -356,4 +362,41 @@ test("finishing an execution preserves a workspace being acquired by a rival", a
   expect(await hub.ownedAgentArchivedAt(first.payload.agentId!)).not.toBeNull();
   expect(await hub.agentRemainsAvailable(rival.id)).toBe(true);
   expect(await hub.worktreeState(worktreeCwd!)).toEqual({ exists: true, listed: true });
+});
+
+test("finishing an execution releases its workspace after a rival registration fails", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("first-create", "first-execution", {
+    worktree: { mode: "branch-off", newBranch: "failed-rival-finish-worktree" },
+  });
+  const first = await hub.ownedCreateResult("first-create");
+  const worktreeCwd = first.payload.agent?.cwd;
+  const workspaceId = first.payload.agent?.workspaceId;
+  expect(worktreeCwd).toEqual(expect.any(String));
+  expect(workspaceId).toEqual(expect.any(String));
+
+  const priorProviderCreations = hub.providerCreations();
+  hub.holdAgentCreationAtCwd(worktreeCwd!);
+  hub.failNextProviderCreation();
+  const rivalCreation = hub.createAgentInWorkspace(workspaceId!, worktreeCwd!);
+  let archiveResult;
+  let creationReleased = false;
+  try {
+    await hub.agentCreationAtCwd(worktreeCwd!, priorProviderCreations);
+    const archive = hub.archiveExecution("first-execution");
+    hub.finishAgentCreation();
+    creationReleased = true;
+    [archiveResult] = await Promise.all([
+      archive,
+      expect(rivalCreation).rejects.toThrow("Requested provider creation failure"),
+    ]);
+  } finally {
+    if (!creationReleased) {
+      hub.finishAgentCreation();
+    }
+  }
+
+  expect(archiveResult).toMatchObject({ success: true, executionId: "first-execution" });
+  expect(await hub.ownedAgentArchivedAt(first.payload.agentId!)).not.toBeNull();
+  expect(await hub.worktreeState(worktreeCwd!)).toEqual({ exists: false, listed: false });
 });
