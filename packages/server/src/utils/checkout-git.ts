@@ -770,6 +770,40 @@ export class MergeFromBaseConflictError extends Error {
   }
 }
 
+export class MergeCleanupError extends AggregateError {
+  readonly baseRef: string;
+  readonly currentBranch: string;
+  readonly conflictFiles: string[];
+  readonly diagnosticErrors: unknown[];
+  readonly cleanupErrors: unknown[];
+  readonly operationErrors: unknown[];
+
+  constructor(options: {
+    baseRef: string;
+    currentBranch: string;
+    conflictFiles: string[];
+    diagnosticErrors?: unknown[];
+    cleanupErrors: unknown[];
+    operationErrors?: unknown[];
+  }) {
+    const diagnosticErrors = options.diagnosticErrors ? [...options.diagnosticErrors] : [];
+    const cleanupErrors = [...options.cleanupErrors];
+    const operationErrors = options.operationErrors ? [...options.operationErrors] : [];
+    super(
+      [...operationErrors, ...diagnosticErrors, ...cleanupErrors],
+      `Merge cleanup failed while merging ${options.currentBranch} and ${options.baseRef}; checkout may require manual recovery`,
+      { cause: operationErrors[0] ?? cleanupErrors[0] },
+    );
+    this.name = "MergeCleanupError";
+    this.baseRef = options.baseRef;
+    this.currentBranch = options.currentBranch;
+    this.conflictFiles = [...options.conflictFiles];
+    this.diagnosticErrors = diagnosticErrors;
+    this.cleanupErrors = cleanupErrors;
+    this.operationErrors = operationErrors;
+  }
+}
+
 export interface AheadBehind {
   ahead: number;
   behind: number;
@@ -3321,64 +3355,250 @@ export async function commitAll(cwd: string, message: string): Promise<void> {
   await commitChanges(cwd, { message, addAll: true });
 }
 
-interface DetectMergeToBaseConflictInput {
-  operationCwd: string;
+interface HandleFailedMergeInput {
+  cwd: string;
   error: unknown;
   baseRef: string;
   currentBranch: string;
+  direction: "to-base" | "from-base";
+  mode: "merge" | "squash";
 }
 
-async function detectAndThrowMergeToBaseConflict(
-  input: DetectMergeToBaseConflictInput,
-): Promise<void> {
-  const { operationCwd, error, baseRef, currentBranch } = input;
+interface MergeConflictDiagnostics {
+  conflictFiles: string[];
+  errors: unknown[];
+}
+
+async function collectMergeConflictDiagnostics(cwd: string): Promise<MergeConflictDiagnostics> {
+  let unmergedOutput = "";
+  let lsFilesOutput = "";
+  let statusOutput = "";
+  const errors: unknown[] = [];
+
+  try {
+    unmergedOutput = (await runGitCommand(["diff", "--name-only", "--diff-filter=U"], { cwd }))
+      .stdout;
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    lsFilesOutput = (await runGitCommand(["ls-files", "-u"], { cwd })).stdout;
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    statusOutput = (await runGitCommand(["status", "--porcelain"], { cwd })).stdout;
+  } catch (error) {
+    errors.push(error);
+  }
+
+  const statusConflicts = statusOutput
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => /^(UU|AA|DD|AU|UA|UD|DU)\s/.test(line))
+    .map((line) => line.slice(3).trim());
+  const conflictFiles = [
+    ...unmergedOutput
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean),
+    ...lsFilesOutput
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => line.split("\t").at(-1) ?? ""),
+    ...statusConflicts,
+  ].filter(Boolean);
+
+  return { conflictFiles: [...new Set(conflictFiles)], errors };
+}
+
+async function verifyMergeCleanup(cwd: string): Promise<unknown[]> {
+  const errors: unknown[] = [];
+  try {
+    const mergeHead = await runGitCommand(["rev-parse", "-q", "--verify", "MERGE_HEAD"], {
+      cwd,
+      acceptExitCodes: [0, 1],
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
+    if (mergeHead.exitCode === 0 || mergeHead.stdout.trim().length > 0) {
+      errors.push(new Error("Merge cleanup invariant failed: MERGE_HEAD still exists"));
+    }
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    const unmerged = await runGitCommand(["ls-files", "-u"], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
+    if (unmerged.stdout.trim().length > 0) {
+      errors.push(new Error("Merge cleanup invariant failed: unmerged index entries remain"));
+    }
+  } catch (error) {
+    errors.push(error);
+  }
+  return errors;
+}
+
+async function cleanupFailedMerge(cwd: string, mode: "merge" | "squash"): Promise<unknown[]> {
+  const errors: unknown[] = [];
+  try {
+    // A failed squash merge leaves conflicted index entries without MERGE_HEAD,
+    // so `merge --abort` cannot clean it; `reset --merge` can.
+    const cleanupArgs = mode === "squash" ? ["reset", "--merge", "HEAD"] : ["merge", "--abort"];
+    await runGitCommand(cleanupArgs, { cwd, timeout: 120_000 });
+  } catch (error) {
+    errors.push(error);
+  }
+  errors.push(...(await verifyMergeCleanup(cwd)));
+  return errors;
+}
+
+async function handleFailedMerge(input: HandleFailedMergeInput): Promise<never> {
+  const { cwd, error, baseRef, currentBranch, direction, mode } = input;
   const errorDetails =
     error instanceof Error
       ? `${error.message}\n${getErrorStderr(error)}\n${getErrorStdout(error)}`
       : String(error);
-  try {
-    const [unmergedOutput, lsFilesOutput, statusOutput] = await Promise.all([
-      runGitCommand(["diff", "--name-only", "--diff-filter=U"], { cwd: operationCwd }),
-      runGitCommand(["ls-files", "-u"], { cwd: operationCwd }),
-      runGitCommand(["status", "--porcelain"], { cwd: operationCwd }),
-    ]);
-    const statusConflicts = statusOutput.stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .filter((line) => /^(UU|AA|DD|AU|UA|UD|DU)\s/.test(line))
-      .map((line) => line.slice(3).trim());
-    const conflicts = [
-      ...unmergedOutput.stdout
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean),
-      ...lsFilesOutput.stdout
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => line.split("\t").at(-1) ?? ""),
-      ...statusConflicts,
-    ].filter(Boolean);
-    const conflictDetected =
-      conflicts.length > 0 || /CONFLICT|Automatic merge failed/i.test(errorDetails);
-    if (conflictDetected) {
-      try {
-        await runGitCommand(["merge", "--abort"], { cwd: operationCwd, timeout: 120_000 });
-      } catch {
-        // ignore
-      }
+  const diagnostics = await collectMergeConflictDiagnostics(cwd);
+  const cleanupErrors = await cleanupFailedMerge(cwd, mode);
+
+  const conflictDetected =
+    diagnostics.conflictFiles.length > 0 || /CONFLICT|Automatic merge failed/i.test(errorDetails);
+  if (cleanupErrors.length > 0) {
+    throw new MergeCleanupError({
+      baseRef,
+      currentBranch,
+      conflictFiles: diagnostics.conflictFiles,
+      diagnosticErrors: diagnostics.errors,
+      cleanupErrors,
+      operationErrors: [error],
+    });
+  }
+  if (conflictDetected) {
+    if (direction === "to-base") {
       throw new MergeConflictError({
         baseRef,
         currentBranch,
-        conflictFiles: conflicts.length > 0 ? conflicts : [],
+        conflictFiles: diagnostics.conflictFiles,
       });
     }
-  } catch (innerError) {
-    if (innerError instanceof MergeConflictError) {
-      throw innerError;
-    }
-    // ignore detection failures
+    throw new MergeFromBaseConflictError({
+      baseRef,
+      currentBranch,
+      conflictFiles: diagnostics.conflictFiles,
+    });
+  }
+
+  const relatedErrors = diagnostics.errors;
+  if (relatedErrors.length > 0) {
+    throw new AggregateError(
+      [error, ...relatedErrors],
+      `Merge failed and ${relatedErrors.length} diagnostic or cleanup operation(s) also failed`,
+      { cause: error },
+    );
+  }
+  throw error;
+}
+
+interface AppendMergeCleanupErrorInput {
+  primary: unknown;
+  cleanupError: unknown;
+  baseRef: string;
+  currentBranch: string;
+}
+
+function appendMergeCleanupError(input: AppendMergeCleanupErrorInput): MergeCleanupError {
+  const { primary, cleanupError } = input;
+  if (primary instanceof MergeCleanupError) {
+    return new MergeCleanupError({
+      baseRef: primary.baseRef,
+      currentBranch: primary.currentBranch,
+      conflictFiles: primary.conflictFiles,
+      diagnosticErrors: primary.diagnosticErrors,
+      cleanupErrors: [...primary.cleanupErrors, cleanupError],
+      operationErrors: primary.operationErrors,
+    });
+  }
+  if (primary instanceof MergeConflictError || primary instanceof MergeFromBaseConflictError) {
+    return new MergeCleanupError({
+      baseRef: primary.baseRef,
+      currentBranch: primary.currentBranch,
+      conflictFiles: primary.conflictFiles,
+      cleanupErrors: [cleanupError],
+      operationErrors: [primary],
+    });
+  }
+  return new MergeCleanupError({
+    baseRef: input.baseRef,
+    currentBranch: input.currentBranch,
+    conflictFiles: [],
+    cleanupErrors: [cleanupError],
+    operationErrors: [primary],
+  });
+}
+
+interface ExecuteMergeToBaseInput {
+  operationCwd: string;
+  baseRef: string;
+  currentBranch: string;
+  mode: "merge" | "squash";
+  commitMessage?: string;
+}
+
+async function executeMergeToBase(input: ExecuteMergeToBaseInput): Promise<void> {
+  const { operationCwd, baseRef, currentBranch, mode } = input;
+  await runGitCommand(["checkout", baseRef], {
+    cwd: operationCwd,
+    timeout: 120_000,
+  });
+  try {
+    const mergeArgs =
+      mode === "squash" ? ["merge", "--squash", currentBranch] : ["merge", currentBranch];
+    await runGitCommand(mergeArgs, { cwd: operationCwd, timeout: 120_000 });
+  } catch (error) {
+    await handleFailedMerge({
+      cwd: operationCwd,
+      error,
+      baseRef,
+      currentBranch,
+      direction: "to-base",
+      mode,
+    });
+  }
+  if (mode !== "squash") return;
+
+  const message = input.commitMessage ?? `Squash merge ${currentBranch} into ${baseRef}`;
+  await runGitCommand(["-c", "commit.gpgsign=false", "commit", "-m", message], {
+    cwd: operationCwd,
+    timeout: 120_000,
+  });
+}
+
+async function restoreBranchAfterMerge(cwd: string, originalBranch: string): Promise<void> {
+  await runGitCommand(["checkout", originalBranch], {
+    cwd,
+    timeout: 120_000,
+  });
+  const restoredBranch = await getCurrentBranch(cwd);
+  if (restoredBranch !== originalBranch) {
+    throw new Error(
+      `Failed to restore branch after merge: expected ${originalBranch}, found ${restoredBranch ?? "detached HEAD"}`,
+    );
+  }
+}
+
+async function requireCleanSquashTarget(cwd: string, mode: "merge" | "squash"): Promise<void> {
+  if (mode !== "squash") return;
+
+  const { stdout } = await runGitCommand(["status", "--porcelain"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  if (stdout.trim().length > 0) {
+    throw new Error("Working directory has uncommitted changes.");
   }
 }
 
@@ -3412,45 +3632,42 @@ export async function mergeToBase(
   const isSameCheckout = resolve(operationCwd) === resolve(currentWorktreeRoot);
   const originalBranch = await getCurrentBranch(operationCwd);
   const mode = options.mode ?? "merge";
+  await requireCleanSquashTarget(operationCwd, mode);
+  let operationError: unknown;
+  let operationFailed = false;
   try {
-    await runGitCommand(["checkout", normalizedBaseRef], {
-      cwd: operationCwd,
-      timeout: 120_000,
-    });
-    if (mode === "squash") {
-      await runGitCommand(["merge", "--squash", currentBranch], {
-        cwd: operationCwd,
-        timeout: 120_000,
-      });
-      const message =
-        options.commitMessage ?? `Squash merge ${currentBranch} into ${normalizedBaseRef}`;
-      await runGitCommand(["-c", "commit.gpgsign=false", "commit", "-m", message], {
-        cwd: operationCwd,
-        timeout: 120_000,
-      });
-    } else {
-      await runGitCommand(["merge", currentBranch], { cwd: operationCwd, timeout: 120_000 });
-    }
-  } catch (error) {
-    await detectAndThrowMergeToBaseConflict({
+    await executeMergeToBase({
       operationCwd,
-      error,
       baseRef: normalizedBaseRef,
       currentBranch,
+      mode,
+      commitMessage: options.commitMessage,
     });
-    throw error;
-  } finally {
-    if (isSameCheckout && originalBranch && originalBranch !== normalizedBaseRef) {
-      try {
-        await runGitCommand(["checkout", originalBranch], {
-          cwd: operationCwd,
-          timeout: 120_000,
+  } catch (error) {
+    operationError = error;
+    operationFailed = true;
+  }
+  if (isSameCheckout && originalBranch && originalBranch !== normalizedBaseRef) {
+    try {
+      await restoreBranchAfterMerge(operationCwd, originalBranch);
+    } catch (restorationError) {
+      if (!operationFailed) {
+        throw new MergeCleanupError({
+          baseRef: normalizedBaseRef,
+          currentBranch,
+          conflictFiles: [],
+          cleanupErrors: [restorationError],
         });
-      } catch {
-        // ignore
       }
+      operationError = appendMergeCleanupError({
+        primary: operationError,
+        cleanupError: restorationError,
+        baseRef: normalizedBaseRef,
+        currentBranch,
+      });
     }
   }
+  if (operationFailed) throw operationError;
   return operationCwd;
 }
 
@@ -3494,74 +3711,14 @@ export async function mergeFromBase(
   try {
     await runGitCommand(["merge", bestBaseRef], { cwd, timeout: 120_000 });
   } catch (error) {
-    await detectAndThrowMergeFromBaseConflict({
+    await handleFailedMerge({
       cwd,
       error,
       baseRef: bestBaseRef,
       currentBranch,
+      direction: "from-base",
+      mode: "merge",
     });
-    throw error;
-  }
-}
-
-interface DetectMergeFromBaseConflictInput {
-  cwd: string;
-  error: unknown;
-  baseRef: string;
-  currentBranch: string;
-}
-
-async function detectAndThrowMergeFromBaseConflict(
-  input: DetectMergeFromBaseConflictInput,
-): Promise<void> {
-  const { cwd, error, baseRef, currentBranch } = input;
-  const errorDetails =
-    error instanceof Error
-      ? `${error.message}\n${getErrorStderr(error)}\n${getErrorStdout(error)}`
-      : String(error);
-  try {
-    const [unmergedOutput, lsFilesOutput, statusOutput] = await Promise.all([
-      runGitCommand(["diff", "--name-only", "--diff-filter=U"], { cwd }),
-      runGitCommand(["ls-files", "-u"], { cwd }),
-      runGitCommand(["status", "--porcelain"], { cwd }),
-    ]);
-    const statusConflicts = statusOutput.stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .filter((line) => /^(UU|AA|DD|AU|UA|UD|DU)\s/.test(line))
-      .map((line) => line.slice(3).trim());
-    const conflicts = [
-      ...unmergedOutput.stdout
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean),
-      ...lsFilesOutput.stdout
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => line.split("\t").at(-1) ?? ""),
-      ...statusConflicts,
-    ].filter(Boolean);
-    const conflictDetected =
-      conflicts.length > 0 || /CONFLICT|Automatic merge failed/i.test(errorDetails);
-    if (conflictDetected) {
-      try {
-        await runGitCommand(["merge", "--abort"], { cwd, timeout: 120_000 });
-      } catch {
-        // ignore
-      }
-      throw new MergeFromBaseConflictError({
-        baseRef,
-        currentBranch,
-        conflictFiles: conflicts.length > 0 ? conflicts : [],
-      });
-    }
-  } catch (innerError) {
-    if (innerError instanceof MergeFromBaseConflictError) {
-      throw innerError;
-    }
-    // ignore detection failures
   }
 }
 
