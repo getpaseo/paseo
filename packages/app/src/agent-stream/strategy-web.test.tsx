@@ -896,7 +896,7 @@ describe("createWebStreamStrategy", () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 1800, behavior: "auto" });
   });
 
-  it("stops following output after an upward primary-pointer drag", () => {
+  it("stops following output after pointer-driven upward scrolling", () => {
     const scrollTo = vi.fn(function (this: HTMLElement, options?: ScrollToOptions | number) {
       const top = typeof options === "object" ? (options.top ?? 0) : 0;
       Object.defineProperty(this, "scrollTop", { configurable: true, value: top });
@@ -940,35 +940,37 @@ describe("createWebStreamStrategy", () => {
       throw new Error("Expected agent chat scroll container");
     }
     Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 500 });
+    Object.defineProperty(scrollContainer, "clientWidth", { configurable: true, value: 500 });
+    Object.defineProperty(scrollContainer, "offsetWidth", { configurable: true, value: 520 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1500 });
     Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1000 });
+    scrollContainer.getBoundingClientRect = () =>
+      ({
+        bottom: 500,
+        height: 500,
+        left: 0,
+        right: 520,
+        top: 0,
+        width: 520,
+        x: 0,
+        y: 0,
+        toJSON: () => {},
+      }) as DOMRect;
     act(() => scrollContainer.dispatchEvent(new Event("scroll")));
 
-    const pointerDown = new MouseEvent("pointerdown", {
+    const scrollbarPointerDown = new MouseEvent("pointerdown", {
       bubbles: true,
       button: 0,
       buttons: 1,
+      clientX: 515,
       clientY: 400,
     });
-    Object.defineProperties(pointerDown, {
+    Object.defineProperties(scrollbarPointerDown, {
       isPrimary: { value: true },
       pointerId: { value: 1 },
       pointerType: { value: "mouse" },
     });
-    const pointerMove = new MouseEvent("pointermove", {
-      bubbles: true,
-      buttons: 1,
-      clientY: 300,
-    });
-    Object.defineProperties(pointerMove, {
-      isPrimary: { value: true },
-      pointerId: { value: 1 },
-      pointerType: { value: "mouse" },
-    });
-    act(() => {
-      scrollContainer.dispatchEvent(pointerDown);
-      window.dispatchEvent(pointerMove);
-    });
+    act(() => scrollContainer.dispatchEvent(scrollbarPointerDown));
     Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 700 });
     act(() => scrollContainer.dispatchEvent(new Event("scroll")));
     scrollTo.mockClear();
@@ -979,6 +981,54 @@ describe("createWebStreamStrategy", () => {
         strategy.render({
           ...renderInput,
           segments: { ...renderInput.segments, liveHead: [userMessage(3)] },
+          boundary: { ...renderInput.boundary, hasLiveHead: true },
+        }),
+      );
+    });
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1300 });
+    act(() => scrollContainer.dispatchEvent(new Event("scroll")));
+    const pointerDown = new MouseEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      clientX: 100,
+      clientY: 400,
+    });
+    Object.defineProperties(pointerDown, {
+      isPrimary: { value: true },
+      pointerId: { value: 2 },
+      pointerType: { value: "mouse" },
+    });
+    const pointerMove = new MouseEvent("pointermove", {
+      bubbles: true,
+      buttons: 1,
+      clientX: 100,
+      clientY: 300,
+    });
+    Object.defineProperties(pointerMove, {
+      isPrimary: { value: true },
+      pointerId: { value: 2 },
+      pointerType: { value: "mouse" },
+    });
+    act(() => {
+      scrollContainer.dispatchEvent(pointerDown);
+      window.dispatchEvent(pointerMove);
+    });
+    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1000 });
+    act(() => scrollContainer.dispatchEvent(new Event("scroll")));
+    scrollTo.mockClear();
+
+    Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 2100 });
+    act(() => {
+      root?.render(
+        strategy.render({
+          ...renderInput,
+          segments: {
+            ...renderInput.segments,
+            liveHead: [userMessage(3), userMessage(4)],
+          },
           boundary: { ...renderInput.boundary, hasLiveHead: true },
         }),
       );

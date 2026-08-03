@@ -58,7 +58,7 @@ function armDelayedScrollForHiddenChat(page: Page): Promise<void> {
     });
 }
 
-test("a stationary pointer cannot turn geometry changes into scroll intent", async ({ page }) => {
+test("pointer jitter cannot turn geometry changes into scroll intent", async ({ page }) => {
   test.setTimeout(240_000);
   const longChat = await seedLongMockAgentTimeline({ turns: 30 });
   const backgroundPrompt = "Continue after a pointer is released outside the chat";
@@ -74,9 +74,10 @@ test("a stationary pointer cannot turn geometry changes into scroll intent", asy
     expect(bounds, "Expected visible chat scroll bounds").not.toBeNull();
     await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
     await page.mouse.down();
+    await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2 - 3);
     await page.setViewportSize({ width: 390, height: 1124 });
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.mouse.move(410, bounds!.y + bounds!.height / 2);
+    await page.mouse.move(410, bounds!.y + bounds!.height / 2 - 3);
     await page.mouse.up();
 
     await longChat.client.sendAgentMessage(longChat.agentId, backgroundPrompt);
@@ -206,6 +207,18 @@ test("editing keys in an embedded question keep output following", async ({ page
       .getByTestId("question-form-card")
       .first()
       .getByRole("textbox", { name: firstQuestion });
+    const inputBounds = await firstInput.boundingBox();
+    expect(inputBounds, "Expected embedded question input bounds").not.toBeNull();
+    await page.mouse.move(
+      inputBounds!.x + inputBounds!.width / 2,
+      inputBounds!.y + inputBounds!.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      inputBounds!.x + inputBounds!.width / 2 + 20,
+      inputBounds!.y + inputBounds!.height / 2 - 3,
+    );
+    await page.mouse.up();
     await firstInput.press("Home");
     await firstInput.press("ArrowUp");
     await continueToNextQuestion(page);
