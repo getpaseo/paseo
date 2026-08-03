@@ -64,11 +64,10 @@ export interface OpenCodeServerManagerOptions {
 }
 
 function getServerRuntimeSettingsKey(runtimeSettings?: ProviderRuntimeSettings): string {
-  const env = runtimeSettings?.env
-    ? Object.fromEntries(
-        Object.entries(runtimeSettings.env).sort(([left], [right]) => left.localeCompare(right)),
-      )
-    : undefined;
+  const envEntries = Object.entries(runtimeSettings?.env ?? {}).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  const env = envEntries.length > 0 ? Object.fromEntries(envEntries) : undefined;
   return JSON.stringify({ command: runtimeSettings?.command, env });
 }
 

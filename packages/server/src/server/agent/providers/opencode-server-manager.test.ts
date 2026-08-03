@@ -27,6 +27,25 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+test("reuses a manager for absent and empty environments but isolates distinct environments", async () => {
+  const logger = createTestLogger();
+  const command = {
+    mode: "replace" as const,
+    argv: ["/roles/environment-normalization/opencode"],
+  };
+  const withoutEnv = OpenCodeServerManager.getInstance(logger, { command });
+  const withEmptyEnv = OpenCodeServerManager.getInstance(logger, { command, env: {} });
+  const withDistinctEnv = OpenCodeServerManager.getInstance(logger, {
+    command,
+    env: { OPENCODE_CONFIG_DIR: "/roles/environment-normalization/config" },
+  });
+
+  expect(withEmptyEnv).toBe(withoutEnv);
+  expect(withDistinctEnv).not.toBe(withoutEnv);
+
+  await Promise.all([withoutEnv.shutdown(), withDistinctEnv.shutdown()]);
+});
+
 test("uses role-specific command and environment when empty settings initialize first", async () => {
   const logger = createTestLogger();
   const builtinRuntime = new FakeOpenCodeServerRuntime([4080], { autoAnnounce: true });
