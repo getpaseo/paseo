@@ -2402,14 +2402,17 @@ export class PiRpcAgentSession implements AgentSession {
       this.lastInterruptedTurnId = null;
       return;
     }
-    // Flush any buffered text from this turn before its ids are cleared, so the
-    // fragment is emitted under the correct turn/message and doesn't outlive the
-    // turn (or attach to the next one) when a turn ends without assistant message_end.
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
     this.activeTurnStarted = false;
     this.clearNoTurnBuffers();
+    // Reset per-message coalescing flags too: flushHeldText() above leaves
+    // textStreamDirect=true, which would otherwise leak into the next turn and
+    // silently disable coalescing for an assistant message that starts without
+    // message_start (the very case this PR targets).
+    this.reasoningPresent = false;
+    this.textStreamDirect = false;
     const errorMessage = latestPiErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
       this.emit({

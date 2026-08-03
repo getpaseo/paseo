@@ -682,7 +682,69 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
-  test("discards held text on close (no late emit)", async t => {
+  test("resets coalescing flags so the next turn coalesces without a message_start", async () => {
+    const prev = process.env.PI_REASONING_HOLD_MS;
+    process.env.PI_REASONING_HOLD_MS = "10000"; // long hold: flush must come from turn completion, not the timer
+    onTestFinished(() => {
+      if (prev === undefined) delete process.env.PI_REASONING_HOLD_MS;
+      else process.env.PI_REASONING_HOLD_MS = prev;
+    });
+
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    // Turn 1 ends without an assistant message_end, leaking textStreamDirect=true.
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", content: [], responseId: "r1" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "r1" },
+      assistantMessageEvent: { type: "thinking_delta", delta: "think" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "r1" },
+      assistantMessageEvent: { type: "text_delta", delta: "There are " },
+    });
+    fakeSession.finishTurn();
+    await events.nextTurnCompletion();
+
+    // Turn 2 starts WITHOUT message_start (the shim path), so only a flag reset in
+    // completeTurn keeps coalescing armed. If textStreamDirect leaked, the text
+    // would stream before the trailing reasoning and split the reasoning run.
+    await session.startTurn("hello2");
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "r2" },
+      assistantMessageEvent: { type: "thinking_delta", delta: "think2" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "r2" },
+      assistantMessageEvent: { type: "text_delta", delta: "There are 4 " },
+    });
+    // Trailing reasoning must stay in the reasoning run, not after the text.
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "r2" },
+      assistantMessageEvent: { type: "thinking_delta", delta: " more" },
+    });
+    fakeSession.finishTurn();
+    await events.nextTurnCompletion();
+
+    expect(events.timelineItems()).toEqual([
+      { type: "reasoning", text: "think" },
+      { type: "assistant_message", text: "There are ", messageId: "r1" },
+      { type: "reasoning", text: "think2" },
+      { type: "reasoning", text: " more" },
+      { type: "assistant_message", text: "There are 4 ", messageId: "r2" },
+    ]);
+  });
+
+  test("discards held text on close (no late emit)", async () => {
     const prev = process.env.PI_REASONING_HOLD_MS;
     process.env.PI_REASONING_HOLD_MS = "10000"; // long hold: only close can cancel it
     onTestFinished(() => {
@@ -709,13 +771,13 @@ describe("PiRpcAgentSession", () => {
       assistantMessageEvent: { type: "text_delta", delta: "There are " },
     });
     await session.close();
-    await new Promise(r => setTimeout(r, 30)); // a leaked timer would have fired by now
+    await new Promise((r) => setTimeout(r, 30)); // a leaked timer would have fired by now
 
     // Thinking was streamed, but the held text is dropped on close (no late emit).
     expect(events.timelineItems()).toEqual([{ type: "reasoning", text: "think" }]);
   });
 
-  test("discards held text on interrupt (no late emit)", async t => {
+  test("discards held text on interrupt (no late emit)", async () => {
     const prev = process.env.PI_REASONING_HOLD_MS;
     process.env.PI_REASONING_HOLD_MS = "10000"; // long hold: only interrupt can cancel it
     onTestFinished(() => {
@@ -742,7 +804,7 @@ describe("PiRpcAgentSession", () => {
       assistantMessageEvent: { type: "text_delta", delta: "There are " },
     });
     await session.interrupt();
-    await new Promise(r => setTimeout(r, 30));
+    await new Promise((r) => setTimeout(r, 30));
 
     expect(events.timelineItems()).toEqual([{ type: "reasoning", text: "think" }]);
   });
