@@ -3414,7 +3414,7 @@ async function collectMergeConflictDiagnostics(cwd: string): Promise<MergeConfli
   return { conflictFiles: [...new Set(conflictFiles)], errors };
 }
 
-async function verifyMergeCleanup(cwd: string): Promise<unknown[]> {
+async function verifyMergeCleanup(cwd: string, mode: "merge" | "squash"): Promise<unknown[]> {
   const errors: unknown[] = [];
   try {
     const mergeHead = await runGitCommand(["rev-parse", "-q", "--verify", "MERGE_HEAD"], {
@@ -3439,6 +3439,21 @@ async function verifyMergeCleanup(cwd: string): Promise<unknown[]> {
   } catch (error) {
     errors.push(error);
   }
+  if (mode === "squash") {
+    try {
+      const status = await runGitCommand(["status", "--porcelain"], {
+        cwd,
+        envOverlay: READ_ONLY_GIT_ENV,
+      });
+      if (status.stdout.trim().length > 0) {
+        errors.push(
+          new Error("Merge cleanup invariant failed: squash index or worktree changes remain"),
+        );
+      }
+    } catch (error) {
+      errors.push(error);
+    }
+  }
   return errors;
 }
 
@@ -3460,7 +3475,7 @@ async function cleanupFailedMerge(
   } catch (error) {
     commandErrors.push(error);
   }
-  return { commandErrors, verificationErrors: await verifyMergeCleanup(cwd) };
+  return { commandErrors, verificationErrors: await verifyMergeCleanup(cwd, mode) };
 }
 
 async function handleFailedMerge(input: HandleFailedMergeInput): Promise<never> {
@@ -3511,6 +3526,27 @@ async function handleFailedMerge(input: HandleFailedMergeInput): Promise<never> 
     );
   }
   throw error;
+}
+
+interface HandleFailedSquashCommitInput {
+  cwd: string;
+  error: unknown;
+  baseRef: string;
+  currentBranch: string;
+}
+
+async function handleFailedSquashCommit(input: HandleFailedSquashCommitInput): Promise<never> {
+  const cleanup = await cleanupFailedMerge(input.cwd, "squash");
+  if (cleanup.verificationErrors.length > 0) {
+    throw new MergeCleanupError({
+      baseRef: input.baseRef,
+      currentBranch: input.currentBranch,
+      conflictFiles: [],
+      cleanupErrors: [...cleanup.commandErrors, ...cleanup.verificationErrors],
+      operationErrors: [input.error],
+    });
+  }
+  throw input.error;
 }
 
 interface AppendMergeCleanupErrorInput {
@@ -3581,10 +3617,19 @@ async function executeMergeToBase(input: ExecuteMergeToBaseInput): Promise<void>
   if (mode !== "squash") return;
 
   const message = input.commitMessage ?? `Squash merge ${currentBranch} into ${baseRef}`;
-  await runGitCommand(["-c", "commit.gpgsign=false", "commit", "-m", message], {
-    cwd: operationCwd,
-    timeout: 120_000,
-  });
+  try {
+    await runGitCommand(["-c", "commit.gpgsign=false", "commit", "-m", message], {
+      cwd: operationCwd,
+      timeout: 120_000,
+    });
+  } catch (error) {
+    await handleFailedSquashCommit({
+      cwd: operationCwd,
+      error,
+      baseRef,
+      currentBranch,
+    });
+  }
 }
 
 async function restoreBranchAfterMerge(cwd: string, originalBranch: string): Promise<void> {

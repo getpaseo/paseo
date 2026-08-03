@@ -20,7 +20,8 @@ type GitFailureMode =
   | "generic-cleanup"
   | "generic-restore"
   | "restore"
-  | "restore-noop";
+  | "restore-noop"
+  | "squash-reset-noop";
 
 function resolveRealGitPath(): string {
   for (const directory of (process.env.PATH ?? "").split(delimiter)) {
@@ -111,6 +112,12 @@ fi
 if [ "$PASEO_TEST_GIT_FAILURE" = "restore-noop" ] && [ "$3" = "checkout" ] && [ "$4" = "feature" ]; then
   exit 0
 fi
+if [ "$3" = "reset" ] && [ "$4" = "--merge" ]; then
+  : > "$PASEO_TEST_RESET_MARKER"
+fi
+if [ "$PASEO_TEST_GIT_FAILURE" = "squash-reset-noop" ] && [ "$3" = "reset" ] && [ "$4" = "--merge" ]; then
+  exit 0
+fi
 exec '${quotedGitPath}' "$@"
 `,
   );
@@ -139,6 +146,23 @@ function hasMergeHead(repoDir: string): boolean {
   }
 }
 
+function installRejectingCommitHook(repoDir: string): string {
+  const hookPath = join(repoDir, ".git", "hooks", "pre-commit");
+  writeFileSync(
+    hookPath,
+    `#!/bin/sh
+if git diff --cached --quiet; then
+  echo "expected a populated squash index" >&2
+  exit 81
+fi
+echo "commit blocked after populated squash index" >&2
+exit 80
+`,
+  );
+  chmodSync(hookPath, 0o755);
+  return hookPath;
+}
+
 async function captureFailure(operation: Promise<unknown>): Promise<unknown> {
   try {
     await operation;
@@ -154,11 +178,13 @@ async function withMergeRepository(
 ): Promise<void> {
   const previousConcurrency = process.env.PASEO_GIT_CONCURRENCY;
   const previousFailureMode = process.env.PASEO_TEST_GIT_FAILURE;
+  const previousResetMarker = process.env.PASEO_TEST_RESET_MARKER;
   const previousPath = process.env.PATH;
   const repoDir = createMergeRepository(options.conflicting);
   let wrapperDir: string | null = null;
   try {
     process.env.PASEO_GIT_CONCURRENCY = "1";
+    process.env.PASEO_TEST_RESET_MARKER = join(repoDir, ".git", "paseo-test-reset-marker");
     wrapperDir = installGitFailureWrapper(options.failureMode);
     vi.resetModules();
     await run(repoDir);
@@ -167,6 +193,8 @@ async function withMergeRepository(
     else process.env.PASEO_GIT_CONCURRENCY = previousConcurrency;
     if (previousFailureMode === undefined) delete process.env.PASEO_TEST_GIT_FAILURE;
     else process.env.PASEO_TEST_GIT_FAILURE = previousFailureMode;
+    if (previousResetMarker === undefined) delete process.env.PASEO_TEST_RESET_MARKER;
+    else process.env.PASEO_TEST_RESET_MARKER = previousResetMarker;
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
     if (wrapperDir) rmSync(wrapperDir, { recursive: true, force: true });
@@ -331,6 +359,103 @@ describe.skipIf(isPlatform("win32"))("checkout merge cleanup", () => {
         expect(readStatus(repoDir)).toBe("");
         expect(hasMergeHead(repoDir)).toBe(false);
       });
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "cleans a populated squash index when the commit fails and leaves the checkout reusable",
+    async () => {
+      await withMergeRepository({ conflicting: false, failureMode: "none" }, async (repoDir) => {
+        const hookPath = installRejectingCommitHook(repoDir);
+        const resetMarker = process.env.PASEO_TEST_RESET_MARKER;
+        if (!resetMarker) throw new Error("Missing reset marker path");
+        const { mergeToBase, MergeCleanupError, MergeConflictError } =
+          await import("./checkout-git.js");
+
+        const failure = await captureFailure(
+          mergeToBase(repoDir, { baseRef: "main", mode: "squash" }),
+        );
+
+        expect(failure).toBeInstanceOf(Error);
+        expect(failure).not.toBeInstanceOf(MergeCleanupError);
+        expect(failure).not.toBeInstanceOf(MergeConflictError);
+        expect(failure).not.toBeInstanceOf(AggregateError);
+        if (!(failure instanceof Error)) throw failure;
+        expect(failure.message).toContain("commit blocked after populated squash index");
+        expect(existsSync(resetMarker)).toBe(true);
+        expect(readBranch(repoDir)).toBe("feature");
+        expect(readStatus(repoDir)).toBe("");
+        expect(hasMergeHead(repoDir)).toBe(false);
+
+        rmSync(hookPath);
+        await mergeToBase(repoDir, { baseRef: "main", mode: "squash" });
+
+        expect(readBranch(repoDir)).toBe("feature");
+        expect(readStatus(repoDir)).toBe("");
+        expect(
+          execFileSync(realGitPath(), ["show", "main:feature.txt"], { cwd: repoDir }).toString(),
+        ).toBe("feature\n");
+      });
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "types branch restoration failure after cleaning a failed squash commit",
+    async () => {
+      await withMergeRepository({ conflicting: false, failureMode: "restore" }, async (repoDir) => {
+        installRejectingCommitHook(repoDir);
+        const { mergeToBase, MergeCleanupError } = await import("./checkout-git.js");
+
+        const failure = await captureFailure(
+          mergeToBase(repoDir, { baseRef: "main", mode: "squash" }),
+        );
+
+        expect(failure).toBeInstanceOf(MergeCleanupError);
+        if (!(failure instanceof MergeCleanupError)) throw failure;
+        expect(failure.operationErrors).toEqual([
+          expect.objectContaining({
+            message: expect.stringContaining("commit blocked after populated squash index"),
+          }),
+        ]);
+        expect(failure.cleanupErrors).toEqual([
+          expect.objectContaining({ message: expect.stringContaining("restore blocked") }),
+        ]);
+        expect(readBranch(repoDir)).toBe("main");
+        expect(readStatus(repoDir)).toBe("");
+      });
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "types a squash commit cleanup that reports success without clearing the index",
+    async () => {
+      await withMergeRepository(
+        { conflicting: false, failureMode: "squash-reset-noop" },
+        async (repoDir) => {
+          installRejectingCommitHook(repoDir);
+          const { mergeToBase, MergeCleanupError } = await import("./checkout-git.js");
+
+          const failure = await captureFailure(
+            mergeToBase(repoDir, { baseRef: "main", mode: "squash" }),
+          );
+
+          expect(failure).toBeInstanceOf(MergeCleanupError);
+          if (!(failure instanceof MergeCleanupError)) throw failure;
+          expect(failure.operationErrors).toEqual([
+            expect.objectContaining({
+              message: expect.stringContaining("commit blocked after populated squash index"),
+            }),
+          ]);
+          expect(failure.cleanupErrors).toEqual([
+            expect.objectContaining({
+              message: expect.stringContaining("squash index or worktree changes remain"),
+            }),
+          ]);
+        },
+      );
     },
     TEST_TIMEOUT,
   );
