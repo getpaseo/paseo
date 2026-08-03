@@ -285,9 +285,11 @@ upstream. This keeps unpushed local commits out of new workspaces by default. Th
 identical refs; divergent local or non-origin refs remain explicit, qualified choices.
 
 The daemon sends the exact upstream ref because the remote and branch names cannot be inferred.
-Worktrees retain that ref for comparisons and actions while exposing its branch name to the UI.
-Older daemons omit the optional field and retain the previous local-first behavior; older worktree
-metadata without the exact ref also resolves through its stored branch name.
+Worktrees retain that ref for comparisons and updates from base while exposing its branch name to
+the UI. Merging into base requires a mutable local target: `origin/main` maps to local `main`, while
+another remote fails closed until the worktree records an explicit local target. Older daemons omit
+the optional field and retain the previous local-first behavior; older worktree metadata without the
+exact ref also resolves through its stored branch name.
 
 Worktrees inherit committed Git state only; uncommitted source-checkout changes are not copied.
 

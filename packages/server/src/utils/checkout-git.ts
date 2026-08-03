@@ -1231,6 +1231,24 @@ function baseRefMismatchError(refs: { stored: string; requested: string }): Erro
   return new Error(`Base ref mismatch: stored ${refs.stored}, requested ${refs.requested}`);
 }
 
+function resolveOperationBaseRef(input: {
+  storedBaseRef: string | null;
+  resolvedBaseRef: string | null;
+  requestedBaseRef?: string;
+}): string | null {
+  if (
+    input.storedBaseRef &&
+    input.requestedBaseRef &&
+    !isSameBaseRef(input.storedBaseRef, input.requestedBaseRef)
+  ) {
+    throw baseRefMismatchError({
+      stored: input.storedBaseRef,
+      requested: input.requestedBaseRef,
+    });
+  }
+  return input.storedBaseRef ?? input.requestedBaseRef ?? input.resolvedBaseRef;
+}
+
 async function isWorkingTreeDirty(cwd: string, context?: CheckoutContext): Promise<boolean> {
   const { stdout } = await runGitCommand(["status", "--porcelain"], {
     cwd,
@@ -1478,6 +1496,15 @@ interface ComparisonBaseRefName {
 function normalizeComparisonBaseRefName(input: string): ComparisonBaseRefName {
   const localName = branchNameFromRef(input);
   return { localName, originRef: `origin/${localName}` };
+}
+
+function resolveMergeTargetBranch(baseRef: string): string {
+  const remotePrefix = "refs/remotes/";
+  const originPrefix = `${remotePrefix}origin/`;
+  if (baseRef.startsWith(remotePrefix) && !baseRef.startsWith(originPrefix)) {
+    throw new Error(`No local merge target is recorded for base ref ${baseRef}`);
+  }
+  return branchNameFromRef(baseRef);
 }
 
 async function doesGitRefExist(
@@ -2356,7 +2383,7 @@ async function tryResolveCheckoutCommitsBaseRef(
   if (!normalizedBaseRef || normalizedBaseRef === currentBranch) {
     return null;
   }
-  return resolveMostAheadBaseRef(cwd, normalizedBaseRef).catch(() => null);
+  return resolveMostAheadBaseRef(cwd, baseRef).catch(() => null);
 }
 
 export async function listCheckoutCommits({
@@ -2998,12 +3025,13 @@ async function resolveCheckoutDiffRefs(
     return { baseRef: "HEAD", includeUntracked: true };
   }
   const { storedBaseRef, resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
-  const baseRef = compare.baseRef ?? resolvedBaseRef;
+  const baseRef = resolveOperationBaseRef({
+    storedBaseRef,
+    resolvedBaseRef,
+    requestedBaseRef: compare.baseRef,
+  });
   if (!baseRef) {
     return null;
-  }
-  if (storedBaseRef && compare.baseRef && !isSameBaseRef(storedBaseRef, compare.baseRef)) {
-    throw baseRefMismatchError({ stored: storedBaseRef, requested: compare.baseRef });
   }
   const bestBaseRef = await resolveBestComparisonBaseRef(cwd, baseRef);
   return {
@@ -3216,18 +3244,18 @@ export async function mergeToBase(
   await requireGitRepo(cwd);
   const currentBranch = await getCurrentBranch(cwd);
   const { storedBaseRef, resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
-  const baseRef = options.baseRef ?? resolvedBaseRef;
+  const baseRef = resolveOperationBaseRef({
+    storedBaseRef,
+    resolvedBaseRef,
+    requestedBaseRef: options.baseRef,
+  });
   if (!baseRef) {
     throw new Error("Unable to determine base branch for merge");
-  }
-  if (storedBaseRef && options.baseRef && !isSameBaseRef(storedBaseRef, options.baseRef)) {
-    throw baseRefMismatchError({ stored: storedBaseRef, requested: options.baseRef });
   }
   if (!currentBranch) {
     throw new Error("Unable to determine current branch for merge");
   }
-  let normalizedBaseRef = baseRef;
-  normalizedBaseRef = branchNameFromRef(normalizedBaseRef);
+  const normalizedBaseRef = resolveMergeTargetBranch(baseRef);
   const currentWorktreeRoot = (await getWorktreeRoot(cwd, context)) ?? cwd;
   if (normalizedBaseRef === currentBranch) {
     return currentWorktreeRoot;
@@ -3292,12 +3320,13 @@ export async function mergeFromBase(
   }
 
   const { storedBaseRef, resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
-  const baseRef = options.baseRef ?? resolvedBaseRef;
+  const baseRef = resolveOperationBaseRef({
+    storedBaseRef,
+    resolvedBaseRef,
+    requestedBaseRef: options.baseRef,
+  });
   if (!baseRef) {
     throw new Error("Unable to determine base branch for merge");
-  }
-  if (storedBaseRef && options.baseRef && !isSameBaseRef(storedBaseRef, options.baseRef)) {
-    throw baseRefMismatchError({ stored: storedBaseRef, requested: options.baseRef });
   }
 
   const requireCleanTarget = options.requireCleanTarget ?? true;
@@ -3625,7 +3654,11 @@ export async function createPullRequest(
 
   const head = options.head ?? (await getCurrentBranch(cwd));
   const { storedBaseRef, resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
-  const base = options.base ?? resolvedBaseRef;
+  const base = resolveOperationBaseRef({
+    storedBaseRef,
+    resolvedBaseRef,
+    requestedBaseRef: options.base,
+  });
   if (!head) {
     throw new Error("Unable to determine head branch for PR");
   }
@@ -3633,9 +3666,6 @@ export async function createPullRequest(
     throw new Error("Unable to determine base branch for PR");
   }
   const normalizedBase = branchNameFromRef(base);
-  if (storedBaseRef && options.base && !isSameBaseRef(storedBaseRef, options.base)) {
-    throw baseRefMismatchError({ stored: storedBaseRef, requested: options.base });
-  }
 
   // The push deliberately happens before the adapter resolves the target
   // repository: slug resolution is adapter-internal (e.g. `gh repo view`, which

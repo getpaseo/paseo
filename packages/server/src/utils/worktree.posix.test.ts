@@ -23,7 +23,13 @@ import {
 } from "./worktree";
 import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
 import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
-import { getCheckoutStatus, mergeFromBase } from "./checkout-git.js";
+import {
+  getCheckoutDiff,
+  getCheckoutStatus,
+  listCheckoutCommits,
+  mergeFromBase,
+  mergeToBase,
+} from "./checkout-git.js";
 import { execFileSync } from "child_process";
 import { isPlatform } from "../test-utils/platform.js";
 import {
@@ -477,6 +483,11 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       });
       execFileSync("git", ["push", "origin", "main"], { cwd: forkCloneDir });
       execFileSync("git", ["fetch", "upstream"], { cwd: repoDir });
+      const localMainHead = execFileSync("git", ["rev-parse", "refs/heads/main"], {
+        cwd: repoDir,
+      })
+        .toString()
+        .trim();
 
       const result = await createLegacyWorktreeForTest({
         branchName: "fork-base-feature",
@@ -506,6 +517,26 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       // which is why an untouched child reports no work of its own.
       expect(status.baseRef).toBe("main");
       expect(status.aheadBehind).toEqual({ ahead: 0, behind: 0 });
+      expect(
+        await getCheckoutDiff(
+          result.worktreePath,
+          { mode: "base", baseRef: "main" },
+          { paseoHome },
+        ),
+      ).toMatchObject({ diff: "" });
+      const history = await listCheckoutCommits({
+        cwd: result.worktreePath,
+        context: { paseoHome },
+      });
+      expect(history.commits.every((commit) => commit.isOnBase)).toBe(true);
+      await expect(
+        mergeToBase(result.worktreePath, { baseRef: "main" }, { paseoHome }),
+      ).rejects.toThrow(
+        "No local merge target is recorded for base ref refs/remotes/upstream/main",
+      );
+      expect(
+        execFileSync("git", ["rev-parse", "refs/heads/main"], { cwd: repoDir }).toString().trim(),
+      ).toBe(localMainHead);
 
       writeFileSync(join(forkCloneDir, "later.txt"), "later\n");
       execFileSync("git", ["add", "later.txt"], { cwd: forkCloneDir });
@@ -514,7 +545,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       });
       execFileSync("git", ["push", "origin", "main"], { cwd: forkCloneDir });
       execFileSync("git", ["fetch", "upstream"], { cwd: result.worktreePath });
-      await mergeFromBase(result.worktreePath, {}, { paseoHome });
+      await mergeFromBase(result.worktreePath, { baseRef: "main" }, { paseoHome });
       expect(readFileSync(join(result.worktreePath, "later.txt"), "utf8")).toBe("later\n");
     });
 
