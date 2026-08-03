@@ -177,6 +177,7 @@ export class DaemonExecutions implements HubExecutionAgents {
       return this.resolveRecord(existing);
     }
     this.requireAuthority(authorityGeneration);
+    requireHubMcpNamespace(input.mcpServers);
 
     let createdWorktree: CreatePaseoWorktreeWorkflowResult | null = null;
     let createdAgentId: string | null = null;
@@ -348,6 +349,12 @@ export class DaemonExecutions implements HubExecutionAgents {
       throw new Error(`Agent ${record.id} is not owned by daemon ${this.daemonId}`);
     }
     return owner;
+  }
+}
+
+function requireHubMcpNamespace(mcpServers: Record<string, McpServerConfig> | undefined): void {
+  if (mcpServers && Object.hasOwn(mcpServers, "paseo")) {
+    throw new Error('Hub execution MCP server name "paseo" is reserved by the daemon');
   }
 }
 

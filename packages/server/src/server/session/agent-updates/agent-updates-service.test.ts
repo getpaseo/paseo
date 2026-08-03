@@ -350,6 +350,16 @@ describe("forwardLiveAgent", () => {
         headers: { Authorization: "Bearer execution-secret" },
       },
     };
+    expect(agent.config).toMatchObject({
+      provider: "codex",
+      mcpServers: {
+        hub: {
+          type: "http",
+          url: "https://hub.test/mcp/executions/execution-1",
+          headers: { Authorization: "Bearer execution-secret" },
+        },
+      },
+    });
 
     await h.service.forwardLiveAgent(agent);
 
@@ -359,8 +369,11 @@ describe("forwardLiveAgent", () => {
       agent: expect.objectContaining({ id: "a" }),
       project: makeProject(),
     });
-    expect(JSON.stringify(update)).not.toContain("execution-secret");
-    expect(JSON.stringify(update)).not.toContain("https://hub.test/mcp/executions/execution-1");
+    if (update?.kind !== "upsert") {
+      throw new Error("Expected an agent upsert");
+    }
+    expect(update.agent).not.toHaveProperty("config");
+    expect(update.agent).not.toHaveProperty("mcpServers");
   });
 
   test("emits a remove when the agent's workspace resolves to no project", async () => {
