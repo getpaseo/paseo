@@ -389,7 +389,10 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
 
   process.on("SIGINT", () => forwardSignal("SIGINT"));
   process.on("SIGTERM", () => forwardSignal("SIGTERM"));
-  if (process.platform !== "win32") {
+  // SIGQUIT is an ownership signal only for explicitly service-managed
+  // supervisors. Unmanaged and Desktop supervisors retain Node's native
+  // SIGQUIT termination behavior.
+  if (serviceManaged && process.platform !== "win32") {
     process.on(SERVICE_MANAGER_STOP_SIGNAL, () => {
       requestShutdown(`supervisor_received_${SERVICE_MANAGER_STOP_SIGNAL}`, true);
     });

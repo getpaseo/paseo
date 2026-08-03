@@ -122,6 +122,7 @@ async function runSupervisorFixture(options: {
  */
 const IDLE_WORKER = `
   process.on("SIGTERM", () => process.exit(0));
+  process.on("disconnect", () => process.exit(0));
   process.stderr.write("worker-up\\n");
   setInterval(() => {}, 1000);
 `;
@@ -242,5 +243,18 @@ describe("service-managed supervisor stop authorization", () => {
 
     expect(result.code).toBe(0);
     expect(result.log).not.toContain("Unauthorized stop of a service-managed daemon");
+  }, 30_000);
+
+  test("an unmanaged supervisor preserves native SIGQUIT termination", async () => {
+    const result = await runSupervisorFixture({
+      workerSource: IDLE_WORKER,
+      serviceManaged: false,
+      signalSupervisor: SERVICE_MANAGER_STOP_SIGNAL,
+    });
+
+    expect(result.code).toBeNull();
+    expect(result.signal).toBe(SERVICE_MANAGER_STOP_SIGNAL);
+    expect(result.log).not.toContain("Supervisor shutdown requested");
+    expect(result.log).not.toContain('"authorized":true');
   }, 30_000);
 });
