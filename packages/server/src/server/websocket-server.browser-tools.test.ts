@@ -204,6 +204,10 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
   const wsServer = createVoiceAssistantWebSocketServer({ httpServer, broker });
   const clients = new Set<DaemonClient>();
 
+  httpServer.on("upgrade", (request, socket, head) => {
+    wsServer.handleUpgrade(request, socket, head);
+  });
+
   await listen(httpServer);
   const url = `ws://127.0.0.1:${getPort(httpServer)}/ws`;
 
