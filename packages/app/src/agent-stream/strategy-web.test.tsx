@@ -877,6 +877,11 @@ describe("createWebStreamStrategy", () => {
     act(() => scrollContainer.dispatchEvent(new Event("scroll")));
     scrollTo.mockClear();
 
+    act(() => {
+      scrollContainer.dispatchEvent(
+        new WheelEvent("wheel", { bubbles: true, ctrlKey: true, deltaY: -100 }),
+      );
+    });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1800 });
     act(() => {
       root?.render(

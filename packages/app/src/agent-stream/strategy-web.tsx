@@ -761,7 +761,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     }
 
     const handleWheel = (event: WheelEvent) => {
-      if (event.deltaY < 0) {
+      if (!event.ctrlKey && event.deltaY < 0) {
         stopFollowingOutputFromUserIntent();
       }
     };
