@@ -326,3 +326,34 @@ test("failed create never archives a reused worktree", async () => {
   });
   expect(await hub.worktreeState(worktreeCwd!)).toEqual({ exists: true, listed: true });
 });
+
+test("finishing an execution preserves a workspace being acquired by a rival", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("first-create", "first-execution", {
+    worktree: { mode: "branch-off", newBranch: "shared-finish-worktree" },
+  });
+  const first = await hub.ownedCreateResult("first-create");
+  const worktreeCwd = first.payload.agent?.cwd;
+  const workspaceId = first.payload.agent?.workspaceId;
+  expect(worktreeCwd).toEqual(expect.any(String));
+  expect(workspaceId).toEqual(expect.any(String));
+
+  const priorProviderCreations = hub.providerCreations();
+  hub.holdAgentCreationAtCwd(worktreeCwd!);
+  const rivalCreation = hub.createAgentInWorkspace(workspaceId!, worktreeCwd!);
+
+  let archiveResult;
+  try {
+    await hub.agentCreationAtCwd(worktreeCwd!, priorProviderCreations);
+    archiveResult = await hub.archiveExecution("first-execution");
+  } finally {
+    hub.finishAgentCreation();
+  }
+  const rival = await rivalCreation;
+
+  expect(archiveResult).toMatchObject({ success: true, executionId: "first-execution" });
+  expect(rival.workspaceId).toBe(workspaceId);
+  expect(await hub.ownedAgentArchivedAt(first.payload.agentId!)).not.toBeNull();
+  expect(await hub.agentRemainsAvailable(rival.id)).toBe(true);
+  expect(await hub.worktreeState(worktreeCwd!)).toEqual({ exists: true, listed: true });
+});
