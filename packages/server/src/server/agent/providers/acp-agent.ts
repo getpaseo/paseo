@@ -272,9 +272,10 @@ const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
 // Per-model thinking-option probe budget. Each probe is a local stdio
 // JSON-RPC round-trip that normally completes in milliseconds; the timeout
 // only guards against an agent that never answers a model-switch request.
-// Keeping it far below ACP_CATALOG_TIMEOUT_MS lets several stalled probes
-// fall back to shared options instead of failing the whole catalog.
-export const PER_MODEL_THINKING_PROBE_TIMEOUT_MS = 5_000;
+// Probes run serially so the agent's shared session state is always the
+// model the response was requested for; 2s × 30 models = the 60s catalog
+// budget, and realistic model counts are far below that.
+export const PER_MODEL_THINKING_PROBE_TIMEOUT_MS = 2_000;
 
 function summarizeMalformedACPStdoutError(error: unknown): { type: string; message: string } {
   return {
@@ -1000,11 +1001,12 @@ export class ACPAgentClient implements AgentClient {
    * PER_MODEL_THINKING_PROBE_TIMEOUT_MS so a stalled probe cannot hang the
    * whole catalog probe.
    *
-   * Probes run concurrently: ACP is JSON-RPC, so requests carry ids and
-   * responses are matched per request; local agents process the writes
-   * sequentially anyway. Parallel probes keep the worst case at one
-   * per-model timeout instead of models × timeout, so a provider that
-   * advertises many models cannot exhaust the catalog budget.
+   * Probes run serially: an ACP session has one shared model state, and
+   * serial order guarantees each response is built after exactly the
+   * requested model was applied — concurrent probes could associate a
+   * response with the wrong model. The serial worst case is
+   * models × PER_MODEL_THINKING_PROBE_TIMEOUT_MS, which stays inside the
+   * catalog budget for any realistic model count.
    */
   private async collectPerModelThinkingOptions({
     connection,
@@ -1021,41 +1023,32 @@ export class ACPAgentClient implements AgentClient {
       return undefined;
     }
 
-    const probed = await Promise.all(
-      flattenSelectOptions(modelOption.options).map(async (choice) => {
-        try {
-          const response = await withTimeout(
-            this.runACPRequest(() =>
-              connection.setSessionConfigOption({
-                sessionId,
-                configId: modelOption.id,
-                value: choice.value,
-              }),
-            ),
-            PER_MODEL_THINKING_PROBE_TIMEOUT_MS,
-            `ACP thinking-options probe for model "${choice.value}" timed out after ${PER_MODEL_THINKING_PROBE_TIMEOUT_MS}ms`,
-          );
-          const transformedConfigOptions = this.configOptionsTransformer
-            ? this.configOptionsTransformer(response.configOptions)
-            : response.configOptions;
-          return {
-            modelId: choice.value,
-            options: deriveSelectorOptions(transformedConfigOptions, "thought_level"),
-          };
-        } catch (error) {
-          this.logger.warn(
-            { err: error, provider: this.provider, model: choice.value },
-            "Failed to probe ACP thinking options for model",
-          );
-          return null;
-        }
-      }),
-    );
-
     const perModel = new Map<string, ConfigOptionSelector[]>();
-    for (const entry of probed) {
-      if (entry) {
-        perModel.set(entry.modelId, entry.options);
+    for (const choice of flattenSelectOptions(modelOption.options)) {
+      try {
+        const response = await withTimeout(
+          this.runACPRequest(() =>
+            connection.setSessionConfigOption({
+              sessionId,
+              configId: modelOption.id,
+              value: choice.value,
+            }),
+          ),
+          PER_MODEL_THINKING_PROBE_TIMEOUT_MS,
+          `ACP thinking-options probe for model "${choice.value}" timed out after ${PER_MODEL_THINKING_PROBE_TIMEOUT_MS}ms`,
+        );
+        const transformedConfigOptions = this.configOptionsTransformer
+          ? this.configOptionsTransformer(response.configOptions)
+          : response.configOptions;
+        perModel.set(
+          choice.value,
+          deriveSelectorOptions(transformedConfigOptions, "thought_level"),
+        );
+      } catch (error) {
+        this.logger.warn(
+          { err: error, provider: this.provider, model: choice.value },
+          "Failed to probe ACP thinking options for model",
+        );
       }
     }
     return perModel.size > 0 ? perModel : undefined;

@@ -2503,9 +2503,11 @@ describe("ACPAgentClient fetchCatalog", () => {
     }
   });
 
-  test("stalled probes run concurrently, so many stalled models stay within one per-model budget", async () => {
-    // Both model probes never answer; the whole catalog must still finish
-    // after a single PER_MODEL_THINKING_PROBE_TIMEOUT_MS, not N × that.
+  test("multiple stalled probes each time out serially without failing the catalog", async () => {
+    // Both model probes never answer; each times out on its own
+    // PER_MODEL_THINKING_PROBE_TIMEOUT_MS budget and the catalog still
+    // completes — serial probing stays within the catalog budget for any
+    // realistic model count.
     const setSessionConfigOption = vi.fn(() => new Promise(() => {}));
 
     class TestACPAgentClient extends ACPAgentClient {
@@ -2564,11 +2566,13 @@ describe("ACPAgentClient fetchCatalog", () => {
     try {
       const catalogPromise = client.fetchCatalog({
         scope: "workspace",
-        cwd: "/tmp/acp-per-model-concurrent",
+        cwd: "/tmp/acp-per-model-serial-stall",
         force: false,
       });
       await vi.advanceTimersByTimeAsync(0);
-      // One per-model budget fires both stalled probes at once.
+      // First stalled probe times out, then the second one is attempted and
+      // times out too — each on its own per-model budget.
+      await vi.advanceTimersByTimeAsync(PER_MODEL_THINKING_PROBE_TIMEOUT_MS);
       await vi.advanceTimersByTimeAsync(PER_MODEL_THINKING_PROBE_TIMEOUT_MS);
       const catalog = await catalogPromise;
 
