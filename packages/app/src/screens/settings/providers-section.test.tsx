@@ -321,6 +321,18 @@ const disabledCodexEntry: ProviderSnapshotEntry = {
   modes: [],
 };
 
+const claudeWorkEntry: ProviderSnapshotEntry = {
+  provider: "claude-work",
+  source: "custom",
+  status: "ready",
+  enabled: true,
+  label: "Claude · Work",
+  description: "Claude Code work account",
+  defaultModeId: null,
+  modes: [],
+  models: [],
+};
+
 function makeConfig(providers: MutableDaemonConfig["providers"] = {}): MutableDaemonConfig {
   return {
     relay: { enabled: false },
@@ -436,6 +448,29 @@ describe("ProvidersSection", () => {
     expect(status).toBeGreaterThan(label);
     expect(modelCount).toBeGreaterThan(status);
     expect(switchEl).toBeGreaterThan(modelCount);
+  });
+
+  it("groups an account with its base provider and reuses the base icon", () => {
+    snapshotState.entries = [claudeEntry, disabledCodexEntry, claudeWorkEntry];
+    configState.config = makeConfig({
+      codex: { enabled: false },
+      "claude-work": { extends: "claude", label: "Claude · Work" },
+    });
+
+    render();
+
+    const rows = Array.from(
+      container?.querySelectorAll<HTMLElement>('[role="button"][aria-label$="provider details"]') ??
+        [],
+    );
+    expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual([
+      "Claude provider details",
+      "Claude · Work provider details",
+      "Codex provider details",
+    ]);
+    expect(
+      findRow("Claude · Work provider details").querySelector('[data-icon="provider-claude"]'),
+    ).not.toBeNull();
   });
 
   it("opens the diagnostic sheet when the outer row is pressed for a disabled provider", () => {

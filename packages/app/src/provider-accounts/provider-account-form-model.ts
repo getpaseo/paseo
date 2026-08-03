@@ -38,6 +38,47 @@ export function canAddProviderAccount(input: {
   return (ACCOUNT_BASE_PROVIDER_IDS as readonly string[]).includes(input.providerId);
 }
 
+export function resolveProviderAccountBaseId(
+  providerId: string,
+  providers: Record<string, Record<string, unknown>> | undefined,
+): string | null {
+  const extendsProvider = providers?.[providerId]?.extends;
+  return typeof extendsProvider === "string" &&
+    (ACCOUNT_BASE_PROVIDER_IDS as readonly string[]).includes(extendsProvider)
+    ? extendsProvider
+    : null;
+}
+
+export function groupProviderAccounts<T extends { id: string }>(
+  items: readonly T[],
+  providers: Record<string, Record<string, unknown>> | undefined,
+): T[] {
+  const accountsByBase = new Map<string, T[]>();
+  const accountIds = new Set<string>();
+
+  for (const item of items) {
+    const baseProviderId = resolveProviderAccountBaseId(item.id, providers);
+    if (!baseProviderId) continue;
+    accountIds.add(item.id);
+    const accounts = accountsByBase.get(baseProviderId) ?? [];
+    accounts.push(item);
+    accountsByBase.set(baseProviderId, accounts);
+  }
+
+  const grouped: T[] = [];
+  for (const item of items) {
+    if (accountIds.has(item.id)) continue;
+    grouped.push(item, ...(accountsByBase.get(item.id) ?? []));
+  }
+
+  for (const item of items) {
+    if (accountIds.has(item.id) && !grouped.includes(item)) {
+      grouped.push(item);
+    }
+  }
+  return grouped;
+}
+
 export function deriveProviderAccountId(label: string): string {
   return label
     .toLowerCase()
@@ -193,7 +234,7 @@ export function buildProviderAccountConfigPatch(input: {
   for (const row of input.envRows) {
     const key = row.key.trim();
     if (key.length === 0) continue;
-    env[key] = row.value.trim();
+    env[key] = row.value;
   }
   const description = input.description.trim();
 

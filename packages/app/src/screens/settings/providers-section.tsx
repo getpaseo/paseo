@@ -26,7 +26,11 @@ import {
   ProviderAccountSheet,
   type ProviderAccountCreateInput,
 } from "@/components/provider-account-sheet";
-import { canAddProviderAccount } from "@/provider-accounts/provider-account-form-model";
+import {
+  canAddProviderAccount,
+  groupProviderAccounts,
+  resolveProviderAccountBaseId,
+} from "@/provider-accounts/provider-account-form-model";
 import { getProviderIcon } from "@/components/provider-icons";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Switch } from "@/components/ui/switch";
@@ -90,6 +94,7 @@ interface ProviderRowProps {
   isRemoving: boolean;
   canRemove: boolean;
   canAddAccount: boolean;
+  iconProviderId: string;
   isFirst: boolean;
   onPress: (providerId: string) => void;
   onToggleEnabled: (providerId: string, enabled: boolean) => void;
@@ -207,6 +212,7 @@ function ProviderRow({
   isRemoving,
   canRemove,
   canAddAccount,
+  iconProviderId,
   isFirst,
   onPress,
   onToggleEnabled,
@@ -216,7 +222,7 @@ function ProviderRow({
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
-  const ProviderIcon = getProviderIcon(def.id, serverId);
+  const ProviderIcon = getProviderIcon(iconProviderId, serverId);
   const providerError =
     enabled &&
     entry.status === "error" &&
@@ -369,7 +375,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const isConnected = useHostRuntimeIsConnected(serverId);
   const supportsProviderRemoval = useHostFeature(serverId, "providerRemoval");
   const { entries, isLoading, refresh } = useProvidersSnapshot(serverId);
-  const { patchConfig } = useDaemonConfig(serverId);
+  const { config, patchConfig } = useDaemonConfig(serverId);
   const openProviderSettings = useProviderSettingsStore((state) => state.open);
   const [pendingProviderId, setPendingProviderId] = useState<string | null>(null);
   const [removingProviderId, setRemovingProviderId] = useState<string | null>(null);
@@ -379,7 +385,10 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
     null,
   );
 
-  const providerDefinitions = useMemo(() => buildProviderDefinitions(entries), [entries]);
+  const providerDefinitions = useMemo(
+    () => groupProviderAccounts(buildProviderDefinitions(entries), config?.providers),
+    [config?.providers, entries],
+  );
   const existingProviderIds = useMemo(
     () => (entries ?? []).map((entry) => entry.provider),
     [entries],
@@ -522,6 +531,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
                     providerId: def.id,
                     source: entry.source,
                   })}
+                  iconProviderId={resolveProviderAccountBaseId(def.id, config?.providers) ?? def.id}
                   isFirst={index === 0}
                   onPress={handleOpenProviderSettings}
                   onToggleEnabled={handleToggleEnabled}

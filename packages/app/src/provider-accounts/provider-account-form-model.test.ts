@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   canAddProviderAccount,
   deriveProviderAccountId,
+  groupProviderAccounts,
   openProviderAccountForm,
+  resolveProviderAccountBaseId,
   type ProviderAccountFormSnapshot,
 } from "./provider-account-form-model";
 
@@ -39,6 +41,34 @@ describe("deriveProviderAccountId", () => {
     expect(deriveProviderAccountId("  Z.AI  ")).toBe("z-ai");
     expect(deriveProviderAccountId("2nd Account")).toBe("nd-account");
     expect(deriveProviderAccountId("!!!")).toBe("");
+  });
+});
+
+describe("provider account presentation", () => {
+  const providers = {
+    "claude-work": { extends: "claude" },
+    "codex-work": { extends: "codex" },
+    catalog: { extends: "acp" },
+  };
+
+  it("resolves the built-in base used for an account icon", () => {
+    expect(resolveProviderAccountBaseId("claude-work", providers)).toBe("claude");
+    expect(resolveProviderAccountBaseId("catalog", providers)).toBeNull();
+    expect(resolveProviderAccountBaseId("claude", providers)).toBeNull();
+  });
+
+  it("groups accounts immediately after their built-in base", () => {
+    const items = ["claude", "codex", "copilot", "catalog", "claude-work", "codex-work"].map(
+      (id) => ({ id }),
+    );
+    expect(groupProviderAccounts(items, providers).map((item) => item.id)).toEqual([
+      "claude",
+      "claude-work",
+      "codex",
+      "codex-work",
+      "copilot",
+      "catalog",
+    ]);
   });
 });
 
@@ -130,7 +160,7 @@ describe("provider account form model", () => {
           extends: "claude",
           label: "Claude (Work)",
           description: "Work account",
-          env: { ANTHROPIC_API_KEY: "sk-test" },
+          env: { ANTHROPIC_API_KEY: " sk-test " },
         },
       },
     });

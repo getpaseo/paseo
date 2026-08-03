@@ -62,10 +62,10 @@ function parseModelEntries(entries: string[]): ProviderProfileModel[] {
     const separator = entry.indexOf("=");
     const id = separator === -1 ? entry : entry.slice(0, separator);
     const label = separator === -1 ? entry : entry.slice(separator + 1);
-    if (!id) {
+    if (id.trim().length === 0) {
       throw new Error(`Invalid --model "${entry}": expected id or id=label`);
     }
-    if (!label) {
+    if (label.trim().length === 0) {
       throw new Error(`Invalid --model "${entry}": label must not be empty`);
     }
     return { id, label, ...(index === 0 ? { isDefault: true } : {}) };

@@ -78,4 +78,13 @@ describe("provider add override", () => {
       /expected KEY=VALUE/,
     );
   });
+
+  it("rejects whitespace-only model ids and labels", () => {
+    expect(() => buildProviderOverride("mine", { extends: "claude", model: ["   "] })).toThrow(
+      /expected id or id=label/,
+    );
+    expect(() =>
+      buildProviderOverride("mine", { extends: "claude", model: ["model-id=   "] }),
+    ).toThrow(/label must not be empty/);
+  });
 });
