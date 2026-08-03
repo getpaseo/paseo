@@ -143,6 +143,18 @@ describe("keyboard-shortcuts", () => {
       action: "workspace.new",
     },
     {
+      name: "matches Cmd+P to switch project on mac",
+      event: { key: "p", code: "KeyP", metaKey: true },
+      context: { isMac: true, commandCenterOpen: false },
+      action: "workspace.project.pick",
+    },
+    {
+      name: "matches Ctrl+P to switch project on non-mac",
+      event: { key: "p", code: "KeyP", ctrlKey: true },
+      context: { isMac: false, commandCenterOpen: false, focusScope: "other" },
+      action: "workspace.project.pick",
+    },
+    {
       name: "matches question-mark shortcut to toggle the shortcuts dialog",
       event: { key: "?", code: "Slash", shiftKey: true },
       context: { focusScope: "other" },
@@ -409,6 +421,16 @@ describe("keyboard-shortcuts", () => {
       name: "does not match question-mark shortcut inside editable scopes",
       event: { key: "?", code: "Slash", shiftKey: true },
       context: { focusScope: "message-input" },
+    },
+    {
+      name: "does not switch project with Ctrl+P on non-mac while terminal is focused",
+      event: { key: "p", code: "KeyP", ctrlKey: true },
+      context: { isMac: false, focusScope: "terminal" },
+    },
+    {
+      name: "does not switch project with Cmd+P while the command center is open",
+      event: { key: "p", code: "KeyP", metaKey: true },
+      context: { isMac: true, commandCenterOpen: true },
     },
     {
       name: "does not close tab with Ctrl+W on mac desktop (Cmd+W only)",

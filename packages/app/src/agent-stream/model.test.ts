@@ -35,7 +35,8 @@ describe("buildAgentStreamRenderModel", () => {
     const head = [assistantMessage("live-a", 121)];
 
     const model = buildAgentStreamRenderModel({
-      agentStatus: "running",
+      isTurnActive: true,
+      activeTurnStartedAt: tail.at(-2)?.timestamp ?? null,
       tail,
       head,
       platform: "web",
@@ -53,7 +54,8 @@ describe("buildAgentStreamRenderModel", () => {
     const head = [assistantMessage("live-a", 3)];
 
     const model = buildAgentStreamRenderModel({
-      agentStatus: "running",
+      isTurnActive: true,
+      activeTurnStartedAt: tail[0]?.timestamp ?? null,
       tail,
       head,
       platform: "web",
@@ -71,14 +73,16 @@ describe("buildAgentStreamRenderModel", () => {
     const secondHead = [assistantMessage("live-b", 4)];
 
     const first = buildAgentStreamRenderModel({
-      agentStatus: "running",
+      isTurnActive: true,
+      activeTurnStartedAt: tail[0]?.timestamp ?? null,
       tail,
       head: firstHead,
       platform: "native",
       isMobileBreakpoint: false,
     });
     const second = buildAgentStreamRenderModel({
-      agentStatus: "running",
+      isTurnActive: true,
+      activeTurnStartedAt: tail[0]?.timestamp ?? null,
       tail,
       head: secondHead,
       platform: "native",
@@ -95,7 +99,8 @@ describe("buildAgentStreamRenderModel", () => {
     const head = [assistantMessage("live-a", 4)];
 
     const model = buildAgentStreamRenderModel({
-      agentStatus: "running",
+      isTurnActive: true,
+      activeTurnStartedAt: tail[0]?.timestamp ?? null,
       tail,
       head,
       platform: "web",
@@ -111,7 +116,8 @@ describe("buildAgentStreamRenderModel", () => {
     const head = [assistantMessage("live-a", 4)];
 
     const model = buildAgentStreamRenderModel({
-      agentStatus: "idle",
+      isTurnActive: false,
+      activeTurnStartedAt: null,
       tail,
       head,
       platform: "web",
@@ -130,7 +136,8 @@ describe("buildAgentStreamRenderModel", () => {
     const tail = [userMessage("u1", 1), assistantMessage("a1", 4)];
 
     const model = buildAgentStreamRenderModel({
-      agentStatus: "idle",
+      isTurnActive: false,
+      activeTurnStartedAt: null,
       tail,
       head: [],
       platform: "native",
@@ -149,7 +156,8 @@ describe("buildAgentStreamRenderModel", () => {
     const tail = [userMessage("u1", 1), userMessage("u2", 4)];
 
     const model = buildAgentStreamRenderModel({
-      agentStatus: "idle",
+      isTurnActive: false,
+      activeTurnStartedAt: null,
       tail,
       head: [],
       platform: "web",

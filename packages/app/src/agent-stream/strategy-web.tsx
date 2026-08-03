@@ -1,5 +1,4 @@
 import React, {
-  Fragment,
   type CSSProperties,
   useCallback,
   useEffect,
@@ -17,13 +16,29 @@ import { estimateStreamItemHeight } from "./web-virtualization";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import { createStreamStrategy } from "./strategy";
 import {
+  abandonHistoryStartPaginationRequest,
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
+  isHistoryStartLoadingOperation,
   rearmHistoryStartPagination,
+  settleHistoryStartPagination,
+  type HistoryStartPaginationInput,
+  type HistoryStartPaginationTransition,
 } from "./history-start-pagination";
+import {
+  createHistoryStartSettleScheduler,
+  type HistoryStartSettleScheduler,
+} from "./history-start-settle-scheduler";
+import { useScrollToMessage } from "./use-scroll-to-message.web";
 
 interface CreateWebStreamStrategyInput {
   isMobileBreakpoint: boolean;
+}
+
+interface HistoryStartPrependAnchor {
+  progressKey: string;
+  rowId: string;
+  viewportOffset: number;
 }
 
 type ScrollBehaviorLike = "auto" | "smooth";
@@ -33,19 +48,40 @@ const USER_SCROLL_DELTA_EPSILON = 1;
 const BOTTOM_OVERSCROLL_TOLERANCE_PX = 2;
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 64;
 const AUTO_SCROLL_RESUME_THRESHOLD_PX = 1;
+const HISTORY_START_SETTLE_FRAMES = 2;
+const HISTORY_START_SLOT_HEIGHT_PX = 32;
+const CONTENT_PADDING_TOP_PX = 16;
+const VIRTUALIZER_SCROLL_MARGIN_PX = HISTORY_START_SLOT_HEIGHT_PX + CONTENT_PADDING_TOP_PX;
+// A row has to clear this much of the viewport top before the next one takes over as the
+// reading position, so a row resting exactly on the edge does not flip back and forth.
+const READING_POSITION_OFFSET_PX = 8;
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
 
+function findHistoryRowElement(contentNode: HTMLElement, rowId: string): HTMLElement | null {
+  for (const element of contentNode.querySelectorAll<HTMLElement>("[data-history-row-id]")) {
+    if (element.dataset.historyRowId === rowId) {
+      return element;
+    }
+  }
+  return null;
+}
+
 const historyStartSlotStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  minHeight: 32,
-  paddingTop: 4,
-  paddingBottom: 8,
+  height: HISTORY_START_SLOT_HEIGHT_PX,
+  flexShrink: 0,
+};
+
+const streamRowStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  width: "100%",
 };
 
 function isScrollContainerNearBottom(
@@ -101,7 +137,6 @@ function getScrollContainerDistanceFromBottom(
 function isScrollContainerOverscrolledPastBottom(
   scrollContainer: Pick<HTMLElement, "scrollTop" | "clientHeight" | "scrollHeight">,
 ): boolean {
-  // Browser zoom can leave scrollTop fractional while the height metrics remain integer-valued.
   return getScrollContainerDistanceFromBottom(scrollContainer) < -BOTTOM_OVERSCROLL_TOLERANCE_PX;
 }
 
@@ -116,6 +151,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     routeBottomAnchorRequest,
     isAuthoritativeHistoryReady,
     onNearBottomChange,
+    onReadingPositionChange,
     onNearHistoryStart,
     isLoadingOlderHistory,
     hasOlderHistory,
@@ -140,13 +176,18 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   };
   const lastKnownScrollTopRef = useRef(0);
   const pendingUserScrollUpIntentRef = useRef(false);
-  const isPointerScrollActiveRef = useRef(false);
   const lastTouchClientYRef = useRef<number | null>(null);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
   const pendingAutoScrollTimeoutRef = useRef<number | null>(null);
   const pendingVirtualRowMeasureFramesRef = useRef(new Map<Element, number>());
   const historyStartReadyRef = useRef(false);
-  const historyStartPaginationStateRef = useRef(createHistoryStartPaginationState());
+  const [historyStartPaginationState, setHistoryStartPaginationState] = useState(
+    createHistoryStartPaginationState,
+  );
+  const historyStartPaginationStateRef = useRef(historyStartPaginationState);
+  const historyStartPrependAnchorRef = useRef<HistoryStartPrependAnchor | null>(null);
+  const historyStartPrependAnchorActiveRef = useRef(false);
+  const historyStartSettleSchedulerRef = useRef<HistoryStartSettleScheduler | null>(null);
   const shouldUseVirtualizer = segments.historyVirtualized.length > 0;
   const {
     renderHistoryVirtualizedRow,
@@ -171,11 +212,15 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       return row ? estimateStreamItemHeight(row) : 120;
     },
     measureElement: measureVirtualElement,
+    scrollMargin: VIRTUALIZER_SCROLL_MARGIN_PX,
     useAnimationFrameWithResizeObserver: true,
     overscan: 8,
   });
   useEffect(() => {
     rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (_item, _delta, instance) => {
+      if (historyStartPrependAnchorActiveRef.current) {
+        return false;
+      }
       const viewportHeight = instance.scrollRect?.height ?? 0;
       const scrollOffset = instance.scrollOffset ?? 0;
       const remainingDistance = instance.getTotalSize() - (scrollOffset + viewportHeight);
@@ -187,25 +232,162 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [rowVirtualizer]);
   const virtualRows = rowVirtualizer.getVirtualItems();
   const virtualTotalSize = rowVirtualizer.getTotalSize();
-  const evaluateHistoryStart = useStableEvent(() => {
+  const getHistoryStartPaginationInput = useStableEvent((): HistoryStartPaginationInput | null => {
     const scrollContainer = scrollContainerRef.current;
     if (!scrollContainer) {
-      return;
+      return null;
     }
     const bottomAnchorSettled =
       !followOutputRef.current || isScrollContainerNearBottom(scrollContainer);
-    const result = evaluateHistoryStartPagination(historyStartPaginationStateRef.current, {
+    return {
       distanceFromHistoryStart: scrollContainer.scrollTop,
       hasOlderHistory,
       isLoadingOlderHistory,
       isReady: historyStartReadyRef.current && bottomAnchorSettled,
       progressKey: olderHistoryProgressKey,
-    });
-    historyStartPaginationStateRef.current = result.state;
-    if (result.shouldLoad) {
-      onNearHistoryStart();
-    }
+    };
   });
+  const applyHistoryStartPaginationTransition = useStableEvent(
+    (transition: HistoryStartPaginationTransition) => {
+      const previousState = historyStartPaginationStateRef.current;
+      historyStartPaginationStateRef.current = transition.state;
+      if (transition.state !== previousState) {
+        setHistoryStartPaginationState(transition.state);
+      }
+      if (!isHistoryStartLoadingOperation(transition.state)) {
+        historyStartPrependAnchorRef.current = null;
+        historyStartPrependAnchorActiveRef.current = false;
+      }
+      if (!transition.shouldLoad || olderHistoryProgressKey === null) {
+        return;
+      }
+      const scrollContainer = scrollContainerRef.current;
+      const contentNode = contentRef.current;
+      const anchorRow = segments.historyMounted.at(-1) ?? segments.historyVirtualized.at(-1);
+      const anchorElement =
+        contentNode && anchorRow ? findHistoryRowElement(contentNode, anchorRow.id) : null;
+      if (scrollContainer && anchorRow && anchorElement) {
+        historyStartPrependAnchorRef.current = {
+          progressKey: olderHistoryProgressKey,
+          rowId: anchorRow.id,
+          viewportOffset:
+            anchorElement.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top,
+        };
+      } else {
+        historyStartPrependAnchorRef.current = null;
+      }
+      historyStartPrependAnchorActiveRef.current = false;
+      const requestedProgressKey = olderHistoryProgressKey;
+      void (async () => {
+        const started = await onNearHistoryStart();
+        if (started === true) {
+          return;
+        }
+        applyHistoryStartPaginationTransition({
+          state: abandonHistoryStartPaginationRequest(
+            historyStartPaginationStateRef.current,
+            requestedProgressKey,
+          ),
+          shouldLoad: false,
+        });
+      })();
+    },
+  );
+  const evaluateHistoryStart = useStableEvent(() => {
+    const input = getHistoryStartPaginationInput();
+    if (!input) {
+      return;
+    }
+    const transition = evaluateHistoryStartPagination(
+      historyStartPaginationStateRef.current,
+      input,
+    );
+    applyHistoryStartPaginationTransition(transition);
+  });
+  const rearmHistoryStartFromUserIntent = useStableEvent(() => {
+    const rearmed = rearmHistoryStartPagination(historyStartPaginationStateRef.current);
+    if (rearmed === historyStartPaginationStateRef.current) {
+      return;
+    }
+    historyStartPaginationStateRef.current = rearmed;
+    setHistoryStartPaginationState(rearmed);
+    evaluateHistoryStart();
+  });
+  const applyHistoryStartPrependAnchor = useStableEvent(() => {
+    const scrollContainer = scrollContainerRef.current;
+    const contentNode = contentRef.current;
+    const anchor = historyStartPrependAnchorRef.current;
+    if (
+      !scrollContainer ||
+      !contentNode ||
+      !anchor ||
+      !historyStartPrependAnchorActiveRef.current
+    ) {
+      return;
+    }
+    const anchorElement = findHistoryRowElement(contentNode, anchor.rowId);
+    if (!anchorElement) {
+      return;
+    }
+    const viewportOffset =
+      anchorElement.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top;
+    scrollContainer.scrollTop += viewportOffset - anchor.viewportOffset;
+    lastKnownScrollTopRef.current = scrollContainer.scrollTop;
+  });
+  const scheduleHistoryStartPrependSettle = useStableEvent(() => {
+    let scheduler = historyStartSettleSchedulerRef.current;
+    if (!scheduler) {
+      scheduler = createHistoryStartSettleScheduler({
+        settleFrames: HISTORY_START_SETTLE_FRAMES,
+        requestFrame: (callback) => window.requestAnimationFrame(callback),
+        cancelFrame: (frame) => window.cancelAnimationFrame(frame),
+        isSettling: () => historyStartPaginationStateRef.current.status === "settling",
+        isLoading: () => {
+          const input = getHistoryStartPaginationInput();
+          return (
+            !input ||
+            input.isLoadingOlderHistory ||
+            pendingVirtualRowMeasureFramesRef.current.size > 0
+          );
+        },
+        onFrame: applyHistoryStartPrependAnchor,
+        onSettle: () => {
+          const input = getHistoryStartPaginationInput();
+          if (!input) {
+            return;
+          }
+          historyStartPrependAnchorActiveRef.current = false;
+          const transition = settleHistoryStartPagination(
+            historyStartPaginationStateRef.current,
+            input,
+          );
+          historyStartPrependAnchorRef.current = null;
+          applyHistoryStartPaginationTransition(transition);
+        },
+      });
+      historyStartSettleSchedulerRef.current = scheduler;
+    }
+    scheduler.schedule();
+  });
+
+  useLayoutEffect(() => {
+    const anchor = historyStartPrependAnchorRef.current;
+    if (!anchor || anchor.progressKey === olderHistoryProgressKey) {
+      return;
+    }
+    historyStartPrependAnchorActiveRef.current = true;
+    evaluateHistoryStart();
+    applyHistoryStartPrependAnchor();
+    scheduleHistoryStartPrependSettle();
+  }, [
+    applyHistoryStartPrependAnchor,
+    evaluateHistoryStart,
+    olderHistoryProgressKey,
+    scheduleHistoryStartPrependSettle,
+    segments.historyMounted,
+    segments.historyVirtualized,
+    virtualTotalSize,
+  ]);
 
   const measureVirtualizedRowElement = useCallback(
     (node: HTMLDivElement | null) => {
@@ -292,6 +474,33 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     scheduleStickToBottom();
   }, [cancelPendingStickToBottom, scheduleStickToBottom, scrollMessagesToBottom]);
 
+  // Rows are laid out in DOM order, virtualized block first, so the first row whose bottom
+  // clears the reading line is the one the reader is looking at.
+  const reportReadingPosition = useStableEvent(() => {
+    if (!onReadingPositionChange) {
+      return;
+    }
+    const scrollContainer = scrollContainerRef.current;
+    const contentNode = contentRef.current;
+    if (!scrollContainer || !contentNode) {
+      onReadingPositionChange(null);
+      return;
+    }
+    const readingLine = scrollContainer.getBoundingClientRect().top + READING_POSITION_OFFSET_PX;
+    let readingRowId: string | null = null;
+    for (const element of contentNode.querySelectorAll<HTMLElement>("[data-history-row-id]")) {
+      const rowId = element.dataset.historyRowId;
+      if (!rowId) {
+        continue;
+      }
+      readingRowId = rowId;
+      if (element.getBoundingClientRect().bottom > readingLine) {
+        break;
+      }
+    }
+    onReadingPositionChange(readingRowId);
+  });
+
   const updateScrollMetrics = useCallback(() => {
     const scrollContainer = scrollContainerRef.current;
     if (!scrollContainer) {
@@ -299,7 +508,17 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       return;
     }
     syncNearBottom(scrollContainer, onNearBottomChange);
-  }, [onNearBottomChange]);
+    reportReadingPosition();
+  }, [onNearBottomChange, reportReadingPosition]);
+
+  const { isJumpSettling, scrollToMessage } = useScrollToMessage({
+    scrollContainerRef,
+    rowVirtualizer,
+    historyVirtualized: segments.historyVirtualized,
+    cancelPendingStickToBottom,
+    setFollowOutput,
+    onNearBottomChange,
+  });
 
   const handleDomScroll = useCallback(() => {
     const scrollContainer = scrollContainerRef.current;
@@ -313,29 +532,41 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const scrolledDown =
       currentScrollTop > lastKnownScrollTopRef.current + USER_SCROLL_DELTA_EPSILON;
 
-    if (!followOutputRef.current && isAtBottom && scrolledDown) {
+    if (scrolledUp) {
+      cancelPendingStickToBottom();
+      if (followOutputRef.current) {
+        setFollowOutput(false);
+      }
+      pendingUserScrollUpIntentRef.current = false;
+      rearmHistoryStartFromUserIntent();
+    } else if (!followOutputRef.current && isAtBottom && scrolledDown && !isJumpSettling()) {
       setFollowOutput(true);
       pendingUserScrollUpIntentRef.current = false;
     } else if (followOutputRef.current && pendingUserScrollUpIntentRef.current) {
-      if (scrolledUp || !isAtBottom) {
+      if (!isAtBottom) {
         cancelPendingStickToBottom();
         setFollowOutput(false);
       }
       pendingUserScrollUpIntentRef.current = false;
-    } else if (followOutputRef.current && isPointerScrollActiveRef.current) {
-      if (scrolledUp) {
-        cancelPendingStickToBottom();
-        setFollowOutput(false);
-      }
     }
 
     lastKnownScrollTopRef.current = currentScrollTop;
     updateScrollMetrics();
     evaluateHistoryStart();
-  }, [cancelPendingStickToBottom, evaluateHistoryStart, updateScrollMetrics]);
+  }, [
+    cancelPendingStickToBottom,
+    evaluateHistoryStart,
+    isJumpSettling,
+    rearmHistoryStartFromUserIntent,
+    updateScrollMetrics,
+  ]);
 
   useEffect(() => {
-    historyStartPaginationStateRef.current = createHistoryStartPaginationState();
+    const initialHistoryStartState = createHistoryStartPaginationState();
+    historyStartPaginationStateRef.current = initialHistoryStartState;
+    setHistoryStartPaginationState(initialHistoryStartState);
+    historyStartPrependAnchorRef.current = null;
+    historyStartPrependAnchorActiveRef.current = false;
     const frame = window.requestAnimationFrame(() => {
       historyStartReadyRef.current = true;
       evaluateHistoryStart();
@@ -343,6 +574,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return () => {
       window.cancelAnimationFrame(frame);
       historyStartReadyRef.current = false;
+      historyStartSettleSchedulerRef.current?.cancel();
+      historyStartSettleSchedulerRef.current = null;
     };
   }, [evaluateHistoryStart, props.agentId]);
 
@@ -379,33 +612,36 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     scheduleStickToBottom,
   ]);
 
-  useEffect(() => {
+  // Following output is a layout invariant: rows, footer, and bottom offset must
+  // reach the browser in the same paint.
+  useLayoutEffect(() => {
     if (!followOutputRef.current) {
       return;
     }
-    scheduleStickToBottom();
+    cancelPendingStickToBottom();
+    scrollMessagesToBottom("auto");
   }, [
-    scheduleStickToBottom,
+    cancelPendingStickToBottom,
+    renderLiveAuxiliary,
+    scrollMessagesToBottom,
     segments.historyMounted,
     segments.historyVirtualized,
     segments.liveHead,
+    virtualTotalSize,
   ]);
-
-  useEffect(() => {
-    if (!followOutputRef.current || !shouldUseVirtualizer) {
-      return;
-    }
-    scheduleStickToBottom();
-  }, [scheduleStickToBottom, shouldUseVirtualizer, virtualTotalSize]);
 
   useEffect(() => {
     updateScrollMetrics();
     evaluateHistoryStart();
+    if (historyStartPaginationStateRef.current.status === "settling") {
+      scheduleHistoryStartPrependSettle();
+    }
   }, [
     evaluateHistoryStart,
     hasOlderHistory,
     isLoadingOlderHistory,
     olderHistoryProgressKey,
+    scheduleHistoryStartPrependSettle,
     segments.historyMounted.length,
     segments.historyVirtualized.length,
     segments.liveHead.length,
@@ -423,6 +659,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     updateScrollMetrics();
     evaluateHistoryStart();
     const observer = new ResizeObserver(() => {
+      if (historyStartPrependAnchorActiveRef.current) {
+        applyHistoryStartPrependAnchor();
+      }
+      if (historyStartPaginationStateRef.current.status === "settling") {
+        scheduleHistoryStartPrependSettle();
+      }
       updateScrollMetrics();
       evaluateHistoryStart();
       if (!followOutputRef.current) {
@@ -437,7 +679,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return () => {
       observer.disconnect();
     };
-  }, [evaluateHistoryStart, scheduleStickToBottom, updateScrollMetrics]);
+  }, [
+    applyHistoryStartPrependAnchor,
+    evaluateHistoryStart,
+    scheduleHistoryStartPrependSettle,
+    scheduleStickToBottom,
+    updateScrollMetrics,
+  ]);
 
   useEffect(() => {
     const scrollContainer = scrollContainerRef.current;
@@ -447,21 +695,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
     const handleWheel = (event: WheelEvent) => {
       if (event.deltaY < 0) {
-        if (!isLoadingOlderHistory) {
-          historyStartPaginationStateRef.current = rearmHistoryStartPagination(
-            historyStartPaginationStateRef.current,
-          );
-        }
         pendingUserScrollUpIntentRef.current = true;
         cancelPendingStickToBottom();
-        evaluateHistoryStart();
+        rearmHistoryStartFromUserIntent();
       }
-    };
-    const handlePointerDown = () => {
-      isPointerScrollActiveRef.current = true;
-    };
-    const handlePointerUp = () => {
-      isPointerScrollActiveRef.current = false;
     };
     const handleTouchStart = (event: TouchEvent) => {
       const touch = event.touches[0];
@@ -477,14 +714,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       }
       const previousTouchY = lastTouchClientYRef.current;
       if (previousTouchY !== null && touch.clientY > previousTouchY + 1) {
-        if (!isLoadingOlderHistory) {
-          historyStartPaginationStateRef.current = rearmHistoryStartPagination(
-            historyStartPaginationStateRef.current,
-          );
-        }
         pendingUserScrollUpIntentRef.current = true;
         cancelPendingStickToBottom();
-        evaluateHistoryStart();
+        rearmHistoryStartFromUserIntent();
       }
       lastTouchClientYRef.current = touch.clientY;
     };
@@ -494,9 +726,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
     scrollContainer.addEventListener("scroll", handleDomScroll, { passive: true });
     scrollContainer.addEventListener("wheel", handleWheel, { passive: true });
-    scrollContainer.addEventListener("pointerdown", handlePointerDown, { passive: true });
-    scrollContainer.addEventListener("pointerup", handlePointerUp, { passive: true });
-    scrollContainer.addEventListener("pointercancel", handlePointerUp, { passive: true });
     scrollContainer.addEventListener("touchstart", handleTouchStart, { passive: true });
     scrollContainer.addEventListener("touchmove", handleTouchMove, { passive: true });
     scrollContainer.addEventListener("touchend", handleTouchEnd, { passive: true });
@@ -505,15 +734,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return () => {
       scrollContainer.removeEventListener("scroll", handleDomScroll);
       scrollContainer.removeEventListener("wheel", handleWheel);
-      scrollContainer.removeEventListener("pointerdown", handlePointerDown);
-      scrollContainer.removeEventListener("pointerup", handlePointerUp);
-      scrollContainer.removeEventListener("pointercancel", handlePointerUp);
       scrollContainer.removeEventListener("touchstart", handleTouchStart);
       scrollContainer.removeEventListener("touchmove", handleTouchMove);
       scrollContainer.removeEventListener("touchend", handleTouchEnd);
       scrollContainer.removeEventListener("touchcancel", handleTouchEnd);
     };
-  }, [cancelPendingStickToBottom, evaluateHistoryStart, handleDomScroll, isLoadingOlderHistory]);
+  }, [cancelPendingStickToBottom, handleDomScroll, rearmHistoryStartFromUserIntent]);
 
   useEffect(() => {
     const handle: StreamViewportHandle = {
@@ -528,6 +754,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         }
         scheduleStickToBottom();
       },
+      scrollToMessage,
     };
     viewportRef.current = handle;
     return () => {
@@ -536,14 +763,20 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       }
       cancelPendingStickToBottom();
     };
-  }, [cancelPendingStickToBottom, forceStickToBottom, scheduleStickToBottom, viewportRef]);
+  }, [
+    cancelPendingStickToBottom,
+    forceStickToBottom,
+    scheduleStickToBottom,
+    scrollToMessage,
+    viewportRef,
+  ]);
 
   const contentContainerStyle = useMemo((): CSSProperties => {
     return {
       display: "flex",
       flexDirection: "column",
       minHeight: "100%",
-      paddingTop: 16,
+      paddingTop: CONTENT_PADDING_TOP_PX,
       paddingBottom: 16,
       paddingLeft: isMobileBreakpoint ? 8 : 16,
       paddingRight: isMobileBreakpoint ? 8 : 16,
@@ -556,6 +789,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       minHeight: 0,
       overflowX: "hidden",
       overflowY: scrollEnabled ? "auto" : "hidden",
+      overflowAnchor: "none",
       overscrollBehaviorY: "contain",
     };
   }, [scrollEnabled]);
@@ -574,41 +808,40 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       display: "flex",
       flexDirection: "column",
       width: "100%",
-      transform: `translateY(${start}px)`,
+      transform: `translateY(${start - VIRTUALIZER_SCROLL_MARGIN_PX}px)`,
     }),
     [],
   );
   const mountedHistoryRows = useMemo(() => {
     return segments.historyMounted.map((item, index) => (
-      <Fragment key={item.id}>
+      <div key={item.id} data-history-row-id={item.id} style={streamRowStyle}>
         {renderHistoryMountedRow(item, index, segments.historyMounted)}
-      </Fragment>
+      </div>
     ));
   }, [renderHistoryMountedRow, segments.historyMounted]);
   const liveHeadRows = useMemo(() => {
     void liveHeadRowRevision;
     return segments.liveHead.map((item, index) => (
-      <Fragment key={item.id}>{renderLiveHeadRow(item, index, segments.liveHead)}</Fragment>
+      <div key={item.id} data-history-row-id={item.id} style={streamRowStyle}>
+        {renderLiveHeadRow(item, index, segments.liveHead)}
+      </div>
     ));
   }, [liveHeadRowRevision, renderLiveHeadRow, segments.liveHead]);
   const liveAuxiliary = useMemo(() => {
     return renderLiveAuxiliary();
   }, [renderLiveAuxiliary]);
   const historyStartSlot = useMemo(() => {
-    if (!hasOlderHistory && !isLoadingOlderHistory) {
-      return null;
-    }
+    const isLoadingOperation = isHistoryStartLoadingOperation(historyStartPaginationState);
     return (
-      <div
-        style={historyStartSlotStyle}
-        data-testid={isLoadingOlderHistory ? "load-older-history-spinner" : undefined}
-      >
-        {isLoadingOlderHistory ? (
-          <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+      <div style={historyStartSlotStyle} data-testid="older-history-slot">
+        {isLoadingOperation ? (
+          <div data-testid="load-older-history-spinner">
+            <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+          </div>
         ) : null}
       </div>
     );
-  }, [hasOlderHistory, isLoadingOlderHistory]);
+  }, [historyStartPaginationState]);
   const shouldRenderEmpty =
     !boundary.hasMountedHistory &&
     !boundary.hasVirtualizedHistory &&
@@ -635,6 +868,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
                 <div
                   key={virtualRow.key}
                   data-index={virtualRow.index}
+                  data-history-row-id={item.id}
                   ref={measureVirtualizedRowElement}
                   style={renderVirtualRowStyle(virtualRow.start)}
                 >

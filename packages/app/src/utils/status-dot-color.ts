@@ -8,6 +8,9 @@ export function getStatusDotColor(input: {
 }): string | null {
   const { theme, bucket, showDoneAsInactive = false } = input;
 
+  // Working and needs_input share amber: both mean "this agent has your turn in it". They
+  // never collide in practice because needs_input always draws the alert glyph, never a bare
+  // dot — see getProjectStatusBadgeContent.
   if (bucket === "needs_input") {
     return theme.colors.palette.amber[500];
   }
@@ -15,7 +18,7 @@ export function getStatusDotColor(input: {
     return theme.colors.palette.red[500];
   }
   if (bucket === "running") {
-    return theme.colors.palette.blue[500];
+    return theme.colors.palette.amber[500];
   }
   if (bucket === "attention") {
     return theme.colors.palette.green[500];

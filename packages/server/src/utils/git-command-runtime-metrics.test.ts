@@ -1,10 +1,13 @@
 import { describe, expect, test } from "vitest";
 import { GitCommandRuntimeMetricsWindow } from "./git-command-runtime-metrics.js";
 
-function createMetricsWindow(concurrencyLimit = 2) {
+function createMetricsWindow(concurrencyLimit = 2, maxProcessesPerSecond = 8) {
   let now = 1_000;
   return {
-    metrics: new GitCommandRuntimeMetricsWindow(concurrencyLimit, () => now),
+    metrics: new GitCommandRuntimeMetricsWindow(
+      { concurrencyLimit, maxProcessesPerSecond },
+      () => now,
+    ),
     advance(ms: number) {
       now += ms;
     },
@@ -42,6 +45,7 @@ describe("GitCommandRuntimeMetricsWindow", () => {
 
     expect(metrics.snapshotAndReset()).toMatchObject({
       concurrencyLimit: 1,
+      maxProcessesPerSecond: 8,
       active: 1,
       pending: 1,
       peakActive: 1,

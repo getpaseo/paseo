@@ -6,6 +6,7 @@ import type {
   MessageInputKeyboardActionKind,
 } from "@/keyboard/actions";
 import { type KeyCombo, parseChordString } from "@/keyboard/shortcut-string";
+import { chordStringToShortcutKeys } from "@/keyboard/shortcut-string";
 
 export type { KeyCombo } from "@/keyboard/shortcut-string";
 
@@ -131,6 +132,7 @@ const SHORTCUT_HELP_SECTION_LABEL_KEYS: Record<ShortcutSectionId, string> = {
 const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "new-agent": "settings.shortcuts.help.openProject",
   "new-workspace": "settings.shortcuts.help.newWorkspace",
+  "switch-project": "settings.shortcuts.help.switchProject",
   "archive-workspace": "settings.shortcuts.help.archiveWorkspace",
   "workspace-tab-new": "settings.shortcuts.help.newTab",
   "workspace-tab-close-current": "settings.shortcuts.help.closeCurrentTab",
@@ -228,6 +230,32 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       section: "projects",
       label: "New workspace",
       keys: ["mod", "N"],
+    },
+  },
+
+  // --- Switch project (New Workspace screen) ---
+  {
+    id: "workspace-project-pick-cmd-p-mac",
+    action: "workspace.project.pick",
+    combo: "Cmd+P",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "switch-project",
+      section: "projects",
+      label: "Switch project",
+      keys: ["mod", "P"],
+    },
+  },
+  {
+    id: "workspace-project-pick-ctrl-p-non-mac",
+    action: "workspace.project.pick",
+    combo: "Ctrl+P",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "switch-project",
+      section: "projects",
+      label: "Switch project",
+      keys: ["mod", "P"],
     },
   },
 
@@ -1377,6 +1405,19 @@ export function getDefaultKeysForAction(
     return binding.help.keys;
   }
   return null;
+}
+
+export function resolveShortcutKeysForAction(
+  actionId: string,
+  overrides: Readonly<Record<string, string>>,
+  platform: { isMac: boolean; isDesktop: boolean },
+): ShortcutKey[][] | null {
+  const bindingId = getBindingIdForAction(actionId, platform);
+  if (!bindingId) return null;
+  const override = overrides[bindingId];
+  if (override) return chordStringToShortcutKeys(override);
+  const defaultKeys = getDefaultKeysForAction(actionId, platform);
+  return defaultKeys ? [defaultKeys] : null;
 }
 
 /**

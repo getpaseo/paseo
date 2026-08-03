@@ -7,6 +7,7 @@ import type {
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
+import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
 import { providersSnapshotQueryKey, providersSnapshotQueryRoot } from "@/data/providers-snapshot";
 
 type ProvidersSnapshotUpdateMessage = Extract<
@@ -103,6 +104,12 @@ const RECONNECT_REPAIR_POLICIES: ReconnectRepairPolicy[] = [
     domain: "daemonConfig",
     invalidate: ({ queryClient, serverId }) => {
       void queryClient.invalidateQueries({ queryKey: daemonConfigQueryKey(serverId) });
+    },
+  },
+  {
+    domain: "daemonPairingOffer",
+    invalidate: ({ queryClient, serverId }) => {
+      void queryClient.invalidateQueries({ queryKey: daemonPairingOfferQueryKey(serverId) });
     },
   },
   {
@@ -403,6 +410,9 @@ function applyDaemonConfigStatus(input: {
     daemonConfigQueryKey(input.serverId),
     payload.config,
   );
+  void input.queryClient.invalidateQueries({
+    queryKey: daemonPairingOfferQueryKey(input.serverId),
+  });
 }
 
 function applyCheckoutDiffUpdate(input: {
@@ -420,6 +430,9 @@ function applyCheckoutDiffUpdate(input: {
       cwd: input.message.payload.cwd,
       files: orderCheckoutDiffFiles(input.message.payload.files),
       error: input.message.payload.error,
+      ...(input.message.payload.diffTooLarge !== undefined
+        ? { diffTooLarge: input.message.payload.diffTooLarge }
+        : {}),
       requestId: `subscription:${input.message.payload.subscriptionId}`,
     },
   });
@@ -440,6 +453,9 @@ function applyCheckoutDiffSubscribeResponse(input: {
       cwd: input.message.payload.cwd,
       files: orderCheckoutDiffFiles(input.message.payload.files),
       error: input.message.payload.error,
+      ...(input.message.payload.diffTooLarge !== undefined
+        ? { diffTooLarge: input.message.payload.diffTooLarge }
+        : {}),
       requestId: input.message.payload.requestId,
     },
   });

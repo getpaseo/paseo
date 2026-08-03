@@ -244,6 +244,7 @@ export interface ComboboxItemProps {
   selected?: boolean;
   active?: boolean;
   disabled?: boolean;
+  accessibilityLabel?: string;
   /** When true, bumps hover/pressed colors up one surface level (for items on elevated backgrounds). */
   elevated?: boolean;
   onPress: () => void;
@@ -259,6 +260,7 @@ export function ComboboxItem({
   selected,
   active,
   disabled,
+  accessibilityLabel,
   elevated,
   onPress,
   testID,
@@ -299,7 +301,14 @@ export function ComboboxItem({
   );
 
   return (
-    <Pressable testID={testID} disabled={disabled} onPress={onPress} style={itemPressableStyle}>
+    <Pressable
+      testID={testID}
+      disabled={disabled}
+      onPress={onPress}
+      style={itemPressableStyle}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? label}
+    >
       {leadingContent}
       <View style={itemContentStyle}>
         <Text numberOfLines={1} style={styles.comboboxItemLabel}>

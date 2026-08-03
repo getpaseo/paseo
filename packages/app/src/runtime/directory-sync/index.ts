@@ -5,10 +5,12 @@ import type {
 } from "@getpaseo/client/internal/daemon-client";
 import { fetchAgentTimelineOnce } from "@/timeline/fetch-agent-timeline-once";
 import {
-  normalizeEmptyProjectDescriptor,
+  normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
   useSessionStore,
   type Agent,
+  type ProjectDescriptor,
+  type WorkspaceDescriptor,
 } from "@/stores/session-store";
 import {
   readLegacyDaemonWorkspaceDirectory,
@@ -79,13 +81,13 @@ export class DirectorySync {
   constructor(
     private readonly serverId: string,
     private readonly callbacks: {
-      drainQueuedAgentMessage: (agentId: string) => void;
+      onAgentStoppedRunning: (agentId: string) => void;
       markAgentLoading: () => void;
       markAgentReady: () => void;
       markAgentError: (error: string) => void;
     },
   ) {
-    this.agents = new AgentDirectoryReplica(serverId, callbacks.drainQueuedAgentMessage);
+    this.agents = new AgentDirectoryReplica(serverId, callbacks.onAgentStoppedRunning);
     this.workspaces = new WorkspaceDirectoryReplica(serverId);
   }
 
@@ -109,7 +111,7 @@ export class DirectorySync {
     const source = connection.source;
     this.workspaceTransactions.begin(source, () => ({
       workspaces: new Map(),
-      emptyProjects: new Map(),
+      projects: new Map(),
     }));
     const subscriptions = [
       client.on("agent_update", (message) => {
@@ -205,8 +207,12 @@ export class DirectorySync {
       }
       if (completion.snapshot.legacy) {
         const store = useSessionStore.getState();
-        store.setWorkspaces(this.serverId, buildLegacyWorkspaces(completion.snapshot.entries));
-        store.setEmptyProjects(this.serverId, []);
+        const workspaces = buildLegacyWorkspaces(completion.snapshot.entries);
+        store.setWorkspaces(this.serverId, workspaces);
+        store.setProjects(
+          this.serverId,
+          Array.from(workspaces.values(), legacyProjectDescriptorFromWorkspace),
+        );
         store.setHasHydratedWorkspaces(this.serverId, true);
       }
       const deltas = completion.snapshot.legacy
@@ -233,7 +239,7 @@ export class DirectorySync {
     const { client, source } = this.requireOnline();
     const transaction = this.workspaceTransactions.begin(source, () => ({
       workspaces: new Map(),
-      emptyProjects: new Map(),
+      projects: new Map(),
     }));
     try {
       await this.waitForSessionMetadata(client, source);
@@ -243,7 +249,17 @@ export class DirectorySync {
         if (deltas) for (const delta of deltas) this.workspaces.applyDelta(delta);
         return;
       }
+      const supportsProjectList = serverInfo.features?.projectList === true;
+      if (supportsProjectList) {
+        const payload = await client.listProjects();
+        this.assertWorkspaceTransactionCurrent(client, source, transaction);
+        for (const entry of payload.projects) {
+          const project = normalizeProjectDescriptor(entry);
+          transaction.snapshot.projects.set(project.projectId, project);
+        }
+      }
       await this.fetchWorkspaceSnapshot(client, source, transaction, input?.subscribe === true);
+      if (!supportsProjectList) this.buildLegacyProjectSnapshot(transaction.snapshot);
       if (!this.isCurrent(client, source) || !this.hasMatchingSession(client, source)) {
         throw new DirectoryRefreshSupersededError("workspace completion no longer current");
       }
@@ -279,12 +295,21 @@ export class DirectorySync {
         transaction.snapshot.workspaces.set(workspace.id, workspace);
       }
       for (const entry of payload.emptyProjects ?? []) {
-        const project = normalizeEmptyProjectDescriptor(entry);
-        transaction.snapshot.emptyProjects.set(project.projectId, project);
+        const project = normalizeProjectDescriptor(entry);
+        transaction.snapshot.projects.set(project.projectId, project);
       }
       if (!payload.pageInfo.hasMore || !payload.pageInfo.nextCursor) return;
       cursor = payload.pageInfo.nextCursor;
       subscribe = false;
+    }
+  }
+
+  private buildLegacyProjectSnapshot(snapshot: WorkspaceDirectorySnapshot): void {
+    for (const workspace of snapshot.workspaces.values()) {
+      if (!snapshot.projects.has(workspace.projectId)) {
+        const project = legacyProjectDescriptorFromWorkspace(workspace);
+        snapshot.projects.set(project.projectId, project);
+      }
     }
   }
 
@@ -419,6 +444,17 @@ export class DirectorySync {
   private abortPendingSessionWaits(): void {
     for (const abort of this.abortSessionWaits) abort();
   }
+}
+
+function legacyProjectDescriptorFromWorkspace(workspace: WorkspaceDescriptor): ProjectDescriptor {
+  return {
+    projectId: workspace.projectId,
+    projectKey: null,
+    projectDisplayName: workspace.projectDisplayName,
+    projectCustomName: workspace.projectCustomName ?? null,
+    projectRootPath: workspace.projectRootPath,
+    projectKind: workspace.projectKind,
+  };
 }
 
 export class DirectoryRefreshSupersededError extends Error {}

@@ -23,6 +23,7 @@ import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
 import { createWorktree, getPaseoWorktreesRoot } from "../utils/worktree.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../utils/path.js";
+import { deriveProjectKey } from "./project-key.js";
 
 const cleanupPaths: string[] = [];
 
@@ -73,7 +74,16 @@ test("creates a worktree and registers it in the source workspace project withou
   expect(result.workspace.baseBranch).toBe("main");
   expect(result.workspace.title).toBe("Feature One");
   expect(deps.workspaceGitService.getSnapshot).not.toHaveBeenCalled();
-  expect(deps.projects.get(sourceProject.projectId)).toEqual(sourceProject);
+  expect(deps.projects.get(sourceProject.projectId)).toEqual({
+    ...sourceProject,
+    projectKey: deriveProjectKey({
+      rootPath: result.repoRoot,
+      remoteUrl: null,
+      worktreeRoot: null,
+      mainRepoRoot: null,
+    }),
+    updatedAt: expect.any(String),
+  });
   expect(events).toEqual([`workspace:${result.workspace.workspaceId}`]);
 });
 
@@ -436,7 +446,16 @@ test("an explicit project FK remains unchanged when its worktree comes from anot
   );
 
   expect(result.workspace.projectId).toBe(project.projectId);
-  expect(deps.projects.get(project.projectId)).toEqual(project);
+  expect(deps.projects.get(project.projectId)).toEqual({
+    ...project,
+    projectKey: deriveProjectKey({
+      rootPath: project.rootPath,
+      remoteUrl: null,
+      worktreeRoot: null,
+      mainRepoRoot: null,
+    }),
+    updatedAt: expect.any(String),
+  });
 });
 
 // POSIX-only: Windows git worktree paths need separate canonicalization coverage.

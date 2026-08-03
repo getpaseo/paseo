@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.2.2",
+  "version": "0.2.5",
   "private": true,
   "description": "Paseo: voice-controlled development environment for local AI coding agents",
   "keywords": [
@@ -49,9 +49,9 @@
     "build:relay:clean": "npm run build:clean --workspace=@getpaseo/relay",
     "build:protocol": "npm run build --workspace=@getpaseo/protocol",
     "build:protocol:clean": "npm run build:clean --workspace=@getpaseo/protocol",
-    "build:client": "npm run build:protocol && npm run build --workspace=@getpaseo/client",
+    "build:client": "npm run build --workspace=@getpaseo/client",
     "build:client:clean": "npm run build:protocol:clean && npm run build:clean --workspace=@getpaseo/client",
-    "build:server-deps": "npm run build:highlight && npm run build:relay && npm run build:client",
+    "build:server-deps": "concurrently --kill-others-on-fail --names highlight,relay,client --prefix-colors yellow,blue,cyan \"npm run build:highlight\" \"npm run build:relay\" \"npm run build:client\"",
     "build:server-deps:clean": "npm run build:highlight:clean && npm run build:relay:clean && npm run build:client:clean",
     "build:server": "npm run build:server-deps && npm run build --workspace=@getpaseo/server && npm run build --workspace=@getpaseo/cli",
     "build:server:clean": "npm run build:server-deps:clean && npm run build:clean --workspace=@getpaseo/server && npm run build:clean --workspace=@getpaseo/cli",

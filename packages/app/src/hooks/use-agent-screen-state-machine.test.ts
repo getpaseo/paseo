@@ -17,6 +17,7 @@ function createAgent(id: string): Agent {
     id,
     provider: "claude",
     status: "running",
+    activeTurn: { turnId: "turn-1", startedAt: now },
     createdAt: now,
     updatedAt: now,
     lastUserMessageAt: now,

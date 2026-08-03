@@ -26,7 +26,7 @@ export type AgentLoaderManager = Pick<
   | "hydrateTimelineFromProvider"
   | "resumeAgentFromPersistence"
 > &
-  Partial<Pick<AgentManager, "touchAgentActivity" | "waitForAgentClose">>;
+  Partial<Pick<AgentManager, "waitForAgentClose">>;
 
 export interface EnsureAgentLoadedDeps {
   agentManager: AgentLoaderManager;
@@ -71,8 +71,7 @@ export async function ensureAgentLoaded(
     return inflight.promise;
   }
 
-  const existing =
-    deps.agentManager.touchAgentActivity?.(agentId) ?? deps.agentManager.getAgent(agentId);
+  const existing = deps.agentManager.getAgent(agentId);
   if (existing) {
     return existing;
   }

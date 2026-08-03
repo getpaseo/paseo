@@ -17,6 +17,7 @@ import {
   encodeWorkspaceIdForPathSegment,
   isSettingsSectionSlug,
   normalizeHostSectionSlug,
+  normalizeProjectSettingsRouteId,
   parseHostAgentRouteFromPathname,
   parseHostWorkspaceOpenIntentFromPathname,
   parseHostWorkspaceRouteFromPathname,
@@ -192,27 +193,18 @@ describe("projects settings routes", () => {
     expect(buildSettingsAddHostRoute("retry 1")).toBe("/settings/general?addHost=retry%201");
   });
 
-  it("buildProjectsSettingsRoute returns /settings/projects", () => {
-    expect(buildProjectsSettingsRoute()).toBe("/settings/projects");
+  it("buildProjectsSettingsRoute scopes the list to a host", () => {
+    expect(buildProjectsSettingsRoute("host a")).toBe("/settings/hosts/host%20a/projects");
   });
 
-  it("buildProjectSettingsRoute encodes a remote project key as a single segment", () => {
-    expect(buildProjectSettingsRoute("remote:github.com/acme/app")).toBe(
-      "/settings/projects/remote%3Agithub.com%2Facme%2Fapp",
+  it("buildProjectSettingsRoute addresses a host-local project id", () => {
+    expect(buildProjectSettingsRoute("host a", "project/1")).toBe(
+      "/settings/hosts/host%20a/projects/project%2F1",
     );
   });
 
-  it("buildProjectSettingsRoute encodes a local repo-root key", () => {
-    expect(buildProjectSettingsRoute("/Users/me/dev/paseo")).toBe(
-      "/settings/projects/%2FUsers%2Fme%2Fdev%2Fpaseo",
-    );
-  });
-
-  it("project keys round-trip through decodeURIComponent", () => {
-    const projectKey = "remote:github.com/acme/app";
-    const route = buildProjectSettingsRoute(projectKey);
-    const segment = route.slice("/settings/projects/".length);
-    expect(decodeURIComponent(segment)).toBe(projectKey);
+  it("keeps route ids opaque", () => {
+    expect(normalizeProjectSettingsRouteId("project%2F1")).toBe("project%2F1");
   });
 });
 
@@ -254,8 +246,10 @@ describe("global routes", () => {
 describe("host settings section slugs", () => {
   it("keeps current host settings sections", () => {
     expect(normalizeHostSectionSlug("connections")).toBe("connections");
+    expect(normalizeHostSectionSlug("pair-device")).toBe("pair-device");
     expect(normalizeHostSectionSlug("agents")).toBe("agents");
     expect(normalizeHostSectionSlug("workspaces")).toBe("workspaces");
+    expect(normalizeHostSectionSlug("projects")).toBe("projects");
     expect(normalizeHostSectionSlug("providers")).toBe("providers");
     expect(normalizeHostSectionSlug("usage")).toBe("usage");
     expect(normalizeHostSectionSlug("host")).toBe("host");

@@ -30,22 +30,15 @@ import { BORDER_WIDTH, ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
 import { useIsCompactFormFactor, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import {
   AlignJustify,
-  Archive,
-  ArrowDownUp,
   ChevronDown,
   Columns2,
-  Download,
   FolderTree,
-  GitCommitHorizontal,
-  GitMerge,
   List,
   ListChevronsDownUp,
   ListChevronsUpDown,
   Maximize2,
   Pilcrow,
-  RefreshCcw,
   RotateCw,
-  Upload,
   WrapText,
 } from "lucide-react-native";
 import { type ParsedDiffFile, type DiffLine, type HighlightToken } from "@/git/use-diff-query";
@@ -90,6 +83,7 @@ import { lineNumberGutterWidth } from "@/components/code-insets";
 import { GitActionsSplitButton } from "@/git/actions-split-button";
 import { BranchSwitcher } from "@/components/branch-switcher";
 import { useGitActions } from "@/git/use-actions";
+import { GIT_ACTION_ICONS } from "@/git/action-icons";
 import { buildForgeSignInCommand, getForgePresentation, type Forge } from "@/git/forge";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import type { ForgeAuthState } from "@getpaseo/protocol/messages";
@@ -119,6 +113,7 @@ import {
   type InlineReviewActions,
 } from "@/review";
 import { usePublishWorkingDiffAttachment, useWorkingDiff } from "@/git/use-working-diff";
+import { DiffTooLargeState } from "@/git/diff-too-large-state";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
@@ -1329,13 +1324,6 @@ const ThemedListChevronsUpDown = withUnistyles(ListChevronsUpDown);
 const ThemedFolderTree = withUnistyles(FolderTree);
 const ThemedList = withUnistyles(List);
 const ThemedMaximize2 = withUnistyles(Maximize2);
-const ThemedGitCommitHorizontal = withUnistyles(GitCommitHorizontal);
-const ThemedDownload = withUnistyles(Download);
-const ThemedUpload = withUnistyles(Upload);
-const ThemedArrowDownUp = withUnistyles(ArrowDownUp);
-const ThemedGitMerge = withUnistyles(GitMerge);
-const ThemedRefreshCcw = withUnistyles(RefreshCcw);
-const ThemedArchive = withUnistyles(Archive);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const DIFF_OPTIONS_WHITESPACE_ICON = (
   <ThemedPilcrow size={14} uniProps={foregroundMutedIconColorMapping} />
@@ -1755,6 +1743,7 @@ interface DiffBodyContentProps {
   notGit: boolean;
   isDiffLoading: boolean;
   diffErrorMessage: string | null;
+  diffTooLarge: boolean;
   hasChanges: boolean;
   emptyMessage: string;
   children: ReactElement;
@@ -1768,6 +1757,7 @@ function DiffBodyContent({
   notGit,
   isDiffLoading,
   diffErrorMessage,
+  diffTooLarge,
   hasChanges,
   emptyMessage,
   children,
@@ -1802,6 +1792,9 @@ function DiffBodyContent({
         <ThemedLoadingSpinner size="large" uniProps={foregroundMutedIconColorMapping} />
       </View>
     );
+  }
+  if (diffTooLarge) {
+    return <DiffTooLargeState />;
   }
   if (diffErrorMessage) {
     return (
@@ -2693,6 +2686,7 @@ export function GitDiffPane({
     selectBase: handleSelectBase,
     files,
     diffPayloadError,
+    diffTooLarge,
     isDiffLoading,
     reviewActions,
     reviewAttachment,
@@ -2816,22 +2810,10 @@ export function GitDiffPane({
     () => computeBaseRefLabel(baseRef, t("workspace.git.diff.base")),
     [baseRef, t],
   );
-  const gitActionsIcons = useMemo(
-    () => ({
-      commit: <ThemedGitCommitHorizontal size={16} uniProps={foregroundMutedIconColorMapping} />,
-      pull: <ThemedDownload size={16} uniProps={foregroundMutedIconColorMapping} />,
-      push: <ThemedUpload size={16} uniProps={foregroundMutedIconColorMapping} />,
-      pullAndPush: <ThemedArrowDownUp size={16} uniProps={foregroundMutedIconColorMapping} />,
-      merge: <ThemedGitMerge size={16} uniProps={foregroundMutedIconColorMapping} />,
-      mergeFromBase: <ThemedRefreshCcw size={16} uniProps={foregroundMutedIconColorMapping} />,
-      archive: <ThemedArchive size={16} uniProps={foregroundMutedIconColorMapping} />,
-    }),
-    [],
-  );
   const { gitActions, branchLabel } = useGitActions({
     serverId,
     cwd,
-    icons: gitActionsIcons,
+    icons: GIT_ACTION_ICONS,
   });
   const committedDiffDescription = useMemo(
     () => computeCommittedDiffDescription(branchLabel, baseRefLabel),
@@ -2855,6 +2837,7 @@ export function GitDiffPane({
       notGit={notGit}
       isDiffLoading={isDiffLoading}
       diffErrorMessage={diffErrorMessage}
+      diffTooLarge={diffTooLarge}
       hasChanges={hasChanges}
       emptyMessage={emptyMessage}
       checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
