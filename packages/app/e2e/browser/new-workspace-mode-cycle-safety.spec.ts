@@ -121,9 +121,9 @@ test.describe("New Workspace mode cycle safety", () => {
 
       // Mount the live agent tab: its mode control registers a mode-cycle keyboard handler.
       await openAgentRoute(page, { workspaceId: seeded.workspaceId, agentId: agent.id });
-      await expect(page.getByTestId("mode-control").first()).toContainText("Default permissions", {
-        timeout: 30_000,
-      });
+      await expect(
+        page.getByRole("button", { name: "Select agent mode (Default permissions)" }),
+      ).toBeVisible({ timeout: 30_000 });
 
       // Move to the New Workspace composer. The agent tab stays mounted in the background,
       // so its handler is still registered when we cycle here.

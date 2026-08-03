@@ -1423,7 +1423,7 @@ export function hydrateStreamState(
     timestamp: Date;
     timelineCursor?: TimelinePosition;
   }>,
-  options?: { source?: StreamUpdateSource },
+  options?: { source?: StreamUpdateSource; reservedItemIds?: ReadonlySet<string> },
 ): StreamItem[] {
   const hydrated = events.reduce<StreamItem[]>((state, { event, timestamp, timelineCursor }) => {
     return reduceStreamUpdate(state, event, timestamp, { ...options, timelineCursor });

@@ -244,6 +244,27 @@ The supervisor rotates `daemon.log`. Persisted `log.file.rotate` settings in
 `PASEO_LOG_ROTATE_SIZE` and `PASEO_LOG_ROTATE_COUNT` env vars override the
 defaults. The default rotation is `10m` x `3` files everywhere.
 
+### Git process pressure
+
+If Git refreshes consume too much CPU, disk, or antivirus capacity, especially on Windows, reduce
+the daemon-global Git process limits in `$PASEO_HOME/config.json`:
+
+```json
+{
+  "daemon": {
+    "git": {
+      "maxProcessesPerSecond": 5,
+      "maxProcessConcurrency": 4
+    }
+  }
+}
+```
+
+Restart the daemon with `paseo daemon restart`. If Paseo Desktop manages the daemon, fully quit and
+reopen the desktop app. Lower values reduce machine pressure but make Git-backed workspace state and
+Git RPCs wait longer. See [Git process limits](data-model.md#git-process-limits) for defaults,
+semantics, and environment-variable overrides.
+
 ### Agent Tool Catalog Measurement
 
 Measure the MCP `tools/list` payload that Paseo injects into agents with:

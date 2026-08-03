@@ -7,6 +7,7 @@ export interface GitCommandDurationStats {
 
 export interface GitCommandRuntimeMetricsSnapshot {
   concurrencyLimit: number;
+  maxProcessesPerSecond: number;
   active: number;
   pending: number;
   peakActive: number;
@@ -44,7 +45,10 @@ export class GitCommandRuntimeMetricsWindow {
   private readonly operationCounts = new Map<string, number>();
 
   constructor(
-    private readonly concurrencyLimit: number,
+    private readonly limits: {
+      concurrencyLimit: number;
+      maxProcessesPerSecond: number;
+    },
     private readonly clock: Clock = Date.now,
   ) {}
 
@@ -98,7 +102,8 @@ export class GitCommandRuntimeMetricsWindow {
       ...Array.from(this.pendingCommands, (metric) => metric.queuedAtMs),
     );
     const snapshot: GitCommandRuntimeMetricsSnapshot = {
-      concurrencyLimit: this.concurrencyLimit,
+      concurrencyLimit: this.limits.concurrencyLimit,
+      maxProcessesPerSecond: this.limits.maxProcessesPerSecond,
       active: limiter.active,
       pending: limiter.pending,
       peakActive: this.peakActive,

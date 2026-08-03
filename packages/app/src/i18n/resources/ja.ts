@@ -112,6 +112,7 @@ export const ja: TranslationResources = {
     },
     attachments: {
       addImage: "画像を追加",
+      pasteImage: "画像を貼り付け",
       addFile: "ファイルをアップロード",
       addIssueOrPr: "イシューまたはPRを追加",
       addIssueOrPr_mr: "イシューまたはMRを追加",
@@ -137,6 +138,8 @@ export const ja: TranslationResources = {
       initialPromptRequired: "初期プロンプトが必要です",
       alreadyLoading: "すでに読み込み中です",
       uploadFailed: "ファイルのアップロードに失敗しました",
+      noClipboardImage: "クリップボードに画像がありません",
+      pasteImageFailed: "画像を貼り付けられませんでした",
       fileTooLarge: "{{fileName}}が大きすぎます（最大{{size}}）",
     },
     clientCommands: {
@@ -187,6 +190,7 @@ export const ja: TranslationResources = {
   agentStream: {
     empty: "このエージェントとチャットを始めましょう...",
     scrollToBottom: "下にスクロール",
+    historyLoadFailed: "エージェントの履歴を読み込めませんでした",
     permission: {
       plan: "プラン",
       required: "権限が必要です",
@@ -1793,6 +1797,10 @@ export const ja: TranslationResources = {
       detailLevel: {
         title: "詳細レベル",
       },
+      chatOutline: {
+        title: "チャットのアウトライン",
+        description: "プロンプト間を移動するためのアウトラインを表示します",
+      },
       fonts: {
         title: "フォント",
         systemDefault: "システムデフォルト",
@@ -1949,6 +1957,41 @@ export const ja: TranslationResources = {
       },
     },
     host: {
+      appearance: {
+        title: "外観",
+        name: {
+          label: "名前",
+        },
+        color: {
+          label: "色",
+          accessibilityLabel: "色、{{value}}",
+          options: {
+            none: "デフォルト",
+            violet: "バイオレット",
+            sky: "スカイ",
+            emerald: "エメラルド",
+            orange: "オレンジ",
+            pink: "ピンク",
+            indigo: "インディゴ",
+            teal: "ティール",
+            red: "レッド",
+            amber: "アンバー",
+            blue: "ブルー",
+          },
+        },
+        badge: {
+          label: "サイドバーのバッジ",
+          accessibilityLabel: "サイドバーのバッジ、{{value}}",
+          options: {
+            name: "名前",
+            icon: "アイコンのみ",
+            hidden: "非表示",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "ホストが見つかりません",
       badges: {
         relay: "リレー",

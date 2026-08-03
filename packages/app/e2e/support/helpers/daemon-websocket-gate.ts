@@ -176,6 +176,10 @@ function agentStreamEventKey(type: string): string {
   return `agent-stream-event:${type}`;
 }
 
+function agentStreamItemKey(type: string): string {
+  return `agent-stream-item:${type}`;
+}
+
 function agentUpdateKey(agentId: string, status: string): string {
   return `agent-update:${agentId}:${status}`;
 }
@@ -526,6 +530,12 @@ export async function installDaemonWebSocketGate(page: Page) {
         (message) => readAgentStreamEventType(message) === type,
       );
     },
+    holdNextAgentStreamItem(type: string): void {
+      pendingServerMessageHolds.set(
+        agentStreamItemKey(type),
+        (message) => readAgentStreamItemType(message) === type,
+      );
+    },
     async waitForHeldServerMessage(type?: string): Promise<void> {
       const key = type ? serverMessageKey(type) : null;
       while (!heldServerMessages.some((message) => key === null || message.key === key)) {
@@ -569,6 +579,22 @@ export async function installDaemonWebSocketGate(page: Page) {
       const index = heldServerMessages.findIndex((message) => message.key === key);
       const [heldServerMessage] = index >= 0 ? heldServerMessages.splice(index, 1) : [];
       if (!heldServerMessage) throw new Error("No held agent stream event to release");
+      heldServerMessage.browser.send(heldServerMessage.message);
+      for (const follower of heldServerMessage.agentStreamFollowers) {
+        heldServerMessage.browser.send(follower);
+      }
+    },
+    async waitForHeldAgentStreamItem(type: string): Promise<void> {
+      const key = agentStreamItemKey(type);
+      while (!heldServerMessages.some((message) => message.key === key)) {
+        await new Promise<void>((resolve) => heldServerMessageWaiters.add(resolve));
+      }
+    },
+    releaseHeldAgentStreamItem(type: string): void {
+      const key = agentStreamItemKey(type);
+      const index = heldServerMessages.findIndex((message) => message.key === key);
+      const [heldServerMessage] = index >= 0 ? heldServerMessages.splice(index, 1) : [];
+      if (!heldServerMessage) throw new Error("No held agent stream item to release");
       heldServerMessage.browser.send(heldServerMessage.message);
       for (const follower of heldServerMessage.agentStreamFollowers) {
         heldServerMessage.browser.send(follower);

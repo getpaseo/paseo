@@ -42,6 +42,8 @@ mac:
   extraResources:
     - from: bin/paseo
       to: bin/paseo
+    - from: assets/icon.png
+      to: icon.png
   target:
     - dmg
     - zip

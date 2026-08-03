@@ -1,11 +1,17 @@
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { memo, useCallback, useMemo, useState, type ReactNode } from "react";
+import { memo, useCallback, useId, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View, type GestureResponderEvent, type ViewStyle } from "react-native";
+import {
+  Pressable,
+  Text,
+  View,
+  type GestureResponderEvent,
+  type PressableStateCallbackType,
+  type ViewStyle,
+} from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
 import {
   CircleAlert,
-  ExternalLink,
   Folder,
   FolderGit2,
   GitPullRequest,
@@ -13,53 +19,82 @@ import {
   Monitor,
   SquareTerminal,
 } from "lucide-react-native";
-import { SidebarSubtitleProjectIcon } from "@/components/sidebar/sidebar-subtitle-project-icon";
+import { HostBadge } from "@/components/sidebar/host-badge";
+import { ProjectStatusIndicator } from "@/components/sidebar/project-leading-visual";
+import { PulsingStatusDot } from "@/components/sidebar/pulsing-status-dot";
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
-import { SyncedLoader } from "@/components/synced-loader";
+import type { HostBadgeModel } from "@/hosts/appearance";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { useAppSettings } from "@/hooks/use-settings";
 import type { Theme } from "@/styles/theme";
 import type { PrHint } from "@/git/use-pr-status-query";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
-import { ForgeBrandIcon } from "@/git/forge-icon";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
-import { isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
+import { getStatusDotColor, isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
+
+// The scrim spans more than the kebab so the fade starts left of the diff stat. Solid from
+// SCRIM_SOLID_OFFSET rightward, which keeps the kebab itself off the gradient entirely.
+const SCRIM_WIDTH = 48;
+const SCRIM_SOLID_OFFSET = "55%";
 
 const DEFAULT_STATUS_DOT_SIZE = 7;
 const EMPHASIZED_STATUS_DOT_SIZE = 9;
 const DEFAULT_STATUS_DOT_OFFSET = 0;
 const EMPHASIZED_STATUS_DOT_OFFSET = -1;
 
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const amberColorMapping = (theme: Theme) => ({ color: theme.colors.palette.amber[500] });
-const syncedLoaderColorMapping = (theme: Theme) => ({
-  color:
-    theme.colorScheme === "light"
-      ? theme.colors.palette.amber[700]
-      : theme.colors.palette.amber[500],
-});
 const blueColorMapping = (theme: Theme) => ({ color: theme.colors.palette.blue[500] });
 const greenColorMapping = (theme: Theme) => ({ color: theme.colors.palette.green[500] });
 const redColorMapping = (theme: Theme) => ({ color: theme.colors.palette.red[500] });
 const purpleColorMapping = (theme: Theme) => ({ color: theme.colors.palette.purple[500] });
 
-const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
-const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
-const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const ThemedMonitor = withUnistyles(Monitor);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedFolderGit2 = withUnistyles(FolderGit2);
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 
-function renderChecksBadgeForgeIcon(icon: string) {
-  return <ForgeBrandIcon iconKind={icon} size={10} uniProps={redColorMapping} />;
+/**
+ * react-native-svg's extractGradient reads stopColor off the child elements structurally,
+ * without rendering them, so wrapping Stop itself in withUnistyles hides the color from it and
+ * the native gradient silently falls back to black. Theme the whole SVG instead and keep real
+ * Stop elements as direct children of the gradient.
+ */
+function TrailingActionScrimSvg({ gradientId, color }: { gradientId: string; color: string }) {
+  return (
+    <Svg width="100%" height="100%" preserveAspectRatio="none">
+      <Defs>
+        <SvgLinearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%">
+          {/* Same color at both ends, varying only stopOpacity. Interpolating a hex toward
+              `transparent` goes through black in some engines and leaves a grey fringe. */}
+          <Stop offset="0%" stopColor={color} stopOpacity={0} />
+          <Stop offset={SCRIM_SOLID_OFFSET} stopColor={color} stopOpacity={1} />
+          <Stop offset="100%" stopColor={color} stopOpacity={1} />
+        </SvgLinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${gradientId})`} />
+    </Svg>
+  );
+}
+
+const ThemedTrailingActionScrimSvg = withUnistyles(TrailingActionScrimSvg);
+
+const scrimColorMapping = (theme: Theme) => ({ color: theme.colors.surfaceSidebarHover });
+
+function pullRequestIconStyle({
+  hovered,
+  pressed,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [
+    pullRequestIconStyles.pressable,
+    (Boolean(hovered) || pressed) && pullRequestIconStyles.pressableActive,
+  ];
 }
 
 type SidebarWorkspaceScriptIconKind = "service" | "command";
@@ -73,29 +108,48 @@ export function SidebarWorkspaceRowFrame({
   isDragging?: boolean;
   children: (input: {
     isHovered: boolean;
+    contextMenuOpen: boolean;
+    onContextMenuOpenChange: (open: boolean) => void;
     hoverHandlers: { onPointerEnter: () => void; onPointerLeave: () => void };
   }) => ReactNode;
 }) {
   const [isHovered, setIsHovered] = useState(false);
-  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const handlePointerEnter = useCallback(() => {
+    if (!contextMenuOpen) setIsHovered(true);
+  }, [contextMenuOpen]);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+  const handleContextMenuOpenChange = useCallback((open: boolean) => {
+    setContextMenuOpen(open);
+    if (open) setIsHovered(false);
+  }, []);
   const hoverHandlers = useMemo(
     () => ({ onPointerEnter: handlePointerEnter, onPointerLeave: handlePointerLeave }),
     [handlePointerEnter, handlePointerLeave],
   );
 
   return (
-    <WorkspaceHoverCard workspace={workspace} prHint={workspace.prHint} isDragging={isDragging}>
-      {children({ isHovered, hoverHandlers })}
+    <WorkspaceHoverCard
+      workspace={workspace}
+      prHint={workspace.prHint}
+      isDragging={isDragging}
+      disabled={contextMenuOpen}
+    >
+      {children({
+        isHovered: isHovered && !contextMenuOpen,
+        contextMenuOpen,
+        onContextMenuOpenChange: handleContextMenuOpenChange,
+        hoverHandlers,
+      })}
     </WorkspaceHoverCard>
   );
 }
 
 export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowContent({
   workspace,
-  subtitle,
-  subtitleProjectName = null,
-  subtitleProjectIconDataUri = null,
+  hostBadge,
+  leadingProjectName = null,
+  leadingProjectIconDataUri = null,
   scriptIconKind = null,
   isHovered,
   isLoading,
@@ -106,10 +160,10 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   children,
 }: {
   workspace: SidebarWorkspaceEntry;
-  subtitle?: string | null;
-  /** Project named by the subtitle. Set it to lead the subtitle line with that project's icon. */
-  subtitleProjectName?: string | null;
-  subtitleProjectIconDataUri?: string | null;
+  hostBadge?: HostBadgeModel | null;
+  /** Hoisted rows use their project icon as the leading visual because no project row contains them. */
+  leadingProjectName?: string | null;
+  leadingProjectIconDataUri?: string | null;
   scriptIconKind?: SidebarWorkspaceScriptIconKind | null;
   isHovered: boolean;
   isLoading: boolean;
@@ -124,28 +178,51 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     settings: { workspaceTitleSource },
   } = useAppSettings();
   const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
+  const hasTitleAccessory = Boolean(scriptIconKind || workspace.prHint || hostBadge);
   const workspaceBranchTextStyle = useMemo(
     () => [
       styles.workspaceBranchText,
-      scriptIconKind ? styles.workspaceBranchTextWithAccessory : styles.workspaceBranchTextFlexible,
+      hasTitleAccessory
+        ? styles.workspaceBranchTextWithAccessory
+        : styles.workspaceBranchTextFlexible,
       isHovered && styles.workspaceBranchTextHovered,
       isCreating && styles.workspaceBranchTextCreating,
     ],
-    [scriptIconKind, isHovered, isCreating],
+    [hasTitleAccessory, isHovered, isCreating],
   );
 
   return (
     <View style={styles.workspaceRowContent}>
       <View style={styles.workspaceRowMain}>
-        <WorkspaceStatusIndicator
-          bucket={workspace.statusBucket}
-          workspaceKind={workspace.workspaceKind}
-          loading={isLoading}
-          reserveIdleSpace={reserveIdleStatusIndicatorSpace}
-        />
+        {leadingProjectName ? (
+          <ProjectStatusIndicator
+            iconDataUri={leadingProjectIconDataUri}
+            displayName={leadingProjectName}
+            projectViewKey={workspace.projectViewKey}
+            statusBucket={workspace.statusBucket}
+            loading={isLoading}
+            testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
+          />
+        ) : (
+          <WorkspaceStatusIndicator
+            bucket={workspace.statusBucket}
+            workspaceKind={workspace.workspaceKind}
+            loading={isLoading}
+            reserveIdleSpace={reserveIdleStatusIndicatorSpace}
+          />
+        )}
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
             <View style={styles.workspaceTitleLeft}>
+              {workspace.prHint ? <PullRequestIcon hint={workspace.prHint} /> : null}
+              {hostBadge ? (
+                <HostBadge
+                  serverId={hostBadge.serverId}
+                  label={hostBadge.label}
+                  color={hostBadge.color}
+                  showLabel={hostBadge.showLabel}
+                />
+              ) : null}
               <Text style={workspaceBranchTextStyle} numberOfLines={1}>
                 {workspaceLabel}
               </Text>
@@ -153,27 +230,6 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             </View>
             <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
           </View>
-          {subtitle ? (
-            <View style={styles.workspaceSubtitleRow}>
-              {subtitleProjectName ? (
-                <SidebarSubtitleProjectIcon
-                  projectViewKey={workspace.projectViewKey}
-                  projectName={subtitleProjectName}
-                  iconDataUri={subtitleProjectIconDataUri}
-                  testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
-                />
-              ) : null}
-              <Text style={styles.workspaceSubtitle} numberOfLines={1}>
-                {subtitle}
-              </Text>
-            </View>
-          ) : null}
-          {workspace.prHint ? (
-            <View style={styles.workspacePrBadgeRow}>
-              <PrBadge hint={workspace.prHint} />
-              <ChecksBadge checks={workspace.prHint.checks} forge={workspace.prHint.forge} />
-            </View>
-          ) : null}
         </View>
       </View>
       {showShortcutBadge && shortcutNumber !== null ? (
@@ -212,20 +268,22 @@ function WorkspaceStatusIndicator({
   loading?: boolean;
   reserveIdleSpace?: boolean;
 }) {
-  const shouldShowSyncedLoader = shouldRenderSyncedStatusLoader({ bucket });
-
+  // Busy is a pulsing dot here for the same reason it is on a project icon: every status in
+  // the sidebar is a dot, and a row with a project icon simply moves that dot onto the icon.
+  // A row starting up and a row working are both busy, so they share the dot and differ only
+  // in testID.
   if (loading) {
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-loading">
-        <ThemedLoadingSpinner size={8} uniProps={foregroundMutedColorMapping} />
+        <PulsingStatusDot style={styles.standaloneRunningDot} />
       </View>
     );
   }
 
-  if (shouldShowSyncedLoader) {
+  if (shouldRenderSyncedStatusLoader({ bucket })) {
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-running">
-        <ThemedSyncedLoader size={11} uniProps={syncedLoaderColorMapping} />
+        <PulsingStatusDot style={styles.standaloneRunningDot} />
       </View>
     );
   }
@@ -247,8 +305,14 @@ function WorkspaceStatusIndicator({
   }
 
   if (bucket === "done") {
+    // An idle row still gets a dot rather than an empty slot. Nested rows are marked as
+    // workspaces by indentation alone, and with nothing in the leading slot the rail has no
+    // edge to read against — a workspace carrying its own glyph starts looking like a project
+    // header. The dot is muted to half opacity so it holds the rail without reporting status.
     return reserveIdleSpace ? (
-      <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-done" />
+      <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-done">
+        <View style={styles.idleStatusDot} />
+      </View>
     ) : null;
   }
 
@@ -304,9 +368,8 @@ function StatusDotOverlay({
   return <View style={overlayStyle} />;
 }
 
-function PrBadge({ hint }: { hint: PrHint }) {
+function PullRequestIcon({ hint }: { hint: PrHint }) {
   const { t } = useTranslation();
-  const [isHovered, setIsHovered] = useState(false);
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {
       event.stopPropagation();
@@ -314,21 +377,9 @@ function PrBadge({ hint }: { hint: PrHint }) {
     },
     [hint.url],
   );
-  const textStyle = useMemo(
-    () => (isHovered ? [prBadgeStyles.text, prBadgeStyles.textHovered] : prBadgeStyles.text),
-    [isHovered],
-  );
-  const iconUniProps = isHovered ? foregroundColorMapping : getPrIconUniMapping(hint.state);
   const presentation = getForgePresentation(normalizeForge(hint.forge));
 
   const handlePressIn = useCallback((event: GestureResponderEvent) => event.stopPropagation(), []);
-  const handleHoverIn = useCallback(() => setIsHovered(true), []);
-  const handleHoverOut = useCallback(() => setIsHovered(false), []);
-
-  const pressableStyle = useMemo(
-    () => [prBadgeStyles.badge, isHovered && prBadgeStyles.badgePressed],
-    [isHovered],
-  );
 
   return (
     <Pressable
@@ -340,33 +391,10 @@ function PrBadge({ hint }: { hint: PrHint }) {
       hitSlop={4}
       onPressIn={handlePressIn}
       onPress={handlePress}
-      onHoverIn={handleHoverIn}
-      onHoverOut={handleHoverOut}
-      style={pressableStyle}
+      style={pullRequestIconStyle}
     >
-      {isHovered ? (
-        <ThemedExternalLink size={12} uniProps={iconUniProps} />
-      ) : (
-        <ThemedGitPullRequest size={12} uniProps={iconUniProps} />
-      )}
-      <Text style={textStyle} numberOfLines={1}>
-        {presentation.numberPrefix}
-        {hint.number}
-      </Text>
+      <ThemedGitPullRequest size={12} uniProps={getPrIconUniMapping(hint.state)} />
     </Pressable>
-  );
-}
-
-function ChecksBadge({ checks, forge }: { checks: PrHint["checks"]; forge: PrHint["forge"] }) {
-  if (!checks || checks.length === 0) return null;
-  const failed = checks.filter((check) => check.status === "failure").length;
-  if (failed === 0) return null;
-  const icon = getForgePresentation(normalizeForge(forge)).icon;
-  return (
-    <View style={checksBadgeStyles.badge}>
-      {renderChecksBadgeForgeIcon(icon)}
-      <Text style={checksBadgeStyles.text}>{failed} failed</Text>
-    </View>
   );
 }
 
@@ -396,37 +424,15 @@ function getStatusDotColorStyle(bucket: SidebarStateBucket) {
   }
 }
 
-const prBadgeStyles = StyleSheet.create((theme) => ({
-  badge: {
-    flexDirection: "row",
+const pullRequestIconStyles = StyleSheet.create(() => ({
+  pressable: {
+    height: 20,
     alignItems: "center",
-    gap: 2,
+    justifyContent: "center",
+    flexShrink: 0,
   },
-  badgePressed: {
+  pressableActive: {
     opacity: 0.82,
-  },
-  text: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    lineHeight: 14,
-    color: theme.colors.foregroundMuted,
-  },
-  textHovered: {
-    color: theme.colors.foreground,
-  },
-}));
-
-const checksBadgeStyles = StyleSheet.create((theme) => ({
-  badge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 2,
-  },
-  text: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    lineHeight: 14,
-    color: theme.colors.palette.red[500],
   },
 }));
 
@@ -469,6 +475,13 @@ export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
     top: 0,
     right: 0,
   },
+  trailingActionScrim: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    right: 0,
+    width: SCRIM_WIDTH,
+  },
 }));
 
 export function SidebarWorkspaceShortcutBadge({ number }: { number: number }) {
@@ -477,6 +490,34 @@ export function SidebarWorkspaceShortcutBadge({ number }: { number: number }) {
       <Text style={sidebarWorkspaceRowStyles.shortcutBadgeText}>{number}</Text>
     </View>
   );
+}
+
+/**
+ * What the trailing slot shows for a row. Derived in one place because three row renderers
+ * share it: the two project-mode rows and the status-mode row. The rule used to be copied
+ * into each of them and immediately drifted — one call site kept hiding the diff after the
+ * others stopped.
+ *
+ * The diff survives the kebab on hover and fades under the scrim instead of blinking out.
+ * Touch has no hover, so its permanent kebab still hides the diff outright rather than
+ * scrimming an unhovered row whose background doesn't match the gradient.
+ */
+export function resolveTrailingActionVisibility({
+  hasDiffStat,
+  hasArchiveAction,
+  isHovered,
+  isTouchPlatform,
+  showShortcut,
+}: {
+  hasDiffStat: boolean;
+  hasArchiveAction: boolean;
+  isHovered: boolean;
+  isTouchPlatform: boolean;
+  showShortcut: boolean;
+}): { showDiffStat: boolean; showKebab: boolean; showScrim: boolean } {
+  const showKebab = Boolean(hasArchiveAction && (isHovered || isTouchPlatform)) && !showShortcut;
+  const showDiffStat = hasDiffStat && !showShortcut && (isHovered || !showKebab);
+  return { showDiffStat, showKebab, showScrim: showDiffStat && showKebab };
 }
 
 export function SidebarWorkspaceTrailingActionSlot({ children }: { children: ReactNode }) {
@@ -496,13 +537,42 @@ export function SidebarWorkspaceTrailingActionBase({
 
 export function SidebarWorkspaceTrailingActionOverlay({
   visible,
+  scrim = false,
   children,
 }: {
   visible: boolean;
+  /** Fade the row into the kebab when something (the diff stat) is still rendered behind it. */
+  scrim?: boolean;
   children: ReactNode;
 }) {
   if (!visible || !children) return null;
-  return <View style={sidebarWorkspaceRowStyles.trailingActionOverlay}>{children}</View>;
+  return (
+    <>
+      {scrim ? <TrailingActionScrim /> : null}
+      <View style={sidebarWorkspaceRowStyles.trailingActionOverlay}>{children}</View>
+    </>
+  );
+}
+
+/**
+ * The row's own background, faded in from the right, sitting between the diff stat and the
+ * kebab. The kebab lands on fully opaque background while the diff dissolves underneath it
+ * rather than blinking out — hiding the diff outright was the old behavior and it cost a
+ * visible flicker on every hover.
+ *
+ * Anchored to the trailing slot, which is position:relative. Wider than the slot on purpose:
+ * the fade has to start before the diff stat does or the diff's left edge cuts off hard.
+ */
+function TrailingActionScrim() {
+  // useId's output contains characters that are not legal inside url(#...) — React 19 wraps
+  // ids in guillemets, React 18 in colons — and an unresolvable fill paints nothing at all.
+  // Keep the per-instance uniqueness, drop everything a fragment reference can't carry.
+  const gradientId = `sidebar-scrim-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  return (
+    <View style={sidebarWorkspaceRowStyles.trailingActionScrim} pointerEvents="none">
+      <ThemedTrailingActionScrimSvg gradientId={gradientId} uniProps={scrimColorMapping} />
+    </View>
+  );
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -528,7 +598,7 @@ const styles = StyleSheet.create((theme) => ({
   workspaceTitleLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
+    gap: theme.spacing[1],
     flex: 1,
     minWidth: 0,
   },
@@ -557,6 +627,19 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.palette.green[500],
   },
+  standaloneRunningDot: {
+    width: 8,
+    height: 8,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: getStatusDotColor({ theme, bucket: "running" }) ?? undefined,
+  },
+  idleStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.foregroundExtraMuted,
+    opacity: 0.3,
+  },
   workspaceBranchText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
@@ -583,25 +666,6 @@ const styles = StyleSheet.create((theme) => ({
   workspaceBranchTextHovered: {
     opacity: 1,
   },
-  workspaceSubtitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    minWidth: 0,
-  },
-  workspaceSubtitle: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    lineHeight: 14,
-    flexShrink: 1,
-    minWidth: 0,
-  },
-  workspacePrBadgeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    marginTop: theme.spacing[1],
-  },
   statusDotNeedsInput: {
     backgroundColor: theme.colors.palette.amber[500],
     borderColor: theme.colors.surface0,
@@ -611,7 +675,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.surface0,
   },
   statusDotRunning: {
-    backgroundColor: theme.colors.palette.blue[500],
+    backgroundColor: getStatusDotColor({ theme, bucket: "running" }) ?? undefined,
     borderColor: theme.colors.surface0,
   },
   statusDotAttention: {

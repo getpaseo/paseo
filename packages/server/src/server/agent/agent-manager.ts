@@ -1027,6 +1027,17 @@ export class AgentManager {
     return this.providerSubagents.list(parentAgentId);
   }
 
+  listProviderSubagentActivity(): ProviderSubagentDescriptor[] {
+    const publicParentIds = new Set(
+      Array.from(this.agents.values())
+        .filter((agent) => !agent.internal)
+        .map((agent) => agent.id),
+    );
+    return this.providerSubagents
+      .listAll()
+      .filter((subagent) => publicParentIds.has(subagent.parentAgentId));
+  }
+
   getProviderSubagent(
     parentAgentId: string,
     subagentId: string,

@@ -17,6 +17,8 @@ interface LongTimelineAgentOptions {
 }
 
 export interface LongTimelineAgent extends MockAgentWorkspace {
+  /** Every seeded prompt, oldest first, so a test can name the nth turn. */
+  prompts: string[];
   firstOlderPagePrompt: string;
   initialTailAnchorPrompt: string;
   initialTailOldestPrompt: string;
@@ -56,8 +58,11 @@ interface OlderHistoryLoadingOperation {
 interface OlderHistoryPages {
   expectRequestedPages(count: number): Promise<void>;
   expectSettledWithRequestedPages(count: number): Promise<void>;
-  expectNoRepeatedAssistantEntries(): void;
+  expectNoRepeatedEntries(): void;
+  expectRepeatedEntries(): void;
+  expectOwnedTextRendered(text: string): Promise<void>;
   releasePage(pageNumber: number): void;
+  requestCount(): number;
 }
 
 function promptForTurn(index: number): string {
@@ -80,6 +85,7 @@ export async function seedLongMockAgentTimeline(
 
   return {
     ...agent,
+    prompts: Array.from({ length: options.turns }, (_unused, index) => promptForTurn(index)),
     firstOlderPagePrompt: promptForTurn(Math.max(0, options.turns - 40)),
     initialTailAnchorPrompt: promptForTurn(Math.max(0, options.turns - 5)),
     initialTailOldestPrompt: promptForTurn(Math.max(0, options.turns - 20)),
@@ -146,6 +152,25 @@ export async function rememberTimelinePromptPosition(
   return { prompt, top: box.y };
 }
 
+export async function expectTimelinePromptLandedBelowTop(
+  page: Page,
+  prompt: string,
+): Promise<void> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  const promptRow = timeline.locator("[data-history-row-id]").filter({ hasText: prompt });
+  await expect(promptRow).toBeVisible();
+  await expect
+    .poll(async () => {
+      const [timelineBox, promptBox] = await Promise.all([
+        timeline.boundingBox(),
+        promptRow.boundingBox(),
+      ]);
+      if (!timelineBox || !promptBox) return Number.POSITIVE_INFINITY;
+      return Math.abs(promptBox.y - timelineBox.y - 8);
+    })
+    .toBeLessThanOrEqual(2);
+}
+
 export async function expectTimelinePromptPositionPreserved(
   page: Page,
   before: TimelinePromptPositionSnapshot,
@@ -161,8 +186,45 @@ export async function expectTimelinePromptPositionPreserved(
     .toBeLessThanOrEqual(2);
 }
 
-export async function openAgentTimeline(page: Page, agent: MockAgentWorkspace): Promise<void> {
-  await page.goto(buildAgentRoute(agent.workspaceId, agent.agentId));
+export async function expectTimelineAtMaximumScrollWithPromptVisible(
+  page: Page,
+  prompt: string,
+): Promise<void> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  const item = timeline.getByText(prompt, { exact: true });
+  await expect
+    .poll(async () => {
+      const [metrics, timelineBox, promptBox] = await Promise.all([
+        timeline.evaluate((element) => {
+          if (!(element instanceof HTMLElement)) {
+            throw new Error("Agent chat scroll element is not an HTMLElement");
+          }
+          return {
+            clientHeight: element.clientHeight,
+            scrollHeight: element.scrollHeight,
+            scrollTop: element.scrollTop,
+          };
+        }),
+        timeline.boundingBox(),
+        item.boundingBox(),
+      ]);
+      if (!timelineBox || !promptBox) return false;
+      const isAtMaximumScroll =
+        Math.abs(metrics.scrollTop + metrics.clientHeight - metrics.scrollHeight) <= 2;
+      const isPromptFullyVisible =
+        promptBox.y >= timelineBox.y &&
+        promptBox.y + promptBox.height <= timelineBox.y + timelineBox.height;
+      return isAtMaximumScroll && isPromptFullyVisible;
+    })
+    .toBe(true);
+}
+
+export async function openAgentTimeline(
+  page: Page,
+  agent: MockAgentWorkspace,
+  serverId?: string,
+): Promise<void> {
+  await page.goto(buildAgentRoute(agent.workspaceId, agent.agentId, serverId));
   await page.waitForURL(
     (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
     { timeout: 60_000 },
@@ -262,8 +324,13 @@ export async function holdNextOlderTimelinePage(
 export async function holdOlderHistoryPages(
   page: Page,
   agent: MockAgentWorkspace,
+  daemonPort?: number,
 ): Promise<OlderHistoryPages> {
-  const gate: OlderTimelinePagesGate = await holdAgentOlderTimelinePages(page, agent.agentId);
+  const gate: OlderTimelinePagesGate = await holdAgentOlderTimelinePages(
+    page,
+    agent.agentId,
+    daemonPort,
+  );
   return {
     async expectRequestedPages(count) {
       await gate.waitForRequestCount(count);
@@ -273,11 +340,23 @@ export async function holdOlderHistoryPages(
       await waitForTimelineGeometryToSettle(page);
       expect(gate.getRequestCount()).toBe(count);
     },
-    expectNoRepeatedAssistantEntries() {
-      expect(gate.getRepeatedAssistantEntryCount()).toBe(0);
+    expectNoRepeatedEntries() {
+      expect(gate.getRepeatedEntryCount()).toBe(0);
+    },
+    expectRepeatedEntries() {
+      expect(gate.getRepeatedEntryCount()).toBeGreaterThan(0);
+    },
+    async expectOwnedTextRendered(text) {
+      const expectedCount = gate.getOwnedEntryCountContaining(text);
+      expect(expectedCount).toBeGreaterThan(0);
+      const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+      await expect(timeline.getByText(text, { exact: false })).toHaveCount(expectedCount);
     },
     releasePage(pageNumber) {
       gate.releasePage(pageNumber);
+    },
+    requestCount() {
+      return gate.getRequestCount();
     },
   };
 }

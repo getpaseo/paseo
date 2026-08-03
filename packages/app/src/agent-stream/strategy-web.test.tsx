@@ -201,6 +201,50 @@ describe("createWebStreamStrategy", () => {
     expect(renderLiveHeadRow).toHaveBeenCalledTimes(2);
   });
 
+  it("reports the live-head row as the reading position", () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: false });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    const onReadingPositionChange = vi.fn();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          agentId: "agent",
+          segments: {
+            historyVirtualized: [],
+            historyMounted: [userMessage(1)],
+            liveHead: [userMessage(2)],
+          },
+          boundary: {
+            hasVirtualizedHistory: false,
+            hasMountedHistory: true,
+            hasLiveHead: true,
+          },
+          renderers: createRenderers(vi.fn()),
+          listEmptyComponent: null,
+          viewportRef,
+          routeBottomAnchorRequest: null,
+          isAuthoritativeHistoryReady: true,
+          onNearBottomChange: vi.fn(),
+          onReadingPositionChange,
+          onNearHistoryStart: vi.fn().mockReturnValue(true),
+          isLoadingOlderHistory: false,
+          hasOlderHistory: false,
+          olderHistoryProgressKey: null,
+          scrollEnabled: true,
+          listStyle: null,
+          baseListContentContainerStyle: null,
+          forwardListContentContainerStyle: null,
+        }),
+      );
+    });
+
+    expect(onReadingPositionChange).toHaveBeenLastCalledWith("message-2");
+  });
+
   it("keeps bottom anchoring through subpixel browser rounding", () => {
     const scrollTo = vi.fn();
     HTMLElement.prototype.scrollTo = scrollTo;

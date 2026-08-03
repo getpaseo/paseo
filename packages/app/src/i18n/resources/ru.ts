@@ -112,6 +112,7 @@ export const ru: TranslationResources = {
     },
     attachments: {
       addImage: "Добавить изображение",
+      pasteImage: "Вставить изображение",
       addFile: "Upload file",
       addIssueOrPr: "Добавить проблему или PR",
       addIssueOrPr_mr: "Добавить проблему или MR",
@@ -137,6 +138,8 @@ export const ru: TranslationResources = {
       initialPromptRequired: "Требуется начальное приглашение",
       alreadyLoading: "Уже загружается",
       uploadFailed: "Failed to upload file",
+      noClipboardImage: "В буфере обмена нет изображения",
+      pasteImageFailed: "Не удалось вставить изображение",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
@@ -187,6 +190,7 @@ export const ru: TranslationResources = {
   agentStream: {
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
+    historyLoadFailed: "Не удалось загрузить историю агента",
     permission: {
       plan: "План",
       required: "Требуется разрешение",
@@ -1814,6 +1818,10 @@ export const ru: TranslationResources = {
       detailLevel: {
         title: "Уровень детализации",
       },
+      chatOutline: {
+        title: "Структура чата",
+        description: "Показывать структуру для перехода между запросами",
+      },
       fonts: {
         title: "Шрифты",
         systemDefault: "Система по умолчанию",
@@ -1968,6 +1976,41 @@ export const ru: TranslationResources = {
       },
     },
     host: {
+      appearance: {
+        title: "Оформление",
+        name: {
+          label: "Имя",
+        },
+        color: {
+          label: "Цвет",
+          accessibilityLabel: "Цвет, {{value}}",
+          options: {
+            none: "По умолчанию",
+            violet: "Фиолетовый",
+            sky: "Небесный",
+            emerald: "Изумрудный",
+            orange: "Оранжевый",
+            pink: "Розовый",
+            indigo: "Индиго",
+            teal: "Бирюзовый",
+            red: "Красный",
+            amber: "Янтарный",
+            blue: "Синий",
+          },
+        },
+        badge: {
+          label: "Значок на боковой панели",
+          accessibilityLabel: "Значок на боковой панели, {{value}}",
+          options: {
+            name: "Имя",
+            icon: "Только значок",
+            hidden: "Скрыт",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "Host не найден",
       badges: {
         relay: "Реле",

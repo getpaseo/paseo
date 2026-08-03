@@ -10,6 +10,7 @@
   makeDesktopItem,
   electron,
   libuv,
+  buildVersion,
   # Reuse the daemon's prebuilt npm-deps FOD. Same lockfile, same content —
   # without this, the desktop drv produces a separately-named store path
   # (`paseo-desktop-<v>-npm-deps`) and refetches the entire registry. Override
@@ -126,6 +127,7 @@ buildNpmPackage {
             --mac \
             --publish never \
             --config.electronDist="$electron_dist" \
+            --config.buildVersion=${lib.escapeShellArg buildVersion} \
             --config.mac.identity=null \
             --config.mac.hardenedRuntime=false \
             --config.mac.notarize=false
@@ -185,11 +187,22 @@ buildNpmPackage {
       install -Dm644 packages/desktop/assets/icon.png \
         $out/share/icons/hicolor/512x512/apps/paseo-desktop.png
 
+      # Electron derives Wayland's toplevel app_id from the package name in the
+      # app root it launches. Point it at a one-file app named "paseo-desktop"
+      # so shells can match the window to the desktop entry and hicolor icon.
+      mkdir -p $out/share/paseo-desktop/electron-app
+      printf '%s\n' "{ \"name\": \"paseo-desktop\", \"version\": \"$version\", \"main\": \"index.js\" }" \
+        > $out/share/paseo-desktop/electron-app/package.json
+      printf '%s\n' 'require("../packages/desktop/dist/main.js");' \
+        > $out/share/paseo-desktop/electron-app/index.js
+
       # Chromium's setuid sandbox cannot live in the immutable Nix store.
       makeWrapper ${electron}/bin/electron $out/bin/paseo-desktop \
-        --add-flags "$out/share/paseo-desktop/packages/desktop/dist/main.js" \
+        --add-flags "$out/share/paseo-desktop/electron-app" \
         --add-flags "--no-sandbox" \
-        --set EXPO_DEV_URL "paseo://app/"
+        --add-flags "--class=paseo-desktop" \
+        --set EXPO_DEV_URL "paseo://app/" \
+        --set CHROME_DESKTOP "paseo-desktop.desktop"
 
       copyDesktopItems
     ''}
@@ -217,7 +230,23 @@ buildNpmPackage {
       exec = "paseo-desktop";
       icon = "paseo-desktop";
       categories = ["Development"];
+      startupWMClass = "paseo-desktop";
+    })
+    # Hidden alias entry. Which of the two names Electron ends up publishing as
+    # the Wayland app_id depends on the Electron version: 41 uses the app-root
+    # package.json `name` ("paseo-desktop"), 38 uses the runtime app name that
+    # main.ts sets ("Paseo"). Ship a NoDisplay entry for the second spelling so
+    # the icon resolves either way without a duplicate launcher item.
+    (makeDesktopItem {
+      name = "Paseo";
+      desktopName = "Paseo";
+      genericName = "AI Coding Agents";
+      comment = "Self-hosted daemon for AI coding agents";
+      exec = "paseo-desktop";
+      icon = "paseo-desktop";
+      categories = [ "Development" ];
       startupWMClass = "Paseo";
+      noDisplay = true;
     })
   ];
 

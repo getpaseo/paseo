@@ -30,8 +30,10 @@ import {
   FileText,
   GitPullRequest,
   Image as ImageIcon,
+  ClipboardPaste,
   Paperclip,
 } from "lucide-react-native";
+import * as Clipboard from "expo-clipboard";
 import Animated from "react-native-reanimated";
 import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
 import {
@@ -64,6 +66,7 @@ import {
   sendQueuedComposerMessageNow,
   toggleGithubAttachmentFromPicker,
   uploadFileAttachments,
+  type AttachmentPersister,
   type QueueWriter,
   type QueuedComposerMessage,
 } from "@/composer/actions";
@@ -82,6 +85,7 @@ import {
 import {
   deleteAttachments,
   persistAttachmentFromBlob,
+  persistAttachmentFromDataUrl,
   persistAttachmentFromFileUri,
 } from "@/attachments/service";
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
@@ -119,6 +123,7 @@ import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { getForgePresentation } from "@/git/forge";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { useComposerGithubAutoAttach } from "./github/auto-attach";
+import { readClipboardImage } from "./clipboard-image";
 import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
 import {
   appendWorkspaceFileAttachment,
@@ -129,6 +134,15 @@ import {
   resolveWorkspaceFileDrop,
   type WorkspaceFileDragPayload,
 } from "@/attachments/workspace-file-drag";
+
+const composerImageAttachmentPersister: Pick<
+  AttachmentPersister,
+  "persistFromBlob" | "persistFromDataUrl" | "persistFromFileUri"
+> = {
+  persistFromBlob: persistAttachmentFromBlob,
+  persistFromDataUrl: persistAttachmentFromDataUrl,
+  persistFromFileUri: persistAttachmentFromFileUri,
+};
 
 type QueuedMessage = QueuedComposerMessage;
 
@@ -1408,16 +1422,31 @@ export function Composer({
   const handlePickImage = useCallback(async () => {
     const newImages = await pickAndPersistImages({
       pickImages,
-      persister: {
-        persistFromBlob: ({ blob, mimeType, fileName }) =>
-          persistAttachmentFromBlob({ blob, mimeType, fileName }),
-        persistFromFileUri: ({ uri, mimeType, fileName }) =>
-          persistAttachmentFromFileUri({ uri, mimeType, fileName }),
-      },
+      persister: composerImageAttachmentPersister,
     });
     if (newImages.length === 0) return;
     addImages(newImages);
   }, [addImages, pickImages]);
+
+  const handlePasteImage = useCallback(async () => {
+    try {
+      const newImages = await pickAndPersistImages({
+        pickImages: async () => {
+          const image = await readClipboardImage(Clipboard);
+          return image ? [image] : null;
+        },
+        persister: composerImageAttachmentPersister,
+      });
+      if (newImages.length === 0) {
+        toastErrorRef.current(t("composer.errors.noClipboardImage"));
+        return;
+      }
+      addImages(newImages);
+    } catch (error) {
+      console.error("[Composer] Failed to paste clipboard image:", error);
+      toastErrorRef.current(t("composer.errors.pasteImageFailed"));
+    }
+  }, [addImages, t]);
 
   const uploadPickedFiles = useCallback(
     async (files: PickedFile[]) => {
@@ -1823,8 +1852,8 @@ export function Composer({
     [githubSearchItems, githubSearchQueryTrimmed],
   );
 
-  const attachmentMenuItems = useMemo<AttachmentMenuItem[]>(
-    () => [
+  const attachmentMenuItems = useMemo<AttachmentMenuItem[]>(() => {
+    const items: AttachmentMenuItem[] = [
       {
         id: "image",
         label: t("composer.attachments.addImage"),
@@ -1833,6 +1862,18 @@ export function Composer({
           void handlePickImage();
         },
       },
+    ];
+    if (isNative) {
+      items.push({
+        id: "paste-image",
+        label: t("composer.attachments.pasteImage"),
+        icon: <ThemedClipboardPaste size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+        onSelect: () => {
+          void handlePasteImage();
+        },
+      });
+    }
+    items.push(
       {
         id: "github",
         label: t("composer.attachments.addIssueOrPr", {
@@ -1851,9 +1892,9 @@ export function Composer({
           void handlePickFile();
         },
       },
-    ],
-    [handlePickImage, handlePickFile, t, forgePresentation],
-  );
+    );
+    return items;
+  }, [forgePresentation, handlePasteImage, handlePickFile, handlePickImage, t]);
 
   const handleToggleGithubItem = useCallback(
     (item: ForgeSearchItem) => {
@@ -1985,11 +2026,9 @@ export function Composer({
 
   const messageInputContainerRef = useRef<View>(null);
 
-  const isSubmitBusy =
-    isProcessing ||
-    isSubmitLoading ||
-    isUploadingFile ||
-    (waitForGithubAutoAttachOnSubmit && githubAutoAttach.isResolving);
+  const isSubmitLoadingVisible = isProcessing || isSubmitLoading || isUploadingFile;
+  const isSubmitDisabled =
+    isSubmitLoadingVisible || (waitForGithubAutoAttachOnSubmit && githubAutoAttach.isResolving);
 
   // Disable drops while submitting/uploading: the submit path clears and restores attachments,
   // so a drop in that window would be lost or land on a locked draft. `disabled` hides the
@@ -2000,7 +2039,7 @@ export function Composer({
       onGenericFiles: handleGenericFilesDropped,
       onWorkspaceFile: handleWorkspaceFileDropped,
     },
-    { disabled: isSubmitBusy },
+    { disabled: isSubmitLoadingVisible },
   );
 
   const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint;
@@ -2048,8 +2087,8 @@ export function Composer({
                 submitButtonAccessibilityLabel={submitButtonAccessibilityLabel}
                 submitButtonTestID={submitButtonTestID}
                 submitIcon={submitIcon}
-                isSubmitDisabled={isSubmitBusy}
-                isSubmitLoading={isSubmitBusy}
+                isSubmitDisabled={isSubmitDisabled}
+                isSubmitLoading={isSubmitLoadingVisible}
                 preserveHeightOnSubmit={submitBehavior === "preserve-and-lock"}
                 attachments={selectedAttachments}
                 cwd={cwd}
@@ -2248,6 +2287,7 @@ const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedAudioLines = withUnistyles(AudioLines);
 const ThemedPaperclip = withUnistyles(Paperclip);
 const ThemedImageIcon = withUnistyles(ImageIcon);
+const ThemedClipboardPaste = withUnistyles(ClipboardPaste);
 const ThemedFileText = withUnistyles(FileText);
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });

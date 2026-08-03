@@ -197,6 +197,24 @@ describe("deriveAgentStreamTurnLiveness", () => {
   });
 });
 
+describe("detached timeline windows", () => {
+  it("does not apply or catch up live events while viewing an older window", () => {
+    const currentTail = [makeAssistantItem("older window")];
+    const result = processAgentStreamEvents({
+      events: [makeStreamReducerEvent(makeAssistantTimelineEvent("new live output"), 101)],
+      currentTail,
+      currentHead: [],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 40 },
+      hasAuthoritativeBaseline: true,
+      isDetached: true,
+    });
+
+    expect(result.tail).toBe(currentTail);
+    expect(result.changedTail).toBe(false);
+    expect(result.sideEffects).toEqual([]);
+  });
+});
+
 function getAssistantTexts(items: StreamItem[]): string[] {
   return items
     .filter((item): item is Extract<StreamItem, { kind: "assistant_message" }> => {
@@ -224,6 +242,7 @@ const baseTimelineInput: ProcessTimelineResponseInput = {
   payload: {
     agentId: "agent-1",
     direction: "after",
+    projection: "projected",
     reset: false,
     epoch: "epoch-1",
     window: { minSeq: 1, maxSeq: 0, nextSeq: 1 },
@@ -2540,6 +2559,388 @@ describe("processTimelineResponse", () => {
     expect(result.older).toBe("none");
   });
 
+  it("keeps only projected entries anchored in an older response page", () => {
+    const currentTail: StreamItem[] = [
+      {
+        kind: "user_message",
+        id: "current-81",
+        text: "current-81",
+        timestamp: new Date(81000),
+      },
+    ];
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 81, endSeq: 100 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        projection: "projected",
+        epoch: "epoch-1",
+        startCursor: { seq: 41 },
+        endCursor: { seq: 80 },
+        hasOlder: true,
+        entries: [
+          makeTimelineEntry(1, "wide assistant", "assistant_message", 80),
+          makeTimelineEntry(50, "owned by this page", "user_message"),
+        ],
+      },
+    });
+
+    expect(getAssistantTexts(result.tail)).toEqual([]);
+    expect(getUserTexts(result.tail)).toEqual(["owned by this page", "current-81"]);
+    expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 41, endSeq: 100 });
+    expect(result.older).toBe("available");
+  });
+
+  it("advances through an older projected page with no anchored entries", () => {
+    const currentTail: StreamItem[] = [
+      {
+        kind: "user_message",
+        id: "current-81",
+        text: "current-81",
+        timestamp: new Date(81000),
+      },
+    ];
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 81, endSeq: 100 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        projection: "projected",
+        epoch: "epoch-1",
+        startCursor: { seq: 41 },
+        endCursor: { seq: 80 },
+        hasOlder: true,
+        entries: [makeTimelineEntry(1, "wide assistant", "assistant_message", 80)],
+      },
+    });
+
+    expect(result.tail).toBe(currentTail);
+    expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 41, endSeq: 100 });
+    expect(result.cursorChanged).toBe(true);
+    expect(result.older).toBe("available");
+  });
+
+  it("gives prepended assistant blocks unique ids across independently hydrated pages", () => {
+    const currentTail: StreamItem[] = [
+      {
+        kind: "user_message",
+        id: "current-81",
+        text: "current-81",
+        timestamp: new Date(81000),
+      },
+      {
+        kind: "assistant_message",
+        id: "shared-provider-message",
+        messageId: "shared-provider-message",
+        text: "newer assistant block",
+        timestamp: new Date(82000),
+      },
+    ];
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 81, endSeq: 100 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        projection: "projected",
+        epoch: "epoch-1",
+        startCursor: { seq: 41 },
+        endCursor: { seq: 80 },
+        hasOlder: true,
+        entries: [
+          {
+            ...makeTimelineEntry(50, "older assistant block"),
+            item: {
+              type: "assistant_message",
+              text: "older assistant block",
+              messageId: "shared-provider-message",
+            },
+          },
+        ],
+      },
+    });
+
+    const assistants = result.tail.filter((item) => item.kind === "assistant_message");
+    expect(assistants.map((item) => item.messageId)).toEqual([
+      "shared-provider-message",
+      "shared-provider-message",
+    ]);
+    expect(new Set(assistants.map((item) => item.id)).size).toBe(2);
+  });
+
+  it("retains the current timeline while merging a disjoint prompt-jump window", () => {
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [
+        {
+          kind: "user_message",
+          id: "newest",
+          text: "newest",
+          timestamp: new Date(1000),
+          timelineCursor: { epoch: "epoch-1", seq: 100 },
+        },
+        makeSubmittedUserMessage("pending submission", "pending-submission"),
+      ],
+      currentCursor: { epoch: "epoch-1", startSeq: 80, endSeq: 100 },
+      sendingClientMessageIds: ["pending-submission"],
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        mergeWindow: true,
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 40 },
+        hasOlder: false,
+        hasNewer: true,
+        entries: [makeTimelineEntry(1, "oldest", "user_message")],
+      },
+    });
+
+    expect(getUserTexts(result.tail)).toEqual(["oldest", "newest", "pending submission"]);
+    expect(result.cursor).toEqual({
+      epoch: "epoch-1",
+      startSeq: 80,
+      endSeq: 100,
+      retainedRanges: [{ startSeq: 1, endSeq: 40, hasOlder: false }],
+    });
+    expect(result.older).toBe("none");
+    expect(result.sideEffects).not.toContainEqual(expect.objectContaining({ type: "catch_up" }));
+  });
+
+  it("fills the gap between a retained prompt window and the contiguous tail", () => {
+    const currentTail: StreamItem[] = [
+      {
+        kind: "user_message",
+        id: "oldest",
+        text: "oldest",
+        timestamp: new Date(1000),
+        timelineCursor: { epoch: "epoch-1", seq: 1 },
+      },
+      {
+        kind: "user_message",
+        id: "newest",
+        text: "newest",
+        timestamp: new Date(100_000),
+        timelineCursor: { epoch: "epoch-1", seq: 100 },
+      },
+    ];
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: {
+        epoch: "epoch-1",
+        startSeq: 80,
+        endSeq: 100,
+        retainedRanges: [{ startSeq: 1, endSeq: 40, hasOlder: false }],
+      },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        epoch: "epoch-1",
+        startCursor: { seq: 40 },
+        endCursor: { seq: 79 },
+        hasOlder: true,
+        entries: [makeTimelineEntry(50, "bridge", "user_message")],
+      },
+    });
+
+    expect(getUserTexts(result.tail)).toEqual(["oldest", "bridge", "newest"]);
+    expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 1, endSeq: 100 });
+    expect(result.older).toBe("none");
+  });
+
+  it.each(["tail", "head"] as const)(
+    "reconciles a pending submission from the %s included in a prompt-jump window",
+    (lane) => {
+      const clientMessageId = "pending-submission";
+      const pending = makeSubmittedUserMessage("local pending prompt", clientMessageId);
+      const result = processTimelineResponse({
+        ...baseTimelineInput,
+        currentTail: [
+          {
+            kind: "user_message",
+            id: "newest",
+            text: "newest",
+            timestamp: new Date(100_000),
+            timelineCursor: { epoch: "epoch-1", seq: 100 },
+          },
+          ...(lane === "tail" ? [pending] : []),
+        ],
+        currentHead: lane === "head" ? [pending] : [],
+        currentCursor: { epoch: "epoch-1", startSeq: 80, endSeq: 100 },
+        sendingClientMessageIds: [clientMessageId],
+        payload: {
+          ...baseTimelineInput.payload,
+          direction: "before",
+          mergeWindow: true,
+          epoch: "epoch-1",
+          startCursor: { seq: 1 },
+          endCursor: { seq: 40 },
+          hasOlder: false,
+          hasNewer: true,
+          entries: [
+            {
+              ...makeTimelineEntry(1, "canonical pending prompt", "user_message"),
+              item: {
+                type: "user_message",
+                text: "canonical pending prompt",
+                messageId: "canonical-message",
+                clientMessageId,
+              },
+            },
+          ],
+        },
+      });
+
+      expect({
+        userMessages: result.tail
+          .filter((item) => item.kind === "user_message")
+          .map(({ text, messageId, timelineCursor }) => ({ text, messageId, timelineCursor })),
+        head: result.head,
+        acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
+      }).toEqual({
+        userMessages: [
+          {
+            text: "local pending prompt",
+            messageId: "canonical-message",
+            timelineCursor: { epoch: "epoch-1", seq: 1 },
+          },
+          { text: "newest", messageId: undefined, timelineCursor: { epoch: "epoch-1", seq: 100 } },
+        ],
+        head: [],
+        acknowledgedClientMessageIds: [clientMessageId],
+      });
+    },
+  );
+
+  it("does not duplicate a projected tool row that spans a prompt-jump window", () => {
+    const currentTail = hydrateStreamState(
+      [
+        {
+          event: makeToolCallTimelineEvent("call-1"),
+          timestamp: new Date(500),
+          timelineCursor: { epoch: "epoch-1", seq: 500 },
+        },
+      ],
+      { source: "canonical" },
+    );
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 400, endSeq: 500 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        projection: "projected",
+        mergeWindow: true,
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 40 },
+        hasOlder: false,
+        hasNewer: true,
+        entries: [
+          {
+            ...makeToolCallTimelineEntry(1, "call-1", "completed", {
+              type: "read",
+              filePath: "/tmp/example.ts",
+            }),
+            seqEnd: 500,
+            sourceSeqRanges: [
+              { startSeq: 1, endSeq: 1 },
+              { startSeq: 500, endSeq: 500 },
+            ],
+            collapsed: ["tool_lifecycle"],
+          },
+        ],
+      },
+    });
+
+    expect(
+      getAgentToolCalls(result.tail).map((item) => ({
+        callId: item.payload.data.callId,
+        status: item.payload.data.status,
+        timelineCursor: item.timelineCursor,
+      })),
+    ).toEqual([
+      {
+        callId: "call-1",
+        status: "completed",
+        timelineCursor: { epoch: "epoch-1", seq: 500 },
+      },
+    ]);
+  });
+
+  it("does not duplicate a projected assistant row that spans a prompt-jump window", () => {
+    const timestamp = new Date(500);
+    const currentTail: StreamItem[] = [
+      {
+        ...makeAssistantItem("projected response", "loaded-assistant"),
+        messageId: "assistant-message",
+        timestamp,
+        timelineCursor: { epoch: "epoch-1", seq: 500 },
+      },
+    ];
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 400, endSeq: 500 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        projection: "projected",
+        mergeWindow: true,
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 40 },
+        hasOlder: false,
+        hasNewer: true,
+        entries: [
+          {
+            ...makeTimelineEntry(1, "projected response"),
+            item: {
+              type: "assistant_message",
+              text: "projected response",
+              messageId: "assistant-message",
+            },
+            timestamp: timestamp.toISOString(),
+            seqEnd: 500,
+            sourceSeqRanges: [
+              { startSeq: 1, endSeq: 1 },
+              { startSeq: 500, endSeq: 500 },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(
+      result.tail
+        .filter((item) => item.kind === "assistant_message")
+        .map(({ id, text, messageId, timelineCursor }) => ({
+          id,
+          text,
+          messageId,
+          timelineCursor,
+        })),
+    ).toEqual([
+      {
+        id: "loaded-assistant",
+        text: "projected response",
+        messageId: "assistant-message",
+        timelineCursor: { epoch: "epoch-1", seq: 500 },
+      },
+    ]);
+  });
+
   it("drops a stale before page anchored before a resume-tail replacement", () => {
     const currentTail: StreamItem[] = [
       {
@@ -3616,6 +4017,7 @@ describe("processAgentStreamEvents", () => {
       payload: {
         agentId: "agent-1",
         direction: "tail",
+        projection: "projected",
         reset: false,
         epoch: "epoch-1",
         window: { minSeq: 186, maxSeq: 186, nextSeq: 187 },
@@ -3660,6 +4062,7 @@ describe("processAgentStreamEvents", () => {
       payload: {
         agentId: "agent-1",
         direction: "tail",
+        projection: "projected",
         reset: false,
         epoch: "epoch-1",
         window: { minSeq: 10, maxSeq: 10, nextSeq: 11 },

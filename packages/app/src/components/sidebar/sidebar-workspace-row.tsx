@@ -1,9 +1,10 @@
 import { memo, useCallback, useMemo, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
-import { View, Text, Pressable } from "react-native";
+import { View, Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation } from "@tanstack/react-query";
 import * as Clipboard from "expo-clipboard";
+import type { HostBadgeModel } from "@/hosts/appearance";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { DraggableListDragHandleProps } from "@/components/draggable-list.types";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -20,10 +21,14 @@ import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-ar
 import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { isNative as platformIsNative } from "@/constants/platform";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
-import { SidebarWorkspaceMenu } from "@/components/sidebar/sidebar-workspace-menu";
+import {
+  SidebarWorkspaceContextMenu,
+  SidebarWorkspaceMenu,
+} from "@/components/sidebar/sidebar-workspace-menu";
 import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
+  resolveTrailingActionVisibility,
   SidebarWorkspaceTrailingActionBase,
   SidebarWorkspaceTrailingActionOverlay,
   SidebarWorkspaceTrailingActionSlot,
@@ -38,8 +43,8 @@ interface SidebarWorkspaceRowProps {
   showShortcutBadge: boolean;
   canCopyBranchName: boolean;
   onPress: () => void;
-  /** Secondary line under the name (status grouping shows the project name). */
-  subtitle?: string | null;
+  /** The host pill after the title. Absent → the sidebar spans one host, or this one is hidden. */
+  hostBadge?: HostBadgeModel | null;
   /** Project grouping only: shows a transient "creating" affordance. */
   isCreating?: boolean;
   /** Project grouping only: drag-to-reorder wiring. Absent → not draggable. */
@@ -55,7 +60,7 @@ export function SidebarWorkspaceRow({
   showShortcutBadge,
   canCopyBranchName,
   onPress,
-  subtitle,
+  hostBadge,
   isCreating = false,
   drag,
   isDragging = false,
@@ -175,7 +180,7 @@ export function SidebarWorkspaceRow({
         selected={selected}
         shortcutNumber={shortcutNumber}
         showShortcutBadge={showShortcutBadge}
-        subtitle={subtitle}
+        hostBadge={hostBadge}
         isCreating={isCreating}
         isArchiving={isArchiving}
         onPress={onPress}
@@ -211,7 +216,7 @@ interface WorkspaceRowBodyProps {
   selected: boolean;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
-  subtitle?: string | null;
+  hostBadge?: HostBadgeModel | null;
   isCreating: boolean;
   isArchiving: boolean;
   onPress: () => void;
@@ -234,7 +239,7 @@ function WorkspaceRowBody({
   selected,
   shortcutNumber,
   showShortcutBadge,
-  subtitle,
+  hostBadge,
   isCreating,
   isArchiving,
   onPress,
@@ -276,7 +281,7 @@ function WorkspaceRowBody({
 
   return (
     <SidebarWorkspaceRowFrame workspace={workspace} isDragging={isDragging}>
-      {({ isHovered, hoverHandlers }) => {
+      {({ isHovered, contextMenuOpen, onContextMenuOpenChange, hoverHandlers }) => {
         const isDesktop = !isTouchPlatform;
         const showScriptsIcon = isDesktop && workspace.hasRunningScripts;
         const hasRunningService = workspace.scripts.some(
@@ -297,7 +302,23 @@ function WorkspaceRowBody({
             style={styles.workspaceRowContainer}
             {...hoverHandlers}
           >
-            <Pressable
+            <SidebarWorkspaceContextMenu
+              contextMenuOpen={contextMenuOpen}
+              onContextMenuOpenChange={onContextMenuOpenChange}
+              workspace={workspace}
+              hostBadgeLabel={hostBadge?.label}
+              scriptIconKind={scriptIconKind}
+              workspaceKey={workspace.workspaceKey}
+              onCopyPath={onCopyPath}
+              onCopyBranchName={onCopyBranchName}
+              onRename={onRename}
+              onMarkAsRead={onMarkAsRead}
+              onArchive={onArchive}
+              archiveLabel={archiveLabel}
+              archiveStatus={archiveStatus}
+              archivePendingLabel={archivePendingLabel}
+              archiveShortcutKeys={archiveShortcutKeys}
+              openInFileManagerPath={workspace.workspaceDirectory}
               disabled={isArchiving}
               aria-selected={selected}
               accessibilityRole="button"
@@ -311,7 +332,7 @@ function WorkspaceRowBody({
             >
               <SidebarWorkspaceRowContent
                 workspace={workspace}
-                subtitle={subtitle}
+                hostBadge={hostBadge}
                 scriptIconKind={scriptIconKind}
                 isHovered={isHovered}
                 isLoading={isArchiving || isCreating}
@@ -337,7 +358,7 @@ function WorkspaceRowBody({
                   onMarkAsRead={onMarkAsRead}
                 />
               </SidebarWorkspaceRowContent>
-            </Pressable>
+            </SidebarWorkspaceContextMenu>
           </View>
         );
       }}
@@ -380,8 +401,17 @@ function WorkspaceRowTrailingActions({
 }) {
   const { t } = useTranslation();
   const showShortcut = showShortcutBadge && shortcutNumber !== null;
-  const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
-  const showKebabInSlot = showKebab && !showShortcut;
+  const {
+    showDiffStat,
+    showKebab: showKebabInSlot,
+    showScrim,
+  } = resolveTrailingActionVisibility({
+    hasDiffStat: Boolean(workspace.diffStat),
+    hasArchiveAction: Boolean(onArchive),
+    isHovered,
+    isTouchPlatform,
+    showShortcut,
+  });
   const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat);
 
   return (
@@ -391,9 +421,7 @@ function WorkspaceRowTrailingActions({
       ) : null}
       {shouldRenderActionSlot ? (
         <SidebarWorkspaceTrailingActionSlot>
-          <SidebarWorkspaceTrailingActionBase
-            visible={Boolean(workspace.diffStat && !showKebabInSlot && !showShortcut)}
-          >
+          <SidebarWorkspaceTrailingActionBase visible={showDiffStat}>
             {workspace.diffStat ? (
               <DiffStat
                 additions={workspace.diffStat.additions}
@@ -401,7 +429,7 @@ function WorkspaceRowTrailingActions({
               />
             ) : null}
           </SidebarWorkspaceTrailingActionBase>
-          <SidebarWorkspaceTrailingActionOverlay visible={showKebabInSlot}>
+          <SidebarWorkspaceTrailingActionOverlay visible={showKebabInSlot} scrim={showScrim}>
             {onArchive ? (
               <SidebarWorkspaceMenu
                 workspaceKey={workspace.workspaceKey}

@@ -1,4 +1,4 @@
-import { test } from "./support/fixtures";
+import { test } from "../support/fixtures";
 import {
   expandStatusProject,
   expectCollapsedProjectStatus,
@@ -8,7 +8,7 @@ import {
   seedStatusProject,
   startNeedsInputWorkspace,
   startWorkingWorkspace,
-} from "./helpers/project-status-badge";
+} from "../helpers/project-status-badge";
 
 test("a collapsed project surfaces its most urgent hidden workspace status", async ({ page }) => {
   test.setTimeout(120_000);

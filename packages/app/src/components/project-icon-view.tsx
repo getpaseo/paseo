@@ -8,7 +8,7 @@ import {
   View,
   type ViewStyle,
 } from "react-native";
-import { deriveProjectIconColor } from "@/utils/project-icon-color";
+import { deriveIdentityColorName, identityColor } from "@/styles/identity-colors";
 
 const WHITE_TEXT = { color: "#ffffff" } as const;
 
@@ -29,7 +29,10 @@ export function ProjectIconView({
 }) {
   const imageSource = useMemo(() => ({ uri: iconDataUri ?? "" }), [iconDataUri]);
   const fallbackStyles = useMemo(
-    () => [fallbackStyle, { backgroundColor: deriveProjectIconColor(projectViewKey) }],
+    () => [
+      fallbackStyle,
+      { backgroundColor: identityColor(deriveIdentityColorName(projectViewKey)) },
+    ],
     [fallbackStyle, projectViewKey],
   );
   const textStyles = useMemo(() => [textStyle, WHITE_TEXT], [textStyle]);

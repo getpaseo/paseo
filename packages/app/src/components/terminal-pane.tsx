@@ -1,4 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import Animated, { runOnJS, useAnimatedReaction } from "react-native-reanimated";
@@ -172,6 +173,7 @@ export function TerminalPane({
   onOpenWorkspaceFile,
 }: TerminalPaneProps) {
   const { t } = useTranslation();
+  const retainedPanelActive = useRetainedPanelActive();
   const isAppActivelyVisible = useAppActivelyVisible();
   const { theme } = useUnistyles();
   const { settings } = useAppSettings();
@@ -191,6 +193,7 @@ export function TerminalPane({
 
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const isTerminalActive = retainedPanelActive && isWorkspaceFocused;
   const supportsTerminalRestoreModes = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.["terminal-restore-modes"] === true,
   );
@@ -215,6 +218,8 @@ export function TerminalPane({
   const [resizeRequestToken, setResizeRequestToken] = useState(0);
   const emulatorRef = useRef<TerminalEmulatorHandle>(null);
   const terminalIdRef = useRef<string>(terminalId);
+  const terminalActiveRef = useRef(isTerminalActive);
+  terminalActiveRef.current = isTerminalActive;
   const inputModeRef = useRef<TerminalInputModeState>({
     kittyKeyboardFlags: 0,
     win32InputMode: false,
@@ -356,7 +361,7 @@ export function TerminalPane({
   );
 
   useEffect(() => {
-    if (!client || !isConnected || !isWorkspaceFocused) {
+    if (!client || !isConnected || !isTerminalActive) {
       return;
     }
 
@@ -379,7 +384,7 @@ export function TerminalPane({
       });
       setModifiers({ ...EMPTY_MODIFIERS });
     });
-  }, [client, isConnected, isWorkspaceFocused, workspaceTerminalSession.snapshots]);
+  }, [client, isConnected, isTerminalActive, workspaceTerminalSession.snapshots]);
 
   useEffect(() => {
     measuredTerminalSizeRef.current = null;
@@ -405,21 +410,21 @@ export function TerminalPane({
       client,
       getPreferredSize: () => lastSentTerminalSizeRef.current,
       onOutput: ({ terminalId: outputTerminalId, data }) => {
-        if (!isWorkspaceFocused || terminalIdRef.current !== outputTerminalId) {
+        if (!terminalActiveRef.current || terminalIdRef.current !== outputTerminalId) {
           return;
         }
         emulatorRef.current?.writeOutput(data);
       },
       onRestore: ({ terminalId: restoreTerminalId, data }) => {
         workspaceTerminalSession.snapshots.clear({ terminalId: restoreTerminalId });
-        if (!isWorkspaceFocused || terminalIdRef.current !== restoreTerminalId) {
+        if (!terminalActiveRef.current || terminalIdRef.current !== restoreTerminalId) {
           return;
         }
         emulatorRef.current?.restoreOutput(data);
       },
       onSnapshot: ({ terminalId: snapshotTerminalId, state }) => {
         workspaceTerminalSession.snapshots.set({ terminalId: snapshotTerminalId, state });
-        if (!isWorkspaceFocused || terminalIdRef.current !== snapshotTerminalId) {
+        if (!terminalActiveRef.current || terminalIdRef.current !== snapshotTerminalId) {
           return;
         }
         emulatorRef.current?.renderSnapshot(state);
@@ -435,7 +440,7 @@ export function TerminalPane({
 
     streamControllerRef.current = controller;
     controller.setTerminal({
-      terminalId: isWorkspaceFocused ? terminalIdRef.current : null,
+      terminalId: terminalActiveRef.current ? terminalIdRef.current : null,
     });
 
     return () => {
@@ -448,18 +453,17 @@ export function TerminalPane({
     client,
     handleStreamControllerStatus,
     isConnected,
-    isWorkspaceFocused,
     supportsTerminalRestoreModes,
     workspaceTerminalSession.snapshots,
   ]);
 
   useEffect(() => {
     pendingTerminalInputRef.current = [];
-    const nextTerminalId = isWorkspaceFocused ? terminalId : null;
+    const nextTerminalId = isTerminalActive ? terminalId : null;
     streamControllerRef.current?.setTerminal({
       terminalId: nextTerminalId,
     });
-  }, [isWorkspaceFocused, terminalId]);
+  }, [isTerminalActive, terminalId]);
 
   const enqueuePendingTerminalInput = useCallback((entry: PendingTerminalInput) => {
     const queue = pendingTerminalInputRef.current;
@@ -778,7 +782,7 @@ export function TerminalPane({
     onOpenFileExplorer();
   }, [swipeGesturesEnabled, onOpenFileExplorer]);
   const showLoadingOverlay = shouldShowTerminalLoadingOverlay({
-    isWorkspaceFocused,
+    isWorkspaceFocused: isTerminalActive,
     hasStreamError: Boolean(streamError),
     isAttaching,
     rendererReadyStreamKey,
@@ -796,38 +800,34 @@ export function TerminalPane({
   return (
     <Animated.View style={containerStyle}>
       <View style={styles.outputContainer}>
-        {isWorkspaceFocused ? (
-          <View style={styles.terminalGestureContainer}>
-            <TerminalEmulator
-              ref={emulatorRef}
-              dom={TERMINAL_EMULATOR_DOM_PROPS}
-              streamKey={terminalStreamKey}
-              testId="terminal-surface"
-              xtermTheme={xtermTheme}
-              scrollbackLines={settings.terminalScrollbackLines}
-              fontFamily={terminalFontFamily}
-              fontSize={settings.codeFontSize}
-              swipeGesturesEnabled={swipeGesturesEnabled}
-              initialSnapshot={initialSnapshot}
-              onRendererReadyChange={handleRendererReadyChange}
-              onSwipeRight={handleSwipeRight}
-              onSwipeLeft={handleSwipeLeft}
-              onInput={handleTerminalData}
-              onFocus={handleTerminalFocus}
-              onResize={handleTerminalResize}
-              onTerminalKey={handleTerminalKey}
-              onInputModeChange={handleInputModeChange}
-              onResolveLocalFileLink={handleResolveLocalFileLink}
-              onOpenLocalFileLink={handleOpenLocalFileLink}
-              onPendingModifiersConsumed={handlePendingModifiersConsumed}
-              pendingModifiers={modifiers}
-              focusRequestToken={focusRequestToken}
-              resizeRequestToken={resizeRequestToken}
-            />
-          </View>
-        ) : (
-          <View style={styles.terminalGestureContainer} />
-        )}
+        <View style={styles.terminalGestureContainer}>
+          <TerminalEmulator
+            ref={emulatorRef}
+            dom={TERMINAL_EMULATOR_DOM_PROPS}
+            streamKey={terminalStreamKey}
+            testId="terminal-surface"
+            xtermTheme={xtermTheme}
+            scrollbackLines={settings.terminalScrollbackLines}
+            fontFamily={terminalFontFamily}
+            fontSize={settings.codeFontSize}
+            swipeGesturesEnabled={swipeGesturesEnabled}
+            initialSnapshot={initialSnapshot}
+            onRendererReadyChange={handleRendererReadyChange}
+            onSwipeRight={handleSwipeRight}
+            onSwipeLeft={handleSwipeLeft}
+            onInput={handleTerminalData}
+            onFocus={handleTerminalFocus}
+            onResize={handleTerminalResize}
+            onTerminalKey={handleTerminalKey}
+            onInputModeChange={handleInputModeChange}
+            onResolveLocalFileLink={handleResolveLocalFileLink}
+            onOpenLocalFileLink={handleOpenLocalFileLink}
+            onPendingModifiersConsumed={handlePendingModifiersConsumed}
+            pendingModifiers={modifiers}
+            focusRequestToken={focusRequestToken}
+            resizeRequestToken={resizeRequestToken}
+          />
+        </View>
 
         {showLoadingOverlay ? (
           <View style={styles.attachOverlay} pointerEvents="none" testID="terminal-attach-loading">
