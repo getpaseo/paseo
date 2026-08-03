@@ -409,6 +409,56 @@ test("logs redacted query summary and never leaks sentinel secrets", async () =>
   }
 });
 
+test("delivers the prompt when a query restart is pending and no query exists", async () => {
+  sdkQueryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    const readPromptUuid = createPromptUuidReader(prompt);
+    let emittedResult = false;
+    return createBaseQueryMock(
+      vi.fn(async () => {
+        if (emittedResult) {
+          return { done: true, value: undefined };
+        }
+        emittedResult = true;
+        const uuid = await readPromptUuid();
+        return {
+          done: false,
+          value: {
+            type: "result",
+            subtype: "success",
+            session_id: "session-restart-pending",
+            usage: buildUsage(),
+            result: uuid ? "received prompt" : "missing prompt",
+          },
+        };
+      }),
+    );
+  });
+
+  const session = await createSession();
+  const internal: { query: unknown; queryRestartNeeded: boolean } = asInternals(session);
+  // A restart can be requested while the session has no live query (idle runtime
+  // released, rewind, model/thinking change before the first prompt). The flag must
+  // not survive query creation, or startQueryPump() tears down the input stream that
+  // sendPrompt() is about to write to.
+  expect(internal.query).toBeNull();
+  internal.queryRestartNeeded = true;
+
+  try {
+    const events = await collectUntilTerminal(streamSession(session, "hello"));
+    const failure = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "turn_failed" }> =>
+        event.type === "turn_failed",
+    );
+
+    expect(failure).toBeUndefined();
+    expect(events.some((event) => event.type === "turn_completed")).toBe(true);
+    expect(sdkQueryFactory).toHaveBeenCalledTimes(1);
+    expect(internal.queryRestartNeeded).toBe(false);
+  } finally {
+    await session.close();
+  }
+});
+
 test("interruptActiveTurn only interrupts the active query without info logs", async () => {
   const spy = createSpyLogger();
   const session = await createSessionWithLogger(spy.logger);

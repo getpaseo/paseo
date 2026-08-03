@@ -2190,11 +2190,14 @@ class ClaudeAgentSession implements AgentSession {
 
     try {
       await this.ensureQuery();
-      if (!this.input) {
+      const input = this.input;
+      if (!input) {
         throw new Error("Claude session input stream not initialized");
       }
+      // Push before starting the pump: startQueryPump() re-enters ensureQuery(), which can
+      // synchronously swap out this.input when a query restart is pending.
+      input.push(sdkMessage);
       this.startQueryPump();
-      this.input.push(sdkMessage);
       setTimeout(() => {
         if (this.activeForegroundTurnId === turnId) {
           this.emitSubmittedUserMessage(sdkMessage, turnId, options?.clientMessageId);
@@ -2924,6 +2927,13 @@ class ClaudeAgentSession implements AgentSession {
         this.childProcess = null;
       }
     }
+
+    // The query is about to be (re)created, so any pending restart request is satisfied.
+    // Clearing this unconditionally matters when a restart was requested while no query
+    // existed (idle runtime released, rewind, model/thinking change before the first
+    // prompt): otherwise the flag stays set and the next ensureQuery() call — reached
+    // synchronously from startQueryPump() — tears down the query/input we just handed out.
+    this.queryRestartNeeded = false;
 
     // Preserve claudeSessionId across query recreation so buildOptions() passes
     // resume: sessionId and the new query continues the existing conversation.
