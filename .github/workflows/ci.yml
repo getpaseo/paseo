@@ -244,11 +244,28 @@ jobs:
           PASEO_DESKTOP_SMOKE: "1"
           PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
 
+      - name: Build and smoke unpacked Windows desktop app
+        if: ${{ runner.os == 'Windows' }}
+        run: npm run build:desktop -- --publish never --win --x64 --dir
+        env:
+          EP_GH_IGNORE_TIME: true
+          PASEO_DESKTOP_SMOKE: "1"
+          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
+
       - name: Upload packaged smoke diagnostics
         uses: actions/upload-artifact@v4
         if: ${{ failure() && runner.os == 'Linux' }}
         with:
           name: desktop-packaged-smoke-linux-x64
+          path: ${{ runner.temp }}/desktop-smoke
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload Windows packaged smoke diagnostics
+        uses: actions/upload-artifact@v4
+        if: ${{ failure() && runner.os == 'Windows' }}
+        with:
+          name: desktop-packaged-smoke-windows-x64
           path: ${{ runner.temp }}/desktop-smoke
           if-no-files-found: ignore
           retention-days: 7

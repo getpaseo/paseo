@@ -47,7 +47,6 @@ describe("Windows native dependency preparation", () => {
       "--no-audit",
       "--no-fund",
       "--no-save",
-      "--force",
       "--os=win32",
       `--cpu=${arch}`,
     ]);

@@ -14,7 +14,6 @@ function getTargetNpmInstallArgs(platform, arch) {
     "--no-audit",
     "--no-fund",
     "--no-save",
-    "--force",
     `--os=${platform}`,
     `--cpu=${arch}`,
   ];
