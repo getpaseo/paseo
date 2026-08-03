@@ -166,6 +166,16 @@ function parseSettledAssistantImageMarkdown(prompt: AgentPromptInput): string | 
   return match?.[1] ?? null;
 }
 
+function parseSettledAssistantMarkdown(prompt: AgentPromptInput): string | null {
+  const text = promptToText(prompt);
+  const prefix = "emit settled assistant markdown:\n";
+  if (!text.toLowerCase().startsWith(prefix)) {
+    return null;
+  }
+  const markdown = text.slice(prefix.length).trim();
+  return markdown.length > 0 ? markdown : null;
+}
+
 function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRequest | null {
   const text = promptToText(prompt);
   if (!/emit\s+(?:a\s+)?synthetic\s+questions?/i.test(text)) {
@@ -684,6 +694,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     const questionPrompt = parseMockQuestionPrompt(prompt);
     const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
     const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
+    const settledAssistantMarkdown = parseSettledAssistantMarkdown(prompt);
     const scheduleTurn = () => {
       if (shouldEmitTurnFailure(prompt)) {
         this.scheduleFailedTurn(turn);
@@ -691,6 +702,8 @@ export class MockLoadTestAgentSession implements AgentSession {
         this.scheduleSettledAssistantTurn(turn, JSON.stringify(structuredBranchName));
       } else if (settledAssistantImageMarkdown) {
         this.scheduleSettledAssistantTurn(turn, settledAssistantImageMarkdown);
+      } else if (settledAssistantMarkdown) {
+        this.scheduleSettledAssistantTurn(turn, settledAssistantMarkdown);
       } else if (shouldEmitPlanApprovalPrompt(prompt)) {
         this.schedulePlanApprovalTurn(turn);
       } else if (questionPrompt) {

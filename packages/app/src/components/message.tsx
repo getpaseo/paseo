@@ -70,7 +70,13 @@ import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
+import { MermaidDiagram } from "@/components/mermaid-diagram";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import {
+  installMarkdownFenceMetadata,
+  isClosedFenceMetadata,
+  isMermaidFenceInfo,
+} from "@/utils/markdown-fence";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
@@ -1430,6 +1436,7 @@ export const AssistantMessage = memo(function AssistantMessage({
 }: AssistantMessageProps) {
   const markdownParser = useMemo(() => {
     const parser = MarkdownIt({ typographer: true, linkify: true });
+    installMarkdownFenceMetadata(parser);
     const defaultValidateLink = parser.validateLink.bind(parser);
     parser.validateLink = (url: string) => {
       if (url.trim().toLowerCase().startsWith("file://")) {
@@ -1582,15 +1589,30 @@ export const AssistantMessage = memo(function AssistantMessage({
         _parent: ASTNode[],
         styles: MarkdownStyles,
         inheritedStyles: TextStyle = {},
-      ) => (
-        <HighlightedCodeBlock
-          key={node.key}
-          code={node.content}
-          language={node.sourceInfo}
-          inheritedStyles={inheritedStyles}
-          textStyle={styles.fence}
-        />
-      ),
+      ) => {
+        const sourceMeta = Reflect.get(node, "sourceMeta");
+        if (isMermaidFenceInfo(node.sourceInfo)) {
+          return (
+            <MermaidDiagram
+              key={node.key}
+              code={node.content}
+              isComplete={isClosedFenceMetadata(sourceMeta)}
+              inheritedStyles={inheritedStyles}
+              textStyle={styles.fence}
+            />
+          );
+        }
+
+        return (
+          <HighlightedCodeBlock
+            key={node.key}
+            code={node.content}
+            language={node.sourceInfo}
+            inheritedStyles={inheritedStyles}
+            textStyle={styles.fence}
+          />
+        );
+      },
       code_inline: (
         node: ASTNode,
         _children: ReactNode[],

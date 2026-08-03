@@ -275,6 +275,16 @@ export const ar: TranslationResources = {
       openFile: "افتح الملف",
       copied: "منقول",
     },
+    mermaid: {
+      title: "مخطط Mermaid",
+      zoomOut: "تصغير",
+      zoomIn: "تكبير",
+      fit: "ملاءمة المخطط",
+      copySource: "نسخ مصدر المخطط",
+      waiting: "في انتظار اكتمال المخطط...",
+      rendering: "جارٍ رسم المخطط...",
+      renderFailed: "تعذر رسم المخطط",
+    },
     attachments: {
       dismissImage: "تجاهل الصورة",
       closeImage: "إغلاق الصورة",

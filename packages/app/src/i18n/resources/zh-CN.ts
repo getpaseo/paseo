@@ -275,6 +275,16 @@ export const zhCN: TranslationResources = {
       openFile: "打开文件",
       copied: "已复制",
     },
+    mermaid: {
+      title: "Mermaid 图表",
+      zoomOut: "缩小",
+      zoomIn: "放大",
+      fit: "适应图表",
+      copySource: "复制图表源码",
+      waiting: "正在等待图表...",
+      rendering: "正在渲染图表...",
+      renderFailed: "无法渲染图表",
+    },
     attachments: {
       dismissImage: "关闭图片",
       closeImage: "关闭图片",

@@ -28,6 +28,57 @@ import {
 const SCROLL_AWAY_MIN_SCROLLABLE_DISTANCE = 360;
 
 test.describe("Agent stream UI", () => {
+  test("renders Mermaid diagrams with camera controls and an inline source fallback", async ({
+    page,
+  }, testInfo) => {
+    const markdown = [
+      "```mermaid",
+      "flowchart LR",
+      "  Browser --> Paseo",
+      "  Paseo --> Agent",
+      "```",
+      "",
+      "```mermaid",
+      "this is not a valid diagram",
+      "```",
+    ].join("\n");
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "mermaid-diagram-",
+      title: "Mermaid diagram",
+      initialPrompt: `Emit settled assistant markdown:\n${markdown}`,
+    });
+    try {
+      await agent.client.waitForFinish(agent.agentId, 30_000);
+      await openAgentRoute(page, agent);
+
+      const diagrams = page.getByTestId("mermaid-diagram");
+      await expect(diagrams).toHaveCount(2);
+      const renderedDiagram = diagrams.first();
+      await expect(
+        renderedDiagram.getByTestId("mermaid-diagram-viewport").locator("svg"),
+      ).toBeVisible({ timeout: 30_000 });
+
+      const zoomIn = renderedDiagram.getByTestId("mermaid-zoom-in");
+      const zoomOut = renderedDiagram.getByTestId("mermaid-zoom-out");
+      const fit = renderedDiagram.getByTestId("mermaid-fit");
+      await expect(zoomIn).toBeEnabled();
+      await expect(zoomOut).toBeDisabled();
+      await zoomIn.click();
+      await expect(zoomOut).toBeEnabled();
+      await fit.click();
+      await expect(zoomOut).toBeDisabled();
+
+      await expect(diagrams.nth(1)).toContainText("Unable to render diagram");
+      await expect(diagrams.nth(1)).toContainText("this is not a valid diagram");
+      await testInfo.attach("mermaid-diagram", {
+        body: await renderedDiagram.screenshot(),
+        contentType: "image/png",
+      });
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("keeps running agent chrome after page refresh", async ({ page }) => {
     const title = "Running agent refresh";
     const agent = await seedRunningMockAgentWorkspace({

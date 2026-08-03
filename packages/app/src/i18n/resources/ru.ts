@@ -277,6 +277,16 @@ export const ru: TranslationResources = {
       openFile: "Открыть файл",
       copied: "Скопировано",
     },
+    mermaid: {
+      title: "Диаграмма Mermaid",
+      zoomOut: "Уменьшить",
+      zoomIn: "Увеличить",
+      fit: "Вместить диаграмму",
+      copySource: "Скопировать код диаграммы",
+      waiting: "Ожидание диаграммы...",
+      rendering: "Построение диаграммы...",
+      renderFailed: "Не удалось построить диаграмму",
+    },
     attachments: {
       dismissImage: "Закрыть изображение",
       closeImage: "Закрыть изображение",

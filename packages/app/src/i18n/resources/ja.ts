@@ -278,6 +278,16 @@ export const ja: TranslationResources = {
       openFile: "ファイルを開く",
       copied: "コピーしました",
     },
+    mermaid: {
+      title: "Mermaid ダイアグラム",
+      zoomOut: "縮小",
+      zoomIn: "拡大",
+      fit: "全体を表示",
+      copySource: "ダイアグラムのソースをコピー",
+      waiting: "ダイアグラムを待機中...",
+      rendering: "ダイアグラムを描画中...",
+      renderFailed: "ダイアグラムを描画できません",
+    },
     attachments: {
       dismissImage: "画像を閉じる",
       closeImage: "画像を閉じる",

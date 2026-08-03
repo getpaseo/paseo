@@ -2,6 +2,8 @@ import { createContext, useContext, useCallback, useMemo, useRef, type ReactNode
 import { useSharedValue, type SharedValue } from "react-native-reanimated";
 
 interface HorizontalScrollContextValue {
+  // Shared value indicating that an embedded interaction surface owns the active touch.
+  isGestureSuppressed: SharedValue<boolean>;
   // Shared value indicating if any registered horizontal scroll is scrolled (offset > 0)
   isAnyScrolledRight: SharedValue<boolean>;
   // Register a scroll view's offset - returns an unregister function
@@ -12,6 +14,7 @@ interface HorizontalScrollContextValue {
 const HorizontalScrollContext = createContext<HorizontalScrollContextValue | null>(null);
 
 export function HorizontalScrollProvider({ children }: { children: ReactNode }) {
+  const isGestureSuppressed = useSharedValue(false);
   const isAnyScrolledRight = useSharedValue(false);
   const scrollOffsetsRef = useRef<Map<string, number>>(new Map());
 
@@ -44,11 +47,12 @@ export function HorizontalScrollProvider({ children }: { children: ReactNode }) 
 
   const contextValue = useMemo(
     () => ({
+      isGestureSuppressed,
       isAnyScrolledRight,
       registerScrollOffset,
       unregisterScrollOffset,
     }),
-    [isAnyScrolledRight, registerScrollOffset, unregisterScrollOffset],
+    [isAnyScrolledRight, isGestureSuppressed, registerScrollOffset, unregisterScrollOffset],
   );
 
   return (

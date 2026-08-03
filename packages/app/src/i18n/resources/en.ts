@@ -274,6 +274,16 @@ export const en = {
       openFile: "Open file",
       copied: "Copied",
     },
+    mermaid: {
+      title: "Mermaid diagram",
+      zoomOut: "Zoom out",
+      zoomIn: "Zoom in",
+      fit: "Fit diagram",
+      copySource: "Copy diagram source",
+      waiting: "Waiting for diagram...",
+      rendering: "Rendering diagram...",
+      renderFailed: "Unable to render diagram",
+    },
     attachments: {
       dismissImage: "Dismiss image",
       closeImage: "Close image",
