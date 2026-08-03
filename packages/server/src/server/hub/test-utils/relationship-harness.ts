@@ -245,6 +245,7 @@ class ControlledAgentClient implements AgentClient {
   readonly provider;
   readonly capabilities;
   private gate: Deferred<void> | null = null;
+  private heldCreationCwd: string | null = null;
   private creationObserved = deferred<void>();
   creations = 0;
   resumes = 0;
@@ -255,8 +256,9 @@ class ControlledAgentClient implements AgentClient {
     this.capabilities = client.capabilities;
   }
 
-  holdCreation(): void {
+  holdCreation(cwd?: string): void {
     this.gate = deferred<void>();
+    this.heldCreationCwd = cwd ?? null;
   }
 
   async creationAt(count: number): Promise<void> {
@@ -266,10 +268,18 @@ class ControlledAgentClient implements AgentClient {
     }
   }
 
+  async creationAtCwd(cwd: string, after: number): Promise<void> {
+    while (!this.createdConfigs.slice(after).some((config) => config.cwd === cwd)) {
+      await this.creationObserved.promise;
+      this.creationObserved = deferred<void>();
+    }
+  }
+
   finishCreation(): void {
     if (!this.gate) throw new Error("Agent creation is not held");
     this.gate.resolve();
     this.gate = null;
+    this.heldCreationCwd = null;
   }
 
   async createSession(
@@ -280,7 +290,9 @@ class ControlledAgentClient implements AgentClient {
     this.creations++;
     this.createdConfigs.push({ ...config });
     this.creationObserved.resolve();
-    await this.gate?.promise;
+    if (this.gate && (!this.heldCreationCwd || this.heldCreationCwd === config.cwd)) {
+      await this.gate.promise;
+    }
     return this.client.createSession(config, launchContext, options);
   }
 
@@ -687,6 +699,10 @@ export class HubRelationshipHarness {
     this.codex.holdCreation();
   }
 
+  holdAgentCreationAtCwd(cwd: string): void {
+    this.codex.holdCreation(cwd);
+  }
+
   beginOwnedCreate(
     requestId: string,
     executionId = "execution-race",
@@ -695,6 +711,8 @@ export class HubRelationshipHarness {
       prompt?: string;
       modeId?: string;
       mcpServers?: AgentSessionConfig["mcpServers"];
+      cwd?: string;
+      workspaceId?: string;
     } = {},
   ): void {
     const { prompt = "Create through the Hub", ...requestOptions } = options;
@@ -712,6 +730,10 @@ export class HubRelationshipHarness {
 
   async agentCreationAttempts(count: number): Promise<void> {
     await this.codex.creationAt(count);
+  }
+
+  async agentCreationAtCwd(cwd: string, after: number): Promise<void> {
+    await this.codex.creationAtCwd(cwd, after);
   }
 
   finishAgentCreation(): void {

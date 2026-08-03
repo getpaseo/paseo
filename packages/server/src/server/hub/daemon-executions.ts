@@ -273,7 +273,14 @@ export class DaemonExecutions implements HubExecutionAgents {
     }
     if (workspace?.isPaseoOwnedWorktree) {
       this.requireAuthority(authorityGeneration, "execution control");
-      await this.options.archiveWorkspace(workspace.workspaceId, input.requestId);
+      await this.agentManager.releaseWorkspaceIfUnowned({
+        workspaceId: workspace.workspaceId,
+        finishedAgentId: record.id,
+        release: async () => {
+          this.requireAuthority(authorityGeneration, "execution control");
+          await this.options.archiveWorkspace(workspace.workspaceId, input.requestId);
+        },
+      });
     }
   }
 

@@ -267,6 +267,12 @@ export interface AgentManagerOptions {
   logger: Logger;
 }
 
+export interface ReleaseWorkspaceIfUnownedOptions {
+  workspaceId: string;
+  finishedAgentId: string;
+  release: () => Promise<void>;
+}
+
 export interface WaitForAgentOptions {
   signal?: AbortSignal;
   waitForActive?: boolean;
@@ -618,6 +624,8 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
+  private readonly workspaceAgentRegistrations = new Map<string, number>();
+  private readonly releasingWorkspaces = new Set<string>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -1060,7 +1068,11 @@ export class AgentManager {
     agentId: string | undefined,
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.createAgentInternal(config, agentId, options));
+    return this.trackAgentRegistrationOperation(
+      this.trackWorkspaceAgentRegistration(options.workspaceId, () =>
+        this.createAgentInternal(config, agentId, options),
+      ),
+    );
   }
 
   private async createAgentInternal(
@@ -1123,7 +1135,9 @@ export class AgentManager {
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
-      this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
+      this.trackWorkspaceAgentRegistration(options?.workspaceId, () =>
+        this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
+      ),
     );
   }
 
@@ -1186,7 +1200,11 @@ export class AgentManager {
     workspaceId: string;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
+    return this.trackAgentRegistrationOperation(
+      this.trackWorkspaceAgentRegistration(input.workspaceId, () =>
+        this.importProviderSessionInternal(input),
+      ),
+    );
   }
 
   private async importProviderSessionInternal(input: {
@@ -1499,6 +1517,40 @@ export class AgentManager {
     await this.cascadeArchiveChildren(agentId);
 
     return { archivedAt };
+  }
+
+  async releaseWorkspaceIfUnowned(options: ReleaseWorkspaceIfUnownedOptions): Promise<boolean> {
+    const { workspaceId, finishedAgentId } = options;
+    // Registration and release claim opposing state before their first await, so
+    // JavaScript run-to-completion makes this ownership handoff atomic.
+    if (
+      this.releasingWorkspaces.has(workspaceId) ||
+      (this.workspaceAgentRegistrations.get(workspaceId) ?? 0) > 0
+    ) {
+      return false;
+    }
+
+    this.releasingWorkspaces.add(workspaceId);
+    try {
+      if (this.hasLiveAgentInWorkspace(workspaceId)) {
+        return false;
+      }
+
+      const records = await this.requireRegistry().list();
+      const finishedRecord = records.find((record) => record.id === finishedAgentId);
+      if (
+        !finishedRecord?.archivedAt ||
+        finishedRecord.workspaceId !== workspaceId ||
+        records.some((record) => record.workspaceId === workspaceId && !record.archivedAt)
+      ) {
+        return false;
+      }
+
+      await options.release();
+      return true;
+    } finally {
+      this.releasingWorkspaces.delete(workspaceId);
+    }
   }
 
   // Children created via the MCP `create_agent` tool carry the parent-agent-id
@@ -4216,6 +4268,49 @@ export class AgentManager {
       return undefined;
     });
     return result;
+  }
+
+  private trackWorkspaceAgentRegistration<T>(
+    workspaceId: string | undefined,
+    register: () => Promise<T>,
+  ): Promise<T> {
+    if (!workspaceId) {
+      return register();
+    }
+    if (this.releasingWorkspaces.has(workspaceId)) {
+      return Promise.reject(new Error(`Workspace ${workspaceId} is being released`));
+    }
+
+    this.workspaceAgentRegistrations.set(
+      workspaceId,
+      (this.workspaceAgentRegistrations.get(workspaceId) ?? 0) + 1,
+    );
+    let registration: Promise<T>;
+    try {
+      registration = register();
+    } catch (error) {
+      this.finishWorkspaceAgentRegistration(workspaceId);
+      throw error;
+    }
+    return registration.finally(() => this.finishWorkspaceAgentRegistration(workspaceId));
+  }
+
+  private finishWorkspaceAgentRegistration(workspaceId: string): void {
+    const remaining = (this.workspaceAgentRegistrations.get(workspaceId) ?? 1) - 1;
+    if (remaining === 0) {
+      this.workspaceAgentRegistrations.delete(workspaceId);
+    } else {
+      this.workspaceAgentRegistrations.set(workspaceId, remaining);
+    }
+  }
+
+  private hasLiveAgentInWorkspace(workspaceId: string): boolean {
+    for (const agent of this.agents.values()) {
+      if (agent.workspaceId === workspaceId) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
