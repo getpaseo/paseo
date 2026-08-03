@@ -52,9 +52,10 @@ function armDelayedScrollForHiddenChat(page: Page): Promise<void> {
     });
 }
 
-test("a long chat remains at the bottom through viewport geometry changes", async ({ page }) => {
+test("a stationary pointer cannot turn geometry changes into scroll intent", async ({ page }) => {
   test.setTimeout(240_000);
   const longChat = await seedLongMockAgentTimeline({ turns: 30 });
+  const backgroundPrompt = "Continue after a pointer is released outside the chat";
 
   try {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -62,9 +63,19 @@ test("a long chat remains at the bottom through viewport geometry changes", asyn
     await expectTimelinePromptVisible(page, longChat.newestPrompt);
     await expectChatAtBottom(page);
 
+    const scroll = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+    const bounds = await scroll.boundingBox();
+    expect(bounds, "Expected visible chat scroll bounds").not.toBeNull();
+    await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+    await page.mouse.down();
     await page.setViewportSize({ width: 390, height: 1124 });
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.mouse.move(410, bounds!.y + bounds!.height / 2);
+    await page.mouse.up();
 
+    await longChat.client.sendAgentMessage(longChat.agentId, backgroundPrompt);
+    await longChat.client.waitForFinish(longChat.agentId, 20_000);
+    await expectTimelinePromptVisible(page, backgroundPrompt);
     await expectChatAtBottom(page);
   } finally {
     await longChat.cleanup();

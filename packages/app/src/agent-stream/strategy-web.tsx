@@ -193,8 +193,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return value;
   };
   const lastKnownScrollTopRef = useRef(0);
-  const pendingUserScrollUpIntentRef = useRef(false);
-  const isPointerScrollActiveRef = useRef(false);
+  const mouseDragRef = useRef<{ pointerId: number; lastClientY: number } | null>(null);
   const lastTouchClientYRef = useRef<number | null>(null);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
   const pendingAutoScrollTimeoutRef = useRef<number | null>(null);
@@ -467,8 +466,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       window.cancelAnimationFrame(frame);
     }
     pendingVirtualRowMeasureFramesRef.current.clear();
-    pendingUserScrollUpIntentRef.current = false;
-    isPointerScrollActiveRef.current = false;
+    mouseDragRef.current = null;
     lastTouchClientYRef.current = null;
   }, [cancelPendingStickToBottom, isActive]);
 
@@ -572,6 +570,14 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     onNearBottomChange,
   });
 
+  const stopFollowingOutputFromUserIntent = useStableEvent(() => {
+    cancelPendingStickToBottom();
+    if (followOutputRef.current) {
+      setFollowOutput(false);
+    }
+    rearmHistoryStartFromUserIntent();
+  });
+
   const handleDomScroll = useCallback(() => {
     const scrollContainer = scrollContainerRef.current;
     if (!isActiveRef.current || !scrollContainer || !isScrollContainerMeasurable(scrollContainer)) {
@@ -580,35 +586,17 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
     const currentScrollTop = scrollContainer.scrollTop;
     const isAtBottom = isScrollContainerAtBottom(scrollContainer);
-    const scrolledUp = currentScrollTop < lastKnownScrollTopRef.current - USER_SCROLL_DELTA_EPSILON;
     const scrolledDown =
       currentScrollTop > lastKnownScrollTopRef.current + USER_SCROLL_DELTA_EPSILON;
 
-    const hasUserScrollUpIntent =
-      pendingUserScrollUpIntentRef.current || isPointerScrollActiveRef.current;
-
     if (!followOutputRef.current && isAtBottom && scrolledDown && !isJumpSettling()) {
       setFollowOutput(true);
-      pendingUserScrollUpIntentRef.current = false;
-    } else if (followOutputRef.current && hasUserScrollUpIntent && (scrolledUp || !isAtBottom)) {
-      cancelPendingStickToBottom();
-      setFollowOutput(false);
-      pendingUserScrollUpIntentRef.current = false;
-      rearmHistoryStartFromUserIntent();
-    } else if (pendingUserScrollUpIntentRef.current) {
-      pendingUserScrollUpIntentRef.current = false;
     }
 
     lastKnownScrollTopRef.current = currentScrollTop;
     updateScrollMetrics();
     evaluateHistoryStart();
-  }, [
-    cancelPendingStickToBottom,
-    evaluateHistoryStart,
-    isJumpSettling,
-    rearmHistoryStartFromUserIntent,
-    updateScrollMetrics,
-  ]);
+  }, [evaluateHistoryStart, isJumpSettling, updateScrollMetrics]);
 
   useEffect(() => {
     const initialHistoryStartState = createHistoryStartPaginationState();
@@ -756,24 +744,42 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
     const handleWheel = (event: WheelEvent) => {
       if (event.deltaY < 0) {
-        pendingUserScrollUpIntentRef.current = true;
-        cancelPendingStickToBottom();
-        rearmHistoryStartFromUserIntent();
+        stopFollowingOutputFromUserIntent();
       }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!isUpwardScrollKey(event)) {
         return;
       }
-      pendingUserScrollUpIntentRef.current = true;
-      cancelPendingStickToBottom();
-      rearmHistoryStartFromUserIntent();
+      stopFollowingOutputFromUserIntent();
     };
-    const handlePointerDown = () => {
-      isPointerScrollActiveRef.current = true;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.pointerType !== "mouse" || !event.isPrimary || event.button !== 0) {
+        return;
+      }
+      mouseDragRef.current = { pointerId: event.pointerId, lastClientY: event.clientY };
     };
-    const handlePointerUp = () => {
-      isPointerScrollActiveRef.current = false;
+    const handlePointerMove = (event: PointerEvent) => {
+      const drag = mouseDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) {
+        return;
+      }
+      if ((event.buttons & 1) === 0) {
+        mouseDragRef.current = null;
+        return;
+      }
+      if (event.clientY < drag.lastClientY - 1) {
+        stopFollowingOutputFromUserIntent();
+      }
+      drag.lastClientY = event.clientY;
+    };
+    const handlePointerEnd = (event: PointerEvent) => {
+      if (mouseDragRef.current?.pointerId === event.pointerId) {
+        mouseDragRef.current = null;
+      }
+    };
+    const handlePointerInactivity = () => {
+      mouseDragRef.current = null;
     };
     const handleTouchStart = (event: TouchEvent) => {
       const touch = event.touches[0];
@@ -789,9 +795,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       }
       const previousTouchY = lastTouchClientYRef.current;
       if (previousTouchY !== null && touch.clientY > previousTouchY + 1) {
-        pendingUserScrollUpIntentRef.current = true;
-        cancelPendingStickToBottom();
-        rearmHistoryStartFromUserIntent();
+        stopFollowingOutputFromUserIntent();
       }
       lastTouchClientYRef.current = touch.clientY;
     };
@@ -803,8 +807,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     scrollContainer.addEventListener("wheel", handleWheel, { passive: true });
     scrollContainer.addEventListener("keydown", handleKeyDown, { passive: true });
     scrollContainer.addEventListener("pointerdown", handlePointerDown, { passive: true });
-    scrollContainer.addEventListener("pointerup", handlePointerUp, { passive: true });
-    scrollContainer.addEventListener("pointercancel", handlePointerUp, { passive: true });
+    window.addEventListener("pointermove", handlePointerMove, { passive: true });
+    window.addEventListener("pointerup", handlePointerEnd, { passive: true });
+    window.addEventListener("pointercancel", handlePointerEnd, { passive: true });
+    window.addEventListener("blur", handlePointerInactivity);
     scrollContainer.addEventListener("touchstart", handleTouchStart, { passive: true });
     scrollContainer.addEventListener("touchmove", handleTouchMove, { passive: true });
     scrollContainer.addEventListener("touchend", handleTouchEnd, { passive: true });
@@ -815,14 +821,16 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       scrollContainer.removeEventListener("wheel", handleWheel);
       scrollContainer.removeEventListener("keydown", handleKeyDown);
       scrollContainer.removeEventListener("pointerdown", handlePointerDown);
-      scrollContainer.removeEventListener("pointerup", handlePointerUp);
-      scrollContainer.removeEventListener("pointercancel", handlePointerUp);
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
+      window.removeEventListener("blur", handlePointerInactivity);
       scrollContainer.removeEventListener("touchstart", handleTouchStart);
       scrollContainer.removeEventListener("touchmove", handleTouchMove);
       scrollContainer.removeEventListener("touchend", handleTouchEnd);
       scrollContainer.removeEventListener("touchcancel", handleTouchEnd);
     };
-  }, [cancelPendingStickToBottom, handleDomScroll, isActive, rearmHistoryStartFromUserIntent]);
+  }, [handleDomScroll, isActive, stopFollowingOutputFromUserIntent]);
 
   useEffect(() => {
     const handle: StreamViewportHandle = {
