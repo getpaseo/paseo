@@ -27,6 +27,114 @@ test("sequential replay after reconstruction keeps one durable owned agent", asy
   expect(reconstructed.durableAgentCount).toBe(1);
 });
 
+test("Hub MCP configuration reaches the provider alongside Paseo MCP without entering snapshots", async () => {
+  const hub = await HubRelationshipHarness.startWithAgentMcp();
+  await hub.beginConnect().result;
+  hub.connectLatestSocket();
+  relationship = hub;
+  const bearer = "hub-execution-bearer";
+  hub.beginOwnedCreate("mcp-create", "mcp-execution", {
+    mcpServers: {
+      hub: {
+        type: "http",
+        url: "https://hub.test/mcp/executions/mcp-execution",
+        headers: { Authorization: `Bearer ${bearer}` },
+      },
+    },
+  });
+
+  const response = await hub.ownedCreateResult("mcp-create");
+
+  expect(hub.latestProviderCreateConfig()?.mcpServers).toMatchObject({
+    paseo: { type: "http" },
+    hub: {
+      type: "http",
+      url: "https://hub.test/mcp/executions/mcp-execution",
+      headers: { Authorization: `Bearer ${bearer}` },
+    },
+  });
+  expect(response).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, agent: { provider: "codex" } },
+  });
+  expect(response.payload.agent).not.toHaveProperty("config");
+  expect(response.payload.agent).not.toHaveProperty("mcpServers");
+  expect(response.payload.agent.persistence?.metadata).toEqual({
+    conversationId: response.payload.agent.persistence?.sessionId,
+    cwd: response.payload.agent.cwd,
+  });
+  expect(JSON.stringify(response.payload.agent)).not.toContain(bearer);
+
+  const update = hub.hubMessages().find((message) => message.type === "hub.execution.agent.update");
+  expect(update).toMatchObject({
+    type: "hub.execution.agent.update",
+    payload: { agent: { provider: "codex" } },
+  });
+  if (!update || update.type !== "hub.execution.agent.update") {
+    throw new Error("Expected a Hub execution agent update");
+  }
+  expect(update.payload.agent).not.toHaveProperty("config");
+  expect(update.payload.agent).not.toHaveProperty("mcpServers");
+  expect(update.payload.agent.persistence?.metadata).toEqual({
+    conversationId: update.payload.agent.persistence?.sessionId,
+    cwd: update.payload.agent.cwd,
+  });
+  expect(JSON.stringify(update.payload.agent)).not.toContain(bearer);
+});
+
+test("new Hub executions cannot override the daemon-owned Paseo MCP server", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("reserved-mcp-create", "reserved-mcp-execution", {
+    mcpServers: {
+      paseo: { type: "http", url: "https://hub.test/replace-paseo" },
+    },
+  });
+
+  const response = await hub.ownedCreateResult("reserved-mcp-create");
+
+  expect(response).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: {
+      success: false,
+      executionId: "reserved-mcp-execution",
+      agentId: null,
+      agent: null,
+    },
+  });
+  expect(hub.providerCreations()).toBe(0);
+  expect(hub.activeOwnedAgentIds()).toEqual([]);
+  expect(await hub.durableOwnedAgentIds()).toEqual([]);
+});
+
+test("reserved Paseo MCP input does not invalidate replay of an owned execution", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("original-create", "replayed-execution");
+  const original = await hub.ownedCreateResult("original-create");
+  expect(original).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, executionId: "replayed-execution" },
+  });
+  const providerCreations = hub.providerCreations();
+
+  hub.beginOwnedCreate("replay-create", "replayed-execution", {
+    mcpServers: {
+      paseo: { type: "http", url: "https://hub.test/replace-paseo" },
+    },
+  });
+  const replay = await hub.ownedCreateResult("replay-create");
+
+  expect(replay).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: {
+      success: true,
+      executionId: "replayed-execution",
+      agentId: original.payload.agentId,
+    },
+  });
+  expect(hub.providerCreations()).toBe(providerCreations);
+  expect(await hub.durableOwnedAgentIds()).toEqual([original.payload.agentId]);
+});
+
 test("removing a daemon-owned agent removes its execution association", async () => {
   const hub = await launchRelationship();
   const created = await hub.createOwnedConcurrently();
