@@ -468,6 +468,14 @@ export const en = {
       hostDisconnected: "Host is not connected",
       unableToSubscribe: "Unable to subscribe to terminal",
     },
+    repositoryGraph: {
+      loading: "Loading repository history...",
+      loadError: "Unable to load repository history",
+      retry: "Retry",
+      empty: "No commits found",
+      updateHost: "Update the host to view the repository graph",
+      limit: "Showing the latest {{count}} commits",
+    },
     tabs: {
       loading: "Loading...",
       modified: "Unsaved changes",
@@ -524,6 +532,7 @@ export const en = {
         close: "Close explorer",
         toggle: "Toggle explorer",
         changes: "Changes",
+        repositoryGraph: "Repository Graph",
         files: "Files",
       },
       toasts: {

@@ -473,6 +473,14 @@ export const ja: TranslationResources = {
       hostDisconnected: "ホストが接続されていません",
       unableToSubscribe: "ターミナルに接続できません",
     },
+    repositoryGraph: {
+      loading: "リポジトリ履歴を読み込み中...",
+      loadError: "リポジトリ履歴を読み込めませんでした",
+      retry: "再試行",
+      empty: "コミットが見つかりません",
+      updateHost: "リポジトリグラフを表示するにはホストを更新してください",
+      limit: "最新の{{count}}件のコミットを表示",
+    },
     tabs: {
       loading: "読み込み中...",
       modified: "未保存の変更",
@@ -530,6 +538,7 @@ export const ja: TranslationResources = {
         close: "エクスプローラーを閉じる",
         toggle: "エクスプローラーを切り替え",
         changes: "変更",
+        repositoryGraph: "リポジトリグラフ",
         files: "ファイル",
       },
       toasts: {

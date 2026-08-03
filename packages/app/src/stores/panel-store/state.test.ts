@@ -96,6 +96,34 @@ describe("panel-store explorer tab resolution", () => {
       }),
     ).toBe("files");
   });
+
+  it("restores a stored repository graph tab for git checkouts", () => {
+    const key = buildExplorerCheckoutKey(serverId, cwd)!;
+    expect(
+      resolveExplorerTabForCheckout({
+        serverId,
+        cwd,
+        isGit: true,
+        explorerTabByCheckout: {
+          [key]: "repository_graph",
+        },
+      }),
+    ).toBe("repository_graph");
+  });
+
+  it("coerces a stored repository graph tab to files for non-git checkouts", () => {
+    const key = buildExplorerCheckoutKey(serverId, cwd)!;
+    expect(
+      resolveExplorerTabForCheckout({
+        serverId,
+        cwd,
+        isGit: false,
+        explorerTabByCheckout: {
+          [key]: "repository_graph",
+        },
+      }),
+    ).toBe("files");
+  });
 });
 
 describe("panel-store migration", () => {

@@ -469,6 +469,14 @@ export const zhCN: TranslationResources = {
       hostDisconnected: "Host 未连接",
       unableToSubscribe: "无法订阅 Terminal",
     },
+    repositoryGraph: {
+      loading: "正在加载仓库历史...",
+      loadError: "无法加载仓库历史",
+      retry: "重试",
+      empty: "未找到提交",
+      updateHost: "请更新 Host 以查看仓库图",
+      limit: "显示最近 {{count}} 个提交",
+    },
     tabs: {
       loading: "正在加载...",
       modified: "未保存的更改",
@@ -525,6 +533,7 @@ export const zhCN: TranslationResources = {
         close: "关闭 explorer",
         toggle: "切换 explorer",
         changes: "变更",
+        repositoryGraph: "仓库图",
         files: "文件",
       },
       toasts: {

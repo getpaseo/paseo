@@ -39,6 +39,10 @@ export function checkoutCommitsQueryKey(serverId: string, cwd: string) {
   return ["checkoutCommits", serverId, cwd] as const;
 }
 
+export function repositoryGraphQueryKey(serverId: string, cwd: string) {
+  return ["repositoryGraph", serverId, cwd] as const;
+}
+
 export function checkoutCommitFileDiffQueryKey(
   serverId: string,
   cwd: string,
@@ -66,6 +70,9 @@ export async function invalidateCheckoutGitQueriesForClient(
       queryKey: checkoutCommitsQueryKey(identity.serverId, identity.cwd),
     }),
     queryClient.invalidateQueries({
+      queryKey: repositoryGraphQueryKey(identity.serverId, identity.cwd),
+    }),
+    queryClient.invalidateQueries({
       predicate: checkoutQueryPredicate(prPaneTimelineQueryKind, identity),
     }),
     queryClient.invalidateQueries({
@@ -85,6 +92,7 @@ export async function invalidateCheckoutGitQueriesForServer(
     "checkoutStatus",
     "checkoutPrStatus",
     "checkoutCommits",
+    "repositoryGraph",
     prPaneTimelineQueryKind,
     prPanePipelineQueryKind,
   ];

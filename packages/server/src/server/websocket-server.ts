@@ -1575,6 +1575,8 @@ export class VoiceAssistantWebSocketServer {
         commitsList: true,
         // COMPAT(commitBaseClassification): added in v0.2.0, remove gate after 2027-01-23.
         commitBaseClassification: true,
+        // COMPAT(repositoryGraph): added in v0.2.5, remove gate after 2027-02-03.
+        repositoryGraph: true,
         // COMPAT(providerRemoval): added in v0.1.105, drop the gate when floor >= v0.1.105.
         providerRemoval: true,
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.

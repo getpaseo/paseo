@@ -473,6 +473,14 @@ export const es: TranslationResources = {
       hostDisconnected: "Hostno está conectado",
       unableToSubscribe: "No se puede suscribir al terminal",
     },
+    repositoryGraph: {
+      loading: "Cargando historial del repositorio...",
+      loadError: "No se pudo cargar el historial del repositorio",
+      retry: "Reintentar",
+      empty: "No se encontraron commits",
+      updateHost: "Actualiza el host para ver el gráfico del repositorio",
+      limit: "Mostrando los últimos {{count}} commits",
+    },
     tabs: {
       loading: "Cargando...",
       modified: "Cambios sin guardar",
@@ -530,6 +538,7 @@ export const es: TranslationResources = {
         close: "Cerrar explorador",
         toggle: "Alternar explorador",
         changes: "Cambios",
+        repositoryGraph: "Gráfico del repositorio",
         files: "Archivos",
       },
       toasts: {

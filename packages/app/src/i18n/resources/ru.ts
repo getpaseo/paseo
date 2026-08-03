@@ -473,6 +473,14 @@ export const ru: TranslationResources = {
       hostDisconnected: "Host не подключен",
       unableToSubscribe: "Невозможно подписаться на терминал",
     },
+    repositoryGraph: {
+      loading: "Загрузка истории репозитория...",
+      loadError: "Не удалось загрузить историю репозитория",
+      retry: "Повторить",
+      empty: "Коммиты не найдены",
+      updateHost: "Обновите хост для просмотра графа репозитория",
+      limit: "Показаны последние {{count}} коммитов",
+    },
     tabs: {
       loading: "Загрузка...",
       modified: "Несохранённые изменения",
@@ -529,6 +537,7 @@ export const ru: TranslationResources = {
         close: "Закрыть проводник",
         toggle: "Переключить проводник",
         changes: "Изменения",
+        repositoryGraph: "Граф репозитория",
         files: "Файлы",
       },
       toasts: {
