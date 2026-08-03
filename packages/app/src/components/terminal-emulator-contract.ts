@@ -34,6 +34,7 @@ export interface TerminalEmulatorProps {
   fontFamily?: string;
   fontSize?: number;
   keyboardInset?: number;
+  isKeyboardVisible?: boolean;
   swipeGesturesEnabled?: boolean;
   onSwipeLeft?: () => void;
   onSwipeRight?: () => void;
