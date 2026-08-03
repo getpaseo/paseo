@@ -480,12 +480,28 @@ export class HubRelationshipHarness {
     }).codex,
   );
 
-  private constructor(private readonly archiveWatchFiles: ArchiveWatchFiles) {}
+  private constructor(
+    private readonly archiveWatchFiles: ArchiveWatchFiles,
+    private readonly mcpEnabled: boolean,
+  ) {}
 
   static async start(
     archiveWatchFiles: ArchiveWatchFiles = nodeArchiveWatchFiles,
   ): Promise<HubRelationshipHarness> {
-    const harness = new HubRelationshipHarness(archiveWatchFiles);
+    return this.launch(archiveWatchFiles, false);
+  }
+
+  static async startWithAgentMcp(
+    archiveWatchFiles: ArchiveWatchFiles = nodeArchiveWatchFiles,
+  ): Promise<HubRelationshipHarness> {
+    return this.launch(archiveWatchFiles, true);
+  }
+
+  private static async launch(
+    archiveWatchFiles: ArchiveWatchFiles,
+    mcpEnabled: boolean,
+  ): Promise<HubRelationshipHarness> {
+    const harness = new HubRelationshipHarness(archiveWatchFiles, mcpEnabled);
     await harness.createHome();
     await harness.startDaemon();
     return harness;
@@ -675,6 +691,7 @@ export class HubRelationshipHarness {
       worktree?: CreateAgentWorktreeTarget;
       prompt?: string;
       modeId?: string;
+      mcpServers?: AgentSessionConfig["mcpServers"];
     } = {},
   ): void {
     const { prompt = "Create through the Hub", ...requestOptions } = options;
@@ -824,6 +841,14 @@ export class HubRelationshipHarness {
     return this.providerPrompts.map((prompt) =>
       typeof prompt === "string" ? prompt : JSON.stringify(prompt),
     );
+  }
+
+  latestProviderCreateConfig(): AgentSessionConfig | null {
+    return this.codex.createdConfigs.at(-1) ?? null;
+  }
+
+  hubMessages(): SessionOutboundMessage[] {
+    return this.remote.sockets.flatMap(({ socket }) => socket.sent);
   }
 
   latestCreatedCwd(): string | null {
@@ -1285,7 +1310,7 @@ export class HubRelationshipHarness {
       paseoHome: this.paseoHome,
       corsAllowedOrigins: [],
       hostnames: true,
-      mcpEnabled: false,
+      mcpEnabled: this.mcpEnabled,
       staticDir,
       mcpDebug: false,
       agentClients: {

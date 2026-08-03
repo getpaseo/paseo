@@ -6,6 +6,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 
 import type { AgentManager, AgentManagerEvent, ManagedAgent } from "../agent/agent-manager.js";
+import type { McpServerConfig } from "../agent/agent-sdk-types.js";
 import type { AgentStorage, StoredAgentRecord } from "../agent/agent-storage.js";
 import type { BoundCreateAgentCommand } from "../agent/create-agent/create.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../worktree-session.js";
@@ -25,6 +26,7 @@ export interface HubExecutionAgentCreateInput {
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
   env?: Record<string, string>;
+  mcpServers?: Record<string, McpServerConfig>;
   worktree?: CreateAgentWorktreeTarget;
 }
 
@@ -192,6 +194,7 @@ export class DaemonExecutions implements HubExecutionAgents {
         thinking: input.thinkingOptionId,
         features: input.featureValues,
         env: input.env,
+        ...(input.mcpServers ? { config: { mcpServers: input.mcpServers } } : {}),
         worktree: toCreateAgentWorktree(input.worktree),
         background: true,
         notifyOnFinish: false,

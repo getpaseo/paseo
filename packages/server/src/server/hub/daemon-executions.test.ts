@@ -27,6 +27,43 @@ test("sequential replay after reconstruction keeps one durable owned agent", asy
   expect(reconstructed.durableAgentCount).toBe(1);
 });
 
+test("Hub MCP configuration reaches the provider alongside Paseo MCP without entering snapshots", async () => {
+  const hub = await HubRelationshipHarness.startWithAgentMcp();
+  await hub.beginConnect().result;
+  hub.connectLatestSocket();
+  relationship = hub;
+  const bearer = "hub-execution-bearer";
+  hub.beginOwnedCreate("mcp-create", "mcp-execution", {
+    mcpServers: {
+      hub: {
+        type: "http",
+        url: "https://hub.test/mcp/executions/mcp-execution",
+        headers: { Authorization: `Bearer ${bearer}` },
+      },
+    },
+  });
+
+  const response = await hub.ownedCreateResult("mcp-create");
+
+  expect(hub.latestProviderCreateConfig()?.mcpServers).toMatchObject({
+    paseo: { type: "http" },
+    hub: {
+      type: "http",
+      url: "https://hub.test/mcp/executions/mcp-execution",
+      headers: { Authorization: `Bearer ${bearer}` },
+    },
+  });
+  const snapshots = [
+    response,
+    ...hub.hubMessages().filter((message) => message.type === "hub.execution.agent.update"),
+  ];
+  expect(snapshots).toEqual(
+    expect.arrayContaining([expect.objectContaining({ type: "hub.execution.agent.update" })]),
+  );
+  expect(JSON.stringify(snapshots)).not.toContain(bearer);
+  expect(JSON.stringify(snapshots)).not.toContain("https://hub.test/mcp/executions/mcp-execution");
+});
+
 test("removing a daemon-owned agent removes its execution association", async () => {
   const hub = await launchRelationship();
   const created = await hub.createOwnedConcurrently();
