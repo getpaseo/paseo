@@ -58,6 +58,7 @@ const DEGRADED_GIT_POLL_INTERVAL_MS = 5_000;
 // retains subprocess and event-loop headroom during large workspace reconciliation bursts.
 export const WORKSPACE_GIT_REFRESH_CONCURRENCY = 4;
 export const WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY = 2;
+export const WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS = 10_000;
 // Auxiliary reads may reuse cached values within this window; snapshots do not expire on read.
 const WORKSPACE_GIT_AUXILIARY_READ_TTL_MS = 15_000;
 // Non-forced refresh triggers share this minimum gap to absorb watcher/self-heal bursts; force bypasses it.
@@ -314,6 +315,22 @@ interface WorkspaceGitServiceOptions {
   deps?: Partial<WorkspaceGitServiceDependencies>;
 }
 
+class WorkspaceGitServiceDisposedError extends Error {
+  constructor() {
+    super("WorkspaceGitService is disposed");
+    this.name = "WorkspaceGitServiceDisposedError";
+  }
+}
+
+class WorkspaceGitWatcherSubscriptionTimeoutError extends Error {
+  constructor(watchPath: string) {
+    super(
+      `Watcher subscription for ${watchPath} timed out after ${WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS}ms`,
+    );
+    this.name = "WorkspaceGitWatcherSubscriptionTimeoutError";
+  }
+}
+
 interface WorkspaceGitTarget {
   cwd: string;
   listeners: Set<WorkspaceGitListener>;
@@ -415,10 +432,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly worktreesRoot: string | undefined;
   private readonly deps: WorkspaceGitServiceDependencies;
   private readonly forgeResolver: ForgeResolver;
-  private readonly workspaceRefreshLimit = pLimit(WORKSPACE_GIT_REFRESH_CONCURRENCY);
-  private readonly workspaceObservationSetupLimit = pLimit(
-    WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
-  );
+  private readonly workspaceRefreshLimit = pLimit({
+    concurrency: WORKSPACE_GIT_REFRESH_CONCURRENCY,
+    rejectOnClear: true,
+  });
+  private readonly workspaceObservationSetupLimit = pLimit({
+    concurrency: WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
+    rejectOnClear: true,
+  });
+  private readonly disposeController = new AbortController();
+  private disposed = false;
   private readonly snapshotUpdatedListeners = new Set<WorkspaceGitSnapshotUpdatedListener>();
   private readonly workspaceTargets = new Map<string, WorkspaceGitTarget>();
   private readonly repoTargets = new Map<string, RepoGitTarget>();
@@ -465,6 +488,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   resolveForge(cwd: string): Promise<ForgeResolution | null> {
+    this.assertNotDisposed();
     return this.forgeResolver.resolve(resolve(cwd));
   }
 
@@ -472,6 +496,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     params: { cwd: string },
     listener: WorkspaceGitListener,
   ): WorkspaceGitSubscription {
+    this.assertNotDisposed();
     const cwd = resolve(params.cwd);
     const target = this.ensureWorkspaceTarget(cwd);
     target.listeners.add(listener);
@@ -491,6 +516,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   onSnapshotUpdated(listener: WorkspaceGitSnapshotUpdatedListener): WorkspaceGitSubscription {
+    this.assertNotDisposed();
     this.snapshotUpdatedListeners.add(listener);
     return {
       unsubscribe: () => {
@@ -556,6 +582,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     cwd: string,
     options?: WorkspaceGitSnapshotOptions,
   ): Promise<WorkspaceGitRuntimeSnapshot> {
+    this.assertNotDisposed();
     cwd = resolve(cwd);
     const request = this.normalizeRefreshRequest(options, "getSnapshot", true);
     const target = this.ensureWorkspaceTarget(cwd);
@@ -567,6 +594,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   async getCheckout(cwd: string): Promise<ProjectCheckoutLitePayload> {
+    this.assertNotDisposed();
     const normalizedCwd = resolve(cwd);
     const status = await this.deps.getCheckoutStatus(normalizedCwd, {
       paseoHome: this.paseoHome,
@@ -603,6 +631,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     options: CheckoutDiffCompare,
     readOptions?: WorkspaceGitReadOptions,
   ): Promise<CheckoutDiffResult> {
+    this.assertNotDisposed();
     const normalizedCwd = resolve(cwd);
     const normalizedOptions = this.normalizeCheckoutDiffOptions(options);
     const key = this.buildCheckoutDiffCacheKey(normalizedCwd, normalizedOptions);
@@ -652,6 +681,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     ref: string,
     options?: WorkspaceGitReadOptions,
   ): Promise<WorkspaceGitBranchValidationResult> {
+    this.assertNotDisposed();
     const normalizedCwd = resolve(cwd);
     const normalizedRef = ref.trim();
     const key = JSON.stringify(["branch-validation", normalizedCwd, normalizedRef]);
@@ -661,6 +691,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   hasLocalBranch(cwd: string, branch: string, options?: WorkspaceGitReadOptions): Promise<boolean> {
+    this.assertNotDisposed();
     const normalizedCwd = resolve(cwd);
     const normalizedBranch = branch.trim();
     const ref = `refs/heads/${normalizedBranch}`;
@@ -680,6 +711,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     options?: WorkspaceGitBranchSuggestionsOptions,
     readOptions?: WorkspaceGitReadOptions,
   ): Promise<WorkspaceGitBranchSuggestion[]> {
+    this.assertNotDisposed();
     const normalizedCwd = resolve(cwd);
     const query = options?.query ?? "";
     const limit = options?.limit;
@@ -694,6 +726,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     options?: WorkspaceGitStashListOptions,
     readOptions?: WorkspaceGitReadOptions,
   ): Promise<WorkspaceGitStashEntry[]> {
+    this.assertNotDisposed();
     const normalizedCwd = resolve(cwd);
     const paseoOnly = options?.paseoOnly !== false;
     const key = JSON.stringify(["stashes", normalizedCwd, paseoOnly]);
@@ -710,6 +743,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     cwdOrRepoRoot: string,
     options?: WorkspaceGitReadOptions,
   ): Promise<WorkspaceGitWorktreeInfo[]> {
+    this.assertNotDisposed();
     const repoRoot = await this.resolveRepoRoot(cwdOrRepoRoot, options);
     const key = JSON.stringify(["worktrees", repoRoot]);
     return this.readAuxiliaryCache(this.worktreeListCache, key, options, () =>
@@ -736,6 +770,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     cwdOrRepoRoot: string,
     options?: WorkspaceGitReadOptions,
   ): Promise<string> {
+    this.assertNotDisposed();
     const cwd = resolve(cwdOrRepoRoot);
     const key = JSON.stringify(["default-branch", cwd]);
     return this.readAuxiliaryCache(this.defaultBranchCache, key, options, async () => {
@@ -761,6 +796,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   async refresh(cwd: string, _options?: { priority?: "normal" | "high" }): Promise<void> {
+    this.assertNotDisposed();
     cwd = resolve(cwd);
     const target = this.ensureWorkspaceTarget(cwd);
     await this.refreshWorkspaceTarget(target, {
@@ -779,6 +815,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     cwd: string,
     onChange: () => void,
   ): Promise<{ repoRoot: string | null; unsubscribe: () => void }> {
+    this.assertNotDisposed();
     cwd = resolve(cwd);
     const target = await this.ensureWorkingTreeWatchTarget(cwd);
     target.listeners.add(onChange);
@@ -792,6 +829,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   scheduleRefreshForCwd(cwd: string): void {
+    this.assertNotDisposed();
     cwd = resolve(cwd);
     const target = this.workspaceTargets.get(cwd);
     if (target) {
@@ -800,6 +838,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   onWorkspaceStateMayHaveChanged(cwd: string): void {
+    this.assertNotDisposed();
     const normalizedCwd = resolve(cwd);
     const target = this.workspaceTargets.get(normalizedCwd);
     if (!target || target.closed) {
@@ -819,10 +858,19 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
    * git mutations to force a fresh forge status on the next refresh.
    */
   invalidateForge(cwd: string): void {
+    this.assertNotDisposed();
     this.forgeResolver.invalidate(resolve(cwd));
   }
 
   dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    this.disposeController.abort(new WorkspaceGitServiceDisposedError());
+    this.workspaceRefreshLimit.clearQueue();
+    this.workspaceObservationSetupLimit.clearQueue();
+
     for (const target of this.workspaceTargets.values()) {
       this.closeWorkspaceTarget(target);
     }
@@ -843,7 +891,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.snapshotUpdatedListeners.clear();
   }
 
+  private assertNotDisposed(): void {
+    if (this.disposed) {
+      throw new WorkspaceGitServiceDisposedError();
+    }
+  }
+
   private ensureWorkspaceTarget(cwd: string): WorkspaceGitTarget {
+    this.assertNotDisposed();
     const existingTarget = this.workspaceTargets.get(cwd);
     if (existingTarget) {
       return existingTarget;
@@ -858,6 +913,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     options: WorkspaceGitReadOptions | undefined,
     load: () => Promise<T>,
   ): Promise<T> {
+    this.assertNotDisposed();
     if (options?.force && !options.reason) {
       throw new Error("WorkspaceGitService forced read requires a reason");
     }
@@ -914,6 +970,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private ensureWorkingTreeWatchTarget(cwd: string): Promise<WorkingTreeWatchTarget> {
+    this.assertNotDisposed();
     const targetCwd = this.workingTreeWatchAliases.get(cwd);
     if (targetCwd) {
       const existingTarget = this.workingTreeWatchTargets.get(targetCwd);
@@ -1037,6 +1094,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       await this.setupWorkspaceObservation(target);
     })
       .catch((error) => {
+        if (this.disposed || !this.isActiveObservedWorkspaceTarget(target)) {
+          return;
+        }
         this.logger.warn(
           { err: error, cwd: target.cwd },
           "Failed to set up workspace git observation",
@@ -1146,6 +1206,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     };
 
     await this.startWorkingTreeSubscription(target);
+    this.assertNotDisposed();
 
     if (repoRoot === null) {
       this.startWorkingTreeWatchFallback(target, "not_a_git_checkout");
@@ -1156,10 +1217,87 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return target;
   }
 
+  private async subscribeWithDeadline(
+    watchPath: string,
+    callback: parcelWatcher.SubscribeCallback,
+    options: parcelWatcher.Options,
+  ): Promise<parcelWatcher.AsyncSubscription> {
+    this.assertNotDisposed();
+    const signal = this.disposeController.signal;
+    let outcome: "pending" | "accepted" | "expired" = "pending";
+    let timeout: NodeJS.Timeout | null = null;
+    let removeAbortListener = () => {};
+    let unsubscribePromise: Promise<void> | null = null;
+    const subscriptionPromise = this.deps.subscribe(watchPath, callback, options);
+    void subscriptionPromise.then(
+      (subscription) => {
+        if (outcome === "expired" || signal.aborted) {
+          unsubscribePromise ??= this.unsubscribeWatcherSubscription(subscription, watchPath);
+          return unsubscribePromise;
+        }
+        return undefined;
+      },
+      () => undefined,
+    );
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        outcome = "expired";
+        reject(new WorkspaceGitWatcherSubscriptionTimeoutError(watchPath));
+      }, WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+    });
+    const disposalPromise = new Promise<never>((_resolve, reject) => {
+      const rejectForDisposal = () => {
+        outcome = "expired";
+        reject(signal.reason);
+      };
+      if (signal.aborted) {
+        rejectForDisposal();
+        return;
+      }
+      signal.addEventListener("abort", rejectForDisposal, { once: true });
+      removeAbortListener = () => signal.removeEventListener("abort", rejectForDisposal);
+    });
+
+    try {
+      const subscription = await Promise.race([
+        subscriptionPromise,
+        timeoutPromise,
+        disposalPromise,
+      ]);
+      if (signal.aborted) {
+        outcome = "expired";
+        unsubscribePromise ??= this.unsubscribeWatcherSubscription(subscription, watchPath);
+        await unsubscribePromise;
+        throw signal.reason;
+      }
+      outcome = "accepted";
+      return subscription;
+    } finally {
+      if (outcome === "pending") {
+        outcome = "expired";
+      }
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      removeAbortListener();
+    }
+  }
+
+  private async unsubscribeWatcherSubscription(
+    subscription: parcelWatcher.AsyncSubscription,
+    watchPath: string,
+  ): Promise<void> {
+    try {
+      await subscription.unsubscribe();
+    } catch (error) {
+      this.logger.warn({ err: error, watchPath }, "Failed to stop watcher subscription");
+    }
+  }
+
   private async startWorkingTreeSubscription(target: WorkingTreeWatchTarget): Promise<void> {
     const ignore = [join(target.watchPath, ".git"), ...target.ignoredDirectories];
     try {
-      const subscription = await this.deps.subscribe(
+      const subscription = await this.subscribeWithDeadline(
         target.watchPath,
         (error, events) => {
           if (error) {
@@ -1178,11 +1316,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         { ignore },
       );
       if (target.closed || target.fallbackPollTimer || target.subscription) {
-        await subscription.unsubscribe();
+        await this.unsubscribeWatcherSubscription(subscription, target.watchPath);
       } else {
         target.subscription = subscription;
       }
     } catch (error) {
+      if (this.disposed || target.closed) {
+        throw error;
+      }
       this.logger.warn(
         { err: error, cwd: target.cwd },
         "Failed to start working tree watcher; using degraded polling",
@@ -1195,7 +1336,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target: WorkingTreeWatchTarget,
     reason: "not_a_git_checkout" | "watcher_error" | "watcher_setup_failed",
   ): void {
-    if (target.fallbackPollTimer) {
+    if (this.disposed || target.closed || target.fallbackPollTimer) {
       return;
     }
     const { cwd } = target;
@@ -1485,7 +1626,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     ];
     const matchesRepoGitRoot = createRealpathAwarePathMatcher(target.repoGitRoot);
     try {
-      const subscription = await this.deps.subscribe(
+      const subscription = await this.subscribeWithDeadline(
         target.repoGitRoot,
         (error, events) => {
           if (error) {
@@ -1512,11 +1653,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         target.fallbackPollTimer ||
         this.repoTargets.get(target.repoGitRoot) !== target
       ) {
-        await subscription.unsubscribe();
+        await this.unsubscribeWatcherSubscription(subscription, target.repoGitRoot);
       } else {
         target.subscription = subscription;
       }
     } catch (error) {
+      if (this.disposed || target.closed) {
+        throw error;
+      }
       this.logger.warn(
         { err: error, repoGitRoot: target.repoGitRoot },
         "Failed to start repository metadata watcher; using degraded polling",
@@ -1942,6 +2086,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     try {
       await this.requestWorkspaceSnapshot(target, request);
     } catch (error) {
+      if (this.disposed || target.closed) {
+        return;
+      }
       this.logger.warn(
         { err: error, cwd: target.cwd, reason: request.reason },
         "Failed to refresh workspace git snapshot",
@@ -2098,6 +2245,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         failure = null;
       } catch (error) {
         failure = { error };
+      }
+
+      if (this.disposed || target.closed || this.workspaceTargets.get(target.cwd) !== target) {
+        break;
       }
 
       const state = target.refreshState;
