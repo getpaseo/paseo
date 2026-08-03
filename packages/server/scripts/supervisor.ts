@@ -59,6 +59,12 @@ interface SupervisorOptions {
 /** Exit code for a service-managed daemon stopped without going through the authorized route. */
 export const UNAUTHORIZED_SERVICE_MANAGED_STOP_EXIT_CODE = 75;
 
+/**
+ * Reserved for an owning service manager's deliberate stop. Routine clients
+ * and older Paseo releases use SIGTERM, so it cannot also prove ownership.
+ */
+export const SERVICE_MANAGER_STOP_SIGNAL = "SIGQUIT" as const;
+
 export interface SupervisorController {
   requestShutdown(reason: string): void;
 }
@@ -296,26 +302,26 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
         return;
       }
 
-      // A service-managed daemon must survive a signal aimed at its worker. The
-      // default rule treats a SIGTERM death as an intentional stop and lets the
-      // supervisor exit, which hands any client a way to take the host down.
-      const workerStoppedByStraySignal = serviceManaged && signal !== null;
+      // Reaching this branch means no supervisor shutdown was requested. For a
+      // service-managed daemon, only `restarting` proves that the supervisor
+      // authorized this worker exit. Exit metadata cannot prove intent: the
+      // production worker handles SIGTERM and turns it into `code: 0, signal:
+      // null`, which otherwise looks like a voluntary clean stop.
+      if (serviceManaged && !restarting) {
+        log(
+          `Worker exited (${exitDescriptor}) without a supervisor lifecycle request. Restarting worker...`,
+        );
+        writeLifecycleLog(
+          "Restarting worker after an exit without a supervisor lifecycle request",
+          { code, signal, exit: exitDescriptor },
+        );
+        spawnWorker();
+        return;
+      }
 
       const crashed =
         restartOnCrash &&
         ((code !== 0 && code !== null) || (signal !== null && signal !== "SIGTERM"));
-
-      if (workerStoppedByStraySignal && !restarting && !crashed) {
-        log(
-          `Worker was signalled (${exitDescriptor}) without a stop request. Restarting worker...`,
-        );
-        writeLifecycleLog("Restarting worker after an unrequested signal", {
-          signal,
-          exit: exitDescriptor,
-        });
-        spawnWorker();
-        return;
-      }
 
       if (restarting || crashed) {
         restarting = false;
@@ -383,6 +389,11 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
 
   process.on("SIGINT", () => forwardSignal("SIGINT"));
   process.on("SIGTERM", () => forwardSignal("SIGTERM"));
+  if (process.platform !== "win32") {
+    process.on(SERVICE_MANAGER_STOP_SIGNAL, () => {
+      requestShutdown(`supervisor_received_${SERVICE_MANAGER_STOP_SIGNAL}`, true);
+    });
+  }
 
   process.stdout.write(`[${options.name}] ${options.startupMessage}\n`);
   writeLifecycleLog(options.startupMessage);

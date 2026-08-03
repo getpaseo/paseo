@@ -34,6 +34,7 @@ test("every executable daemon entrypoint enters the supervisor", async () => {
     appIsolatedHostDaemon,
     serverConnectionOfferE2e,
     desktopRuntimePaths,
+    dockerBase,
     nixPackage,
     nixModule,
   ] = await Promise.all([
@@ -44,6 +45,7 @@ test("every executable daemon entrypoint enters the supervisor", async () => {
       "utf8",
     ),
     readFile(join(repoRoot, "packages/desktop/src/daemon/runtime-paths.ts"), "utf8"),
+    readFile(join(repoRoot, "docker/base/Dockerfile"), "utf8"),
     readFile(join(repoRoot, "nix/package.nix"), "utf8"),
     readFile(join(repoRoot, "nix/module.nix"), "utf8"),
   ]);
@@ -79,4 +81,10 @@ test("every executable daemon entrypoint enters the supervisor", async () => {
   assert.doesNotMatch(nixPackage, /--set(-default)?\s+NODE_ENV\b/);
   assert.doesNotMatch(nixModule, /\bNODE_ENV\b\s*=/);
   assert.doesNotMatch(nixModule, /\bPASEO_NODE_ENV\b/);
+
+  // Service managers need an ownership-only signal. SIGTERM is also used by
+  // old clients, so it cannot distinguish a deliberate unit/container stop.
+  assert.match(dockerBase, /^STOPSIGNAL SIGQUIT$/m);
+  assert.match(nixModule, /\bKillMode\s*=\s*"mixed";/);
+  assert.match(nixModule, /\bKillSignal\s*=\s*"SIGQUIT";/);
 });

@@ -282,8 +282,14 @@ in
         Restart = "on-failure";
         RestartSec = 5;
 
-        # Graceful shutdown (server handles SIGTERM with a 10s timeout)
-        KillSignal = "SIGTERM";
+        # Graceful shutdown (server stops the worker with a 10s timeout).
+        # SIGQUIT tells the daemon this stop is systemd's own, so `systemctl stop`
+        # exits 0 instead of reporting the unauthorized-stop code reserved for a
+        # SIGTERM of unknown origin. Mixed targets only the supervisor first;
+        # it then gives the worker the production SIGTERM shutdown path, while
+        # systemd still SIGKILLs the whole control group after the timeout.
+        KillMode = "mixed";
+        KillSignal = "SIGQUIT";
         TimeoutStopSec = 15;
       };
     };

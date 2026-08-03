@@ -4,7 +4,10 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { describe, expect, test } from "vitest";
-import { UNAUTHORIZED_SERVICE_MANAGED_STOP_EXIT_CODE } from "./supervisor.js";
+import {
+  SERVICE_MANAGER_STOP_SIGNAL,
+  UNAUTHORIZED_SERVICE_MANAGED_STOP_EXIT_CODE,
+} from "./supervisor.js";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const supervisorPath = fileURLToPath(new URL("./supervisor.ts", import.meta.url));
@@ -111,8 +114,14 @@ async function runSupervisorFixture(options: {
   return { code, signal, log, stderr };
 }
 
-/** Runs until signalled. Reports readiness so the test never races the spawn. */
+/**
+ * Production-shaped: the real worker traps SIGTERM and exits 0, so a supervisor
+ * stop always shows up as `code: 0, signal: null`. A worker that dies from the
+ * signal instead would let a broken supervisor pass on exit metadata alone.
+ * Reports readiness so the test never races the spawn.
+ */
 const IDLE_WORKER = `
+  process.on("SIGTERM", () => process.exit(0));
   process.stderr.write("worker-up\\n");
   setInterval(() => {}, 1000);
 `;
@@ -136,6 +145,22 @@ describe("service-managed supervisor stop authorization", () => {
     // Exiting 0 here is what leaves a `Restart=on-failure` unit down for good.
     expect(result.code).toBe(UNAUTHORIZED_SERVICE_MANAGED_STOP_EXIT_CODE);
     expect(result.log).toContain("Unauthorized stop of a service-managed daemon");
+  }, 30_000);
+
+  test("the service manager stop signal is an intentional stop, not an unauthorized one", async () => {
+    // What systemd KillSignal= and Docker STOPSIGNAL send. `systemctl stop` and
+    // `docker stop` must not leave a failed unit or a 75 container exit code.
+    const result = await runSupervisorFixture({
+      workerSource: IDLE_WORKER,
+      serviceManaged: true,
+      signalSupervisor: SERVICE_MANAGER_STOP_SIGNAL,
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.log).toContain('"authorized":true');
+    expect(result.log).not.toContain("Unauthorized stop of a service-managed daemon");
+    // The worker still gets a graceful SIGTERM rather than being killed outright.
+    expect(result.log).toContain('"signal":"SIGTERM"');
   }, 30_000);
 
   test("an authorized service maintenance shutdown still exits cleanly", async () => {
@@ -173,7 +198,38 @@ describe("service-managed supervisor stop authorization", () => {
     });
 
     expect(result.stderr).toContain("worker-up-again");
-    expect(result.log).toContain("Restarting worker after an unrequested signal");
+    expect(result.log).toContain(
+      "Restarting worker after an exit without a supervisor lifecycle request",
+    );
+    expect(result.code).toBe(0);
+  }, 30_000);
+
+  test("a production-shaped SIGTERM handler exit is respawned without a supervisor request", async () => {
+    const result = await runSupervisorFixture({
+      workerSource: `
+          import { existsSync, writeFileSync } from "node:fs";
+          const marker = process.env.PASEO_TEST_RESTART_MARKER;
+          process.on("SIGTERM", () => process.exit(0));
+          if (existsSync(marker)) {
+            process.stderr.write("worker-up-again\\n");
+            process.send?.({ type: "paseo:shutdown", reason: "client_shutdown_rpc" });
+            setInterval(() => {}, 1000);
+          } else {
+            writeFileSync(marker, "1");
+            process.stderr.write("worker-up\\n");
+            process.kill(process.pid, "SIGTERM");
+          }
+        `,
+      serviceManaged: true,
+      useRestartMarker: true,
+    });
+
+    expect(result.stderr).toContain("worker-up-again");
+    expect(result.log).toContain(
+      "Restarting worker after an exit without a supervisor lifecycle request",
+    );
+    expect(result.log).toContain('"code":0');
+    expect(result.log).toContain('"signal":null');
     expect(result.code).toBe(0);
   }, 30_000);
 

@@ -418,7 +418,17 @@ The maintenance route is an explicit opt-in, not a privilege: `paseo daemon stop
 
 A client released before the fence does not understand `shutdown_rejected`. It waits out its RPC timeout and falls back to signalling the pid-lock owner, which is the supervisor. Signals carry no sender identity, so the supervisor cannot refuse one without also refusing its own service manager — which stops the daemon exactly that way. It therefore never fights the signal; it refuses to let an unauthorized stop look clean:
 
-- A worker killed by a signal the supervisor did not ask for is respawned instead of ending the daemon. This fully covers anything that signals the worker, including the tree-kill that reaches both processes.
+- Any worker exit the supervisor did not request is respawned instead of ending the daemon. The fence uses supervisor lifecycle state rather than exit metadata because the production worker handles `SIGTERM` and converts it into a clean `code: 0, signal: null` exit. This covers direct worker signals and tree-kill even when the worker exits gracefully.
 - A supervisor stopped without an authorized request still stops gracefully, but exits `75` and logs `Unauthorized stop of a service-managed daemon`, so `Restart=on-failure` and equivalent policies bring the host back instead of reading exit 0 as success.
 
-Only a worker-relayed `paseo:shutdown` counts as authorized, and the session fence gates that. A service manager stopping its own service does not restart it regardless of exit code, so the backstop costs a non-zero code in the log and nothing else. Give a unit an `ExecStop` that runs `paseo daemon stop --service-maintenance` to keep even that clean.
+There are two explicit authorization paths. A worker-relayed `paseo:shutdown` is authorized only after the session fence accepts `serviceMaintenance: true`. On POSIX hosts, `SIGQUIT` is reserved for the owning service manager's deliberate stop; routine Paseo clients use `SIGTERM`, so they cannot invoke it through the client fallback. The shipped Docker image uses `STOPSIGNAL SIGQUIT`, and the NixOS unit sends `SIGQUIT` to the supervisor before the supervisor gives its worker the normal graceful `SIGTERM`. Other units can use an `ExecStop` that runs `paseo daemon stop --service-maintenance` to stop cleanly.
+
+### Service-managed upgrade boundary
+
+Moving a service-managed installation from a release without this fence requires the service manager to stop and recreate the complete supervisor-and-worker process tree. Replacing only the client, daemon worker, or files in place is not an upgrade:
+
+- A new client cannot make an old daemon reject the shutdown RPC.
+- A new worker cannot retrofit authorization state or respawn policy into an already-running old supervisor.
+- A new supervisor with an old worker still receives the old worker's unfenced shutdown intent as authorized.
+
+The fence is active only after both the supervisor and worker are running the new release under `PASEO_SERVICE_MANAGED=1`. Perform this one-time boundary crossing through launchd, systemd, Docker, or the owning service manager; do not use daemon self-restart or worker-only replacement for it.

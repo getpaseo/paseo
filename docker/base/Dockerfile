@@ -102,4 +102,9 @@ VOLUME ["/home/paseo"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD node -e "const listen=process.env.PASEO_LISTEN||'0.0.0.0:6767'; const m=listen.match(/:(\\d+)$/); const port=m?Number(m[1]):6767; require('http').get({hostname:'127.0.0.1',port,path:'/api/health'},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 
+# `docker stop` is this container's own stop, not a client's. tini forwards the
+# signal to the daemon, which stops the worker gracefully and exits 0. Leaving
+# this at SIGTERM would report the unauthorized-stop code as the container exit.
+STOPSIGNAL SIGQUIT
+
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/paseo-docker-entrypoint"]
