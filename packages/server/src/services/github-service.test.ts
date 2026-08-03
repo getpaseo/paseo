@@ -105,6 +105,35 @@ function createDeferredRunner(): TestRunner {
   };
 }
 
+function createQueuedDeferredRunner(): TestRunner & {
+  resolveCall: (index: number, stdout: string) => void;
+} {
+  const calls: RunnerCall[] = [];
+  const pending = new Map<number, (stdout: string) => void>();
+
+  return {
+    calls,
+    runner: (args: string[], options: GitHubCommandRunnerOptions) => {
+      const index = calls.length;
+      calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
+      return new Promise((resolve) => {
+        pending.set(index, (stdout: string) => {
+          pending.delete(index);
+          resolve({ stdout, stderr: "" });
+        });
+      });
+    },
+    resolveNext: () => {},
+    resolveCall: (index: number, stdout: string) => {
+      const resolve = pending.get(index);
+      if (!resolve) {
+        throw new Error(`Runner call ${index} is not waiting for resolution.`);
+      }
+      resolve(stdout);
+    },
+  };
+}
+
 interface FakeGitHubCliFixture {
   cwd: string;
   logPath: string;
@@ -824,6 +853,59 @@ describe("ForgeService", () => {
     expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
 
     subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("does not deliver an old same-key poll into a newly retained target", async () => {
+    const runner = createQueuedDeferredRunner();
+    const service = createGitHubService({
+      ttlMs: 30_000,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+    });
+    const oldStatus = vi.fn();
+    const freshStatus = vi.fn();
+
+    const oldSubscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      onStatus: oldStatus,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.calls).toHaveLength(1);
+
+    oldSubscription?.unsubscribe();
+    const freshSubscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      onStatus: freshStatus,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // A new retained lifecycle must not join the old lifecycle's same-key read.
+    expect(runner.calls).toHaveLength(2);
+
+    runner.resolveCall(1, currentPullRequestJson({ title: "Fresh generation PR" }));
+    await vi.waitFor(() => expect(runner.calls).toHaveLength(3));
+    runner.resolveCall(2, currentPullRequestGithubFactsJson());
+    await vi.waitFor(() => expect(freshStatus).toHaveBeenCalledTimes(1));
+    expect(freshStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: "Fresh generation PR" }),
+    );
+
+    runner.resolveCall(0, currentPullRequestJson({ title: "Stale generation PR" }));
+    await vi.waitFor(() => expect(runner.calls).toHaveLength(4));
+    runner.resolveCall(3, currentPullRequestGithubFactsJson());
+    await flushMicrotasks();
+
+    expect(oldStatus).not.toHaveBeenCalled();
+    expect(freshStatus).toHaveBeenCalledTimes(1);
+    expect(freshStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: "Fresh generation PR" }),
+    );
+
+    freshSubscription?.unsubscribe();
     service.dispose?.();
   });
 
