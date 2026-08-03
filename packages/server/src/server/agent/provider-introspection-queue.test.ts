@@ -314,3 +314,79 @@ test("does not serialize real agent creation behind draft introspection", async 
   const created = await agent;
   await manager.closeAgent(created.id);
 });
+
+test("falls back to the provider default model when the draft config has none", async () => {
+  const sessionModels: Array<string | undefined> = [];
+  const client = createClient({
+    async fetchCatalog() {
+      return {
+        models: [
+          { provider: "codex", id: "gpt-5.4", label: "GPT-5.4" },
+          { provider: "codex", id: "gpt-5.6-codex", label: "GPT-5.6 Codex", isDefault: true },
+        ] as AgentModelDefinition[],
+        modes: [] as AgentMode[],
+      };
+    },
+    async createSession(config) {
+      sessionModels.push(config.model);
+      return {
+        ...createSession(config),
+        async listCommands() {
+          return [{ name: "review", description: "Review changes", argumentHint: "" }];
+        },
+      };
+    },
+  });
+  const manager = new AgentManager({ clients: { codex: client }, logger: createTestLogger() });
+
+  const commands = await manager.listDraftCommands({
+    provider: "codex",
+    cwd: process.cwd(),
+    modeId: "default",
+  });
+
+  expect(commands.map((command) => command.name)).toEqual(["review"]);
+  expect(sessionModels).toEqual(["gpt-5.6-codex"]);
+});
+
+test("reports an error instead of an empty list when no model can be resolved", async () => {
+  const client = createClient({
+    async createSession(config) {
+      return createSession(config);
+    },
+  });
+  const manager = new AgentManager({ clients: { codex: client }, logger: createTestLogger() });
+
+  await expect(
+    manager.listDraftCommands({ provider: "codex", cwd: process.cwd(), modeId: "default" }),
+  ).rejects.toThrow("has no models available");
+});
+
+test("serves repeat draft command requests from cache without respawning the provider", async () => {
+  let createCalls = 0;
+  const client = createClient({
+    async createSession(config) {
+      createCalls += 1;
+      return {
+        ...createSession(config),
+        async listCommands() {
+          return [{ name: "review", description: "Review changes", argumentHint: "" }];
+        },
+      };
+    },
+  });
+  const manager = new AgentManager({ clients: { codex: client }, logger: createTestLogger() });
+  const config = {
+    provider: "codex",
+    cwd: process.cwd(),
+    model: "gpt-5.4",
+    modeId: "default",
+  } as const;
+
+  const first = await manager.listDraftCommands(config);
+  const second = await manager.listDraftCommands(config);
+
+  expect(first.map((command) => command.name)).toEqual(["review"]);
+  expect(second.map((command) => command.name)).toEqual(["review"]);
+  expect(createCalls).toBe(1);
+});
