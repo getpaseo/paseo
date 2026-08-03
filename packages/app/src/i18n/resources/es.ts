@@ -2571,13 +2571,16 @@ export const es: TranslationResources = {
       actions: {
         menu: "{{name}} actions",
         addAccount: "Añadir cuenta",
+        editAccount: "Editar cuenta",
         remove: "Remove provider",
         removing: "Removing...",
       },
       account: {
         title: "Añadir cuenta de {{provider}}",
-        errorTitle: "No se pudo añadir la cuenta",
+        editTitle: "Editar cuenta de {{provider}}",
+        errorTitle: "No se pudo guardar la cuenta",
         submit: "Añadir cuenta",
+        save: "Guardar cambios",
         fields: {
           label: "Nombre",
           providerId: "ID del proveedor",

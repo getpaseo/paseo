@@ -2623,13 +2623,16 @@ export const en = {
       actions: {
         menu: "{{name}} actions",
         addAccount: "Add account",
+        editAccount: "Edit account",
         remove: "Remove provider",
         removing: "Removing...",
       },
       account: {
         title: "Add {{provider}} account",
-        errorTitle: "Unable to add account",
+        editTitle: "Edit {{provider}} account",
+        errorTitle: "Unable to save account",
         submit: "Add account",
+        save: "Save changes",
         fields: {
           label: "Name",
           providerId: "Provider ID",

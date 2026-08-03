@@ -2539,13 +2539,16 @@ export const ja: TranslationResources = {
       actions: {
         menu: "{{name}} actions",
         addAccount: "アカウントを追加",
+        editAccount: "アカウントを編集",
         remove: "Remove provider",
         removing: "Removing...",
       },
       account: {
         title: "{{provider}} アカウントを追加",
-        errorTitle: "アカウントを追加できません",
+        editTitle: "{{provider}} アカウントを編集",
+        errorTitle: "アカウントを保存できません",
         submit: "アカウントを追加",
+        save: "変更を保存",
         fields: {
           label: "名前",
           providerId: "プロバイダー ID",

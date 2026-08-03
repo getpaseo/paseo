@@ -379,6 +379,12 @@ export async function openProviderAccountForm(page: Page, providerId: string): P
   await expect(page.getByTestId("provider-account-sheet")).toBeVisible();
 }
 
+export async function openProviderAccountEditForm(page: Page, providerId: string): Promise<void> {
+  await page.getByTestId(`provider-actions-${providerId}`).click();
+  await page.getByTestId(`provider-edit-account-${providerId}`).click();
+  await expect(page.getByTestId("provider-account-sheet")).toBeVisible();
+}
+
 export async function fillProviderAccountForm(
   page: Page,
   input: ProviderAccountFormInput,

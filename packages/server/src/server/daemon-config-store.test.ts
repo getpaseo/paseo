@@ -442,6 +442,90 @@ describe("DaemonConfigStore", () => {
     });
   });
 
+  test("replaceProviders removes stale provider fields in memory and config.json", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    writeFileSync(
+      path.join(paseoHome, "config.json"),
+      `${JSON.stringify(
+        {
+          version: 1,
+          agents: {
+            providers: {
+              "claude-work": {
+                extends: "claude",
+                label: "Old label",
+                description: "Remove me",
+                env: { OLD_TOKEN: "secret", KEEP: "old" },
+                additionalModels: [{ id: "old-model", label: "Old model" }],
+              },
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const store = new DaemonConfigStore(paseoHome, {
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {
+        "claude-work": {
+          extends: "claude",
+          label: "Old label",
+          description: "Remove me",
+          env: { OLD_TOKEN: "secret", KEEP: "old" },
+          additionalModels: [{ id: "old-model", label: "Old model" }],
+        },
+      },
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    const next = store.patch({
+      replaceProviders: {
+        "claude-work": {
+          extends: "claude",
+          label: "Work",
+          env: { KEEP: "new" },
+        },
+      },
+    });
+
+    const expected = {
+      extends: "claude",
+      label: "Work",
+      env: { KEEP: "new" },
+    };
+    expect(next.providers["claude-work"]).toEqual(expected);
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.["claude-work"]).toEqual(expected);
+  });
+
+  test("rejects removing and replacing the same provider", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    expect(() =>
+      store.patch({
+        removeProviders: ["claude-work"],
+        replaceProviders: { "claude-work": { extends: "claude" } },
+      }),
+    ).toThrow("cannot be removed and replaced together");
+  });
+
   test("patch removes provider entries from config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

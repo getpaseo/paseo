@@ -2578,13 +2578,16 @@ export const fr: TranslationResources = {
       actions: {
         menu: "{{name}} actions",
         addAccount: "Ajouter un compte",
+        editAccount: "Modifier le compte",
         remove: "Remove provider",
         removing: "Removing...",
       },
       account: {
         title: "Ajouter un compte {{provider}}",
-        errorTitle: "Impossible d'ajouter le compte",
+        editTitle: "Modifier le compte {{provider}}",
+        errorTitle: "Impossible d'enregistrer le compte",
         submit: "Ajouter un compte",
+        save: "Enregistrer",
         fields: {
           label: "Nom",
           providerId: "ID du fournisseur",

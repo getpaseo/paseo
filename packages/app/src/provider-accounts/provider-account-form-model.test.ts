@@ -198,4 +198,87 @@ describe("provider account form model", () => {
     model.setSubmitting(false);
     expect(model.getState().canSubmit).toBe(true);
   });
+
+  it("opens an existing account with its editable fields and environment", () => {
+    const model = openForm({
+      existingProviderIds: ["claude", "claude-work", "claude-personal"],
+      account: {
+        providerId: "claude-work",
+        config: {
+          extends: "claude",
+          label: "Claude (Work)",
+          description: "Company account",
+          env: { CLAUDE_CONFIG_DIR: "/work/claude", TOKEN: " keep spaces " },
+        },
+      },
+    });
+
+    expect(model.getState()).toMatchObject({
+      isEditing: true,
+      label: "Claude (Work)",
+      providerId: "claude-work",
+      providerIdError: null,
+      description: "Company account",
+      canSubmit: true,
+    });
+    expect(model.getState().envRows.map(({ key, value }) => ({ key, value }))).toEqual([
+      { key: "CLAUDE_CONFIG_DIR", value: "/work/claude" },
+      { key: "TOKEN", value: " keep spaces " },
+    ]);
+  });
+
+  it("replaces an edited account exactly while preserving fields outside the form", () => {
+    const model = openForm({
+      existingProviderIds: ["claude", "claude-work"],
+      account: {
+        providerId: "claude-work",
+        config: {
+          extends: "claude",
+          label: "Old label",
+          description: "Delete me",
+          env: { OLD_TOKEN: "old", KEEP: "old" },
+          command: ["claude", "--work"],
+          additionalModels: [{ id: "work-model", label: "Work model" }],
+        },
+      },
+    });
+    model.setLabel("Work");
+    model.setDescription("   ");
+    const [oldToken, keep] = model.getState().envRows;
+    if (!oldToken || !keep) throw new Error("expected seeded environment rows");
+    model.removeEnvRow(oldToken.id);
+    model.setEnvValue(keep.id, "new");
+
+    expect(model.buildPatch()).toEqual({
+      replaceProviders: {
+        "claude-work": {
+          extends: "claude",
+          label: "Work",
+          env: { KEEP: "new" },
+          command: ["claude", "--work"],
+          additionalModels: [{ id: "work-model", label: "Work model" }],
+        },
+      },
+    });
+  });
+
+  it("renames an account atomically and still rejects another account id", () => {
+    const model = openForm({
+      existingProviderIds: ["claude", "claude-work", "claude-personal"],
+      account: {
+        providerId: "claude-work",
+        config: { extends: "claude", label: "Work", env: {} },
+      },
+    });
+
+    model.setProviderId("claude-personal");
+    expect(model.getState().providerIdError).toBe("taken");
+    model.setProviderId("claude-company");
+    expect(model.buildPatch()).toEqual({
+      replaceProviders: {
+        "claude-company": { extends: "claude", label: "Work", env: {} },
+      },
+      removeProviders: ["claude-work"],
+    });
+  });
 });

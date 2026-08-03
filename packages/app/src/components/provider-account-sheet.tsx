@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Plus, X } from "lucide-react-native";
-import type { MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
+import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import type { FieldControlSize } from "@/components/ui/control-geometry";
@@ -22,8 +22,9 @@ const ThemedX = withUnistyles(X, foregroundMutedColorMapping);
 const ThemedPlus = withUnistyles(Plus, foregroundMutedColorMapping);
 const ADD_VARIABLE_ICON = <ThemedPlus size={14} />;
 
-export interface ProviderAccountCreateInput {
+export interface ProviderAccountSaveInput {
   providerId: string;
+  originalProviderId?: string;
   patch: MutableDaemonConfigPatch;
 }
 
@@ -32,9 +33,13 @@ export interface ProviderAccountSheetProps {
   baseProviderId: string;
   baseProviderLabel: string;
   existingProviderIds: readonly string[];
+  account?: {
+    providerId: string;
+    config: MutableDaemonConfig["providers"][string];
+  };
   onClose: () => void;
   /** Resolves true when the account was written; the sheet then closes. */
-  onCreate: (input: ProviderAccountCreateInput) => Promise<boolean>;
+  onSave: (input: ProviderAccountSaveInput) => Promise<boolean>;
 }
 
 export function ProviderAccountSheet(props: ProviderAccountSheetProps): ReactElement | null {
@@ -47,14 +52,15 @@ function OpenProviderAccountSheet({
   baseProviderId,
   baseProviderLabel,
   existingProviderIds,
+  account,
   onClose,
-  onCreate,
+  onSave,
 }: ProviderAccountSheetProps): ReactElement {
   const { t } = useTranslation();
   const controlSize: FieldControlSize = useIsCompactFormFactor() ? "md" : "sm";
   const snapshot = useMemo(
-    () => ({ baseProviderId, baseProviderLabel, existingProviderIds }),
-    [baseProviderId, baseProviderLabel, existingProviderIds],
+    () => ({ baseProviderId, baseProviderLabel, existingProviderIds, account }),
+    [account, baseProviderId, baseProviderLabel, existingProviderIds],
   );
   const model = useProviderAccountFormModel(snapshot);
   const state = useSyncExternalStore(model.subscribe, model.getState, model.getState);
@@ -67,23 +73,34 @@ function OpenProviderAccountSheet({
 
     model.setSubmitting(true);
     try {
-      const created = await onCreate({ providerId: state.providerId.trim(), patch });
-      if (created) {
+      const saved = await onSave({
+        providerId: state.providerId.trim(),
+        originalProviderId: account?.providerId,
+        patch,
+      });
+      if (saved) {
         onClose();
         return;
       }
     } finally {
       model.setSubmitting(false);
     }
-  }, [model, onClose, onCreate, state.isSubmitting, state.providerId]);
+  }, [account?.providerId, model, onClose, onSave, state.isSubmitting, state.providerId]);
 
   const handleSubmitPress = useCallback(() => {
     void handleSubmit();
   }, [handleSubmit]);
 
   const header = useMemo<SheetHeader>(
-    () => ({ title: t("settings.providers.account.title", { provider: baseProviderLabel }) }),
-    [baseProviderLabel, t],
+    () => ({
+      title: t(
+        state.isEditing
+          ? "settings.providers.account.editTitle"
+          : "settings.providers.account.title",
+        { provider: baseProviderLabel },
+      ),
+    }),
+    [baseProviderLabel, state.isEditing, t],
   );
 
   const footer = useMemo(
@@ -106,11 +123,15 @@ function OpenProviderAccountSheet({
           loading={state.isSubmitting}
           testID="provider-account-submit"
         >
-          {t("settings.providers.account.submit")}
+          {t(
+            state.isEditing
+              ? "settings.providers.account.save"
+              : "settings.providers.account.submit",
+          )}
         </Button>
       </View>
     ),
-    [handleSubmitPress, onClose, state.isSubmitting, t],
+    [handleSubmitPress, onClose, state.isEditing, state.isSubmitting, t],
   );
 
   return (

@@ -1452,6 +1452,38 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
     }
   });
 
+  test("replaces startup provider overrides instead of merging stale fields", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        "claude-work": {
+          extends: "claude",
+          label: "Old label",
+          description: "Remove me",
+          env: { OLD_TOKEN: "secret" },
+        },
+      },
+    });
+    try {
+      const state = manager.applyMutableProviderConfig(
+        {
+          "claude-work": { extends: "claude", label: "Work" },
+        },
+        { replaceProviders: ["claude-work"] },
+      );
+
+      expect(state.providerDefinitions["claude-work"]).toBeDefined();
+      const snapshot = manager
+        .getSnapshot()
+        .records.map(({ entry }) => entry)
+        .find((entry) => entry.provider === "claude-work");
+      expect(snapshot?.label).toBe("Work");
+      expect(snapshot?.description).not.toBe("Remove me");
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("drops disabled built-in providers from clients while preserving providerDefinitions", () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),

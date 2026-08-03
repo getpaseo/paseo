@@ -5,6 +5,7 @@ import { getServerId } from "../support/helpers/server-id";
 import {
   expectProviderInstalledInSettings,
   fillProviderAccountForm,
+  openProviderAccountEditForm,
   openProviderAccountForm,
   openSettingsHost,
   openSettingsHostSection,
@@ -16,11 +17,18 @@ const ACCOUNT = {
   id: "claude-work",
   label: "Claude (Work)",
 } as const;
+const EDITED_ACCOUNT = {
+  id: "claude-company",
+  label: "Claude (Company)",
+} as const;
 
 interface ProviderAccountDaemonClient {
   connect(): Promise<void>;
   close(): Promise<void>;
-  patchDaemonConfig(config: { removeProviders?: string[] }): Promise<unknown>;
+  patchDaemonConfig(config: {
+    removeProviders?: string[];
+    replaceProviders?: Record<string, unknown>;
+  }): Promise<unknown>;
   getDaemonConfig(): Promise<{
     config: {
       providers?: Record<
@@ -32,7 +40,7 @@ interface ProviderAccountDaemonClient {
 }
 
 test.describe("provider accounts", () => {
-  test("creates a second account for a builtin provider", async ({ page }) => {
+  test("creates and edits a second account for a builtin provider", async ({ page }) => {
     test.setTimeout(120_000);
     const client = await connectDaemonClient<ProviderAccountDaemonClient>({
       clientIdPrefix: "provider-account-e2e",
@@ -40,6 +48,9 @@ test.describe("provider accounts", () => {
 
     try {
       await client.patchDaemonConfig({ removeProviders: [ACCOUNT.id] }).catch(() => undefined);
+      await client
+        .patchDaemonConfig({ removeProviders: [EDITED_ACCOUNT.id] })
+        .catch(() => undefined);
 
       await gotoAppShell(page);
       await openSettings(page);
@@ -87,8 +98,45 @@ test.describe("provider accounts", () => {
           description: "Work account",
           env: { ANTHROPIC_API_KEY: "sk-e2e-test" },
         });
+
+      await openProviderAccountEditForm(page, ACCOUNT.id);
+      await expect(page.getByTestId("provider-account-label-input")).toHaveValue(ACCOUNT.label);
+      await expect(page.getByTestId("provider-account-id-input")).toHaveValue(ACCOUNT.id);
+      await expect(page.getByTestId("provider-account-description-input")).toHaveValue(
+        "Work account",
+      );
+      await expect(page.getByTestId("provider-account-env-key-0")).toHaveValue("ANTHROPIC_API_KEY");
+
+      await fillProviderAccountForm(page, {
+        label: EDITED_ACCOUNT.label,
+        providerId: EDITED_ACCOUNT.id,
+        description: "",
+        env: [{ key: "CLAUDE_CONFIG_DIR", value: "/tmp/claude-company" }],
+      });
+      await submitProviderAccountForm(page);
+
+      await expect(page.getByTestId("provider-account-sheet")).toHaveCount(0);
+      await expectProviderInstalledInSettings(page, EDITED_ACCOUNT.label);
+      await expect
+        .poll(async () => {
+          const { config } = await client.getDaemonConfig();
+          return {
+            old: config.providers?.[ACCOUNT.id] ?? null,
+            edited: config.providers?.[EDITED_ACCOUNT.id] ?? null,
+          };
+        })
+        .toEqual({
+          old: null,
+          edited: {
+            extends: BASE_PROVIDER_ID,
+            label: EDITED_ACCOUNT.label,
+            env: { CLAUDE_CONFIG_DIR: "/tmp/claude-company" },
+          },
+        });
     } finally {
-      await client.patchDaemonConfig({ removeProviders: [ACCOUNT.id] }).catch(() => undefined);
+      await client
+        .patchDaemonConfig({ removeProviders: [ACCOUNT.id, EDITED_ACCOUNT.id] })
+        .catch(() => undefined);
       await client.close().catch(() => undefined);
     }
   });

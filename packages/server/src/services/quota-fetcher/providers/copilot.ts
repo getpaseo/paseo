@@ -15,6 +15,8 @@ const CopilotUsageResponseSchema = z.object({
 interface CopilotQuotaProviderOptions {
   logger: Logger;
   fetch?: ProviderApiFetch;
+  env?: NodeJS.ProcessEnv;
+  readCliToken?: () => Promise<string | null>;
 }
 
 async function readGithubCliToken(): Promise<string | null> {
@@ -43,18 +45,22 @@ export class CopilotQuotaProvider implements ProviderUsageFetcher {
 
   private readonly logger: Logger;
   private readonly fetchApi: ProviderApiFetch;
+  private readonly env: NodeJS.ProcessEnv;
+  private readonly readCliToken: () => Promise<string | null>;
 
   constructor(options: CopilotQuotaProviderOptions) {
     this.logger = options.logger;
     this.fetchApi = options.fetch ?? fetch;
+    this.env = options.env ?? process.env;
+    this.readCliToken = options.readCliToken ?? readGithubCliToken;
   }
 
   async fetchUsage(): Promise<ProviderUsage> {
     const token =
-      process.env["COPILOT_TOKEN"] ||
-      process.env["GITHUB_TOKEN"] ||
-      process.env["GITHUB_PAT"] ||
-      (await readGithubCliToken());
+      this.env["COPILOT_TOKEN"] ||
+      this.env["GITHUB_TOKEN"] ||
+      this.env["GITHUB_PAT"] ||
+      (await this.readCliToken());
 
     if (!token) return unavailableUsage(this);
 

@@ -2483,13 +2483,16 @@ export const zhCN: TranslationResources = {
       actions: {
         menu: "{{name}} actions",
         addAccount: "添加账户",
+        editAccount: "编辑账户",
         remove: "Remove provider",
         removing: "Removing...",
       },
       account: {
         title: "添加 {{provider}} 账户",
-        errorTitle: "无法添加账户",
+        editTitle: "编辑 {{provider}} 账户",
+        errorTitle: "无法保存账户",
         submit: "添加账户",
+        save: "保存更改",
         fields: {
           label: "名称",
           providerId: "Provider ID",

@@ -142,6 +142,7 @@ interface ProviderSnapshotReadOptions {
 interface ApplyMutableProviderConfigOptions {
   removeProviders?: readonly string[];
   replace?: boolean;
+  replaceProviders?: readonly string[];
 }
 
 export interface PreparedMutableProviderConfig {
@@ -583,7 +584,10 @@ export class ProviderSnapshotManager {
   ): PreparedMutableProviderConfig {
     const baseProviderOverrides = options.replace
       ? undefined
-      : omitProviderOverrides(this.baseProviderOverrides, options.removeProviders ?? []);
+      : omitProviderOverrides(this.baseProviderOverrides, [
+          ...(options.removeProviders ?? []),
+          ...(options.replaceProviders ?? []),
+        ]);
     const runtimeSettings = options.replace ? undefined : this.runtimeSettings;
     const providerOverrides = applyMutableProviderConfigToOverrides(
       baseProviderOverrides,
