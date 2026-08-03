@@ -30,7 +30,7 @@ describe("native terminal typed input", () => {
 
     expect(input.receiveTextChange("npm run typecheck")).toEqual({
       data: "npm run typecheck",
-      shouldClear: false,
+      shouldClear: true,
     });
   });
 
@@ -94,10 +94,9 @@ describe("native terminal typed input", () => {
   it("clears accumulated hidden input text after terminal submit", () => {
     const input = createTerminalTextInputState();
 
-    expect(input.receiveTextChange("echo hello")).toEqual({
-      data: "echo hello",
-      shouldClear: false,
-    });
+    for (const key of "echo hello") {
+      input.receiveKeyPress(key);
+    }
     expect(input.receiveKeyPress("Enter")).toEqual({ data: "\r", shouldClear: true });
 
     input.reset();
@@ -109,10 +108,9 @@ describe("native terminal typed input", () => {
   it("ignores late newline text change after Return keypress submits", () => {
     const input = createTerminalTextInputState();
 
-    expect(input.receiveTextChange("echo hello")).toEqual({
-      data: "echo hello",
-      shouldClear: false,
-    });
+    for (const key of "echo hello") {
+      input.receiveKeyPress(key);
+    }
     expect(input.receiveKeyPress("Enter")).toEqual({ data: "\r", shouldClear: true });
 
     input.reset();
@@ -120,12 +118,15 @@ describe("native terminal typed input", () => {
     expect(input.receiveTextChange("echo hello\n")).toEqual({ data: "", shouldClear: false });
   });
 
-  it("keeps long paste-like input intact until terminal submit", () => {
+  it("accepts the same long keyboard clipboard item twice", () => {
     const input = createTerminalTextInputState();
     const longText = "x".repeat(512);
 
-    expect(input.receiveTextChange(longText)).toEqual({ data: longText, shouldClear: false });
-    expect(input.receiveTextChange(`${longText}y`)).toEqual({ data: "y", shouldClear: false });
+    expect(input.receiveTextChange(longText)).toEqual({ data: longText, shouldClear: true });
+
+    input.reset();
+
+    expect(input.receiveTextChange(longText)).toEqual({ data: longText, shouldClear: true });
   });
 
   it("translates software keyboard terminal control keys", () => {
@@ -179,24 +180,31 @@ describe("native terminal typed input", () => {
     });
   });
 
-  it("refocuses an already-focused hidden input without relying on software-keyboard state", () => {
-    expect(resolveTerminalInputFocusRequest({ isInputFocused: true })).toEqual("refocus");
-    expect(resolveTerminalInputFocusRequest({ isInputFocused: false })).toEqual("focus");
+  it("does not disturb an already-focused input while the keyboard is visible", () => {
+    expect(
+      resolveTerminalInputFocusRequest({ isInputFocused: true, isKeyboardVisible: true }),
+    ).toEqual("none");
+    expect(
+      resolveTerminalInputFocusRequest({ isInputFocused: true, isKeyboardVisible: false }),
+    ).toEqual("refocus");
+    expect(
+      resolveTerminalInputFocusRequest({ isInputFocused: false, isKeyboardVisible: false }),
+    ).toEqual("focus");
   });
 
-  it("accepts fresh printable text after keyboard-hide reset and tap refocus", () => {
+  it("accepts the same keyboard clipboard item after terminal focus synchronization", () => {
     const input = createTerminalTextInputState();
 
-    expect(input.receiveTextChange("echo stale")).toEqual({
-      data: "echo stale",
-      shouldClear: false,
+    expect(input.receiveTextChange("echo clipboard item")).toEqual({
+      data: "echo clipboard item",
+      shouldClear: true,
     });
 
     input.reset();
 
-    expect(input.receiveTextChange("printf 'M1_TAP_OK\\n'")).toEqual({
-      data: "printf 'M1_TAP_OK\\n'",
-      shouldClear: false,
+    expect(input.receiveTextChange("echo clipboard item")).toEqual({
+      data: "echo clipboard item",
+      shouldClear: true,
     });
   });
 });

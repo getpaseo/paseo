@@ -222,6 +222,7 @@ export function TerminalPane({
     enabled: isMobile,
   });
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
 
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -298,8 +299,8 @@ export function TerminalPane({
   }, [keyboardInset, refreshClipboardAvailability]);
 
   useEffect(() => {
-    setIsKeyboardToggleVisible(keyboardInset > 0);
-  }, [keyboardInset]);
+    setIsKeyboardToggleVisible(isKeyboardVisible);
+  }, [isKeyboardVisible]);
 
   const handleSelectionChange = useCallback((nextHasSelection: boolean) => {
     setHasSelection(nextHasSelection);
@@ -418,12 +419,13 @@ export function TerminalPane({
     );
   }, [clearKeyboardRefitTimeouts, requestTerminalReflow]);
 
-  const handleKeyboardInsetChange = useCallback(
-    (nextInset: number) => {
-      setKeyboardInset(nextInset);
+  const handleKeyboardChange = useCallback(
+    (nextShift: number) => {
+      setKeyboardInset(isMobile ? nextShift : 0);
+      setIsKeyboardVisible(nextShift > 0);
       pulseKeyboardRefits();
     },
-    [pulseKeyboardRefits],
+    [isMobile, pulseKeyboardRefits],
   );
 
   useEffect(() => {
@@ -431,14 +433,14 @@ export function TerminalPane({
   }, [clearKeyboardRefitTimeouts]);
 
   useAnimatedReaction(
-    () => (isMobile ? Math.round(keyboardShift.value) : 0),
+    () => Math.round(keyboardShift.value),
     (next, prev) => {
       if (next === prev) {
         return;
       }
-      runOnJS(handleKeyboardInsetChange)(next);
+      runOnJS(handleKeyboardChange)(next);
     },
-    [isMobile, handleKeyboardInsetChange],
+    [handleKeyboardChange],
   );
 
   useEffect(() => {
@@ -842,9 +844,8 @@ export function TerminalPane({
 
     setIsKeyboardToggleVisible(true);
     emulatorRef.current?.showKeyboard();
-    requestTerminalFocus();
     requestTerminalReflow();
-  }, [isKeyboardToggleVisible, requestTerminalFocus, requestTerminalReflow]);
+  }, [isKeyboardToggleVisible, requestTerminalReflow]);
 
   const handleInputModeChange = useCallback((state: TerminalInputModeState) => {
     inputModeRef.current = state;
@@ -1014,6 +1015,7 @@ export function TerminalPane({
             fontFamily={terminalFontFamily}
             fontSize={settings.codeFontSize}
             keyboardInset={keyboardInset}
+            isKeyboardVisible={isKeyboardVisible}
             swipeGesturesEnabled={swipeGesturesEnabled}
             initialSnapshot={initialSnapshot}
             onRendererReadyChange={handleRendererReadyChange}
