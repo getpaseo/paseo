@@ -61,8 +61,14 @@ export function buildCheckoutStatusPayloadFromSnapshot({
       isDirty: snapshot.git.isDirty,
       baseRef: snapshot.git.baseRef,
       aheadBehind: snapshot.git.aheadBehind ?? null,
+      ...(snapshot.git.hasChangesFromBase !== undefined
+        ? { hasChangesFromBase: snapshot.git.hasChangesFromBase }
+        : {}),
       aheadOfOrigin: snapshot.git.aheadOfOrigin ?? null,
       behindOfOrigin: snapshot.git.behindOfOrigin ?? null,
+      ...(snapshot.git.hasChangesFromOrigin !== undefined
+        ? { hasChangesFromOrigin: snapshot.git.hasChangesFromOrigin }
+        : {}),
       hasRemote: snapshot.git.hasRemote,
       remoteUrl: snapshot.git.remoteUrl,
       isPaseoOwnedWorktree: true,
@@ -80,8 +86,14 @@ export function buildCheckoutStatusPayloadFromSnapshot({
     isDirty: snapshot.git.isDirty,
     baseRef: snapshot.git.baseRef ?? null,
     aheadBehind: snapshot.git.aheadBehind ?? null,
+    ...(snapshot.git.hasChangesFromBase !== undefined
+      ? { hasChangesFromBase: snapshot.git.hasChangesFromBase }
+      : {}),
     aheadOfOrigin: snapshot.git.aheadOfOrigin ?? null,
     behindOfOrigin: snapshot.git.behindOfOrigin ?? null,
+    ...(snapshot.git.hasChangesFromOrigin !== undefined
+      ? { hasChangesFromOrigin: snapshot.git.hasChangesFromOrigin }
+      : {}),
     hasRemote: snapshot.git.hasRemote,
     remoteUrl: snapshot.git.remoteUrl,
     isPaseoOwnedWorktree: false,

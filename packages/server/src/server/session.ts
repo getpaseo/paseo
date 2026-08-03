@@ -4246,8 +4246,10 @@ export class Session {
       isPaseoOwnedWorktree: snapshot.git.isPaseoOwnedWorktree,
       isDirty: snapshot.git.isDirty,
       aheadBehind: snapshot.git.aheadBehind,
+      hasChangesFromBase: snapshot.git.hasChangesFromBase,
       aheadOfOrigin: snapshot.git.aheadOfOrigin,
       behindOfOrigin: snapshot.git.behindOfOrigin,
+      hasChangesFromOrigin: snapshot.git.hasChangesFromOrigin,
     };
   }
 

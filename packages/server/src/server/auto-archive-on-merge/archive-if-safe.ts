@@ -87,7 +87,11 @@ export async function archiveIfSafe(input: {
     if (snapshot.git.isDirty === true) {
       return;
     }
-    if (typeof snapshot.git.aheadOfOrigin === "number" && snapshot.git.aheadOfOrigin > 0) {
+    if (
+      typeof snapshot.git.aheadOfOrigin === "number" &&
+      snapshot.git.aheadOfOrigin > 0 &&
+      snapshot.git.hasChangesFromBase !== false
+    ) {
       return;
     }
 

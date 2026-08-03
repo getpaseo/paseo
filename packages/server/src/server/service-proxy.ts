@@ -783,16 +783,33 @@ export function createScriptProxyUpgradeHandler({
   routeStore: ServiceProxyRouteRegistry;
   logger: Logger;
   passthroughUnknown?: boolean;
-}): (req: IncomingMessage, socket: net.Socket, head: Buffer) => void {
+}): (req: IncomingMessage, socket: net.Socket, head: Buffer) => boolean {
   return (req, socket, head) => {
     const classification = routeStore.classifyHost(req.headers.host);
     if (classification.type !== "registered-service") {
       if (!passthroughUnknown) {
         socket.destroy();
+        return true;
       }
-      return;
+      return false;
     }
     proxyUpgradeRequest({ req, socket, head, route: classification.route, logger });
+    return true;
+  };
+}
+
+export function createWebSocketUpgradeDispatcher({
+  serviceProxyHandler,
+  daemonHandler,
+}: {
+  serviceProxyHandler: (req: IncomingMessage, socket: net.Socket, head: Buffer) => boolean;
+  daemonHandler: (req: IncomingMessage, socket: net.Socket, head: Buffer) => void;
+}): (req: IncomingMessage, socket: net.Socket, head: Buffer) => void {
+  return (req, socket, head) => {
+    if (serviceProxyHandler(req, socket, head)) {
+      return;
+    }
+    daemonHandler(req, socket, head);
   };
 }
 
@@ -829,7 +846,7 @@ export interface ServiceProxySubsystem {
   middleware(): RequestHandler;
   upgradeHandler(options: {
     passthroughUnknown: boolean;
-  }): (req: IncomingMessage, socket: net.Socket, head: Buffer) => void;
+  }): (req: IncomingMessage, socket: net.Socket, head: Buffer) => boolean;
   startStandalone(options: {
     listenTarget: ServiceProxyListenTarget;
   }): Promise<ServiceProxyListenTarget>;
@@ -923,7 +940,7 @@ class NodeServiceProxySubsystem implements ServiceProxySubsystem {
 
   upgradeHandler(options: {
     passthroughUnknown: boolean;
-  }): (req: IncomingMessage, socket: net.Socket, head: Buffer) => void {
+  }): (req: IncomingMessage, socket: net.Socket, head: Buffer) => boolean {
     // Pass passthroughUnknown explicitly: the factory defaults it to true, the
     // subsystem requires callers to choose.
     return createScriptProxyUpgradeHandler({

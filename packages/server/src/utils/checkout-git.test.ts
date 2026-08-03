@@ -756,6 +756,26 @@ const x = 1;
     ]);
   });
 
+  it("reports no base changes when a merge commit has the same tree as the base", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "merged content\n", "feature commit");
+    execFileSync("git", ["checkout", "main"], { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "merged content\n", "merge feature independently");
+    execFileSync("git", ["checkout", "feature"], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "merge", "main", "--no-edit"], {
+      cwd: repoDir,
+    });
+
+    const status = await getCheckoutStatus(repoDir);
+
+    expect(status.isGit).toBe(true);
+    if (!status.isGit) {
+      return;
+    }
+    expect(status.aheadBehind?.ahead).toBeGreaterThan(0);
+    expect(status.hasChangesFromBase).toBe(false);
+  });
+
   it("reports a PR worktree as not ahead when its branch is pushed to the configured PR remote", async () => {
     setupRemoteTrackingMain(repoDir, tempDir);
     const prRemoteDir = join(tempDir, "pr-remote.git");
