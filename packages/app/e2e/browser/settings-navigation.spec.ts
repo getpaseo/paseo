@@ -121,6 +121,13 @@ test.describe("Settings sidebar navigation", () => {
     await clickSettingsBackToWorkspace(page);
     await expect(page).not.toHaveURL(/\/settings(\/|$)/);
   });
+
+  test("pressing Escape closes settings", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await page.keyboard.press("Escape");
+    await expect(page).not.toHaveURL(/\/settings(\/|$)/);
+  });
 });
 
 test.describe("Settings — compact master-detail", () => {
