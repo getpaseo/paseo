@@ -1,21 +1,8 @@
 name: Nix Update Hash
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "nix/**"
-      - "flake.nix"
-      - "flake.lock"
-      - "package.json"
-      - "package-lock.json"
-      - "packages/highlight/**"
-      - "packages/server/**"
-      - "packages/relay/**"
-      - "packages/cli/**"
-      - "scripts/update-nix.sh"
-      - "scripts/fix-lockfile.mjs"
-      - ".github/workflows/nix-update-hash.yml"
+  # YOOZ DOWNSTREAM(sync): Nix packages are not part of fork CI or releases.
+  workflow_dispatch:
 
 permissions:
   contents: read
