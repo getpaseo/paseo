@@ -170,28 +170,6 @@ export const TaskListCard = memo(function TaskListCard({
   );
 });
 
-/**
- * Simple timeline rendering of a todo list entry.
- * Shows all tasks with check/box icons — no expand/collapse chrome.
- */
-export const TodoListTimeline = memo(function TodoListTimeline({ items }: { items: TodoEntry[] }) {
-  return (
-    <View style={timelineStyles.list}>
-      {items.map((item) => (
-        <View key={item.text} style={timelineStyles.row}>
-          <TaskCheckbox completed={item.completed} />
-          <Text
-            style={[timelineStyles.itemText, item.completed && timelineStyles.itemTextCompleted]}
-            numberOfLines={1}
-          >
-            {item.text}
-          </Text>
-        </View>
-      ))}
-    </View>
-  );
-});
-
 const styles = StyleSheet.create((theme) => ({
   container: {
     alignItems: "center",
@@ -278,29 +256,5 @@ const styles = StyleSheet.create((theme) => ({
   tooltipText: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foreground,
-  },
-}));
-
-const timelineStyles = StyleSheet.create((theme) => ({
-  list: {
-    gap: theme.spacing[1],
-    marginTop: theme.spacing[2],
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingLeft: theme.spacing[3],
-    paddingRight: theme.spacing[1],
-    paddingVertical: theme.spacing[1],
-  },
-  itemText: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foreground,
-  },
-  itemTextCompleted: {
-    color: theme.colors.foregroundMuted,
   },
 }));

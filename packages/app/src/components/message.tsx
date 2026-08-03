@@ -39,6 +39,7 @@ import {
   ChevronRight,
   ChevronDown,
   Check,
+  CheckSquare,
   Copy,
   TriangleAlertIcon,
   Scissors,
@@ -60,7 +61,7 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "reac
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { MarkdownRenderer, type MarkdownStyles } from "@/components/markdown/renderer";
-import type { UserMessageImageAttachment } from "@/types/stream";
+import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
@@ -167,6 +168,9 @@ const mutedForegroundColorMapping = (theme: Theme) => ({
   color: theme.colors.mutedForeground,
 });
 const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
+const primaryForegroundColorMapping = (theme: Theme) => ({
+  color: theme.colors.primaryForeground,
+});
 const WEB_TOOLCALL_SHIMMER_KEYFRAME_CSS = `
   @keyframes ${WEB_TOOLCALL_SHIMMER_ANIMATION_NAME} {
     0% {
@@ -2097,6 +2101,104 @@ export const CompactionMarker = memo(function CompactionMarker({
       </View>
       <View style={compactionStylesheet.line} />
     </View>
+  );
+});
+const ThemedTodoCheckIcon = withUnistyles(Check);
+
+function TodoListItemRow({ text, completed }: { text: string; completed: boolean }) {
+  const badgeStyle = useMemo(
+    () => [
+      todoListCardStylesheet.radioBadge,
+      completed
+        ? todoListCardStylesheet.radioBadgeComplete
+        : todoListCardStylesheet.radioBadgeIncomplete,
+    ],
+    [completed],
+  );
+  const textStyle = useMemo(
+    () => [todoListCardStylesheet.itemText, completed && todoListCardStylesheet.itemTextCompleted],
+    [completed],
+  );
+  return (
+    <View style={todoListCardStylesheet.itemRow}>
+      <View style={badgeStyle}>
+        {completed ? (
+          <ThemedTodoCheckIcon size={12} uniProps={primaryForegroundColorMapping} />
+        ) : null}
+      </View>
+      <Text style={textStyle}>{text}</Text>
+    </View>
+  );
+}
+
+const todoListCardStylesheet = StyleSheet.create((theme) => ({
+  detailsWrapper: { padding: theme.spacing[2] },
+  list: { gap: theme.spacing[1] },
+  itemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  radioBadge: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: theme.colors.foregroundMuted,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  radioBadgeIncomplete: { opacity: 0.55 },
+  radioBadgeComplete: { opacity: 0.95 },
+  itemText: {
+    flex: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+  },
+  itemTextCompleted: {
+    color: theme.colors.foregroundMuted,
+    textDecorationLine: "line-through",
+  },
+  emptyText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.base,
+  },
+}));
+
+export const TodoListCard = memo(function TodoListCard({ items }: { items: TodoEntry[] }) {
+  const { t } = useTranslation();
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const nextTask = useMemo(() => items.find((item) => !item.completed)?.text, [items]);
+
+  const handleToggle = useCallback(() => {
+    setIsExpanded((prev) => !prev);
+  }, []);
+
+  const renderDetails = useCallback(() => {
+    return (
+      <View style={todoListCardStylesheet.detailsWrapper}>
+        <View style={todoListCardStylesheet.list}>
+          {items.length === 0 ? (
+            <Text style={todoListCardStylesheet.emptyText}>{t("message.todo.empty")}</Text>
+          ) : (
+            items.map((item) => (
+              <TodoListItemRow key={item.text} text={item.text} completed={item.completed} />
+            ))
+          )}
+        </View>
+      </View>
+    );
+  }, [items, t]);
+
+  return (
+    <ExpandableBadge
+      label={t("message.todo.title")}
+      secondaryLabel={nextTask}
+      icon={CheckSquare}
+      isExpanded={isExpanded}
+      onToggle={handleToggle}
+      renderDetails={renderDetails}
+    />
   );
 });
 
