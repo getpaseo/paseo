@@ -4,6 +4,14 @@
  * The Codex handshake is identical to the browser transport. React Native
  * supplies the peer connection and media tracks through react-native-webrtc;
  * remote audio is rendered by the native WebRTC audio device.
+ *
+ * Every mobile call takes the native call lifetime — there is no app-visible
+ * choice between a foreground and a background call. On Android a call without a
+ * microphone-typed foreground service is handed silence the moment the user
+ * leaves the app, and on iOS the `audio` background mode is an Info.plist
+ * capability that is always declared, so the lifetime module only adds the
+ * `playAndRecord`/`voiceChat` session a voice call wants in the foreground too.
+ * Neither platform has a call worth placing without it.
  */
 
 import type {
@@ -27,7 +35,6 @@ export {
   type LiveVoiceNegotiationResult,
   type LiveVoiceSession,
   type LiveVoiceSessionFailureCode,
-  type LiveVoiceSessionMode,
   type StartLiveVoiceSessionOptions,
 } from "./live-voice-session.types";
 
@@ -35,8 +42,12 @@ const ICE_GATHERING_TIMEOUT_MS = 10_000;
 const SUSTAINED_DISCONNECT_MS = 8_000;
 const EVENT_CHANNEL_LABEL = "oai-events";
 
-export const isLiveVoiceSessionSupported = true;
-export const isLiveVoiceBackgroundSessionSupported = isLiveVoiceBackgroundCallSupported();
+/**
+ * The call lifetime is not optional, so a binary without the native module has
+ * no Live Voice at all rather than a call that dies on the home button. Only a
+ * JS bundle newer than the binary it runs on reaches this — rebuild the client.
+ */
+export const isLiveVoiceSessionSupported = isLiveVoiceBackgroundCallSupported();
 
 // `react-native-webrtc` implements EventTarget methods at runtime, but its
 // published declaration output omits the inherited methods. Use the typed
@@ -156,18 +167,16 @@ export async function startLiveVoiceSession(
       throw new LiveVoiceSessionError("mic_unavailable", "No microphone track was produced.");
     }
 
-    if (options.mode === "background") {
-      try {
-        await beginLiveVoiceBackgroundCall();
-        backgroundCallActive = true;
-      } catch (error) {
-        console.warn("[LiveVoice] Failed to establish background call lifetime", error);
-        throw new LiveVoiceSessionError(
-          "background_unavailable",
-          "Live Voice could not establish background audio support.",
-          { cause: error },
-        );
-      }
+    try {
+      await beginLiveVoiceBackgroundCall();
+      backgroundCallActive = true;
+    } catch (error) {
+      console.warn("[LiveVoice] Failed to establish background call lifetime", error);
+      throw new LiveVoiceSessionError(
+        "background_unavailable",
+        "Live Voice could not establish background audio support.",
+        { cause: error },
+      );
     }
 
     pc = new RTCPeerConnection();

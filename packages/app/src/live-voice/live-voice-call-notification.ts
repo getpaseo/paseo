@@ -2,13 +2,13 @@
  * Keeps the ongoing call notification in step with the runtime.
  *
  * The notification is posted and torn down by the native foreground service,
- * which is bound to the background session's lifetime — not by this module. What
- * happens here is the other two halves: pushing state into a notification that
- * already exists, and turning its buttons back into runtime calls.
+ * which is bound to the call lifetime — not by this module. What happens here is
+ * the other two halves: pushing state into a notification that already exists,
+ * and turning its buttons back into runtime calls.
  *
- * Only a `background` call has a notification. A `foreground` call ends when the
- * app leaves the screen, so a persistent control for it would outlive the thing
- * it controls.
+ * Every mobile call takes that lifetime, so an active call always has a
+ * notification to push to; the platforms without one (web, Electron) never reach
+ * this because `updateLiveVoiceBackgroundCall` is a no-op there.
  */
 
 import {
@@ -35,7 +35,7 @@ export const initialLiveVoiceNotificationState: LiveVoiceNotificationState = {
 };
 
 function hasNotification(snapshot: LiveVoiceSnapshot): boolean {
-  return snapshot.phase === "active" && snapshot.sessionMode === "background";
+  return snapshot.phase === "active";
 }
 
 /**

@@ -12,7 +12,6 @@ const { HOME_INDICATOR_INSET, liveVoice } = vi.hoisted(() => ({
     phase: "idle" as LiveVoicePhase,
     serverId: "host-a" as string | null,
     liveSessionId: null as string | null,
-    sessionMode: "background" as "background" | "foreground" | null,
     isMuted: false,
     isAudioBlocked: false,
     transcripts: [] as Array<{ id: string; role: "user" | "assistant"; text: string }>,

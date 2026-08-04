@@ -282,6 +282,19 @@ and Android uses a microphone/media-playback foreground service with an ongoing
 notification. The service must start after microphone capture succeeds and while
 Paseo is still visible; Android rejects a background-origin microphone service.
 
+Every mobile call takes that lifetime. There is no foreground-only call to test
+and no menu entry to choose one — Android hands a backgrounded app silence
+without a microphone-typed foreground service, and on iOS the `audio` background
+mode is an Info.plist capability that is always declared, so the only thing a
+foreground-only call would drop is the `playAndRecord`/`voiceChat` session a call
+wants on screen too. Don't confuse this with Android's foreground _service_,
+which is the mechanism that makes the background call work.
+
+A binary without the `PaseoBackgroundCall` native module reports Live Voice as
+unsupported rather than placing a call that dies at the home button. Only a
+development bundle newer than its installed binary hits this; rebuild the dev
+client.
+
 The app pins the exact daemon connection for the life of the call. This prevents
 adaptive direct/relay probing from swapping out the socket that owns the daemon
 session. A real transport failure still ends the call; background support does

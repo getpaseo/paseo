@@ -20,7 +20,6 @@ import { ChevronDown, ChevronUp, Mic, MicOff, PhoneOff, Volume2 } from "lucide-r
 import type { Theme } from "@/styles/theme";
 import { useLiveVoiceOptional } from "@/contexts/live-voice-context";
 import type { LiveVoicePhase, LiveVoiceTranscriptEntry } from "@/live-voice/live-voice-runtime";
-import type { LiveVoiceSessionMode } from "@/live-voice/live-voice-session";
 
 const ICON_SIZE = 14;
 /** How close to the end counts as "pinned to the bottom" for auto-scroll. */
@@ -45,20 +44,6 @@ export function resolveLiveVoiceStatusLabel(args: {
     return isAudioBlocked ? t("liveVoice.status.audioBlocked") : t("liveVoice.status.live");
   }
   return t("liveVoice.status.ended");
-}
-
-export function resolveLiveVoiceModeLabel(args: {
-  sessionMode: LiveVoiceSessionMode | null;
-  t: (key: string) => string;
-}): string | null {
-  const { sessionMode, t } = args;
-  if (sessionMode === "foreground") {
-    return t("liveVoice.modes.foreground");
-  }
-  if (sessionMode === "background") {
-    return t("liveVoice.modes.background");
-  }
-  return null;
 }
 
 /**

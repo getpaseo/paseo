@@ -148,7 +148,7 @@ vi.mock("./background-call-lifetime", () => ({
 }));
 
 import {
-  isLiveVoiceBackgroundSessionSupported,
+  isLiveVoiceSessionSupported,
   LiveVoiceSessionError,
   startLiveVoiceSession,
 } from "./live-voice-session.native";
@@ -160,14 +160,13 @@ describe("native live voice session", () => {
     backgroundCallLifetime.end.mockClear();
   });
 
-  it("advertises background mode when the native lifetime module is installed", () => {
-    expect(isLiveVoiceBackgroundSessionSupported).toBe(true);
+  it("reports Live Voice as supported when the native lifetime module is installed", () => {
+    expect(isLiveVoiceSessionSupported).toBe(true);
   });
 
   it("negotiates the required WebRTC offer and owns native audio cleanup", async () => {
     const onAudioResumed = vi.fn();
     const session = await startLiveVoiceSession({
-      mode: "background",
       negotiate: async (offerSdp) => {
         nativeRtc.trace.push("negotiate");
         expect(offerSdp).toBe(nativeRtc.OFFER_SDP);
@@ -210,9 +209,11 @@ describe("native live voice session", () => {
     expect(backgroundCallLifetime.end).toHaveBeenCalledOnce();
   });
 
-  it("runs a foreground session without activating background-call lifetime", async () => {
+  // There is no app-visible foreground call: Android hands a backgrounded app
+  // silence without a microphone-typed foreground service, so a call that skipped
+  // the lifetime would die the moment the user left Paseo.
+  it("takes the call lifetime for every session, with no way to opt out", async () => {
     const session = await startLiveVoiceSession({
-      mode: "foreground",
       negotiate: async () => ({
         liveSessionId: "live-native",
         answerSdp: nativeRtc.ANSWER_SDP,
@@ -222,26 +223,15 @@ describe("native live voice session", () => {
       onTerminal: vi.fn(),
     });
 
-    expect(nativeRtc.trace).toEqual([
-      "getUserMedia",
-      "addTrack",
-      "createDataChannel:oai-events",
-      "createOffer",
-      "setLocalDescription",
-      "setRemoteDescription",
-    ]);
-    expect(backgroundCallLifetime.begin).not.toHaveBeenCalled();
+    expect(backgroundCallLifetime.begin).toHaveBeenCalledOnce();
 
     session.close();
-    expect(backgroundCallLifetime.end).not.toHaveBeenCalled();
-    expect(nativeRtc.stream().track.stopped).toBe(true);
-    expect(nativeRtc.stream().released).toBe(true);
+    expect(backgroundCallLifetime.end).toHaveBeenCalledOnce();
   });
 
   it("reports a terminal peer failure once and tears down the microphone", async () => {
     const onTerminal = vi.fn();
     await startLiveVoiceSession({
-      mode: "background",
       negotiate: async () => ({
         liveSessionId: "live-native",
         answerSdp: nativeRtc.ANSWER_SDP,
@@ -276,7 +266,6 @@ describe("native live voice session", () => {
 
     await expect(
       startLiveVoiceSession({
-        mode: "background",
         negotiate: vi.fn(),
         onAudioBlocked: vi.fn(),
         onAudioResumed: vi.fn(),
@@ -298,7 +287,6 @@ describe("native live voice session", () => {
 
     await expect(
       startLiveVoiceSession({
-        mode: "background",
         negotiate: vi.fn(),
         onAudioBlocked: vi.fn(),
         onAudioResumed: vi.fn(),

@@ -105,7 +105,6 @@ describe("live voice notification state", () => {
     phase: "active",
     serverId: SERVER_ID,
     liveSessionId: LIVE_SESSION_ID,
-    sessionMode: "background",
     isMuted: false,
     isAudioBlocked: false,
     transcripts: [],
@@ -152,10 +151,10 @@ describe("live voice notification state", () => {
     expect(unmuted.update).toEqual({ isMuted: false });
   });
 
-  it("never presents for a foreground call, which has no notification to update", () => {
+  it("never presents before the call is active", () => {
     const result = advanceLiveVoiceNotificationState(initialLiveVoiceNotificationState, {
       ...activeSnapshot,
-      sessionMode: "foreground",
+      phase: "starting",
     });
 
     expect(result.update).toBeNull();
@@ -184,19 +183,18 @@ describe("live voice notification state", () => {
 });
 
 describe("live voice notification binding", () => {
-  it("pushes mute state to the notification of a background call", async () => {
+  it("pushes mute state to the call's notification", async () => {
     const harness = createHarness();
 
-    await harness.runtime.start(SERVER_ID, "background");
+    await harness.runtime.start(SERVER_ID);
     harness.runtime.toggleMute();
 
     expect(harness.updates).toEqual([{ isMuted: false }, { isMuted: true }]);
   });
 
-  it("leaves a foreground call's notification alone", async () => {
+  it("pushes nothing before a call reaches active", () => {
     const harness = createHarness();
 
-    await harness.runtime.start(SERVER_ID, "foreground");
     harness.runtime.toggleMute();
 
     expect(harness.updates).toEqual([]);
@@ -205,7 +203,7 @@ describe("live voice notification binding", () => {
   it("mutes the call when the notification's mute button is pressed", async () => {
     const harness = createHarness();
 
-    await harness.runtime.start(SERVER_ID, "background");
+    await harness.runtime.start(SERVER_ID);
     harness.press("toggleMute");
 
     expect(harness.runtime.getSnapshot().isMuted).toBe(true);
@@ -215,7 +213,7 @@ describe("live voice notification binding", () => {
   it("ends the call when the notification's end button is pressed", async () => {
     const harness = createHarness();
 
-    await harness.runtime.start(SERVER_ID, "background");
+    await harness.runtime.start(SERVER_ID);
     harness.press("end");
     await vi.waitFor(() => expect(harness.stopLiveVoice).toHaveBeenCalled());
 
@@ -225,7 +223,7 @@ describe("live voice notification binding", () => {
   it("ignores a button press that races the call ending", async () => {
     const harness = createHarness();
 
-    await harness.runtime.start(SERVER_ID, "background");
+    await harness.runtime.start(SERVER_ID);
     harness.push({ kind: "closed", cause: "provider_hangup" });
     harness.stopLiveVoice.mockClear();
     harness.press("end");
@@ -238,7 +236,7 @@ describe("live voice notification binding", () => {
   it("stops responding to buttons once detached", async () => {
     const harness = createHarness();
 
-    await harness.runtime.start(SERVER_ID, "background");
+    await harness.runtime.start(SERVER_ID);
     harness.detach();
     harness.press("toggleMute");
 

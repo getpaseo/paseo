@@ -26,10 +26,6 @@ import type { LiveVoiceHostAvailability } from "@/live-voice/live-voice-availabi
 import { resolveLiveVoiceStatusLabel } from "@/live-voice/live-voice-call-ui";
 import { resolveLiveVoiceUnavailableMessage } from "@/live-voice/live-voice-unavailable-message";
 import { LiveVoiceStartError, type LiveVoicePhase } from "@/live-voice/live-voice-runtime";
-import {
-  isLiveVoiceBackgroundSessionSupported,
-  type LiveVoiceSessionMode,
-} from "@/live-voice/live-voice-session";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
 const ThemedAudioLines = withUnistyles(AudioLines);
@@ -128,7 +124,7 @@ function LiveVoiceCallMenuItems({
   );
 }
 
-/** Idle menu body: pick a host when there is a choice, then pick a mode. */
+/** Idle menu body: pick a host when there is a choice, then start the call. */
 function LiveVoiceStartMenuItems({
   hosts,
   selectedHost,
@@ -142,24 +138,13 @@ function LiveVoiceStartMenuItems({
   const { t } = useTranslation();
   const { serverId } = selectedHost;
 
-  const startLiveVoice = useCallback(
-    (sessionMode: LiveVoiceSessionMode) => {
-      void liveVoice?.start(serverId, sessionMode).catch((error: unknown) => {
-        if (!(error instanceof LiveVoiceStartError)) {
-          console.error(`[LiveVoice] Failed to start ${sessionMode} session`, error);
-        }
-      });
-    },
-    [liveVoice, serverId],
-  );
-
-  const handleStartForeground = useCallback(() => {
-    startLiveVoice("foreground");
-  }, [startLiveVoice]);
-
-  const handleStartBackground = useCallback(() => {
-    startLiveVoice("background");
-  }, [startLiveVoice]);
+  const handleStart = useCallback(() => {
+    void liveVoice?.start(serverId).catch((error: unknown) => {
+      if (!(error instanceof LiveVoiceStartError)) {
+        console.error("[LiveVoice] Failed to start session", error);
+      }
+    });
+  }, [liveVoice, serverId]);
 
   const hasHostChoice = hosts.length > 1;
 
@@ -180,20 +165,12 @@ function LiveVoiceStartMenuItems({
         </>
       ) : null}
       <DropdownMenuItem
-        onSelect={handleStartForeground}
+        onSelect={handleStart}
         description={hasHostChoice ? undefined : selectedHost.label}
-        testID="live-voice-menu-start-foreground"
+        testID="live-voice-menu-start"
       >
-        {t("liveVoice.actions.startForeground")}
+        {t("liveVoice.actions.start")}
       </DropdownMenuItem>
-      {isLiveVoiceBackgroundSessionSupported ? (
-        <DropdownMenuItem
-          onSelect={handleStartBackground}
-          testID="live-voice-menu-start-background"
-        >
-          {t("liveVoice.actions.startBackground")}
-        </DropdownMenuItem>
-      ) : null}
     </>
   );
 }

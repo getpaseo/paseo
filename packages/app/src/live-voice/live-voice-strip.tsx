@@ -10,7 +10,6 @@ import {
   LiveVoiceCallControls,
   LiveVoiceStatusDot,
   LiveVoiceTranscript,
-  resolveLiveVoiceModeLabel,
   resolveLiveVoiceStatusLabel,
 } from "@/live-voice/live-voice-call-ui";
 import { useIsLiveVoiceStripDocked } from "@/live-voice/live-voice-placement";
@@ -48,10 +47,9 @@ export function LiveVoiceStrip() {
   if (!isDocked || !liveVoice) {
     return null;
   }
-  const { phase, serverId, sessionMode, transcripts, isAudioBlocked, error } = liveVoice;
+  const { phase, serverId, transcripts, isAudioBlocked, error } = liveVoice;
 
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? null;
-  const modeLabel = resolveLiveVoiceModeLabel({ sessionMode, t });
   const statusLabel = resolveLiveVoiceStatusLabel({ phase, isAudioBlocked, t });
   const errorText = error ? resolveLiveVoiceErrorMessage(error, t) : null;
   const latestTranscript = transcripts.length > 0 ? transcripts[transcripts.length - 1] : null;
@@ -77,7 +75,6 @@ export function LiveVoiceStrip() {
         <LiveVoiceStatusDot phase={phase} />
         <Text style={styles.title}>{t("liveVoice.label")}</Text>
         {hostLabel ? <Text style={styles.hostLabel}>{hostLabel}</Text> : null}
-        {modeLabel ? <Text style={styles.modeLabel}>{modeLabel}</Text> : null}
         <Text style={phase === "error" ? styles.statusError : styles.status}>{statusLabel}</Text>
 
         {!isExpanded && latestTranscript ? (
@@ -116,12 +113,6 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.fontFamily.ui,
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
-  },
-  modeLabel: {
-    fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.medium,
-    color: theme.colors.foreground,
   },
   status: {
     fontFamily: theme.fontFamily.ui,

@@ -9,7 +9,6 @@ const ACTIVE_SNAPSHOT: LiveVoiceSnapshot = {
   phase: "active",
   serverId: "source-host",
   liveSessionId: "live-call",
-  sessionMode: "background",
   isMuted: false,
   isAudioBlocked: false,
   transcripts: [],

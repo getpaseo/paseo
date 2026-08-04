@@ -19,12 +19,10 @@ export {
   type LiveVoiceNegotiationResult,
   type LiveVoiceSession,
   type LiveVoiceSessionFailureCode,
-  type LiveVoiceSessionMode,
   type StartLiveVoiceSessionOptions,
 } from "./live-voice-session.types";
 
 export const isLiveVoiceSessionSupported = false;
-export const isLiveVoiceBackgroundSessionSupported = false;
 
 export function startLiveVoiceSession(
   _options: StartLiveVoiceSessionOptions,

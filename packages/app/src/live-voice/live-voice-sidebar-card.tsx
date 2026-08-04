@@ -7,7 +7,6 @@ import {
   LiveVoiceCallControls,
   LiveVoiceStatusDot,
   LiveVoiceTranscript,
-  resolveLiveVoiceModeLabel,
   resolveLiveVoiceStatusLabel,
 } from "@/live-voice/live-voice-call-ui";
 import {
@@ -58,13 +57,12 @@ function LiveVoiceSidebarCard() {
   if (!liveVoice) {
     return null;
   }
-  const { phase, serverId, sessionMode, transcripts, isAudioBlocked, error } = liveVoice;
+  const { phase, serverId, transcripts, isAudioBlocked, error } = liveVoice;
   if (!isLiveVoiceCallInProgress(phase)) {
     return null;
   }
 
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? null;
-  const modeLabel = resolveLiveVoiceModeLabel({ sessionMode, t });
   const statusLabel = resolveLiveVoiceStatusLabel({ phase, isAudioBlocked, t });
   const errorText = error ? resolveLiveVoiceErrorMessage(error, t) : null;
   const latestTranscript = transcripts.length > 0 ? transcripts[transcripts.length - 1] : null;
@@ -76,14 +74,11 @@ function LiveVoiceSidebarCard() {
         <Text style={styles.title}>{t("liveVoice.label")}</Text>
         <Text style={phase === "error" ? styles.statusError : styles.status}>{statusLabel}</Text>
       </View>
-      {hostLabel || modeLabel ? (
+      {hostLabel ? (
         <View style={styles.metadataRow}>
-          {hostLabel ? (
-            <Text numberOfLines={1} style={styles.hostLabel}>
-              {hostLabel}
-            </Text>
-          ) : null}
-          {modeLabel ? <Text style={styles.modeLabel}>{modeLabel}</Text> : null}
+          <Text numberOfLines={1} style={styles.hostLabel}>
+            {hostLabel}
+          </Text>
         </View>
       ) : null}
 
@@ -153,12 +148,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-  },
-  modeLabel: {
-    fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.medium,
-    color: theme.colors.foreground,
   },
   preview: {
     fontFamily: theme.fontFamily.ui,
