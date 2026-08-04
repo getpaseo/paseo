@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import pino from "pino";
 import pretty from "pino-pretty";
+import { resolveDaemonLogPath } from "./daemon-log-path.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { PersistedConfig } from "./persisted-config.js";
 import { resolvePaseoHome } from "./paseo-home.js";
@@ -45,7 +46,6 @@ const LOG_LEVEL_PRIORITIES: Record<LogLevel, number> = {
 const DEFAULT_CONSOLE_LEVEL: LogLevel = "info";
 const DEFAULT_CONSOLE_FORMAT: LogFormat = "json";
 const DEFAULT_FILE_LEVEL: LogLevel = "info";
-const DEFAULT_DAEMON_LOG_FILENAME = "daemon.log";
 const REDACT_PATHS = [
   "authorization",
   "Authorization",
@@ -60,19 +60,6 @@ const REDACT_PATHS = [
   'req.headers["sec-websocket-protocol"]',
   "req.headers.Sec-WebSocket-Protocol",
 ];
-
-function resolveFilePath(paseoHome: string, configuredPath: string | undefined): string {
-  const fallback = path.join(paseoHome, DEFAULT_DAEMON_LOG_FILENAME);
-  if (!configuredPath) {
-    return fallback;
-  }
-
-  if (path.isAbsolute(configuredPath)) {
-    return configuredPath;
-  }
-
-  return path.resolve(paseoHome, configuredPath);
-}
 
 function minLogLevel(levels: LogLevel[]): LogLevel {
   let minLevel = levels[0];
@@ -148,7 +135,7 @@ export function resolveLogConfig(
     options?.file !== false && persistedLog?.file
       ? {
           level: fileLevel ?? DEFAULT_FILE_LEVEL,
-          path: resolveFilePath(paseoHome, persistedLog.file.path),
+          path: resolveDaemonLogPath(paseoHome, persistedConfig),
         }
       : undefined;
 
