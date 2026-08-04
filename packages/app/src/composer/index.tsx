@@ -283,11 +283,13 @@ function renderContextWindowMeter(
   contextWindowUsedTokens: number | null,
   totalCostUsd: number | null,
   showPercentage: boolean,
+  serverId: string,
+  agentId: string,
   pending: boolean,
   glyphSize: number,
 ): ReactElement | null {
   const hasData = contextWindowMaxTokens !== null && contextWindowUsedTokens !== null;
-  if (!hasData && !pending) {
+  if (!hasData && !pending && !showPercentage) {
     return null;
   }
   return (
@@ -296,6 +298,8 @@ function renderContextWindowMeter(
       usedTokens={contextWindowUsedTokens}
       totalCostUsd={totalCostUsd}
       showPercentage={showPercentage}
+      serverId={serverId}
+      agentId={agentId}
       pending={pending}
       glyphSize={glyphSize}
     />
@@ -305,8 +309,18 @@ function renderContextWindowMeter(
 function resolveContextWindowPlacement(
   meter: ReactElement | null,
   reserveSlot: boolean,
-): ReactNode {
-  return reserveSlot ? <View style={styles.contextWindowMeterSlot}>{meter}</View> : null;
+  isCompactLayout: boolean,
+): { beforeVoiceContent: ReactNode; compactContextWindowContent: ReactNode } {
+  if (!reserveSlot) {
+    return { beforeVoiceContent: null, compactContextWindowContent: null };
+  }
+  if (isCompactLayout) {
+    return { beforeVoiceContent: null, compactContextWindowContent: meter };
+  }
+  return {
+    beforeVoiceContent: <View style={styles.contextWindowMeterSlot}>{meter}</View>,
+    compactContextWindowContent: null,
+  };
 }
 
 interface RenderLeftContentArgs {
@@ -2079,7 +2093,9 @@ function ComposerContentImpl({
         contextWindowMaxTokens,
         contextWindowUsedTokens,
         agentState.totalCostUsd,
-        false,
+        isCompactLayout,
+        serverId,
+        agentId,
         contextWindowPending,
         contextWindowMeterGlyphSize,
       ),
@@ -2087,14 +2103,29 @@ function ComposerContentImpl({
       contextWindowMaxTokens,
       contextWindowUsedTokens,
       agentState.totalCostUsd,
+      isCompactLayout,
+      serverId,
+      agentId,
       contextWindowPending,
       contextWindowMeterGlyphSize,
     ],
   );
-  const beforeVoiceContent = useMemo(
-    () => <>{resolveContextWindowPlacement(contextWindowMeter, hasAgent)}</>,
-    [contextWindowMeter, hasAgent],
-  );
+  const { beforeVoiceContent, compactContextWindowContent } = useMemo(
+    () => {
+      const placement = resolveContextWindowPlacement(contextWindowMeter, hasAgent, isCompactLayout);
+      return {
+        ...placement,
+        beforeVoiceContent: (
+          <>
+            {placement.beforeVoiceContent}
+            {hasAgent && !isCompactLayout ? (
+              <UsageComposerPill serverId={serverId} agentId={agentId} />
+            ) : null}
+          </>
+        ),
+      };
+    },
+    [agentId, contextWindowMeter, hasAgent, isCompactLayout, serverId],
 
   const hasGithubAttachment = useMemo(
     () =>
@@ -2476,6 +2507,11 @@ function ComposerContentImpl({
                   submitLabel={submitLabel}
                 />
               </RenderProfile>
+              {compactContextWindowContent ? (
+                <View style={styles.contextWindowMeterCompactSlot}>
+                  {compactContextWindowContent}
+                </View>
+              ) : null}
               <Combobox
                 options={githubSearchOptions}
                 value=""
@@ -2565,6 +2601,9 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
+  },
+  contextWindowMeterCompactSlot: {
+    alignSelf: "flex-start",
   },
   realtimeVoiceButton: {
     width: 28,
