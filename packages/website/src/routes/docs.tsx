@@ -1,6 +1,6 @@
 import { createFileRoute, Link, Outlet, useLocation } from "@tanstack/react-router";
 import { Menu, X } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocsBreadcrumbs } from "~/components/docs-breadcrumbs";
 import { DocsNav } from "~/components/docs-nav";
 import { DocsOutline } from "~/components/docs-outline";
@@ -21,6 +21,14 @@ function DocsLayout() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const toggleMobileNav = useCallback(() => setMobileNavOpen((v) => !v), []);
   const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
+
+  // The sidebar scrolls independently, so a deep page loads with its own entry
+  // below the fold until we bring it into view.
+  const sidebarRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const active = sidebarRef.current?.querySelector("[data-docs-nav-active]");
+    active?.scrollIntoView({ block: "nearest" });
+  }, [location.pathname]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -50,7 +58,10 @@ function DocsLayout() {
 
       <div className="max-w-[90rem] mx-auto flex items-start">
         {/* Desktop sidebar */}
-        <aside className="hidden lg:block sticky top-0 h-screen w-60 shrink-0 border-r border-border p-6 overflow-y-auto">
+        <aside
+          ref={sidebarRef}
+          className="hidden lg:block sticky top-0 h-screen w-60 shrink-0 border-r border-border p-6 overflow-y-auto"
+        >
           <Link to="/" className="flex items-center gap-3 mb-8">
             <img src="/logo.svg" alt="Paseo" className="w-6 h-6" />
             <span className="text-lg font-medium">Paseo</span>
