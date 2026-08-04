@@ -321,6 +321,17 @@ export function getWorkspaceFileWatcherBackend(
   }
 }
 
+export function subscribeToWorkspaceFileChanges(
+  directory: string,
+  callback: parcelWatcher.SubscribeCallback,
+  options?: parcelWatcher.Options,
+): Promise<parcelWatcher.AsyncSubscription> {
+  return parcelWatcher.subscribe(directory, callback, {
+    ...options,
+    backend: getWorkspaceFileWatcherBackend(process.platform),
+  });
+}
+
 interface WorkspaceGitTarget {
   cwd: string;
   listeners: Set<WorkspaceGitListener>;
@@ -390,11 +401,7 @@ interface WorkspaceForgePrStatusPollTarget {
 
 function buildDefaultWorkspaceGitServiceDeps(): WorkspaceGitServiceDependencies {
   return {
-    subscribe: (directory, callback, options) =>
-      parcelWatcher.subscribe(directory, callback, {
-        ...options,
-        backend: getWorkspaceFileWatcherBackend(process.platform),
-      }),
+    subscribe: subscribeToWorkspaceFileChanges,
     getCheckoutSnapshotFacts,
     getCheckoutStatus,
     getCheckoutShortstat,

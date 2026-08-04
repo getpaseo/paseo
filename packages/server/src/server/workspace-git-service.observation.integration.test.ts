@@ -6,7 +6,10 @@ import type pino from "pino";
 import { afterEach, expect, test, vi } from "vitest";
 import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
-import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
+import {
+  subscribeToWorkspaceFileChanges,
+  WorkspaceGitServiceImpl,
+} from "./workspace-git-service.js";
 
 function createLogger(): pino.Logger {
   const logger = {
@@ -83,7 +86,7 @@ test("native recursive observation updates tracked state and prunes ignored stor
     events: parcelWatcher.Event[];
   }> = [];
   const subscribe: typeof parcelWatcher.subscribe = async (directory, callback, options) => {
-    const subscription = await parcelWatcher.subscribe(
+    const subscription = await subscribeToWorkspaceFileChanges(
       directory,
       (error, events) => {
         deliveredEvents.push({ directory, events });
