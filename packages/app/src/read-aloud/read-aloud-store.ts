@@ -33,6 +33,13 @@ export interface ReadAloudSnapshot {
   status: "idle" | "loading" | "speaking";
   failure: ReadAloudFailure | null;
   rate: ReadAloudRate;
+  /**
+   * Who asked for this read — the assistant message id of the turn whose button
+   * was pressed. Playback is a single module-level slot, but the button lives in
+   * every turn footer, so a footer subscribing to this snapshot has to know
+   * whether it is the one speaking or a bystander. `null` when idle.
+   */
+  ownerId: string | null;
 }
 
 /**
@@ -41,7 +48,12 @@ export interface ReadAloudSnapshot {
  */
 let playbackRate: ReadAloudRate = DEFAULT_RATE;
 
-let snapshot: ReadAloudSnapshot = { status: "idle", failure: null, rate: playbackRate };
+let snapshot: ReadAloudSnapshot = {
+  status: "idle",
+  failure: null,
+  rate: playbackRate,
+  ownerId: null,
+};
 const listeners = new Set<() => void>();
 
 /**
@@ -53,10 +65,13 @@ let handle: ReadAloudHandle | null = null;
 let pendingSegmentPlaybacks = 0;
 let streamEnded = false;
 
-// Takes everything but `rate`: the rate is owned by module state, so folding it
-// in here keeps every call site from having to remember to carry it forward.
-function setSnapshot(next: Omit<ReadAloudSnapshot, "rate">): void {
-  snapshot = { ...next, rate: playbackRate };
+/** The turn currently holding the playback slot. Cleared when playback ends. */
+let ownerId: string | null = null;
+
+// Takes everything but `rate` and `ownerId`: both are owned by module state, so
+// folding them in here keeps every call site from having to carry them forward.
+function setSnapshot(next: Omit<ReadAloudSnapshot, "rate" | "ownerId">): void {
+  snapshot = { ...next, rate: playbackRate, ownerId };
   for (const listener of listeners) {
     listener();
   }
@@ -70,6 +85,7 @@ function finishIfDone(token: number): void {
     return;
   }
   handle = null;
+  ownerId = null;
   setSnapshot({ status: "idle", failure: snapshot.failure });
 }
 
@@ -93,6 +109,7 @@ export function stopReadAloud(): void {
   generation += 1;
   handle?.cancel();
   handle = null;
+  ownerId = null;
   pendingSegmentPlaybacks = 0;
   streamEnded = false;
   stopReadAloudAudio();
@@ -112,7 +129,12 @@ export function setReadAloudRate(rate: ReadAloudRate): void {
   setSnapshot({ status: snapshot.status, failure: snapshot.failure });
 }
 
-export function startReadAloud(params: { client: DaemonClient; text: string }): void {
+export function startReadAloud(params: {
+  client: DaemonClient;
+  text: string;
+  /** Assistant message id of the turn being read; surfaces as `snapshot.ownerId`. */
+  ownerId: string;
+}): void {
   stopReadAloud();
 
   if (!isReadAloudAudioSupported) {
@@ -122,6 +144,10 @@ export function startReadAloud(params: { client: DaemonClient; text: string }): 
     });
     return;
   }
+
+  // Set after the guard above: a rejected start never takes the slot, so a
+  // failure surfaces without a bystander footer rendering itself as the owner.
+  ownerId = params.ownerId;
 
   // The engine is created lazily and defaults to 1x, so a rate chosen during an
   // earlier selection has to be re-applied rather than assumed to still be set.

@@ -1468,7 +1468,7 @@ export const es: TranslationResources = {
     speed: "Velocidad de reproducción {{rate}}",
     errors: {
       ttsUnavailable: "La conversión de texto a voz no está configurada en este host",
-      tooLong: "La selección es demasiado larga para leerla en voz alta",
+      tooLong: "El mensaje es demasiado largo para leerlo en voz alta",
       empty: "No hay nada que leer en voz alta",
       unsupported: "Leer en voz alta no está disponible aquí",
       failed: "No se pudo leer eso en voz alta",

@@ -117,6 +117,7 @@ import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import { TurnReadAloudButton } from "@/read-aloud/turn-read-aloud-button";
 export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
 
@@ -563,6 +564,10 @@ export const UserMessage = memo(function UserMessage({
 
 interface AssistantTurnFooterProps {
   getContent: () => string;
+  /** The turn's closing prose, for read aloud. Omitted where speech isn't offered. */
+  getSpeech?: () => string;
+  /** Assistant message id, identifying this turn as the read-aloud owner. */
+  turnId?: string | null;
   completedAt?: Date;
   durationMs?: number;
   onFork?: (target: AssistantForkTarget) => Promise<void> | void;
@@ -608,6 +613,8 @@ const TIMESTAMP_REVEAL_MS = 3000;
  */
 export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   getContent,
+  getSpeech,
+  turnId,
   completedAt,
   durationMs,
   onFork,
@@ -664,6 +671,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
         getContent={getContent}
         containerStyle={assistantTurnFooterStylesheet.copyButton}
       />
+      {getSpeech && turnId ? <TurnReadAloudButton turnId={turnId} getSpeech={getSpeech} /> : null}
       {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
       {durationLabel ? (
         <Pressable

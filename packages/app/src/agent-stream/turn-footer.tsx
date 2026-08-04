@@ -7,6 +7,7 @@ import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import {
   collectAssistantTurnContentForStreamRenderStrategy,
+  collectAssistantTurnSpeechForStreamRenderStrategy,
   type StreamStrategy,
 } from "./strategy";
 import { resolveAssistantTurnForkBoundary, type AssistantTurnForkBoundary } from "./turn-boundary";
@@ -155,6 +156,16 @@ function CompletedTurnFooter({
       }),
     [strategy, items, startIndex],
   );
+  const getSpeech = useCallback(
+    () =>
+      collectAssistantTurnSpeechForStreamRenderStrategy({
+        strategy,
+        items,
+        startIndex,
+      }),
+    [strategy, items, startIndex],
+  );
+  const turnId = items[startIndex]?.id ?? null;
   const boundary = resolveAssistantTurnForkBoundary({
     items,
     startIndex,
@@ -173,6 +184,8 @@ function CompletedTurnFooter({
     <View style={stylesheet.turnFooterSlot}>
       <AssistantTurnFooter
         getContent={getContent}
+        getSpeech={getSpeech}
+        turnId={turnId}
         completedAt={timing?.completedAt}
         durationMs={timing?.durationMs}
         onFork={boundary && onForkAssistantTurn ? handleFork : undefined}

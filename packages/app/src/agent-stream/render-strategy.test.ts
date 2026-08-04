@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";
 import {
   collectAssistantTurnContentForStreamRenderStrategy,
+  collectAssistantTurnSpeechForStreamRenderStrategy,
   getBottomOffsetForStreamRenderStrategy,
   getFrameChildOrderForStreamRenderStrategy,
   getHistoryLiveBoundaryIndexForStreamRenderStrategy,
@@ -35,6 +36,24 @@ function assistantMessage(id: string, text: string, seed: number): StreamItem {
     id,
     text,
     timestamp: createTimestamp(seed),
+  };
+}
+
+function toolCall(id: string, seed: number): StreamItem {
+  return {
+    kind: "tool_call",
+    id,
+    timestamp: createTimestamp(seed),
+    payload: {
+      source: "orchestrator",
+      data: {
+        toolCallId: id,
+        toolName: "bash",
+        arguments: "cmd",
+        result: null,
+        status: "completed",
+      },
+    },
   };
 }
 
@@ -194,6 +213,99 @@ describe("neighbor and traversal semantics", () => {
         startIndex: invertedStartIndex,
       }),
     ).toBe("assistant-1\n\nassistant-2");
+  });
+
+  it("speaks only the prose after the last tool call", () => {
+    const chronological: StreamItem[] = [
+      userMessage("u1", "user-1", 1),
+      assistantMessage("a1", "before the tool", 2),
+      toolCall("t1", 3),
+      assistantMessage("a2", "after the tool", 4),
+    ];
+
+    const forward = resolveStreamRenderStrategy({ platform: "web", isMobileBreakpoint: false });
+    const startIndex = chronological.findIndex((item) => item.id === "a2");
+
+    // Copy takes the whole turn; speech stops at the tool call. Reading a long
+    // turn from the top would replay narration the user already watched.
+    expect(
+      collectAssistantTurnContentForStreamRenderStrategy({
+        strategy: forward,
+        items: chronological,
+        startIndex,
+      }),
+    ).toBe("before the tool\n\nafter the tool");
+    expect(
+      collectAssistantTurnSpeechForStreamRenderStrategy({
+        strategy: forward,
+        items: chronological,
+        startIndex,
+      }),
+    ).toBe("after the tool");
+  });
+
+  it("speaks the whole turn when it has no tool calls", () => {
+    const chronological: StreamItem[] = [
+      userMessage("u1", "user-1", 1),
+      assistantMessage("a1", "assistant-1", 2),
+      assistantMessage("a2", "assistant-2", 3),
+    ];
+
+    const forward = resolveStreamRenderStrategy({ platform: "web", isMobileBreakpoint: false });
+
+    expect(
+      collectAssistantTurnSpeechForStreamRenderStrategy({
+        strategy: forward,
+        items: chronological,
+        startIndex: chronological.findIndex((item) => item.id === "a2"),
+      }),
+    ).toBe("assistant-1\n\nassistant-2");
+  });
+
+  it("speaks nothing when the turn ends on a tool call", () => {
+    const chronological: StreamItem[] = [
+      userMessage("u1", "user-1", 1),
+      assistantMessage("a1", "before the tool", 2),
+      toolCall("t1", 3),
+    ];
+
+    const forward = resolveStreamRenderStrategy({ platform: "web", isMobileBreakpoint: false });
+
+    // The button hides on an empty result rather than synthesizing silence.
+    expect(
+      collectAssistantTurnSpeechForStreamRenderStrategy({
+        strategy: forward,
+        items: chronological,
+        startIndex: chronological.findIndex((item) => item.id === "t1"),
+      }),
+    ).toBe("");
+  });
+
+  it("stops at the last tool call in both traversal directions", () => {
+    const chronological: StreamItem[] = [
+      userMessage("u1", "user-1", 1),
+      assistantMessage("a1", "before the tool", 2),
+      toolCall("t1", 3),
+      assistantMessage("a2", "after the tool", 4),
+    ];
+
+    const inverted = resolveStreamRenderStrategy({
+      platform: "android",
+      isMobileBreakpoint: false,
+    });
+    const invertedItems = orderTailForStreamRenderStrategy({
+      strategy: inverted,
+      streamItems: chronological,
+    });
+
+    // Native renders an inverted list, so the walk runs the other way. Same text.
+    expect(
+      collectAssistantTurnSpeechForStreamRenderStrategy({
+        strategy: inverted,
+        items: invertedItems,
+        startIndex: invertedItems.findIndex((item) => item.id === "a2"),
+      }),
+    ).toBe("after the tool");
   });
 
   it("returns undefined neighbor when index would be out of bounds", () => {

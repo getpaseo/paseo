@@ -95,6 +95,7 @@ export interface StreamStrategy {
     relation: NeighborRelation,
   ) => StreamItem | undefined;
   collectAssistantTurnContent: (items: StreamItem[], startIndex: number) => string;
+  collectAssistantTurnSpeech: (items: StreamItem[], startIndex: number) => string;
   isNearBottom: (input: StreamNearBottomInput) => boolean;
   getBottomOffset: (metrics: StreamViewportMetrics) => number;
   getEdgeSlotProps: (
@@ -168,6 +169,34 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
       ) {
         const currentItem = items[index];
         if (currentItem.kind === "user_message") {
+          break;
+        }
+        if (currentItem.kind === "assistant_message") {
+          messages.push(currentItem.text);
+        }
+      }
+      return messages.toReversed().join("\n\n");
+    },
+    /**
+     * The turn's closing prose — what the agent said after its last tool call.
+     *
+     * Unlike `collectAssistantTurnContent`, which copies the whole turn, this
+     * stops at the first `tool_call` walking backward. Reading a long turn aloud
+     * from the top would replay narration the user watched scroll by; the part
+     * worth hearing is the summary at the end.
+     *
+     * Empty when the turn ends on a tool call with nothing after it — the caller
+     * hides the button rather than synthesizing silence.
+     */
+    collectAssistantTurnSpeech: (items, startIndex) => {
+      const messages: string[] = [];
+      for (
+        let index = startIndex;
+        index >= 0 && index < items.length;
+        index += config.assistantTurnTraversalStep
+      ) {
+        const currentItem = items[index];
+        if (currentItem.kind === "user_message" || currentItem.kind === "tool_call") {
           break;
         }
         if (currentItem.kind === "assistant_message") {
@@ -275,6 +304,14 @@ export function collectAssistantTurnContentForStreamRenderStrategy(params: {
   startIndex: number;
 }): string {
   return params.strategy.collectAssistantTurnContent(params.items, params.startIndex);
+}
+
+export function collectAssistantTurnSpeechForStreamRenderStrategy(params: {
+  strategy: StreamStrategy;
+  items: StreamItem[];
+  startIndex: number;
+}): string {
+  return params.strategy.collectAssistantTurnSpeech(params.items, params.startIndex);
 }
 
 export function isNearBottomForStreamRenderStrategy(

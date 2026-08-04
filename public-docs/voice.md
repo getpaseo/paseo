@@ -113,17 +113,17 @@ Paseo uses these paths under the configured OpenAI base URL:
 
 ## Read Aloud
 
-Select text anywhere in the app — an agent's answer, a diff, a file — and a speaker button appears above the selection. Pressing it speaks the selection; the icon becomes a stop square while it plays, and pressing it again stops. Playback also stops as soon as the selection is cleared.
+Every completed agent turn gets a speaker button in its footer, next to the copy button. Pressing it speaks the turn's closing message — the part the agent wrote after its last tool call, not the narration in between. The icon becomes a stop square while it plays, and pressing it again stops. Starting a read on another turn supersedes the first: one voice at a time.
 
-Read aloud uses the same text-to-speech provider as voice mode (`features.voiceMode.tts`), so local Kokoro and OpenAI both work with no extra configuration. Audio is synthesized sentence by sentence and streamed to the client, so long selections start speaking on the first sentence. Selections above 4000 characters are rejected rather than queued.
+Read aloud uses the same text-to-speech provider as voice mode (`features.voiceMode.tts`), so local Kokoro and OpenAI both work with no extra configuration. Audio is synthesized sentence by sentence and streamed to the client, so a long message starts speaking on the first sentence. Messages above 4000 characters are rejected rather than queued. Markdown and Paseo's own wrapper tags are stripped before synthesis, so fences and `<spoken-input>` are not read out.
 
-Two limits:
+Three limits:
 
-- **Web and desktop only.** The bubble is anchored to a live text selection, and iOS/Android hand selection to the system edit menu, which the app cannot read. There is no read-aloud affordance on the mobile apps.
-- **The composer and the terminal are excluded.** Both own their own selection behavior.
-- **The selection is spoken by the host it came from.** Read aloud never sends text to another paired host, so a selection on a route with no host — settings, history — gets no button.
+- **Web and desktop only.** Native has no audio playback engine for this yet, so the button is hidden on iOS and Android rather than shown doing nothing.
+- **Turns that end on a tool call have no button.** There is nothing to say after the last tool.
+- **A turn is spoken by the host it came from.** Read aloud never sends text to another paired host, so a route with no host — settings, history — gets no button.
 
-Hosts older than v0.2.5 do not have the read-aloud RPC; against those the bubble simply never appears.
+Hosts older than v0.2.5 do not have the read-aloud RPC; against those the button never appears.
 
 ## Environment Variables
 

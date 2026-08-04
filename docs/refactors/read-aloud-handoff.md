@@ -1,63 +1,53 @@
 # Read Aloud — Session Handoff
 
 Picking this up cold? Read this, then
-[read-aloud-selection-anchoring-plan.md](./read-aloud-selection-anchoring-plan.md) — all
-three of its steps have since landed, and its Outcome section records what shipped.
+[read-aloud-footer-button-plan.md](./read-aloud-footer-button-plan.md), which records why
+the feature moved off text selection.
 
-- **Branch:** `text-selection-speech-modal`, branched from `d1ce2b77f`.
+- **Branch:** `text-selection-speech-modal`, branched from `d1ce2b77f`. The branch name
+  predates the pivot; the feature is no longer selection-based.
 
 ## What the feature is
 
-Select text on web/desktop → a 32×32 speaker button floats above the selection → press it
-and the daemon speaks the selection back. Press again, or clear the selection, to stop.
+Every completed agent turn has a speaker button in its footer, next to copy. Press it and
+the daemon speaks the turn's **closing message** — the prose after the last tool call, not
+the narration in between. Press again to stop. Starting a read on another turn supersedes
+the first: playback is one app-wide slot.
 
-**Web and Electron only.** React Native exposes no JS API for the current text selection —
-iOS hands it to the system edit menu, Android to an ActionMode — so there is nothing to
-anchor to on the mobile apps. `read-aloud-selection-bubble.tsx` (the non-`.web` file) is a
-deliberate `return null`. Closing that gap would mean a turn-level "Read aloud" button next
-to the copy button, reading the whole turn instead of a selection. Not built; not started.
+It started as a floating button anchored to a live text selection. The project owner asked
+for the footer instead ("just speaking the message after the last tool call should be
+enough"), which deleted ~1,138 lines of anchoring, placement, and bubble code and resolved
+two Greptile P1s about selected text crossing daemon boundaries.
+
+**Web and Electron only, for now** — but for a different reason than before. Selection was
+web-only because RN exposes no selection API; the footer button has no such limit. What
+blocks native now is only that `read-aloud-audio.ts` is a playback stub
+(`isReadAloudAudioSupported = false`). Implementing it with expo-audio makes the button
+work on iOS/Android with no other change. That is the obvious next task.
 
 Uses the **existing voice-mode TTS provider** (local Kokoro by default, or OpenAI). No
 ElevenLabs — the existing provider already has config, env vars, and docs plumbing.
 
-## State: what works, verified how
-
-Green as of handoff: `npm run typecheck`, `npm run lint`, `npm run format`, 42 server tests
-(`packages/server/src/server/speech/read-aloud-text.test.ts`,
-`src/server/session/voice/`, `src/server/agent/tts-manager.test.ts`), 50 app tests
-(`src/i18n/resources.test.ts`, `src/voice/voice-runtime.test.ts`).
-
-Verified in a real browser via Playwright against the dev stack: button appears above the
-selection; press → stop square + selection survives the press; press again → idle; click
-away → button gone and playback stopped. Audio confirmed reaching the output graph by
-instrumenting `AudioContext` — two segments, non-silent buffers (peak 0.27 / 0.35), context
-`running`.
-
-Since then, anchoring was rewritten. Also green: 14 new tests
-(`packages/app/src/read-aloud/read-aloud-placement.test.ts`) and nine browser cases measured
-off real `getBoundingClientRect()` values — see the plan's Outcome section for the table.
-
 ### Architecture
 
-| Piece                                                    | What it does                                                                           |
-| -------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `protocol/src/messages.ts`                               | `speech.tts.read_aloud.request` → N `.response` segments; `…cancel_read_aloud.request` |
-| `server/session/voice/read-aloud-controller.ts`          | Sanitize → split → synthesize with 2-segment prefetch → stream                         |
-| `server/speech/read-aloud-text.ts`                       | Strips markup before synthesis                                                         |
-| `server/speech/tts-text-splitter.ts`                     | Extracted from `tts-manager.ts`; **shared with voice mode**                            |
-| `client/src/daemon-client.ts` → `startReadAloud()`       | Returns a handle with `cancel()`; streams via `on(…response)`                          |
-| `app/src/read-aloud/use-selection-anchor.web.ts`         | Endpoint rects + the clipping-ancestor `visibleBox`; retains during playback           |
-| `app/src/read-aloud/read-aloud-placement.ts`             | Pure above/below/park decision and clamping; unit-tested                               |
-| `app/src/read-aloud/read-aloud-selection-bubble.web.tsx` | Renders into `#overlay-root`; owns the widths and stop intent                          |
-| `app/src/read-aloud/read-aloud-store.ts`                 | Playback state machine, generation counter, speed                                      |
-| `app/src/read-aloud/read-aloud-audio.web.ts`             | Reuses the voice-mode `AudioEngine` (playback context only, no mic)                    |
+| Piece                                           | What it does                                                                           |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `protocol/src/messages.ts`                      | `speech.tts.read_aloud.request` → N `.response` segments; `…cancel_read_aloud.request` |
+| `server/session/voice/read-aloud-controller.ts` | Sanitize → split → synthesize with 2-segment prefetch → stream                         |
+| `server/speech/read-aloud-text.ts`              | Strips markdown and Paseo wrapper tags before synthesis                                |
+| `server/speech/tts-text-splitter.ts`            | Extracted from `tts-manager.ts`; **shared with voice mode**                            |
+| `client/src/daemon-client.ts`                   | `startReadAloud()` returns a handle with `cancel()`                                    |
+| `app/src/agent-stream/strategy.ts`              | `collectAssistantTurnSpeech` — walks back, stops at the last `tool_call`               |
+| `app/src/read-aloud/turn-read-aloud-button.tsx` | The footer button; owns gating and stop intent                                         |
+| `app/src/read-aloud/read-aloud-store.ts`        | Playback state machine, `ownerId`, generation counter, speed                           |
+| `app/src/read-aloud/use-read-aloud-host.ts`     | Route-host binding — speech never crosses to another paired daemon                     |
+| `app/src/read-aloud/read-aloud-audio.web.ts`    | Reuses the voice-mode `AudioEngine` (playback context only, no mic)                    |
 
 Segmented streaming is not gold-plating: local TTS returns raw 24 kHz PCM (~48 KB/s), so a
-long selection in one message would be megabytes.
+long message in one frame would be megabytes.
 
 **Capability-gated** on `server_info.features.readAloud` (`COMPAT(readAloud)`, v0.2.5).
-Hosts without it get no button at all — an upgrade prompt on every text selection would be
-worse than the feature being absent. No fallback path.
+Hosts without it get no button. No fallback path.
 
 ## Environment gotchas — every one of these cost real time to rediscover
 
@@ -107,8 +97,8 @@ Runs alongside the user's normal Paseo on **6767** — different port, different
 (`.dev/paseo-home`). **Never restart the 6767 daemon**; it manages live agents. The dev
 home already has a project and workspace registered from earlier testing.
 
-To try it: open the workspace → diff-stat button in the top bar → expand a file → drag-select
-a couple of diff lines. Agent output in a chat works too.
+To try it: open a workspace with an agent that has finished at least one turn, and press
+the speaker button in that turn's footer, next to the copy button.
 
 ### Probing the daemon directly
 
@@ -129,9 +119,11 @@ Faster than the UI for server-side questions. Connect to `ws://localhost:6768/ws
 - **Error detail is dropped.** Unknown failure codes render the generic "Couldn't read that
   aloud"; the daemon's real message sits unused in `failure.message`. Worth surfacing on
   hover so the next failure is self-diagnosing.
-- **Markup sanitization is unit-tested only.** It was written after the last daemon restart,
-  so it has never run against a live daemon. First thing to confirm after restarting:
-  selecting a `<spoken-input>` block should speak only the inner text.
+- **Markup sanitization is unit-tested only.** It has not been exercised against a live
+  daemon. Confirm a turn containing a `<spoken-input>` block or a fenced code block speaks
+  only the prose.
+- **Native audio is unimplemented.** `read-aloud-audio.ts` is a stub, so the button hides
+  on iOS/Android. Nothing else blocks native now that selection is gone.
 
 ## Things I got wrong — don't repeat them
 
@@ -145,5 +137,6 @@ Faster than the UI for server-side questions. Connect to `ws://localhost:6768/ws
   actually runs, not one bent to work.
 - **Swallowed errors in a `.catch(() => {})`.** Turned a hard `ReferenceError` into "no
   error, no sound", the worst possible failure mode. That catch now reports.
-- **Assumed `getClientRects()` was one rect per line.** It is not — see the plan's traps
-  section. The sub-agent caught this before it was written.
+- **Built the hard version first.** Selection anchoring — endpoint rects, clipping
+  ancestors, placement clamping — was ~1,138 lines that the owner replaced with a button in
+  a footer. The expensive part was never the speech; it was the anchoring nobody asked for.
