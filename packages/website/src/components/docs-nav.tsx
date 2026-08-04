@@ -1,6 +1,6 @@
 import { Link, useLocation } from "@tanstack/react-router";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { type MouseEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type DocsNavNode } from "~/docs";
 
 interface DocsNavProps {
@@ -21,6 +21,22 @@ function clsx(...classes: (string | false | null | undefined)[]): string {
   return classes.filter(Boolean).join(" ");
 }
 
+/**
+ * The sidebar scrolls independently of the page, so the active entry has to
+ * bring itself into view. The entry owns this rather than the layout, because
+ * a link inside a collapsed group only mounts once that group opens, and
+ * anything watching from above would have to query before that happens.
+ */
+function useScrollIntoViewWhenActive(isActive: boolean) {
+  const ref = useRef<HTMLAnchorElement>(null);
+
+  useEffect(() => {
+    if (isActive) ref.current?.scrollIntoView({ block: "nearest" });
+  }, [isActive]);
+
+  return ref;
+}
+
 function PageLink({
   node,
   mobile,
@@ -32,9 +48,11 @@ function PageLink({
 }) {
   const location = useLocation();
   const isActive = location.pathname === node.href;
+  const ref = useScrollIntoViewWhenActive(isActive);
 
   return (
     <Link
+      ref={ref}
       to={node.href}
       activeOptions={ACTIVE_OPTIONS_EXACT}
       onClick={onNavigate}
@@ -65,6 +83,7 @@ function GroupNode({
   const currentHref = location.pathname;
   const containsActive = useMemo(() => nodeContainsHref(node, currentHref), [node, currentHref]);
   const isActive = node.href === currentHref;
+  const ref = useScrollIntoViewWhenActive(isActive);
   const [isOpen, setIsOpen] = useState(containsActive);
   const toggle = useCallback(() => setIsOpen((open) => !open), []);
 
@@ -109,6 +128,7 @@ function GroupNode({
         </button>
       ) : (
         <Link
+          ref={ref}
           to={node.href}
           activeOptions={ACTIVE_OPTIONS_EXACT}
           onClick={handleClick}
