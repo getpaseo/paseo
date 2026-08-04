@@ -60,6 +60,7 @@ import {
   resolveOmpLaunchMode,
   resolveOmpProviderParams,
   OMP_MODES,
+  type OmpGuardrailParams,
   type OmpModelRoleParams,
   type OmpRuntimeProviderParams,
 } from "./provider-config.js";
@@ -2185,6 +2186,7 @@ export class OmpAgentClient implements AgentClient {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly providerParams: OmpRuntimeProviderParams;
   private readonly modelRoleParams: OmpModelRoleParams;
+  private readonly guardrailParams: OmpGuardrailParams;
   private readonly subagentCardScheduler?: OmpSubagentCardScheduler;
   private readonly providerIdleScheduler?: OmpProviderIdleScheduler;
   private readonly noTurnScheduler?: OmpNoTurnScheduler;
@@ -2192,7 +2194,7 @@ export class OmpAgentClient implements AgentClient {
   private readonly runtime: OmpRuntime;
 
   constructor(options: OmpAgentClientOptions) {
-    const { runtimeProviderParams, modelRoleParams } = resolveOmpProviderParams(
+    const { runtimeProviderParams, modelRoleParams, guardrailParams } = resolveOmpProviderParams(
       options.providerParams,
     );
     const runtimeSettings = mergeOmpRuntimeSettings(
@@ -2208,6 +2210,7 @@ export class OmpAgentClient implements AgentClient {
     this.runtimeSettings = runtimeSettings;
     this.providerParams = runtimeProviderParams;
     this.modelRoleParams = modelRoleParams;
+    this.guardrailParams = guardrailParams;
     this.subagentCardScheduler = options.subagentCardScheduler;
     this.providerIdleScheduler = options.providerIdleScheduler;
     this.noTurnScheduler = options.noTurnScheduler;
@@ -2233,11 +2236,18 @@ export class OmpAgentClient implements AgentClient {
     const runtimeSession = await this.runtime.startSession({
       cwd: config.cwd,
       protocolMode: "rpc-ui",
-      model: config.model,
+      // params.model only backstops requests that didn't pick a model; an
+      // explicit caller choice always wins. Resumes deliberately skip this —
+      // they restore the model the session itself persisted.
+      model: config.model ?? this.guardrailParams.defaultModel,
       thinkingOptionId: normalizeOmpThinkingOption(config.thinkingOptionId) ?? undefined,
       noSession: config.internal === true,
       modeId: launchMode.modeId,
-      extraArgs: launchMode.extraArgs,
+      // The params.configOverlay settings overlay rides every launch —
+      // its fallback-chain/model-role constraints must hold for the process.
+      extraArgs: this.guardrailParams.configOverlay
+        ? [...launchMode.extraArgs, "--config", this.guardrailParams.configOverlay]
+        : launchMode.extraArgs,
       systemPrompt: composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
       env: launchContext?.env,
     });
@@ -2280,7 +2290,12 @@ export class OmpAgentClient implements AgentClient {
         resumeConfig,
         sessionFile,
         launchContext,
-        launchMode,
+        launchMode: this.guardrailParams.configOverlay
+          ? {
+              ...launchMode,
+              extraArgs: [...launchMode.extraArgs, "--config", this.guardrailParams.configOverlay],
+            }
+          : launchMode,
       }),
     );
     try {

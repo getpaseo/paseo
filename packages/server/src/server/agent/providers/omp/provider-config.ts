@@ -15,6 +15,8 @@ export { OMP_MODES };
 export const OmpProviderParamsSchema = z
   .object({
     sessionDir: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    configOverlay: z.string().min(1).optional(),
     smolModel: z.string().min(1).optional(),
     slowModel: z.string().min(1).optional(),
     planModel: z.string().min(1).optional(),
@@ -29,6 +31,18 @@ export interface OmpModelRoleParams {
   smolModel?: string;
   slowModel?: string;
   planModel?: string;
+}
+
+/**
+ * Provider-level launch guardrails for unattended agents: a default model for
+ * agent requests that don't pick one, and an OMP settings overlay (passed as
+ * `--config`) whose `modelRoles`/`retry.fallbackChains` constrain every
+ * spawned session, so headless agents can't silently escalate to models the
+ * deployment didn't budget for.
+ */
+export interface OmpGuardrailParams {
+  defaultModel?: string;
+  configOverlay?: string;
 }
 
 export function resolveOmpLaunchMode(
@@ -127,6 +141,7 @@ export function formatOmpVersionSupport(versionOutput: string): string {
 export function resolveOmpProviderParams(providerParams: unknown): {
   runtimeProviderParams: OmpRuntimeProviderParams;
   modelRoleParams: OmpModelRoleParams;
+  guardrailParams: OmpGuardrailParams;
 } {
   const params = OmpProviderParamsSchema.parse(providerParams ?? {});
   return {
@@ -135,6 +150,10 @@ export function resolveOmpProviderParams(providerParams: unknown): {
       ...(params.smolModel ? { smolModel: params.smolModel } : {}),
       ...(params.slowModel ? { slowModel: params.slowModel } : {}),
       ...(params.planModel ? { planModel: params.planModel } : {}),
+    },
+    guardrailParams: {
+      ...(params.model ? { defaultModel: params.model } : {}),
+      ...(params.configOverlay ? { configOverlay: params.configOverlay } : {}),
     },
   };
 }

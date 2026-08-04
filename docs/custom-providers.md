@@ -389,6 +389,27 @@ Custom OMP profiles should extend `omp`. They inherit the OMP adapter's `rpc-ui`
 
 `params.sessionDir` is used only for importing sessions that were started outside Paseo. If `command` or XDG env vars move OMP's state directory, set `params.sessionDir` to the resulting OMP JSONL session directory; launching and resuming still go through the configured command.
 
+Two optional params guard against unwanted model spend on unattended (loop, schedule, voice, subagent) OMP agents:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "omp": {
+        "enabled": true,
+        "params": {
+          "model": "kimi-code/k3-256k",
+          "configOverlay": "/home/brian/.paseo/omp-guardrails.yml"
+        }
+      }
+    }
+  }
+}
+```
+
+- `params.model` is the default model for agent requests that don't pick one. An explicit model choice (app picker, `--model`, `provider/model`) always wins. Resumed sessions ignore it and restore the model the session itself used.
+- `params.configOverlay` is an absolute path to an OMP settings overlay passed to every spawn as `--config` (create and resume). Use it to pin `modelRoles` or strip paid providers from `retry.fallbackChains` for Paseo-driven sessions without touching your interactive `~/.omp/agent/config.yml`. Note the overlay steers defaults and fallback chains; OMP still resolves an explicitly requested `--model` outside `enabledModels`.
+
 For other providers that keep Pi's `--mode rpc` API but write sessions somewhere else, extend `pi`, replace the command, and provide the JSONL session directory:
 
 ```json
