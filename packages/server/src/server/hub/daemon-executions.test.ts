@@ -73,10 +73,11 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
   });
   expect(response.payload.agent).not.toHaveProperty("config");
   expect(response.payload.agent).not.toHaveProperty("mcpServers");
-  expect(response.payload.agent.persistence?.metadata).toEqual({
-    conversationId: response.payload.agent.persistence?.sessionId,
-    cwd: response.payload.agent.cwd,
-  });
+  // Persistence reaches the wire as identity only. Provider metadata is where
+  // the MCP configuration lived, so its absence is what this test is about.
+  expect(response.payload.agent.persistence).not.toHaveProperty("metadata");
+  expect(response.payload.agent.persistence).toMatchObject({ provider: "codex" });
+  expect(response.payload.agent.persistence?.sessionId).toEqual(expect.any(String));
   expect(JSON.stringify(response.payload.agent)).not.toContain(bearer);
   expect(JSON.stringify(response.payload.agent)).not.toContain("private-build");
   expect(JSON.stringify(response.payload.agent)).not.toContain("finish_execution");
@@ -91,10 +92,9 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
   }
   expect(update.payload.agent).not.toHaveProperty("config");
   expect(update.payload.agent).not.toHaveProperty("mcpServers");
-  expect(update.payload.agent.persistence?.metadata).toEqual({
-    conversationId: update.payload.agent.persistence?.sessionId,
-    cwd: update.payload.agent.cwd,
-  });
+  expect(update.payload.agent.persistence).not.toHaveProperty("metadata");
+  expect(update.payload.agent.persistence).toMatchObject({ provider: "codex" });
+  expect(update.payload.agent.persistence?.sessionId).toEqual(expect.any(String));
   expect(JSON.stringify(update.payload.agent)).not.toContain(bearer);
   expect(JSON.stringify(update.payload.agent)).not.toContain("private-build");
   expect(JSON.stringify(update.payload.agent)).not.toContain("finish_execution");
