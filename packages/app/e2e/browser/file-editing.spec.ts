@@ -51,6 +51,15 @@ async function openWorkspaceFile(page: Page, filename: string): Promise<void> {
   await expectFileTabOpen(page, filename);
 }
 
+function tableRows(page: Page): Promise<string[][]> {
+  return page
+    .getByTestId("file-table-preview")
+    .locator('[data-testid^="file-table-body-row-"]')
+    .evaluateAll((rows) =>
+      rows.map((row) => [...row.children].map((cell) => cell.textContent ?? "")),
+    );
+}
+
 function htmlPreview(page: Page) {
   return {
     host: page.getByTestId("file-html-preview"),
@@ -494,6 +503,78 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(preview.host).toHaveCount(0);
     await selectFileView(page, "Preview");
     await expect(preview.host).toBeVisible();
+  });
+
+  test("previews a CSV as a table that sorts, filters, and follows the file", async ({
+    page,
+    withWorkspace,
+  }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "file-editing-table-preview-" });
+    const csvPath = path.join(workspace.repoPath, "metrics.csv");
+    await writeFile(csvPath, "name,runs\ngrace,10\nalan,\nada,9\n", "utf8");
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "metrics.csv");
+
+    const runsHeader = page.getByTestId("file-table-sort-1");
+    const rowCount = page.getByTestId("file-table-row-count");
+    await expect(page.getByTestId("file-table-preview")).toBeVisible();
+    await expect(page.getByTestId("file-table-sort-0")).toHaveText("name");
+    await expect(rowCount).toHaveText("3 rows");
+    await expect
+      .poll(() => tableRows(page))
+      .toEqual([
+        ["grace", "10"],
+        ["alan", ""],
+        ["ada", "9"],
+      ]);
+
+    // Numeric, not lexicographic: 9 sorts before 10, and the blank stays last
+    // whichever way the column points.
+    await runsHeader.click();
+    await expect(runsHeader).toHaveAttribute("aria-label", "runs, sorted ascending");
+    await expect
+      .poll(() => tableRows(page))
+      .toEqual([
+        ["ada", "9"],
+        ["grace", "10"],
+        ["alan", ""],
+      ]);
+    await runsHeader.click();
+    await expect(runsHeader).toHaveAttribute("aria-label", "runs, sorted descending");
+    await expect
+      .poll(() => tableRows(page))
+      .toEqual([
+        ["grace", "10"],
+        ["ada", "9"],
+        ["alan", ""],
+      ]);
+    await runsHeader.click();
+    await expect(runsHeader).toHaveAttribute("aria-label", "Sort by runs");
+    await expect
+      .poll(() => tableRows(page))
+      .toEqual([
+        ["grace", "10"],
+        ["alan", ""],
+        ["ada", "9"],
+      ]);
+
+    await page.getByTestId("file-table-filter-0").fill("ada");
+    await expect.poll(() => tableRows(page)).toEqual([["ada", "9"]]);
+    await expect(rowCount).toHaveText("1 of 3 rows");
+    await page.getByTestId("file-table-filter-0").fill("nothing here");
+    await expect(page.getByText("No matching rows", { exact: true })).toBeVisible();
+    await page.getByTestId("file-table-filter-0").fill("");
+    await expect(rowCount).toHaveText("3 rows");
+
+    await writeFile(csvPath, "name,runs\ngrace,10\nalan,\nada,9\nkatherine,42\n", "utf8");
+    await expect(rowCount).toHaveText("4 rows");
+
+    await selectFileView(page, "Source");
+    await expect(page.getByTestId("file-source-editor")).toBeVisible();
+    await expect(page.getByTestId("file-table-preview")).toHaveCount(0);
+    await selectFileView(page, "Preview");
+    await expect(page.getByTestId("file-table-preview")).toBeVisible();
   });
 
   test("runs inline scripts without allowing fetch egress", async ({ page, withWorkspace }) => {

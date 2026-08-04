@@ -1571,6 +1571,24 @@ export const ptBR: TranslationResources = {
       binaryPreviewUnavailable: "Prévia binária indisponível",
       failedToLoad: "Falha ao carregar arquivo",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
+      table: {
+        empty: "Nenhuma linha",
+        noMatches: "Nenhuma linha corresponde",
+        filter: "Filtrar",
+        filterColumn: "Filtrar {{column}}",
+        sortColumn: "Ordenar por {{column}}",
+        sortedAscending: "{{column}}, ordem crescente",
+        sortedDescending: "{{column}}, ordem decrescente",
+        unnamedColumn: "Coluna sem nome",
+        rowCount: {
+          one: "{{count}} linha",
+          other: "{{count}} linhas",
+        },
+        filteredRowCount: {
+          one: "{{visible}} de {{count}} linha",
+          other: "{{visible}} de {{count}} linhas",
+        },
+      },
       editor: {
         fileSize: "Tamanho {{size}}",
         lines: "{{count}} linhas",
