@@ -473,7 +473,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       execFileSync("git", ["remote", "add", "upstream", forkDir], { cwd: repoDir });
       execFileSync("git", ["push", "-u", "upstream", "main"], { cwd: repoDir });
 
-      execFileSync("git", ["clone", forkDir, forkCloneDir]);
+      execFileSync("git", ["clone", "--branch", "main", forkDir, forkCloneDir]);
       execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: forkCloneDir });
       execFileSync("git", ["config", "user.name", "Test"], { cwd: forkCloneDir });
       writeFileSync(join(forkCloneDir, "file.txt"), "from-upstream\n");
