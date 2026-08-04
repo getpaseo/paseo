@@ -58,6 +58,7 @@ import {
   type PushNotifications,
   type PushNotificationSender,
 } from "./push/index.js";
+import { resolvePaseoWorktreesBaseRoot } from "../utils/worktree.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
@@ -1630,6 +1631,11 @@ export class VoiceAssistantWebSocketServer {
       permissions: session.getPermissions(),
       // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
       desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
+      // Clients cannot derive this — see the schema comment in packages/protocol.
+      worktreesRoot: resolvePaseoWorktreesBaseRoot({
+        paseoHome: this.paseoHome,
+        worktreesRoot: this.worktreesRoot,
+      }),
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
       features: {
         agentRequestReceipts: true,
