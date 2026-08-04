@@ -1,6 +1,6 @@
-import { expect, test } from "./fixtures";
-import { gotoAppShell, openSettings } from "./helpers/app";
-import { openSettingsSection } from "./helpers/settings";
+import { expect, test } from "../support/fixtures";
+import { gotoAppShell, openSettings } from "../support/helpers/app";
+import { openSettingsSection } from "../support/helpers/settings";
 
 const VALID_THEME = {
   version: 1,
