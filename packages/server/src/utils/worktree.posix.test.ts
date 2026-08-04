@@ -443,7 +443,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       const localResult = await createLegacyWorktreeForTest({
         branchName: "prefer-local-feature",
         cwd: repoDir,
-        baseBranch: "main",
+        baseBranch: "refs/heads/main",
         worktreeSlug: "prefer-local-feature",
         runSetup: false,
         paseoHome,
@@ -458,6 +458,15 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       });
 
       expect(readFileSync(join(localResult.worktreePath, "file.txt"), "utf8")).toBe("from-local\n");
+      const localStatus = await getCheckoutStatus(localResult.worktreePath, { paseoHome });
+      expect(localStatus.isGit).toBe(true);
+      if (!localStatus.isGit) {
+        return;
+      }
+      expect(localStatus.aheadBehind).toEqual({ ahead: 0, behind: 0 });
+      await expect(
+        getCheckoutDiff(localResult.worktreePath, { mode: "base", baseRef: "main" }, { paseoHome }),
+      ).resolves.toMatchObject({ diff: "" });
       expect(readFileSync(join(originResult.worktreePath, "file.txt"), "utf8")).toBe(
         "from-origin\n",
       );

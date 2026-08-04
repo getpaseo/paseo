@@ -1521,8 +1521,8 @@ async function doesGitRefExist(
   return result.exitCode === 0;
 }
 
-function isQualifiedRemoteRef(ref: string): boolean {
-  return ref.startsWith("refs/remotes/");
+function isQualifiedBranchRef(ref: string): boolean {
+  return ref.startsWith("refs/heads/") || ref.startsWith("refs/remotes/");
 }
 
 async function resolveBestComparisonBaseRef(
@@ -1530,11 +1530,9 @@ async function resolveBestComparisonBaseRef(
   baseRef: string,
   context?: CheckoutContext,
 ): Promise<string> {
-  // A remote-tracking ref names the exact commit stream to compare against, and it is the
-  // only form that can name a non-origin remote. Bare names and refs/heads/... keep going
-  // through the local-vs-origin heuristic below, which is what the ahead/behind badge has
-  // always meant for a worktree based on a local branch.
-  if (isQualifiedRemoteRef(baseRef)) {
+  // A fully qualified branch ref names the exact commit stream to compare against. Bare names
+  // keep going through the local-vs-origin heuristic below for legacy worktree metadata.
+  if (isQualifiedBranchRef(baseRef)) {
     if (await doesGitRefExist(cwd, baseRef, context)) {
       return baseRef;
     }
@@ -1561,7 +1559,7 @@ async function resolveBestComparisonBaseRef(
 }
 
 async function resolveMostAheadBaseRef(cwd: string, baseRef: string): Promise<string> {
-  if (isQualifiedRemoteRef(baseRef)) {
+  if (isQualifiedBranchRef(baseRef)) {
     if (await doesGitRefExist(cwd, baseRef)) {
       return baseRef;
     }
@@ -2396,7 +2394,7 @@ async function tryResolveCheckoutCommitsBaseRef(
   try {
     return await resolveMostAheadBaseRef(cwd, baseRef);
   } catch (error) {
-    if (isQualifiedRemoteRef(baseRef)) {
+    if (isQualifiedBranchRef(baseRef)) {
       throw error;
     }
     return null;
