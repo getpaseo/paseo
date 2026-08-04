@@ -107,6 +107,13 @@ export function createAudioEngine(
       reject: (error: Error) => void;
       settled: boolean;
     } | null;
+    /**
+     * Bumped by every `stop()`/`clearQueue()`. A segment decodes across two
+     * awaits before it registers as `activePlayback`, so a stop landing in that
+     * window has nothing to cancel — without this the segment would start
+     * playing after the user asked for silence.
+     */
+    playbackGeneration: number;
   } = {
     playbackRate: 1,
     playbackContext: null,
@@ -120,6 +127,7 @@ export function createAudioEngine(
     queue: [],
     processingQueue: false,
     activePlayback: null,
+    playbackGeneration: 0,
   };
 
   async function ensurePlaybackContext(): Promise<AudioContext> {
@@ -165,6 +173,7 @@ export function createAudioEngine(
   }
 
   async function playAudio(audio: AudioPlaybackSource): Promise<number> {
+    const generation = refs.playbackGeneration;
     const context = await ensurePlaybackContext();
     const arrayBuffer = await audio.arrayBuffer();
     const type = (audio.type || "").toLowerCase();
@@ -175,6 +184,12 @@ export function createAudioEngine(
           parsePcmSampleRate(type) ?? 24000,
         )
       : await decodeAudioData(context, arrayBuffer);
+
+    // Re-check after the awaits above: a stop during context init or decode
+    // could not reach this segment, so it has to bow out on its own.
+    if (generation !== refs.playbackGeneration) {
+      throw new Error("Playback stopped");
+    }
 
     const source = context.createBufferSource();
     source.buffer = audioBuffer;
@@ -397,6 +412,7 @@ export function createAudioEngine(
     },
 
     stop() {
+      refs.playbackGeneration += 1;
       if (refs.activePlayback) {
         const active = refs.activePlayback;
         refs.activePlayback = null;
@@ -413,6 +429,7 @@ export function createAudioEngine(
     },
 
     clearQueue() {
+      refs.playbackGeneration += 1;
       while (refs.queue.length > 0) {
         refs.queue.shift()!.reject(new Error("Playback stopped"));
       }
