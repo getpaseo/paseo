@@ -4,6 +4,7 @@ import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { formatPct } from "@/provider-usage/format";
 import {
   ProviderUsageMobileSession,
   ProviderUsageTooltipSection,
@@ -110,7 +111,7 @@ export function ContextWindowMeter({
   glyphSize,
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [isTooltipOpen, setIsTooltipOpen] = useState(false);
   const shouldFetchProviderUsage = isTooltipOpen || (showPercentage && provider != null);
   const { view: providerUsageView, refresh: refreshProviderUsage } = useProviderUsage(
@@ -217,7 +218,9 @@ export function ContextWindowMeter({
               />
             </Svg>
             {showPercentage ? (
-              <Text style={styles.percentageLabel}>{`${roundedPercentage}%`}</Text>
+              <Text style={styles.percentageLabel}>
+                {formatPct(roundedPercentage, i18n.resolvedLanguage)}
+              </Text>
             ) : null}
           </Pressable>
         </TooltipTrigger>
