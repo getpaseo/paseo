@@ -350,10 +350,11 @@ cascade of `Route "./X.tsx" is missing the required default export` warnings. Th
 router bug — the module-level throw aborts `_layout.tsx` evaluation, so its default export never gets
 assigned. One missing native module, N confusing warnings.
 
-**Prerequisite: an Apple ID for the signing team must be added under Xcode → Settings → Accounts.** Without
-it the build below fails at code signing, and it fails with a misleading _certificate_ error rather than an
-account error — see [Signing needs an Apple ID in Xcode](#signing-needs-an-apple-id-in-xcode) before you
-start, not after it fails.
+**Prerequisite: Xcode needs a signed-in Apple ID for the signing team _with a valid keychain token_.** An
+account that merely appears in Xcode → Settings → Accounts is not enough — if its `Xcode-Token` is missing,
+the build below fails at code signing and blames a _certificate_ instead. See
+[Signing needs a working Apple ID token in Xcode](#signing-needs-a-working-apple-id-token-in-xcode) before
+you start, not after it fails.
 
 ```bash
 cd packages/app
@@ -367,22 +368,62 @@ to `production` — so a bare `npm run ios` builds `sh.paseo` and collides with 
 of the `sh.paseo.debug` dev client. Ignore prebuild's `--non-interactive is not supported` warning; use
 `CI=1` if you need non-interactive.
 
-### Signing needs an Apple ID in Xcode
+### Signing needs a working Apple ID token in Xcode
 
-Device builds fail with `error: No Accounts: Add a new account in Accounts settings.` unless an Apple ID for
-the signing team is added under **Xcode → Settings → Accounts**. Without it, `-allowProvisioningUpdates`
-cannot regenerate provisioning profiles, which surfaces as a confusing _certificate_ error rather than an
-account error:
+Device builds fail with a trio of errors that all point away from the real cause:
 
 ```
+error: No Accounts: Add a new account in Accounts settings.
 error: Provisioning profile "iOS Team Provisioning Profile: *" doesn't include
        signing certificate "Apple Development: <name>".
+error: Provisioning profile "iOS Team Provisioning Profile: *" doesn't include
+       the aps-environment entitlement.
 ```
 
-That happens when the machine holds a dev cert newer than the profile — Xcode selects the newest cert, the
-older profile does not embed it, and the regeneration that would fix it is blocked. Adding the account is
-the actual fix. Signing an Xcode-_managed_ profile via `CODE_SIGN_STYLE=Manual` is not a workaround; Xcode
-rejects it with `is Xcode managed, but signing settings require a manually managed profile`.
+**`No Accounts` does not reliably mean no account is configured.** Check the line _above_ it in the build
+log before believing it:
+
+```
+DVTDeveloperAccountManager: Failed to load credentials for <apple-id>:
+  Invalid credentials in keychain for <apple-id>, missing Xcode-Token
+```
+
+That is the actual failure: the Apple ID is registered in Xcode, but its `Xcode-Token` keychain item is gone
+(typically after an Apple ID password change or a keychain reset). Xcode reports it as `No Accounts`, then
+falls back to whatever stale profile is cached — and if the machine holds a dev cert newer than that
+profile, you get the _certificate_ mismatch as a second-order symptom. Chasing the certificate error is a
+dead end.
+
+Verify what is actually configured rather than trusting the message:
+
+```bash
+# Accounts Xcode knows about
+defaults read com.apple.dt.Xcode DVTDeveloperAccountManagerAppleIDLists
+
+# The credential that is actually missing (error => no token)
+security find-generic-password -s "Xcode-Token"
+```
+
+Fix: Xcode → Settings → Accounts, re-sign-in to the listed Apple ID (removing and re-adding forces a fresh
+token). That restores `-allowProvisioningUpdates`, profile regeneration, and push.
+
+Signing an Xcode-_managed_ profile via `CODE_SIGN_STYLE=Manual` is not a workaround; Xcode rejects it with
+`is Xcode managed, but signing settings require a manually managed profile`.
+
+If you need a build on the device before the token is fixed, build unsigned and sign by hand with a cert the
+cached profile already embeds (list them with `security cms -D -i <profile>.mobileprovision`, then compare
+against `security find-identity -v -p codesigning`):
+
+```bash
+xcodebuild ... CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+cp <profile>.mobileprovision "$APP/embedded.mobileprovision"
+# sign nested frameworks/dylibs first, then the bundle, then:
+xcrun devicectl device install app --device <udid> "$APP"
+```
+
+This is a stopgap, not a fix: `expo prebuild` regenerates `packages/app/ios/` and discards it. It also
+requires stripping entitlements the cached profile lacks (e.g. `aps-environment`), so push is dead in such a
+build.
 
 To verify only that native Swift compiles, skip signing entirely — the pods have their own schemes:
 
