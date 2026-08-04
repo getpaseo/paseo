@@ -26,7 +26,7 @@ Under **OAuth2**, add the redirect URL:
 https://hub.example.com/api/integrations/discord/callback
 ```
 
-Replace `hub.example.com` with your `PASEO_CLOUD_PUBLIC_URL`.
+Replace `hub.example.com` with your `PASEO_HUB_APP_URL`.
 
 ## Configure Hub
 

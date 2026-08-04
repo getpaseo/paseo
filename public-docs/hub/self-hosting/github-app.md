@@ -14,7 +14,7 @@ Hub talks to GitHub through a GitHub App you own. One App serves your whole Hub;
 
 Go to **Settings → Developer settings → GitHub Apps → New GitHub App** on the account that should own it.
 
-Replace `hub.example.com` with your `PASEO_CLOUD_PUBLIC_URL`.
+Replace `hub.example.com` with your `PASEO_HUB_APP_URL`.
 
 | Setting            | Value                                                      |
 | ------------------ | ---------------------------------------------------------- |

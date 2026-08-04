@@ -12,7 +12,7 @@ Hub receives Slack mentions over the Events API. Socket Mode is not used, so you
 
 ## Create the app
 
-Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App → From a manifest**, and paste this after replacing `hub.example.com` with your `PASEO_CLOUD_PUBLIC_URL`:
+Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App → From a manifest**, and paste this after replacing `hub.example.com` with your `PASEO_HUB_APP_URL`:
 
 ```yaml
 display_information:

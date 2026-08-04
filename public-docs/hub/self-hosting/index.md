@@ -1,6 +1,6 @@
 ---
 title: Self-hosting Hub
-description: Deploy Paseo Hub with Postgres and a public HTTPS origin, on Fly or with Docker.
+description: Deploy Paseo Hub with PostgreSQL and a public HTTPS origin, using Docker Compose or Fly.
 nav: Self-hosting
 order: 73
 category: Hub
@@ -8,42 +8,41 @@ category: Hub
 
 # Self-hosting Hub
 
-Hub is a Node service backed by PostgreSQL. It needs a public HTTPS origin, because GitHub and Slack deliver events to it over the internet.
+Hub is a Node service backed by PostgreSQL. Connecting external providers requires a public HTTPS URL for their callbacks and webhooks.
 
-Getting it running takes three steps: deploy the service, create the provider apps it talks to, then use it.
-
-1. Deploy, below.
+1. Deploy Hub with [Docker Compose](#docker-compose) or [Fly](#fly).
 2. Create the [GitHub App](/docs/hub/self-hosting/github-app), [Slack app](/docs/hub/self-hosting/slack-app), and [Discord app](/docs/hub/self-hosting/discord-app) you want.
 3. Follow the [quickstart](/docs/hub/quickstart).
 
-## Requirements
+Migrations run automatically at startup. Hub does not start listening when a migration fails.
 
-- PostgreSQL 14 or newer.
-- A public HTTPS origin, for example `https://hub.example.com`.
-- A secret store you control. Two of these secrets must survive restarts.
+## Configuration
 
-Migrations run automatically at startup. If a migration fails, the process does not start listening.
+Hub has one public URL and one persistent application secret:
 
-## Environment
+| Variable                | Purpose                                                            |
+| ----------------------- | ------------------------------------------------------------------ |
+| `PASEO_HUB_APP_URL`     | Public origin used by the dashboard, authentication, and callbacks |
+| `PASEO_HUB_AUTH_SECRET` | Protects browser sessions and derives execution credentials        |
+| `DATABASE_URL`          | PostgreSQL connection string                                       |
 
-### Required
-
-| Variable                              | Purpose                                         |
-| ------------------------------------- | ----------------------------------------------- |
-| `DATABASE_URL`                        | PostgreSQL connection string                    |
-| `PASEO_CLOUD_PUBLIC_URL`              | Public origin, used to build every callback URL |
-| `BETTER_AUTH_SECRET`                  | Session signing key                             |
-| `PASEO_CLOUD_COMPLETION_TOKEN_SECRET` | Derives the per-execution MCP bearer tokens     |
-
-Generate the two secrets once and persist them:
+Generate `PASEO_HUB_AUTH_SECRET` once and keep it across restarts:
 
 ```sh
-openssl rand -base64 32
+openssl rand -hex 32
 ```
 
-Without `BETTER_AUTH_SECRET` the dashboard's auth routes stay closed and nobody can sign in. Rotating `PASEO_CLOUD_COMPLETION_TOKEN_SECRET` invalidates the completion callback of every execution still running, and Hub refuses to dispatch at all when it is missing.
+Changing it signs everyone out and invalidates completion credentials for executions that are still running.
 
-The `PASEO_CLOUD_` prefix is historical. The product is Hub.
+Bootstrap the first owner with:
+
+```dotenv
+PASEO_BOOTSTRAP_ORGANIZATION=My organization
+PASEO_BOOTSTRAP_OWNER_EMAIL=me@example.com
+PASEO_BOOTSTRAP_OWNER_PASSWORD=replace-with-a-temporary-password
+```
+
+The password must be at least 12 characters. Sign in with it once, replace it in the dashboard, then remove `PASEO_BOOTSTRAP_OWNER_PASSWORD` from the deployment. Hub keeps the account and organization.
 
 ### Providers
 
@@ -72,63 +71,57 @@ DISCORD_BOT_TOKEN=
 
 See [GitHub](/docs/hub/self-hosting/github-app), [Slack](/docs/hub/self-hosting/slack-app), and [Discord](/docs/hub/self-hosting/discord-app) for where each value comes from.
 
-### Optional
+## Docker Compose
 
-| Variable                               | Default                  | Purpose                                                 |
-| -------------------------------------- | ------------------------ | ------------------------------------------------------- |
-| `BETTER_AUTH_URL`                      | `PASEO_CLOUD_PUBLIC_URL` | Origin the dashboard's auth issues links on             |
-| `PORT`                                 | `3000`                   | Listen port                                             |
-| `PASEO_CLOUD_BIND`                     | `0.0.0.0`                | Bind address                                            |
-| `PASEO_CLOUD_TRUSTED_CLIENT_IP_HEADER` | unset                    | Client IP header when behind a proxy                    |
-| `PASEO_ADMIN_TOKEN`                    | unset                    | Opens the admin routes. Leave unset to keep them closed |
-
-## Docker
+The repository contains Hub and PostgreSQL as one Compose stack:
 
 ```sh
-docker run --env-file .env -p 3000:3000 paseo-cloud
+git clone https://github.com/getpaseo/hub.git
+cd hub
+cp .env.example .env
 ```
 
-Put the same origin in `PASEO_CLOUD_PUBLIC_URL` that your reverse proxy serves, and set `PASEO_CLOUD_TRUSTED_CLIENT_IP_HEADER` to whatever header your proxy sets.
+Set `PASEO_HUB_APP_URL`, `PASEO_HUB_AUTH_SECRET`, and the three bootstrap values in `.env`, then run:
+
+```sh
+docker compose up -d
+```
+
+The stack publishes Hub on port `3000` and stores PostgreSQL data in a named volume. The Hub image is `ghcr.io/getpaseo/hub:latest`.
+
+When a reverse proxy terminates HTTPS, set `PASEO_HUB_TRUSTED_CLIENT_IP_HEADER` to the header carrying the original client IP.
 
 ## Fly
 
-`fly.toml` holds the non-secret configuration:
-
-```toml
-[env]
-  PORT = '3000'
-  PASEO_CLOUD_PUBLIC_URL = 'https://hub.example.com'
-  PASEO_CLOUD_TRUSTED_CLIENT_IP_HEADER = 'fly-client-ip'
-
-[http_service]
-  internal_port = 3000
-  force_https = true
-  min_machines_running = 1
-```
-
-Attach a database. `attach` sets `DATABASE_URL` as a secret on the app, so you do not set it yourself:
+Clone the repository and create an app and database under names you control:
 
 ```sh
-fly postgres create --name your-app-db
-fly postgres attach your-app-db -a your-app
+git clone https://github.com/getpaseo/hub.git
+cd hub
+fly apps create your-hub
+fly postgres create --name your-hub-db
+fly postgres attach your-hub-db -a your-hub
 ```
 
-Install the remaining secrets, along with the provider credentials for whichever of GitHub, Slack, and Discord you are connecting:
+Set the application secret and bootstrap account, along with credentials for the providers you use:
 
 ```sh
-fly secrets set -a your-app \
-  BETTER_AUTH_SECRET="$(openssl rand -base64 32)" \
-  PASEO_CLOUD_COMPLETION_TOKEN_SECRET="$(openssl rand -base64 32)"
+fly secrets set -a your-hub \
+  PASEO_HUB_AUTH_SECRET="$(openssl rand -hex 32)" \
+  PASEO_BOOTSTRAP_ORGANIZATION="My organization" \
+  PASEO_BOOTSTRAP_OWNER_EMAIL=me@example.com \
+  PASEO_BOOTSTRAP_OWNER_PASSWORD=replace-with-a-temporary-password
 ```
 
-Keep `min_machines_running = 1`. Hub holds the Discord gateway connection and dispatches to daemons; a stopped machine misses events.
+Deploy the Dockerfile from the repository:
 
-## First account
+```sh
+fly deploy -a your-hub \
+  -e PASEO_HUB_APP_URL=https://your-hub.fly.dev
+```
 
-Sign up through the dashboard. The first account creates its own organization. From there, the [quickstart](/docs/hub/quickstart) takes over.
-
-For a deployment that already has tenant data, such as a migration from an earlier install, `PASEO_BOOTSTRAP_OWNER_EMAIL` selects one account and `PASEO_BOOTSTRAP_CLAIM_SECRET` supplies the proof, delivered out of band. Matching the email alone never claims ownership. Remove both once the membership exists.
+Keep one machine running. Hub holds the Discord gateway connection and dispatches events to daemons, so a stopped machine misses events.
 
 ## Upgrades
 
-Deploy the new image. Migrations run at startup and are forward-only, with no down migrations. Back up the database before an upgrade; that database holds your configuration revisions, connections, and execution history.
+Pull the new image or source and deploy it. Migrations are forward-only. Back up PostgreSQL first; it contains configuration revisions, connections, and execution history.

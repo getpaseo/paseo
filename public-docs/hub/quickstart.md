@@ -10,9 +10,9 @@ category: Hub
 
 From an empty Hub to an agent that starts when someone mentions it. Each step links to the page that covers it properly.
 
-## 1. Sign in and create an organization
+## 1. Sign in
 
-Open your Hub and create an account. Name the organization. Your connections, daemons, and projects all live inside it.
+Open your Hub and sign in with the owner account created during deployment. Replace its temporary password when prompted. Your connections, daemons, and projects all live inside its organization.
 
 ## 2. Connect GitHub
 
