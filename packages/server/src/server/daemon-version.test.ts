@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,6 +21,28 @@ afterEach(() => {
 });
 
 describe("resolveDaemonVersion", () => {
+  it("resolves a fork version from the source checkout release tag", () => {
+    const root = createTempDir();
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ name: "@getpaseo/server", version: "9.8.7" }),
+      "utf8",
+    );
+    const nestedDir = path.join(root, "dist", "server");
+    mkdirSync(nestedDir, { recursive: true });
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    execFileSync("git", ["add", "package.json"], { cwd: root });
+    execFileSync(
+      "git",
+      ["-c", "user.name=Paseo Test", "-c", "user.email=test@paseo.local", "commit", "-qm", "test"],
+      { cwd: root },
+    );
+    execFileSync("git", ["tag", "v9.8.7-fork.4"], { cwd: root });
+
+    const moduleUrl = pathToFileURL(path.join(nestedDir, "index.js")).href;
+    expect(resolveDaemonVersion(moduleUrl)).toBe("9.8.7-fork.4");
+  });
+
   it("resolves server version by walking up to @getpaseo/server package.json", () => {
     const root = createTempDir();
     writeFileSync(
