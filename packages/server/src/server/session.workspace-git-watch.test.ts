@@ -200,6 +200,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     agentManager: createStub<SessionOptions["agentManager"]>({
       subscribe: () => () => {},
       listAgents: () => [],
+      listProviderSubagentActivity: () => [],
       getAgent: () => null,
     }),
     agentStorage: createStub<SessionOptions["agentStorage"]>({
@@ -259,6 +260,9 @@ function createSessionForWorkspaceGitWatchTests(options?: {
       dispose: () => {},
     }),
     workspaceGitService,
+    scheduleService: createStub<SessionOptions["scheduleService"]>({
+      listActiveHeartbeatActivity: async () => [],
+    }),
     mcpBaseUrl: null,
     stt: null,
     tts: null,

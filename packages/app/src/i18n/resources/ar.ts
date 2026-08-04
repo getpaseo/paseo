@@ -1530,6 +1530,16 @@ export const ar: TranslationResources = {
     archiveFinishedAction: "أرشفة الوكلاء الفرعيين المكتملين",
     archiveFinishedTooltip: "أرشفة المكتملين",
   },
+  heartbeats: {
+    trackLabel: "{{count}} نبضة",
+    trackLabelPlural: "{{count}} نبضات",
+    openAction: "{{title}}، {{cadence}}",
+    deleteAction: "حذف النبضة {{title}}",
+    deleteTooltip: "حذف النبضة",
+    hostUpdate: {
+      label: "قم بتحديث المضيف لعرض نشاط النبضات",
+    },
+  },
   panels: {
     draft: {
       newAgent: "وكيل جديد",

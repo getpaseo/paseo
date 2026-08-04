@@ -981,6 +981,7 @@ export class Session {
       workspaceRegistry: this.workspaceRegistry,
       listAgentPayloads: () => this.listAgentPayloads(),
       listProviderSubagentActivity: async () => this.agentManager.listProviderSubagentActivity(),
+      listHeartbeatActivity: () => scheduleService.listActiveHeartbeatActivity(),
       listTerminalActivityContributions: () => this.listTerminalActivityContributions(),
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
       buildWorkspaceDescriptor: (input) => this.buildWorkspaceDescriptor(input),

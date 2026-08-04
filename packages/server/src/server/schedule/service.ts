@@ -228,6 +228,12 @@ export interface ScheduleServiceOptions {
   archiveWorkspace: (workspaceId: string) => Promise<void>;
   now?: () => Date;
   runner?: (schedule: StoredSchedule, runId: string) => Promise<ScheduleExecutionResult>;
+  onHeartbeatActivityChanged?: (agentId: string) => Promise<void>;
+}
+
+export interface ActiveHeartbeatActivity {
+  agentId: string;
+  updatedAt: string;
 }
 
 export class ScheduleService {
@@ -248,6 +254,7 @@ export class ScheduleService {
     schedule: StoredSchedule,
     runId: string,
   ) => Promise<ScheduleExecutionResult>;
+  private readonly onHeartbeatActivityChanged: (agentId: string) => Promise<void>;
   private readonly runningScheduleIds = new Set<string>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -262,6 +269,7 @@ export class ScheduleService {
     this.archiveWorkspace = options.archiveWorkspace;
     this.now = options.now ?? (() => new Date());
     this.runner = options.runner ?? ((schedule, runId) => this.executeSchedule(schedule, runId));
+    this.onHeartbeatActivityChanged = options.onHeartbeatActivityChanged ?? (async () => {});
   }
 
   async start(): Promise<void> {
@@ -289,11 +297,13 @@ export class ScheduleService {
   async create(input: CreateScheduleInput): Promise<StoredSchedule> {
     const prompt = normalizePrompt(input.prompt);
     validateScheduleCadence(input.cadence);
-    return this.createScheduleRecord(input, {
+    const schedule = await this.createScheduleRecord(input, {
       name: trimOptionalName(input.name),
       prompt,
       target: input.target,
     });
+    await this.notifyHeartbeatActivityChanged(schedule);
+    return schedule;
   }
 
   private async createScheduleRecord(
@@ -335,11 +345,17 @@ export class ScheduleService {
     const prompt = normalizePrompt(input.prompt);
     validateScheduleCadence(input.cadence);
     if (name === null) {
-      return this.createScheduleRecord(input, { name, prompt, target: input.target });
+      const schedule = await this.createScheduleRecord(input, {
+        name,
+        prompt,
+        target: input.target,
+      });
+      await this.notifyHeartbeatActivityChanged(schedule);
+      return schedule;
     }
 
     const inputTarget = input.target;
-    return this.store.upsertByNameAndTarget(name, inputTarget, {
+    const schedule = await this.store.upsertByNameAndTarget(name, inputTarget, {
       create: async () => {
         return this.buildScheduleRecord(input, { name, prompt, target: inputTarget });
       },
@@ -363,10 +379,26 @@ export class ScheduleService {
         };
       },
     });
+    await this.notifyHeartbeatActivityChanged(schedule);
+    return schedule;
   }
 
   async list(): Promise<StoredSchedule[]> {
     return this.store.list();
+  }
+
+  async listActiveHeartbeatActivity(): Promise<ActiveHeartbeatActivity[]> {
+    const nowMs = this.now().getTime();
+    return (await this.store.list()).flatMap((schedule) => {
+      if (
+        schedule.target.type !== "agent" ||
+        schedule.status !== "active" ||
+        (schedule.expiresAt && new Date(schedule.expiresAt).getTime() <= nowMs)
+      ) {
+        return [];
+      }
+      return [{ agentId: schedule.target.agentId, updatedAt: schedule.updatedAt }];
+    });
   }
 
   async inspect(id: string): Promise<StoredSchedule> {
@@ -399,7 +431,9 @@ export class ScheduleService {
         updatedAt: now.toISOString(),
       };
     });
-    return requireSchedule(paused, id);
+    const schedule = requireSchedule(paused, id);
+    await this.notifyHeartbeatActivityChanged(schedule);
+    return schedule;
   }
 
   async resume(id: string): Promise<StoredSchedule> {
@@ -419,7 +453,9 @@ export class ScheduleService {
         updatedAt: now.toISOString(),
       };
     });
-    return requireSchedule(resumed, id);
+    const schedule = requireSchedule(resumed, id);
+    await this.notifyHeartbeatActivityChanged(schedule);
+    return schedule;
   }
 
   async update(input: UpdateScheduleInput): Promise<StoredSchedule> {
@@ -464,11 +500,17 @@ export class ScheduleService {
 
       return { ...updated, updatedAt: now.toISOString() };
     });
-    return requireSchedule(next, input.id);
+    const schedule = requireSchedule(next, input.id);
+    await this.notifyHeartbeatActivityChanged(schedule);
+    return schedule;
   }
 
   async delete(id: string): Promise<void> {
+    const schedule = await this.store.get(id);
     await this.store.delete(id);
+    if (schedule) {
+      await this.notifyHeartbeatActivityChanged(schedule);
+    }
   }
 
   async completeForAgent(agentId: string): Promise<number> {
@@ -498,7 +540,27 @@ export class ScheduleService {
         );
       }
     }
+    if (completed > 0) {
+      await this.notifyHeartbeatAgentActivityChanged(agentId);
+    }
     return completed;
+  }
+
+  private async notifyHeartbeatActivityChanged(schedule: StoredSchedule): Promise<void> {
+    if (schedule.target.type === "agent") {
+      await this.notifyHeartbeatAgentActivityChanged(schedule.target.agentId);
+    }
+  }
+
+  private async notifyHeartbeatAgentActivityChanged(agentId: string): Promise<void> {
+    try {
+      await this.onHeartbeatActivityChanged(agentId);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId },
+        "Failed to emit heartbeat workspace activity update",
+      );
+    }
   }
 
   private async completeScheduleForAgent(
@@ -556,6 +618,7 @@ export class ScheduleService {
   }
 
   private async completeScheduleIfDue(scheduleId: string, now: Date): Promise<void> {
+    let completed = false;
     const updated = await this.store.update(scheduleId, (schedule) => {
       if (
         schedule.status !== "active" ||
@@ -564,9 +627,13 @@ export class ScheduleService {
       ) {
         return schedule;
       }
+      completed = true;
       return completeSchedule(schedule, now);
     });
-    requireSchedule(updated, scheduleId);
+    const schedule = requireSchedule(updated, scheduleId);
+    if (completed) {
+      await this.notifyHeartbeatActivityChanged(schedule);
+    }
   }
 
   private async recoverInterruptedRuns(): Promise<void> {
@@ -663,7 +730,8 @@ export class ScheduleService {
   }
 
   private async sweepOrphanedSchedule(scheduleId: string, now: Date): Promise<void> {
-    await this.store.update(scheduleId, async (schedule) => {
+    let completed = false;
+    const updated = await this.store.update(scheduleId, async (schedule) => {
       if (schedule.target.type !== "agent" || schedule.status === "completed") {
         return schedule;
       }
@@ -671,8 +739,12 @@ export class ScheduleService {
       if (record && !record.archivedAt) {
         return schedule;
       }
+      completed = true;
       return completeSchedule(schedule, now);
     });
+    if (updated && completed) {
+      await this.notifyHeartbeatActivityChanged(updated);
+    }
   }
 
   private async runSchedule(
@@ -745,6 +817,7 @@ export class ScheduleService {
     targetGone: boolean;
     manual: boolean;
   }): Promise<void> {
+    let heartbeatCompleted = false;
     const updatedSchedule = await this.store.update(params.scheduleId, (schedule) => {
       const now = this.now();
       const completedRuns = schedule.runs.map((run) =>
@@ -770,6 +843,7 @@ export class ScheduleService {
         // The target is permanently gone; retrying only burns the schedule down to
         // its expiry, so complete it now regardless of manual/scheduled origin.
         updated = completeSchedule(updated, now);
+        heartbeatCompleted = schedule.target.type === "agent";
       } else if (updated.status === "completed") {
         // Completed concurrently (e.g. the target agent was archived mid-run);
         // record the run outcome but leave the schedule terminal — don't advance.
@@ -777,6 +851,7 @@ export class ScheduleService {
         // Manual one-shot runs do not advance the cadence or recompute completion.
       } else if (shouldCompleteSchedule(updated, now)) {
         updated = completeSchedule(updated, now);
+        heartbeatCompleted = schedule.target.type === "agent";
       } else if (updated.status === "paused") {
         updated = {
           ...updated,
@@ -796,7 +871,10 @@ export class ScheduleService {
 
       return updated;
     });
-    requireSchedule(updatedSchedule, params.scheduleId);
+    const schedule = requireSchedule(updatedSchedule, params.scheduleId);
+    if (heartbeatCompleted) {
+      await this.notifyHeartbeatActivityChanged(schedule);
+    }
   }
 
   private async recordRunWorkspace(params: {

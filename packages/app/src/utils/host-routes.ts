@@ -424,8 +424,35 @@ export function buildSessionsRoute() {
   return "/sessions" as const;
 }
 
-export function buildSchedulesRoute() {
-  return "/schedules" as const;
+/**
+ * One schedule on one daemon. Schedule ids are host-local, so a link that
+ * names only the schedule can resolve to the wrong row on a multi-host client.
+ */
+export interface ScheduleFocus {
+  serverId: string;
+  scheduleId: string;
+}
+
+export function buildSchedulesRoute(focus?: ScheduleFocus) {
+  const serverId = trimNonEmpty(focus?.serverId);
+  const scheduleId = trimNonEmpty(focus?.scheduleId);
+  if (!serverId || !scheduleId) {
+    return "/schedules" as const;
+  }
+  const params = new URLSearchParams({ serverId, scheduleId });
+  return `/schedules?${params.toString()}` as const;
+}
+
+export function parseScheduleFocus(params: {
+  serverId?: NullableString;
+  scheduleId?: NullableString;
+}): ScheduleFocus | null {
+  const serverId = trimNonEmpty(params.serverId);
+  const scheduleId = trimNonEmpty(params.scheduleId);
+  if (!serverId || !scheduleId) {
+    return null;
+  }
+  return { serverId, scheduleId };
 }
 
 export function buildOpenProjectRoute() {

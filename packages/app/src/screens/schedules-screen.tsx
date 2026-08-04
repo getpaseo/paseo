@@ -33,7 +33,8 @@ import {
   type ScheduleBucket,
   type ScheduleTargetAgent,
 } from "@/schedules/schedule-derivation";
-import { resolveSchedulesScreenBodyState } from "./schedules-screen-state";
+import { resolveScheduleFocus, resolveSchedulesScreenBodyState } from "./schedules-screen-state";
+import type { ScheduleFocus } from "@/utils/host-routes";
 import {
   buildProjectNameByCwd,
   buildScheduleProjectTargets,
@@ -52,17 +53,22 @@ const STATUS_FILTER_OPTIONS: { value: ScheduleBucket; label: string; testID: str
 
 const EMPTY_SCHEDULES: AggregatedSchedule[] = [];
 
-export function SchedulesScreen(): ReactElement {
+export interface SchedulesScreenProps {
+  /** Deep link target: open this exact schedule once the list has loaded. */
+  focus?: ScheduleFocus | null;
+}
+
+export function SchedulesScreen({ focus = null }: SchedulesScreenProps = {}): ReactElement {
   const isFocused = useIsFocused();
 
   if (!isFocused) {
     return <View style={styles.container} />;
   }
 
-  return <SchedulesScreenContent />;
+  return <SchedulesScreenContent focus={focus} />;
 }
 
-function SchedulesScreenContent(): ReactElement {
+function SchedulesScreenContent({ focus }: { focus: ScheduleFocus | null }): ReactElement {
   const { loadState, hostErrors, isError, refetch } = useSchedules();
   const schedules = loadState.status === "loaded" ? loadState.data : EMPTY_SCHEDULES;
   const { agents } = useAggregatedAgents({ includeArchived: true });
@@ -92,6 +98,9 @@ function SchedulesScreenContent(): ReactElement {
   }, [hosts, runtime, runtimeVersion]);
 
   const [form, setForm] = useState<FormState>({ mode: "closed" });
+  // A deep link presents its schedule until the user acts on the form; after
+  // that their choice owns the sheet, so the link stops overriding it.
+  const [consumedFocusKey, setConsumedFocusKey] = useState<string | null>(null);
   const [selectedHost, setSelectedHost] = useState(ALL_HOSTS_OPTION_ID);
   const [statusFilter, setStatusFilter] = useState<ScheduleBucket>("runnable");
 
@@ -104,11 +113,32 @@ function SchedulesScreenContent(): ReactElement {
     }
   }, [hosts, selectedHost]);
 
-  const openCreate = useCallback(() => setForm({ mode: "create" }), []);
-  const openEdit = useCallback((schedule: AggregatedSchedule) => {
-    setForm({ mode: "edit", serverId: schedule.serverId, schedule });
-  }, []);
-  const closeForm = useCallback(() => setForm({ mode: "closed" }), []);
+  const focusKey = focus ? `${focus.serverId}:${focus.scheduleId}` : null;
+  const focusResolution = resolveScheduleFocus({
+    focus: focusKey !== null && focusKey !== consumedFocusKey ? focus : null,
+    loadState,
+  });
+
+  const openCreate = useCallback(() => {
+    setConsumedFocusKey(focusKey);
+    setForm({ mode: "create" });
+  }, [focusKey]);
+  const openEdit = useCallback(
+    (schedule: AggregatedSchedule) => {
+      setConsumedFocusKey(focusKey);
+      setForm({ mode: "edit", serverId: schedule.serverId, schedule });
+    },
+    [focusKey],
+  );
+  const closeForm = useCallback(() => {
+    setConsumedFocusKey(focusKey);
+    setForm({ mode: "closed" });
+  }, [focusKey]);
+
+  const activeForm: FormState =
+    focusResolution.kind === "found"
+      ? { mode: "edit", serverId: focusResolution.serverId, schedule: focusResolution.schedule }
+      : form;
 
   const agentsByKey = useMemo(() => {
     const map = new Map<string, ScheduleTargetAgent>();
@@ -182,11 +212,11 @@ function SchedulesScreenContent(): ReactElement {
         onEdit={openEdit}
       />
       <ScheduleFormSheet
-        serverId={form.mode === "edit" ? form.serverId : undefined}
-        visible={form.mode === "create" || form.mode === "edit"}
+        serverId={activeForm.mode === "edit" ? activeForm.serverId : undefined}
+        visible={activeForm.mode === "create" || activeForm.mode === "edit"}
         onClose={closeForm}
-        mode={form.mode === "edit" ? "edit" : "create"}
-        schedule={form.mode === "edit" ? form.schedule : undefined}
+        mode={activeForm.mode === "edit" ? "edit" : "create"}
+        schedule={activeForm.mode === "edit" ? activeForm.schedule : undefined}
       />
     </View>
   );

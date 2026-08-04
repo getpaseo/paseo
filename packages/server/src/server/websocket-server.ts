@@ -1602,6 +1602,8 @@ export class VoiceAssistantWebSocketServer {
         workspaceScriptManagement: true,
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: true,
+        // COMPAT(heartbeatWorkspaceActivity): added in v0.2.6, remove after 2027-02-02 once daemon floor >= v0.2.6.
+        heartbeatWorkspaceActivity: true,
       },
     };
   }

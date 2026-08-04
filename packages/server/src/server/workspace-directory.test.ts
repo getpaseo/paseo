@@ -5,7 +5,10 @@ import type { AgentSnapshotPayload, WorkspaceDescriptorPayload } from "./message
 import { WorkspaceDirectory } from "./workspace-directory.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
-import type { ProviderSubagentWorkspaceActivity } from "./workspace-directory.js";
+import type {
+  HeartbeatWorkspaceActivity,
+  ProviderSubagentWorkspaceActivity,
+} from "./workspace-directory.js";
 
 const NOW = "2026-03-01T12:00:00.000Z";
 
@@ -60,6 +63,7 @@ class WorkspaceStatus {
 
   private readonly agents: AgentSnapshotPayload[] = [];
   private readonly providerSubagents: ProviderSubagentWorkspaceActivity[] = [];
+  private readonly heartbeats: HeartbeatWorkspaceActivity[] = [];
   private readonly terminals: Array<{
     cwd: string;
     workspaceId?: string;
@@ -71,6 +75,7 @@ class WorkspaceStatus {
     workspaceRegistry: { list: async () => this.workspaces },
     listAgentPayloads: async () => this.agents,
     listProviderSubagentActivity: async () => this.providerSubagents,
+    listHeartbeatActivity: async () => this.heartbeats,
     listTerminalActivityContributions: async () => this.terminals,
     isProviderVisibleToClient: () => true,
     buildWorkspaceDescriptor: async ({ workspace }) => ({
@@ -129,6 +134,10 @@ class WorkspaceStatus {
 
   hasProviderSubagent(input: ProviderSubagentWorkspaceActivity): void {
     this.providerSubagents.push(input);
+  }
+
+  hasHeartbeat(input: HeartbeatWorkspaceActivity): void {
+    this.heartbeats.push(input);
   }
 
   hasWorktreeWorkspace(): void {
@@ -425,6 +434,54 @@ describe("WorkspaceDirectory", () => {
     });
   });
 
+  test("active heartbeat contributes running without changing its idle target agent", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "heartbeat-target", status: "idle" });
+    workspace.hasHeartbeat({
+      agentId: "heartbeat-target",
+      updatedAt: "2026-05-01T10:00:00.000Z",
+    });
+
+    const descriptor = await workspace.workspaceDescriptor();
+    expect(descriptor.status).toBe("running");
+    expect(descriptor.statusEnteredAt).toBe("2026-05-01T10:00:00.000Z");
+  });
+
+  test("heartbeat follows explicit workspace ownership across same-cwd siblings", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasSiblingWorkspaceSameCwd();
+    workspace.hasStampedRootAgent({
+      id: "heartbeat-target",
+      status: "idle",
+      workspaceId: "workspace-1-sibling",
+    });
+    workspace.hasHeartbeat({ agentId: "heartbeat-target", updatedAt: NOW });
+
+    await expect(workspace.workspaceStatuses()).resolves.toEqual({
+      "workspace-1": "done",
+      "workspace-1-sibling": "running",
+    });
+  });
+
+  test("missing heartbeat targets contribute to no workspace", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasHeartbeat({ agentId: "missing-agent", updatedAt: NOW });
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("done");
+  });
+
+  test("higher-priority agent state wins over heartbeat running", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({
+      id: "heartbeat-target",
+      status: "idle",
+      pendingPermissionCount: 1,
+    });
+    workspace.hasHeartbeat({ agentId: "heartbeat-target", updatedAt: NOW });
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("needs_input");
+  });
+
   test("running cross-workspace subagent contributes to its own workspace", async () => {
     const workspace = new WorkspaceStatus();
 
@@ -560,6 +617,7 @@ describe("WorkspaceDirectory empty projects", () => {
       workspaceRegistry: { list: async () => input.workspaces },
       listAgentPayloads: async () => [],
       listProviderSubagentActivity: async () => [],
+      listHeartbeatActivity: async () => [],
       listTerminalActivityContributions: async () => [],
       isProviderVisibleToClient: () => true,
       buildWorkspaceDescriptor: async ({ workspace }) => ({

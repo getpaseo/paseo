@@ -28,7 +28,10 @@ export function isNewAgentSchedule(schedule: ScheduleSummary): boolean {
   return schedule.target.type === "new-agent";
 }
 
-export function scheduleProductName(schedule: ScheduleSummary): "Heartbeat" | "Schedule" {
+/** Paseo's vocabulary: an agent-target schedule is a Heartbeat, a new-agent one is a Schedule. */
+export type ScheduleProductName = "Heartbeat" | "Schedule";
+
+export function scheduleProductName(schedule: ScheduleSummary): ScheduleProductName {
   return schedule.target.type === "agent" ? "Heartbeat" : "Schedule";
 }
 

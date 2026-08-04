@@ -24,8 +24,11 @@ export function schedulesQueryKey(serverIds: readonly string[]) {
   return [...schedulesQueryBaseKey, [...serverIds].sort().join("|")] as const;
 }
 
+const SCHEDULE_REFRESH_INTERVAL_MS = 5_000;
+
 export interface UseSchedulesResult {
   loadState: AggregateLoadState<AggregatedSchedule>;
+  dataUpdatedAt: number;
   hostErrors: ScheduleHostError[];
   isError: boolean;
   error: Error | null;
@@ -51,6 +54,7 @@ export function useSchedules(): UseSchedulesResult {
     queryKey: [...schedulesQueryKey(serverIds), connectionStatusKey],
     queryFn: () => fetchAggregatedSchedules({ hosts: hostInputs, runtime }),
     dataShape: "list",
+    refetchInterval: SCHEDULE_REFRESH_INTERVAL_MS,
     staleTimeMs: 5_000,
   });
 
@@ -65,6 +69,7 @@ export function useSchedules(): UseSchedulesResult {
 
   return {
     loadState,
+    dataUpdatedAt: query.dataUpdatedAt,
     hostErrors: query.data?.status === "loaded" ? query.data.hostErrors : [],
     isError: query.isError,
     error: query.error,

@@ -1,12 +1,13 @@
-import { useCallback, useMemo, useState, type ReactElement } from "react";
-import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
+import { useCallback, useMemo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import { Archive, ChevronDown, ChevronRight, Unlink } from "lucide-react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { Archive, Unlink } from "lucide-react-native";
+import { withUnistyles } from "react-native-unistyles";
 import { getProviderIcon } from "@/components/provider-icons";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useIsCompactFormFactor, MAX_CONTENT_WIDTH } from "@/constants/layout";
-import { isNative } from "@/constants/platform";
+import {
+  ComposerTrackActionButton,
+  ComposerTrackRow,
+  ComposerTrackSection,
+} from "@/composer/tracks";
 import {
   WorkspaceTabIcon,
   type WorkspaceTabPresentation,
@@ -20,8 +21,6 @@ import {
 } from "./track-presentation";
 
 const ThemedArchive = withUnistyles(Archive);
-const ThemedChevronDown = withUnistyles(ChevronDown);
-const ThemedChevronRight = withUnistyles(ChevronRight);
 const ThemedUnlink = withUnistyles(Unlink);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
@@ -29,7 +28,28 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
 
+const ACTION_ICON_SIZE = 14;
+
+function renderArchiveIcon(isActive: boolean): ReactElement {
+  return (
+    <ThemedArchive
+      size={ACTION_ICON_SIZE}
+      uniProps={isActive ? foregroundColorMapping : foregroundMutedColorMapping}
+    />
+  );
+}
+
+function renderDetachIcon(isActive: boolean): ReactElement {
+  return (
+    <ThemedUnlink
+      size={ACTION_ICON_SIZE}
+      uniProps={isActive ? foregroundColorMapping : foregroundMutedColorMapping}
+    />
+  );
+}
+
 export interface SubagentsTrackProps {
+  /** Non-empty. The composer decides which tracks exist; a track always has rows. */
   rows: SubagentRow[];
   onOpenSubagent: (id: string) => void;
   onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
@@ -37,8 +57,6 @@ export interface SubagentsTrackProps {
   onArchiveFinished?: () => void;
   onDetachSubagent?: (id: string) => void;
 }
-
-const SUBAGENTS_LIST_MAX_HEIGHT = 200;
 
 function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
   const data = buildSubagentRowPresentationData(row);
@@ -57,94 +75,43 @@ export function SubagentsTrack({
   onArchiveSubagent,
   onArchiveFinished,
   onDetachSubagent,
-}: SubagentsTrackProps): ReactElement | null {
+}: SubagentsTrackProps): ReactElement {
   const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(false);
+  const canArchiveFinished = countFinishedSubagents(rows) > 0 && onArchiveFinished !== undefined;
 
-  const toggleExpanded = useCallback(() => {
-    setExpanded((current) => !current);
-  }, []);
-
-  const surfaceStyle = useMemo(
-    () => [styles.surface, expanded && styles.surfaceExpanded],
-    [expanded],
-  );
-
-  const headerStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType) => [
-      styles.headerToggle,
-      (hovered || pressed) && styles.headerActive,
-    ],
-    [],
-  );
-  const headerContainerStyle = useMemo(
-    () => [styles.header, expanded ? styles.headerDivider : styles.headerCollapsed],
-    [expanded],
-  );
-
-  if (rows.length === 0) {
-    return null;
-  }
-
-  const headerLabel = formatHeaderLabel(rows);
-  const finishedCount = countFinishedSubagents(rows);
+  const renderHeaderAction = useCallback(() => {
+    if (!onArchiveFinished) {
+      return null;
+    }
+    return (
+      <ComposerTrackActionButton
+        accessibilityLabel={t("subagents.archiveFinishedAction")}
+        testID="subagents-track-archive-finished"
+        tooltipLabel={t("subagents.archiveFinishedTooltip")}
+        renderIcon={renderArchiveIcon}
+        onPress={onArchiveFinished}
+      />
+    );
+  }, [onArchiveFinished, t]);
 
   return (
-    <View style={styles.outer} testID="subagents-track">
-      <View style={styles.track}>
-        <View style={surfaceStyle}>
-          <View style={headerContainerStyle}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={headerLabel}
-              testID="subagents-track-header"
-              onPress={toggleExpanded}
-              style={headerStyle}
-            >
-              {expanded ? (
-                <ThemedChevronDown size={12} uniProps={foregroundMutedColorMapping} />
-              ) : (
-                <ThemedChevronRight size={12} uniProps={foregroundMutedColorMapping} />
-              )}
-              <Text style={styles.headerLabel} numberOfLines={1}>
-                {headerLabel}
-              </Text>
-            </Pressable>
-            {finishedCount > 0 && onArchiveFinished ? (
-              <View style={styles.headerAction}>
-                <SubagentActionButton
-                  accessibilityLabel={t("subagents.archiveFinishedAction")}
-                  testID="subagents-track-archive-finished"
-                  tooltipLabel={t("subagents.archiveFinishedTooltip")}
-                  icon="archive"
-                  visible
-                  onPress={onArchiveFinished}
-                />
-              </View>
-            ) : null}
-          </View>
-          {expanded ? (
-            <ScrollView
-              style={styles.scroll}
-              contentContainerStyle={styles.scrollContent}
-              showsVerticalScrollIndicator={false}
-              nestedScrollEnabled
-            >
-              {rows.map((row) => (
-                <SubagentsTrackRow
-                  key={row.id}
-                  row={row}
-                  onOpenSubagent={onOpenSubagent}
-                  onOpenProviderSubagent={onOpenProviderSubagent}
-                  onArchiveSubagent={onArchiveSubagent}
-                  onDetachSubagent={onDetachSubagent}
-                />
-              ))}
-            </ScrollView>
-          ) : null}
-        </View>
-      </View>
-    </View>
+    <ComposerTrackSection
+      label={formatHeaderLabel(rows)}
+      testID="subagents-track"
+      headerTestID="subagents-track-header"
+      renderHeaderAction={canArchiveFinished ? renderHeaderAction : undefined}
+    >
+      {rows.map((row) => (
+        <SubagentsTrackRow
+          key={row.id}
+          row={row}
+          onOpenSubagent={onOpenSubagent}
+          onOpenProviderSubagent={onOpenProviderSubagent}
+          onArchiveSubagent={onArchiveSubagent}
+          onDetachSubagent={onDetachSubagent}
+        />
+      ))}
+    </ComposerTrackSection>
   );
 }
 
@@ -164,8 +131,6 @@ function SubagentsTrackRow({
   onDetachSubagent,
 }: SubagentsTrackRowProps): ReactElement {
   const { t } = useTranslation();
-  const isCompact = useIsCompactFormFactor();
-  const [hovered, setHovered] = useState(false);
   const presentation = useMemo(() => buildRowPresentation(row), [row]);
   const displayLabel =
     presentation.titleState === "loading" ? t("common.states.loading") : presentation.label;
@@ -182,247 +147,46 @@ function SubagentsTrackRow({
   const handleDetachPress = useCallback(() => {
     onDetachSubagent?.(row.id);
   }, [onDetachSubagent, row.id]);
-  const handlePointerEnter = useCallback(() => setHovered(true), []);
-  const handlePointerLeave = useCallback(() => setHovered(false), []);
-  const actionsAlwaysVisible = isNative || isCompact;
-  const actionsVisible = actionsAlwaysVisible || hovered;
 
-  return (
-    // Wrapper View handles hover so moving the pointer between the row and
-    // the archive button doesn't drop the hover state — the same pattern
-    // used by sidebar workspace rows.
-    <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={displayLabel}
-        testID={`subagents-track-row-${row.id}`}
-        onPress={handlePress}
-      >
-        {({ pressed }) => (
-          <View style={hovered || pressed ? styles.rowActive : styles.row}>
-            <WorkspaceTabIcon presentation={presentation} />
-            <Text style={styles.rowLabel} numberOfLines={1}>
-              {displayLabel}
-            </Text>
-            {presentation.subtitle ? (
-              <Text style={styles.rowSubtitle} numberOfLines={1}>
-                {presentation.subtitle}
-              </Text>
-            ) : null}
-            {row.kind === "paseo" ? (
-              <SubagentRowActions
-                rowId={row.id}
-                displayLabel={displayLabel}
-                visible={actionsVisible}
-                onDetachPress={onDetachSubagent ? handleDetachPress : undefined}
-                onArchivePress={handleArchivePress}
-              />
-            ) : null}
-          </View>
-        )}
-      </Pressable>
-    </View>
+  const renderLeading = useCallback(
+    () => <WorkspaceTabIcon presentation={presentation} />,
+    [presentation],
   );
-}
 
-function SubagentRowActions({
-  rowId,
-  displayLabel,
-  visible,
-  onDetachPress,
-  onArchivePress,
-}: {
-  rowId: string;
-  displayLabel: string;
-  visible: boolean;
-  onDetachPress?: () => void;
-  onArchivePress: () => void;
-}): ReactElement {
-  const { t } = useTranslation();
-  return (
-    <View
-      style={visible ? styles.actionClusterVisible : styles.actionClusterHidden}
-      pointerEvents={visible ? "auto" : "none"}
-    >
-      {onDetachPress ? (
-        <SubagentActionButton
-          accessibilityLabel={t("subagents.detachAction", { label: displayLabel })}
-          testID={`subagents-track-detach-${rowId}`}
-          tooltipLabel={t("subagents.detachTooltip")}
-          icon="detach"
-          visible={visible}
-          onPress={onDetachPress}
+  const renderActions = useCallback(
+    () => (
+      <>
+        {onDetachSubagent ? (
+          <ComposerTrackActionButton
+            accessibilityLabel={t("subagents.detachAction", { label: displayLabel })}
+            testID={`subagents-track-detach-${row.id}`}
+            tooltipLabel={t("subagents.detachTooltip")}
+            renderIcon={renderDetachIcon}
+            onPress={handleDetachPress}
+          />
+        ) : null}
+        <ComposerTrackActionButton
+          accessibilityLabel={t("subagents.archiveAction", { label: displayLabel })}
+          testID={`subagents-track-archive-${row.id}`}
+          tooltipLabel={t("subagents.archiveTooltip")}
+          renderIcon={renderArchiveIcon}
+          onPress={handleArchivePress}
         />
-      ) : null}
-      <SubagentActionButton
-        accessibilityLabel={t("subagents.archiveAction", { label: displayLabel })}
-        testID={`subagents-track-archive-${rowId}`}
-        tooltipLabel={t("subagents.archiveTooltip")}
-        icon="archive"
-        visible={visible}
-        onPress={onArchivePress}
-      />
-    </View>
+      </>
+    ),
+    [displayLabel, handleArchivePress, handleDetachPress, onDetachSubagent, row.id, t],
   );
-}
 
-type SubagentActionIcon = "archive" | "detach";
-
-function renderSubagentActionIcon(icon: SubagentActionIcon, isActive: boolean): ReactElement {
-  const uniProps = isActive ? foregroundColorMapping : foregroundMutedColorMapping;
-  if (icon === "detach") {
-    return <ThemedUnlink size={14} uniProps={uniProps} />;
-  }
-  return <ThemedArchive size={14} uniProps={uniProps} />;
-}
-
-function SubagentActionButton({
-  accessibilityLabel,
-  testID,
-  tooltipLabel,
-  icon,
-  visible,
-  onPress,
-}: {
-  accessibilityLabel: string;
-  testID: string;
-  tooltipLabel: string;
-  icon: SubagentActionIcon;
-  visible: boolean;
-  onPress: () => void;
-}): ReactElement {
   return (
-    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-      <TooltipTrigger asChild disabled={!visible}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={accessibilityLabel}
-          testID={testID}
-          onPress={onPress}
-          style={styles.actionButton}
-          hitSlop={8}
-        >
-          {({ hovered, pressed }) => renderSubagentActionIcon(icon, hovered || pressed)}
-        </Pressable>
-      </TooltipTrigger>
-      <TooltipContent side="top" align="center" offset={8}>
-        <Text style={styles.tooltipText}>{tooltipLabel}</Text>
-      </TooltipContent>
-    </Tooltip>
+    <ComposerTrackRow
+      accessibilityRole="button"
+      accessibilityLabel={displayLabel}
+      testID={`subagents-track-row-${row.id}`}
+      onPress={handlePress}
+      renderLeading={renderLeading}
+      label={displayLabel}
+      secondary={presentation.subtitle}
+      actions={row.kind === "paseo" ? renderActions : undefined}
+    />
   );
 }
-
-const styles = StyleSheet.create((theme) => ({
-  outer: {
-    width: "100%",
-    alignItems: "center",
-    paddingHorizontal: theme.spacing[4],
-  },
-  track: {
-    width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
-    marginBottom: -theme.spacing[4],
-  },
-  surface: {
-    alignSelf: "stretch",
-    backgroundColor: theme.colors.surface1,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.borderAccent,
-    borderBottomWidth: 0,
-    borderTopLeftRadius: theme.borderRadius["2xl"],
-    borderTopRightRadius: theme.borderRadius["2xl"],
-    overflow: "hidden",
-  },
-  surfaceExpanded: {
-    paddingBottom: theme.spacing[4],
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  headerToggle: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingLeft: theme.spacing[3],
-    paddingRight: theme.spacing[1],
-    paddingVertical: theme.spacing[2],
-  },
-  headerAction: {
-    paddingRight: theme.spacing[2],
-  },
-  headerCollapsed: {
-    paddingBottom: theme.spacing[4],
-  },
-  headerActive: {
-    backgroundColor: theme.colors.surface2,
-  },
-  headerDivider: {
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
-  },
-  headerLabel: {
-    flexShrink: 1,
-    minWidth: 0,
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-  },
-  scroll: {
-    maxHeight: SUBAGENTS_LIST_MAX_HEIGHT,
-  },
-  scrollContent: {
-    paddingVertical: theme.spacing[1],
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-  },
-  rowActive: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    backgroundColor: theme.colors.surface2,
-  },
-  rowLabel: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foreground,
-  },
-  // Keep provider context secondary and bounded so the task remains readable on compact screens.
-  rowSubtitle: {
-    flexShrink: 1,
-    minWidth: 0,
-    maxWidth: "45%",
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-  },
-  actionClusterVisible: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    opacity: 1,
-  },
-  actionClusterHidden: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    opacity: 0,
-  },
-  actionButton: {
-    padding: theme.spacing[1],
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  tooltipText: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foreground,
-  },
-}));

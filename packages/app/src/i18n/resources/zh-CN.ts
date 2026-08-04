@@ -1510,6 +1510,16 @@ export const zhCN: TranslationResources = {
     archiveFinishedAction: "归档已完成的 subagent",
     archiveFinishedTooltip: "归档已完成项",
   },
+  heartbeats: {
+    trackLabel: "{{count}} 个心跳",
+    trackLabelPlural: "{{count}} 个心跳",
+    openAction: "{{title}}，{{cadence}}",
+    deleteAction: "删除心跳 {{title}}",
+    deleteTooltip: "删除心跳",
+    hostUpdate: {
+      label: "更新 Host 以显示心跳活动",
+    },
+  },
   panels: {
     draft: {
       newAgent: "新建 Agent",

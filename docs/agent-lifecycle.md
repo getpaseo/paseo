@@ -111,7 +111,7 @@ Running provider-native subagents contribute `running` to the workspace owned by
 
 ## The subagents track
 
-The collapsible track above the composer in an agent's pane (`packages/app/src/subagents/track.tsx`) combines two kinds of children:
+One collapsible section of the composer track lane in an agent's pane (`packages/app/src/subagents/track.tsx`), stacked with any other track the agent has. It combines two kinds of children:
 
 - **Paseo subagents** are full managed agents. Their membership rule (`packages/app/src/subagents/select.ts`) is:
 

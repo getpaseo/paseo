@@ -55,7 +55,9 @@ export function asChatService(): SessionOptions["chatService"] {
 }
 
 export function asScheduleService(): SessionOptions["scheduleService"] {
-  return createStub<SessionOptions["scheduleService"]>({});
+  return createStub<SessionOptions["scheduleService"]>({
+    listActiveHeartbeatActivity: async () => [],
+  });
 }
 
 export function asLoopService(): SessionOptions["loopService"] {

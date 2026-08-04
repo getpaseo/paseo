@@ -307,6 +307,22 @@ describe("agent detach RPC", () => {
     expect(parsed.features?.agentDetach).toBe(true);
   });
 
+  test("parses the heartbeat workspace activity feature gate as optional", () => {
+    const capable = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-capable",
+      features: { heartbeatWorkspaceActivity: true },
+    });
+    const legacy = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-legacy",
+      features: {},
+    });
+
+    expect(capable?.features?.heartbeatWorkspaceActivity).toBe(true);
+    expect(legacy?.features?.heartbeatWorkspaceActivity).toBeUndefined();
+  });
+
   test("parses the workspace-targeted session import feature gate", () => {
     const parsed = parseServerInfoStatusPayload({
       status: "server_info",

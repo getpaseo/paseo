@@ -1577,6 +1577,16 @@ export const fr: TranslationResources = {
     archiveFinishedAction: "Archiver les sous-agents terminés",
     archiveFinishedTooltip: "Archiver les terminés",
   },
+  heartbeats: {
+    trackLabel: "{{count}} pulsation",
+    trackLabelPlural: "{{count}} pulsations",
+    openAction: "{{title}}, {{cadence}}",
+    deleteAction: "Supprimer la pulsation {{title}}",
+    deleteTooltip: "Supprimer la pulsation",
+    hostUpdate: {
+      label: "Mettez à jour l'hôte pour afficher l'activité des pulsations",
+    },
+  },
   panels: {
     draft: {
       newAgent: "Nouvel agent",

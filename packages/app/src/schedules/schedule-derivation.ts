@@ -76,15 +76,18 @@ function resolveTarget(input: ResolveScheduleInput): ScheduleTargetResolution {
   };
 }
 
-// One badge, one truth. Order matters: expiry and a missing target are more
-// informative than the raw "completed"/"paused" status, so they win.
-function deriveState(input: ResolveScheduleInput): ScheduleDerivedState {
-  const { schedule, now } = input;
+/**
+ * The part of the derived state that the schedule record answers on its own:
+ * expiry, completion, pause. Callers that already know the target exists — the
+ * heartbeat track renders inside its own target agent — ask this directly
+ * instead of assembling an agent directory just to rule out `targetGone`.
+ */
+export function deriveScheduleLifecycleState(
+  schedule: ScheduleSummary,
+  now: number,
+): Exclude<ScheduleDerivedState, "targetGone"> {
   if (isExpired(schedule, now)) {
     return "expired";
-  }
-  if (isAgentTargetGone(input)) {
-    return "targetGone";
   }
   if (schedule.status === "completed") {
     return "finished";
@@ -93,6 +96,16 @@ function deriveState(input: ResolveScheduleInput): ScheduleDerivedState {
     return "paused";
   }
   return "active";
+}
+
+// One badge, one truth. Order matters: expiry and a missing target are more
+// informative than the raw "completed"/"paused" status, so they win.
+function deriveState(input: ResolveScheduleInput): ScheduleDerivedState {
+  const lifecycle = deriveScheduleLifecycleState(input.schedule, input.now);
+  if (lifecycle !== "expired" && isAgentTargetGone(input)) {
+    return "targetGone";
+  }
+  return lifecycle;
 }
 
 export function scheduleBucket(state: ScheduleDerivedState): ScheduleBucket {

@@ -68,6 +68,11 @@ export type ProviderSubagentWorkspaceActivity = Pick<
   "parentAgentId" | "status" | "updatedAt"
 >;
 
+export interface HeartbeatWorkspaceActivity {
+  agentId: string;
+  updatedAt: string;
+}
+
 export interface WorkspaceDirectoryDeps {
   logger: pino.Logger;
   projectRegistry: {
@@ -78,6 +83,7 @@ export interface WorkspaceDirectoryDeps {
   };
   listAgentPayloads(): Promise<AgentSnapshotPayload[]>;
   listProviderSubagentActivity(): Promise<ProviderSubagentWorkspaceActivity[]>;
+  listHeartbeatActivity(): Promise<HeartbeatWorkspaceActivity[]>;
   listTerminalActivityContributions(): Promise<
     Array<{ cwd: string; workspaceId?: string; activity: TerminalActivity | null }>
   >;
@@ -207,12 +213,14 @@ export class WorkspaceDirectory {
     const [
       agents,
       providerSubagentActivity,
+      heartbeatActivity,
       persistedWorkspaces,
       persistedProjects,
       terminalContributions,
     ] = await Promise.all([
       this.deps.listAgentPayloads(),
       this.deps.listProviderSubagentActivity(),
+      this.deps.listHeartbeatActivity(),
       this.deps.workspaceRegistry.list(),
       this.deps.projectRegistry.list(),
       this.deps.listTerminalActivityContributions(),
@@ -274,6 +282,12 @@ export class WorkspaceDirectory {
       descriptorsByWorkspaceId,
       activityEntriesByWorkspaceId,
     });
+    this.applyHeartbeatContributions({
+      activeAgents,
+      heartbeatActivity,
+      descriptorsByWorkspaceId,
+      activityEntriesByWorkspaceId,
+    });
 
     const contributingAgentsByWorkspaceId = groupAgentsByWorkspaceId(
       activeAgents,
@@ -304,6 +318,32 @@ export class WorkspaceDirectory {
     }
 
     return descriptorsByWorkspaceId;
+  }
+
+  private applyHeartbeatContributions(params: {
+    activeAgents: AgentSnapshotPayload[];
+    heartbeatActivity: HeartbeatWorkspaceActivity[];
+    descriptorsByWorkspaceId: Map<string, WorkspaceDescriptorPayload>;
+    activityEntriesByWorkspaceId: Map<string, WorkspaceBucketTimestampEntry[]>;
+  }): void {
+    const activeAgentsById = new Map(
+      params.activeAgents.map((agent) => [agent.id, agent] as const),
+    );
+    for (const heartbeat of params.heartbeatActivity) {
+      const workspaceId = activeAgentsById.get(heartbeat.agentId)?.workspaceId;
+      if (!workspaceId) continue;
+      const descriptor = params.descriptorsByWorkspaceId.get(workspaceId);
+      if (!descriptor) continue;
+      if (
+        getWorkspaceStateBucketPriority("running") <
+        getWorkspaceStateBucketPriority(descriptor.status)
+      ) {
+        descriptor.status = "running";
+      }
+      const entries = params.activityEntriesByWorkspaceId.get(workspaceId) ?? [];
+      entries.push({ bucket: "running", changedAtIso: heartbeat.updatedAt });
+      params.activityEntriesByWorkspaceId.set(workspaceId, entries);
+    }
   }
 
   private applyProviderSubagentContributions(params: {

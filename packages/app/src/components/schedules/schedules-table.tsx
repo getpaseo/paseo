@@ -4,6 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { ScheduleRow, type ScheduleRowPending } from "@/components/schedules/schedule-row";
 import { useScheduleMutations } from "@/hooks/use-schedule-mutations";
 import type { AggregatedSchedule } from "@/hooks/use-schedules";
+import { resolveDeleteScheduleDialog } from "@/schedules/delete-schedule";
 import type { ScheduleDerivedState } from "@/schedules/schedule-derivation";
 import { settingsStyles } from "@/styles/settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -113,13 +114,12 @@ function SchedulesTableRow({
 
   const handleDelete = useCallback(() => {
     void (async () => {
-      const productName = scheduleProductName(schedule);
-      const confirmed = await confirmDialog({
-        title: `Delete ${productName.toLowerCase()}`,
-        message: `Delete "${resolveScheduleTitle(schedule)}"? This cannot be undone.`,
-        confirmLabel: "Delete",
-        destructive: true,
-      });
+      const confirmed = await confirmDialog(
+        resolveDeleteScheduleDialog({
+          productName: scheduleProductName(schedule),
+          title: resolveScheduleTitle(schedule),
+        }),
+      );
       if (!confirmed) {
         return;
       }

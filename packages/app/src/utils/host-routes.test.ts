@@ -7,6 +7,7 @@ import {
   buildNewWorkspaceRoute,
   buildOpenProjectRoute,
   resolveKnownHostRoute,
+  buildSchedulesRoute,
   buildSessionsRoute,
   buildSettingsAddHostRoute,
   buildProjectSettingsRoute,
@@ -21,6 +22,7 @@ import {
   parseHostAgentRouteFromPathname,
   parseHostWorkspaceOpenIntentFromPathname,
   parseHostWorkspaceRouteFromPathname,
+  parseScheduleFocus,
   parseWorkspaceOpenIntent,
   stripHostWorkspaceRouteEchoSearch,
 } from "./host-routes";
@@ -240,6 +242,30 @@ describe("global routes", () => {
         draftId: "draft-1",
       }),
     ).toBe("/new?serverId=local&dir=%2Frepo%2Fproject&draftId=draft-1");
+  });
+
+  it("buildSchedulesRoute returns the all-host Schedules route", () => {
+    expect(buildSchedulesRoute()).toBe("/schedules");
+  });
+
+  it("buildSchedulesRoute identifies both host and schedule so ids cannot collide", () => {
+    expect(buildSchedulesRoute({ serverId: "host/1", scheduleId: "sch 1" })).toBe(
+      "/schedules?serverId=host%2F1&scheduleId=sch+1",
+    );
+  });
+
+  it("parseScheduleFocus reads the focused schedule back out of route params", () => {
+    expect(parseScheduleFocus({ serverId: "host-1", scheduleId: "sch-1" })).toEqual({
+      serverId: "host-1",
+      scheduleId: "sch-1",
+    });
+  });
+
+  it("parseScheduleFocus ignores partial or blank params", () => {
+    expect(parseScheduleFocus({ serverId: "host-1" })).toBeNull();
+    expect(parseScheduleFocus({ scheduleId: "sch-1" })).toBeNull();
+    expect(parseScheduleFocus({ serverId: "  ", scheduleId: "sch-1" })).toBeNull();
+    expect(parseScheduleFocus({})).toBeNull();
   });
 });
 

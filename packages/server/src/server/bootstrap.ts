@@ -1216,6 +1216,12 @@ export async function createPaseoDaemon(
     createDirectoryWorkspace: createScheduleLocalWorkspaceExternal,
     createPaseoWorktreeWorkspace: createSchedulePaseoWorktreeExternal,
     archiveWorkspace: archiveScheduleWorkspaceExternal,
+    onHeartbeatActivityChanged: async (agentId) => {
+      const agent = await agentStorage.get(agentId);
+      if (agent?.workspaceId) {
+        await emitWorkspaceUpdatesExternal([agent.workspaceId]);
+      }
+    },
   });
   await scheduleService.start();
   agentManager.setAgentArchivedCallback(async (agentId) => {

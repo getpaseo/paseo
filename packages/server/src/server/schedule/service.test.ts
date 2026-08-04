@@ -2614,6 +2614,61 @@ describe("ScheduleService", () => {
     expect((await service.inspect(newAgentSchedule.id)).status).toBe("active");
   });
 
+  test("lists only active, unexpired agent-target schedules as heartbeat activity", async () => {
+    const changedTargets: string[] = [];
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+      onHeartbeatActivityChanged: async (agentId) => {
+        changedTargets.push(agentId);
+      },
+    });
+    const activeAgentId = "11111111-1111-4111-8111-111111111111";
+    const pausedAgentId = "22222222-2222-4222-8222-222222222222";
+    const expiredAgentId = "33333333-3333-4333-8333-333333333333";
+
+    const active = await service.create({
+      prompt: "watch active",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: activeAgentId },
+    });
+    const paused = await service.create({
+      prompt: "watch paused",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: pausedAgentId },
+    });
+    await service.pause(paused.id);
+    await service.create({
+      prompt: "watch expired",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: expiredAgentId },
+      expiresAt: "2025-12-31T23:59:00.000Z",
+    });
+    await service.create({
+      prompt: "spawn instead",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+
+    await expect(service.listActiveHeartbeatActivity()).resolves.toEqual([
+      { agentId: activeAgentId, updatedAt: active.updatedAt },
+    ]);
+    expect(changedTargets).toEqual([activeAgentId, pausedAgentId, pausedAgentId, expiredAgentId]);
+
+    await service.delete(active.id);
+    expect(changedTargets.at(-1)).toBe(activeAgentId);
+    await expect(service.listActiveHeartbeatActivity()).resolves.toEqual([]);
+
+    const notificationsAfterDelete = changedTargets.length;
+    await expect(service.delete(active.id)).resolves.toBeUndefined();
+    expect(changedTargets).toHaveLength(notificationsAfterDelete);
+  });
+
   test("startup sweep completes agent-target schedules whose agent is gone", async () => {
     const missingAgentId = "44444444-4444-4444-8444-444444444444";
     const archivedAgentId = "55555555-5555-4555-8555-555555555555";

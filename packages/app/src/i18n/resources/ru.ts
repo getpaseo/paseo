@@ -1564,6 +1564,16 @@ export const ru: TranslationResources = {
     archiveFinishedAction: "Архивировать завершенные субагенты",
     archiveFinishedTooltip: "Архивировать завершенные",
   },
+  heartbeats: {
+    trackLabel: "{{count}} пульс",
+    trackLabelPlural: "Пульсов: {{count}}",
+    openAction: "{{title}}, {{cadence}}",
+    deleteAction: "Удалить пульс {{title}}",
+    deleteTooltip: "Удалить пульс",
+    hostUpdate: {
+      label: "Обновите хост, чтобы показывать активность пульса",
+    },
+  },
   panels: {
     draft: {
       newAgent: "Новый агент",
