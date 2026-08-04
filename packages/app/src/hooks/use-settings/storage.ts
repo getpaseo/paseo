@@ -1,8 +1,6 @@
 import { isSyntaxThemeId, type SyntaxThemeId } from "@getpaseo/highlight";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type { QueryClient } from "@tanstack/react-query";
-import type { DesktopSettings } from "@/desktop/settings/desktop-settings";
-import { parseAppLanguage, type AppLanguage } from "@/i18n/locales";
 import {
   DEFAULT_SIDEBAR_CHECKS_DISPLAY,
   parseSidebarChecksDisplay,
@@ -14,6 +12,8 @@ import {
   parseSidebarRowItems,
   type SidebarRowItems,
 } from "@/components/sidebar/display-preferences/row-items";
+import type { DesktopSettings } from "@/desktop/settings/desktop-settings";
+import { parseAppLanguage, type AppLanguage } from "@/i18n/locales";
 import { THEME_OPTIONS, type ThemePreference } from "@/styles/theme";
 import { z } from "zod";
 import { readValidatedJson } from "@/storage/validated-storage";
