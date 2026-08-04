@@ -1,6 +1,7 @@
 import { WebSocket } from "ws";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
+import { hashDaemonPassword } from "./auth.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 
 const originalEnv = { ...process.env };
@@ -146,6 +147,22 @@ describe("daemon bearer auth", () => {
         protocol: "paseo.bearer.correct-password",
       });
       expect(protocol).toBe("paseo.bearer.correct-password");
+      ws.close();
+    } finally {
+      await daemonHandle.close();
+    }
+  });
+
+  test("accepts an encoded WebSocket password containing non-token characters", async () => {
+    const daemonHandle = await createTestPaseoDaemon({
+      auth: { password: hashDaemonPassword("base64+/=") },
+    });
+    try {
+      const { ws, protocol } = await connectWebSocket({
+        port: daemonHandle.port,
+        protocol: "paseo.bearer64.YmFzZTY0Ky89",
+      });
+      expect(protocol).toBe("paseo.bearer64.YmFzZTY0Ky89");
       ws.close();
     } finally {
       await daemonHandle.close();

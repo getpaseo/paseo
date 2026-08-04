@@ -433,8 +433,9 @@ describe("toAgentPayload", () => {
         },
       },
     });
-    expect(payload.persistence?.metadata).toEqual({
-      conversationId: "conversation-stored",
+    expect(payload.persistence).toEqual({
+      provider: "codex",
+      sessionId: "persist-stored",
     });
   });
 

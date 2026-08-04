@@ -391,7 +391,7 @@ describe("forwardLiveAgent", () => {
     }
     expect(update.agent).not.toHaveProperty("config");
     expect(update.agent).not.toHaveProperty("mcpServers");
-    expect(update.agent.persistence?.metadata).toEqual({ conversationId: "conversation-a" });
+    expect(update.agent.persistence).toEqual({ provider: "codex", sessionId: "session-a" });
     expect(JSON.stringify(update.agent)).not.toContain("execution-secret");
   });
 

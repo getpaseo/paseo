@@ -725,6 +725,32 @@ test("passes password as HTTP bearer header and WebSocket subprotocol", async ()
   });
 });
 
+test("encodes passwords with WebSocket-incompatible characters in the subprotocol", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const transportFactory = vi.fn(() => mock.transport);
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    password: "base64+/= 🔐",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  expect(transportFactory).toHaveBeenCalledWith({
+    url: "ws://test",
+    headers: { Authorization: "Bearer base64+/= 🔐" },
+    protocols: ["paseo.bearer64.YmFzZTY0Ky89IPCflJA"],
+  });
+});
+
 test("advertises client capabilities in hello", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
