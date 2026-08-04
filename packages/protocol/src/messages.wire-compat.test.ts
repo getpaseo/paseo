@@ -42,6 +42,18 @@ const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.extend({
   capabilities: LegacyAgentCapabilityFlagsSchema,
 });
 
+const LegacyServerInfoStatusPayloadSchema = z
+  .object({
+    status: z.literal("server_info"),
+    serverId: z.string(),
+    features: z
+      .object({
+        providerRemoval: z.boolean().optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
 describe("wire schema compatibility", () => {
   test("hello parses with and without the project update capability", () => {
     const legacy = WSHelloMessageSchema.parse({
@@ -92,6 +104,19 @@ describe("wire schema compatibility", () => {
       version: null,
       features: { agentTurnIdentity: true },
     });
+  });
+
+  test("old clients parse server info with provider-scoped Paseo tool support", () => {
+    const parsed = LegacyServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "new-server",
+      features: {
+        providerRemoval: true,
+        providerScopedPaseoTools: true,
+      },
+    });
+
+    expect(parsed.features).toEqual({ providerRemoval: true });
   });
 
   test("assistant timeline message ids are optional on the wire", () => {

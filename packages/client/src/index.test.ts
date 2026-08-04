@@ -80,7 +80,9 @@ function parseSentFrame(
   return JSON.parse(data);
 }
 
-async function connectClient(): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
+async function connectClient(options?: {
+  features?: Record<string, boolean>;
+}): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
   vi.stubGlobal("WebSocket", FakeWebSocket);
   const client = createPaseoClient({
     url: "ws://daemon.test",
@@ -105,6 +107,7 @@ async function connectClient(): Promise<{ client: PaseoClient; ws: FakeWebSocket
         serverId: "srv_sdk_test",
         hostname: null,
         version: null,
+        ...(options?.features ? { features: options.features } : {}),
       },
     }),
   );
@@ -665,7 +668,7 @@ test("provider actions delegate to existing provider RPCs and local snapshot upd
   await client.close();
 });
 
-test("config actions delegate to existing daemon config RPCs", async () => {
+test("unrelated config actions delegate without provider-policy support", async () => {
   const { client, ws } = await connectClient();
 
   const getPromise = client.config.get("config-get-request");
@@ -753,6 +756,80 @@ test("config actions delegate to existing daemon config RPCs", async () => {
       appendSystemPrompt: "",
     },
   });
+
+  await client.close();
+});
+
+test("provider-policy config patches require daemon support before sending", async () => {
+  const { client, ws } = await connectClient();
+  const sentBeforePatches = ws.sent.length;
+
+  for (const injectIntoProviders of [["codex-lead"], [], null] as const) {
+    await expect(client.config.patch({ mcp: { injectIntoProviders } })).rejects.toThrow(
+      "Update the host to configure provider-scoped Paseo tools.",
+    );
+  }
+
+  expect(ws.sent).toHaveLength(sentBeforePatches);
+  await client.close();
+});
+
+test("provider-policy config patches send arrays and reset when daemon supports them", async () => {
+  const { client, ws } = await connectClient({
+    features: { providerScopedPaseoTools: true },
+  });
+  const cases: Array<{
+    requestId: string;
+    injectIntoProviders: string[] | null;
+    responseMcp: { injectIntoAgents: boolean; injectIntoProviders?: string[] };
+  }> = [
+    {
+      requestId: "config-provider-policy-array",
+      injectIntoProviders: ["codex-lead"],
+      responseMcp: { injectIntoAgents: true, injectIntoProviders: ["codex-lead"] },
+    },
+    {
+      requestId: "config-provider-policy-empty",
+      injectIntoProviders: [],
+      responseMcp: { injectIntoAgents: true, injectIntoProviders: [] },
+    },
+    {
+      requestId: "config-provider-policy-reset",
+      injectIntoProviders: null,
+      responseMcp: { injectIntoAgents: true },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const patchPromise = client.config.patch(
+      { mcp: { injectIntoProviders: testCase.injectIntoProviders } },
+      testCase.requestId,
+    );
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "set_daemon_config_request",
+      requestId: testCase.requestId,
+      config: {
+        mcp: { injectIntoProviders: testCase.injectIntoProviders },
+      },
+    });
+    ws.message(
+      sessionMessage({
+        type: "set_daemon_config_response",
+        payload: {
+          requestId: testCase.requestId,
+          config: {
+            mcp: testCase.responseMcp,
+            providers: {},
+            autoArchiveAfterMerge: false,
+          },
+        },
+      }),
+    );
+    await expect(patchPromise).resolves.toMatchObject({
+      requestId: testCase.requestId,
+      config: { mcp: testCase.responseMcp },
+    });
+  }
 
   await client.close();
 });
