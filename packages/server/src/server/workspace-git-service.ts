@@ -306,6 +306,32 @@ interface WorkspaceGitServiceOptions {
   deps?: Partial<WorkspaceGitServiceDependencies>;
 }
 
+export function getWorkspaceFileWatcherBackend(
+  platform: NodeJS.Platform,
+): parcelWatcher.BackendType {
+  switch (platform) {
+    case "darwin":
+      return "fs-events";
+    case "linux":
+      return "inotify";
+    case "win32":
+      return "windows";
+    default:
+      throw new Error(`No native workspace file watcher configured for ${platform}`);
+  }
+}
+
+export function subscribeToWorkspaceFileChanges(
+  directory: string,
+  callback: parcelWatcher.SubscribeCallback,
+  options?: parcelWatcher.Options,
+): Promise<parcelWatcher.AsyncSubscription> {
+  return parcelWatcher.subscribe(directory, callback, {
+    ...options,
+    backend: getWorkspaceFileWatcherBackend(process.platform),
+  });
+}
+
 interface WorkspaceGitTarget {
   cwd: string;
   listeners: Set<WorkspaceGitListener>;
@@ -375,7 +401,7 @@ interface WorkspaceForgePrStatusPollTarget {
 
 function buildDefaultWorkspaceGitServiceDeps(): WorkspaceGitServiceDependencies {
   return {
-    subscribe: parcelWatcher.subscribe,
+    subscribe: subscribeToWorkspaceFileChanges,
     getCheckoutSnapshotFacts,
     getCheckoutStatus,
     getCheckoutShortstat,
