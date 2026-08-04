@@ -185,6 +185,43 @@ interface ProviderSummary {
   error?: string;
 }
 
+/**
+ * `query` on `list_paseo_tools` is written by a model describing what it wants,
+ * so it arrives as a phrase — "list workspaces archive workspace". Matching that
+ * phrase as one substring finds nothing, and an empty catalog reads as "Paseo
+ * cannot do this". Match the words separately instead and rank by how many hit.
+ */
+function tokenizeToolQuery(query: string | undefined): string[] {
+  if (!query) {
+    return [];
+  }
+  const terms = query
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((term) => term.length > 0);
+  return Array.from(new Set(terms));
+}
+
+/**
+ * A hit in the name outweighs a hit in the prose. Descriptions cross-reference
+ * each other freely — `create_agent` mentions `list_workspaces` — so unweighted
+ * counting floats whichever tool has the longest description to the top.
+ */
+const NAME_MATCH_WEIGHT = 3;
+
+function scoreToolAgainstQuery(tool: PaseoToolDefinition, terms: readonly string[]): number {
+  if (terms.length === 0) {
+    return 1;
+  }
+  const name = tool.name.toLowerCase();
+  const prose = `${tool.title ?? ""} ${tool.description}`.toLowerCase();
+  return terms.reduce(
+    (score, term) =>
+      score + (name.includes(term) ? NAME_MATCH_WEIGHT : 0) + (prose.includes(term) ? 1 : 0),
+    0,
+  );
+}
+
 const WorkspaceAutomationSummarySchema = z.object({
   workspaceId: z.string(),
   projectId: z.string(),
@@ -3207,25 +3244,27 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Discover Paseo tools",
       description:
-        "List ordinary Paseo tools and their input schemas. Use toolName for one exact definition or query for a compact filtered catalog.",
+        "List ordinary Paseo tools and their input schemas. Use toolName for one exact definition, or query as a keyword filter — every word is matched separately and the best matches come first.",
       inputSchema: {
         toolName: z.string().trim().min(1).optional(),
         query: z.string().trim().min(1).optional(),
       },
     },
     async ({ toolName, query }) => {
-      const normalizedQuery = query?.toLowerCase();
+      const queryTerms = tokenizeToolQuery(query);
       const definitions = Array.from(tools.values())
         .filter((tool) => tool.name !== "list_paseo_tools")
         .filter((tool) => !toolName || tool.name === toolName)
-        .filter(
-          (tool) =>
-            !normalizedQuery ||
-            `${tool.name} ${tool.title ?? ""} ${tool.description}`
-              .toLowerCase()
-              .includes(normalizedQuery),
+        .map((tool) => ({
+          tool,
+          score: scoreToolAgainstQuery(tool, queryTerms),
+        }))
+        .filter((scored) => scored.score > 0)
+        .sort(
+          (left, right) =>
+            right.score - left.score || left.tool.name.localeCompare(right.tool.name),
         )
-        .sort((left, right) => left.name.localeCompare(right.name))
+        .map((scored) => scored.tool)
         .slice(0, toolName ? 1 : 100)
         .map((tool) => {
           const inputSchema =

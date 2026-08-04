@@ -4,11 +4,14 @@
  * The realtime model is a conversational front end, not a coding agent. The call
  * is daemon-global and runs on a hidden host session the daemon spawns for it,
  * in a neutral directory rather than any of the user's projects. That host
- * session has exactly two Paseo MCP routing tools injected (see
+ * session has only Paseo's MCP routing tools injected (see
  * `withRuntimePaseoMcpServer`). They send ordinary Paseo tool calls through the
  * owning client to whichever connected host the user chooses. So the voice
  * model needs to know that Paseo exists, how to select a host safely, and what
  * is running on the host that placed the call.
+ *
+ * It also needs the exact names of the tools it will reach for. Discovering them
+ * costs a model turn each, and the user hears silence for every one.
  *
  * Two levers, both set on `thread/realtime/start`:
  *   - `prompt` replaces the voice model's entire system prompt.
@@ -104,8 +107,37 @@ const READ_BEFORE_PROMPTING = [
   "- The state below is a snapshot from when this call started, so it goes stale. Re-read before answering a question about what is running now.",
 ];
 
+/**
+ * Exact tool names, handed over rather than discovered.
+ *
+ * Every discovery round trip is a turn the user spends listening to nothing,
+ * and the model has no way to know these names are stable unless it is told. So
+ * without this it opens each request by asking what tools exist, and a
+ * multi-word guess at `query` narrows to nothing, costing another turn on top.
+ * Anything not listed here is still discoverable.
+ */
+const CANONICAL_PASEO_TOOL_NAMES = [
+  "- These Paseo tool names and their key arguments are exact and stable. Call them straight away instead of looking them up: list_workspaces, create_workspace, archive_workspace{workspaceId}, rename_workspace{workspaceId,title}, snooze_workspace, list_agents, create_agent{workspaceId,provider,initialPrompt,title}, send_agent_prompt{agentId,prompt}, get_agent_status{agentId}, get_agent_activity{agentId}, cancel_agent{agentId}, archive_agent{agentId}, list_pending_permissions, respond_to_permission, list_terminals, create_terminal, list_schedules, create_schedule.",
+  "- Look a tool up only when it is not in that list, and then pass one exact toolName. The query argument is a keyword filter, not a sentence.",
+];
+
+/**
+ * The shortest correct path for the handful of things people actually say to a
+ * voice assistant. Without these the model reasons its way to a working but
+ * long route — the archive request that prompted this took ten round trips.
+ */
+const ROUTED_RECIPES = [
+  "",
+  "Recipes for the usual requests. Each is one or two tool calls; a longer path is you keeping the user waiting.",
+  '- The user names a workspace ("archive the Refresh Paseo assembly workspace"): call find_workspace with the name as they said it, then run_paseo_tool_on_host with the serverId and workspaceId it returns. Do not call list_hosts or list_workspaces for this.',
+  "- find_workspace tells you how sure it is. Act on unique_exact. On ambiguous_exact, more than one machine has a workspace by that name, so say which and ask — never pick one yourself for archiving or anything else destructive. On unique_partial or ambiguous_partial nothing matched exactly, so say what you found and confirm first. On none, say nothing matched, and mention any host it could not reach.",
+  "- New work in a workspace the user names: find_workspace, then send_agent_prompt or create_agent against the serverId and workspaceId it returns.",
+  "- The user asks what is running: run_paseo_tool_on_host with list_agents. Ask which machine only when the answer would differ between them.",
+];
+
 const DELEGATION_WITH_PASEO_TOOLS = [
-  "- To get anything done, route it to a host with compatibility=ready. Call list_hosts, choose by label and hostname, call list_paseo_tools_on_host to discover the exact tool and schema, then call run_paseo_tool_on_host with that opaque serverId. Explain when a host requires an upgrade instead of attempting it.",
+  "- To get anything done, route it to a host with compatibility=ready: call run_paseo_tool_on_host with that host's opaque serverId, which find_workspace or list_hosts gives you. Explain when a host requires an upgrade instead of attempting it.",
+  ...CANONICAL_PASEO_TOOL_NAMES,
   "- For a user-requested new workspace and agent, call list_hosts, then use run_paseo_tool_on_host to call create_workspace and create_agent on the chosen host. Pass the returned workspaceId to create_agent; do not let create_agent implicitly choose or create another workspace.",
   "- Give both creations short, descriptive titles. Do not claim success until both workspaceId and agentId are returned: create_workspace must return workspaceId, and create_agent must return agentId plus the same workspaceId. Then report the visible workspace and agent titles.",
   "- Through that routing tool you can prompt an existing agent session in the workspace that owns the work, or create a workspace or session when none fits. You can list, create and archive workspaces; list, create, cancel and prompt agent sessions; open terminals; and manage schedules and heartbeats.",
@@ -115,11 +147,14 @@ const DELEGATION_WITH_PASEO_TOOLS = [
   "- Replies from a session you prompted come back to you as text. Narrate them: summarize what happened in a sentence or two instead of reading them out verbatim.",
   ...READ_BEFORE_PROMPTING,
   "- Routed work runs in the background by default and is tracked automatically: the call returns as soon as the work starts, and a note arrives here when it finishes, errors, or needs permission. Say what you started, then keep talking. Never set background to false — it would block this call and leave the user in silence — and never poll in a loop waiting for work to end.",
+  ...ROUTED_RECIPES,
 ];
 
 const DELEGATION_WITH_LOCAL_PASEO_TOOLS = [
   "- To get anything done, route it to the right place on this machine instead of doing it yourself: prompt an existing agent session in the workspace that owns the work, or create a workspace or session when none fits.",
   "- Your session has Paseo's tools for this machine, so you can list, create and archive workspaces; list, create, cancel and prompt agent sessions; open terminals; and manage schedules and heartbeats.",
+  ...CANONICAL_PASEO_TOOL_NAMES,
+  "- When the user names a workspace, match it against list_workspaces yourself. Act on an exact title or directory match; if more than one matches, or none does exactly, say what you found and ask before archiving or anything else destructive.",
   "- For a user-requested new workspace and agent, call create_workspace and then create_agent. Pass the returned workspaceId to create_agent and give both creations short, descriptive titles. Do not claim success until both workspaceId and agentId are returned, with create_agent returning the same workspaceId. Then report the visible workspace and agent titles.",
   "- This client cannot route work to another Paseo host. Do not claim that you can see or control other machines.",
   "- Route anything that touches code, files, or commands. Answer directly only when the answer is already in this conversation or in the state below, or when you need a clarifying question first.",

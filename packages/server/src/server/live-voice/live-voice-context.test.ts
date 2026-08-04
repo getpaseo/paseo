@@ -112,6 +112,36 @@ describe("live voice prompt", () => {
     expect(prompt).toMatch(/read for everything else/i);
   });
 
+  it("hands over the exact tool names so the model does not spend turns discovering them", () => {
+    const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
+
+    expect(prompt).toContain("archive_workspace{workspaceId}");
+    expect(prompt).toContain("send_agent_prompt{agentId,prompt}");
+    expect(prompt).toMatch(/exact and stable/i);
+    expect(prompt).toMatch(/query argument is a keyword filter, not a sentence/i);
+  });
+
+  it("gives the named-workspace request a two-call recipe that resolves before it acts", () => {
+    const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
+
+    expect(prompt).toContain("find_workspace");
+    expect(prompt).toMatch(/Do not call list_hosts or list_workspaces for this/i);
+    expect(prompt).toContain("unique_exact");
+    // Duplicate titles across machines must reach the user as a question.
+    expect(prompt).toMatch(/never pick one yourself for archiving/i);
+  });
+
+  it("gives a local-only call the same tool names but no cross-host recipe", () => {
+    const prompt = buildLiveVoicePrompt({
+      paseoToolsAvailable: true,
+      crossHostRoutingAvailable: false,
+    });
+
+    expect(prompt).toContain("archive_workspace{workspaceId}");
+    expect(prompt).not.toContain("find_workspace");
+    expect(prompt).toMatch(/ask before archiving/i);
+  });
+
   it("makes Paseo MCP the early authoritative source for Paseo state", () => {
     const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
 

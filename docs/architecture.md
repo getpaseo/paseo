@@ -163,8 +163,9 @@ equivalent — its module manages the audio session and nothing else, and a pinn
 call presence there would mean a Live Activity.
 
 For clients advertising `live_voice_cross_host_router`, the hidden session gets
-only routing tools: list compatible hosts, discover the ordinary tools and
-schemas on one host, and execute one selected tool. The route is:
+only routing tools: list compatible hosts, resolve a workspace by name, describe
+the ordinary tools and schemas on one host, and execute one selected tool. The
+route is:
 
 ```text
 hidden Live Voice host on A
@@ -173,6 +174,28 @@ hidden Live Voice host on A
   -> authenticated existing socket on B
   -> B's top-level Paseo tool catalog
 ```
+
+Each hop of that route is cheap; what is expensive is a model turn, because the
+user hears silence for the whole of it. So the tools are shaped to spend hops
+instead of turns. `find_workspace` takes the name as the user said it, fans out
+`list_workspaces` across every ready host at once, and returns the `serverId`
+and `workspaceId` to act on — turning "archive the Refresh Paseo assembly
+workspace" into two turns rather than one per host plus one per lookup. The
+prompt hands the model the exact names of the common Paseo tools for the same
+reason, so discovery is a fallback rather than an opening move.
+
+Resolution is classified, never decided: `find_workspace` returns
+`unique_exact`, `ambiguous_exact`, `unique_partial`, `ambiguous_partial`, or
+`none`, and the prompt permits action only on `unique_exact`. Two machines
+holding a workspace with the same name is a question for the user, not a coin
+flip, and the destructive tools still take a `workspaceId`. Matching folds case,
+punctuation, and hyphens because the name arrives through a transcriber, and it
+covers the directory name as well as the title. A host that fails to answer is
+reported in `unavailableHosts` rather than folded into "no match".
+
+Routed discovery uses a 30-second timeout instead of the broker's ten-minute
+default. That default is sized for tools that wait on an agent turn; inherited
+here, one quiet host would hold the call silent for ten minutes.
 
 Work started that way runs longer than a sentence, so the route has a return
 leg. The app records the agent id returned by a routed tool call. Every host

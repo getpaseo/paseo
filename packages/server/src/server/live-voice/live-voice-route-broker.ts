@@ -42,7 +42,7 @@ interface PendingLiveVoiceRoute {
 }
 
 /**
- * Routes the hidden Live Voice host's two MCP tools back through the exact app
+ * Routes the hidden Live Voice host's MCP tools back through the exact app
  * socket that owns the call. A logical client session can have multiple sockets,
  * so neither clientId nor the shared Session object is a sufficient authority.
  */

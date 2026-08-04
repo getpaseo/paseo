@@ -5316,6 +5316,7 @@ describe("Live Voice cross-host MCP tools", () => {
     const listHosts = registeredTool(server, "list_hosts");
     const listTools = registeredTool(server, "list_paseo_tools_on_host");
     const runTool = registeredTool(server, "run_paseo_tool_on_host");
+    expect(lookupTool(server, "find_workspace")).toBeDefined();
     expect(lookupTool(server, "list_agents")).toBeUndefined();
     expect(lookupTool(server, "create_workspace")).toBeUndefined();
     expect(lookupTool(server, "speak")).toBeUndefined();
@@ -5348,7 +5349,14 @@ describe("Live Voice cross-host MCP tools", () => {
         result: { agents: [] },
       },
     });
-    expect(execute).toHaveBeenNthCalledWith(1, "voice-host", { kind: "list_hosts" });
+    // Discovery is bounded: a host that goes quiet must not hold the call for
+    // the broker's ten-minute agent-turn default.
+    expect(execute).toHaveBeenNthCalledWith(
+      1,
+      "voice-host",
+      { kind: "list_hosts" },
+      { timeoutMs: 30_000 },
+    );
     expect(execute).toHaveBeenNthCalledWith(2, "voice-host", {
       kind: "execute_tool",
       targetServerId: "server-b",
@@ -5388,9 +5396,11 @@ describe("Live Voice cross-host MCP tools", () => {
 
     expect(lookupTool(ordinary, "list_hosts")).toBeUndefined();
     expect(lookupTool(ordinary, "run_paseo_tool_on_host")).toBeUndefined();
+    expect(lookupTool(ordinary, "find_workspace")).toBeUndefined();
     expect(lookupTool(ordinary, "list_agents")).toBeDefined();
     expect(lookupTool(topLevel, "list_hosts")).toBeUndefined();
     expect(lookupTool(topLevel, "run_paseo_tool_on_host")).toBeUndefined();
+    expect(lookupTool(topLevel, "find_workspace")).toBeUndefined();
     expect(lookupTool(topLevel, "list_agents")).toBeDefined();
   });
 });
@@ -6034,6 +6044,51 @@ describe("agent snapshot MCP serialization", () => {
         initialPrompt: expect.any(Object),
       },
     });
+  });
+
+  it("answers a multi-word list_paseo_tools query best-match first instead of with nothing", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+
+    // The phrase a Live Voice call actually sent. As one substring it matched no
+    // tool at all, which cost the model a wasted turn.
+    const response = await registeredTool(server, "list_paseo_tools").handler({
+      query: "list workspaces archive workspace",
+    });
+    const names = z
+      .array(z.object({ name: z.string() }))
+      .parse(response.structuredContent.tools)
+      .map((tool) => tool.name);
+
+    expect(names.slice(0, 2)).toEqual(
+      expect.arrayContaining(["list_workspaces", "archive_workspace"]),
+    );
+  });
+
+  it("keeps a single-keyword list_paseo_tools query narrow", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+
+    const response = await registeredTool(server, "list_paseo_tools").handler({
+      query: "heartbeat",
+    });
+    const names = z
+      .array(z.object({ name: z.string() }))
+      .parse(response.structuredContent.tools)
+      .map((tool) => tool.name);
+
+    expect(names).toContain("create_heartbeat");
+    expect(names).not.toContain("list_workspaces");
   });
 
   it("loads archived agents before reading get_agent_activity", async () => {
