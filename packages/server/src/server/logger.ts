@@ -6,6 +6,7 @@ import { resolveDaemonLogPath } from "./daemon-log-path.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { PersistedConfig } from "./persisted-config.js";
 import { resolvePaseoHome } from "./paseo-home.js";
+import { ensurePrivateFile, PRIVATE_FILE_MODE } from "./private-files.js";
 
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 export type LogFormat = "pretty" | "json";
@@ -154,9 +155,19 @@ export function createRootLogger(
   options?: ResolveLogConfigOptions,
 ): pino.Logger {
   const config = resolveLogConfig(configInput, options);
-  if (config.file) {
-    mkdirSync(path.dirname(config.file.path), { recursive: true });
+  const filePath = config.file?.path;
+  if (filePath) {
+    mkdirSync(path.dirname(filePath), { recursive: true });
+    // The log carries verbatim agent stdout/stderr. `mode` below only applies when
+    // the file is created, so tighten a log left world-readable by an older release.
+    ensurePrivateFile(filePath);
   }
+
+  // Open the file destination here rather than handing pino-pretty a path: it does
+  // not forward a mode when it opens the file itself.
+  const fileDestination = filePath
+    ? pino.destination({ dest: filePath, sync: false, mode: PRIVATE_FILE_MODE })
+    : null;
 
   const stream =
     config.console.format === "pretty"
@@ -164,9 +175,9 @@ export function createRootLogger(
           colorize: true,
           singleLine: true,
           ignore: "pid,hostname",
-          destination: config.file?.path ?? 1,
+          destination: fileDestination ?? 1,
         })
-      : pino.destination({ dest: config.file?.path ?? 1, sync: false });
+      : (fileDestination ?? pino.destination({ dest: 1, sync: false }));
 
   const logger = pino(
     {

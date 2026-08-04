@@ -6,6 +6,7 @@ import { loadConfig } from "./config.js";
 import { resolveDaemonLogPath } from "./daemon-log-path.js";
 import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
+import { PRIVATE_FILE_MODE } from "./private-files.js";
 import type { DaemonLifecycleIntent } from "./bootstrap.js";
 import { getProcessDiagnostics } from "./process-diagnostics.js";
 
@@ -63,7 +64,7 @@ function writeWorkerLifecycleLog(
         msg: message,
         ...fields,
       })}\n`,
-      "utf8",
+      { encoding: "utf8", mode: PRIVATE_FILE_MODE },
     );
   } catch {
     // Exit-reason logging must never prevent the worker from exiting.
