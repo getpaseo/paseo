@@ -22,6 +22,7 @@ import { resolveNativeTerminalFontFamily } from "./font.native";
 import type { TerminalViewportState } from "./headless-terminal-state";
 import {
   resolveMeasuredTerminalCellMetrics,
+  resolveTerminalCustomGlyphCellTransform,
   resolveTerminalGridMetricsMeasurement,
   resolveTerminalCursorOffset,
   type TerminalGridCellMetrics,
@@ -192,7 +193,7 @@ function TerminalGridCustomGlyphRun({
         pointerEvents="none"
         preserveAspectRatio="none"
         style={styles.customGlyphSvg}
-        viewBox={`0 0 ${run.cellCount} 1`}
+        viewBox={`0 0 ${run.cellCount * cellWidth} ${cellHeight}`}
         width={run.cellCount * cellWidth}
       >
         <G fill="none" stroke={run.foregroundColor}>
@@ -204,7 +205,11 @@ function TerminalGridCustomGlyphRun({
                 strokeLinecap="butt"
                 strokeLinejoin="miter"
                 strokeWidth={cell.glyph.strokeWidth}
-                transform={`translate(${cell.offset} 0)`}
+                transform={resolveTerminalCustomGlyphCellTransform({
+                  cellOffset: cell.offset,
+                  cellWidth,
+                  cellHeight,
+                })}
                 vectorEffect="non-scaling-stroke"
               />
             ) : null,

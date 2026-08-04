@@ -53,6 +53,10 @@ import { useSessionStore } from "@/stores/session-store";
 import { toXtermTheme } from "@/utils/to-xterm-theme";
 import TerminalEmulator, { type TerminalEmulatorHandle } from "./terminal-emulator";
 import { TerminalFloatingCopyAction, TerminalPasteAction } from "./terminal-copy-paste-actions";
+import {
+  createTerminalResizeDebouncer,
+  type TerminalResizeRequest,
+} from "./terminal-resize-debouncer";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import {
@@ -85,6 +89,7 @@ interface TerminalPaneProps {
 }
 
 const TERMINAL_REFIT_DELAYS_MS = [0, 48, 144, 320];
+const TERMINAL_RESIZE_DEBOUNCE_MS = 100;
 
 const MODIFIER_LABELS = {
   ctrl: "Ctrl",
@@ -759,51 +764,69 @@ export function TerminalPane({
     ],
   );
 
-  const handleTerminalResize = useStableEvent(
-    (input: { rows: number; cols: number; shouldClaim: boolean; forceClaim?: boolean }) => {
-      const { rows, cols } = input;
-      if (rows <= 0 || cols <= 0) {
-        return;
-      }
-      const normalizedRows = Math.floor(rows);
-      const normalizedCols = Math.floor(cols);
-      const nextSize = { rows: normalizedRows, cols: normalizedCols };
-      measuredTerminalSizeRef.current = nextSize;
-      const claim = resolveTerminalResizeClaim({
-        size: nextSize,
-        previousSentSize: lastSentTerminalSizeRef.current,
-        shouldClaim: input.shouldClaim,
-        forceClaim: input.forceClaim ?? false,
-        supportsTerminalSizeOwnership,
-        readiness: {
-          isWorkspaceFocused: isTerminalActive,
-          isPaneFocused,
-          isAppActivelyVisible,
-          isClientReady: client !== null,
-          isConnected,
-          isRendererReady: rendererReadyStreamKey === terminalStreamKey,
-        },
+  const sendTerminalResize = useStableEvent((input: TerminalResizeRequest) => {
+    const nextSize = { rows: input.rows, cols: input.cols };
+    const claim = resolveTerminalResizeClaim({
+      size: nextSize,
+      previousSentSize: lastSentTerminalSizeRef.current,
+      shouldClaim: input.shouldClaim,
+      forceClaim: input.forceClaim ?? false,
+      supportsTerminalSizeOwnership,
+      readiness: {
+        isWorkspaceFocused: isTerminalActive,
+        isPaneFocused,
+        isAppActivelyVisible,
+        isClientReady: client !== null,
+        isConnected,
+        isRendererReady: rendererReadyStreamKey === terminalStreamKey,
+      },
+    });
+    let sent = false;
+    if (client && terminalId && claim.shouldSend) {
+      lastSentTerminalSizeRef.current = nextSize;
+      client.sendTerminalInput(terminalId, {
+        type: "resize",
+        rows: input.rows,
+        cols: input.cols,
+        intent: claim.intent,
       });
-      let sent = false;
-      if (client && terminalId && claim.shouldSend) {
-        lastSentTerminalSizeRef.current = nextSize;
-        client.sendTerminalInput(terminalId, {
-          type: "resize",
-          rows: normalizedRows,
-          cols: normalizedCols,
-          intent: claim.intent,
-        });
-        sent = true;
-      }
-      const requestedKey = paneFocusResizeClaimRef.current.requestedKey;
-      if (requestedKey && claim.intent === "claim") {
-        paneFocusResizeClaimRef.current = settleFocusClaim(paneFocusResizeClaimRef.current, {
-          key: requestedKey,
-          sent,
-        });
-      }
-    },
+      sent = true;
+    }
+    const requestedKey = paneFocusResizeClaimRef.current.requestedKey;
+    if (requestedKey && claim.intent === "claim") {
+      paneFocusResizeClaimRef.current = settleFocusClaim(paneFocusResizeClaimRef.current, {
+        key: requestedKey,
+        sent,
+      });
+    }
+  });
+
+  const terminalResizeDebouncer = useMemo(
+    () =>
+      createTerminalResizeDebouncer({
+        delayMs: TERMINAL_RESIZE_DEBOUNCE_MS,
+        emit: sendTerminalResize,
+      }),
+    [sendTerminalResize],
   );
+
+  useEffect(
+    () => () => terminalResizeDebouncer.cancel(),
+    [terminalResizeDebouncer, terminalStreamKey],
+  );
+
+  const handleTerminalResize = useStableEvent((input: TerminalResizeRequest) => {
+    if (input.rows <= 0 || input.cols <= 0) {
+      return;
+    }
+    const nextResize = {
+      ...input,
+      rows: Math.floor(input.rows),
+      cols: Math.floor(input.cols),
+    };
+    measuredTerminalSizeRef.current = { rows: nextResize.rows, cols: nextResize.cols };
+    terminalResizeDebouncer.schedule(nextResize);
+  });
 
   const handleTerminalKey = useCallback(
     async (input: { key: string; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean }) => {
