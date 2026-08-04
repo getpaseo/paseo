@@ -556,6 +556,45 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       execFileSync("git", ["fetch", "upstream"], { cwd: result.worktreePath });
       await mergeFromBase(result.worktreePath, { baseRef: "main" }, { paseoHome });
       expect(readFileSync(join(result.worktreePath, "later.txt"), "utf8")).toBe("later\n");
+
+      execFileSync("git", ["update-ref", "-d", "refs/remotes/upstream/main"], {
+        cwd: result.worktreePath,
+      });
+      await expect(
+        getCheckoutDiff(result.worktreePath, { mode: "base", baseRef: "main" }, { paseoHome }),
+      ).rejects.toThrow("Base ref not found: refs/remotes/upstream/main");
+      await expect(
+        mergeFromBase(result.worktreePath, { baseRef: "main" }, { paseoHome }),
+      ).rejects.toThrow("Base ref not found: refs/remotes/upstream/main");
+      await expect(
+        listCheckoutCommits({ cwd: result.worktreePath, context: { paseoHome } }),
+      ).rejects.toThrow("Base ref not found: refs/remotes/upstream/main");
+    });
+
+    it("records Git-valid characters in a remote base branch", async () => {
+      const upstreamDir = join(tempDir, "upstream.git");
+      execFileSync("git", ["init", "--bare", upstreamDir]);
+      execFileSync("git", ["remote", "add", "upstream", upstreamDir], { cwd: repoDir });
+      execFileSync("git", ["push", "upstream", "refs/heads/main:refs/heads/release+hotfix"], {
+        cwd: repoDir,
+      });
+      execFileSync("git", ["fetch", "upstream"], { cwd: repoDir });
+
+      const result = await createLegacyWorktreeForTest({
+        branchName: "release-hotfix-feature",
+        cwd: repoDir,
+        baseBranch: "refs/remotes/upstream/release+hotfix",
+        worktreeSlug: "release-hotfix-feature",
+        runSetup: false,
+        paseoHome,
+      });
+
+      expect(
+        JSON.parse(readFileSync(getPaseoWorktreeMetadataPath(result.worktreePath), "utf8")),
+      ).toMatchObject({
+        baseRefName: "release+hotfix",
+        baseRef: "refs/remotes/upstream/release+hotfix",
+      });
     });
 
     it("uses a local branch when origin/{branch} does not exist", async () => {

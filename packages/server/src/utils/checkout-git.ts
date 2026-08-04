@@ -1521,6 +1521,10 @@ async function doesGitRefExist(
   return result.exitCode === 0;
 }
 
+function isQualifiedRemoteRef(ref: string): boolean {
+  return ref.startsWith("refs/remotes/");
+}
+
 async function resolveBestComparisonBaseRef(
   cwd: string,
   baseRef: string,
@@ -1530,8 +1534,11 @@ async function resolveBestComparisonBaseRef(
   // only form that can name a non-origin remote. Bare names and refs/heads/... keep going
   // through the local-vs-origin heuristic below, which is what the ahead/behind badge has
   // always meant for a worktree based on a local branch.
-  if (baseRef.startsWith("refs/remotes/") && (await doesGitRefExist(cwd, baseRef, context))) {
-    return baseRef;
+  if (isQualifiedRemoteRef(baseRef)) {
+    if (await doesGitRefExist(cwd, baseRef, context)) {
+      return baseRef;
+    }
+    throw new Error(`Base ref not found: ${baseRef}`);
   }
   const normalized = normalizeComparisonBaseRefName(baseRef);
   const [hasLocal, hasOrigin] = await Promise.all([
@@ -1554,8 +1561,11 @@ async function resolveBestComparisonBaseRef(
 }
 
 async function resolveMostAheadBaseRef(cwd: string, baseRef: string): Promise<string> {
-  if (baseRef.startsWith("refs/remotes/") && (await doesGitRefExist(cwd, baseRef))) {
-    return baseRef;
+  if (isQualifiedRemoteRef(baseRef)) {
+    if (await doesGitRefExist(cwd, baseRef)) {
+      return baseRef;
+    }
+    throw new Error(`Base ref not found: ${baseRef}`);
   }
   const normalizedBaseRef = branchNameFromRef(baseRef);
   const [hasLocal, hasOrigin] = await Promise.all([
@@ -2383,7 +2393,14 @@ async function tryResolveCheckoutCommitsBaseRef(
   if (!normalizedBaseRef || normalizedBaseRef === currentBranch) {
     return null;
   }
-  return resolveMostAheadBaseRef(cwd, baseRef).catch(() => null);
+  try {
+    return await resolveMostAheadBaseRef(cwd, baseRef);
+  } catch (error) {
+    if (isQualifiedRemoteRef(baseRef)) {
+      throw error;
+    }
+    return null;
+  }
 }
 
 export async function listCheckoutCommits({

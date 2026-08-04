@@ -183,9 +183,6 @@ function assertValidBaseRef(value: string): void {
   if (value.includes("..") || value.includes("@{")) {
     throw new Error(`Invalid base branch: ${value}`);
   }
-  if (!/^[0-9A-Za-z._/-]+$/.test(value)) {
-    throw new Error(`Invalid base branch: ${value}`);
-  }
 }
 
 export function writePaseoWorktreeMetadata(
