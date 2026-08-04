@@ -84,3 +84,6 @@ You can steer the wording of each kind of metadata per repository with a `paseo.
 ```
 
 Each key is optional; only the ones you set are affected. Your instructions **replace** the default style for that metadata type — they are not appended to it — so your wording never competes with Paseo's defaults. The functional requirements (what to produce and the output format) always apply and cannot be overridden.
+
+To disable rolling agent purpose summaries, set `features.agentPurposeSummaries.enabled`
+to `false` in `~/.paseo/config.json`. See [daemon configuration](/docs/configuration).

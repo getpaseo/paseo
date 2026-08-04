@@ -27,6 +27,7 @@ interface Harness {
   generationRequests: AgentPurposeSummaryGenerationRequest<unknown>[];
   summaryWrites: SummaryWrite[];
   appendRow: (row: AgentTimelineRow) => void;
+  publishState: () => void;
   service: AgentPurposeSummaryService;
 }
 
@@ -99,6 +100,63 @@ describe("AgentPurposeSummaryService", () => {
     expect(harness.summaryWrites[0]?.expectedPreviousSummary).toBe("Initial purpose.");
     expect(harness.summaryWrites[0]?.consumedTurns).toBe(3);
     expect(harness.agent.summaryTurnsSinceUpdate).toBe(0);
+    harness.service.dispose();
+  });
+
+  it("does not consume the interval when a completed turn has no conversation transcript", async () => {
+    vi.useFakeTimers({ now: BASE_TIME });
+    const harness = createHarness({
+      summary: "Initial purpose.",
+      summaryUpdatedAt: new Date(BASE_TIME - 300_000),
+      summaryTurnsSinceUpdate: 3,
+      minTurnsBetweenGenerations: 3,
+      minIntervalMs: 300_000,
+      timelineRows: [
+        row(1, "2026-07-30T12:01:00.000Z", {
+          type: "tool_call",
+          callId: "call-1",
+          name: "status",
+          detail: { type: "unknown", input: {}, output: {} },
+          status: "completed",
+          error: null,
+        }),
+      ],
+    });
+
+    harness.completeTurn();
+    await vi.runAllTimersAsync();
+    expect(harness.generationRequests).toHaveLength(0);
+
+    harness.appendRow(
+      row(2, "2026-07-30T12:02:00.000Z", {
+        type: "user_message",
+        text: "Now summarize the current work.",
+      }),
+    );
+    harness.completeTurn();
+    await vi.runAllTimersAsync();
+
+    expect(harness.generationRequests).toHaveLength(1);
+    harness.service.dispose();
+  });
+
+  it("arms a wake timer when an eligible agent is loaded after service startup", async () => {
+    vi.useFakeTimers({ now: BASE_TIME });
+    const harness = createHarness({
+      includeAgentAtStart: false,
+      summary: "Initial purpose.",
+      summaryUpdatedAt: new Date(BASE_TIME - 100_000),
+      summaryTurnsSinceUpdate: 3,
+      minTurnsBetweenGenerations: 3,
+      minIntervalMs: 300_000,
+    });
+
+    harness.publishState();
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(200_000);
+    await vi.runAllTimersAsync();
+    expect(harness.generationRequests).toHaveLength(1);
     harness.service.dispose();
   });
 
@@ -321,6 +379,7 @@ interface HarnessInput {
   minIntervalMs?: number;
   now?: () => number;
   generate?: () => Promise<{ summary: string }>;
+  includeAgentAtStart?: boolean;
 }
 
 function createHarness(input: HarnessInput = {}): Harness {
@@ -354,7 +413,7 @@ function createHarness(input: HarnessInput = {}): Harness {
       return agentId === AGENT_ID ? agent : null;
     },
     listAgents() {
-      return [agent];
+      return input.includeAgentAtStart === false ? [] : [agent];
     },
     fetchTimeline(
       _agentId: string,
@@ -445,6 +504,7 @@ function createHarness(input: HarnessInput = {}): Harness {
     generationRequests,
     summaryWrites,
     appendRow: (nextRow) => timelineRows.push(nextRow),
+    publishState: () => subscriber?.({ type: "agent_state", agent }),
     service,
   };
 }

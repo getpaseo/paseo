@@ -123,10 +123,18 @@ export class AgentPurposeSummaryService {
   }
 
   private handleAgentEvent(event: AgentManagerEvent): void {
-    if (event.type !== "agent_stream" || event.event.type !== "turn_completed" || this.disposed) {
+    if (this.disposed) {
       return;
     }
-    this.maybeGenerate(event.agentId);
+    if (event.type === "agent_state") {
+      if (event.agent.lifecycle !== "closed") {
+        this.maybeGenerate(event.agent.id);
+      }
+      return;
+    }
+    if (event.type === "agent_stream" && event.event.type === "turn_completed") {
+      this.maybeGenerate(event.agentId);
+    }
   }
 
   /**
@@ -151,16 +159,23 @@ export class AgentPurposeSummaryService {
       const turnsAtStart = agent.summaryTurnsSinceUpdate ?? 0;
       const timer = setTimeout(() => {
         this.scheduled.delete(timer);
+        let attempted = false;
         void this.generateSummary(agentId, turnsAtStart)
-          .catch((error) => {
-            this.logger.warn(
-              { err: error, agentId, cwd: agent.cwd },
-              "Failed to generate agent purpose summary",
-            );
+          .then((outcome) => {
+            // An empty transcript is not an attempted generation. Wait for a
+            // future timeline event instead of spinning or consuming the
+            // interval floor before there is anything to summarize.
+            attempted = outcome === "attempted";
+            return outcome;
           })
           .finally(() => {
             state.inFlight = false;
-            this.maybeGenerate(agentId);
+            // `generateSummary` marks the attempt before any awaited work, so
+            // a failed non-empty generation gets the same delayed retry as a
+            // successful or stale generation.
+            if (attempted) {
+              this.maybeGenerate(agentId);
+            }
           });
       }, 0);
       this.scheduled.add(timer);
@@ -220,60 +235,73 @@ export class AgentPurposeSummaryService {
     return state.lastAttemptAt === 0 || this.now() - state.lastAttemptAt >= this.minIntervalMs;
   }
 
-  private async generateSummary(agentId: string, consumedTurns: number): Promise<boolean> {
+  private async generateSummary(
+    agentId: string,
+    consumedTurns: number,
+  ): Promise<"empty" | "attempted"> {
     if (this.disposed) {
-      return false;
+      return "empty";
     }
     const agent = this.agentManager.getAgent(agentId);
     if (!agent || agent.internal) {
-      return false;
+      return "empty";
     }
 
     const expectedPreviousSummary = agent.summary ?? null;
     const transcript = this.buildTranscript(agent);
     if (!transcript) {
-      return false;
+      return "empty";
     }
 
-    const prompt = await buildMetadataPrompt({
-      cwd: agent.cwd,
-      workspaceGitService: this.workspaceGitService,
-      contract: [
-        "Update the one-line purpose summary for this coding agent.",
-        "Describe what it is currently trying to accomplish and the most meaningful current progress.",
-        "Return JSON only with a single field 'summary'.",
-      ].join(" "),
-      styles: [
-        {
-          configKey: "agentSummary",
-          default:
-            "Use one concrete present-tense sentence. Stay under 180 characters and avoid generic phrases such as “working on the task”.",
-        },
-      ],
-      after: [
-        `Previous summary: ${expectedPreviousSummary ?? "(none yet)"}`,
-        "",
-        "Conversation since the previous summary:",
-        transcript.text,
-      ].join("\n"),
-    });
+    this.getCadenceState(agent).lastAttemptAt = this.now();
 
-    const result = await this.generation.generate({
-      cwd: agent.cwd,
-      prompt,
-      schema: SUMMARY_SCHEMA,
-      schemaName: "AgentPurposeSummary",
-      agentTitle: "Agent summary generator",
-    });
-    if (this.disposed) {
-      return false;
+    try {
+      const prompt = await buildMetadataPrompt({
+        cwd: agent.cwd,
+        workspaceGitService: this.workspaceGitService,
+        contract: [
+          "Update the one-line purpose summary for this coding agent.",
+          "Describe what it is currently trying to accomplish and the most meaningful current progress.",
+          "Return JSON only with a single field 'summary'.",
+        ].join(" "),
+        styles: [
+          {
+            configKey: "agentSummary",
+            default:
+              "Use one concrete present-tense sentence. Stay under 180 characters and avoid generic phrases such as “working on the task”.",
+          },
+        ],
+        after: [
+          `Previous summary: ${expectedPreviousSummary ?? "(none yet)"}`,
+          "",
+          "Conversation since the previous summary:",
+          transcript.text,
+        ].join("\n"),
+      });
+
+      const result = await this.generation.generate({
+        cwd: agent.cwd,
+        prompt,
+        schema: SUMMARY_SCHEMA,
+        schemaName: "AgentPurposeSummary",
+        agentTitle: "Agent summary generator",
+      });
+      if (this.disposed) {
+        return "attempted";
+      }
+
+      await this.agentManager.setAgentSummary(agentId, result.summary, {
+        expectedPreviousSummary,
+        summaryCursor: transcript.cursor,
+        consumedTurns,
+      });
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId, cwd: agent.cwd },
+        "Failed to generate agent purpose summary",
+      );
     }
-
-    return await this.agentManager.setAgentSummary(agentId, result.summary, {
-      expectedPreviousSummary,
-      summaryCursor: transcript.cursor,
-      consumedTurns,
-    });
+    return "attempted";
   }
 
   private buildTranscript(agent: ManagedAgent): SummaryTranscript | null {

@@ -519,8 +519,15 @@ function resolveProfileLists(persisted: ReturnType<typeof loadPersistedConfig>) 
   };
 }
 
-function resolveAgentPurposeSummariesEnabled(env: NodeJS.ProcessEnv): boolean {
-  return parseBooleanEnv(env.PASEO_AGENT_PURPOSE_SUMMARIES) ?? true;
+function resolveAgentPurposeSummariesEnabled(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): boolean {
+  return (
+    parseBooleanEnv(env.PASEO_AGENT_PURPOSE_SUMMARIES) ??
+    persisted.features?.agentPurposeSummaries?.enabled ??
+    true
+  );
 }
 
 function resolveStaticLoadConfigSettings(
@@ -533,7 +540,7 @@ function resolveStaticLoadConfigSettings(
     mcpInjectIntoAgents:
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
     browserToolsEnabled: resolveBrowserToolsEnabled(persisted),
-    agentPurposeSummariesEnabled: resolveAgentPurposeSummariesEnabled(env),
+    agentPurposeSummariesEnabled: resolveAgentPurposeSummariesEnabled(env, persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
     ...resolveProfileLists(persisted),
