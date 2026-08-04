@@ -17,7 +17,7 @@ Usage: node scripts/sync-release-notes-from-changelog.mjs [options]
 Options:
   --repo <owner/repo>       Repository slug. Defaults to $GITHUB_REPOSITORY.
   --tag <tag>               Release tag (e.g. v0.1.14). Defaults to latest changelog entry.
-  --create-if-missing       Create release if it does not already exist.
+  --create-if-missing       Create a draft release if it does not already exist.
 `;
   process.stderr.write(usage.trimStart());
   process.stderr.write("\n");
@@ -186,6 +186,7 @@ export function syncReleaseNotes(argv = process.argv.slice(2), deps = {}) {
     "--notes-file",
     notesPath,
     "--verify-tag",
+    "--draft",
     ...(parseReleaseVersion(releaseInfo.version).isPrerelease ? ["--prerelease"] : []),
   ];
 

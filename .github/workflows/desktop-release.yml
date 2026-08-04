@@ -86,6 +86,7 @@ jobs:
               --repo "${{ github.repository }}" \
               --title "Paseo $RELEASE_TAG" \
               --notes "" \
+              --draft \
               $prerelease_flag || {
                 echo "Release creation raced with another workflow; continuing."
               }
@@ -480,7 +481,7 @@ jobs:
           name: windows-manifest
           path: release-manifests/windows-manifest
 
-      - name: Assemble and upload stamped manifests
+      - name: Assemble manifests and publish release
         if: env.IS_SMOKE_TAG != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -537,3 +538,5 @@ jobs:
             }
           ' "${files[@]}"
           gh release upload "$RELEASE_TAG" "${files[@]}" --clobber --repo "${{ github.repository }}"
+          release_id="$(gh api "repos/${{ github.repository }}/releases/tags/$RELEASE_TAG" --jq .id)"
+          gh api --method PATCH "repos/${{ github.repository }}/releases/$release_id" -F draft=false

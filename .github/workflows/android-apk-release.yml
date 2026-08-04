@@ -52,6 +52,7 @@ jobs:
             --repo "${{ github.repository }}"
             --title "Paseo $RELEASE_TAG"
             --notes ""
+            --draft
           )
 
           if [[ "$IS_PRERELEASE" == "true" ]]; then

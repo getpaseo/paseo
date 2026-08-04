@@ -64,6 +64,38 @@ test("updates an existing release body through the release id API", () => {
   });
 });
 
+test("creates missing releases as drafts", () => {
+  withTempChangelog(() => {
+    const calls = [];
+
+    const execFileSync = (command, args, options) => {
+      calls.push({ args, command, options });
+
+      if (args[0] === "api" && args[1] === "repos/getpaseo/paseo/releases/tags/v0.1.60-beta.1") {
+        throw new Error("release not found");
+      }
+
+      if (args[0] === "release" && args[1] === "create") {
+        return "";
+      }
+
+      throw new Error(`Unexpected gh call: ${command} ${args.join(" ")}`);
+    };
+
+    syncReleaseNotes(
+      ["--repo", "getpaseo/paseo", "--tag", "v0.1.60-beta.1", "--create-if-missing"],
+      { execFileSync },
+    );
+
+    const createCall = calls.find(
+      (call) => call.args[0] === "release" && call.args[1] === "create",
+    );
+    assert.ok(createCall, "the missing release should be created");
+    assert.equal(createCall.args.includes("--draft"), true);
+    assert.equal(createCall.args.includes("--prerelease"), true);
+  });
+});
+
 test("converts contributor profile links to mentions in synced release notes", () => {
   const changelogText = [
     "## 0.1.60-beta.1 - 2026-04-20",

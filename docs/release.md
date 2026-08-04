@@ -150,10 +150,10 @@ The rollout is driven by a `rolloutHours` field stamped into the GitHub Release 
 
 Desktop release builds now publish in two phases:
 
-- Platform build jobs upload the installers/packages (`.dmg`, `.zip`, `.exe`, `.AppImage`, etc.) to the GitHub release.
-- The final job merges/stamps the manifests and uploads all `.yml` files only after they already contain the final `releaseDate` and `rolloutHours`.
+- The GitHub release stays a draft while platform build jobs upload the installers/packages (`.dmg`, `.zip`, `.exe`, `.AppImage`, etc.).
+- The final job merges/stamps the manifests, uploads all `.yml` files with their final `releaseDate` and `rolloutHours`, and then publishes the GitHub release.
 
-Updater clients only discover a release through those `.yml` manifests, so there is no silent 100% admission window before rollout metadata is present.
+Keeping the release as a draft prevents Electron's GitHub feed from advertising it before its update manifests exist. Updater clients cannot discover the release until every desktop artifact is ready.
 
 ### Default behavior
 
