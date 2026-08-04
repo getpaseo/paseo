@@ -1087,6 +1087,14 @@ export const ru: TranslationResources = {
         diff: "Статистика изменений",
         timestamp: "Последняя активность",
       },
+      recentlyDone: {
+        label: "Недавно завершённые",
+        options: {
+          off: "Выключено",
+          minutes: "{{minutes}} мин",
+          hour: "1 час",
+        },
+      },
       checks: {
         iconAndText: "Значок и текст",
         icon: "Только значок",

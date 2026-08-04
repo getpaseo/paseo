@@ -214,7 +214,11 @@ describe("buildStatusGroups recently-done window", () => {
     const groups = buildStatusGroups(
       [doneAt("srv:old", 20), doneAt("srv:fresh", 2)],
       emptyProjectNames,
-      { windowMs: 5 * MINUTE, now: NOW },
+      {
+        windowMs: 5 * MINUTE,
+        clientNow: NOW,
+        serverClockOffsetMsByServerId: new Map([["srv", 0]]),
+      },
     );
 
     expect(groups.map((g) => g.key)).toEqual(["recently_done", "done"]);
@@ -228,7 +232,11 @@ describe("buildStatusGroups recently-done window", () => {
 
     expect(buildStatusGroups(workspaces, emptyProjectNames).map((g) => g.key)).toEqual(["done"]);
     expect(
-      buildStatusGroups(workspaces, emptyProjectNames, { windowMs: 0, now: NOW }).map((g) => g.key),
+      buildStatusGroups(workspaces, emptyProjectNames, {
+        windowMs: 0,
+        clientNow: NOW,
+        serverClockOffsetMsByServerId: new Map([["srv", 0]]),
+      }).map((g) => g.key),
     ).toEqual(["done"]);
   });
 
@@ -243,19 +251,47 @@ describe("buildStatusGroups recently-done window", () => {
         }),
       ],
       emptyProjectNames,
-      { windowMs: 5 * MINUTE, now: NOW },
+      {
+        windowMs: 5 * MINUTE,
+        clientNow: NOW,
+        serverClockOffsetMsByServerId: new Map([["srv", 0]]),
+      },
     );
 
     expect(groups.map((g) => g.key)).toEqual(["running", "done"]);
   });
 
-  it("treats a future timestamp as not recent rather than pinning it forever", () => {
-    const groups = buildStatusGroups([doneAt("srv:future", -10)], emptyProjectNames, {
+  it("uses each host clock instead of comparing daemon timestamps to the client clock", () => {
+    const serverOffsetMs = 3 * 60 * MINUTE;
+    const workspace = ws({
+      workspaceKey: "srv:fresh",
+      statusBucket: "done",
+      statusEnteredAt: new Date(NOW + serverOffsetMs - 2 * MINUTE),
+    });
+    const groups = buildStatusGroups([workspace], emptyProjectNames, {
       windowMs: 5 * MINUTE,
-      now: NOW,
+      clientNow: NOW,
+      serverClockOffsetMsByServerId: new Map([["srv", serverOffsetMs]]),
     });
 
-    expect(groups.map((g) => g.key)).toEqual(["done"]);
+    expect(groups.map((g) => g.key)).toEqual(["recently_done"]);
+  });
+
+  it("keeps an uncalibrated or future-timestamp workspace in Done", () => {
+    const future = doneAt("srv:future", -10);
+    const uncalibrated = buildStatusGroups([future], emptyProjectNames, {
+      windowMs: 5 * MINUTE,
+      clientNow: NOW,
+      serverClockOffsetMsByServerId: new Map(),
+    });
+    const calibrated = buildStatusGroups([future], emptyProjectNames, {
+      windowMs: 5 * MINUTE,
+      clientNow: NOW,
+      serverClockOffsetMsByServerId: new Map([["srv", 0]]),
+    });
+
+    expect(uncalibrated.map((g) => g.key)).toEqual(["done"]);
+    expect(calibrated.map((g) => g.key)).toEqual(["done"]);
   });
 });
 

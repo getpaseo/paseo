@@ -1106,6 +1106,14 @@ export const es: TranslationResources = {
         diff: "Estadísticas de cambios",
         timestamp: "Última actividad",
       },
+      recentlyDone: {
+        label: "Hecho recientemente",
+        options: {
+          off: "Desactivado",
+          minutes: "{{minutes}} min",
+          hour: "1 hora",
+        },
+      },
       checks: {
         iconAndText: "Icono y texto",
         icon: "Solo icono",

@@ -72,7 +72,7 @@ import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
 } from "@/components/sidebar/sidebar-workspace-menu";
-import { useSidebarAppearance } from "@/components/sidebar/use-sidebar-appearance";
+import { useCompactSidebarRows } from "@/components/sidebar/display-preferences/model";
 import {
   comfortableSidebarRowDensity,
   compactSidebarRowDensity,
@@ -413,7 +413,7 @@ function StatusGroupHeader({
   collapsed: boolean;
 }) {
   const [isHovered, setIsHovered] = useState(false);
-  const { compactSidebarRows } = useSidebarAppearance();
+  const compactSidebarRows = useCompactSidebarRows();
   const toggleWorkspaceGroupCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleWorkspaceGroupCollapsed,
   );
@@ -793,7 +793,7 @@ function StatusWorkspaceRowInnerContent({
   const isTouchPlatform = platformIsNative || isCompact;
   const [isPressed, setIsPressed] = useState(false);
   const trailing = useSidebarWorkspaceTrailing();
-  const { compactSidebarRows } = useSidebarAppearance();
+  const compactSidebarRows = useCompactSidebarRows();
   const {
     role: _dragRole,
     tabIndex: _dragTabIndex,

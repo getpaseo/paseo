@@ -1072,6 +1072,14 @@ export const ar: TranslationResources = {
         diff: "إحصائيات الفروق",
         timestamp: "آخر نشاط",
       },
+      recentlyDone: {
+        label: "تم مؤخرًا",
+        options: {
+          off: "إيقاف",
+          minutes: "{{minutes}} د",
+          hour: "ساعة واحدة",
+        },
+      },
       checks: {
         iconAndText: "أيقونة ونص",
         icon: "أيقونة فقط",

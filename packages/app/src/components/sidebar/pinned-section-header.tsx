@@ -5,7 +5,7 @@ import { Pressable, Text } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
-import { useSidebarAppearance } from "@/components/sidebar/use-sidebar-appearance";
+import { useCompactSidebarRows } from "@/components/sidebar/display-preferences/model";
 import { compactSidebarSecondaryRowDensity } from "@/components/sidebar/sidebar-row-metrics";
 import type { Theme } from "@/styles/theme";
 
@@ -24,7 +24,7 @@ export function PinnedSectionHeader({
 }) {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
-  const { compactSidebarRows } = useSidebarAppearance();
+  const compactSidebarRows = useCompactSidebarRows();
   const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
   const Chevron = collapsed ? ThemedChevronRight : ThemedChevronDown;
   const headerStyle = useMemo(

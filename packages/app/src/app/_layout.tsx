@@ -631,7 +631,7 @@ function SidebarChrome({
   const isMobileActive = useIsMobilePanelActive("agent-list");
   const isDesktopOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const active = visible && (isCompactLayout ? isMobileActive : isDesktopOpen);
-  const recency = useRecentlyDoneRecency();
+  const recency = useRecentlyDoneRecency(active);
   return (
     <SidebarModelProvider active={active} recency={recency}>
       {mounted ? <LeftSidebar active={active} /> : null}

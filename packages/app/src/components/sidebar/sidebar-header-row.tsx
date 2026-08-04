@@ -5,7 +5,7 @@ import type { LucideIcon } from "lucide-react-native";
 import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from "@/constants/layout";
 import { ICON_SIZE } from "@/styles/theme";
 import type { Theme } from "@/styles/theme";
-import { useSidebarAppearance } from "@/components/sidebar/use-sidebar-appearance";
+import { useCompactSidebarRows } from "@/components/sidebar/display-preferences/model";
 import {
   comfortableSidebarSecondaryRowDensity,
   compactSidebarSecondaryRowDensity,
@@ -48,7 +48,7 @@ export function SidebarHeaderRow({
   shortcutKeys = null,
 }: SidebarHeaderRowProps) {
   const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
-  const { compactSidebarRows } = useSidebarAppearance();
+  const compactSidebarRows = useCompactSidebarRows();
   const isDense = variant === "compact" && compactSidebarRows;
 
   const containerStyle = useMemo(

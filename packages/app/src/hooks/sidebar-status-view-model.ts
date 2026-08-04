@@ -37,7 +37,8 @@ export interface StatusGroup {
 
 export interface RecentlyDoneRecency {
   windowMs: number;
-  now: number;
+  clientNow: number;
+  serverClockOffsetMsByServerId: ReadonlyMap<string, number>;
 }
 
 const MIN_RECENCY_TICK_MS = 5_000;
@@ -86,8 +87,10 @@ function resolveStatusGroupKey(
     return workspace.statusBucket;
   }
   const enteredAt = workspace.statusEnteredAt?.getTime();
-  if (enteredAt === undefined) return "done";
-  const age = recency.now - enteredAt;
+  const serverClockOffsetMs = recency.serverClockOffsetMsByServerId.get(workspace.serverId);
+  if (enteredAt === undefined || serverClockOffsetMs === undefined) return "done";
+  const serverNow = recency.clientNow + serverClockOffsetMs;
+  const age = serverNow - enteredAt;
   return age >= 0 && age < recency.windowMs ? "recently_done" : "done";
 }
 

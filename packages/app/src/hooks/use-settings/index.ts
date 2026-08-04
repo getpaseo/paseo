@@ -244,7 +244,7 @@ export function useSettings<TSelected>(
   };
 }
 
-export async function persistAppSettings(updates: Partial<AppSettings>): Promise<void> {
+export async function persistAppSettings(updates: AppSettingsUpdate): Promise<void> {
   await saveAppSettings({ queryClient: appQueryClient, updates });
 }
 

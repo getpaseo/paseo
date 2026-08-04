@@ -1079,6 +1079,14 @@ export const ko: TranslationResources = {
         diff: "Diff 통계",
         timestamp: "마지막 활동",
       },
+      recentlyDone: {
+        label: "최근 완료",
+        options: {
+          off: "끄기",
+          minutes: "{{minutes}}분",
+          hour: "1시간",
+        },
+      },
       checks: {
         iconAndText: "아이콘 및 텍스트",
         icon: "아이콘만",

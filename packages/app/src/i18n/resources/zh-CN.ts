@@ -1064,6 +1064,14 @@ export const zhCN: TranslationResources = {
         diff: "差异统计",
         timestamp: "最近活动",
       },
+      recentlyDone: {
+        label: "最近完成",
+        options: {
+          off: "关闭",
+          minutes: "{{minutes}} 分钟",
+          hour: "1 小时",
+        },
+      },
       checks: {
         iconAndText: "图标和文字",
         icon: "仅图标",

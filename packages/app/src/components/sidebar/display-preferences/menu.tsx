@@ -51,7 +51,11 @@ import {
   type SidebarGroupMode,
 } from "@/stores/sidebar-view-store";
 import { workspaceLabelKey, type WorkspaceLabelColor } from "@getpaseo/protocol/workspace-labels";
-import type { WorkspaceTitleSource } from "@/hooks/use-settings";
+import {
+  RECENTLY_DONE_WINDOW_OPTIONS,
+  type RecentlyDoneWindowMinutes,
+  type WorkspaceTitleSource,
+} from "@/hooks/use-settings";
 import { SIDEBAR_CHECKS_DISPLAYS, type SidebarChecksDisplay } from "./checks-display";
 import { useSidebarDisplayPreferences, type SidebarTrailingChoice } from "./model";
 import { SIDEBAR_ROW_ITEMS, type SidebarRowItem } from "./row-items";
@@ -225,6 +229,11 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
         content: <ShowPage preferences={preferences} />,
       },
       {
+        id: "recentlyDone",
+        title: t("sidebar.display.recentlyDone.label"),
+        content: <RecentlyDonePage preferences={preferences} />,
+      },
+      {
         id: "checks",
         title: t("sidebar.display.show.checks"),
         content: (
@@ -317,6 +326,13 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
           </MenuSubTrigger>
           <MenuSubTrigger id="show" testID="sidebar-display-show">
             {t("sidebar.display.show.label")}
+          </MenuSubTrigger>
+          <MenuSubTrigger
+            id="recentlyDone"
+            value={formatRecentlyDoneWindow(t, preferences.recentlyDoneWindowMinutes)}
+            testID="sidebar-display-recently-done"
+          >
+            {t("sidebar.display.recentlyDone.label")}
           </MenuSubTrigger>
           {showHostFilter ? (
             <>
@@ -597,6 +613,48 @@ function ChecksSubTrigger(): ReactElement {
     <MenuSubTrigger id="checks" leading={leading} testID="sidebar-display-checks">
       {t("sidebar.display.show.checks")}
     </MenuSubTrigger>
+  );
+}
+
+function formatRecentlyDoneWindow(
+  t: ReturnType<typeof useTranslation>["t"],
+  value: RecentlyDoneWindowMinutes,
+): string {
+  if (value === 0) return t("sidebar.display.recentlyDone.options.off");
+  if (value === 60) return t("sidebar.display.recentlyDone.options.hour");
+  return t("sidebar.display.recentlyDone.options.minutes", { minutes: value });
+}
+
+function RecentlyDonePage({ preferences }: { preferences: Preferences }): ReactElement {
+  return (
+    <>
+      {RECENTLY_DONE_WINDOW_OPTIONS.map((value) => (
+        <RecentlyDoneOption key={value} value={value} preferences={preferences} />
+      ))}
+    </>
+  );
+}
+
+function RecentlyDoneOption({
+  value,
+  preferences,
+}: {
+  value: RecentlyDoneWindowMinutes;
+  preferences: Preferences;
+}): ReactElement {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(
+    () => preferences.setRecentlyDoneWindowMinutes(value),
+    [preferences, value],
+  );
+  return (
+    <MenuItem
+      selected={preferences.recentlyDoneWindowMinutes === value}
+      onSelect={handleSelect}
+      testID={`sidebar-recently-done-${value}`}
+    >
+      {formatRecentlyDoneWindow(t, value)}
+    </MenuItem>
   );
 }
 

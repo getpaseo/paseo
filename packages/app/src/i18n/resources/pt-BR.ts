@@ -1097,6 +1097,14 @@ export const ptBR: TranslationResources = {
         diff: "Estatísticas de diff",
         timestamp: "Última atividade",
       },
+      recentlyDone: {
+        label: "Concluído há pouco",
+        options: {
+          off: "Desativado",
+          minutes: "{{minutes}} min",
+          hour: "1 hora",
+        },
+      },
       checks: {
         iconAndText: "Ícone e texto",
         icon: "Somente ícone",

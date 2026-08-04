@@ -5,7 +5,7 @@ import { ChevronDown, ChevronUp } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { isWeb } from "@/constants/platform";
 import { sidebarWorkspaceRowStyles } from "@/components/sidebar/sidebar-workspace-row-content";
-import { useSidebarAppearance } from "@/components/sidebar/use-sidebar-appearance";
+import { useCompactSidebarRows } from "@/components/sidebar/display-preferences/model";
 import { compactSidebarSecondaryRowDensity } from "@/components/sidebar/sidebar-row-metrics";
 import type { Theme } from "@/styles/theme";
 
@@ -40,7 +40,7 @@ export function SidebarGroupToggleRow({
   testID: string;
 }) {
   const { t } = useTranslation();
-  const { compactSidebarRows } = useSidebarAppearance();
+  const compactSidebarRows = useCompactSidebarRows();
   const label = t(
     expanded ? "sidebar.workspace.actions.showLess" : "sidebar.workspace.actions.showMore",
   );

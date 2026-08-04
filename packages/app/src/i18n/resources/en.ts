@@ -1081,6 +1081,14 @@ export const en = {
         diff: "Diff stats",
         timestamp: "Last activity",
       },
+      recentlyDone: {
+        label: "Recently done",
+        options: {
+          off: "Off",
+          minutes: "{{minutes}} min",
+          hour: "1 hour",
+        },
+      },
       checks: {
         iconAndText: "Icon and text",
         icon: "Icon only",
