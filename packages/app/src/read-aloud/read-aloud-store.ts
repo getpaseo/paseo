@@ -40,6 +40,12 @@ export interface ReadAloudSnapshot {
    * whether it is the one speaking or a bystander. `null` when idle.
    */
   ownerId: string | null;
+  /**
+   * The host whose route started this read. The footer button unmounts when you
+   * navigate away, taking the Stop control with it, so playback has to be tied
+   * to the route that owns it rather than left running unreachable.
+   */
+  ownerServerId: string | null;
 }
 
 /**
@@ -53,6 +59,7 @@ let snapshot: ReadAloudSnapshot = {
   failure: null,
   rate: playbackRate,
   ownerId: null,
+  ownerServerId: null,
 };
 const listeners = new Set<() => void>();
 
@@ -67,11 +74,13 @@ let streamEnded = false;
 
 /** The turn currently holding the playback slot. Cleared when playback ends. */
 let ownerId: string | null = null;
+/** The host that turn belongs to. Cleared with `ownerId`. */
+let ownerServerId: string | null = null;
 
-// Takes everything but `rate` and `ownerId`: both are owned by module state, so
-// folding them in here keeps every call site from having to carry them forward.
-function setSnapshot(next: Omit<ReadAloudSnapshot, "rate" | "ownerId">): void {
-  snapshot = { ...next, rate: playbackRate, ownerId };
+// Takes everything but the module-owned fields, so no call site has to remember
+// to carry `rate`, `ownerId`, or `ownerServerId` forward.
+function setSnapshot(next: Omit<ReadAloudSnapshot, "rate" | "ownerId" | "ownerServerId">): void {
+  snapshot = { ...next, rate: playbackRate, ownerId, ownerServerId };
   for (const listener of listeners) {
     listener();
   }
@@ -86,6 +95,7 @@ function finishIfDone(token: number): void {
   }
   handle = null;
   ownerId = null;
+  ownerServerId = null;
   setSnapshot({ status: "idle", failure: snapshot.failure });
 }
 
@@ -110,6 +120,7 @@ export function stopReadAloud(): void {
   handle?.cancel();
   handle = null;
   ownerId = null;
+  ownerServerId = null;
   pendingSegmentPlaybacks = 0;
   streamEnded = false;
   stopReadAloudAudio();
@@ -134,6 +145,8 @@ export function startReadAloud(params: {
   text: string;
   /** Assistant message id of the turn being read; surfaces as `snapshot.ownerId`. */
   ownerId: string;
+  /** Host the turn belongs to; playback stops when the route leaves it. */
+  serverId: string;
 }): void {
   stopReadAloud();
 
@@ -148,6 +161,7 @@ export function startReadAloud(params: {
   // Set after the guard above: a rejected start never takes the slot, so a
   // failure surfaces without a bystander footer rendering itself as the owner.
   ownerId = params.ownerId;
+  ownerServerId = params.serverId;
 
   // The engine is created lazily and defaults to 1x, so a rate chosen during an
   // earlier selection has to be re-applied rather than assumed to still be set.

@@ -108,11 +108,11 @@ export const TurnReadAloudButton = memo(function TurnReadAloudButton({
       return;
     }
     const text = getSpeech();
-    if (!text || !client) {
+    if (!text || !client || !serverId) {
       return;
     }
-    startReadAloud({ client, text, ownerId: turnId });
-  }, [client, getSpeech, status, turnId]);
+    startReadAloud({ client, text, ownerId: turnId, serverId });
+  }, [client, getSpeech, serverId, status, turnId]);
 
   const pressableStyle = useMemo(
     () => [turnReadAloudButtonStylesheet.container, containerStyle],

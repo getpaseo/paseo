@@ -35,7 +35,7 @@ describe("read aloud playback rate", () => {
   });
 
   it("applies a rate change to audio that is already playing", () => {
-    startReadAloud({ client: createClient(), text: "hello", ownerId: "turn-1" });
+    startReadAloud({ client: createClient(), text: "hello", ownerId: "turn-1", serverId: "srv-1" });
     setReadAloudRate(2);
 
     expect(setReadAloudPlaybackRate).toHaveBeenCalledWith(2);
@@ -51,7 +51,12 @@ describe("read aloud playback rate", () => {
     expect(getReadAloudSnapshot().rate).toBe(1.5);
 
     setReadAloudPlaybackRate.mockClear();
-    startReadAloud({ client: createClient(), text: "hello again", ownerId: "turn-1" });
+    startReadAloud({
+      client: createClient(),
+      text: "hello again",
+      ownerId: "turn-1",
+      serverId: "srv-1",
+    });
 
     // Re-applied rather than assumed: the audio engine is lazily created and
     // starts at 1x, so a stale engine would silently play at the wrong speed.
@@ -68,14 +73,19 @@ describe("read aloud playback rate", () => {
   });
 
   it("names the turn that owns playback, so other footers stay idle", () => {
-    startReadAloud({ client: createClient(), text: "hello", ownerId: "turn-1" });
+    startReadAloud({ client: createClient(), text: "hello", ownerId: "turn-1", serverId: "srv-1" });
 
     expect(getReadAloudSnapshot().ownerId).toBe("turn-1");
   });
 
   it("hands the slot to the turn that started last", () => {
-    startReadAloud({ client: createClient(), text: "first", ownerId: "turn-1" });
-    startReadAloud({ client: createClient(), text: "second", ownerId: "turn-2" });
+    startReadAloud({ client: createClient(), text: "first", ownerId: "turn-1", serverId: "srv-1" });
+    startReadAloud({
+      client: createClient(),
+      text: "second",
+      ownerId: "turn-2",
+      serverId: "srv-1",
+    });
 
     // Only one voice at a time: the second press supersedes the first rather
     // than leaving two footers both rendering themselves as speaking.
@@ -83,7 +93,7 @@ describe("read aloud playback rate", () => {
   });
 
   it("releases the slot on stop", () => {
-    startReadAloud({ client: createClient(), text: "hello", ownerId: "turn-1" });
+    startReadAloud({ client: createClient(), text: "hello", ownerId: "turn-1", serverId: "srv-1" });
     stopReadAloud();
 
     expect(getReadAloudSnapshot().ownerId).toBeNull();
@@ -102,7 +112,7 @@ describe("read aloud playback rate", () => {
       return { requestId: "req-1", cancel: vi.fn() };
     });
 
-    startReadAloud({ client, text: "hello", ownerId: "turn-1" });
+    startReadAloud({ client, text: "hello", ownerId: "turn-1", serverId: "srv-1" });
     await vi.waitFor(() => expect(getReadAloudSnapshot().status).toBe("idle"));
 
     // A finished read must free the slot too, not just an explicit stop —
@@ -120,12 +130,32 @@ describe("read aloud playback rate", () => {
     }));
     const unsupported = await import("@/read-aloud/read-aloud-store");
 
-    unsupported.startReadAloud({ client: createClient(), text: "hello", ownerId: "turn-1" });
+    unsupported.startReadAloud({
+      client: createClient(),
+      text: "hello",
+      ownerId: "turn-1",
+      serverId: "srv-1",
+    });
 
     const snapshot = unsupported.getReadAloudSnapshot();
     expect(snapshot.failure?.code).toBe("unsupported_platform");
     expect(snapshot.ownerId).toBeNull();
     vi.doUnmock("@/read-aloud/read-aloud-audio");
+  });
+
+  it("records the host that started playback, so a route change can stop it", () => {
+    startReadAloud({ client: createClient(), text: "hello", ownerId: "turn-1", serverId: "srv-1" });
+
+    // The Stop control lives in a turn footer. Navigate away and it unmounts,
+    // so playback has to be attributable to a host or it becomes unstoppable.
+    expect(getReadAloudSnapshot().ownerServerId).toBe("srv-1");
+  });
+
+  it("clears the owning host on stop", () => {
+    startReadAloud({ client: createClient(), text: "hello", ownerId: "turn-1", serverId: "srv-1" });
+    stopReadAloud();
+
+    expect(getReadAloudSnapshot().ownerServerId).toBeNull();
   });
 
   it("reports the rate on every snapshot, including failures", () => {
@@ -136,7 +166,7 @@ describe("read aloud playback rate", () => {
       return { requestId: "req-1", cancel: vi.fn() };
     });
 
-    startReadAloud({ client, text: "hello", ownerId: "turn-1" });
+    startReadAloud({ client, text: "hello", ownerId: "turn-1", serverId: "srv-1" });
 
     const snapshot = getReadAloudSnapshot();
     expect(snapshot.failure?.code).toBe("tts_unavailable");
