@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { registerLiveVoiceRoutingTools } from "./live-voice-routing-tools.js";
+import {
+  LIVE_VOICE_ALL_HOSTS_READ_TOOLS,
+  registerLiveVoiceRoutingTools,
+} from "./live-voice-routing-tools.js";
 import type { LiveVoiceRouteResult } from "./live-voice-route-broker.js";
 import type { VoiceLiveRouteOperation } from "@getpaseo/protocol/live-voice-routing";
 import type {
@@ -303,6 +306,137 @@ describe("find_workspace", () => {
   });
 });
 
+async function runOnAllHosts(
+  execute: RouteExecute,
+  input: { toolName: string; arguments?: Record<string, unknown> },
+): Promise<Record<string, unknown>> {
+  const tool = register(execute).get("run_paseo_tool_on_all_hosts");
+  if (!tool) {
+    throw new Error("run_paseo_tool_on_all_hosts was not registered");
+  }
+  const result = await tool.handler(input, {});
+  return result.structuredContent as Record<string, unknown>;
+}
+
+describe("run_paseo_tool_on_all_hosts", () => {
+  it("answers a question about every machine in a single call", async () => {
+    const execute = vi.fn<RouteExecute>(async (_hostAgentId, operation) => {
+      if (operation.kind === "list_hosts") {
+        return {
+          kind: "list_hosts",
+          hosts: [host(), host({ serverId: "server-b", label: "Laptop" })],
+        };
+      }
+      return {
+        kind: "execute_tool",
+        targetServerId: operation.targetServerId,
+        toolResult: {
+          content: [],
+          structuredContent: { agents: [{ id: `agent-${operation.targetServerId}` }] },
+        },
+      };
+    });
+
+    const result = await runOnAllHosts(execute, { toolName: "list_agents" });
+
+    expect(result).toMatchObject({
+      toolName: "list_agents",
+      results: [
+        {
+          serverId: "server-a",
+          hostLabel: "Desktop",
+          result: { agents: [{ id: "agent-server-a" }] },
+        },
+        {
+          serverId: "server-b",
+          hostLabel: "Laptop",
+          result: { agents: [{ id: "agent-server-b" }] },
+        },
+      ],
+      unavailableHosts: [],
+    });
+    // One turn for the model: the host lookup plus one read per host.
+    expect(execute).toHaveBeenCalledTimes(3);
+  });
+
+  it("passes the same arguments to every host", async () => {
+    const execute = vi.fn<RouteExecute>(async (_hostAgentId, operation) => {
+      if (operation.kind === "list_hosts") {
+        return {
+          kind: "list_hosts",
+          hosts: [host(), host({ serverId: "server-b", label: "Laptop" })],
+        };
+      }
+      return {
+        kind: "execute_tool",
+        targetServerId: operation.targetServerId,
+        toolResult: { content: [], structuredContent: {} },
+      };
+    });
+
+    await runOnAllHosts(execute, {
+      toolName: "get_agent_status",
+      arguments: { agentId: "agent-1" },
+    });
+
+    expect(
+      execute.mock.calls
+        .filter(([, operation]) => operation.kind === "execute_tool")
+        .map(([, operation]) => (operation.kind === "execute_tool" ? operation.arguments : null)),
+    ).toEqual([{ agentId: "agent-1" }, { agentId: "agent-1" }]);
+  });
+
+  it("refuses to fan a mutating tool out across every machine", async () => {
+    const execute = vi.fn<RouteExecute>(async () => ({ kind: "list_hosts", hosts: [host()] }));
+
+    await expect(runOnAllHosts(execute, { toolName: "archive_workspace" })).rejects.toThrow(
+      /cannot be run on every host at once/,
+    );
+    // It must not reach a single host either — the refusal is total.
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it.each(["archive_workspace", "create_agent", "kill_agent", "send_agent_prompt", "cancel_agent"])(
+    "keeps %s off the all-hosts allowlist",
+    (toolName) => {
+      expect(LIVE_VOICE_ALL_HOSTS_READ_TOOLS).not.toContain(toolName);
+    },
+  );
+
+  it("reports the hosts it could not reach alongside the ones it did", async () => {
+    const execute: RouteExecute = async (_hostAgentId, operation) => {
+      if (operation.kind === "list_hosts") {
+        return {
+          kind: "list_hosts",
+          hosts: [
+            host(),
+            host({ serverId: "server-b", label: "Laptop" }),
+            host({ serverId: "server-c", label: "Server", compatibility: "offline" }),
+          ],
+        };
+      }
+      if (operation.targetServerId === "server-b") {
+        throw new Error("The requested target host is offline.");
+      }
+      return {
+        kind: "execute_tool",
+        targetServerId: operation.targetServerId,
+        toolResult: { content: [], structuredContent: { agents: [] } },
+      };
+    };
+
+    const result = await runOnAllHosts(execute, { toolName: "list_agents" });
+
+    expect(result).toMatchObject({
+      results: [{ serverId: "server-a" }],
+      unavailableHosts: [
+        { serverId: "server-c", reason: "offline" },
+        { serverId: "server-b", reason: "The requested target host is offline." },
+      ],
+    });
+  });
+});
+
 describe("live voice routing tool catalog", () => {
   it("tells the model to resolve a named workspace before acting on it", () => {
     const registered = register(async () => ({ kind: "list_hosts", hosts: [] }));
@@ -310,6 +444,7 @@ describe("live voice routing tool catalog", () => {
     expect(Array.from(registered.keys())).toEqual([
       "list_hosts",
       "find_workspace",
+      "run_paseo_tool_on_all_hosts",
       "list_paseo_tools_on_host",
       "run_paseo_tool_on_host",
     ]);

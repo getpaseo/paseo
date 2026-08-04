@@ -1,6 +1,7 @@
 import {
   LiveVoiceJsonObjectSchema,
   VoiceLiveRouteHostSchema,
+  type LiveVoiceJsonObject,
   type VoiceLiveRouteHost,
 } from "@getpaseo/protocol/live-voice-routing";
 import { z } from "zod";
@@ -42,6 +43,39 @@ const UnavailableHostSchema = z.object({
   label: z.string(),
   reason: z.string(),
 });
+
+/**
+ * The tools that may be run on every host at once.
+ *
+ * An allowlist rather than a denylist, so a tool added later is not fannable
+ * until someone decides it should be. Mass mutation is the thing being kept out:
+ * "archive it on all of them" is a sentence a user can say by accident, and one
+ * misheard word should not reach five machines. Anything that changes state goes
+ * through `run_paseo_tool_on_host`, one named host at a time.
+ *
+ * This is enforced here rather than on the target daemon because it is an
+ * ergonomic guard, not a privilege boundary — the model can already mutate a
+ * single host, and does not gain authority by naming it.
+ */
+export const LIVE_VOICE_ALL_HOSTS_READ_TOOLS: readonly string[] = [
+  "capture_terminal",
+  "get_agent_activity",
+  "get_agent_status",
+  "inspect_provider",
+  "inspect_schedule",
+  "list_agents",
+  "list_models",
+  "list_paseo_tools",
+  "list_pending_permissions",
+  "list_providers",
+  "list_schedules",
+  "list_terminals",
+  "list_workspace_scripts",
+  "list_workspaces",
+  "schedule_logs",
+];
+
+const allHostsReadTools = new Set(LIVE_VOICE_ALL_HOSTS_READ_TOOLS);
 
 export interface RegisterLiveVoiceRoutingToolsOptions {
   hostAgentId: string;
@@ -88,23 +122,92 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
     return result.hosts;
   }
 
-  async function listWorkspacesOnHost(
+  async function runOnHost(
     host: VoiceLiveRouteHost,
-  ): Promise<LiveVoiceWorkspaceCandidate[]> {
+    toolName: string,
+    args: LiveVoiceJsonObject,
+  ): Promise<unknown> {
     const result = await options.broker.execute(
       options.hostAgentId,
       {
         kind: "execute_tool",
         targetServerId: host.serverId,
-        toolName: "list_workspaces",
-        arguments: {},
+        toolName,
+        arguments: args,
       },
       { timeoutMs: DISCOVERY_TIMEOUT_MS },
     );
     if (result.kind !== "execute_tool") {
-      throw new Error(`Unexpected routed result '${result.kind}' for list_workspaces`);
+      throw new Error(`Unexpected routed result '${result.kind}' for ${toolName}`);
     }
-    const structured = result.toolResult.structuredContent;
+    return result.toolResult.structuredContent ?? null;
+  }
+
+  interface FanOutSuccess {
+    host: VoiceLiveRouteHost;
+    structuredContent: unknown;
+  }
+
+  interface FanOutOutcome {
+    successes: FanOutSuccess[];
+    searchedHosts: Array<{ serverId: string; label: string }>;
+    unavailableHosts: Array<{ serverId: string; label: string; reason: string }>;
+  }
+
+  /**
+   * One read, every ready host, one model turn. The hops are cheap; the turn the
+   * user waits through is not, so nothing here is sequential.
+   */
+  async function fanOut(input: {
+    toolName: string;
+    arguments: LiveVoiceJsonObject;
+    serverId?: string | undefined;
+  }): Promise<FanOutOutcome> {
+    const hosts = await listHosts();
+    const requested = input.serverId
+      ? hosts.filter((host) => host.serverId === input.serverId)
+      : hosts;
+    if (input.serverId && requested.length === 0) {
+      throw new Error(`Unknown host '${input.serverId}'. Call list_hosts for the current list.`);
+    }
+
+    const unavailableHosts = requested
+      .filter((host) => !isReadyHost(host))
+      .map((host) => ({
+        serverId: host.serverId,
+        label: host.label,
+        reason: describeUnreadyHost(host),
+      }));
+    const readyHosts = requested.filter(isReadyHost);
+
+    const settled = await Promise.allSettled(
+      readyHosts.map((host) => runOnHost(host, input.toolName, input.arguments)),
+    );
+    const successes: FanOutSuccess[] = [];
+    const searchedHosts: Array<{ serverId: string; label: string }> = [];
+    settled.forEach((outcome, index) => {
+      const host = readyHosts[index];
+      if (!host) {
+        return;
+      }
+      if (outcome.status === "fulfilled") {
+        successes.push({ host, structuredContent: outcome.value });
+        searchedHosts.push({ serverId: host.serverId, label: host.label });
+        return;
+      }
+      // A host that failed to answer is reported, never folded into an empty
+      // result — what the user asked about may well be on it.
+      unavailableHosts.push({
+        serverId: host.serverId,
+        label: host.label,
+        reason: errorMessage(outcome.reason),
+      });
+    });
+    return { successes, searchedHosts, unavailableHosts };
+  }
+
+  function toWorkspaceCandidates(outcome: FanOutSuccess): LiveVoiceWorkspaceCandidate[] {
+    const structured = outcome.structuredContent;
     const rows =
       structured && typeof structured === "object" && !Array.isArray(structured)
         ? z
@@ -113,8 +216,8 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
             .parse((structured as { workspaces?: unknown }).workspaces)
         : [];
     return rows.map((row) => ({
-      serverId: host.serverId,
-      hostLabel: host.label,
+      serverId: outcome.host.serverId,
+      hostLabel: outcome.host.label,
       workspaceId: row.workspaceId,
       title: row.title ?? null,
       cwd: row.cwd ?? null,
@@ -180,55 +283,80 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
         })
         .parse(input);
 
-      const hosts = await listHosts();
-      const requested = parsed.serverId
-        ? hosts.filter((host) => host.serverId === parsed.serverId)
-        : hosts;
-      if (parsed.serverId && requested.length === 0) {
-        throw new Error(`Unknown host '${parsed.serverId}'. Call list_hosts for the current list.`);
-      }
-
-      const unavailableHosts = requested
-        .filter((host) => !isReadyHost(host))
-        .map((host) => ({
-          serverId: host.serverId,
-          label: host.label,
-          reason: describeUnreadyHost(host),
-        }));
-      const readyHosts = requested.filter(isReadyHost);
-
-      // One round trip per host, all in flight together: the call waits for the
-      // slowest host rather than for the sum of them.
-      const listings = await Promise.allSettled(readyHosts.map(listWorkspacesOnHost));
-      const candidates: LiveVoiceWorkspaceCandidate[] = [];
-      const searchedHosts: Array<{ serverId: string; label: string }> = [];
-      listings.forEach((listing, index) => {
-        const host = readyHosts[index];
-        if (!host) {
-          return;
-        }
-        if (listing.status === "fulfilled") {
-          candidates.push(...listing.value);
-          searchedHosts.push({ serverId: host.serverId, label: host.label });
-          return;
-        }
-        // A host that failed to answer is reported, never folded into "no
-        // match" — the workspace the user asked for may well be on it.
-        unavailableHosts.push({
-          serverId: host.serverId,
-          label: host.label,
-          reason: errorMessage(listing.reason),
-        });
+      const outcome = await fanOut({
+        toolName: "list_workspaces",
+        arguments: {},
+        serverId: parsed.serverId,
       });
-
+      const candidates: LiveVoiceWorkspaceCandidate[] =
+        outcome.successes.flatMap(toWorkspaceCandidates);
       const search = searchLiveVoiceWorkspaces(parsed.query, candidates);
       return {
         content: [],
         structuredContent: {
           resolution: search.resolution,
           matches: search.matches,
-          searchedHosts,
-          unavailableHosts,
+          searchedHosts: outcome.searchedHosts,
+          unavailableHosts: outcome.unavailableHosts,
+        },
+      };
+    },
+  );
+
+  options.registerTool(
+    "run_paseo_tool_on_all_hosts",
+    {
+      title: "Run a Paseo read on every host",
+      description: `Run one read-only Paseo tool on every ready host at once and get the results per host, in a single call. Use this for any question about the user's machines as a whole — what is running anywhere, what is waiting on permission anywhere — instead of calling list_hosts and then run_paseo_tool_on_host once per machine. Only these tools can be run this way: ${LIVE_VOICE_ALL_HOSTS_READ_TOOLS.join(", ")}. Anything that changes state runs on one named host through run_paseo_tool_on_host, so the user is never asked one question that mutates several machines. Hosts that could not be reached come back in unavailableHosts; say so rather than reporting their absence as nothing found.`,
+      inputSchema: {
+        toolName: z
+          .string()
+          .trim()
+          .min(1)
+          .describe("A read-only Paseo tool name from the list in this description."),
+        arguments: LiveVoiceJsonObjectSchema.optional().describe(
+          "Arguments for the target tool, applied identically on every host. Omit when it takes none.",
+        ),
+      },
+      outputSchema: {
+        toolName: z.string(),
+        results: z.array(
+          z.object({
+            serverId: z.string(),
+            hostLabel: z.string(),
+            result: LiveVoiceJsonObjectSchema.nullable(),
+          }),
+        ),
+        unavailableHosts: z.array(UnavailableHostSchema),
+      },
+    },
+    async (input) => {
+      const parsed = z
+        .object({
+          toolName: z.string().trim().min(1),
+          arguments: LiveVoiceJsonObjectSchema.optional(),
+        })
+        .parse(input);
+      if (!allHostsReadTools.has(parsed.toolName)) {
+        throw new Error(
+          `'${parsed.toolName}' cannot be run on every host at once. Run it on one host with run_paseo_tool_on_host, or fan out one of: ${LIVE_VOICE_ALL_HOSTS_READ_TOOLS.join(", ")}.`,
+        );
+      }
+
+      const outcome = await fanOut({
+        toolName: parsed.toolName,
+        arguments: parsed.arguments ?? {},
+      });
+      return {
+        content: [],
+        structuredContent: {
+          toolName: parsed.toolName,
+          results: outcome.successes.map((success) => ({
+            serverId: success.host.serverId,
+            hostLabel: success.host.label,
+            result: success.structuredContent ?? null,
+          })),
+          unavailableHosts: outcome.unavailableHosts,
         },
       };
     },

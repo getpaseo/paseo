@@ -131,6 +131,15 @@ describe("live voice prompt", () => {
     expect(prompt).toMatch(/never pick one yourself for archiving/i);
   });
 
+  it("answers a question about every machine with one call, and keeps writes to one", () => {
+    const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
+
+    expect(prompt).toContain("run_paseo_tool_on_all_hosts");
+    expect(prompt).toMatch(/do not ask which one they meant/i);
+    expect(prompt).toMatch(/Only reads can go to every host at once/i);
+    expect(prompt).toMatch(/never mutate several machines/i);
+  });
+
   it("gives a local-only call the same tool names but no cross-host recipe", () => {
     const prompt = buildLiveVoicePrompt({
       paseoToolsAvailable: true,
@@ -139,6 +148,7 @@ describe("live voice prompt", () => {
 
     expect(prompt).toContain("archive_workspace{workspaceId}");
     expect(prompt).not.toContain("find_workspace");
+    expect(prompt).not.toContain("run_paseo_tool_on_all_hosts");
     expect(prompt).toMatch(/ask before archiving/i);
   });
 

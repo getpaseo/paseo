@@ -56,6 +56,7 @@ import { MutableDaemonConfigSchema, type AgentProfile } from "@getpaseo/protocol
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-tools/broker.js";
 import type { LiveVoiceRouteBroker } from "../live-voice/live-voice-route-broker.js";
+import { LIVE_VOICE_ALL_HOSTS_READ_TOOLS } from "../live-voice/live-voice-routing-tools.js";
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
@@ -5317,6 +5318,7 @@ describe("Live Voice cross-host MCP tools", () => {
     const listTools = registeredTool(server, "list_paseo_tools_on_host");
     const runTool = registeredTool(server, "run_paseo_tool_on_host");
     expect(lookupTool(server, "find_workspace")).toBeDefined();
+    expect(lookupTool(server, "run_paseo_tool_on_all_hosts")).toBeDefined();
     expect(lookupTool(server, "list_agents")).toBeUndefined();
     expect(lookupTool(server, "create_workspace")).toBeUndefined();
     expect(lookupTool(server, "speak")).toBeUndefined();
@@ -5370,6 +5372,22 @@ describe("Live Voice cross-host MCP tools", () => {
       arguments: {},
       notifyOnAgentFinish: true,
     });
+  });
+
+  it("keeps every all-hosts read tool a real tool on the target catalog", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const target = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+
+    // The allowlist is typed by hand, so a rename on the target side would
+    // otherwise turn into a tool_not_found on every host at once.
+    for (const toolName of LIVE_VOICE_ALL_HOSTS_READ_TOOLS) {
+      expect(lookupTool(target, toolName), `${toolName} is missing`).toBeDefined();
+    }
   });
 
   it("never exposes routing wrappers to an ordinary or top-level catalog", async () => {

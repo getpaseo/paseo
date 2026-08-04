@@ -162,10 +162,15 @@ Expo module to the app runtime, which stays the only writer. iOS has no
 equivalent — its module manages the audio session and nothing else, and a pinned
 call presence there would mean a Live Activity.
 
+Only the app knows the user's other hosts — `getSavedHosts` lives there and
+nowhere in the daemon — so cross-host work exists only on this app-mediated
+route. A daemon-side Paseo tool has no connection to another machine and cannot
+grow one; anything "across all hosts" has to be a routing tool.
+
 For clients advertising `live_voice_cross_host_router`, the hidden session gets
-only routing tools: list compatible hosts, resolve a workspace by name, describe
-the ordinary tools and schemas on one host, and execute one selected tool. The
-route is:
+only routing tools: list compatible hosts, resolve a workspace by name, run one
+read on every host at once, describe the ordinary tools and schemas on one host,
+and execute one selected tool. The route is:
 
 ```text
 hidden Live Voice host on A
@@ -177,12 +182,25 @@ hidden Live Voice host on A
 
 Each hop of that route is cheap; what is expensive is a model turn, because the
 user hears silence for the whole of it. So the tools are shaped to spend hops
-instead of turns. `find_workspace` takes the name as the user said it, fans out
-`list_workspaces` across every ready host at once, and returns the `serverId`
-and `workspaceId` to act on — turning "archive the Refresh Paseo assembly
-workspace" into two turns rather than one per host plus one per lookup. The
-prompt hands the model the exact names of the common Paseo tools for the same
-reason, so discovery is a fallback rather than an opening move.
+instead of turns — every one of them fans out concurrently rather than walking
+the hosts. `find_workspace` takes the name as the user said it, fans out
+`list_workspaces`, and returns the `serverId` and `workspaceId` to act on,
+turning "archive the Refresh Paseo assembly workspace" into two turns rather
+than one per host plus one per lookup. `run_paseo_tool_on_all_hosts` does the
+same for any read, so "what's running?" is one turn regardless of how many
+machines the user owns. The prompt hands the model the exact names of the common
+Paseo tools for the same reason, so discovery is a fallback rather than an
+opening move.
+
+Only reads fan out, against a hand-written allowlist rather than a denylist, so
+a tool added later is not fannable until someone decides it should be. Mass
+mutation is what is being kept out: "archive it on all of them" is a sentence a
+user can say by accident, and one misheard word should not reach five machines.
+The allowlist is an ergonomic guard, not a privilege boundary — it is enforced
+on the requesting side, and the model gains no authority it did not already have
+against a single host. A test pins every allowlisted name to a real tool on the
+target catalog, since a rename would otherwise become `tool_not_found` on every
+host at once.
 
 Resolution is classified, never decided: `find_workspace` returns
 `unique_exact`, `ambiguous_exact`, `unique_partial`, `ambiguous_partial`, or

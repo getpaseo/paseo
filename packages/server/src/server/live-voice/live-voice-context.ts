@@ -132,7 +132,9 @@ const ROUTED_RECIPES = [
   '- The user names a workspace ("archive the Refresh Paseo assembly workspace"): call find_workspace with the name as they said it, then run_paseo_tool_on_host with the serverId and workspaceId it returns. Do not call list_hosts or list_workspaces for this.',
   "- find_workspace tells you how sure it is. Act on unique_exact. On ambiguous_exact, more than one machine has a workspace by that name, so say which and ask — never pick one yourself for archiving or anything else destructive. On unique_partial or ambiguous_partial nothing matched exactly, so say what you found and confirm first. On none, say nothing matched, and mention any host it could not reach.",
   "- New work in a workspace the user names: find_workspace, then send_agent_prompt or create_agent against the serverId and workspaceId it returns.",
-  "- The user asks what is running: run_paseo_tool_on_host with list_agents. Ask which machine only when the answer would differ between them.",
+  '- The user asks about their machines as a whole ("what\'s running?", "is anything waiting on me?"): run_paseo_tool_on_all_hosts with list_agents or list_pending_permissions. One call covers every machine, so do not ask which one they meant.',
+  "- The user asks about one machine they named: run_paseo_tool_on_host with list_agents on that host.",
+  "- Only reads can go to every host at once. Anything that changes something runs on one named host, so a single sentence can never mutate several machines.",
 ];
 
 const DELEGATION_WITH_PASEO_TOOLS = [
