@@ -1465,7 +1465,6 @@ export const zhCN: TranslationResources = {
   readAloud: {
     action: "朗读",
     stop: "停止",
-    speed: "播放速度 {{rate}}",
     errors: {
       ttsUnavailable: "此主机未配置文字转语音",
       tooLong: "消息过长，无法朗读",

@@ -16,10 +16,6 @@ export async function playReadAloudSegment(_params: {
   throw new Error("Read aloud is not supported on this platform");
 }
 
-export function setReadAloudPlaybackRate(_rate: number): void {
-  // No playback to speed up.
-}
-
 export function stopReadAloudAudio(): void {
   // No playback to stop.
 }

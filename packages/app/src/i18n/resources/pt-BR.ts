@@ -1514,7 +1514,6 @@ export const ptBR: TranslationResources = {
   readAloud: {
     action: "Ler em voz alta",
     stop: "Parar",
-    speed: "Velocidade de reprodução {{rate}}",
     errors: {
       ttsUnavailable: "A conversão de texto em fala não está configurada neste host",
       tooLong: "A mensagem é longa demais para ser lida em voz alta",

@@ -13,7 +13,6 @@ function createAudioEngineMock(): AudioEngine {
     toggleMute: vi.fn().mockReturnValue(true),
     isMuted: vi.fn().mockReturnValue(false),
     play: vi.fn().mockResolvedValue(0.1),
-    setPlaybackRate: vi.fn(),
     stop: vi.fn(),
     clearQueue: vi.fn(),
     isPlaying: vi.fn().mockReturnValue(false),

@@ -10,6 +10,7 @@ import {
   startReadAloud,
   stopReadAloud,
   useReadAloudSnapshot,
+  type ReadAloudFailure,
   type ReadAloudSnapshot,
 } from "@/read-aloud/read-aloud-store";
 import { useReadAloudServerId } from "@/read-aloud/use-read-aloud-host";
@@ -78,6 +79,32 @@ function resolveIconColor(params: {
 }
 
 /**
+ * Why a read failed, in the user's language.
+ *
+ * The daemon's own `failure.message` is deliberately not shown: it is English,
+ * untranslated, and written for a log. Unknown codes fall back to the generic
+ * string rather than leaking it.
+ */
+function useFailureLabel(failure: ReadAloudFailure | null): string | null {
+  const { t } = useTranslation();
+  if (!failure) {
+    return null;
+  }
+  switch (failure.code) {
+    case "tts_unavailable":
+      return t("readAloud.errors.ttsUnavailable");
+    case "text_too_long":
+      return t("readAloud.errors.tooLong");
+    case "empty_text":
+      return t("readAloud.errors.empty");
+    case "unsupported_platform":
+      return t("readAloud.errors.unsupported");
+    default:
+      return t("readAloud.errors.failed");
+  }
+}
+
+/**
  * Speak the end of an assistant turn.
  *
  * Playback is a single app-wide slot, so this compares the store's `ownerId`
@@ -100,7 +127,9 @@ export const TurnReadAloudButton = memo(function TurnReadAloudButton({
 
   const isOwner = snapshot.ownerId === turnId;
   const status = isOwner ? snapshot.status : "idle";
-  const failed = isOwner && snapshot.failure !== null;
+  const failure = isOwner ? snapshot.failure : null;
+  const failed = failure !== null;
+  const failureLabel = useFailureLabel(failure);
 
   const handlePress = useCallback(() => {
     if (status !== "idle") {
@@ -131,7 +160,12 @@ export const TurnReadAloudButton = memo(function TurnReadAloudButton({
       onPress={handlePress}
       style={pressableStyle}
       accessibilityRole="button"
-      accessibilityLabel={status === "idle" ? t("readAloud.action") : t("readAloud.stop")}
+      accessibilityLabel={
+        failureLabel ?? (status === "idle" ? t("readAloud.action") : t("readAloud.stop"))
+      }
+      // Hover reveals why on web; the accessibility label carries it everywhere
+      // else. A red icon with no explanation is a dead end for the user.
+      {...(failureLabel ? { title: failureLabel } : {})}
       testID="turn-read-aloud-button"
     >
       {({ hovered }) =>

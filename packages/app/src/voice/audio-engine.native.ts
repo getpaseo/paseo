@@ -304,13 +304,6 @@ export function createAudioEngine(
       });
     },
 
-    setPlaybackRate(_rate: number) {
-      // Not supported: native playback hands raw PCM to the audio module at a
-      // fixed sample rate with no resampling hook. The only caller is read
-      // aloud, which is web-only (see `read-aloud-audio.ts`), so nothing on
-      // native asks for a rate today.
-    },
-
     stop() {
       native.stopPlayback();
       clearPlaybackTimeout();

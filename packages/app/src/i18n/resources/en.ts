@@ -1496,7 +1496,6 @@ export const en = {
   readAloud: {
     action: "Read aloud",
     stop: "Stop",
-    speed: "{{rate}} playback speed",
     errors: {
       ttsUnavailable: "Text-to-speech isn't set up on this host",
       tooLong: "Message is too long to read aloud",

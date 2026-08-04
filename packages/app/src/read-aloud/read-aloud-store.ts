@@ -4,22 +4,8 @@ import type { DaemonClient, ReadAloudHandle } from "@getpaseo/client";
 import {
   isReadAloudAudioSupported,
   playReadAloudSegment,
-  setReadAloudPlaybackRate,
   stopReadAloudAudio,
 } from "@/read-aloud/read-aloud-audio";
-
-/**
- * Selectable speeds.
- *
- * Capped at 2x because playback is a raw resampling rate on the shared voice
- * audio engine — pitch is not preserved, and past 2x the voice stops sounding
- * like a voice. 2x matches what podcast and article readers offer anyway.
- */
-export const READ_ALOUD_RATES = [1, 1.5, 2] as const;
-
-export type ReadAloudRate = (typeof READ_ALOUD_RATES)[number];
-
-const DEFAULT_RATE: ReadAloudRate = 1;
 
 export interface ReadAloudFailure {
   /** Daemon-side code (`tts_unavailable`, `text_too_long`, …) or a client code. */
@@ -32,7 +18,6 @@ export interface ReadAloudSnapshot {
   /** `loading` = synthesizing, no audio yet. `speaking` = audio is playing. */
   status: "idle" | "loading" | "speaking";
   failure: ReadAloudFailure | null;
-  rate: ReadAloudRate;
   /**
    * Who asked for this read — the assistant message id of the turn whose button
    * was pressed. Playback is a single module-level slot, but the button lives in
@@ -48,16 +33,9 @@ export interface ReadAloudSnapshot {
   ownerServerId: string | null;
 }
 
-/**
- * Outlives any single playback: picking 2x once should hold for the next
- * selection too, so it deliberately survives `stopReadAloud`.
- */
-let playbackRate: ReadAloudRate = DEFAULT_RATE;
-
 let snapshot: ReadAloudSnapshot = {
   status: "idle",
   failure: null,
-  rate: playbackRate,
   ownerId: null,
   ownerServerId: null,
 };
@@ -78,9 +56,9 @@ let ownerId: string | null = null;
 let ownerServerId: string | null = null;
 
 // Takes everything but the module-owned fields, so no call site has to remember
-// to carry `rate`, `ownerId`, or `ownerServerId` forward.
-function setSnapshot(next: Omit<ReadAloudSnapshot, "rate" | "ownerId" | "ownerServerId">): void {
-  snapshot = { ...next, rate: playbackRate, ownerId, ownerServerId };
+// to carry `ownerId` or `ownerServerId` forward.
+function setSnapshot(next: Omit<ReadAloudSnapshot, "ownerId" | "ownerServerId">): void {
+  snapshot = { ...next, ownerId, ownerServerId };
   for (const listener of listeners) {
     listener();
   }
@@ -127,19 +105,6 @@ export function stopReadAloud(): void {
   setSnapshot({ status: "idle", failure: null });
 }
 
-/**
- * Change speed. Takes effect immediately on audio that is already playing, so
- * the user hears the result of the tap without restarting the selection.
- */
-export function setReadAloudRate(rate: ReadAloudRate): void {
-  if (rate === playbackRate) {
-    return;
-  }
-  playbackRate = rate;
-  setReadAloudPlaybackRate(rate);
-  setSnapshot({ status: snapshot.status, failure: snapshot.failure });
-}
-
 export function startReadAloud(params: {
   client: DaemonClient;
   text: string;
@@ -162,10 +127,6 @@ export function startReadAloud(params: {
   // failure surfaces without a bystander footer rendering itself as the owner.
   ownerId = params.ownerId;
   ownerServerId = params.serverId;
-
-  // The engine is created lazily and defaults to 1x, so a rate chosen during an
-  // earlier selection has to be re-applied rather than assumed to still be set.
-  setReadAloudPlaybackRate(playbackRate);
 
   const token = generation;
   setSnapshot({ status: "loading", failure: null });

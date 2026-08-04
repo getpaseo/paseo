@@ -90,7 +90,6 @@ export function createAudioEngine(
   _options?: { traceLabel?: string },
 ): AudioEngine {
   const refs: {
-    playbackRate: number;
     playbackContext: AudioContext | null;
     captureContext: AudioContext | null;
     stream: MediaStream | null;
@@ -115,7 +114,6 @@ export function createAudioEngine(
      */
     playbackGeneration: number;
   } = {
-    playbackRate: 1,
     playbackContext: null,
     captureContext: null,
     stream: null,
@@ -193,11 +191,8 @@ export function createAudioEngine(
 
     const source = context.createBufferSource();
     source.buffer = audioBuffer;
-    source.playbackRate.value = refs.playbackRate;
     source.connect(context.destination);
-    // Wall-clock duration, not buffer duration: at 2x the audio is done in half
-    // the time, and callers use this to know how long playback actually takes.
-    const durationSec = audioBuffer.duration / refs.playbackRate;
+    const durationSec = audioBuffer.duration;
 
     return await new Promise<number>((resolve, reject) => {
       refs.activePlayback = { source, resolve, reject, settled: false };
@@ -397,18 +392,6 @@ export function createAudioEngine(
           void processQueue();
         }
       });
-    },
-
-    setPlaybackRate(rate: number) {
-      if (!Number.isFinite(rate) || rate <= 0) {
-        return;
-      }
-      refs.playbackRate = rate;
-      // Retune the segment already in flight so the change is audible now
-      // rather than at the next segment boundary.
-      if (refs.activePlayback) {
-        refs.activePlayback.source.playbackRate.value = rate;
-      }
     },
 
     stop() {

@@ -1532,7 +1532,6 @@ export const fr: TranslationResources = {
   readAloud: {
     action: "Lire à voix haute",
     stop: "Arrêter",
-    speed: "Vitesse de lecture {{rate}}",
     errors: {
       ttsUnavailable: "La synthèse vocale n'est pas configurée sur cet hôte",
       tooLong: "Le message est trop long pour être lu à voix haute",

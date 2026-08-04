@@ -1485,7 +1485,6 @@ export const ar: TranslationResources = {
   readAloud: {
     action: "القراءة بصوت عالٍ",
     stop: "إيقاف",
-    speed: "سرعة التشغيل {{rate}}",
     errors: {
       ttsUnavailable: "لم يتم إعداد تحويل النص إلى كلام على هذا المضيف",
       tooLong: "الرسالة أطول من أن تُقرأ بصوت عالٍ",

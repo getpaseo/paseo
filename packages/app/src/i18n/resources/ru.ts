@@ -1519,7 +1519,6 @@ export const ru: TranslationResources = {
   readAloud: {
     action: "Прочитать вслух",
     stop: "Остановить",
-    speed: "Скорость воспроизведения {{rate}}",
     errors: {
       ttsUnavailable: "Синтез речи не настроен на этом хосте",
       tooLong: "Сообщение слишком длинное для чтения вслух",

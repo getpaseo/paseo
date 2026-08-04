@@ -38,16 +38,6 @@ function toMimeType(format: string): string {
   return format.startsWith("audio/") ? format : `audio/${format}`;
 }
 
-/**
- * Speed multiplier applied to every segment, including the one in flight.
- *
- * Kept here rather than passed per-segment so it survives the gap between
- * segments and applies to audio the daemon has already streamed.
- */
-export function setReadAloudPlaybackRate(rate: number): void {
-  getEngine().setPlaybackRate(rate);
-}
-
 export async function playReadAloudSegment(params: {
   audioBase64: string;
   format: string;

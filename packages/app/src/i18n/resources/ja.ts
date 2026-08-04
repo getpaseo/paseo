@@ -1501,7 +1501,6 @@ export const ja: TranslationResources = {
   readAloud: {
     action: "読み上げ",
     stop: "停止",
-    speed: "再生速度 {{rate}}",
     errors: {
       ttsUnavailable: "このホストでは音声合成が設定されていません",
       tooLong: "メッセージが長すぎて読み上げできません",
