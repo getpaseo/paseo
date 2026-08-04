@@ -2,7 +2,7 @@
 title: Troubleshooting
 description: Why Paseo can't find a provider you've installed, and how to fix the PATH and environment mismatches behind most setup issues.
 nav: Common problems
-order: 50
+order: 90
 category: Troubleshooting
 ---
 
