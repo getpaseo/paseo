@@ -3,7 +3,7 @@ import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { formatTokenCount } from "./context-window-meter.utils";
+import { formatContextPercentage, formatTokenCount } from "./context-window-meter.utils";
 
 interface ContextWindowMeterProps {
   maxTokens: number | null;
@@ -99,7 +99,7 @@ export function ContextWindowMeter({
   glyphSize,
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const percentage =
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
   const geometry = getMeterGeometry(showPercentage, glyphSize);
@@ -183,7 +183,9 @@ export function ContextWindowMeter({
             />
           </Svg>
           {showPercentage ? (
-            <Text style={styles.percentageLabel}>{`${roundedPercentage}%`}</Text>
+            <Text style={styles.percentageLabel}>
+              {formatContextPercentage(roundedPercentage, i18n.resolvedLanguage)}
+            </Text>
           ) : null}
         </Pressable>
       </TooltipTrigger>

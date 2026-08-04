@@ -36,4 +36,8 @@ describe("formatAmount", () => {
     expect(formatRunsOutLabel(twoHoursFromNow, NOW)).toBe("2時間後に上限に到達");
     expect(formatAgo(threeDaysAgo, NOW)).toBe("3日前");
   });
+
+  it("formats percentages with locale-specific spacing", () => {
+    expect(formatPct(42, "fr")).toBe("42\u00a0%");
+  });
 });
