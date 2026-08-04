@@ -2,7 +2,7 @@ import { memo, useCallback, useMemo, type ReactNode } from "react";
 import { Pressable, type StyleProp, type ViewStyle } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
-import { Square, Volume2, VolumeX } from "lucide-react-native";
+import { CircleStop, Volume2, VolumeX } from "lucide-react-native";
 
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { isReadAloudAudioSupported } from "@/read-aloud/read-aloud-audio";
@@ -49,7 +49,9 @@ function renderIcon(params: {
     return <LoadingSpinner size="small" color={params.color} />;
   }
   if (params.status === "speaking") {
-    return <Square size={16} color={params.color} fill={params.color} />;
+    // Outlined circle around the stop square: a filled square alone reads as a
+    // solid blob at footer size, next to the outlined copy and fork icons.
+    return <CircleStop size={16} color={params.color} />;
   }
   if (params.failed) {
     return <VolumeX size={16} color={params.color} />;
