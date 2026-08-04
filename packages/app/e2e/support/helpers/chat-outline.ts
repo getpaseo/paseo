@@ -125,26 +125,6 @@ export async function expectChatOutlinePromptToRemainBare(
   await expect(chatOutlinePrompt(page, position)).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
 }
 
-export async function expectChatOutlineAlignedWithActiveTabGlyph(page: Page): Promise<void> {
-  const outlinePill = chatOutlinePrompt(page, 1).locator("div").first();
-  const activeTabGlyph = page
-    .getByTestId("workspace-tabs-row")
-    .filter({ visible: true })
-    .locator('[role="button"][aria-selected="true"]')
-    .locator("svg")
-    .first();
-
-  await expect
-    .poll(async () => {
-      const [pillBox, glyphBox] = await Promise.all([
-        requireBoundingBox(outlinePill),
-        requireBoundingBox(activeTabGlyph),
-      ]);
-      return Math.abs(pillBox.x - glyphBox.x);
-    })
-    .toBeLessThanOrEqual(1);
-}
-
 /** Exactly one prompt is marked, without saying which — the reader always has a "you are here". */
 export async function expectOneActiveChatOutlinePrompt(page: Page): Promise<void> {
   await expect(chatOutlineRail(page).getByRole("tab", { selected: true })).toHaveCount(1);

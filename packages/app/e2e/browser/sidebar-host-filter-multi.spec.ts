@@ -4,7 +4,7 @@ import { gotoAppShell } from "../support/helpers/app";
 import {
   addOfflineHostAndReload,
   expectHostFilterRow,
-  openSidebarDisplayPreferences,
+  openSidebarHostFilter,
   selectAllHostsFilter,
   toggleHostFilter,
 } from "../support/helpers/hosts";
@@ -29,7 +29,7 @@ test.describe("Sidebar host filter (multi-select)", () => {
       await addOfflineHostAndReload(page, { serverId: SECONDARY_HOST_ID, label: "Secondary Host" });
       await expect(workspaceRow).toBeVisible({ timeout: 30_000 });
 
-      await openSidebarDisplayPreferences(page);
+      await openSidebarHostFilter(page);
       await expectHostFilterRow(page, serverId);
       await expectHostFilterRow(page, SECONDARY_HOST_ID);
 

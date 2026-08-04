@@ -363,9 +363,9 @@ const ThemedCheck = withUnistyles(Check);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const successColorMapping = (theme: Theme) => ({ color: theme.colors.statusSuccess });
-const warningColorMapping = (theme: Theme) => ({ color: theme.colors.statusWarning });
-const dangerColorMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
+const successColorMapping = (theme: Theme) => ({ color: theme.colors.statusMutedSuccess });
+const warningColorMapping = (theme: Theme) => ({ color: theme.colors.statusMutedWarning });
+const dangerColorMapping = (theme: Theme) => ({ color: theme.colors.statusMutedDanger });
 
 function InfoRow({
   icon: Icon,
@@ -660,16 +660,16 @@ const styles = StyleSheet.create((theme) => ({
   checksStatusTextFailed: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.statusDanger,
+    color: theme.colors.statusMutedDanger,
   },
   checksStatusTextPending: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.statusWarning,
+    color: theme.colors.statusMutedWarning,
   },
   checksStatusTextPassed: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.statusSuccess,
+    color: theme.colors.statusMutedSuccess,
   },
 }));

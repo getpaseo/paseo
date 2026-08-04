@@ -109,42 +109,64 @@ export const baseColors = {
 
 export type ThemeName = "light" | "dark" | "zinc" | "midnight" | "claude" | "ghostty";
 
-// Diff colors — light uses muted tones, dark uses the brighter palette values.
+// Diff colors — the +/- inside a diff view, where the color *is* the signal and has to
+// survive being scanned line by line, so it stays saturated. Light uses muted tones, dark
+// uses the brighter palette values.
 //
-// Two tiers, because the +/- serves two jobs. In the diff view the color *is* the signal and
-// has to survive being scanned line by line, so it stays saturated. In a row's metadata the
-// counts are a footnote next to a title and a subtitle; at full saturation they read as the
-// loudest thing in the row. The Stat tier keeps the hue but drops the chroma to roughly the
-// weight of foregroundMuted, so it sits with the subtitle instead of shouting over it.
+// A diff *stat* — the "+12 −3" footnote next to a title — is not this. It reads as one of
+// several muted signals in a row, so it uses statusMutedSuccess/Danger below rather than a
+// near-duplicate tier of its own.
 const lightDiffColors = {
   diffAddition: "#15803d", // green-700 — readable on white without screaming
   diffDeletion: "#b91c1c", // red-700
-  diffStatAddition: "#32794a", // softened green-700
-  diffStatDeletion: "#a43c39", // softened red-700
 };
 
 const darkDiffColors = {
   diffAddition: "#4ade80", // green-400
   diffDeletion: "#ef4444", // red-500
-  diffStatAddition: "#61bf82",
-  diffStatDeletion: "#d36461",
 };
 
-// Status colors — semantic signals for success/danger/warning/merged. Used by
-// check statuses, PR states, and review decisions. Kept a step darker than the
-// raw palette so they read as signals, not neon.
+// Status colors — semantic signals for success/danger/warning/merged. Used by check
+// statuses, PR states, and review decisions.
+//
+// Normalized, not hand-picked. Every color below shares one lightness and one chroma within
+// its tier; only the hue changes, and each hue is the one that family already had. Chroma is
+// a fixed fraction of what sRGB allows at that lightness and hue, because the gamut is
+// lopsided — amber runs out of room long before red does, so a literal equal-chroma set
+// leaves amber flat and red screaming. Equal fractions is what makes four hues read as one
+// family. Regenerate with the same rule rather than nudging one value.
+//
+// Two tiers. Full is for a surface whose job is to report the status — the PR pane, a usage
+// bar. Muted is for the same signal repeated on every row of a dense list, where full
+// saturation makes the list itself the loudest thing on screen; it sits at roughly
+// foregroundMuted's weight so a row built from it reads as one line of subtitle.
+//
+// Deliberately not on this scale: the workspace status dot. That one is supposed to shout,
+// so it keeps the raw palette — see getStatusDotColor.
 const lightStatusColors = {
-  statusSuccess: "#15803d", // green-700
-  statusDanger: "#b91c1c", // red-700
-  statusWarning: "#d97706", // amber-600
-  statusMerged: "#7c3aed", // purple-600
+  // L=0.53, chroma 90% of gamut max
+  statusSuccess: "#1f8040",
+  statusDanger: "#c32424",
+  statusWarning: "#91601b",
+  statusMerged: "#8728e5",
+  // L=0.50, chroma 45% of gamut max
+  statusMutedSuccess: "#496d50",
+  statusMutedDanger: "#904d46",
+  statusMutedWarning: "#755f45",
+  statusMutedMerged: "#6e519d",
 };
 
 const darkStatusColors = {
-  statusSuccess: "#16a34a", // green-600
-  statusDanger: "#dc2626", // red-600
-  statusWarning: "#f59e0b", // amber-500
-  statusMerged: "#9333ea", // purple-600
+  // L=0.66, chroma 90% of gamut max
+  statusSuccess: "#2ead58",
+  statusDanger: "#f65048",
+  statusWarning: "#c38328",
+  statusMerged: "#a670f5",
+  // L=0.70, chroma 40% of gamut max
+  statusMutedSuccess: "#7cac85",
+  statusMutedDanger: "#ca8c85",
+  statusMutedWarning: "#b79875",
+  statusMutedMerged: "#a594c6",
 };
 
 // Semantic color tokens - Layer-based system

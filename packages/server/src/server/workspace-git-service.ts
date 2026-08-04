@@ -80,6 +80,7 @@ export interface WorkspaceGitRuntimeSnapshot {
     isDirty: boolean | null;
     baseRef: string | null;
     aheadBehind: { ahead: number; behind: number } | null;
+    upstreamRef: string | null;
     aheadOfOrigin: number | null;
     behindOfOrigin: number | null;
     hasRemote: boolean;
@@ -305,6 +306,32 @@ interface WorkspaceGitServiceOptions {
   deps?: Partial<WorkspaceGitServiceDependencies>;
 }
 
+export function getWorkspaceFileWatcherBackend(
+  platform: NodeJS.Platform,
+): parcelWatcher.BackendType {
+  switch (platform) {
+    case "darwin":
+      return "fs-events";
+    case "linux":
+      return "inotify";
+    case "win32":
+      return "windows";
+    default:
+      throw new Error(`No native workspace file watcher configured for ${platform}`);
+  }
+}
+
+export function subscribeToWorkspaceFileChanges(
+  directory: string,
+  callback: parcelWatcher.SubscribeCallback,
+  options?: parcelWatcher.Options,
+): Promise<parcelWatcher.AsyncSubscription> {
+  return parcelWatcher.subscribe(directory, callback, {
+    ...options,
+    backend: getWorkspaceFileWatcherBackend(process.platform),
+  });
+}
+
 interface WorkspaceGitTarget {
   cwd: string;
   listeners: Set<WorkspaceGitListener>;
@@ -374,7 +401,7 @@ interface WorkspaceForgePrStatusPollTarget {
 
 function buildDefaultWorkspaceGitServiceDeps(): WorkspaceGitServiceDependencies {
   return {
-    subscribe: parcelWatcher.subscribe,
+    subscribe: subscribeToWorkspaceFileChanges,
     getCheckoutSnapshotFacts,
     getCheckoutStatus,
     getCheckoutShortstat,
@@ -2182,6 +2209,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         : (target.latestGit?.isDirty ?? checkoutStatus.isDirty),
       baseRef: checkoutStatus.baseRef,
       aheadBehind: checkoutStatus.aheadBehind,
+      upstreamRef: checkoutStatus.upstreamRef,
       aheadOfOrigin: checkoutStatus.aheadOfOrigin,
       behindOfOrigin: checkoutStatus.behindOfOrigin,
       hasRemote: checkoutStatus.hasRemote,
@@ -2598,6 +2626,7 @@ function buildNotGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
       isDirty: null,
       baseRef: null,
       aheadBehind: null,
+      upstreamRef: null,
       aheadOfOrigin: null,
       behindOfOrigin: null,
       hasRemote: false,

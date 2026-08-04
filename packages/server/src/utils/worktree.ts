@@ -1271,6 +1271,7 @@ export const createWorktree = async ({
 
   writePaseoWorktreeMetadata(worktreePath, {
     baseRefName: sourcePlan.metadataBaseRefName,
+    ...(sourcePlan.metadataBaseRef ? { baseRef: sourcePlan.metadataBaseRef } : {}),
     ...(sourcePlan.changeRequestLookupTarget
       ? { changeRequestLookupTarget: sourcePlan.changeRequestLookupTarget }
       : {}),
@@ -1300,7 +1301,11 @@ interface ResolveWorktreeSourcePlanOptions {
 
 interface WorktreeSourcePlan {
   branchName: string;
+  // Display name and exact ref are two different facts. The name cannot round-trip to a
+  // commit — "main" resolves local-first even when the worktree was cut from a fork's
+  // upstream — so comparisons and actions read the ref and the UI reads the name.
   metadataBaseRefName: string;
+  metadataBaseRef?: string;
   changeRequestLookupTarget?: PaseoWorktreeChangeRequestHint;
   addArguments: string[];
   pushRemote?: {
@@ -1334,6 +1339,7 @@ async function resolveWorktreeSourcePlan({
       return {
         branchName: newBranchName,
         metadataBaseRefName: normalizedBaseBranch,
+        metadataBaseRef: resolvedBaseBranch,
         addArguments: ["-b", newBranchName, "--no-track", base],
       };
     }

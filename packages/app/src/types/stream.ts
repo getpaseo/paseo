@@ -1573,16 +1573,14 @@ function promoteCompletedAssistantBlocks(params: { tail: StreamItem[]; head: Str
   const completedBlocks = blocks.slice(0, -1);
   const liveBlock = `${blocks[blocks.length - 1] ?? ""}${getTrailingNewlineSuffix(activeItem.text)}`;
   const promotedItems = completedBlocks.map<AssistantMessageItem>((block, offset) => ({
-    kind: "assistant_message",
+    ...activeItem,
     id: createAssistantBlockId({
       groupId: blockGroupId,
       blockIndex: firstBlockIndex + offset,
     }),
-    ...(activeItem.messageId ? { messageId: activeItem.messageId } : {}),
     blockGroupId,
     blockIndex: firstBlockIndex + offset,
     text: block,
-    timestamp: activeItem.timestamp,
   }));
 
   const nextTail = flushHeadToTail(params.tail, promotedItems);

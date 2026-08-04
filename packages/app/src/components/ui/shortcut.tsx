@@ -1,6 +1,7 @@
 import React, { useMemo, type ReactElement } from "react";
 import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 
@@ -14,7 +15,8 @@ export function Shortcut({
   chord?: ShortcutKey[][];
   style?: StyleProp<ViewStyle>;
   textStyle?: StyleProp<TextStyle>;
-}): ReactElement {
+}): ReactElement | null {
+  const shortcutsAvailable = useKeyboardShortcutsAvailable();
   const displayChord = chord ?? (keys ? [keys] : []);
   const shortcutOs = getShortcutOs();
   const singleCombo = displayChord[0];
@@ -22,6 +24,10 @@ export function Shortcut({
   const badgeStyle = useMemo(() => [styles.badge, style], [style]);
   const textCombinedStyle = useMemo(() => [styles.text, textStyle], [textStyle]);
   const sequenceStyle = useMemo(() => [styles.sequence, style], [style]);
+
+  if (!shortcutsAvailable) {
+    return null;
+  }
 
   if (!singleCombo) {
     return <View style={style} />;

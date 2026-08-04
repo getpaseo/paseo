@@ -36,11 +36,11 @@ const styles = StyleSheet.create((theme) => ({
   additions: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.diffStatAddition,
+    color: theme.colors.statusMutedSuccess,
   },
   deletions: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.diffStatDeletion,
+    color: theme.colors.statusMutedDanger,
   },
 }));

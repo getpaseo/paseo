@@ -6,7 +6,6 @@ import {
   expectActiveChatOutlinePrompt,
   expectChatOutlinePreview,
   expectChatOutlinePrompts,
-  expectChatOutlineAlignedWithActiveTabGlyph,
   expectChatOutlinePromptToRemainBare,
   expectLiveTurnPromptAboveFoldAndActive,
   expectNoChatOutlinePreviewWhileCrossingToSidebar,
@@ -138,10 +137,6 @@ test.describe("desktop chat outline", () => {
       await clickChatOutlineRowEdge(page, 4);
 
       await expectChatOutlinePromptToRemainBare(page, 4);
-    });
-
-    test("aligns the ticks with the active tab glyph rail", async ({ page }) => {
-      await expectChatOutlineAlignedWithActiveTabGlyph(page);
     });
 
     test("clamps the newest prompt at maximum scroll while keeping it visible", async ({

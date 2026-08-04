@@ -276,6 +276,26 @@ describe("native terminal selection", () => {
     expect(copied).toEqual(["COPY_OK_123"]);
   });
 
+  it("copies custom-drawn Claude glyphs as their original Unicode text", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 32, scrollbackLines: 20 });
+    const art = "╭─ Claude ─╮\r\n│ ▐▛███▜▌ │\r\n╰──────────╯";
+    await terminal.write(art);
+    const bounds = terminal.getBufferBounds();
+    const firstRow = rowWithText(terminal, "╭─ Claude ─╮");
+    const lastRow = rowWithText(terminal, "╰──────────╯");
+
+    expect(
+      extractTerminalSelectedText({
+        terminal,
+        selection: {
+          start: { row: firstRow, col: 0 },
+          end: { row: lastRow, col: 11 },
+          coordinateEpoch: bounds.coordinateEpoch,
+        },
+      }),
+    ).toBe(art.replaceAll("\r", ""));
+  });
+
   it("copies known text after it has scrolled into retained history", async () => {
     const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 16, scrollbackLines: 20 });
     await terminal.write("KEEP_THIS_LINE\r\n");

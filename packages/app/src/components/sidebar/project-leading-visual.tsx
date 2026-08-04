@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { PulsingStatusDot } from "@/components/sidebar/pulsing-status-dot";
 import { STATUS_BUCKET_LABELS } from "@/hooks/sidebar-status-view-model";
-import type { Theme } from "@/styles/theme";
+import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import {
   getProjectStatusBadgeContent,
@@ -13,25 +13,25 @@ import {
 } from "@/utils/project-status-badge-content";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { getStatusDotColor } from "@/utils/status-dot-color";
+import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 
 // Every surfaced status shares one badge shell, so the badge never changes size or position
 // between states. Only the thing inside it changes.
-const STATUS_BADGE_SIZE = 14;
-const STATUS_BADGE_BORDER_WIDTH = 1;
+const STATUS_BADGE_SIZE = 12;
 // How far the badge overhangs the icon's bottom-right corner. Well short of half the badge:
 // centered on the corner it reads as hanging off the icon rather than sitting on it, and the
 // sidebar row has no padding there to absorb the overhang.
-const STATUS_BADGE_OFFSET = -5;
-// Both glyphs must be EVEN. The shell's interior is 12pt (14 minus the 1pt ring on each side),
-// so a centered glyph of size N sits at a (12 - N) / 2 offset — fractional for odd N, which the
-// browser snaps to a device-pixel boundary and renders visibly off-center (an odd size measured
-// 1.5 device px right and down at 3x, ~3px of asymmetry between opposite gaps). Even sizes
-// divide the interior into whole pixels and land dead center with no correction.
+const STATUS_BADGE_OFFSET = -4;
+// Both glyphs must be EVEN. A centered glyph of size N sits at a (12 - N) / 2 offset — fractional
+// for odd N, which the browser snaps to a device-pixel boundary and renders visibly off-center (an
+// odd size measured 1.5 device px right and down at 3x, ~3px of asymmetry between opposite gaps).
+// Even sizes divide the shell into whole pixels and land dead center with no correction.
 //
-// Lucide's circle-alert paints ~83% of its nominal size, so an alert of 10 draws a ~8.3pt circle
-// against the 8pt dot — the two states read as the same-diameter disc.
-const STATUS_BADGE_DOT_SIZE = 8;
-const STATUS_BADGE_ALERT_SIZE = 10;
+// Lucide's circle-alert paints ~83% of its nominal size, so an alert of 8 draws a ~6.6pt circle
+// against the 6pt dot — the two states read as the same-diameter disc. 8 is the closest even
+// size to the exact match (6 / 0.83 = 7.2); 6 would undershoot the dot rather than meet it.
+const STATUS_BADGE_DOT_SIZE = 6;
+const STATUS_BADGE_ALERT_SIZE = 8;
 // Matches the workspace title's lineHeight (sidebar-workspace-row-content's
 // workspaceBranchText) so the icon centers on the title rather than floating above it.
 const LEADING_SLOT_HEIGHT = 20;
@@ -55,6 +55,7 @@ export function ProjectLeadingVisual({
   iconDataUri,
   statusBucket,
   projectViewKey,
+  backdrop,
   chevron = null,
   showChevron = false,
   isArchiving = false,
@@ -64,6 +65,8 @@ export function ProjectLeadingVisual({
   /** Aggregate status of the project's workspaces; null when it shouldn't be surfaced. */
   statusBucket: SidebarStateBucket | null;
   projectViewKey: string;
+  /** The row's current background, so the status badge can knock out of it. */
+  backdrop: SurfaceBackdrop;
   chevron?: "expand" | "collapse" | null;
   showChevron?: boolean;
   isArchiving?: boolean;
@@ -90,6 +93,7 @@ export function ProjectLeadingVisual({
       displayName={displayName}
       projectViewKey={projectViewKey}
       statusBucket={statusBucket}
+      backdrop={backdrop}
     />
   );
 }
@@ -104,6 +108,7 @@ export function ProjectStatusIndicator({
   displayName,
   projectViewKey,
   statusBucket,
+  backdrop,
   loading = false,
   testID,
 }: {
@@ -111,13 +116,15 @@ export function ProjectStatusIndicator({
   displayName: string;
   projectViewKey: string;
   statusBucket: SidebarStateBucket | null;
+  /** The row's current background, so the status badge can knock out of it. */
+  backdrop: SurfaceBackdrop;
   loading?: boolean;
   testID?: string;
 }) {
   const placeholderInitial = projectIconPlaceholderLabelFromDisplayName(displayName)
     .charAt(0)
     .toUpperCase();
-  // A row that's still starting up and a row that's working are both "busy", and at 8pt
+  // A row that's still starting up and a row that's working are both "busy", and at this size
   // there's no room to draw the difference — so `loading` just resolves to the running bucket
   // and they share one badge.
   const badgeBucket = loading ? "running" : statusBucket;
@@ -140,7 +147,11 @@ export function ProjectStatusIndicator({
           projectViewKey={projectViewKey}
         />
         {badgeContent === null || badgeBucket === null ? null : (
-          <ProjectStatusBadge content={badgeContent} statusBucket={badgeBucket} />
+          <ProjectStatusBadge
+            content={badgeContent}
+            statusBucket={badgeBucket}
+            backdrop={backdrop}
+          />
         )}
       </View>
     </View>
@@ -150,15 +161,17 @@ export function ProjectStatusIndicator({
 function ProjectStatusBadge({
   content,
   statusBucket,
+  backdrop,
 }: {
   content: ProjectStatusBadgeContent;
   statusBucket: SidebarStateBucket;
+  backdrop: SurfaceBackdrop;
 }) {
   return (
     <View
       role="status"
       accessibilityLabel={STATUS_BUCKET_LABELS[statusBucket]}
-      style={styles.statusBadge}
+      style={[styles.statusBadge, getStatusBadgeBackdropStyle(backdrop)]}
       testID="project-status-badge"
     >
       {content.kind === "alert" ? (
@@ -168,6 +181,17 @@ function ProjectStatusBadge({
       )}
     </View>
   );
+}
+
+function getStatusBadgeBackdropStyle(backdrop: SurfaceBackdrop): ViewStyle {
+  switch (backdrop) {
+    case "surfaceSidebarHover":
+      return styles.statusBadgeOnSidebarHover;
+    case "surface2":
+      return styles.statusBadgeOnSurface2;
+    default:
+      return styles.statusBadgeOnSidebar;
+  }
 }
 
 function ProjectStatusDot({ bucket }: { bucket: ProjectStatusBadgeDotBucket }) {
@@ -191,8 +215,7 @@ function ProjectIcon({
       iconDataUri={iconDataUri}
       initial={placeholderInitial}
       projectViewKey={projectViewKey}
-      imageStyle={styles.projectIcon}
-      fallbackStyle={styles.projectIconFallback}
+      size={ICON_SIZE.md}
       textStyle={styles.projectIconFallbackText}
     />
   );
@@ -245,24 +268,13 @@ const styles = StyleSheet.create((theme) => {
       width: theme.iconSize.md,
       height: theme.iconSize.md,
     },
-    projectIcon: {
-      width: "100%",
-      height: "100%",
-      borderRadius: theme.borderRadius.sm,
-    },
-    projectIconFallback: {
-      width: "100%",
-      height: "100%",
-      borderRadius: theme.borderRadius.sm,
-      alignItems: "center",
-      justifyContent: "center",
-    },
     projectIconFallbackText: {
       fontSize: 9,
     },
     // The shell the alert and dot statuses share. It straddles the icon's bottom-right corner
-    // (half in, half out) so the lettered project box stays readable, and its ring is
-    // sidebar-colored so the badge separates from the icon underneath rather than blending in.
+    // (half in, half out) so the lettered project box stays readable. The shell is a knockout:
+    // it is filled with the colour of the row behind it, which is what makes the ring around the
+    // dot read as a gap in the icon rather than as a white halo drawn on top of it.
     statusBadge: {
       position: "absolute",
       right: STATUS_BADGE_OFFSET,
@@ -270,13 +282,13 @@ const styles = StyleSheet.create((theme) => {
       width: STATUS_BADGE_SIZE,
       height: STATUS_BADGE_SIZE,
       borderRadius: theme.borderRadius.full,
-      backgroundColor: theme.colors.surface0,
-      borderWidth: STATUS_BADGE_BORDER_WIDTH,
-      borderColor: theme.colors.surfaceSidebar,
       alignItems: "center",
       justifyContent: "center",
       overflow: "hidden",
     },
+    statusBadgeOnSidebar: { backgroundColor: theme.colors.surfaceSidebar },
+    statusBadgeOnSidebarHover: { backgroundColor: theme.colors.surfaceSidebarHover },
+    statusBadgeOnSurface2: { backgroundColor: theme.colors.surface2 },
     statusDotRunning: statusDot("running"),
     statusDotFailed: statusDot("failed"),
     statusDotAttention: statusDot("attention"),

@@ -67,6 +67,7 @@ import {
   type ProjectPickerOption,
 } from "@/components/project-picker-options";
 import { Shortcut } from "@/components/ui/shortcut";
+import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { pickDirectory } from "@/desktop/pick-directory";
@@ -287,6 +288,9 @@ function FlowRow({ option, active }: { option: FlowRowOption; active: boolean })
 }
 
 function FlowHint({ keys, action }: { keys: string[]; action: string }) {
+  const shortcutsAvailable = useKeyboardShortcutsAvailable();
+  if (!shortcutsAvailable) return null;
+
   return (
     <View style={styles.footerHint}>
       <Shortcut keys={keys} textStyle={styles.footerKeyText} />

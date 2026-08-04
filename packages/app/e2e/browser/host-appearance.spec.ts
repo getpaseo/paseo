@@ -99,11 +99,8 @@ test.describe("Host appearance", () => {
     await expectHostBadgeName(page, { ...badge, hostName: "Build Box" });
   });
 
-  test("long host names leave room for the workspace title and actions", async ({
-    page,
-    twoHostSidebar,
-  }) => {
-    const hostName = "A very long remote build host name that must not take over the sidebar";
+  test("host names use the available metadata width", async ({ page, twoHostSidebar }) => {
+    const hostName = "Developer MacBook Pro.local";
     const workspaceKey = `${twoHostSidebar.secondaryServerId}:${twoHostSidebar.secondaryWorkspaceId}`;
 
     await openHostAppearanceSettings(page, twoHostSidebar.secondaryServerId);
@@ -111,27 +108,19 @@ test.describe("Host appearance", () => {
     await leaveHostAppearanceSettings(page);
 
     const row = page.getByTestId(`sidebar-workspace-row-${workspaceKey}`);
-    const badge = row.getByTestId(`sidebar-host-badge-${twoHostSidebar.secondaryServerId}`);
+    const badge = row.getByTestId(`host-badge-${twoHostSidebar.secondaryServerId}`);
     await expect(badge).toHaveText(hostName);
-    await row.hover();
-
-    const title = row.getByText("Secondary workspace", { exact: true });
-    const kebab = page.getByTestId(`sidebar-workspace-kebab-${workspaceKey}`);
-    await expect(kebab).toBeVisible();
-    const [badgeBox, titleBox, rowBox, kebabBox] = await Promise.all([
-      badge.boundingBox(),
-      title.boundingBox(),
-      row.boundingBox(),
-      kebab.boundingBox(),
-    ]);
+    const [badgeBox, rowBox] = await Promise.all([badge.boundingBox(), row.boundingBox()]);
 
     expect(badgeBox).not.toBeNull();
-    expect(titleBox).not.toBeNull();
     expect(rowBox).not.toBeNull();
-    expect(kebabBox).not.toBeNull();
-    await expect(badge).toHaveCSS("flex-shrink", "0");
-    expect(titleBox!.width).toBeGreaterThan(0);
-    expect(kebabBox!.x + kebabBox!.width).toBeLessThanOrEqual(rowBox!.x + rowBox!.width);
+    expect(badgeBox!.width).toBeGreaterThan(96);
+    expect(badgeBox!.x + badgeBox!.width).toBeLessThanOrEqual(rowBox!.x + rowBox!.width);
+    const labelWidths = await badge.getByText(hostName, { exact: true }).evaluate((label) => ({
+      clientWidth: label.clientWidth,
+      scrollWidth: label.scrollWidth,
+    }));
+    expect(labelWidths.scrollWidth).toBeLessThanOrEqual(labelWidths.clientWidth);
   });
 
   test("picking a color identifies the badge", async ({ page, twoHostSidebar }) => {

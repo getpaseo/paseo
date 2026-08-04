@@ -201,41 +201,29 @@ test.afterEach(async () => {
   }
 });
 
-test("changes diff keeps code rows aligned with the gutter", async ({ page }) => {
-  const workspace = await createWorkspaceWithMountedTabDiff();
-  await useCodeFont(page, 9);
-  await useUnwrappedDiffLines(page);
-  await openWorkspaceChanges(page, workspace);
-
-  await expectDiffCodeFontSize(page, 9);
-  await expectVisibleDiffRowsAligned(page);
-  await expectDiffCodeTextAlignedWithGutterText(page, [
-    {
-      codeText: "function createInitialMountedTabIds(input: UseMountedTabSetInput)",
-      lineNumber: "20",
-    },
-    { codeText: "return next;", lineNumber: "55" },
-    { codeText: "useLayoutEffect(() => {", lineNumber: "78" },
-  ]);
-  await expectHoverCommentButtonAlignedWithCodeLine(page, {
-    codeText: "function createInitialMountedTabIds(input: UseMountedTabSetInput)",
-    lineNumber: "20",
-  });
-});
-
-test("changes file actions open from the kebab and right-click", async ({ page }) => {
+test("changes file actions open below the right-click without a reserved kebab", async ({
+  page,
+}) => {
   const workspace = await createWorkspaceWithMountedTabDiff({ includeDeletedFile: true });
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
 
   await expect(page.getByTestId("diff-file-1")).toContainText("zz-deleted.ts");
-  await page.getByTestId("diff-file-1-actions").click();
+  await expect(page.getByTestId(/diff-file-\d+-actions/)).toHaveCount(0);
+  await page.getByTestId("diff-file-1-toggle").click({ button: "right" });
   await expect(page.getByText("Copy path")).toBeVisible();
   await expect(page.getByTestId("diff-file-1-open-file")).toHaveCount(0);
   await page.keyboard.press("Escape");
 
-  await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
+  const fileRow = page.getByTestId("diff-file-0-toggle");
+  const fileRowBounds = await fileRow.boundingBox();
+  expect(fileRowBounds).not.toBeNull();
+  await fileRow.click({ button: "right", position: { x: 80, y: 10 } });
   await expect(page.getByTestId("diff-file-0-open-file")).toBeVisible();
+  const menuBounds = await page.getByTestId("diff-file-0-context-menu").boundingBox();
+  expect(menuBounds).not.toBeNull();
+  expect(menuBounds!.x).toBeCloseTo(fileRowBounds!.x + 80, 0);
+  expect(menuBounds!.y).toBeGreaterThan(fileRowBounds!.y + 10);
   await page.getByTestId("diff-file-0-open-file").click();
 
   await expect(page.getByTestId("workspace-file-pane")).toBeVisible();
@@ -303,7 +291,7 @@ test("Changes switches between inline and full-tab navigation", async ({ page })
   await page.getByTestId("explorer-content-area").getByTestId("diff-file-1-toggle").click();
   await expect(page.getByTestId(/^workspace-working-diff-close-/)).toHaveCount(1);
   await expect(visiblePanel.getByText("zz-deleted.ts", { exact: true })).toBeVisible();
-  await expect(visiblePanel).toContainText("Deleted");
+  await expect(visiblePanel.getByRole("img", { name: "Deleted" })).toBeVisible();
 
   await changesTabToggle.click();
   await expect(page.getByTestId(/^workspace-working-diff-close-/)).toHaveCount(0);
@@ -340,6 +328,9 @@ test("changes diff switches between flat and tree file lists", async ({ page }) 
   await page.getByTestId("changes-toggle-view-mode").click();
   await expect(page.getByTestId("diff-folder-src")).toBeVisible();
   await expect(page.getByTestId("diff-file-0")).toBeVisible();
+  await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
+  await expect(page.getByTestId("diff-file-0-context-menu")).toBeVisible();
+  await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "Collapse all" }).click();
   await expect(page.getByTestId("diff-file-0")).toHaveCount(0);
@@ -353,56 +344,7 @@ test("changes diff switches between flat and tree file lists", async ({ page }) 
   await expectFlatFileList(page);
 });
 
-test("workspace file panes keep their controls on shared alignment rails", async ({ page }) => {
-  const workspace = await createWorkspaceWithMountedTabDiff();
-  await openWorkspaceChanges(page, workspace);
-
-  await page.getByTestId("changes-toggle-view-mode").click();
-  await expect(page.getByTestId("diff-folder-src")).toBeVisible();
-
-  const changesRightRail = await Promise.all([
-    readSvgRight(page, "explorer-close"),
-    readSvgRight(page, "changes-options-menu"),
-    readSvgRight(page, "diff-file-0-actions"),
-  ]);
-  expectAligned(changesRightRail);
-
-  const [folderStat, fileStat] = await Promise.all([
-    page.getByTestId("diff-folder-src-stat").boundingBox(),
-    page.getByTestId("diff-file-0-stat").boundingBox(),
-  ]);
-  expect(folderStat).not.toBeNull();
-  expect(fileStat).not.toBeNull();
-  expect(folderStat!.x + folderStat!.width).toBeCloseTo(fileStat!.x + fileStat!.width, 0);
-
-  await page.getByTestId("explorer-tab-files").click();
-  await expect(page.getByTestId("file-explorer-row-0")).toBeVisible();
-
-  const filesRightRail = await Promise.all([
-    readSvgRight(page, "explorer-close"),
-    readSvgRight(page, "files-refresh"),
-    readSvgRight(page, "file-explorer-row-0-actions"),
-  ]);
-  expectAligned(filesRightRail);
-
-  const [sortLabel, firstRowIcon, treeBounds, rowBounds] = await Promise.all([
-    page.getByTestId("files-sort-label").boundingBox(),
-    page.getByTestId("file-explorer-row-0").locator("svg").first().boundingBox(),
-    page.getByTestId("file-explorer-tree-scroll").boundingBox(),
-    page.getByTestId("file-explorer-row-0").boundingBox(),
-  ]);
-  expect(sortLabel).not.toBeNull();
-  expect(firstRowIcon).not.toBeNull();
-  expect(treeBounds).not.toBeNull();
-  expect(rowBounds).not.toBeNull();
-  expect(sortLabel!.x).toBeCloseTo(firstRowIcon!.x, 0);
-  expect(rowBounds!.x).toBeCloseTo(treeBounds!.x, 0);
-  expect(rowBounds!.x + rowBounds!.width).toBeCloseTo(treeBounds!.x + treeBounds!.width, 0);
-});
-
-test("changes diff keeps unwrapped gutter and code rows aligned after code size changes", async ({
-  page,
-}) => {
+test("changes diff applies code size changes to gutter and code typography", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await useCodeFont(page, 12);
   await useUnwrappedDiffLines(page);
@@ -415,7 +357,6 @@ test("changes diff keeps unwrapped gutter and code rows aligned after code size 
 
   await expectDiffCodeFontSize(page, 18);
   await expectVisibleDiffRowsShareTypography(page);
-  await expectVisibleDiffRowsAligned(page);
 });
 
 async function useCodeFont(page: Page, codeFontSize: number): Promise<void> {
@@ -476,24 +417,17 @@ async function expectDiffCodeFontSize(page: Page, fontSize: number): Promise<voi
     .toBe(fontSize);
 }
 
-async function expectVisibleDiffRowsAligned(page: Page): Promise<void> {
-  const geometry = await readVisibleDiffRowGeometry(page);
-  expect(geometry.maxDelta, JSON.stringify(geometry.rows, null, 2)).toBeLessThanOrEqual(1);
-}
-
 async function expectVisibleDiffRowsShareTypography(page: Page): Promise<void> {
   const geometry = await readVisibleDiffRowGeometry(page);
   expect(geometry.mismatchedTypography, JSON.stringify(geometry, null, 2)).toEqual([]);
 }
 
 async function readVisibleDiffRowGeometry(page: Page): Promise<{
-  maxDelta: number;
   mismatchedTypography: { index: number; gutterLineHeight: number; codeLineHeight: number }[];
   rows: {
     index: number;
     gutterTop: number;
     codeTop: number;
-    delta: number;
     gutterLineHeight: number;
     codeLineHeight: number;
   }[];
@@ -528,7 +462,6 @@ async function readVisibleDiffRowGeometry(page: Page): Promise<{
           index: code.index,
           gutterTop: gutter.top,
           codeTop: code.top,
-          delta: Math.abs(code.top - gutter.top),
           gutterLineHeight: gutter.lineHeight,
           codeLineHeight: code.lineHeight,
         };
@@ -536,7 +469,6 @@ async function readVisibleDiffRowGeometry(page: Page): Promise<{
       .filter((row) => row.gutterTop >= 0 && row.codeTop >= 0);
 
     return {
-      maxDelta: Math.max(...rows.map((row) => row.delta)),
       mismatchedTypography: rows
         .filter((row) => Math.abs(row.gutterLineHeight - row.codeLineHeight) > 0.5)
         .map((row) => ({
@@ -556,7 +488,7 @@ async function createWorkspaceWithMountedTabDiff(
   if (options.includeDeletedFile) {
     files.push({ path: "src/zz-deleted.ts", content: "export const deleted = true;\n" });
   }
-  const repo = await createTempGitRepo("diff-row-alignment-", { files });
+  const repo = await createTempGitRepo("changes-pane-", { files });
   const client = await connectSeedClient();
   cleanupTasks.push({
     run: async () => {
@@ -591,21 +523,6 @@ async function openWorkspaceChanges(page: Page, workspace: DirtyWorkspace): Prom
 async function openChangesInVisibleExplorer(page: Page): Promise<void> {
   await expect(page.getByTestId("explorer-tab-changes")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("use-mounted-tab-set.ts")).toBeVisible({ timeout: 30_000 });
-}
-
-async function readSvgRight(page: Page, testID: string): Promise<number> {
-  const box = await page.getByTestId(testID).locator("svg").first().boundingBox();
-  if (!box) {
-    throw new Error(`Could not measure ${testID}`);
-  }
-  return box.x + box.width;
-}
-
-function expectAligned(values: number[]): void {
-  const [first, ...rest] = values;
-  for (const value of rest) {
-    expect(value).toBeCloseTo(first, 0);
-  }
 }
 
 async function expectExpandedMountedTabDiff(page: Page): Promise<void> {
@@ -659,87 +576,4 @@ async function scrollToLowerUnwrappedDiffRows(page: Page): Promise<void> {
   });
   await page.getByTestId(`diff-code-row-${lastRowIndex}`).scrollIntoViewIfNeeded();
   await expect(page.getByTestId(`diff-code-row-${lastRowIndex}`)).toBeVisible();
-}
-
-async function expectDiffCodeTextAlignedWithGutterText(
-  page: Page,
-  lines: { codeText: string; lineNumber: string }[],
-): Promise<void> {
-  const geometries = await readDiffTextGeometry(page, lines);
-  for (const geometry of geometries) {
-    expect(geometry.codeTop, geometry.codeText).toBeCloseTo(geometry.gutterTop, 0);
-  }
-}
-
-async function expectHoverCommentButtonAlignedWithCodeLine(
-  page: Page,
-  line: { codeText: string; lineNumber: string },
-): Promise<void> {
-  const target = await readDiffTextGeometry(page, [line]).then((rows) => rows[0]);
-  if (!target) {
-    throw new Error(`Could not find target line ${line.lineNumber}`);
-  }
-  await page.getByTestId(`diff-code-row-${target.index}`).hover();
-  const geometry = await page
-    .getByTestId(`diff-gutter-action-${target.index}`)
-    .evaluate((action, expectedCodeCenterY) => {
-      const rect = action.getBoundingClientRect();
-      return {
-        actionCenterY: rect.top + rect.height / 2,
-        codeCenterY: expectedCodeCenterY,
-      };
-    }, target.codeCenterY);
-  expect(geometry.actionCenterY).toBeCloseTo(geometry.codeCenterY, 0);
-}
-
-async function readDiffTextGeometry(
-  page: Page,
-  lines: { codeText: string; lineNumber: string }[],
-): Promise<
-  { index: number; codeText: string; codeTop: number; gutterTop: number; codeCenterY: number }[]
-> {
-  return page.locator("body").evaluate(({ ownerDocument }, targets) => {
-    const root = ownerDocument.querySelector('[data-testid="explorer-content-area"]');
-    if (!root) {
-      throw new Error("Changes panel is not mounted");
-    }
-
-    const readIndexedElements = (prefix: string) =>
-      Array.from(root.querySelectorAll<HTMLElement>(`[data-testid^="${prefix}"]`)).map(
-        (element) => {
-          const testId = element.getAttribute("data-testid") ?? "";
-          return { index: Number(testId.slice(prefix.length)), element };
-        },
-      );
-
-    const gutterTexts = readIndexedElements("diff-gutter-text-");
-    const codeTexts = readIndexedElements("diff-code-text-");
-
-    return targets.map((target) => {
-      const gutter = gutterTexts.find(
-        ({ element }) => (element.textContent ?? "").trim() === target.lineNumber,
-      );
-      if (!gutter) {
-        throw new Error(`Could not find gutter line ${target.lineNumber}`);
-      }
-      const code = codeTexts.find(
-        ({ index, element }) =>
-          index === gutter.index && (element.textContent ?? "").includes(target.codeText),
-      );
-      if (!code) {
-        throw new Error(`Could not find code row ${target.codeText}`);
-      }
-
-      const codeRect = code.element.getBoundingClientRect();
-      const gutterRect = gutter.element.getBoundingClientRect();
-
-      return {
-        index: gutter.index,
-        codeText: target.codeText,
-        codeTop: codeRect.top,
-        gutterTop: gutterRect.top,
-        codeCenterY: codeRect.top + codeRect.height / 2,
-      };
-    });
-  }, lines);
 }

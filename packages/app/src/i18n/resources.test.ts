@@ -159,6 +159,10 @@ describe("translation resources", () => {
     expect(zhCN.settings.providers.models.many).toBe("{{count}} 个 Model");
   });
 
+  it("labels the immediate add-to-chat action without an ellipsis", () => {
+    expect(en.workspace.fileActions.addToChat).toBe("Add to chat");
+  });
+
   it("keeps local connection fallback errors translated", () => {
     expect(findUntranslatedConnectionErrors()).toEqual([]);
   });

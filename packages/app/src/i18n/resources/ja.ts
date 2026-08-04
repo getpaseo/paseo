@@ -388,7 +388,7 @@ export const ja: TranslationResources = {
       openFile: "ファイルを開く",
       copyPath: "パスをコピー",
       download: "ダウンロード",
-      addToChat: "チャットに追加…",
+      addToChat: "チャットに追加",
       moreActions: "その他のアクション",
     },
     fileExplorer: {
@@ -846,6 +846,14 @@ export const ja: TranslationResources = {
           viewPullRequest: "表示",
           openOn: "{{brand}}で開く",
         },
+        checksSummary: {
+          passedLabel: "成功",
+          failedLabel: "失敗",
+          runningLabel: "実行中",
+          passedAccessible: "チェック成功",
+          failedAccessible: "チェック失敗",
+          runningAccessible: "チェック実行中",
+        },
         sections: {
           checks: "チェック",
           pipeline: "パイプライン",
@@ -893,6 +901,33 @@ export const ja: TranslationResources = {
     },
   },
   sidebar: {
+    display: {
+      trigger: "表示設定",
+      heading: "表示",
+      grouping: {
+        label: "グループ化",
+        project: "プロジェクト",
+        status: "ステータス",
+      },
+      titleSource: {
+        label: "タイトル",
+        title: "タイトル",
+        branch: "ブランチ名",
+      },
+      show: {
+        label: "表示項目",
+        host: "ホスト",
+        changeRequest: "プルリクエスト",
+        checks: "チェック",
+        scripts: "スクリプト",
+        diff: "差分統計",
+        timestamp: "最終アクティビティ",
+      },
+      hostFilter: {
+        label: "ホスト",
+        all: "すべてのホスト",
+      },
+    },
     pinned: {
       title: "固定済み",
     },

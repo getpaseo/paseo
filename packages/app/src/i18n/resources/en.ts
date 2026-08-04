@@ -383,7 +383,7 @@ export const en = {
       openFile: "Open file",
       copyPath: "Copy path",
       download: "Download",
-      addToChat: "Add to chat…",
+      addToChat: "Add to chat",
       moreActions: "More actions",
     },
     fileExplorer: {
@@ -845,6 +845,14 @@ export const en = {
           viewPullRequest: "View",
           openOn: "Open on {{brand}}",
         },
+        checksSummary: {
+          passedLabel: "passed",
+          failedLabel: "failed",
+          runningLabel: "running",
+          passedAccessible: "Checks passed",
+          failedAccessible: "Checks failed",
+          runningAccessible: "Checks running",
+        },
         sections: {
           checks: "Checks",
           pipeline: "Pipeline",
@@ -892,6 +900,33 @@ export const en = {
     },
   },
   sidebar: {
+    display: {
+      trigger: "Display preferences",
+      heading: "Display",
+      grouping: {
+        label: "Grouping",
+        project: "Project",
+        status: "Status",
+      },
+      titleSource: {
+        label: "Title",
+        title: "Title",
+        branch: "Branch name",
+      },
+      show: {
+        label: "Show",
+        host: "Host",
+        changeRequest: "Pull request",
+        checks: "Checks",
+        scripts: "Scripts",
+        diff: "Diff stats",
+        timestamp: "Last activity",
+      },
+      hostFilter: {
+        label: "Host",
+        all: "All hosts",
+      },
+    },
     pinned: {
       title: "Pinned",
     },

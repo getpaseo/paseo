@@ -56,6 +56,7 @@ import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/su
 import { encodeImages } from "@/utils/encode-images";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
 import { ReplicaCache } from "@/runtime/replica-cache";
+import { nativePerformanceTrace } from "@/performance/native-trace";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
 export type HostRegistryStatus = "loading" | "ready";
@@ -483,6 +484,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         appVersion: resolveAppVersion() ?? undefined,
         runtimeGeneration,
         capabilities: appCapabilities,
+        trace: nativePerformanceTrace,
       };
       if (connection.type === "directSocket" || connection.type === "directPipe") {
         return new DaemonClient({
@@ -521,6 +523,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         ...(host.serverId ? { serverId: host.serverId } : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         capabilities: appCapabilities,
+        trace: nativePerformanceTrace,
       }),
     getClientId: () => getOrCreateClientId(),
     mountClientHandlers: ({ client, host }) => {
@@ -1341,7 +1344,6 @@ interface AgentDirectoryRefreshInput {
 export class HostRuntimeStore {
   private controllers = new Map<string, HostRuntimeController>();
   private serverListeners = new Map<string, Set<() => void>>();
-  private agentStoppedRunningListeners = new Map<string, Set<(agentId: string) => void>>();
   private globalListeners = new Set<() => void>();
   private hostListListeners = new Set<() => void>();
   private version = 0;
@@ -1589,12 +1591,11 @@ export class HostRuntimeStore {
     rekeyMap(this.controllers, oldServerId, newServerId);
     rekeyMap(this.lastConnectionStatusByServer, oldServerId, newServerId);
     rekeyMap(this.directoryBootstrapInFlight, oldServerId, newServerId);
-    rekeyMap(this.agentStoppedRunningListeners, oldServerId, newServerId);
     this.replicaCache.reconcileServerId(oldServerId, newServerId);
     this.directorySyncByServer.get(oldServerId)?.dispose();
     this.directorySyncByServer.delete(oldServerId);
     const directory = new DirectorySync(newServerId, {
-      onAgentStoppedRunning: (agentId) => this.onAgentStoppedRunning(newServerId, agentId),
+      onAgentStoppedRunning: (agentId) => this.drainQueuedAgentMessage(newServerId, agentId),
       markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
       markAgentReady: () => controller.markAgentDirectorySyncReady(),
       markAgentError: (error) => controller.markAgentDirectorySyncError(error),
@@ -1977,7 +1978,7 @@ export class HostRuntimeStore {
       this.directorySyncByServer.set(
         host.serverId,
         new DirectorySync(host.serverId, {
-          onAgentStoppedRunning: (agentId) => this.onAgentStoppedRunning(host.serverId, agentId),
+          onAgentStoppedRunning: (agentId) => this.drainQueuedAgentMessage(host.serverId, agentId),
           markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
           markAgentReady: () => controller.markAgentDirectorySyncReady(),
           markAgentError: (error) => controller.markAgentDirectorySyncError(error),
@@ -2176,18 +2177,6 @@ export class HostRuntimeStore {
     };
   }
 
-  subscribeAgentStoppedRunning(serverId: string, listener: (agentId: string) => void): () => void {
-    const listeners = this.agentStoppedRunningListeners.get(serverId) ?? new Set();
-    listeners.add(listener);
-    this.agentStoppedRunningListeners.set(serverId, listeners);
-    return () => {
-      const current = this.agentStoppedRunningListeners.get(serverId);
-      if (!current) return;
-      current.delete(listener);
-      if (current.size === 0) this.agentStoppedRunningListeners.delete(serverId);
-    };
-  }
-
   subscribeAll(listener: () => void): () => void {
     this.globalListeners.add(listener);
     return () => {
@@ -2294,13 +2283,6 @@ export class HostRuntimeStore {
     }
     for (const listener of this.globalListeners) {
       listener();
-    }
-  }
-
-  private onAgentStoppedRunning(serverId: string, agentId: string): void {
-    this.drainQueuedAgentMessage(serverId, agentId);
-    for (const listener of this.agentStoppedRunningListeners.get(serverId) ?? []) {
-      listener(agentId);
     }
   }
 }

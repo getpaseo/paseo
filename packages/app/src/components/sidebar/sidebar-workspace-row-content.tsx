@@ -1,44 +1,44 @@
-import { memo, useCallback, useId, useMemo, useState, type ReactNode } from "react";
-import { useTranslation } from "react-i18next";
-import {
-  Pressable,
-  Text,
-  View,
-  type GestureResponderEvent,
-  type PressableStateCallbackType,
-  type ViewStyle,
-} from "react-native";
+import { memo, useId, useMemo, useCallback, useState, type ReactNode } from "react";
+import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
-import {
-  CircleAlert,
-  Folder,
-  FolderGit2,
-  GitPullRequest,
-  Globe,
-  Monitor,
-  SquareTerminal,
-} from "lucide-react-native";
-import { HostBadge } from "@/components/sidebar/host-badge";
+import { CircleAlert, Folder, FolderGit2, Monitor } from "lucide-react-native";
 import { ProjectStatusIndicator } from "@/components/sidebar/project-leading-visual";
+import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import { PulsingStatusDot } from "@/components/sidebar/pulsing-status-dot";
+import {
+  WorkspaceMetaRow,
+  type WorkspaceScriptSummary,
+} from "@/components/sidebar/workspace-meta-row";
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
+import {
+  hasSidebarWorkspaceTrailing,
+  type SidebarWorkspaceTrailing,
+} from "@/components/sidebar/workspace-trailing";
 import { useAppSettings } from "@/hooks/use-settings";
 import type { Theme } from "@/styles/theme";
-import type { PrHint } from "@/git/use-pr-status-query";
-import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { getStatusDotColor, isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
-import { openExternalUrl } from "@/utils/open-external-url";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
 
 // The scrim spans more than the kebab so the fade starts left of the diff stat. Solid from
 // SCRIM_SOLID_OFFSET rightward, which keeps the kebab itself off the gradient entirely.
 const SCRIM_WIDTH = 48;
 const SCRIM_SOLID_OFFSET = "55%";
+
+/**
+ * How far a workspace row sits inside the status header above it. Only status grouping
+ * indents: a project row carries an icon and its workspaces line up under it already, but a
+ * status header is just a label, so its rows need the offset to read as belonging to it.
+ *
+ * It is row padding rather than a margin on the list, because the row's hover and selected
+ * backgrounds have to keep spanning the group's full width. Indenting the container instead
+ * pulls the highlight in with the content and the row stops lining up with its header.
+ */
+const WORKSPACE_ROW_INDENT = 12;
 
 const DEFAULT_STATUS_DOT_SIZE = 7;
 const EMPHASIZED_STATUS_DOT_SIZE = 9;
@@ -47,18 +47,11 @@ const EMPHASIZED_STATUS_DOT_OFFSET = -1;
 
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const amberColorMapping = (theme: Theme) => ({ color: theme.colors.palette.amber[500] });
-const blueColorMapping = (theme: Theme) => ({ color: theme.colors.palette.blue[500] });
-const greenColorMapping = (theme: Theme) => ({ color: theme.colors.palette.green[500] });
-const redColorMapping = (theme: Theme) => ({ color: theme.colors.palette.red[500] });
-const purpleColorMapping = (theme: Theme) => ({ color: theme.colors.palette.purple[500] });
 
-const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedMonitor = withUnistyles(Monitor);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedFolderGit2 = withUnistyles(FolderGit2);
-const ThemedGlobe = withUnistyles(Globe);
-const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 
 /**
  * react-native-svg's extractGradient reads stopColor off the child elements structurally,
@@ -86,18 +79,6 @@ function TrailingActionScrimSvg({ gradientId, color }: { gradientId: string; col
 const ThemedTrailingActionScrimSvg = withUnistyles(TrailingActionScrimSvg);
 
 const scrimColorMapping = (theme: Theme) => ({ color: theme.colors.surfaceSidebarHover });
-
-function pullRequestIconStyle({
-  hovered,
-  pressed,
-}: PressableStateCallbackType & { hovered?: boolean }) {
-  return [
-    pullRequestIconStyles.pressable,
-    (Boolean(hovered) || pressed) && pullRequestIconStyles.pressableActive,
-  ];
-}
-
-type SidebarWorkspaceScriptIconKind = "service" | "command";
 
 export function SidebarWorkspaceRowFrame({
   workspace,
@@ -150,7 +131,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   hostBadge,
   leadingProjectName = null,
   leadingProjectIconDataUri = null,
-  scriptIconKind = null,
+  scriptSummary = null,
+  backdrop,
   isHovered,
   isLoading,
   isCreating = false,
@@ -164,7 +146,9 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   /** Hoisted rows use their project icon as the leading visual because no project row contains them. */
   leadingProjectName?: string | null;
   leadingProjectIconDataUri?: string | null;
-  scriptIconKind?: SidebarWorkspaceScriptIconKind | null;
+  scriptSummary?: WorkspaceScriptSummary | null;
+  /** The row's current background, so the project status badge can knock out of it. */
+  backdrop: SurfaceBackdrop;
   isHovered: boolean;
   isLoading: boolean;
   isCreating?: boolean;
@@ -178,17 +162,13 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     settings: { workspaceTitleSource },
   } = useAppSettings();
   const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
-  const hasTitleAccessory = Boolean(scriptIconKind || workspace.prHint || hostBadge);
   const workspaceBranchTextStyle = useMemo(
     () => [
       styles.workspaceBranchText,
-      hasTitleAccessory
-        ? styles.workspaceBranchTextWithAccessory
-        : styles.workspaceBranchTextFlexible,
       isHovered && styles.workspaceBranchTextHovered,
       isCreating && styles.workspaceBranchTextCreating,
     ],
-    [hasTitleAccessory, isHovered, isCreating],
+    [isHovered, isCreating],
   );
 
   return (
@@ -200,6 +180,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             displayName={leadingProjectName}
             projectViewKey={workspace.projectViewKey}
             statusBucket={workspace.statusBucket}
+            backdrop={backdrop}
             loading={isLoading}
             testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
           />
@@ -213,23 +194,16 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
         )}
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
-            <View style={styles.workspaceTitleLeft}>
-              {workspace.prHint ? <PullRequestIcon hint={workspace.prHint} /> : null}
-              {hostBadge ? (
-                <HostBadge
-                  serverId={hostBadge.serverId}
-                  label={hostBadge.label}
-                  color={hostBadge.color}
-                  showLabel={hostBadge.showLabel}
-                />
-              ) : null}
-              <Text style={workspaceBranchTextStyle} numberOfLines={1}>
-                {workspaceLabel}
-              </Text>
-              {scriptIconKind ? <WorkspaceScriptIcon kind={scriptIconKind} /> : null}
-            </View>
+            <Text style={workspaceBranchTextStyle} numberOfLines={1}>
+              {workspaceLabel}
+            </Text>
             <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
           </View>
+          <WorkspaceMetaRow
+            hostBadge={hostBadge ?? null}
+            prHint={workspace.prHint}
+            scriptSummary={scriptSummary}
+          />
         </View>
       </View>
       {showShortcutBadge && shortcutNumber !== null ? (
@@ -240,22 +214,6 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     </View>
   );
 });
-
-function WorkspaceScriptIcon({ kind }: { kind: SidebarWorkspaceScriptIconKind }) {
-  return (
-    <View
-      style={styles.workspaceTitleAccessory}
-      accessibilityLabel="Scripts available"
-      testID={kind === "service" ? "workspace-globe-icon" : "workspace-terminal-icon"}
-    >
-      {kind === "service" ? (
-        <ThemedGlobe size={12} uniProps={blueColorMapping} />
-      ) : (
-        <ThemedSquareTerminal size={12} uniProps={blueColorMapping} />
-      )}
-    </View>
-  );
-}
 
 function WorkspaceStatusIndicator({
   bucket,
@@ -368,47 +326,6 @@ function StatusDotOverlay({
   return <View style={overlayStyle} />;
 }
 
-function PullRequestIcon({ hint }: { hint: PrHint }) {
-  const { t } = useTranslation();
-  const handlePress = useCallback(
-    (event: GestureResponderEvent) => {
-      event.stopPropagation();
-      void openExternalUrl(hint.url);
-    },
-    [hint.url],
-  );
-  const presentation = getForgePresentation(normalizeForge(hint.forge));
-
-  const handlePressIn = useCallback((event: GestureResponderEvent) => event.stopPropagation(), []);
-
-  return (
-    <Pressable
-      accessibilityRole="link"
-      accessibilityLabel={t("workspace.git.pr.accessibility.pullRequest", {
-        number: hint.number,
-        context: presentation.changeRequestContext,
-      })}
-      hitSlop={4}
-      onPressIn={handlePressIn}
-      onPress={handlePress}
-      style={pullRequestIconStyle}
-    >
-      <ThemedGitPullRequest size={12} uniProps={getPrIconUniMapping(hint.state)} />
-    </Pressable>
-  );
-}
-
-function getPrIconUniMapping(state: PrHint["state"]) {
-  switch (state) {
-    case "merged":
-      return purpleColorMapping;
-    case "open":
-      return greenColorMapping;
-    case "closed":
-      return redColorMapping;
-  }
-}
-
 function getStatusDotColorStyle(bucket: SidebarStateBucket) {
   switch (bucket) {
     case "needs_input":
@@ -424,19 +341,12 @@ function getStatusDotColorStyle(bucket: SidebarStateBucket) {
   }
 }
 
-const pullRequestIconStyles = StyleSheet.create(() => ({
-  pressable: {
-    height: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  pressableActive: {
-    opacity: 0.82,
-  },
-}));
-
 export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
+  // Layered over the row's own padding rather than replacing it, so the indent stays one
+  // number here instead of being baked into a row style.
+  rowIndented: {
+    paddingLeft: theme.spacing[2] + WORKSPACE_ROW_INDENT,
+  },
   rowRight: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -462,7 +372,16 @@ export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
     lineHeight: 14,
   },
   hidden: { opacity: 0 },
+  // Stays position:relative at zero width so the absolutely-positioned kebab keeps
+  // anchoring to the same right edge whether or not the slot holds anything.
   trailingActionSlot: {
+    position: "relative",
+    minHeight: 20,
+    flexShrink: 0,
+    alignItems: "flex-end",
+    justifyContent: "flex-start",
+  },
+  trailingActionSlotReserved: {
     position: "relative",
     minWidth: 18,
     minHeight: 20,
@@ -498,30 +417,68 @@ export function SidebarWorkspaceShortcutBadge({ number }: { number: number }) {
  * into each of them and immediately drifted — one call site kept hiding the diff after the
  * others stopped.
  *
- * The diff survives the kebab on hover and fades under the scrim instead of blinking out.
- * Touch has no hover, so its permanent kebab still hides the diff outright rather than
- * scrimming an unhovered row whose background doesn't match the gradient.
+ * The trailing content survives the kebab on hover and fades under the scrim instead of
+ * blinking out. Touch has no hover, so its permanent kebab still hides the content outright
+ * rather than scrimming an unhovered row whose background doesn't match the gradient.
  */
 export function resolveTrailingActionVisibility({
-  hasDiffStat,
+  workspace,
+  trailing,
   hasArchiveAction,
   isHovered,
   isTouchPlatform,
   showShortcut,
 }: {
-  hasDiffStat: boolean;
+  workspace: SidebarWorkspaceEntry;
+  trailing: SidebarWorkspaceTrailing;
   hasArchiveAction: boolean;
   isHovered: boolean;
   isTouchPlatform: boolean;
   showShortcut: boolean;
-}): { showDiffStat: boolean; showKebab: boolean; showScrim: boolean } {
+}): {
+  showTrailing: boolean;
+  showKebab: boolean;
+  showScrim: boolean;
+  renderSlot: boolean;
+  reserveSlotWidth: boolean;
+} {
+  const hasTrailing = hasSidebarWorkspaceTrailing({ workspace, trailing });
   const showKebab = Boolean(hasArchiveAction && (isHovered || isTouchPlatform)) && !showShortcut;
-  const showDiffStat = hasDiffStat && !showShortcut && (isHovered || !showKebab);
-  return { showDiffStat, showKebab, showScrim: showDiffStat && showKebab };
+  const showTrailing = hasTrailing && !showShortcut && (isHovered || !showKebab);
+  return {
+    showTrailing,
+    showKebab,
+    // The scrim paints the row's own hover background, so it can only be drawn on a hovered
+    // row — over an unhovered one the gradient fades to the wrong color. That is also why
+    // touch, which shows the kebab without ever hovering, never gets one.
+    showScrim: showKebab && isHovered,
+    renderSlot: hasArchiveAction || hasTrailing,
+    // The slot only holds width for something that permanently sits in it. Trailing content
+    // does; the kebab only does on touch, where there is no hover for it to appear on and so
+    // no scrim to let it overlay the title. Everywhere else the width goes back to the title
+    // and the kebab fades in over its tail.
+    reserveSlotWidth: hasTrailing || (hasArchiveAction && isTouchPlatform),
+  };
 }
 
-export function SidebarWorkspaceTrailingActionSlot({ children }: { children: ReactNode }) {
-  return <View style={sidebarWorkspaceRowStyles.trailingActionSlot}>{children}</View>;
+export function SidebarWorkspaceTrailingActionSlot({
+  reserveWidth,
+  children,
+}: {
+  reserveWidth: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <View
+      style={
+        reserveWidth
+          ? sidebarWorkspaceRowStyles.trailingActionSlotReserved
+          : sidebarWorkspaceRowStyles.trailingActionSlot
+      }
+    >
+      {children}
+    </View>
+  );
 }
 
 export function SidebarWorkspaceTrailingActionBase({
@@ -595,13 +552,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     gap: theme.spacing[2],
   },
-  workspaceTitleLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    flex: 1,
-    minWidth: 0,
-  },
   shortcutBadgeOverlay: {
     position: "absolute",
     top: 1,
@@ -640,25 +590,16 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.foregroundExtraMuted,
     opacity: 0.3,
   },
+  // The title owns the first line outright now that the host, change request and CI moved
+  // to the meta row, so it takes the full width the trailing slot leaves behind.
   workspaceBranchText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: "400",
     lineHeight: 20,
     opacity: 0.76,
-    minWidth: 0,
-  },
-  workspaceBranchTextFlexible: {
     flex: 1,
-  },
-  workspaceBranchTextWithAccessory: {
-    flexShrink: 1,
-  },
-  workspaceTitleAccessory: {
-    height: 20,
-    flexShrink: 0,
-    alignItems: "center",
-    justifyContent: "center",
+    minWidth: 0,
   },
   workspaceBranchTextCreating: {
     opacity: 0.92,
