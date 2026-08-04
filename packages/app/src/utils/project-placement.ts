@@ -6,9 +6,16 @@ function normalizeWorkingDirectory(cwd: string): string {
   return trimmed.length > 0 ? trimmed : ".";
 }
 
-export function deriveProjectPlacementFromCwd(cwd: string): ProjectPlacementPayload {
+/**
+ * Stand-in placement for agents the daemon sent without one. `worktreesRoot` is
+ * `server_info.worktreesRoot`; without it a worktree cwd cannot be told from a checkout.
+ */
+export function deriveProjectPlacementFromCwd(
+  cwd: string,
+  worktreesRoot?: string | null,
+): ProjectPlacementPayload {
   const normalizedCwd = normalizeWorkingDirectory(cwd);
-  const projectKey = deriveProjectKey(normalizedCwd);
+  const projectKey = deriveProjectKey(normalizedCwd, worktreesRoot);
 
   return {
     projectKey,
@@ -29,6 +36,7 @@ export function deriveProjectPlacementFromCwd(cwd: string): ProjectPlacementPayl
 export function resolveProjectPlacement(input: {
   projectPlacement: ProjectPlacementPayload | null | undefined;
   cwd: string;
+  worktreesRoot?: string | null;
 }): ProjectPlacementPayload {
-  return input.projectPlacement ?? deriveProjectPlacementFromCwd(input.cwd);
+  return input.projectPlacement ?? deriveProjectPlacementFromCwd(input.cwd, input.worktreesRoot);
 }

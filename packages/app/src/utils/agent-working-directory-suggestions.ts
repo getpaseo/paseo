@@ -1,13 +1,23 @@
+import { isPaseoWorktreePath } from "@/utils/paseo-worktree-path";
+
 export interface AgentWorkingDirectorySource {
   cwd?: string | null;
   createdAt?: Date | null;
   lastActivityAt?: Date | null;
 }
 
-const PASEO_WORKTREE_PATH_PATTERN = /(^|\/)\.paseo\/worktrees(\/|$)/;
+export interface AgentWorkingDirectorySuggestionOptions {
+  /** The daemon's resolved worktrees base root (`server_info.worktreesRoot`). */
+  worktreesRoot?: string | null;
+}
 
+/**
+ * Recently used working directories, most recent first. Paseo-managed worktrees are left
+ * out — they are created per agent, so offering one back is never what the user wants.
+ */
 export function collectAgentWorkingDirectorySuggestions(
   sources: Iterable<AgentWorkingDirectorySource>,
+  options?: AgentWorkingDirectorySuggestionOptions,
 ): string[] {
   const lastSeenByPath = new Map<string, number>();
 
@@ -16,7 +26,7 @@ export function collectAgentWorkingDirectorySuggestions(
     if (!cwd) {
       continue;
     }
-    if (isPaseoOwnedWorktreePath(cwd)) {
+    if (isPaseoWorktreePath(cwd, options?.worktreesRoot)) {
       continue;
     }
 
@@ -36,10 +46,6 @@ export function collectAgentWorkingDirectorySuggestions(
       return left[0].localeCompare(right[0]);
     })
     .map(([cwd]) => cwd);
-}
-
-function isPaseoOwnedWorktreePath(cwd: string): boolean {
-  return PASEO_WORKTREE_PATH_PATTERN.test(cwd.replace(/\\/g, "/"));
 }
 
 function toEpochMs(date: Date | null | undefined): number {

@@ -172,6 +172,7 @@ describe("buildLegacyDaemonWorkspaceSnapshot", () => {
       serverId: SERVER_ID,
       hostname: null,
       version: "0.1.96",
+      worktreesRoot: null,
     });
     store.setWorkspaces(SERVER_ID, snapshot.workspaces);
     store.setAgents(SERVER_ID, snapshot.agents);

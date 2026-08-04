@@ -82,8 +82,11 @@ export class AgentStoreProjection {
       ...normalized,
       workspaceId: normalized.workspaceId ?? legacyWorkspaceId,
       projectPlacement:
-        resolveProjectPlacement({ projectPlacement: delta.project, cwd: normalized.cwd }) ??
-        previous?.projectPlacement,
+        resolveProjectPlacement({
+          projectPlacement: delta.project,
+          cwd: normalized.cwd,
+          worktreesRoot: session?.serverInfo?.worktreesRoot,
+        }) ?? previous?.projectPlacement,
     });
     if (accepted.archivedAt) {
       clearArchiveAgentPending({ queryClient, serverId: this.serverId, agentId: accepted.id });

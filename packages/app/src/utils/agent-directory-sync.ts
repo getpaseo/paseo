@@ -1,5 +1,5 @@
 import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
-import type { Agent } from "@/stores/session-store";
+import { type Agent, useSessionStore } from "@/stores/session-store";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { resolveProjectPlacement } from "@/utils/project-placement";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
@@ -25,12 +25,15 @@ export function buildAgentDirectoryState(input: {
 } {
   const agents = new Map<string, Agent>();
   const pendingPermissions = new Map<string, PendingPermissionEntry>();
+  const worktreesRoot =
+    useSessionStore.getState().sessions[input.serverId]?.serverInfo?.worktreesRoot;
 
   for (const entry of input.entries) {
     const normalized = normalizeAgentSnapshot(entry.agent, input.serverId);
     const projectPlacement = resolveProjectPlacement({
       projectPlacement: entry.project,
       cwd: normalized.cwd,
+      worktreesRoot,
     });
     const agent: Agent = {
       ...normalized,
