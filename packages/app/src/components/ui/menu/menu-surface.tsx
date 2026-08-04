@@ -14,15 +14,18 @@ import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { BottomSheetBackdrop, BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { ChevronLeft } from "lucide-react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   IsolatedBottomSheetModal,
   useIsolatedBottomSheetVisibility,
   type ContextBridge,
 } from "@/components/ui/isolated-bottom-sheet-modal";
-import type { Theme } from "@/styles/theme";
-import { useMenuContext, MenuContextProvider, MenuDepthProvider } from "./menu-context";
+import { SPACING, type Theme } from "@/styles/theme";
+import { useMenuContext, MenuContextProvider } from "./menu-context";
+import { MenuPage } from "./menu-item";
 import { currentPageId, isSubPageOpen } from "./menu-navigation";
 import { AnchoredSurface, MenuOverlay } from "./menu-overlay";
+import { getMenuSheetBottomPadding } from "./menu-sheet-layout";
 import type { Alignment, Placement } from "./menu-anchor";
 
 const ThemedChevronLeft = withUnistyles(ChevronLeft);
@@ -205,7 +208,7 @@ function MenuPopoverSurface({
 
   return (
     <MenuSurfaceContext.Provider value={surfaceValue}>
-      <MenuOverlay visible={menu.open} onClose={handleClose} onDismiss={menu.flushPendingSelect}>
+      <MenuOverlay visible={menu.open} onClose={handleClose}>
         <>
           <AnchoredSurface
             open={menu.open}
@@ -224,7 +227,7 @@ function MenuPopoverSurface({
             scrollable={scrollable}
             testID={testID}
           >
-            <MenuDepthProvider value={0}>{children}</MenuDepthProvider>
+            <MenuPage depth={0}>{children}</MenuPage>
           </AnchoredSurface>
           {openPages.map(({ page, depth }) => (
             <MenuFlyout
@@ -291,7 +294,7 @@ function MenuFlyout({
       onPointerLeave={handleHoverOut}
       testID={testID}
     >
-      <MenuDepthProvider value={depth + 1}>{page.content}</MenuDepthProvider>
+      <MenuPage depth={depth + 1}>{page.content}</MenuPage>
     </AnchoredSurface>
   );
 }
@@ -304,6 +307,17 @@ function MenuSheetSurface({
 }: MenuSurfaceProps): ReactElement | null {
   const menu = useMenuContext("MenuSurface");
   const { value: surfaceValue } = useSubAnchors();
+  const safeAreaInsets = useSafeAreaInsets();
+
+  const sheetScrollContentStyle = useMemo(
+    () => ({
+      paddingBottom: getMenuSheetBottomPadding({
+        safeAreaBottom: safeAreaInsets.bottom,
+        breathingRoom: SPACING[1],
+      }),
+    }),
+    [safeAreaInsets.bottom],
+  );
 
   const handleClose = useCallback(() => menu.setOpen(false), [menu]);
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
@@ -355,7 +369,7 @@ function MenuSheetSurface({
       keyboardBlurBehavior="restore"
     >
       <BottomSheetScrollView
-        contentContainerStyle={styles.sheetScrollContent}
+        contentContainerStyle={sheetScrollContentStyle}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         testID={testID ? `${testID}-content` : undefined}
@@ -363,12 +377,12 @@ function MenuSheetSurface({
         {openPage ? (
           <>
             <MenuSheetHeader title={openPage.title} onBack={menu.goBack} />
-            <MenuDepthProvider value={depth}>{openPage.content}</MenuDepthProvider>
+            <MenuPage depth={depth}>{openPage.content}</MenuPage>
           </>
         ) : (
           <>
             {sheetTitle ? <MenuSheetHeader title={sheetTitle} onBack={null} /> : null}
-            <MenuDepthProvider value={0}>{children}</MenuDepthProvider>
+            <MenuPage depth={0}>{children}</MenuPage>
           </>
         )}
       </BottomSheetScrollView>
@@ -406,9 +420,6 @@ function MenuSheetHeader({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  sheetScrollContent: {
-    paddingBottom: theme.spacing[6],
-  },
   sheetHeader: {
     flexDirection: "row",
     alignItems: "center",

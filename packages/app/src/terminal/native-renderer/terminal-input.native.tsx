@@ -107,10 +107,7 @@ export function createTerminalTextInputState(): TerminalTextInputState {
       previousText = text;
       return {
         data: appendedText,
-        // Treat multi-character IME commits as complete units. Clearing lets
-        // the keyboard commit the same clipboard item again without needing
-        // a different intermediate value.
-        shouldClear: appendedText.length > 1,
+        shouldClear: false,
       };
     },
     reset(): void {

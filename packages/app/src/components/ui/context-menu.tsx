@@ -7,7 +7,6 @@ import {
 } from "react";
 import {
   Platform,
-  Pressable,
   StatusBar,
   View,
   type GestureResponderEvent,
@@ -28,6 +27,7 @@ import {
   type MenuSurfaceProps,
   type MenuTriggerState,
 } from "@/components/ui/menu";
+import { PressHighlight } from "@/components/ui/press-highlight";
 
 /**
  * A menu opened by a long press or a right click, anchored to the point of the gesture rather
@@ -99,6 +99,7 @@ type TriggerStyleProp = StyleProp<ViewStyle> | ((state: MenuTriggerState) => Sty
 export function ContextMenuTrigger({
   children,
   disabled,
+  highlightStyle,
   style,
   enabled = true,
   enabledOnMobile = true,
@@ -108,6 +109,7 @@ export function ContextMenuTrigger({
   ...props
 }: PropsWithChildren<
   Omit<PressableProps, "style"> & {
+    highlightStyle?: StyleProp<ViewStyle>;
     style?: TriggerStyleProp;
     enabled?: boolean;
     enabledOnMobile?: boolean;
@@ -184,7 +186,7 @@ export function ContextMenuTrigger({
   );
 
   return (
-    <Pressable
+    <PressHighlight
       {...props}
       ref={handleRef}
       collapsable={false}
@@ -194,8 +196,9 @@ export function ContextMenuTrigger({
       // @ts-ignore - onContextMenu is web-only and not in RN types.
       onContextMenu={handleContextMenu}
       style={pressableStyle}
+      highlightStyle={highlightStyle}
     >
       {children}
-    </Pressable>
+    </PressHighlight>
   );
 }

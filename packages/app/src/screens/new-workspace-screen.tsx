@@ -1359,7 +1359,9 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
           style={badgePressableStyle}
           testID="host-picker-trigger"
         >
-          <HostStatusDot serverId={host.selectedServerId} />
+          <View style={styles.badgeIconBox}>
+            <HostStatusDot serverId={host.selectedServerId} />
+          </View>
           <Text style={styles.badgeText} numberOfLines={1}>
             {selectedHostLabel}
           </Text>

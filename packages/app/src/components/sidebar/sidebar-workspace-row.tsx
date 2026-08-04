@@ -325,6 +325,7 @@ function WorkspaceRowBody({
               accessibilityRole="button"
               accessibilityState={accessibilityState}
               style={workspaceRowStyle}
+              highlightStyle={styles.workspaceRowHovered}
               onPressIn={draggable ? interaction.handlePressIn : undefined}
               onTouchMove={draggable ? interaction.handleTouchMove : undefined}
               onPressOut={draggable ? interaction.handlePressOut : undefined}

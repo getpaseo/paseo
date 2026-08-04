@@ -8,11 +8,10 @@ import {
   GitPullRequest,
   GitPullRequestClosed,
   Globe,
-  Server,
   SquareTerminal,
 } from "lucide-react-native";
-import { HOST_COLORS, type HostBadgeModel, type HostColor } from "@/hosts/appearance";
-import { identityColor } from "@/styles/identity-colors";
+import type { HostBadgeModel } from "@/hosts/appearance";
+import { HostBadge, HOST_BADGE_ICON_SIZE } from "@/hosts/host-badge";
 import type { PrHint } from "@/git/pr-hint";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -27,11 +26,11 @@ export { selectWorkspaceScriptSummary, type WorkspaceScriptSummary } from "./scr
 
 /**
  * One size for every glyph on the line. The items are peers — host, change request, CI,
- * running service — so a glyph that differs in size reads as a different rank.
+ * running service — so a glyph that differs in size reads as a different rank. The host badge
+ * owns the size because it is the one item that also appears off this line.
  */
-const META_ICON_SIZE = 12;
+const META_ICON_SIZE = HOST_BADGE_ICON_SIZE;
 
-const ThemedServer = withUnistyles(Server);
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedGitMerge = withUnistyles(GitMerge);
@@ -39,20 +38,9 @@ const ThemedGitPullRequestClosed = withUnistyles(GitPullRequestClosed);
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 
-const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const foregroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mergedMapping = (theme: Theme) => ({ color: theme.colors.statusMutedMerged });
 const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusMutedDanger });
-
-// Theme-independent, so the mapping per host color is fixed for the life of the module. A
-// fresh `uniProps` identity on every render makes withUnistyles re-subscribe each pass.
-const HOST_ICON_MAPPINGS: Record<HostColor, (theme: Theme) => { color: string }> = (() => {
-  const byColor = {} as Record<HostColor, (theme: Theme) => { color: string }>;
-  for (const color of HOST_COLORS) {
-    byColor[color] = color === "none" ? mutedMapping : () => ({ color: identityColor(color) });
-  }
-  return byColor;
-})();
 
 /**
  * The subtitle under a workspace title: which host it lives on, its change request, that
@@ -103,7 +91,7 @@ function MetaItemNode({
   hostBadge: HostBadgeModel | null;
 }): ReactNode {
   if (item.kind === "host") {
-    return hostBadge ? <HostItem hostBadge={hostBadge} /> : null;
+    return hostBadge ? <HostBadge badge={hostBadge} /> : null;
   }
   if (item.kind === "changeRequest") {
     return <PullRequestItem hint={item.hint} />;
@@ -112,23 +100,6 @@ function MetaItemNode({
     return <ChecksItem summary={item.summary} />;
   }
   return <ScriptItem summary={item.summary} />;
-}
-
-function HostItem({ hostBadge }: { hostBadge: HostBadgeModel }) {
-  return (
-    <View
-      style={styles.hostItem}
-      testID={`sidebar-host-badge-${hostBadge.serverId}`}
-      accessibilityLabel={hostBadge.label}
-    >
-      <ThemedServer size={META_ICON_SIZE} uniProps={HOST_ICON_MAPPINGS[hostBadge.color]} />
-      {hostBadge.showLabel ? (
-        <Text style={styles.hostLabel} numberOfLines={1}>
-          {hostBadge.label}
-        </Text>
-      ) : null}
-    </View>
-  );
 }
 
 /**
@@ -280,15 +251,6 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 0,
   },
-  // The host is the only unbounded item, so it consumes the remaining width and gives way
-  // before the bounded change request, CI, and service items.
-  hostItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    minWidth: 0,
-    flexShrink: 1,
-  },
   itemPressed: {
     opacity: 0.82,
   },
@@ -297,13 +259,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     lineHeight: 16,
     flexShrink: 0,
-  },
-  hostLabel: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    lineHeight: 16,
-    flexShrink: 1,
-    minWidth: 0,
   },
   scriptPort: {
     color: theme.colors.statusMutedSuccess,

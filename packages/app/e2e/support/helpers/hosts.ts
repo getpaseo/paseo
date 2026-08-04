@@ -195,7 +195,7 @@ export async function chooseHostBadgeDisplay(
 function hostBadge(page: Page, input: HostBadgeTarget) {
   return page
     .getByTestId(`sidebar-workspace-row-${input.serverId}:${input.workspaceId}`)
-    .getByTestId(`sidebar-host-badge-${input.serverId}`);
+    .getByTestId(`host-badge-${input.serverId}`);
 }
 
 interface HostBadgeTarget {
@@ -242,7 +242,7 @@ export async function expectHostAppearancePreview(
 ): Promise<void> {
   const preview = page.getByTestId("host-appearance-preview");
   await expect(preview).toBeVisible();
-  const badge = preview.getByTestId(`sidebar-host-badge-${input.serverId}`);
+  const badge = preview.getByTestId(`host-badge-${input.serverId}`);
   await expect(badge).toHaveText(input.hostName);
   await expect(badge.locator("svg")).toHaveAttribute("stroke", identityColor(input.color));
 }

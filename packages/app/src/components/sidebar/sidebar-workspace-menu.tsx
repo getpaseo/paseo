@@ -250,7 +250,7 @@ export function SidebarWorkspaceMenu({
 
 type ContextTriggerProps = Omit<
   ComponentProps<typeof ContextMenuTrigger>,
-  "children" | "enabledOnMobile"
+  "children" | "enabledOnMobile" | "highlightStyle"
 >;
 
 export function SidebarWorkspaceContextMenu({
@@ -275,6 +275,7 @@ export function SidebarWorkspaceContextMenu({
   onTogglePin,
   openInFileManagerPath,
   accessibilityLabel,
+  highlightStyle,
   ...triggerProps
 }: PropsWithChildren<
   SidebarWorkspaceMenuItemsProps &
@@ -285,6 +286,7 @@ export function SidebarWorkspaceContextMenu({
       leadingProjectName?: string | null;
       hostBadgeLabel?: string | null;
       scriptSummary?: WorkspaceScriptSummary | null;
+      highlightStyle: ComponentProps<typeof ContextMenuTrigger>["highlightStyle"];
     }
 >) {
   const {
@@ -312,6 +314,7 @@ export function SidebarWorkspaceContextMenu({
         {...triggerProps}
         enabledOnMobile={false}
         accessibilityLabel={accessibilityLabel ?? rowAccessibilityLabel}
+        highlightStyle={highlightStyle}
       >
         {children}
       </ContextMenuTrigger>

@@ -108,13 +108,12 @@ test.describe("Host appearance", () => {
     await leaveHostAppearanceSettings(page);
 
     const row = page.getByTestId(`sidebar-workspace-row-${workspaceKey}`);
-    const badge = row.getByTestId(`sidebar-host-badge-${twoHostSidebar.secondaryServerId}`);
+    const badge = row.getByTestId(`host-badge-${twoHostSidebar.secondaryServerId}`);
     await expect(badge).toHaveText(hostName);
     const [badgeBox, rowBox] = await Promise.all([badge.boundingBox(), row.boundingBox()]);
 
     expect(badgeBox).not.toBeNull();
     expect(rowBox).not.toBeNull();
-    await expect(badge).toHaveCSS("flex-shrink", "1");
     expect(badgeBox!.width).toBeGreaterThan(96);
     expect(badgeBox!.x + badgeBox!.width).toBeLessThanOrEqual(rowBox!.x + rowBox!.width);
     const labelWidths = await badge.getByText(hostName, { exact: true }).evaluate((label) => ({

@@ -730,6 +730,7 @@ function StatusWorkspaceRowInner({
               accessibilityRole="button"
               accessibilityState={accessibilityState}
               style={workspaceRowStyle}
+              highlightStyle={styles.workspaceRowHovered}
               onPress={onPress}
               testID={`sidebar-workspace-row-${workspace.workspaceKey}`}
             >
