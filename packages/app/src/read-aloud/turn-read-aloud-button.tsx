@@ -59,9 +59,11 @@ function renderIcon(params: {
   return <Volume2 size={16} color={params.color} />;
 }
 
+// `hovered` is optional: Pressable's render prop types it as `boolean | undefined`
+// on platforms with no pointer.
 function resolveIconColor(params: {
   failed: boolean;
-  hovered: boolean;
+  hovered: boolean | undefined;
   status: ReadAloudSnapshot["status"];
 }): string {
   if (params.failed) {
