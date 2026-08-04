@@ -2,7 +2,11 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
-import { JsonlRpcProcess, type JsonlRpcLaunch } from "../jsonl-rpc-process.js";
+import {
+  JSONL_RPC_NO_TIMEOUT,
+  JsonlRpcProcess,
+  type JsonlRpcLaunch,
+} from "../jsonl-rpc-process.js";
 import {
   buildOmpLaunch,
   type OmpRuntime,
@@ -40,6 +44,12 @@ import {
 
 const DEFAULT_OMP_COMMAND: [string, ...string[]] = [process.env.OMP_COMMAND ?? "omp"];
 const DEFAULT_COMMANDS_RPC_NAME = "get_available_commands";
+
+/**
+ * OMP returns from compact only after LLM summarization and session persistence.
+ * Bound it by the process/session lifecycle instead of the control-plane timeout.
+ */
+const OMP_COMPACT_REQUEST_TIMEOUT_MS = JSONL_RPC_NO_TIMEOUT;
 
 export interface OmpCliRuntimeOptions {
   logger: Logger;
@@ -125,10 +135,13 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   async compact(customInstructions?: string): Promise<void> {
-    await this.request({
-      type: "compact",
-      ...(customInstructions ? { customInstructions } : {}),
-    });
+    await this.request(
+      {
+        type: "compact",
+        ...(customInstructions ? { customInstructions } : {}),
+      },
+      OMP_COMPACT_REQUEST_TIMEOUT_MS,
+    );
   }
 
   async setAutoCompaction(enabled: boolean): Promise<void> {
@@ -269,7 +282,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     await this.process.close(new Error("OMP RPC session is closed"));
   }
 
-  private request(command: OmpRpcCommand, timeoutMs?: number): Promise<unknown> {
+  private request(command: OmpRpcCommand, timeoutMs?: number | null): Promise<unknown> {
     return this.process.request(OmpRpcCommandSchema.parse(command), timeoutMs);
   }
 
