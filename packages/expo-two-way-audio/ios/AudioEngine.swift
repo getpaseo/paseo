@@ -10,6 +10,7 @@ class AudioEngine {
     
     public private(set) var voiceIOFormat: AVAudioFormat
     public private(set) var isRecording = false
+    public private(set) var isSessionActive = false
     
     public var onMicDataCallback: ((Data) -> Void)?
     public var onInputVolumeCallback: ((Float) -> Void)?
@@ -79,26 +80,64 @@ class AudioEngine {
     
     func setupAudioSession() {
         let session = AVAudioSession.sharedInstance()
-        
+
         do {
             try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP])
         } catch {
             print("Could not set the audio category: \(error.localizedDescription)")
         }
-        
+
         do {
             try session.setPreferredSampleRate(voiceIOFormat.sampleRate)
         } catch {
             print("Could not set the preferred sample rate: \(error.localizedDescription)")
         }
-        
+
         do {
             try session.setActive(true)
+            isSessionActive = true
         } catch {
             print("Could not set the audio session as active")
         }
     }
-    
+
+    func activateAudioSessionIfNeeded() {
+        guard !isSessionActive else { return }
+        setupAudioSession()
+        checkEngineIsRunning()
+    }
+
+    /// Hand the audio session back to the system.
+    ///
+    /// `.playAndRecord` + `.voiceChat` does not mix, so while it is active the user's
+    /// background music stays dead — including across backgrounding, because iOS
+    /// re-asserts whatever category the app last set when it returns to the foreground.
+    /// Releasing when we are neither capturing nor playing is what lets their music come
+    /// back; `.notifyOthersOnDeactivation` is what tells the other app to resume, and
+    /// dropping to `.ambient` means any implicit reactivation mixes instead of interrupting.
+    func releaseAudioSession() {
+        // The native engine is a singleton shared by every JS-side engine wrapper, so it is the
+        // only layer that knows whether *anything* is still using the session. Never release
+        // while capture or playback is live — the JS callers each only see their own queue.
+        guard isSessionActive, !isRecording, !speechPlayer.isPlaying else { return }
+
+        avAudioEngine.pause()
+
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setActive(false, options: [.notifyOthersOnDeactivation])
+        } catch {
+            print("Could not deactivate the audio session: \(error.localizedDescription)")
+        }
+        do {
+            try session.setCategory(.ambient, options: [.mixWithOthers])
+        } catch {
+            print("Could not reset the audio category: \(error.localizedDescription)")
+        }
+
+        isSessionActive = false
+    }
+
     func setup() {
         let input = avAudioEngine.inputNode
         do {
@@ -183,6 +222,8 @@ class AudioEngine {
     }
     
     func playPCMData(_ pcmData: Data) {
+        activateAudioSessionIfNeeded()
+
         // Looks like we don't get a proper AEC for the very first chunks of audio that we play.
         // To work around this, we will discard microphone input for the first few milliseconds.
         // This will give the AEC time to adapt to the playback audio.
@@ -247,6 +288,7 @@ class AudioEngine {
             inputBuffer = [Float](repeating: 0, count: 2048)
             updateInputVolume()
         } else {
+            activateAudioSessionIfNeeded()
             avAudioEngine.inputNode.isVoiceProcessingInputMuted = false
         }
         print("Recording \(isRecording ? "started" : "stopped")")
@@ -255,22 +297,14 @@ class AudioEngine {
     }
     
     func stopRecordingAndPlayer(){
-        do {
-            try AVAudioSession.sharedInstance().setActive(false)
-        } catch {
-            print("Could not set the audio session to inactive: \(error)")
-        }
         toggleRecording(false)
         speechPlayer.stop()
         updateOutputVolume()
+        releaseAudioSession()
     }
-    
+
     func resumeRecordingAndPlayer(){
-        do {
-            try AVAudioSession.sharedInstance().setActive(true)
-        } catch {
-            print("Could not set the audio session to active: \(error)")
-        }
+        activateAudioSessionIfNeeded()
         self.checkEngineIsRunning()
         isRecording = toggleRecording(true)
         speechPlayer.play()
@@ -306,6 +340,11 @@ class AudioEngine {
     }
     
     private func checkEngineIsRunning() {
+        // Starting the engine implicitly reactivates the audio session. Never do that while the
+        // session is released, or a stray configuration-change notification (which releasing
+        // itself can trigger, since it changes the category) would silently grab the user's
+        // audio back and undo the release.
+        guard isSessionActive else { return }
         if !avAudioEngine.isRunning {
             start()
         }
@@ -340,6 +379,9 @@ class AudioEngine {
     private func handleMediaServicesWereReset() {
         self.avAudioEngine.stop()
         self.setup()
+        // Only bring the engine back up if we still own the session; otherwise wait until the
+        // next capture/playback reactivates it.
+        guard isSessionActive else { return }
         self.start()
     }
     

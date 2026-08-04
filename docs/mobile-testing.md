@@ -252,6 +252,25 @@ adb emu gsm call 5551234
 
 Expected result: Paseo does not throw `RuntimeException: Audio focus request failed`; native audio reports an interruption and voice mode stops or pauses coherently.
 
+### Releasing the audio session when idle
+
+Paseo must not hold the OS audio session once it is neither capturing nor playing, or the user's
+background music stays paused. On iOS this is not just a "while recording" problem: the
+`.playAndRecord`/`.voiceChat` category is non-mixing and survives backgrounding, and iOS re-asserts
+it every time the app returns to the foreground — so one dictation turn kills music for the life of
+the process, on every open, until the app is force-quit. Android holds
+`AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE` with the same effect.
+
+`createAudioEngine` (`packages/app/src/voice/audio-engine.native.ts`) calls
+`releaseAudioSession()` whenever capture stops and the playback queue drains, and the iOS module
+also releases on `OnAppEntersBackground`. The native side re-guards on `isRecording` /
+`speechPlayer.isPlaying`, because the native engine is a singleton shared by multiple JS engine
+wrappers (voice provider + dictation) and only it knows the true state.
+
+This cannot be validated by a JS test — verify on a device: play music, open Paseo, use dictation
+once, stop, and confirm the music resumes; then background/foreground the app and confirm it keeps
+playing.
+
 ## Unistyles + Reanimated
 
 ### The crash
@@ -319,6 +338,70 @@ Platform-specific stream edges belong on `StreamStrategy`:
 - native inverted uses the first history item as the history/live-head boundary and compensates for inverted cell child order
 
 If a chat footer looks duplicated or appears above the assistant message on mobile, start with `packages/app/src/agent-stream/layout.test.ts`. Do not add a React Native renderer test for this class of bug; make the pure layout invariant fail first.
+
+## Local iOS device builds
+
+Native changes (anything under `packages/expo-two-way-audio/ios/`, or any new Expo module) **cannot be
+tested over Metro or EAS Update**. Those ship JS only. A stale dev-client binary silently lacks the new
+native functions, so the feature no-ops and the test proves nothing. Rebuild the binary.
+
+Symptom of a stale dev client: `Cannot find native module 'ExpoDocumentPicker'` at startup, followed by a
+cascade of `Route "./X.tsx" is missing the required default export` warnings. The route warnings are not a
+router bug — the module-level throw aborts `_layout.tsx` evaluation, so its default export never gets
+assigned. One missing native module, N confusing warnings.
+
+**Prerequisite: an Apple ID for the signing team must be added under Xcode → Settings → Accounts.** Without
+it the build below fails at code signing, and it fails with a misleading _certificate_ error rather than an
+account error — see [Signing needs an Apple ID in Xcode](#signing-needs-an-apple-id-in-xcode) before you
+start, not after it fails.
+
+```bash
+cd packages/app
+npm --prefix ../.. run build:client
+APP_VARIANT=development npx expo prebuild --platform ios
+APP_VARIANT=development npx expo run:ios --device
+```
+
+`APP_VARIANT=development` is required. The `ios` npm script does not set it, and `app.config.js` defaults
+to `production` — so a bare `npm run ios` builds `sh.paseo` and collides with the App Store install instead
+of the `sh.paseo.debug` dev client. Ignore prebuild's `--non-interactive is not supported` warning; use
+`CI=1` if you need non-interactive.
+
+### Signing needs an Apple ID in Xcode
+
+Device builds fail with `error: No Accounts: Add a new account in Accounts settings.` unless an Apple ID for
+the signing team is added under **Xcode → Settings → Accounts**. Without it, `-allowProvisioningUpdates`
+cannot regenerate provisioning profiles, which surfaces as a confusing _certificate_ error rather than an
+account error:
+
+```
+error: Provisioning profile "iOS Team Provisioning Profile: *" doesn't include
+       signing certificate "Apple Development: <name>".
+```
+
+That happens when the machine holds a dev cert newer than the profile — Xcode selects the newest cert, the
+older profile does not embed it, and the regeneration that would fix it is blocked. Adding the account is
+the actual fix. Signing an Xcode-_managed_ profile via `CODE_SIGN_STYLE=Manual` is not a workaround; Xcode
+rejects it with `is Xcode managed, but signing settings require a manually managed profile`.
+
+To verify only that native Swift compiles, skip signing entirely — the pods have their own schemes:
+
+```bash
+cd packages/app/ios
+xcodebuild -workspace PaseoDebug.xcworkspace -scheme ExpoTwoWayAudio \
+  -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
+```
+
+Confirm the log compiled _your_ file and not a cached copy: the `SwiftCompile` line should reference
+`packages/expo-two-way-audio/ios/...`, not a path inside DerivedData.
+
+### Headless launch cannot verify runtime behavior
+
+`xcrun devicectl device process launch` reports `The app terminated with the exit code 0` about a second
+after launch when the phone's screen is off — the app is suspended and killed before the JS bundle loads.
+This is **not** a build defect. Confirm with a control: launch `com.apple.Preferences` the same way and
+watch it exit identically. Headless install and launch prove the binary is valid and that startup reaches
+RN init; anything about on-screen behavior needs a human holding the phone.
 
 ## iOS Simulator
 

@@ -169,6 +169,25 @@ class AudioEngine (context: Context) {
         }
     }
 
+    /**
+     * Give audio focus back once we are neither recording nor playing. The focus request is
+     * AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE, so holding it after a dictation turn leaves the
+     * user's music paused indefinitely.
+     */
+    @SuppressLint("NewApi")
+    fun releaseAudioSession() {
+        if (isRecording || isPlaying) {
+            return
+        }
+        audioFocusRequest?.let { request ->
+            audioManager.abandonAudioFocusRequest(request)
+            audioFocusRequest = null
+        }
+        if (::audioTrack.isInitialized) {
+            audioTrack.pause()
+        }
+    }
+
     @SuppressLint("NewApi")
     private fun requestAudioFocus(): Boolean {
         audioFocusRequest?.let { request ->
