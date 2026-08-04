@@ -2816,7 +2816,7 @@ export const DictationStreamErrorMessageSchema = z.object({
 });
 
 // One request fans out to N of these, in segment order. Audio is segmented so a
-// long selection starts playing after the first sentence instead of after the
+// long message starts playing after the first sentence instead of after the
 // whole synthesis, and so no single message carries minutes of raw PCM.
 export const ReadAloudResponseMessageSchema = z.object({
   type: z.literal("speech.tts.read_aloud.response"),

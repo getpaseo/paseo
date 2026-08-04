@@ -41,10 +41,20 @@ function toMimeType(format: string): string {
 export async function playReadAloudSegment(params: {
   audioBase64: string;
   format: string;
+  /**
+   * Whether this segment has been superseded. Checked after `initialize()`:
+   * a stop landing during that await is forgotten by the time `play()` runs,
+   * because `play()` then captures the engine's post-stop generation and
+   * proceeds as if it were a fresh request.
+   */
+  isCancelled?: () => boolean;
 }): Promise<void> {
   const bytes = Buffer.from(params.audioBase64, "base64");
   const active = getEngine();
   await active.initialize();
+  if (params.isCancelled?.()) {
+    return;
+  }
   await active.play({
     size: bytes.byteLength,
     type: toMimeType(params.format),

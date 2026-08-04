@@ -70,7 +70,7 @@ export class ReadAloudController {
     this.cancelAll("superseded by a newer read aloud request");
 
     // Cap on what the user selected, before sanitizing, so the limit means the
-    // same thing to them whether or not their selection was full of markup.
+    // same thing to them whether or not the message was full of markup.
     const rawLength = params.text.trim().length;
     const text = sanitizeTextForReadAloud(params.text);
     if (!hasSpeakableContent(text)) {
@@ -82,7 +82,7 @@ export class ReadAloudController {
       this.emitError(
         requestId,
         "text_too_long",
-        `Selection is too long to read aloud (${rawLength} of ${MAX_READ_ALOUD_CHARS} characters)`,
+        `Message is too long to read aloud (${rawLength} of ${MAX_READ_ALOUD_CHARS} characters)`,
       );
       return;
     }

@@ -1,7 +1,7 @@
 /**
- * Turn selected text into something worth hearing.
+ * Turn an agent's message into something worth hearing.
  *
- * A selection is raw screen text: it carries markdown syntax, and agent
+ * Agent output is raw screen text: it carries markdown syntax, and agent
  * messages carry Paseo's own wrapper tags (`<spoken-input>`, `<instruction>`).
  * Synthesized verbatim those become spoken noise — "spoken input, are you
  * working" — so they are stripped before they reach the TTS provider.

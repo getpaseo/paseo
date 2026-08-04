@@ -164,6 +164,7 @@ export function startReadAloud(params: {
       void playReadAloudSegment({
         audioBase64: segment.audioBase64,
         format: segment.format,
+        isCancelled: () => token !== generation,
       }).then(
         () => settleSegment(),
         (error: unknown) => settleSegment(error ?? new Error("Playback failed")),
