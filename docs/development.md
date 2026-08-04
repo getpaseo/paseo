@@ -25,10 +25,6 @@ desktop launches always force the daemon to production mode.
 
 `npm run dev` is only a shorthand for `npm run dev:server`. Keep `127.0.0.1:6767` for the packaged app and production-style `~/.paseo` state.
 
-**The daemon does not hot-reload.** `packages/server/scripts/dev-runner.ts` has no watcher, so the Expo app reloads on save and the daemon does not. Restart `npm run dev:server` after any server change or you will test stale code and draw the wrong conclusion from it.
-
-**Speech features need Node 22+.** In dev the daemon forks the local speech worker with `--experimental-strip-types` using `process.execPath`. On Node 20 the worker exits immediately with code 9 and every synthesis fails — voice mode, dictation, and read aloud alike. Check `.tool-versions`; `nvm use 22` before starting the daemon if your default is older.
-
 ## Nix desktop package
 
 The flake exposes `packages.<system>.desktop` on Linux and macOS:
