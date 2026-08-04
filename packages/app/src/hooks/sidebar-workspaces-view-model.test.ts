@@ -69,6 +69,19 @@ describe("createSidebarWorkspaceEntry forge threading", () => {
   });
 });
 
+describe("createSidebarWorkspaceEntry activity", () => {
+  it("keeps workspace activity separate from status-entry time", () => {
+    const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
+    descriptor.statusEnteredAt = new Date("2026-05-12T09:30:00.000Z");
+    descriptor.activityAt = new Date("2026-05-12T10:30:00.000Z");
+
+    const entry = createSidebarWorkspaceEntry({ serverId: "srv", workspace: descriptor });
+
+    expect(entry.statusEnteredAt).toEqual(new Date("2026-05-12T09:30:00.000Z"));
+    expect(entry.activityAt).toEqual(new Date("2026-05-12T10:30:00.000Z"));
+  });
+});
+
 describe("createSidebarWorkspaceEntry workspace directory label", () => {
   it("uses the daemon-provided slug for a Paseo-owned worktree", () => {
     const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");

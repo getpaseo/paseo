@@ -11,7 +11,7 @@ export type SidebarGroupMode = "project" | "status";
 // - "manual": the user's persisted drag order (sidebar-order-store). This is the default and
 //   preserves the historical behavior where the base order is alphabetical until dragged.
 // - "name": alphabetical by name (the base structure order), ignoring the manual drag order.
-// - "activity": most-recently-active first, by workspace status recency.
+// - "activity": most-recently-active first, by the daemon's workspace activity timestamp.
 export type SidebarSortMode = "manual" | "name" | "activity";
 
 const SIDEBAR_VIEW_STORAGE_KEY = "sidebar-view";

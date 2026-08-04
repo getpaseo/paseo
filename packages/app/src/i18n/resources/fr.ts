@@ -1088,6 +1088,12 @@ export const fr: TranslationResources = {
         status: "Statut",
         labels: "Libellés",
       },
+      sorting: {
+        label: "Tri",
+        manual: "Manuel",
+        name: "Nom",
+        activity: "Activité récente",
+      },
       titleSource: {
         label: "Titre",
         title: "Titre",

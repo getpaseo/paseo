@@ -37,6 +37,7 @@ export interface SidebarStatusWorkspacePlacement extends SidebarWorkspacePlaceme
 }
 
 export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
+  activityAt?: Date | null;
   workspaceDirectory: string;
   workspaceDirectoryLabel: string;
   // Raw user-set title (null when the name is derived from branch/directory).
@@ -172,6 +173,7 @@ export function createSidebarWorkspaceEntry(input: {
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
+    activityAt: input.workspace.activityAt ?? input.workspace.statusEnteredAt,
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
     prHint: selectPrHintFromStatus(
@@ -597,8 +599,9 @@ export function computeSidebarOrderUpdates(input: {
   return { projectOrder, workspaceOrders };
 }
 
-const compareByName = (a: string, b: string): number =>
-  a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+function compareByName(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
 
 // Applies the sidebar's "Sort by" preference to the canonical project list (which arrives in the
 // persisted manual/drag order). This is sidebar-only presentation: it deliberately runs here,
