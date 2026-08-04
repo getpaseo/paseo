@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -24,6 +24,28 @@ describe("server config", () => {
 
     expect(desktopConfig.desktopManaged).toBe(true);
     expect(standaloneConfig.desktopManaged).toBe(false);
+  });
+
+  test("loads the exact provider allowlist for Paseo tool injection", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-mcp-providers-"));
+    roots.push(paseoHome);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({
+        version: 1,
+        daemon: {
+          mcp: {
+            injectIntoAgents: true,
+            injectIntoProviders: ["codex-supervisor", "codex-lead"],
+          },
+        },
+      }),
+    );
+
+    const config = loadConfig(paseoHome, { env: {} });
+
+    expect(config.mcpInjectIntoAgents).toBe(true);
+    expect(config.mcpInjectIntoProviders).toEqual(["codex-supervisor", "codex-lead"]);
   });
 
   test("resolves bundled web UI path from source-tree modules", () => {

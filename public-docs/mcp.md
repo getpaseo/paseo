@@ -10,11 +10,26 @@ category: Orchestration
 
 This is the complete catalog behind the workflows in [Orchestration](/docs/orchestration) and [Common workflows](/docs/orchestration-workflows). You normally ask for an outcome in natural language and let the agent choose the tools.
 
-Paseo can inject these tools into every new agent it launches. Open **Settings → your host → Agents** and turn on **Enable Paseo tools**, or set `daemon.mcp.injectIntoAgents` to `true`.
+Paseo can inject these tools into agents it launches. Open **Settings → your host → Agents** and turn on **Enable Paseo tools**, or set `daemon.mcp.injectIntoAgents` to `true`.
+
+To limit injection to specific configured provider IDs, add `injectIntoProviders`:
+
+```json
+{
+  "daemon": {
+    "mcp": {
+      "injectIntoAgents": true,
+      "injectIntoProviders": ["codex-supervisor", "codex-lead"]
+    }
+  }
+}
+```
+
+The list matches exact configured IDs. In this example, `codex-lead` receives Paseo tools and `codex-peer` does not, even if both extend `codex`. Omit `injectIntoProviders` to inject into every provider. Set it to `[]` to inject into none. This policy covers native tool delivery and the MCP fallback for new, resumed, reloaded, and imported sessions.
 
 Depending on the provider, Paseo delivers the catalog through its native tool interface or MCP. The capabilities are the same either way.
 
-The MCP server itself is controlled by `daemon.mcp.enabled`. Existing agents may need a reload.
+The MCP server itself is controlled by `daemon.mcp.enabled`. Existing agents may need a reload after this configuration changes.
 
 ## Mental model
 

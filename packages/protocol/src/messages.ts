@@ -151,6 +151,7 @@ export const MutableDaemonConfigSchema = z
     mcp: z
       .object({
         injectIntoAgents: z.boolean(),
+        injectIntoProviders: z.array(AgentProviderSchema).optional(),
       })
       .passthrough(),
     browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),

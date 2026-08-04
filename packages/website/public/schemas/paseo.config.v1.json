@@ -68,6 +68,12 @@
                 },
                 "injectIntoAgents": {
                   "type": "boolean"
+                },
+                "injectIntoProviders": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "additionalProperties": true

@@ -348,6 +348,9 @@ function mergeMutableConfigIntoPersistedConfig(params: {
       mcp: {
         ...persisted.daemon?.mcp,
         injectIntoAgents: mutable.mcp.injectIntoAgents,
+        ...(mutable.mcp.injectIntoProviders !== undefined
+          ? { injectIntoProviders: mutable.mcp.injectIntoProviders }
+          : {}),
       },
       browserTools: {
         ...persisted.daemon?.browserTools,

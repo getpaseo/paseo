@@ -49,6 +49,10 @@ Minimal example that configures listening address, hostnames, and MCP:
 
 `daemon.hostnames` is the primary field. The old `daemon.allowedHosts` name still works as a deprecated alias for backward compatibility.
 
+## Paseo tools in agents
+
+Set `daemon.mcp.injectIntoAgents` to enable Paseo's agent tools. Use the optional `daemon.mcp.injectIntoProviders` exact-ID allowlist to limit which configured providers receive them. See [MCP reference](/docs/mcp) for the configuration example and delivery rules.
+
 ## Agent providers
 
 Agent providers, both the first-class ones Paseo ships with and custom entries you add under `agents.providers`, are documented on their own page.
