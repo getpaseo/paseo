@@ -23,6 +23,10 @@ describe("provider usage formatting", () => {
     expect(formatRunsOutLabel(twoHoursFromNow)).toBe("runs out 2h");
   });
 
+  it("formats percentages with locale-specific spacing", () => {
+    expect(formatPct(42, "fr")).toBe("42\u00a0%");
+  });
+
   it("uses the active locale for client-owned relative timing copy", async () => {
     await i18n.changeLanguage("ja");
     const twoHoursFromNow = new Date(NOW + 2 * 60 * 60 * 1000).toISOString();
