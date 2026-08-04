@@ -39,6 +39,10 @@ mac:
   notarize: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
+  extendInfo:
+    NSLocalNetworkUsageDescription: >-
+      Paseo connects directly to the Paseo daemon on your local network when you add a
+      direct connection by LAN IP address.
   extraResources:
     - from: bin/paseo
       to: bin/paseo
