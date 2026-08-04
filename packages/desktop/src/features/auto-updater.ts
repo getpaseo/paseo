@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { app } from "electron";
 import { UUID } from "builder-util-runtime";
+import log from "electron-log/main";
 import { autoUpdater } from "electron-updater";
 import {
   createAppUpdateService,
@@ -100,6 +101,7 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
 
   configure(input: AppUpdateRuntimeConfiguration): void {
     const updateChannel = resolveElectronUpdateChannel(app.getVersion(), input.releaseChannel);
+    autoUpdater.logger = log;
     autoUpdater.autoDownload = true;
     autoUpdater.autoRunAppAfterInstall = true;
     // Paseo revalidates the current manifest before explicitly installing on quit.
@@ -117,26 +119,47 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
       }
     };
 
+    log.info("[auto-updater] configured", {
+      currentVersion: app.getVersion(),
+      releaseChannel: input.releaseChannel,
+      updateChannel,
+      autoDownload: autoUpdater.autoDownload,
+      autoInstallOnAppQuit: autoUpdater.autoInstallOnAppQuit,
+    });
+
     if (this.configured) return;
     this.configured = true;
 
     autoUpdater.on("update-available", (info) => {
+      log.info("[auto-updater] update-available", { version: info.version });
       input.onUpdateAvailable(info as RuntimeUpdateInfo);
     });
     autoUpdater.on("update-downloaded", (info) => {
+      log.info("[auto-updater] update-downloaded", { version: info.version });
       input.onUpdateDownloaded(info as RuntimeUpdateInfo);
     });
     autoUpdater.on("update-not-available", () => {
+      log.info("[auto-updater] update-not-available");
       input.onUpdateNotAvailable();
     });
     autoUpdater.on("error", (error) => {
+      log.error("[auto-updater] error", error);
       input.onError(error);
     });
   }
 
   async checkForUpdates(): Promise<RuntimeUpdateCheckResult | null> {
+    log.info("[auto-updater] check-for-updates.start");
     const result = await autoUpdater.checkForUpdates();
-    if (!result) return null;
+    if (!result) {
+      log.info("[auto-updater] check-for-updates.done", { result: null });
+      return null;
+    }
+    log.info("[auto-updater] check-for-updates.done", {
+      isUpdateAvailable: result.isUpdateAvailable,
+      version: result.updateInfo.version,
+      hasDownloadPromise: result.downloadPromise != null,
+    });
     return {
       isUpdateAvailable: result.isUpdateAvailable,
       updateInfo: result.updateInfo as RuntimeUpdateInfo,
@@ -144,6 +167,7 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   }
 
   downloadUpdate(): Promise<unknown> {
+    log.info("[auto-updater] download-update.requested");
     return autoUpdater.downloadUpdate();
   }
 

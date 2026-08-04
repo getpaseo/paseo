@@ -14,6 +14,13 @@ vi.mock("electron-updater", () => ({
   autoUpdater: {},
 }));
 
+vi.mock("electron-log/main", () => ({
+  default: {
+    error: vi.fn(),
+    info: vi.fn(),
+  },
+}));
+
 import {
   bucketFromStagingUserId,
   resolveElectronUpdateChannel,
