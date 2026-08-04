@@ -436,14 +436,17 @@ test("delivers the prompt when a query restart is pending and no query exists", 
 
   const session = await createSession();
   const internal: { query: unknown; queryRestartNeeded: boolean } = asInternals(session);
-  // A restart can be requested while the session has no live query (idle runtime
-  // released, rewind, model/thinking change before the first prompt). The flag must
-  // not survive query creation, or startQueryPump() tears down the input stream that
-  // sendPrompt() is about to write to.
-  expect(internal.query).toBeNull();
-  internal.queryRestartNeeded = true;
 
   try {
+    // Request a restart through the public API while the session has no live query,
+    // the way the UI does when the thinking option is changed before the first prompt.
+    // The request must not survive query creation, or startQueryPump() tears down the
+    // input stream that sendPrompt() is about to write to.
+    expect(internal.query).toBeNull();
+    await session.setThinkingOption("high");
+    expect(internal.queryRestartNeeded).toBe(true);
+    expect(sdkQueryFactory).not.toHaveBeenCalled();
+
     const events = await collectUntilTerminal(streamSession(session, "hello"));
     const failure = events.find(
       (event): event is Extract<AgentStreamEvent, { type: "turn_failed" }> =>
