@@ -7,6 +7,10 @@ import {
 import { z } from "zod";
 import type { LiveVoiceRouteBroker } from "./live-voice-route-broker.js";
 import {
+  canRunOnAllLiveVoiceHosts,
+  LIVE_VOICE_ALL_HOSTS_READ_TOOLS,
+} from "./live-voice-fanout-tools.js";
+import {
   searchLiveVoiceWorkspaces,
   type LiveVoiceWorkspaceCandidate,
 } from "./live-voice-workspace-search.js";
@@ -43,39 +47,6 @@ const UnavailableHostSchema = z.object({
   label: z.string(),
   reason: z.string(),
 });
-
-/**
- * The tools that may be run on every host at once.
- *
- * An allowlist rather than a denylist, so a tool added later is not fannable
- * until someone decides it should be. Mass mutation is the thing being kept out:
- * "archive it on all of them" is a sentence a user can say by accident, and one
- * misheard word should not reach five machines. Anything that changes state goes
- * through `run_paseo_tool_on_host`, one named host at a time.
- *
- * This is enforced here rather than on the target daemon because it is an
- * ergonomic guard, not a privilege boundary — the model can already mutate a
- * single host, and does not gain authority by naming it.
- */
-export const LIVE_VOICE_ALL_HOSTS_READ_TOOLS: readonly string[] = [
-  "capture_terminal",
-  "get_agent_activity",
-  "get_agent_status",
-  "inspect_provider",
-  "inspect_schedule",
-  "list_agents",
-  "list_models",
-  "list_paseo_tools",
-  "list_pending_permissions",
-  "list_providers",
-  "list_schedules",
-  "list_terminals",
-  "list_workspace_scripts",
-  "list_workspaces",
-  "schedule_logs",
-];
-
-const allHostsReadTools = new Set(LIVE_VOICE_ALL_HOSTS_READ_TOOLS);
 
 export interface RegisterLiveVoiceRoutingToolsOptions {
   hostAgentId: string;
@@ -337,7 +308,7 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
           arguments: LiveVoiceJsonObjectSchema.optional(),
         })
         .parse(input);
-      if (!allHostsReadTools.has(parsed.toolName)) {
+      if (!canRunOnAllLiveVoiceHosts(parsed.toolName)) {
         throw new Error(
           `'${parsed.toolName}' cannot be run on every host at once. Run it on one host with run_paseo_tool_on_host, or fan out one of: ${LIVE_VOICE_ALL_HOSTS_READ_TOOLS.join(", ")}.`,
         );

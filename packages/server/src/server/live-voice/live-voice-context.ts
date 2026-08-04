@@ -24,6 +24,8 @@
  * who sets it opts out of the Paseo prompt.
  */
 
+import { LIVE_VOICE_ALL_HOSTS_READ_TOOLS } from "./live-voice-fanout-tools.js";
+
 /** A `thread/realtime/start` initial item. Roles are codex's allowed set. */
 export interface LiveVoiceInitialItem {
   role: "user" | "developer" | "assistant";
@@ -122,6 +124,24 @@ const CANONICAL_PASEO_TOOL_NAMES = [
 ];
 
 /**
+ * What the model cannot work out from a tool schema.
+ *
+ * A tool's description is read once the model is already considering that tool.
+ * These lines are for the decision before it: how many machines there are, what
+ * reaching one costs, and which shape of call answers the whole question. The
+ * rationale behind the fan-out allowlist is deliberately left out — the model
+ * needs to know which reads fan out, not why the boundary was drawn there.
+ */
+const CROSS_HOST_REACH = [
+  "",
+  "The user's machines, and what a call costs:",
+  "- The state below is only the machine that placed this call. Every other machine of theirs exists to you only through these tools; there is no other way in and no cached copy of what is on them.",
+  "- What the user feels is the number of calls you make, not how much each one does, because they wait through every one in silence. Prefer the call that answers the whole question: one that reads every machine beats five that each read one.",
+  `- These reads go to every machine at once through run_paseo_tool_on_all_hosts: ${LIVE_VOICE_ALL_HOSTS_READ_TOOLS.join(", ")}. Everything else runs on one named machine through run_paseo_tool_on_host, so one sentence from the user can never change several machines at once.`,
+  "- Any of these can come back having failed to reach a machine, in unavailableHosts. Name that machine and say you could not see it. Never answer as though it held nothing.",
+];
+
+/**
  * The shortest correct path for the handful of things people actually say to a
  * voice assistant. Without these the model reasons its way to a working but
  * long route — the archive request that prompted this took ten round trips.
@@ -134,7 +154,6 @@ const ROUTED_RECIPES = [
   "- New work in a workspace the user names: find_workspace, then send_agent_prompt or create_agent against the serverId and workspaceId it returns.",
   '- The user asks about their machines as a whole ("what\'s running?", "is anything waiting on me?"): run_paseo_tool_on_all_hosts with list_agents or list_pending_permissions. One call covers every machine, so do not ask which one they meant.',
   "- The user asks about one machine they named: run_paseo_tool_on_host with list_agents on that host.",
-  "- Only reads can go to every host at once. Anything that changes something runs on one named host, so a single sentence can never mutate several machines.",
 ];
 
 const DELEGATION_WITH_PASEO_TOOLS = [
@@ -143,12 +162,12 @@ const DELEGATION_WITH_PASEO_TOOLS = [
   "- For a user-requested new workspace and agent, call list_hosts, then use run_paseo_tool_on_host to call create_workspace and create_agent on the chosen host. Pass the returned workspaceId to create_agent; do not let create_agent implicitly choose or create another workspace.",
   "- Give both creations short, descriptive titles. Do not claim success until both workspaceId and agentId are returned: create_workspace must return workspaceId, and create_agent must return agentId plus the same workspaceId. Then report the visible workspace and agent titles.",
   "- Through that routing tool you can prompt an existing agent session in the workspace that owns the work, or create a workspace or session when none fits. You can list, create and archive workspaces; list, create, cancel and prompt agent sessions; open terminals; and manage schedules and heartbeats.",
-  "- The state below describes only the host that placed this call. Never assume another host has the same sessions or workspaces; list or inspect them through that host's Paseo tools.",
   "- Host credentials and connection endpoints are intentionally unavailable. Never ask the user for them.",
   "- Route anything that touches code, files, or commands. Answer directly only when the answer is already in this conversation or in the state below, or when you need a clarifying question first.",
   "- Replies from a session you prompted come back to you as text. Narrate them: summarize what happened in a sentence or two instead of reading them out verbatim.",
   ...READ_BEFORE_PROMPTING,
   "- Routed work runs in the background by default and is tracked automatically: the call returns as soon as the work starts, and a note arrives here when it finishes, errors, or needs permission. Say what you started, then keep talking. Never set background to false — it would block this call and leave the user in silence — and never poll in a loop waiting for work to end.",
+  ...CROSS_HOST_REACH,
   ...ROUTED_RECIPES,
 ];
 

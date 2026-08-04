@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  LIVE_VOICE_ALL_HOSTS_READ_TOOLS,
-  registerLiveVoiceRoutingTools,
-} from "./live-voice-routing-tools.js";
+import { registerLiveVoiceRoutingTools } from "./live-voice-routing-tools.js";
+import { LIVE_VOICE_ALL_HOSTS_READ_TOOLS } from "./live-voice-fanout-tools.js";
 import type { LiveVoiceRouteResult } from "./live-voice-route-broker.js";
 import type { VoiceLiveRouteOperation } from "@getpaseo/protocol/live-voice-routing";
 import type {

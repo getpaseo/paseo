@@ -56,7 +56,7 @@ import { MutableDaemonConfigSchema, type AgentProfile } from "@getpaseo/protocol
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-tools/broker.js";
 import type { LiveVoiceRouteBroker } from "../live-voice/live-voice-route-broker.js";
-import { LIVE_VOICE_ALL_HOSTS_READ_TOOLS } from "../live-voice/live-voice-routing-tools.js";
+import { LIVE_VOICE_ALL_HOSTS_READ_TOOLS } from "../live-voice/live-voice-fanout-tools.js";
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";

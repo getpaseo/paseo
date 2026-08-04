@@ -7,6 +7,7 @@ import {
   buildLiveVoiceStartContext,
   type LiveVoiceContextSnapshot,
 } from "./live-voice-context.js";
+import { LIVE_VOICE_ALL_HOSTS_READ_TOOLS } from "./live-voice-fanout-tools.js";
 import { LiveVoiceDaemonContextProvider } from "./live-voice-daemon-context.js";
 import { buildVoiceModeSystemPrompt } from "../voice-config.js";
 
@@ -136,8 +137,27 @@ describe("live voice prompt", () => {
 
     expect(prompt).toContain("run_paseo_tool_on_all_hosts");
     expect(prompt).toMatch(/do not ask which one they meant/i);
-    expect(prompt).toMatch(/Only reads can go to every host at once/i);
-    expect(prompt).toMatch(/never mutate several machines/i);
+    expect(prompt).toMatch(/never change several machines at once/i);
+  });
+
+  it("names the reads that fan out, from the same list the fan-out enforces", () => {
+    const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
+
+    // A prompt advertising a tool the fan-out rejects costs the user a turn.
+    for (const toolName of LIVE_VOICE_ALL_HOSTS_READ_TOOLS) {
+      expect(prompt, `${toolName} is not offered to the model`).toContain(toolName);
+    }
+    expect(prompt).not.toMatch(/at once through run_paseo_tool_on_all_hosts: [^\n]*archive_/);
+  });
+
+  it("tells the model what it cannot see, and what looking costs", () => {
+    const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
+
+    expect(prompt).toMatch(/no other way in and no cached copy/i);
+    expect(prompt).toMatch(/they wait through every one in silence/i);
+    // An unreachable host must not be reported as an empty one.
+    expect(prompt).toContain("unavailableHosts");
+    expect(prompt).toMatch(/Never answer as though it held nothing/i);
   });
 
   it("gives a local-only call the same tool names but no cross-host recipe", () => {

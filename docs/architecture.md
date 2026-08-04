@@ -198,9 +198,18 @@ mutation is what is being kept out: "archive it on all of them" is a sentence a
 user can say by accident, and one misheard word should not reach five machines.
 The allowlist is an ergonomic guard, not a privilege boundary — it is enforced
 on the requesting side, and the model gains no authority it did not already have
-against a single host. A test pins every allowlisted name to a real tool on the
-target catalog, since a rename would otherwise become `tool_not_found` on every
-host at once.
+against a single host. Two tests pin it down, because both of its neighbours can
+drift away from it silently: one checks every allowlisted name is a real tool on
+the target catalog, since a rename would become `tool_not_found` on every host at
+once, and one checks the call's prompt offers exactly the names the fan-out
+accepts, since advertising a rejected tool costs the user a turn.
+
+The prompt carries what a tool description cannot. A description is read once the
+model is already considering that tool; the prompt shapes the decision before it
+— how many machines there are, that they are reachable only through these tools,
+that the user waits through every call in silence, and which reads answer the
+whole question at once. The reasoning behind the allowlist stays out of it: the
+model needs to know which reads fan out, not why the line was drawn there.
 
 Resolution is classified, never decided: `find_workspace` returns
 `unique_exact`, `ambiguous_exact`, `unique_partial`, `ambiguous_partial`, or
