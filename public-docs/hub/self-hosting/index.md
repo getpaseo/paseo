@@ -106,7 +106,14 @@ Put the same origin in `PASEO_CLOUD_PUBLIC_URL` that your reverse proxy serves, 
   min_machines_running = 1
 ```
 
-Install secrets separately so they are not in the repository:
+Attach a database. `attach` sets `DATABASE_URL` as a secret on the app, so you do not set it yourself:
+
+```sh
+fly postgres create --name your-app-db
+fly postgres attach your-app-db -a your-app
+```
+
+Install the remaining secrets, along with the provider credentials for whichever of GitHub, Slack, and Discord you are connecting:
 
 ```sh
 fly secrets set -a your-app \
