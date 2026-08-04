@@ -698,6 +698,33 @@ describe("real provider usage fetchers", () => {
     fetchApi = mockFetch(
       new Map([
         [
+          "https://api.z.ai/api/monitor/usage/quota/limit",
+          () =>
+            jsonResponse({
+              code: 200,
+              success: true,
+              data: {
+                level: "max",
+                limits: [
+                  {
+                    type: "TOKENS_LIMIT",
+                    unit: 3,
+                    number: 5,
+                    percentage: 7,
+                    nextResetTime: 1_782_960_937_355,
+                  },
+                  {
+                    type: "TOKENS_LIMIT",
+                    unit: 6,
+                    number: 1,
+                    percentage: 84,
+                    nextResetTime: 1_783_303_263_991,
+                  },
+                ],
+              },
+            }),
+        ],
+        [
           "https://api.z.ai/api/biz/subscription/list",
           () =>
             jsonResponse({
@@ -719,6 +746,10 @@ describe("real provider usage fetchers", () => {
     expect(zai).toMatchObject({
       status: "available",
       planLabel: "GLM Coding Max",
+      windows: [
+        expect.objectContaining({ id: "session", usedPct: 7, remainingPct: 93 }),
+        expect.objectContaining({ id: "weekly", usedPct: 84, remainingPct: 16 }),
+      ],
       details: expect.arrayContaining([{ id: "status", label: "Status", value: "VALID" }]),
     });
   });

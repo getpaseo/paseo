@@ -111,6 +111,8 @@ See [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai
 
 - `ANTHROPIC_AUTH_TOKEN` is used instead of `ANTHROPIC_API_KEY` — this is the z.ai API key
 - The `API_TIMEOUT_MS` env var extends the request timeout (z.ai can be slower than direct Anthropic)
+- Plan usage automatically reads this provider credential and supports both `api.z.ai` and the
+  China-region `open.bigmodel.cn` endpoint
 - If you get auth errors, run `/logout` inside Claude Code before switching to the z.ai provider
 - Web search (`WebSearch` tool) is an Anthropic-only server-side feature — third-party endpoints don't support it. Add `"disallowedTools": ["WebSearch"]` to avoid errors.
 - Automated setup is also available: `npx @z_ai/coding-helper`

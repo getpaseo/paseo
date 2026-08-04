@@ -39,7 +39,12 @@ export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry
   },
   {
     providerId: "zai",
-    create: (options) => new ZaiQuotaProvider({ logger: options.logger, fetch: options.fetch }),
+    create: (options) =>
+      new ZaiQuotaProvider({
+        logger: options.logger,
+        fetch: options.fetch,
+        getAgentProviderConfigs: options.getAgentProviderConfigs,
+      }),
   },
   {
     providerId: "grok",

@@ -1,13 +1,18 @@
 import type { Logger } from "pino";
 import type { ProviderUsage } from "../../server/messages.js";
 import { createProviderUsageFetchers } from "./manifest.js";
-import type { ProviderApiFetch, ProviderUsageFetcher } from "./provider.js";
+import type {
+  ProviderApiFetch,
+  ProviderUsageAgentProviderConfigs,
+  ProviderUsageFetcher,
+} from "./provider.js";
 import { unavailableUsage } from "./usage.js";
 
 export interface ProviderUsageServiceOptions {
   logger: Logger;
   fetchers?: ProviderUsageFetcher[];
   fetch?: ProviderApiFetch;
+  getAgentProviderConfigs?: () => ProviderUsageAgentProviderConfigs;
   cacheTtlMs?: number;
   now?: () => number;
 }
@@ -34,6 +39,7 @@ export class ProviderUsageService {
       createProviderUsageFetchers({
         logger: this.logger,
         fetch: options.fetch,
+        getAgentProviderConfigs: options.getAgentProviderConfigs,
       });
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS;
     this.now = options.now ?? Date.now;

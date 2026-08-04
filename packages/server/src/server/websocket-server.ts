@@ -76,6 +76,8 @@ import {
   type WebSocketRuntimeDiagnosticSnapshot,
 } from "./websocket/runtime-metrics.js";
 import { ProviderUsageService } from "../services/quota-fetcher/service.js";
+import type { ProviderUsageAgentProviderConfigs } from "../services/quota-fetcher/provider.js";
+import { loadPersistedConfig } from "./persisted-config.js";
 import { getProcessMemoryDiagnostics, getProcessUptimeSeconds } from "./process-diagnostics.js";
 import {
   CLIENT_SHUTDOWN_RPC_REASON,
@@ -148,6 +150,30 @@ type WebSocketRuntimeDiagnosticPayload = WebSocketRuntimeDiagnosticSnapshot<
 type WebSocketRuntimeMetricsLogPayload = Omit<WebSocketRuntimeDiagnosticPayload, "collectedAt">;
 
 type TerminalAttentionReason = "finished" | "needs_input";
+
+/**
+ * Projects the persisted agent-provider overrides into the shape the provider-usage
+ * fetchers consume. `loadPersistedConfig` types `agents.providers` as launch-only runtime
+ * settings (`{ command, env, disallowedTools }`), but the parsed entries also retain the
+ * `enabled` and `order` fields from `ProviderOverridesSchema`. Reading those faithfully lets
+ * the Z.ai quota fetcher bind credential selection to a profile's enabled state and
+ * configured order instead of first-match across every persisted profile.
+ */
+function agentProviderConfigsForUsage(paseoHome: string): ProviderUsageAgentProviderConfigs {
+  const providers = loadPersistedConfig(paseoHome).agents?.providers;
+  if (!providers) return {};
+  type PersistedProviderEntry = NonNullable<(typeof providers)[string]> & {
+    enabled?: boolean;
+    order?: number;
+  };
+  const result: ProviderUsageAgentProviderConfigs = {};
+  for (const [id, provider] of Object.entries(providers)) {
+    if (!provider) continue;
+    const entry = provider as PersistedProviderEntry;
+    result[id] = { env: entry.env, enabled: entry.enabled, order: entry.order };
+  }
+  return result;
+}
 
 function resolveTerminalAttentionReason(input: {
   attentionReason?: TerminalActivity["attentionReason"];
@@ -684,6 +710,7 @@ export class VoiceAssistantWebSocketServer {
 
     this.providerUsageService = new ProviderUsageService({
       logger: this.logger,
+      getAgentProviderConfigs: () => agentProviderConfigsForUsage(this.paseoHome),
     });
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);
