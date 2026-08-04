@@ -381,6 +381,60 @@ describe("saveAppSettings", () => {
     );
   });
 
+  it("serializes overlapping updates without losing either setting", async () => {
+    const entries = new Map([[APP_SETTINGS_KEY, JSON.stringify(DEFAULT_CLIENT_SETTINGS)]]);
+    let releaseFirstWrite = () => {};
+    const firstWriteGate = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+    let markFirstWriteStarted = () => {};
+    const firstWriteStarted = new Promise<void>((resolve) => {
+      markFirstWriteStarted = resolve;
+    });
+    let writeCount = 0;
+    const storage: KeyValueStorage = {
+      async getItem(key) {
+        return entries.get(key) ?? null;
+      },
+      async setItem(key, value) {
+        writeCount += 1;
+        if (writeCount === 1) {
+          markFirstWriteStarted();
+          await firstWriteGate;
+        }
+        entries.set(key, value);
+      },
+    };
+    const deps = { storage, desktop: createFakeDesktopBridge() };
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, DEFAULT_CLIENT_SETTINGS);
+
+    const themeSave = saveAppSettings({
+      queryClient,
+      updates: { theme: "light" },
+      deps,
+    });
+    await firstWriteStarted;
+    const scrollbackSave = saveAppSettings({
+      queryClient,
+      updates: { terminalScrollbackLines: 42_000 },
+      deps,
+    });
+
+    await Promise.resolve();
+    expect(writeCount).toBe(1);
+    releaseFirstWrite();
+    await Promise.all([themeSave, scrollbackSave]);
+
+    const expected = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      theme: "light",
+      terminalScrollbackLines: 42_000,
+    };
+    expect(JSON.parse(entries.get(APP_SETTINGS_KEY) ?? "null")).toEqual(expected);
+    expect(queryClient.getQueryData(APP_SETTINGS_QUERY_KEY)).toEqual(expected);
+  });
+
   it("does not update the cache when persistence fails", async () => {
     const storage: KeyValueStorage = {
       getItem: async () => JSON.stringify(DEFAULT_CLIENT_SETTINGS),

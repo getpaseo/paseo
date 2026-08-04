@@ -175,18 +175,38 @@ export interface SettingsDeps {
   desktop: DesktopSettingsBridge;
 }
 
+const appSettingsSaveQueues = new WeakMap<QueryClient, Promise<void>>();
+
 export async function saveAppSettings(input: {
   queryClient: QueryClient;
   updates: Partial<AppSettings>;
   deps: SettingsDeps;
 }): Promise<void> {
-  const storedCurrent =
-    input.queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ??
-    (await loadAppSettingsFromStorage(input.deps));
-  const current = normalizeAppSettings(storedCurrent);
-  const next = { ...current, ...input.updates };
-  input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
-  await input.deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+  const previousSave = appSettingsSaveQueues.get(input.queryClient) ?? Promise.resolve();
+  const save = (async () => {
+    try {
+      await previousSave;
+    } catch {
+      // The previous caller receives its persistence error; this save must still run.
+    }
+
+    const storedCurrent =
+      input.queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ??
+      (await loadAppSettingsFromStorage(input.deps));
+    const current = normalizeAppSettings(storedCurrent);
+    const next = { ...current, ...input.updates };
+    await input.deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+    input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
+  })();
+  appSettingsSaveQueues.set(input.queryClient, save);
+
+  try {
+    await save;
+  } finally {
+    if (appSettingsSaveQueues.get(input.queryClient) === save) {
+      appSettingsSaveQueues.delete(input.queryClient);
+    }
+  }
 }
 
 export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<AppSettings> {
