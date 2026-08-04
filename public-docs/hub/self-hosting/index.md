@@ -32,7 +32,6 @@ Migrations run automatically at startup. If a migration fails, the process does 
 | ------------------------------------- | ----------------------------------------------- |
 | `DATABASE_URL`                        | PostgreSQL connection string                    |
 | `PASEO_CLOUD_PUBLIC_URL`              | Public origin, used to build every callback URL |
-| `BETTER_AUTH_URL`                     | Same origin, for the dashboard's auth           |
 | `BETTER_AUTH_SECRET`                  | Session signing key                             |
 | `PASEO_CLOUD_COMPLETION_TOKEN_SECRET` | Derives the per-execution MCP bearer tokens     |
 
@@ -42,7 +41,7 @@ Generate the two secrets once and persist them:
 openssl rand -base64 32
 ```
 
-Rotating `PASEO_CLOUD_COMPLETION_TOKEN_SECRET` invalidates the completion callback of every execution still running. Hub refuses to dispatch at all when it is missing.
+Without `BETTER_AUTH_SECRET` the dashboard's auth routes stay closed and nobody can sign in. Rotating `PASEO_CLOUD_COMPLETION_TOKEN_SECRET` invalidates the completion callback of every execution still running, and Hub refuses to dispatch at all when it is missing.
 
 The `PASEO_CLOUD_` prefix is historical. The product is Hub.
 
@@ -75,12 +74,13 @@ See [GitHub](/docs/hub/self-hosting/github-app), [Slack](/docs/hub/self-hosting/
 
 ### Optional
 
-| Variable                               | Default   | Purpose                                                 |
-| -------------------------------------- | --------- | ------------------------------------------------------- |
-| `PORT`                                 | `3000`    | Listen port                                             |
-| `PASEO_CLOUD_BIND`                     | `0.0.0.0` | Bind address                                            |
-| `PASEO_CLOUD_TRUSTED_CLIENT_IP_HEADER` | unset     | Client IP header when behind a proxy                    |
-| `PASEO_ADMIN_TOKEN`                    | unset     | Opens the admin routes. Leave unset to keep them closed |
+| Variable                               | Default                  | Purpose                                                 |
+| -------------------------------------- | ------------------------ | ------------------------------------------------------- |
+| `BETTER_AUTH_URL`                      | `PASEO_CLOUD_PUBLIC_URL` | Origin the dashboard's auth issues links on             |
+| `PORT`                                 | `3000`                   | Listen port                                             |
+| `PASEO_CLOUD_BIND`                     | `0.0.0.0`                | Bind address                                            |
+| `PASEO_CLOUD_TRUSTED_CLIENT_IP_HEADER` | unset                    | Client IP header when behind a proxy                    |
+| `PASEO_ADMIN_TOKEN`                    | unset                    | Opens the admin routes. Leave unset to keep them closed |
 
 ## Docker
 
