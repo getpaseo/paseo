@@ -19,6 +19,7 @@ import {
 } from "../utils/checkout-git.js";
 import { runGitCommand as runGitCommandReal } from "../utils/run-git-command.js";
 import {
+  getWorkspaceFileWatcherBackend,
   getWorkspaceGitSelfHealPhaseMs,
   WorkspaceGitServiceImpl,
   type WorkspaceGitRuntimeSnapshot,
@@ -889,6 +890,20 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
   test("self-heal phase is stable across process restarts", () => {
     expect(getWorkspaceGitSelfHealPhaseMs("/tmp/repo")).toBe(54_185);
     expect(getWorkspaceGitSelfHealPhaseMs("/tmp/staggered-repo")).toBe(9_817);
+  });
+
+  test.each([
+    ["darwin", "fs-events"],
+    ["linux", "inotify"],
+    ["win32", "windows"],
+  ] as const)("uses the native %s file watcher backend", (platform, backend) => {
+    expect(getWorkspaceFileWatcherBackend(platform)).toBe(backend);
+  });
+
+  test("rejects unsupported watcher platforms instead of using backend auto-detection", () => {
+    expect(() => getWorkspaceFileWatcherBackend("freebsd")).toThrow(
+      "No native workspace file watcher configured for freebsd",
+    );
   });
 
   test("self-heal staggers workspaces and settles into a 120 second cadence", async () => {
