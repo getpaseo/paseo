@@ -10,6 +10,8 @@ category: Getting started
 
 Your Paseo app connects to the daemon running on your computer or server. You can connect through the Paseo relay or directly with Tailscale.
 
+This is client-to-daemon transport. If you are looking for the service that starts agents from GitHub, Slack, and Discord events, that is [Hub](/docs/hub).
+
 - [Paseo relay](#paseo-relay)
 - [Tailscale](#tailscale)
 

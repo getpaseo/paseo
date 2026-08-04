@@ -141,3 +141,4 @@ Paseo never stores or transmits provider API keys. Agents run in your user conte
 - **Never bind to 0.0.0.0 without a password**, without one, any device on your network can connect
 - **Scope Docker mounts tightly**, agents can access mounted workspaces and provider credentials
 - **Keep your daemon updated**, security improvements are released regularly
+- **Protect the Hub configuration branch**, push access to `.paseo/hub.yml` controls what that project can reach, see [How Hub works](/docs/hub/concepts)

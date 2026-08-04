@@ -21,6 +21,19 @@ export interface TerminalCursorOffset {
   y: number;
 }
 
+export interface TerminalCustomGlyphCellTransformInput {
+  cellOffset: number;
+  cellWidth: number;
+  cellHeight: number;
+}
+
+export function resolveTerminalCustomGlyphCellTransform(
+  input: TerminalCustomGlyphCellTransformInput,
+): string {
+  const translateX = input.cellOffset * input.cellWidth;
+  return `matrix(${input.cellWidth} 0 0 ${input.cellHeight} ${translateX} 0)`;
+}
+
 export function resolveMeasuredTerminalCellMetrics(
   input: TerminalGridCellMetricsInput,
 ): TerminalGridCellMetrics {
