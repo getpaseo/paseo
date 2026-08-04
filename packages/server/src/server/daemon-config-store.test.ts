@@ -85,7 +85,7 @@ describe("DaemonConfigStore", () => {
     expect(loadPersistedConfig(paseoHome).daemon?.relay?.enabled).toBe(true);
   });
 
-  test("patch persists and emits the provider injection allowlist", () => {
+  test("patch can set and reset the provider injection allowlist", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);
     const store = new DaemonConfigStore(paseoHome, {
@@ -108,6 +108,14 @@ describe("DaemonConfigStore", () => {
     expect(loadPersistedConfig(paseoHome).daemon?.mcp).toEqual({
       injectIntoAgents: true,
       injectIntoProviders: ["codex-supervisor", "codex-lead"],
+    });
+
+    const reset = store.patch({ mcp: { injectIntoProviders: null } });
+
+    expect(reset.mcp).toEqual({ injectIntoAgents: true });
+    expect(changes).toEqual([["codex-supervisor", "codex-lead"], undefined]);
+    expect(loadPersistedConfig(paseoHome).daemon?.mcp).toEqual({
+      injectIntoAgents: true,
     });
   });
 

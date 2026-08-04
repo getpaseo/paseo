@@ -25,7 +25,7 @@ To limit injection to specific configured provider IDs, add `injectIntoProviders
 }
 ```
 
-The list matches exact configured IDs. In this example, `codex-lead` receives Paseo tools and `codex-peer` does not, even if both extend `codex`. Omit `injectIntoProviders` to inject into every provider. Set it to `[]` to inject into none. This policy covers native tool delivery and the MCP fallback for new, resumed, reloaded, and imported sessions.
+The list matches exact configured IDs. In this example, `codex-lead` receives Paseo tools and `codex-peer` does not, even if both extend `codex`. Omit `injectIntoProviders` to inject into every provider. Set it to `[]` to inject into none. When using the daemon config patch API, send `null` to remove the allowlist and restore the omitted behavior. Persisted configuration never stores `null`. This policy covers native tool delivery and the MCP fallback for new, resumed, reloaded, and imported sessions.
 
 Depending on the provider, Paseo delivers the catalog through its native tool interface or MCP. The capabilities are the same either way.
 

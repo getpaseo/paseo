@@ -198,6 +198,9 @@ export class DaemonConfigStore {
     const { removeProviders = [], ...configPatch } = parsedPatch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
+    if (configPatch.mcp?.injectIntoProviders === null) {
+      delete merged.mcp.injectIntoProviders;
+    }
     const next = MutableDaemonConfigSchema.parse(
       omitMetadataGenerationProvidersFromConfig(
         omitProvidersFromConfig(merged, removedProviders),
@@ -316,6 +319,8 @@ function mergeMutableConfigIntoPersistedConfig(params: {
   };
   const shouldPersistMetadataGeneration =
     metadataGenerationProviders.length > 0 || persisted.agents?.metadataGeneration !== undefined;
+  const persistedMcp = { ...persisted.daemon?.mcp };
+  delete persistedMcp.injectIntoProviders;
 
   let nextAgents = persistedAgents as PersistedConfig["agents"];
   if (providerOverrides && Object.keys(providerOverrides).length > 0) {
@@ -346,7 +351,7 @@ function mergeMutableConfigIntoPersistedConfig(params: {
           }
         : {}),
       mcp: {
-        ...persisted.daemon?.mcp,
+        ...persistedMcp,
         injectIntoAgents: mutable.mcp.injectIntoAgents,
         ...(mutable.mcp.injectIntoProviders !== undefined
           ? { injectIntoProviders: mutable.mcp.injectIntoProviders }

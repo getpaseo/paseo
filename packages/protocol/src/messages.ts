@@ -167,7 +167,13 @@ export const MutableDaemonConfigSchema = z
 export const MutableDaemonConfigPatchSchema = z
   .object({
     relay: MutableRelayConfigSchema.partial().optional(),
-    mcp: MutableDaemonConfigSchema.shape.mcp.partial().optional(),
+    mcp: z
+      .object({
+        injectIntoAgents: z.boolean().optional(),
+        injectIntoProviders: z.union([z.array(AgentProviderSchema), z.null()]).optional(),
+      })
+      .passthrough()
+      .optional(),
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
