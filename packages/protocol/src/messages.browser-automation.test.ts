@@ -157,16 +157,22 @@ describe("browser automation protocol integration", () => {
   });
 
   test("mutable daemon config defaults browser tools off and accepts opt-in patches", () => {
-    expect(
-      MutableDaemonConfigSchema.parse({
-        mcp: { injectIntoAgents: false },
-      }).browserTools,
-    ).toEqual({ enabled: false });
+    const config = MutableDaemonConfigSchema.parse({
+      mcp: { injectIntoAgents: false },
+    });
+    expect(config.browserTools).toEqual({ enabled: false });
+    expect(config.providerUsage).toBeUndefined();
 
     expect(
       MutableDaemonConfigPatchSchema.parse({
         browserTools: { enabled: true },
       }).browserTools,
     ).toEqual({ enabled: true });
+
+    expect(
+      MutableDaemonConfigPatchSchema.parse({
+        providerUsage: { hiddenProviders: ["copilot", "minimax"] },
+      }).providerUsage,
+    ).toEqual({ hiddenProviders: ["copilot", "minimax"] });
   });
 });

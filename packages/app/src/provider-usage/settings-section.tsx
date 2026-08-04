@@ -9,13 +9,16 @@ import { SettingsSection } from "@/screens/settings/settings-section";
 import { providerUsageCopy } from "./copy";
 import { ProviderUsageList } from "./list";
 import type { ProviderUsageView } from "./types";
+import { filterVisibleProviders } from "./visibility";
 
 export function ProviderUsageSettingsSection({
   view,
   onRefresh,
+  hiddenProviderIds = [],
 }: {
   view: ProviderUsageView;
   onRefresh: () => void;
+  hiddenProviderIds?: readonly string[];
 }) {
   const busy = view.kind === "loading" || (view.kind === "ready" && view.isRefreshing);
 
@@ -41,7 +44,7 @@ export function ProviderUsageSettingsSection({
       testID="provider-usage-card"
       trailing={refreshButton}
     >
-      <ProviderUsageBody view={view} onRefresh={onRefresh} />
+      <ProviderUsageBody view={view} onRefresh={onRefresh} hiddenProviderIds={hiddenProviderIds} />
     </SettingsSection>
   );
 }
@@ -49,9 +52,11 @@ export function ProviderUsageSettingsSection({
 function ProviderUsageBody({
   view,
   onRefresh,
+  hiddenProviderIds,
 }: {
   view: ProviderUsageView;
   onRefresh: () => void;
+  hiddenProviderIds: readonly string[];
 }) {
   if (view.kind === "loading") {
     return (
@@ -71,15 +76,20 @@ function ProviderUsageBody({
     );
   }
 
-  if (view.payload.providers.length === 0) {
+  const visibleProviders = filterVisibleProviders(view.payload.providers, hiddenProviderIds);
+  if (visibleProviders.length === 0) {
     return (
       <View style={[settingsStyles.card, styles.emptyCard]}>
-        <Text style={styles.emptyText}>{providerUsageCopy.empty}</Text>
+        <Text style={styles.emptyText}>
+          {view.payload.providers.length > 0
+            ? providerUsageCopy.allHidden
+            : providerUsageCopy.empty}
+        </Text>
       </View>
     );
   }
 
-  return <ProviderUsageList providers={view.payload.providers} />;
+  return <ProviderUsageList providers={visibleProviders} />;
 }
 
 const styles = StyleSheet.create((theme) => ({

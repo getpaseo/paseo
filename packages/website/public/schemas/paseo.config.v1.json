@@ -72,6 +72,19 @@
               },
               "additionalProperties": true
             },
+            "providerUsage": {
+              "type": "object",
+              "properties": {
+                "hiddenProviders": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
             "git": {
               "type": "object",
               "properties": {

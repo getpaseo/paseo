@@ -58,6 +58,9 @@ import {
 import { ProvidersSection } from "@/screens/settings/providers-section";
 import { ProviderUsageSettingsSection } from "@/provider-usage/settings-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
+import { providerUsageCopy } from "@/provider-usage/copy";
+import { createProviderVisibilityPatch, getHiddenProviderIds } from "@/provider-usage/visibility";
+import { ProviderUsageVisibilitySection } from "@/provider-usage/visibility-section";
 import { HostAppearanceSection } from "@/screens/settings/host-appearance-section";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { useSessionStore } from "@/stores/session-store";
@@ -331,9 +334,31 @@ export function HostProvidersPage({ serverId }: { serverId: string }) {
 export function HostUsagePage({ serverId }: { serverId: string }) {
   const host = useHostProfile(serverId);
   const { view: providerUsageView, refresh: refreshProviderUsage } = useProviderUsage(serverId);
+  const supportsProviderUsageVisibility = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.providerUsageVisibility === true,
+  );
+  const {
+    config,
+    isLoading: isConfigLoading,
+    patchConfig,
+  } = useDaemonConfig(supportsProviderUsageVisibility ? serverId : null);
+  const hiddenProviderIds = useMemo(() => getHiddenProviderIds(config), [config]);
+  const visibilityProviders =
+    providerUsageView.kind === "ready" ? providerUsageView.payload.providers : [];
   const handleRefresh = useCallback(() => {
     void refreshProviderUsage();
   }, [refreshProviderUsage]);
+  const handleVisibilityChange = useCallback(
+    async (providerId: string, visible: boolean) => {
+      const result = await patchConfig(
+        createProviderVisibilityPatch({ hiddenProviderIds, providerId, visible }),
+      );
+      if (!result) {
+        throw new Error(providerUsageCopy.clientUnavailable);
+      }
+    },
+    [hiddenProviderIds, patchConfig],
+  );
 
   if (!host) {
     return <HostNotFound />;
@@ -341,7 +366,19 @@ export function HostUsagePage({ serverId }: { serverId: string }) {
 
   return (
     <View>
-      <ProviderUsageSettingsSection view={providerUsageView} onRefresh={handleRefresh} />
+      <ProviderUsageSettingsSection
+        view={providerUsageView}
+        onRefresh={handleRefresh}
+        hiddenProviderIds={supportsProviderUsageVisibility ? hiddenProviderIds : []}
+      />
+      {supportsProviderUsageVisibility ? (
+        <ProviderUsageVisibilitySection
+          providers={visibilityProviders}
+          hiddenProviderIds={hiddenProviderIds}
+          isConfigLoading={isConfigLoading}
+          onVisibilityChange={handleVisibilityChange}
+        />
+      ) : null}
     </View>
   );
 }
