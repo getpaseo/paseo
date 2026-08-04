@@ -1752,8 +1752,6 @@ export const ru: TranslationResources = {
     },
     actions: {
       start: "Начать живой голос",
-      startForeground: "Запустить на переднем плане",
-      startBackground: "Запустить в фоне",
       unavailable: "Живой голос недоступен",
       stop: "Остановить живой голос",
       mute: "Отключить микрофон",
@@ -1762,10 +1760,6 @@ export const ru: TranslationResources = {
       showTranscript: "Показать расшифровку",
       hideTranscript: "Скрыть расшифровку",
       dismiss: "Закрыть",
-    },
-    modes: {
-      foreground: "Режим переднего плана",
-      background: "Фоновый режим",
     },
     unavailable: {
       platform: "Живой голос не поддерживается на этом устройстве.",
@@ -2356,9 +2350,12 @@ export const ru: TranslationResources = {
         queueMessage: "Поставить сообщение в очередь",
         muteUnmuteVoiceMode: "Выключить/включить звук в голосовом режиме",
         muteUnmuteLiveVoice: "Выключить/включить микрофон живого голоса",
+        holdInvertLiveVoiceMute: "Удерживать, чтобы инвертировать микрофон живого голоса",
         switchProject: "Сменить проект",
       },
       helpNotes: {
+        holdInvertLiveVoiceMute:
+          "Нажмите и говорите, когда микрофон выключен; нажмите, чтобы выключить, когда он включён.",
         showKeyboardShortcuts: "Доступно, когда фокус находится не в текстовом поле или терминале.",
       },
     },

@@ -1732,8 +1732,6 @@ export const en = {
     },
     actions: {
       start: "Start live voice",
-      startForeground: "Start foreground",
-      startBackground: "Start background",
       unavailable: "Live voice unavailable",
       stop: "Stop live voice",
       mute: "Mute microphone",
@@ -1742,10 +1740,6 @@ export const en = {
       showTranscript: "Show transcript",
       hideTranscript: "Hide transcript",
       dismiss: "Dismiss",
-    },
-    modes: {
-      foreground: "Foreground mode",
-      background: "Background mode",
     },
     unavailable: {
       platform: "Live voice is not supported on this device.",
@@ -2421,9 +2415,11 @@ export const en = {
         queueMessage: "Queue message",
         muteUnmuteVoiceMode: "Mute/unmute voice mode",
         muteUnmuteLiveVoice: "Mute/unmute live voice",
+        holdInvertLiveVoiceMute: "Hold to invert live voice mute",
         switchProject: "Switch project",
       },
       helpNotes: {
+        holdInvertLiveVoiceMute: "Push-to-talk while muted, push-to-mute while live.",
         showKeyboardShortcuts: "Available when focus is not in a text field or terminal.",
       },
     },

@@ -26,7 +26,6 @@ import {
   isLiveVoiceSessionSupported,
   startLiveVoiceSession,
   type LiveVoiceSession,
-  type LiveVoiceSessionMode,
   type StartLiveVoiceSessionOptions,
 } from "@/live-voice/live-voice-session";
 import { resolveLiveVoiceVoiceForCall } from "@/live-voice/live-voice-voice-catalog";
@@ -57,7 +56,6 @@ export interface LiveVoiceSnapshot {
   phase: LiveVoicePhase;
   serverId: string | null;
   liveSessionId: string | null;
-  sessionMode: LiveVoiceSessionMode | null;
   isMuted: boolean;
   /** Autoplay policy blocked remote audio; the UI must offer "tap to enable audio". */
   isAudioBlocked: boolean;
@@ -122,8 +120,10 @@ export interface LiveVoiceRuntimeDeps {
 export interface LiveVoiceRuntime {
   subscribe(listener: () => void): () => void;
   getSnapshot(): LiveVoiceSnapshot;
-  start(serverId: string, sessionMode?: LiveVoiceSessionMode): Promise<void>;
+  start(serverId: string): Promise<void>;
   stop(): Promise<void>;
+  /** Drive mute to an absolute value. No-op unless a call is active. */
+  setMuted(muted: boolean): void;
   toggleMute(): void;
   /** Retry autoplay-blocked playback. Must be driven by a user gesture. */
   resumeAudio(): Promise<void>;
@@ -220,7 +220,6 @@ const IDLE_SNAPSHOT: LiveVoiceSnapshot = {
   phase: "idle",
   serverId: null,
   liveSessionId: null,
-  sessionMode: null,
   isMuted: false,
   isAudioBlocked: false,
   transcripts: [],
@@ -282,6 +281,17 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
 
   function patch(update: Partial<LiveVoiceSnapshot>): void {
     publish({ ...snapshot, ...update });
+  }
+
+  function setMuted(muted: boolean): void {
+    if (!session || snapshot.phase !== "active") {
+      return;
+    }
+    if (snapshot.isMuted === muted) {
+      return;
+    }
+    session.setMuted(muted);
+    patch({ isMuted: muted });
   }
 
   /**
@@ -399,13 +409,9 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
     }
   }
 
-  function failStart(
-    serverId: string,
-    sessionMode: LiveVoiceSessionMode,
-    info: LiveVoiceErrorInfo,
-  ): never {
+  function failStart(serverId: string, info: LiveVoiceErrorInfo): never {
     cleanupLocal();
-    publish({ ...IDLE_SNAPSHOT, phase: "error", serverId, sessionMode, error: info });
+    publish({ ...IDLE_SNAPSHOT, phase: "error", serverId, error: info });
     throw new LiveVoiceStartError(info);
   }
 
@@ -438,7 +444,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       return snapshot;
     },
 
-    async start(serverId, sessionMode = "background") {
+    async start(serverId) {
       if (snapshot.phase === "starting" || snapshot.phase === "active") {
         throw new LiveVoiceStartError({ code: "already_active", message: null });
       }
@@ -446,7 +452,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
         throw new LiveVoiceStartError({ code: "stopping", message: null });
       }
       if (!deps.isSessionSupported) {
-        failStart(serverId, sessionMode, { code: "unsupported", message: null });
+        failStart(serverId, { code: "unsupported", message: null });
       }
       const pin = deps.pinConnection?.(serverId) ?? null;
       // When pinning is available, never silently fall back to an unpinned
@@ -454,7 +460,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       // call immediately after negotiation.
       const client = resolveLiveVoiceClient(deps, serverId, pin);
       if (!client) {
-        failStart(serverId, sessionMode, { code: "not_connected", message: null });
+        failStart(serverId, { code: "not_connected", message: null });
       }
       connectionPin = pin;
       daemonClient = client;
@@ -463,7 +469,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       const token = deps.lease.acquire("liveVoice");
       if (!token) {
         const owner = deps.lease.current();
-        failStart(serverId, sessionMode, {
+        failStart(serverId, {
           code: "mic_busy",
           message: null,
           ...(owner ? { owner } : {}),
@@ -473,7 +479,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
 
       const startGeneration = ++generation;
       pendingUpdates = [];
-      publish({ ...IDLE_SNAPSHOT, phase: "starting", serverId, sessionMode });
+      publish({ ...IDLE_SNAPSHOT, phase: "starting", serverId });
 
       // Subscribe before negotiating: the daemon can push `started` (or a
       // terminal event) before it answers the start request.
@@ -493,7 +499,6 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       }
 
       const sessionOptions: StartLiveVoiceSessionOptions = {
-        mode: sessionMode,
         negotiate: (offerSdp) =>
           client.startLiveVoice({
             offerSdp,
@@ -554,7 +559,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
           releaseSupersededResources();
           throw error instanceof Error ? error : new Error(String(error));
         }
-        failStart(serverId, sessionMode, toErrorInfo(error));
+        failStart(serverId, toErrorInfo(error));
       } finally {
         startInFlight = false;
       }
@@ -599,13 +604,15 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       await client?.stopLiveVoice({ liveSessionId }).catch(() => undefined);
     },
 
+    setMuted(muted) {
+      setMuted(muted);
+    },
+
     toggleMute() {
-      if (!session || snapshot.phase !== "active") {
+      if (snapshot.phase !== "active") {
         return;
       }
-      const nextMuted = !snapshot.isMuted;
-      session.setMuted(nextMuted);
-      patch({ isMuted: nextMuted });
+      setMuted(!snapshot.isMuted);
     },
 
     async resumeAudio() {
@@ -637,7 +644,6 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       publish({
         ...IDLE_SNAPSHOT,
         serverId,
-        sessionMode: snapshot.sessionMode,
         transcripts,
         // The old client session eventually reports the same cause when it expires.
         closedCause: "owner_disconnected",

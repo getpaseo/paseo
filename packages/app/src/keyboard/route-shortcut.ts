@@ -66,6 +66,13 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "workspace.pane.close": { id: "workspace.pane.close", scope: "workspace" },
   "view.toggle.focus": { id: "workspace.focus.toggle", scope: "workspace" },
   "live-voice.mute.toggle": { id: "live-voice.mute-toggle", scope: "global" },
+  // Key-down only. The matching release is dispatched by the shortcut host from
+  // the key-up event, which never reaches the matcher.
+  "live-voice.mute.hold-invert": {
+    id: "live-voice.mute-hold-invert",
+    scope: "global",
+    phase: "press",
+  },
 };
 
 const SIMPLE_CALLBACKS: Record<string, ShortcutCallbackName> = {

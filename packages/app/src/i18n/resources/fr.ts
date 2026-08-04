@@ -1772,8 +1772,6 @@ export const fr: TranslationResources = {
     },
     actions: {
       start: "Démarrer la voix en direct",
-      startForeground: "Démarrer au premier plan",
-      startBackground: "Démarrer en arrière-plan",
       unavailable: "Voix en direct indisponible",
       stop: "Arrêter la voix en direct",
       mute: "Couper le micro",
@@ -1782,10 +1780,6 @@ export const fr: TranslationResources = {
       showTranscript: "Afficher la transcription",
       hideTranscript: "Masquer la transcription",
       dismiss: "Ignorer",
-    },
-    modes: {
-      foreground: "Mode premier plan",
-      background: "Mode arrière-plan",
     },
     unavailable: {
       platform: "La voix en direct n’est pas prise en charge sur cet appareil.",
@@ -2373,9 +2367,12 @@ export const fr: TranslationResources = {
         queueMessage: "Message de file d'attente",
         muteUnmuteVoiceMode: "Mode vocal/unmutemuet",
         muteUnmuteLiveVoice: "Couper/réactiver la voix en direct",
+        holdInvertLiveVoiceMute: "Maintenir pour inverser la coupure de la voix en direct",
         switchProject: "Changer de projet",
       },
       helpNotes: {
+        holdInvertLiveVoiceMute:
+          "Appuyer pour parler si le micro est coupé, appuyer pour couper s’il est actif.",
         showKeyboardShortcuts:
           "Disponible lorsque le focus n’est pas dans un champ de texte ou un terminal.",
       },

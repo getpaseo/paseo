@@ -1701,8 +1701,6 @@ export const zhCN: TranslationResources = {
     },
     actions: {
       start: "开始实时语音",
-      startForeground: "在前台启动",
-      startBackground: "在后台启动",
       unavailable: "实时语音不可用",
       stop: "停止实时语音",
       mute: "静音麦克风",
@@ -1711,10 +1709,6 @@ export const zhCN: TranslationResources = {
       showTranscript: "显示转录",
       hideTranscript: "隐藏转录",
       dismiss: "关闭",
-    },
-    modes: {
-      foreground: "前台模式",
-      background: "后台模式",
     },
     unavailable: {
       platform: "此设备不支持实时语音。",
@@ -2291,9 +2285,11 @@ export const zhCN: TranslationResources = {
         queueMessage: "消息排队",
         muteUnmuteVoiceMode: "静音/取消静音语音模式",
         muteUnmuteLiveVoice: "静音/取消静音实时语音",
+        holdInvertLiveVoiceMute: "按住以反转实时语音静音",
         switchProject: "切换项目",
       },
       helpNotes: {
+        holdInvertLiveVoiceMute: "静音时按住说话，通话时按住静音。",
         showKeyboardShortcuts: "焦点不在文本输入框或终端内时可用。",
       },
     },

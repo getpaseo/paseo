@@ -1768,8 +1768,6 @@ export const es: TranslationResources = {
     },
     actions: {
       start: "Iniciar voz en directo",
-      startForeground: "Iniciar en primer plano",
-      startBackground: "Iniciar en segundo plano",
       unavailable: "Voz en directo no disponible",
       stop: "Detener voz en directo",
       mute: "Silenciar micrófono",
@@ -1778,10 +1776,6 @@ export const es: TranslationResources = {
       showTranscript: "Mostrar transcripción",
       hideTranscript: "Ocultar transcripción",
       dismiss: "Descartar",
-    },
-    modes: {
-      foreground: "Modo en primer plano",
-      background: "Modo en segundo plano",
     },
     unavailable: {
       platform: "La voz en directo no es compatible con este dispositivo.",
@@ -2370,9 +2364,12 @@ export const es: TranslationResources = {
         queueMessage: "mensaje de cola",
         muteUnmuteVoiceMode: "Silenciar el modo de voz/unmute",
         muteUnmuteLiveVoice: "Silenciar/activar la voz en directo",
+        holdInvertLiveVoiceMute: "Mantener para invertir el silencio de la voz en directo",
         switchProject: "Cambiar proyecto",
       },
       helpNotes: {
+        holdInvertLiveVoiceMute:
+          "Pulsar para hablar si está silenciado; pulsar para silenciar si está activo.",
         showKeyboardShortcuts: "Disponible cuando el foco no está en un campo de texto o terminal.",
       },
     },

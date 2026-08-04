@@ -17,7 +17,6 @@ import {
   type LiveVoiceRuntime,
   type LiveVoiceSnapshot,
 } from "@/live-voice/live-voice-runtime";
-import type { LiveVoiceSessionMode } from "@/live-voice/live-voice-session";
 import { registerLiveVoiceRouteAuthority } from "@/live-voice/live-voice-route-authority";
 import { attachLiveVoiceCues } from "@/live-voice/live-voice-cues";
 import { attachLiveVoiceCallNotification } from "@/live-voice/live-voice-call-notification";
@@ -42,8 +41,9 @@ const ambientWatchDeps: LiveVoiceAmbientWatchDeps = {
 };
 
 interface LiveVoiceContextValue extends LiveVoiceSnapshot {
-  start: (serverId: string, sessionMode?: LiveVoiceSessionMode) => Promise<void>;
+  start: (serverId: string) => Promise<void>;
   stop: () => Promise<void>;
+  setMuted: (muted: boolean) => void;
   toggleMute: () => void;
   resumeAudio: () => Promise<void>;
   dismiss: () => void;
@@ -54,7 +54,6 @@ const EMPTY_SNAPSHOT: LiveVoiceSnapshot = {
   phase: "idle",
   serverId: null,
   liveSessionId: null,
-  sessionMode: null,
   isMuted: false,
   isAudioBlocked: false,
   transcripts: [],
@@ -105,6 +104,7 @@ export function useLiveVoiceOptional(): LiveVoiceContextValue | null {
       ...snapshot,
       start: runtime.start,
       stop: runtime.stop,
+      setMuted: runtime.setMuted,
       toggleMute: runtime.toggleMute,
       resumeAudio: runtime.resumeAudio,
       dismiss: runtime.dismiss,
