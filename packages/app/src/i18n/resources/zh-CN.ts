@@ -64,6 +64,16 @@ export const zhCN: TranslationResources = {
       home: "首页",
       modelGroupLabel: "模型",
       modelSearchKeywords: "切换模型 更改模型 设置模型 选择模型",
+      thinkingGroupLabel: "思考",
+      thinkingSearchKeywords: "推理 努力 思考",
+      modeGroupLabel: "模式",
+      modeSearchKeywords: "访问 权限 批准 模式",
+      planModeGroupLabel: "计划模式",
+      planModeSearchKeywords: "计划 规划 计划模式",
+      fastModeGroupLabel: "快速",
+      fastModeSearchKeywords: "快速 速度 低延迟",
+      settingOn: "开",
+      settingOff: "关",
     },
   },
   composer: {
@@ -102,6 +112,7 @@ export const zhCN: TranslationResources = {
     },
     attachments: {
       addImage: "添加图片",
+      pasteImage: "粘贴图片",
       addFile: "Upload file",
       addIssueOrPr: "添加 issue 或 PR",
       addIssueOrPr_mr: "添加 issue 或 MR",
@@ -127,6 +138,8 @@ export const zhCN: TranslationResources = {
       initialPromptRequired: "初始 prompt 必填",
       alreadyLoading: "正在加载",
       uploadFailed: "Failed to upload file",
+      noClipboardImage: "剪贴板中没有图片",
+      pasteImageFailed: "无法粘贴图片",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
@@ -177,6 +190,7 @@ export const zhCN: TranslationResources = {
   agentStream: {
     empty: "开始和这个 Agent 对话...",
     scrollToBottom: "滚动到底部",
+    historyLoadFailed: "无法加载智能体历史记录",
     permission: {
       plan: "Plan",
       required: "需要权限",
@@ -370,7 +384,7 @@ export const zhCN: TranslationResources = {
       openFile: "打开文件",
       copyPath: "复制路径",
       download: "下载",
-      addToChat: "添加到聊天…",
+      addToChat: "添加到聊天",
       moreActions: "更多操作",
     },
     fileExplorer: {
@@ -467,6 +481,7 @@ export const zhCN: TranslationResources = {
     },
     terminal: {
       hostDisconnected: "Host 未连接",
+      updateHost: "请更新主机以使用原生终端渲染器。",
       unableToSubscribe: "无法订阅 Terminal",
     },
     tabs: {
@@ -812,6 +827,14 @@ export const zhCN: TranslationResources = {
           viewPullRequest: "查看",
           openOn: "在 {{brand}} 上打开",
         },
+        checksSummary: {
+          passedLabel: "通过",
+          failedLabel: "失败",
+          runningLabel: "运行中",
+          passedAccessible: "检查通过",
+          failedAccessible: "检查失败",
+          runningAccessible: "检查运行中",
+        },
         sections: {
           checks: "Checks",
           pipeline: "流水线",
@@ -859,6 +882,33 @@ export const zhCN: TranslationResources = {
     },
   },
   sidebar: {
+    display: {
+      trigger: "显示偏好",
+      heading: "显示",
+      grouping: {
+        label: "分组",
+        project: "项目",
+        status: "状态",
+      },
+      titleSource: {
+        label: "标题",
+        title: "标题",
+        branch: "分支名称",
+      },
+      show: {
+        label: "显示",
+        host: "主机",
+        changeRequest: "拉取请求",
+        checks: "检查",
+        scripts: "脚本",
+        diff: "差异统计",
+        timestamp: "最近活动",
+      },
+      hostFilter: {
+        label: "主机",
+        all: "所有主机",
+      },
+    },
     pinned: {
       title: "已置顶",
     },
@@ -1144,6 +1194,7 @@ export const zhCN: TranslationResources = {
         installFailed: "无法安装编排 skills。",
         updateFailed: "无法更新编排 skills。",
         uninstallFailed: "无法卸载编排 skills。",
+        saveSelectionFailed: "无法保存编排 skills 的选择。",
       },
     },
   },
@@ -1392,9 +1443,20 @@ export const zhCN: TranslationResources = {
       loadingOffer: "正在加载配对 offer...",
       failedToLoadOffer: "加载配对 offer 失败。",
       relayDisabled: "Relay 未启用。启用 relay 后才能配对设备。",
+      enableTitle: "启用中继？",
+      enableDescription: "中继让此设备可以从任何地方连接。配对流量采用端到端加密。",
+      relayDocs: "中继如何工作",
+      relayDocsAccessibility: "阅读 Paseo 中继的工作原理",
+      enableRelay: "启用中继",
+      enablingRelay: "正在启用...",
+      notNow: "暂不",
+      directConnectionHint:
+        "不使用中继时，请通过 TCP、Tailscale 或其他 VPN 直接连接。不会生成二维码。",
+      updateRequired: "请更新主机，以便从 Paseo Desktop 启用中继。",
       unavailable: "配对 offer 不可用。",
       hint: "用手机上的 Paseo 扫描此二维码，或复制下方链接。",
       qrUnavailable: "二维码不可用。",
+      qrAccessibility: "配对二维码",
       retry: "重试",
       copy: "复制",
       copied: "已复制",
@@ -1484,7 +1546,9 @@ export const zhCN: TranslationResources = {
         cursor: "第 {{line}} 行，第 {{column}} 列",
         preview: "预览",
         source: "源代码",
-        unavailableTitle: "磁盘上的文件不可用",
+        deletedTitle: "文件已从磁盘删除",
+        checkFailedTitle: "无法检查磁盘上的文件",
+        preservedDescription: "打开的副本已保留。",
         conflictDescription: "本地内容已保留。请选择要保留的版本。",
         overwrite: "覆盖",
         reload: "重新加载",
@@ -1601,6 +1665,7 @@ export const zhCN: TranslationResources = {
       vimHint: "适用于网页和桌面端的源文件。",
     },
     hostSections: {
+      projects: "项目",
       connections: "连接",
       agents: "Agents",
       workspaces: "Workspaces",
@@ -1678,6 +1743,11 @@ export const zhCN: TranslationResources = {
     },
     diagnostics: {
       title: "诊断",
+      legacyTerminalRenderer: {
+        label: "使用旧版终端渲染器",
+        description: "重新打开终端后使用之前的 WebView 终端",
+        accessibilityLabel: "使用旧版终端渲染器",
+      },
       testAudio: "测试音频",
       playTest: "播放测试",
       playing: "正在播放...",
@@ -1743,6 +1813,10 @@ export const zhCN: TranslationResources = {
       },
       detailLevel: {
         title: "详细程度",
+      },
+      chatOutline: {
+        title: "聊天大纲",
+        description: "显示用于在提示词之间跳转的大纲",
       },
       fonts: {
         title: "字体",
@@ -1852,6 +1926,15 @@ export const zhCN: TranslationResources = {
         updateFallback: "将内置 skills 同步到你的机器。",
         uninstallTitle: "卸载 Paseo skills？",
         uninstallMessage: "会从 ~/.agents、~/.claude、~/.codex 移除所有 Paseo 编排 skills。",
+        choose: "选择 skills",
+        chooseAll: "全部 skills",
+        chooseAllHint: "保持安装所有内置 skills，包括以后新增的。",
+        chooseList: "内置 skills",
+        chooseEmpty: "此版本未内置 skills。",
+        removeTitle: "移除取消勾选的 skills？",
+        removeMessage:
+          "将从 ~/.agents、~/.claude、~/.codex 中删除 {{skills}}。你在这些 skill 文件夹里添加的内容也会一并删除。",
+        saveFailed: "无法保存你的 skills 选择。",
       },
       actions: {
         install: "安装",
@@ -1859,7 +1942,10 @@ export const zhCN: TranslationResources = {
         installed: "已安装",
         update: "更新",
         working: "处理中...",
+        remove: "移除",
         uninstall: "卸载",
+        save: "保存",
+        saving: "正在保存...",
       },
       operations: {
         add: "添加 skill",
@@ -1883,6 +1969,41 @@ export const zhCN: TranslationResources = {
       },
     },
     host: {
+      appearance: {
+        title: "外观",
+        name: {
+          label: "名称",
+        },
+        color: {
+          label: "颜色",
+          accessibilityLabel: "颜色，{{value}}",
+          options: {
+            none: "默认",
+            violet: "紫罗兰",
+            sky: "天蓝",
+            emerald: "翠绿",
+            orange: "橙色",
+            pink: "粉色",
+            indigo: "靛蓝",
+            teal: "青色",
+            red: "红色",
+            amber: "琥珀",
+            blue: "蓝色",
+          },
+        },
+        badge: {
+          label: "侧边栏徽章",
+          accessibilityLabel: "侧边栏徽章，{{value}}",
+          options: {
+            name: "名称",
+            icon: "仅图标",
+            hidden: "隐藏",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "Host 未找到",
       badges: {
         relay: "Relay",
@@ -2082,24 +2203,23 @@ export const zhCN: TranslationResources = {
       },
     },
     project: {
-      noEditableTarget: "任何已连接 Host 上都没有这个 Project 的可编辑副本。",
+      noEditableTarget: "此项目无法在这个 Host 上编辑。",
       backToProjects: "返回 Projects",
-      switchHost: "切换 Host",
-      rename: {
-        renamedToast: "Project 已重命名",
-        errorFallback: "无法重命名 Project",
-        renameLabel: "重命名 Project",
-        resetLabel: "将 Project 名称重置为默认值",
-        projectNameLabel: "Project 名称",
-        saveLabel: "保存 Project 名称",
-        cancelLabel: "取消重命名",
-        reset: "重置",
+      edit: {
+        title: "编辑 Project",
+        name: "名称",
+        nameLabel: "Project 名称",
+        icon: "图标",
+        chooseImage: "选择图片",
+        useAutomatic: "使用自动",
+        imageUrl: "图片或网站 URL",
+        save: "保存更改",
+        savedToast: "Project 已更新",
       },
       readFailures: {
         invalidTitle: "无法解析 paseo.json",
         invalidDescription: "修复磁盘上的文件，然后重新加载。",
         missingTitle: "这个 Host 没有这个 Project",
-        missingWithHosts: "切换到上方其他 Host，或重新加载。",
         missingSingleHost: "所选 Host 没有这个 Project 的记录。",
         transportTitle: "无法加载 paseo.json",
         transportFallback: "Host 没有响应。",

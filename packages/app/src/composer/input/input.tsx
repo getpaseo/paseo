@@ -3,8 +3,6 @@ import {
   View,
   Text,
   TextInput,
-  Pressable,
-  Platform,
   useWindowDimensions,
   NativeSyntheticEvent,
   TextInputContentSizeChangeEventData,
@@ -48,8 +46,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
-import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useIosHardwareKeyboardSubmit } from "@/hooks/use-ios-hardware-keyboard-submit";
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
@@ -66,6 +62,7 @@ import {
   resolveVoiceTooltipText,
 } from "./labels";
 import {
+  applyDictationTranscript,
   computeCanStartDictation,
   resolveComposerSurfacePresentation,
   runAlternateSendAction,
@@ -120,8 +117,10 @@ export interface MessageInputProps {
   leftContent?: React.ReactNode;
   /** Content to render on the right side before the voice button (e.g., context window meter) */
   beforeVoiceContent?: React.ReactNode;
-  /** Content to render on the right side after voice button (e.g., realtime button, cancel button) */
+  /** Auxiliary content to render on the right side after the voice button. */
   rightContent?: React.ReactNode;
+  /** Primary action to render when the agent is active and the composer has no sendable content. */
+  activeActionContent?: React.ReactNode;
   voiceServerId?: string;
   voiceAgentId?: string;
   /** When true and there's sendable content, calls onQueue instead of onSubmit */
@@ -161,8 +160,6 @@ const MIN_INPUT_HEIGHT_DESKTOP = 46;
 const DEFAULT_MAX_INPUT_HEIGHT = 160;
 const MAX_INPUT_VIEWPORT_RATIO = 0.5;
 const MIN_INPUT_HEIGHT = isWeb ? MIN_INPUT_HEIGHT_DESKTOP : MIN_INPUT_HEIGHT_MOBILE;
-const ATTACHMENT_SHEET_SNAP_POINTS = ["34%", "45%"];
-
 type WebTextInputKeyPressEvent = NativeSyntheticEvent<
   TextInputKeyPressEventData & {
     metaKey?: boolean;
@@ -222,55 +219,6 @@ function AttachmentMenuList({ items }: { items: AttachmentMenuItem[] }) {
   );
 }
 
-function AttachmentSheetItem({
-  item,
-  onSelect,
-}: {
-  item: AttachmentMenuItem;
-  onSelect: (item: AttachmentMenuItem) => void;
-}) {
-  const handlePress = useCallback(() => {
-    onSelect(item);
-  }, [item, onSelect]);
-  const pressableStyle = useCallback(
-    ({ pressed }: { pressed: boolean }) => [
-      styles.attachmentSheetItem,
-      pressed && styles.attachmentSheetItemPressed,
-      item.disabled && styles.buttonDisabled,
-    ],
-    [item.disabled],
-  );
-
-  return (
-    <Pressable
-      testID={`message-input-attachment-menu-item-${item.id}`}
-      accessibilityRole="button"
-      disabled={item.disabled}
-      onPress={handlePress}
-      style={pressableStyle}
-    >
-      {item.icon ? <View style={styles.attachmentSheetItemIcon}>{item.icon}</View> : null}
-      <Text style={styles.attachmentSheetItemText}>{item.label}</Text>
-    </Pressable>
-  );
-}
-
-function AttachmentSheetList({
-  items,
-  onSelect,
-}: {
-  items: AttachmentMenuItem[];
-  onSelect: (item: AttachmentMenuItem) => void;
-}) {
-  return (
-    <View style={styles.attachmentSheetList}>
-      {items.map((item) => (
-        <AttachmentSheetItem key={item.id} item={item} onSelect={onSelect} />
-      ))}
-    </View>
-  );
-}
-
 function AttachmentDropdown({
   isConnected,
   disabled,
@@ -286,73 +234,9 @@ function AttachmentDropdown({
   attachmentMenuItems: AttachmentMenuItem[];
   addAttachmentLabel: string;
 }) {
-  const isCompact = useIsCompactFormFactor();
-  const [isSheetOpen, setIsSheetOpen] = useState(false);
-  useDismissKeyboardOnOpen(isSheetOpen, isCompact);
-
   const isButtonDisabled = !isConnected || disabled;
-  const attachmentSheetHeader = useMemo<SheetHeader>(
-    () => ({ title: addAttachmentLabel }),
-    [addAttachmentLabel],
-  );
-  const handleOpenSheet = useCallback(() => {
-    if (isButtonDisabled) return;
-    setIsSheetOpen(true);
-  }, [isButtonDisabled]);
-  const handleCloseSheet = useCallback(() => {
-    setIsSheetOpen(false);
-  }, []);
-  const handleSheetItemSelect = useCallback((item: AttachmentMenuItem) => {
-    if (item.disabled) return;
-    setIsSheetOpen(false);
-    if (Platform.OS === "ios") {
-      setTimeout(item.onSelect, 250);
-      return;
-    }
-    item.onSelect();
-  }, []);
-  const mobileAttachButtonStyle = useCallback(
-    (state: { pressed: boolean; hovered?: boolean }) => {
-      if (typeof attachButtonStyle === "function") {
-        return attachButtonStyle({ ...state, hovered: Boolean(state.hovered), open: isSheetOpen });
-      }
-      return attachButtonStyle;
-    },
-    [attachButtonStyle, isSheetOpen],
-  );
-  const renderMobileAttachButtonIcon = useCallback(
-    ({ hovered }: { hovered?: boolean }) => renderAttachButtonIcon({ hovered }),
-    [renderAttachButtonIcon],
-  );
-
-  if (isCompact) {
-    return (
-      <>
-        <Pressable
-          disabled={isButtonDisabled}
-          accessibilityLabel={addAttachmentLabel}
-          accessibilityRole="button"
-          testID="message-input-attach-button"
-          onPress={handleOpenSheet}
-          style={mobileAttachButtonStyle}
-        >
-          {renderMobileAttachButtonIcon}
-        </Pressable>
-        <AdaptiveModalSheet
-          header={attachmentSheetHeader}
-          visible={isSheetOpen}
-          onClose={handleCloseSheet}
-          snapPoints={ATTACHMENT_SHEET_SNAP_POINTS}
-          testID="message-input-attachment-menu"
-        >
-          <AttachmentSheetList items={attachmentMenuItems} onSelect={handleSheetItemSelect} />
-        </AdaptiveModalSheet>
-      </>
-    );
-  }
-
   return (
-    <DropdownMenu>
+    <DropdownMenu compactMode="sheet">
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger
@@ -375,6 +259,7 @@ function AttachmentDropdown({
         offset={8}
         minWidth={220}
         testID="message-input-attachment-menu"
+        sheetTitle={addAttachmentLabel}
       >
         <AttachmentMenuList items={attachmentMenuItems} />
       </DropdownMenuContent>
@@ -778,42 +663,40 @@ function SendButtonTooltip({
   );
 }
 
-interface DictationTranscriptContext {
+type PrimaryActionKind = "send" | "active" | "none";
+
+function hasSendableComposerContent(input: {
   value: string;
-  defaultSendBehavior: "interrupt" | "queue";
+  attachments: readonly ComposerAttachment[];
+  hasExternalContent: boolean;
+}): boolean {
+  return input.value.trim().length > 0 || input.attachments.length > 0 || input.hasExternalContent;
+}
+
+function resolvePrimaryActionKind(input: {
+  hasSendableContent: boolean;
+  allowEmptySubmit: boolean;
   isAgentRunning: boolean;
-  onQueue: ((payload: MessagePayload) => void) | undefined;
-  onSubmit: (payload: MessagePayload) => void;
-  onChangeText: (text: string) => void;
-  attachments: ComposerAttachment[];
-  cwd: string;
-  autoSend: boolean;
+  isSubmitLoading: boolean;
+}): PrimaryActionKind {
+  if (input.hasSendableContent || input.allowEmptySubmit) return "send";
+  if (input.isAgentRunning) return "active";
+  if (input.isSubmitLoading) return "send";
+  return "none";
 }
 
-function applyDictationTranscript(text: string, ctx: DictationTranscriptContext): void {
-  if (!text) return;
-  const shouldPad = ctx.value.length > 0 && !/\s$/.test(ctx.value);
-  const nextValue = `${ctx.value}${shouldPad ? " " : ""}${text}`;
-
-  if (!ctx.autoSend) {
-    ctx.onChangeText(nextValue);
-    return;
-  }
-
-  if (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning && ctx.onQueue) {
-    ctx.onQueue({ text: nextValue, attachments: ctx.attachments, cwd: ctx.cwd });
-    ctx.onChangeText("");
-    return;
-  }
-
-  ctx.onSubmit({
-    text: nextValue,
-    attachments: ctx.attachments,
-    cwd: ctx.cwd,
-    forceSend: ctx.isAgentRunning || undefined,
-  });
+function PrimaryAction({
+  kind,
+  activeActionContent,
+  ...sendButtonProps
+}: {
+  kind: PrimaryActionKind;
+  activeActionContent: React.ReactNode;
+} & React.ComponentProps<typeof SendButtonTooltip>) {
+  if (kind === "active") return activeActionContent;
+  if (kind === "send") return <SendButtonTooltip {...sendButtonProps} />;
+  return null;
 }
-
 interface ToggleRealtimeVoiceContext {
   voice:
     | {
@@ -963,30 +846,6 @@ function computeShouldShowDictationOverlay(
   return isDictating || isDictationProcessing || dictationStatus === "failed";
 }
 
-interface SendableContentInput {
-  value: string;
-  attachments: ComposerAttachment[];
-  hasExternalContent: boolean;
-  allowEmptySubmit: boolean;
-  isSubmitLoading: boolean;
-}
-
-interface SendableContentOutput {
-  hasAttachments: boolean;
-  hasRealContent: boolean;
-  hasSendableContent: boolean;
-  shouldShowSendButton: boolean;
-}
-
-function computeSendableContent(input: SendableContentInput): SendableContentOutput {
-  const hasAttachments = input.attachments.length > 0;
-  const hasRealContent = input.value.trim().length > 0 || hasAttachments;
-  const hasSendableContent = hasRealContent || input.hasExternalContent;
-  const shouldShowSendButton =
-    hasSendableContent || input.allowEmptySubmit || input.isSubmitLoading;
-  return { hasAttachments, hasRealContent, hasSendableContent, shouldShowSendButton };
-}
-
 function computeIsDictationStartEnabled(
   isReadyForDictation: boolean | undefined,
   isConnected: boolean,
@@ -1082,6 +941,7 @@ interface ResolvedMessageInputProps {
   leftContent: React.ReactNode;
   beforeVoiceContent: React.ReactNode;
   rightContent: React.ReactNode;
+  activeActionContent: React.ReactNode;
   voiceServerId: string | undefined;
   voiceAgentId: string | undefined;
   isAgentRunning: boolean;
@@ -1124,6 +984,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     leftContent: props.leftContent,
     beforeVoiceContent: props.beforeVoiceContent,
     rightContent: props.rightContent,
+    activeActionContent: props.activeActionContent,
     voiceServerId: props.voiceServerId,
     voiceAgentId: props.voiceAgentId,
     isAgentRunning: props.isAgentRunning ?? false,
@@ -1174,6 +1035,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       leftContent,
       beforeVoiceContent,
       rightContent,
+      activeActionContent,
       voiceServerId,
       voiceAgentId,
       isAgentRunning,
@@ -1588,11 +1450,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       });
     }
 
-    const { shouldShowSendButton } = computeSendableContent({
-      value,
-      attachments,
-      hasExternalContent,
+    const primaryActionKind = resolvePrimaryActionKind({
+      hasSendableContent: hasSendableComposerContent({
+        value,
+        attachments,
+        hasExternalContent,
+      }),
       allowEmptySubmit,
+      isAgentRunning,
       isSubmitLoading,
     });
     const { canPressLoadingButton, isSendButtonDisabled, defaultActionQueues } =
@@ -1791,8 +1656,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
                 dictationToggleKeys={dictationToggleKeys}
               />
               {rightContent}
-              <SendButtonTooltip
-                shouldShow={shouldShowSendButton}
+              <PrimaryAction
+                kind={primaryActionKind}
+                activeActionContent={activeActionContent}
+                shouldShow
                 canPressLoadingButton={canPressLoadingButton}
                 onSubmitLoadingPress={onSubmitLoadingPress}
                 onDefaultSendAction={handleDefaultSendAction}
@@ -1955,31 +1822,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   buttonDisabled: {
     opacity: 0.5,
-  },
-  attachmentSheetList: {
-    gap: theme.spacing[1],
-  },
-  attachmentSheetItem: {
-    minHeight: 44,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[3],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    borderRadius: theme.borderRadius.xl,
-  },
-  attachmentSheetItemPressed: {
-    backgroundColor: theme.colors.surface2,
-  },
-  attachmentSheetItemIcon: {
-    width: 20,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  attachmentSheetItemText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.normal,
   },
   overlayContainer: {
     position: "absolute",

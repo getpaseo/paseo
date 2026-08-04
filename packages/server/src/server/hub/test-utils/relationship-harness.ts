@@ -463,29 +463,48 @@ export class HubRelationshipHarness {
   private failNextSessionClose = false;
   private observedEnrollments = 0;
   private observedSockets = 0;
-  private readonly codex = new ControlledAgentClient(
-    createTestAgentClients({
-      closeSession: async () => {
-        if (!this.failNextSessionClose) return;
-        this.failNextSessionClose = false;
-        throw new Error("Requested provider session close failure");
-      },
-      onStartTurn: (prompt) => {
-        const promptText = typeof prompt === "string" ? prompt : JSON.stringify(prompt);
-        if (this.promptsToFail.delete(promptText)) {
-          throw new Error("Requested provider prompt startup failure");
-        }
-        this.providerPrompts.push(prompt);
-      },
-    }).codex,
-  );
+  private readonly codex: ControlledAgentClient;
 
-  private constructor(private readonly archiveWatchFiles: ArchiveWatchFiles) {}
+  private constructor(
+    private readonly archiveWatchFiles: ArchiveWatchFiles,
+    private readonly mcpEnabled: boolean,
+  ) {
+    this.codex = new ControlledAgentClient(
+      createTestAgentClients({
+        supportsMcpServers: mcpEnabled,
+        closeSession: async () => {
+          if (!this.failNextSessionClose) return;
+          this.failNextSessionClose = false;
+          throw new Error("Requested provider session close failure");
+        },
+        onStartTurn: (prompt) => {
+          const promptText = typeof prompt === "string" ? prompt : JSON.stringify(prompt);
+          if (this.promptsToFail.delete(promptText)) {
+            throw new Error("Requested provider prompt startup failure");
+          }
+          this.providerPrompts.push(prompt);
+        },
+      }).codex,
+    );
+  }
 
   static async start(
     archiveWatchFiles: ArchiveWatchFiles = nodeArchiveWatchFiles,
   ): Promise<HubRelationshipHarness> {
-    const harness = new HubRelationshipHarness(archiveWatchFiles);
+    return this.launch(archiveWatchFiles, false);
+  }
+
+  static async startWithAgentMcp(
+    archiveWatchFiles: ArchiveWatchFiles = nodeArchiveWatchFiles,
+  ): Promise<HubRelationshipHarness> {
+    return this.launch(archiveWatchFiles, true);
+  }
+
+  private static async launch(
+    archiveWatchFiles: ArchiveWatchFiles,
+    mcpEnabled: boolean,
+  ): Promise<HubRelationshipHarness> {
+    const harness = new HubRelationshipHarness(archiveWatchFiles, mcpEnabled);
     await harness.createHome();
     await harness.startDaemon();
     return harness;
@@ -675,6 +694,7 @@ export class HubRelationshipHarness {
       worktree?: CreateAgentWorktreeTarget;
       prompt?: string;
       modeId?: string;
+      mcpServers?: AgentSessionConfig["mcpServers"];
     } = {},
   ): void {
     const { prompt = "Create through the Hub", ...requestOptions } = options;
@@ -824,6 +844,14 @@ export class HubRelationshipHarness {
     return this.providerPrompts.map((prompt) =>
       typeof prompt === "string" ? prompt : JSON.stringify(prompt),
     );
+  }
+
+  latestProviderCreateConfig(): AgentSessionConfig | null {
+    return this.codex.createdConfigs.at(-1) ?? null;
+  }
+
+  hubMessages(): SessionOutboundMessage[] {
+    return this.remote.sockets.flatMap(({ socket }) => socket.sent);
   }
 
   latestCreatedCwd(): string | null {
@@ -1285,7 +1313,7 @@ export class HubRelationshipHarness {
       paseoHome: this.paseoHome,
       corsAllowedOrigins: [],
       hostnames: true,
-      mcpEnabled: false,
+      mcpEnabled: this.mcpEnabled,
       staticDir,
       mcpDebug: false,
       agentClients: {
@@ -1328,7 +1356,7 @@ export class HubRelationshipHarness {
   }
 
   private async executeCli(args: string[]): Promise<Record<string, unknown>> {
-    const entrypoint = path.join(import.meta.dirname, "../../test-utils/hub-cli-entry.ts");
+    const entrypoint = path.join(import.meta.dirname, "hub-cli-entry.ts");
     const { stdout } = await execFileAsync(
       process.execPath,
       [

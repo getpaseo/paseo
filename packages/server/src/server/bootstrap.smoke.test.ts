@@ -1,7 +1,7 @@
 import os from "node:os";
 import http from "node:http";
 import path from "node:path";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -12,8 +12,18 @@ import { hashDaemonPassword } from "./auth.js";
 import { generateLocalPairingOffer } from "./pairing-offer.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
+import { DaemonClient } from "./test-utils/daemon-client.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { findFreePort } from "./service-proxy.js";
+import type {
+  HubEnrollment,
+  HubEnrollmentResult,
+  HubRelationshipRemote,
+  HubRevocation,
+  HubSocketConnection,
+  HubSocketCredentials,
+  HubSocketEvents,
+} from "./hub/relationship-remote.js";
 
 interface HeldAgentClose {
   started: Promise<void>;
@@ -221,6 +231,103 @@ describe("paseo daemon bootstrap", () => {
     } finally {
       ws.close();
       await daemonHandle.close();
+    }
+  });
+
+  test("relay config changes during Hub enrollment reach the live runtime", async () => {
+    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-relay-startup-"));
+    const paseoHome = path.join(paseoHomeRoot, ".paseo");
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    await mkdir(paseoHome, { recursive: true });
+    await writeFile(
+      path.join(paseoHome, "hub-relationship.json"),
+      `${JSON.stringify({
+        version: 1,
+        state: "pending",
+        relationship: {
+          daemonId: "daemon-startup-race",
+          idempotencyKey: "enrollment-startup-race",
+          hubOrigin: "https://hub.test",
+          createdAt: "2026-07-31T00:00:00.000Z",
+          scopes: ["hub.execution.*"],
+        },
+        credential: { secret: "credential" },
+        enrollment: { token: "enrollment-token" },
+        identity: { serverId: "server-startup-race", daemonPublicKey: "public-key" },
+      })}\n`,
+      "utf-8",
+    );
+
+    let markEnrollmentStarted: () => void = () => undefined;
+    const enrollmentStarted = new Promise<void>((resolve) => {
+      markEnrollmentStarted = resolve;
+    });
+    let releaseEnrollment: () => void = () => undefined;
+    const enrollmentReleased = new Promise<void>((resolve) => {
+      releaseEnrollment = resolve;
+    });
+    const remote: HubRelationshipRemote = {
+      async enroll(input: HubEnrollment): Promise<HubEnrollmentResult> {
+        markEnrollmentStarted();
+        await enrollmentReleased;
+        return {
+          daemonId: input.daemonId,
+          scopes: input.scopes,
+          webSocketUrl: "wss://hub.test/daemon",
+        };
+      },
+      async revoke(_input: HubRevocation): Promise<void> {},
+      openSocket(_input: HubSocketCredentials, _events: HubSocketEvents): HubSocketConnection {
+        return { close: () => undefined };
+      },
+    };
+    const config: PaseoDaemonConfig = {
+      listen: "127.0.0.1:0",
+      paseoHome,
+      corsAllowedOrigins: [],
+      hostnames: true,
+      mcpEnabled: false,
+      staticDir,
+      mcpDebug: false,
+      agentClients: createTestAgentClients(),
+      agentStoragePath: path.join(paseoHome, "agents"),
+      relayEnabled: false,
+      relayEndpoint: "127.0.0.1:9",
+      relayUseTls: false,
+      appBaseUrl: "https://app.paseo.sh",
+      openai: undefined,
+      speech: undefined,
+    };
+    const daemon = await createPaseoDaemon(config, pino({ level: "silent" }), {
+      hubRelationshipRemote: remote,
+    });
+    const starting = daemon.start();
+    let client: DaemonClient | null = null;
+
+    try {
+      await enrollmentStarted;
+      const listenTarget = daemon.getListenTarget();
+      if (!listenTarget || listenTarget.type !== "tcp") {
+        throw new Error("Expected daemon TCP listener during Hub enrollment");
+      }
+      client = new DaemonClient({
+        url: `ws://127.0.0.1:${listenTarget.port}/ws`,
+        appVersion: "0.1.82",
+      });
+      await client.connect();
+      await client.patchDaemonConfig({ relay: { enabled: true } });
+      releaseEnrollment();
+      await starting;
+
+      const status = await client.getDaemonStatus();
+      expect(status.relay?.enabled).toBe(true);
+    } finally {
+      releaseEnrollment();
+      await starting.catch(() => undefined);
+      await client?.close().catch(() => undefined);
+      await daemon.stop().catch(() => undefined);
+      await rm(paseoHomeRoot, { recursive: true, force: true });
+      await rm(staticDir, { recursive: true, force: true });
     }
   });
 

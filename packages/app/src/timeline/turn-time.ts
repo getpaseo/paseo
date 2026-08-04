@@ -9,18 +9,16 @@ export interface TurnTiming {
 export interface StreamTurnTiming {
   byAssistantId: Map<string, TurnTiming>;
   runningStartedAt: Date | null;
-  isActive: boolean;
 }
 
 export function deriveStreamTurnTiming(params: {
-  agentStatus: string;
+  isTurnActive: boolean;
+  activeTurnStartedAt: Date | null;
   tail: StreamItem[];
   head: StreamItem[];
 }): StreamTurnTiming {
   const byAssistantId = new Map<string, TurnTiming>();
   let currentUserAt: Date | null = null;
-  let currentAuthoritativeUserAt: Date | null = null;
-  let currentUserIsOptimistic = false;
   let currentLastItemAt: Date | null = null;
   let currentAssistantIds: string[] = [];
 
@@ -42,8 +40,6 @@ export function deriveStreamTurnTiming(params: {
     if (item.kind === "user_message") {
       flushCompletedTurn();
       currentUserAt = item.timestamp;
-      currentAuthoritativeUserAt = item.optimistic ? null : item.timestamp;
-      currentUserIsOptimistic = item.optimistic === true;
       currentLastItemAt = null;
       currentAssistantIds = [];
       return;
@@ -64,15 +60,13 @@ export function deriveStreamTurnTiming(params: {
     visitItem(item);
   }
 
-  const isRunning = params.agentStatus === "running";
-  const runningStartedAt = isRunning ? currentAuthoritativeUserAt : null;
-  if (params.agentStatus !== "running") {
+  const runningStartedAt = params.isTurnActive ? params.activeTurnStartedAt : null;
+  if (!params.isTurnActive) {
     flushCompletedTurn();
   }
 
   return {
     byAssistantId,
     runningStartedAt,
-    isActive: isRunning || currentUserIsOptimistic,
   };
 }

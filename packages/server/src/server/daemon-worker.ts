@@ -84,8 +84,13 @@ function bootstrapFromEnvironment(): BootstrapResult {
 }
 
 function applyCliFlagOverrides(config: ReturnType<typeof loadConfig>): void {
+  if (process.argv.includes("--relay")) {
+    config.relayEnabled = true;
+    config.relayEnabledMutable = false;
+  }
   if (process.argv.includes("--no-relay")) {
     config.relayEnabled = false;
+    config.relayEnabledMutable = false;
   }
   if (process.argv.includes("--relay-use-tls")) {
     config.relayUseTls = true;

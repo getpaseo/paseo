@@ -244,6 +244,7 @@ export interface ComboboxItemProps {
   selected?: boolean;
   active?: boolean;
   disabled?: boolean;
+  accessibilityLabel?: string;
   /** When true, bumps hover/pressed colors up one surface level (for items on elevated backgrounds). */
   elevated?: boolean;
   onPress: () => void;
@@ -259,6 +260,7 @@ export function ComboboxItem({
   selected,
   active,
   disabled,
+  accessibilityLabel,
   elevated,
   onPress,
   testID,
@@ -301,11 +303,11 @@ export function ComboboxItem({
   return (
     <Pressable
       testID={testID}
-      accessibilityRole="button"
-      accessibilityLabel={label}
       disabled={disabled}
       onPress={onPress}
       style={itemPressableStyle}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? label}
     >
       {leadingContent}
       <View style={itemContentStyle}>
@@ -992,6 +994,7 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
   return (
     <IsolatedBottomSheetModal
       ref={props.bottomSheetRef}
+      contextBridge={null}
       snapPoints={props.snapPoints}
       index={0}
       enableDynamicSizing={false}

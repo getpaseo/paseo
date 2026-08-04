@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { createProjectViewKey } from "@/projects/workspace-structure";
 import type { ProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 import { buildProjects, getProjectSummaryForHostProject } from "./projects";
 
@@ -56,7 +57,7 @@ describe("buildProjects", () => {
 
     expect(result.projects).toEqual([
       expect.objectContaining({
-        projectKey: key,
+        viewKey: createProjectViewKey({ kind: "equivalence", projectKey: key }),
         hostCount: 2,
         onlineHostCount: 1,
         totalWorkspaceCount: 2,

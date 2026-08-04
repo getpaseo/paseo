@@ -159,6 +159,10 @@ describe("translation resources", () => {
     expect(zhCN.settings.providers.models.many).toBe("{{count}} 个 Model");
   });
 
+  it("labels the immediate add-to-chat action without an ellipsis", () => {
+    expect(en.workspace.fileActions.addToChat).toBe("Add to chat");
+  });
+
   it("keeps local connection fallback errors translated", () => {
     expect(findUntranslatedConnectionErrors()).toEqual([]);
   });
@@ -188,6 +192,12 @@ describe("translation resources", () => {
     expect(en.shell.commandCenter.modelSearchKeywords).toBe(
       "switch model change model set model select model",
     );
+    expect(en.shell.commandCenter.thinkingGroupLabel).toBe("Thinking");
+    expect(en.shell.commandCenter.modeGroupLabel).toBe("Mode");
+    expect(en.shell.commandCenter.planModeGroupLabel).toBe("Plan mode");
+    expect(en.shell.commandCenter.fastModeGroupLabel).toBe("Fast");
+    expect(en.shell.commandCenter.settingOn).toBe("On");
+    expect(en.shell.commandCenter.settingOff).toBe("Off");
   });
 
   it("includes composer and agent workflow keys for the Batch 2 migration", () => {
@@ -216,6 +226,9 @@ describe("translation resources", () => {
 
   it("includes Settings expansion keys for the Batch 3A migration", () => {
     expect(en.settings.diagnostics.title).toBe("Diagnostics");
+    expect(en.settings.diagnostics.legacyTerminalRenderer.label).toBe(
+      "Use legacy terminal renderer",
+    );
     expect(en.settings.about.title).toBe("About");
     expect(en.settings.about.releaseChannel.label).toBe("Release channel");
     expect(en.settings.appearance.theme.title).toBe("Theme");

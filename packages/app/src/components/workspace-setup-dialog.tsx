@@ -8,7 +8,7 @@ import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { Composer } from "@/composer";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
-import { useProjectIconQuery } from "@/hooks/use-project-icon-query";
+import { useProjectIcon } from "@/projects/icons";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
@@ -29,6 +29,7 @@ import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { MessagePayload } from "@/composer/types";
+import { projectIconRadius } from "@/components/project-icon-view";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -195,7 +196,7 @@ export function WorkspaceSetupDialog() {
     throw new Error(t("workspaceSetup.errors.composerStateRequired"));
   }
 
-  const { icon: projectIcon } = useProjectIconQuery({
+  const { icon: projectIcon } = useProjectIcon({
     serverId,
     cwd: sourceDirectory,
   });
@@ -460,15 +461,15 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
+  // A user's uploaded mark is sized, never clipped — see projectIconRadius.
   projectIcon: {
     width: theme.iconSize.md,
     height: theme.iconSize.md,
-    borderRadius: theme.borderRadius.sm,
   },
   projectIconFallback: {
     width: theme.iconSize.md,
     height: theme.iconSize.md,
-    borderRadius: theme.borderRadius.sm,
+    borderRadius: projectIconRadius(theme.iconSize.md),
     borderWidth: 1,
     borderColor: theme.colors.border,
     alignItems: "center",
