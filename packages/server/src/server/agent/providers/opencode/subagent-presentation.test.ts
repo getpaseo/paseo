@@ -2,9 +2,32 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildOpenCodeSubagentSubtitle,
+  claimOpenCodeSubagentFallbackTitle,
   foldOpenCodeSubagentPresentation,
   type OpenCodeSubagentPresentationState,
 } from "./subagent-presentation.js";
+
+describe("claimOpenCodeSubagentFallbackTitle", () => {
+  it("claims the fallback title once", () => {
+    const state: OpenCodeSubagentPresentationState = { facts: {} };
+
+    expect(claimOpenCodeSubagentFallbackTitle(state, "explore")).toBe("explore");
+    expect(claimOpenCodeSubagentFallbackTitle(state, "general")).toBeUndefined();
+  });
+
+  it("respects a title set by the tool-call link", () => {
+    const state: OpenCodeSubagentPresentationState = { facts: {}, titleFromLink: true };
+
+    expect(claimOpenCodeSubagentFallbackTitle(state, "general")).toBeUndefined();
+  });
+
+  it("rejects blank agent names", () => {
+    const state: OpenCodeSubagentPresentationState = { facts: {} };
+
+    expect(claimOpenCodeSubagentFallbackTitle(state, "   ")).toBeUndefined();
+    expect(state.titleEmitted).toBeUndefined();
+  });
+});
 
 describe("buildOpenCodeSubagentSubtitle", () => {
   it("formats OpenCode facts into one compact provider-owned label", () => {

@@ -33,6 +33,7 @@ export function claimOpenCodeSubagentFallbackTitle(
 ): string | undefined {
   const title = readPart(agentName);
   if (!title || state.titleFromLink || state.titleEmitted) return undefined;
+  // Title means subagent type, so claim it once rather than refreshing on a mid-session handoff.
   state.titleEmitted = true;
   return title;
 }
