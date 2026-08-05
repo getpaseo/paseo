@@ -3724,12 +3724,23 @@ class ClaudeAgentSession implements AgentSession {
     this.failActiveTurns(staleResumeError);
     // Ending the input retires the process on purpose. Detach first so its exit
     // is not reported as a crash.
+    const retiredChild = this.childProcess;
     this.childProcess = null;
     this.input?.end();
     await this.awaitWithTimeout(
       activeQuery.return?.(),
       "query pump return on missing resumed conversation",
     );
+    // Tree-kill for the same reason the restart path does: MCP children of the
+    // retired claude process outlive it otherwise.
+    if (retiredChild) {
+      await terminateWithTreeKill(retiredChild, {
+        gracefulTimeoutMs: 2_000,
+        forceTimeoutMs: 2_000,
+      }).catch(() => {
+        /* process may already be dead */
+      });
+    }
     if (this.query === activeQuery) {
       this.query = null;
       this.input = null;

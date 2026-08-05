@@ -17,8 +17,9 @@ interface QueryMockOptions {
   // Runs while the session retires this query, modelling a process that dies as
   // part of the retirement handshake.
   onReturn?: () => void;
-  // Awaited once the scripted events run out, so a turn can be held open.
-  tail?: Promise<never>;
+  // Awaited once the scripted events run out, so the query stays open the way a
+  // real one does. Resolving it with a value delivers one more event.
+  tail?: Promise<unknown>;
 }
 
 function createQueryMock(events: unknown[], options: QueryMockOptions = {}): Query {
@@ -28,7 +29,11 @@ function createQueryMock(events: unknown[], options: QueryMockOptions = {}): Que
       if (index < events.length) {
         return { done: false, value: events[index++] };
       }
-      await options.tail;
+      const late = await options.tail;
+      if (late !== undefined) {
+        options.tail = undefined;
+        return { done: false, value: late };
+      }
       return { done: true, value: undefined };
     }),
     return: vi.fn(async () => {
@@ -48,12 +53,16 @@ function createQueryMock(events: unknown[], options: QueryMockOptions = {}): Que
   } as Query;
 }
 
-function createChildProcessStub(): ChildProcess {
-  const child = new EventEmitter() as ChildProcess;
+function createChildProcessStub(): ChildProcess & { killSignals: (NodeJS.Signals | number)[] } {
+  const child = new EventEmitter() as ChildProcess & {
+    killSignals: (NodeJS.Signals | number)[];
+  };
   child.stderr = new EventEmitter() as ChildProcess["stderr"];
+  child.killSignals = [];
   // A real child dies when signalled; without this the teardown path waits out
   // its full graceful + force timeout on every test.
   child.kill = ((signal?: NodeJS.Signals | number) => {
+    child.killSignals.push(signal ?? "SIGTERM");
     child.emit("exit", null, typeof signal === "string" ? signal : "SIGTERM");
     return true;
   }) as ChildProcess["kill"];
@@ -76,6 +85,12 @@ const COMPLETED_TURN_EVENTS = [
     total_cost_usd: 0,
   },
 ];
+
+const MISSING_RESUMED_CONVERSATION_RESULT = {
+  type: "result",
+  subtype: "error_during_execution",
+  errors: ["No conversation found with session ID: claude-runtime-exit-session"],
+};
 
 const SPAWN_OPTIONS: ClaudeSpawnOptions = {
   command: "node",
@@ -182,6 +197,43 @@ describe("Claude runtime exit", () => {
       await session.listCommands();
 
       expect(events.some((event) => event.type === "turn_failed")).toBe(false);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("tree-kills the retired process when the resumed conversation is gone", async () => {
+    let capturedOptions: Options | undefined;
+    let deliverMissingConversation: ((event: unknown) => void) | undefined;
+    // A single query throughout, so the only path that can kill the child is the
+    // missing-conversation recovery — not the restart path in ensureQuery().
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      capturedOptions = options;
+      return createQueryMock(COMPLETED_TURN_EVENTS, {
+        tail: new Promise<unknown>((resolve) => {
+          deliverMissingConversation = resolve;
+        }),
+      });
+    });
+    const child = createChildProcessStub();
+    vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+    try {
+      // Establishes the claude session id the next result fails to resume.
+      await session.run("first turn");
+      capturedOptions?.spawnClaudeCodeProcess?.(SPAWN_OPTIONS);
+
+      deliverMissingConversation?.(MISSING_RESUMED_CONVERSATION_RESULT);
+
+      // MCP children of the retired process outlive it unless the tree is killed.
+      await vi.waitFor(() => expect(child.killSignals.length).toBeGreaterThan(0));
+      expect(queryFactory).toHaveBeenCalledTimes(1);
     } finally {
       await session.close();
     }
