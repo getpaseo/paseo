@@ -13,6 +13,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { File, Folder } from "lucide-react-native";
 import type { Theme } from "@/styles/theme";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getAutocompleteScrollOffset } from "./autocomplete-utils";
 
 export interface AutocompleteOption {
@@ -78,7 +79,7 @@ function AutocompleteRow({
     [isSelected],
   );
 
-  return (
+  const row = (
     <Pressable onLayout={handleLayout} onPress={handlePress} style={pressableStyle}>
       {isFileOrDir ? (
         <>
@@ -115,6 +116,19 @@ function AutocompleteRow({
       )}
     </Pressable>
   );
+
+  if (option.kind === "command" && optionDescription) {
+    return (
+      <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger asChild>{row}</TooltipTrigger>
+        <TooltipContent side="top" align="start" maxWidth={360}>
+          <Text style={styles.tooltipText}>{optionDescription}</Text>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return row;
 }
 
 export function Autocomplete({
@@ -387,5 +401,9 @@ const styles = StyleSheet.create((theme: Theme) => ({
   emptyText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+  },
+  tooltipText: {
+    color: theme.colors.popoverForeground,
+    fontSize: theme.fontSize.xs,
   },
 })) as unknown as Record<string, object>;
