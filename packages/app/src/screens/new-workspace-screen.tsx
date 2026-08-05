@@ -83,10 +83,7 @@ import {
 } from "@/projects/host-projects";
 import { useProjectIcons } from "@/projects/icons";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import {
-  filterAgentContextAttachmentsForServer,
-  type ComposerAttachment,
-} from "@/attachments/types";
+import type { ComposerAttachment } from "@/attachments/types";
 import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import type { MessagePayload } from "@/composer/types";
 import type { UserComposerAttachment } from "@/attachments/types";
@@ -110,6 +107,7 @@ import {
   type PickerOptionData,
 } from "./new-workspace-picker-item";
 import {
+  clearAttachmentsForWorkspaceHostChange,
   clearPickerPrAttachmentForTargetChange,
   initialPickerSelectionState,
   reducePickerSelection,
@@ -1806,15 +1804,24 @@ export function NewWorkspaceScreen({
   );
 
   const clearPickerSelectionForTargetChange = useCallback(
-    (currentTargetId: string, nextTargetId: string) => {
-      const nextAttachments = clearPickerPrAttachmentForTargetChange({
-        attachments: chatDraft.attachments,
-        currentTargetId,
-        nextTargetId,
-      });
+    (currentTargetId: string, nextTargetId: string, nextServerId?: string) => {
+      const nextAttachments = nextServerId
+        ? clearAttachmentsForWorkspaceHostChange({
+            attachments: chatDraft.attachments,
+            currentTargetId,
+            nextTargetId,
+            nextServerId,
+          })
+        : clearPickerPrAttachmentForTargetChange({
+            attachments: chatDraft.attachments,
+            currentTargetId,
+            nextTargetId,
+          });
       if (nextAttachments === chatDraft.attachments) return;
       chatDraft.setAttachments(nextAttachments);
-      dispatchPickerSelection({ type: "target-changed" });
+      if (currentTargetId !== nextTargetId) {
+        dispatchPickerSelection({ type: "target-changed" });
+      }
     },
     [chatDraft],
   );
@@ -1834,13 +1841,9 @@ export function NewWorkspaceScreen({
   const handleSelectWorkspaceHost = useCallback(
     (id: string) => {
       handleSelectHost(id);
-      clearPickerSelectionForTargetChange(selectedServerId, id);
-      const nextAttachments = filterAgentContextAttachmentsForServer(chatDraft.attachments, id);
-      if (nextAttachments.length !== chatDraft.attachments.length) {
-        chatDraft.setAttachments(nextAttachments);
-      }
+      clearPickerSelectionForTargetChange(selectedServerId, id, id);
     },
-    [chatDraft, clearPickerSelectionForTargetChange, handleSelectHost, selectedServerId],
+    [clearPickerSelectionForTargetChange, handleSelectHost, selectedServerId],
   );
 
   const handleAddProject = useCallback(() => {

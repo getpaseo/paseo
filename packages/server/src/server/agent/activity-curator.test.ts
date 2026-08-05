@@ -501,6 +501,34 @@ second line'`,
     expect(result.attachment.text).not.toContain("PRIVATE_SUBAGENT_LOG_SHOULD_NOT_LEAK");
   });
 
+  it("does not serialize oversized unknown tool input for agent context", () => {
+    let serializations = 0;
+    const oversizedInput = {
+      toJSON: () => {
+        serializations += 1;
+        return "PRIVATE_TOOL_INPUT_SHOULD_NOT_BE_SERIALIZED".repeat(50_000);
+      },
+    };
+
+    const result = buildAgentContextAttachment({
+      maxBytes: 1024,
+      rows: [
+        row(
+          1,
+          toolCallItem({
+            callId: "oversized-unknown-tool",
+            name: "PRIVATE_PROVIDER_TOOL_NAME",
+            input: oversizedInput,
+          }),
+        ),
+      ],
+    });
+
+    expect(serializations).toBe(0);
+    expect(result.attachment.text).toContain("[Tool]");
+    expect(result.attachment.text).not.toContain("PRIVATE_TOOL_INPUT_SHOULD_NOT_BE_SERIALIZED");
+  });
+
   it("keeps the newest complete context entries when a source is bounded", () => {
     const oversized = "old assistant context ".repeat(100);
     const result = buildAgentContextAttachment({

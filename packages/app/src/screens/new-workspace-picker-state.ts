@@ -1,5 +1,7 @@
 import {
   NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER,
+  filterAgentContextAttachmentsForServer,
+  hasForeignAgentContextAttachments,
   type UserComposerAttachment,
 } from "@/attachments/types";
 import type { PickerItem } from "./new-workspace-picker-item";
@@ -94,4 +96,22 @@ export function clearPickerPrAttachmentForTargetChange(input: {
     return input.attachments;
   }
   return input.attachments.filter((attachment) => !isPrAttachment(attachment));
+}
+
+/**
+ * A host switch invalidates both target-scoped PR context and daemon-local
+ * agent references. Apply the filters together so one stale closure cannot
+ * restore attachments removed by the other.
+ */
+export function clearAttachmentsForWorkspaceHostChange(input: {
+  attachments: UserComposerAttachment[];
+  currentTargetId: string;
+  nextTargetId: string;
+  nextServerId: string;
+}): UserComposerAttachment[] {
+  const afterPickerClear = clearPickerPrAttachmentForTargetChange(input);
+  if (!hasForeignAgentContextAttachments(afterPickerClear, input.nextServerId)) {
+    return afterPickerClear;
+  }
+  return filterAgentContextAttachmentsForServer(afterPickerClear, input.nextServerId);
 }
