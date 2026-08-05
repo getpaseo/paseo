@@ -23,7 +23,7 @@ export const ko: TranslationResources = {
     },
     states: {
       loading: "불러오는 중...",
-      starting: "시작하는 중...",
+      starting: "시작 중...",
       copied: "복사됨",
       copiedLabel: "{{label}} 복사됨",
       downloadComplete: "다운로드 완료",
@@ -1074,7 +1074,7 @@ export const ko: TranslationResources = {
         title: "상태",
         builtInOnly: "여기에는 내장 데스크톱 데몬만 표시됩니다",
         running: "실행 중",
-        notRunning: "실행 중 아님",
+        notRunning: "실행 중이 아님",
         pid: "PID {{pid}}",
       },
       management: {

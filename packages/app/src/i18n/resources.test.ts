@@ -164,6 +164,11 @@ describe("translation resources", () => {
     expect(zhCN.settings.providers.models.many).toBe("{{count}} 个 Model");
   });
 
+  it("preserves reviewed Korean status labels", () => {
+    expect(ko.common.states.starting).toBe("시작 중...");
+    expect(ko.desktop.daemon.status.notRunning).toBe("실행 중이 아님");
+  });
+
   it("labels the immediate add-to-chat action without an ellipsis", () => {
     expect(en.workspace.fileActions.addToChat).toBe("Add to chat");
   });
