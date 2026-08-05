@@ -4,6 +4,7 @@ type ClaudeEffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
 interface ClaudeModelManifestEntry {
   id: string;
+  aliases?: readonly string[];
   label: string;
   description: string;
   defaultPriority?: number;
@@ -45,6 +46,8 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-fable-5",
+    // COMPAT(claudeFable5OneMillionId): added in v0.3.0, remove after 2027-02-06 once pre-v0.3.0 app preferences are outside support.
+    aliases: ["claude-fable-5[1m]"],
     label: "Fable 5",
     description: "Fable 5 · Most powerful model",
     minimumClaudeCodeVersion: "2.1.169",
@@ -191,6 +194,9 @@ export function getClaudeManifestModels(claudeCodeVersion?: string): AgentModelD
       label: model.label,
       description: model.description,
     };
+    if ("aliases" in model && model.aliases) {
+      definition.aliases = [...model.aliases];
+    }
     if (model === defaultModel) {
       definition.isDefault = true;
     }

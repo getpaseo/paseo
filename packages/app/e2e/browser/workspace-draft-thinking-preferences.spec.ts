@@ -60,6 +60,28 @@ async function readRememberedThinking(page: Page, modelId: string): Promise<stri
   }, modelId);
 }
 
+async function seedLegacyModelPreference(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const storageKey = "@paseo:create-agent-preferences";
+    const raw = localStorage.getItem(storageKey);
+    const preferences = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        ...preferences,
+        provider: "mock",
+        providerPreferences: {
+          ...(preferences.providerPreferences as Record<string, unknown> | undefined),
+          mock: {
+            model: "legacy-five-minute-stream",
+            thinkingByModel: { "legacy-five-minute-stream": "medium" },
+          },
+        },
+      }),
+    );
+  });
+}
+
 test.describe("Workspace draft thinking preferences", () => {
   test.describe.configure({ timeout: 180_000 });
 
@@ -130,6 +152,26 @@ test.describe("Workspace draft thinking preferences", () => {
       await selectModel(page, "Five minute stream");
 
       await expectModeSelected(page, "Approval test");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("canonicalizes a retired model preference and restores its thinking option", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "draft-model-alias-preferences-" });
+
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await openNewAgentTab(page);
+      await seedLegacyModelPreference(page);
+      await reloadWithPersistedPreferences(page);
+
+      await expect(
+        page.getByRole("button", { name: "Select model (Five minute stream)" }),
+      ).toBeVisible({ timeout: 30_000 });
+      await expectThinkingSelected(page, "Medium");
     } finally {
       await workspace.cleanup();
     }

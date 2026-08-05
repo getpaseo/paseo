@@ -61,6 +61,10 @@ const CODEX_MODELS: AgentModelDefinition[] = [
   },
 ];
 
+const ALIASED_CODEX_MODELS: AgentModelDefinition[] = [
+  { ...CODEX_MODELS[0], aliases: ["gpt-5.3-codex-legacy"] },
+];
+
 function makeProviderMap(
   ...definitions: AgentProviderDefinition[]
 ): Map<AgentProvider, AgentProviderDefinition> {
@@ -117,6 +121,55 @@ describe("resolveDefaultModel", () => {
       { provider: "codex", id: "b", label: "B", isDefault: false },
     ];
     expect(resolveDefaultModel(models)?.id).toBe("a");
+  });
+});
+
+describe("model aliases", () => {
+  it("canonicalizes a retired preferred model and restores thinking from its alias key", () => {
+    const resolved = resolveFormState(
+      undefined,
+      {
+        provider: "codex",
+        providerPreferences: {
+          codex: {
+            model: "gpt-5.3-codex-legacy",
+            thinkingByModel: { "gpt-5.3-codex-legacy": "low" },
+          },
+        },
+      },
+      ALIASED_CODEX_MODELS,
+      INITIAL_USER_MODIFIED,
+      makeState().form,
+      codexProviderMap,
+    );
+
+    expect(resolved.model).toBe("gpt-5.3-codex");
+    expect(resolved.thinkingOptionId).toBe("low");
+  });
+
+  it("prefers thinking stored under the canonical model id over an alias", () => {
+    const resolved = resolveFormState(
+      undefined,
+      {
+        provider: "codex",
+        providerPreferences: {
+          codex: {
+            model: "gpt-5.3-codex-legacy",
+            thinkingByModel: {
+              "gpt-5.3-codex": "xhigh",
+              "gpt-5.3-codex-legacy": "low",
+            },
+          },
+        },
+      },
+      ALIASED_CODEX_MODELS,
+      INITIAL_USER_MODIFIED,
+      makeState().form,
+      codexProviderMap,
+    );
+
+    expect(resolved.model).toBe("gpt-5.3-codex");
+    expect(resolved.thinkingOptionId).toBe("xhigh");
   });
 });
 
@@ -925,6 +978,22 @@ describe("resolveAgentForm", () => {
 
       expect(next.form.modeId).toBe("auto");
       expect(next.form.model).toBe("gpt-5.3-codex");
+    });
+
+    it("canonicalizes an aliased preferred model and restores its thinking option", () => {
+      const next = resolveAgentForm(makeState(), {
+        type: "SET_PROVIDER_FROM_USER",
+        provider: "codex",
+        providerModels: ALIASED_CODEX_MODELS,
+        providerDef: TEST_CODEX_DEFINITION,
+        providerPrefs: {
+          model: "gpt-5.3-codex-legacy",
+          thinkingByModel: { "gpt-5.3-codex-legacy": "low" },
+        },
+      });
+
+      expect(next.form.model).toBe("gpt-5.3-codex");
+      expect(next.form.thinkingOptionId).toBe("low");
     });
   });
 

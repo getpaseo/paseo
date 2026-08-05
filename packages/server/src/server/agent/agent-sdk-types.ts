@@ -75,6 +75,7 @@ export type ProviderStatus = "ready" | "loading" | "error" | "unavailable";
 export interface AgentModelDefinition {
   provider: AgentProvider;
   id: string;
+  aliases?: string[];
   label: string;
   description?: string;
   isDefault?: boolean;

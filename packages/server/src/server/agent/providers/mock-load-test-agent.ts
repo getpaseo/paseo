@@ -57,6 +57,7 @@ const MODELS: AgentModelDefinition[] = [
   {
     provider: MOCK_LOAD_TEST_PROVIDER_ID,
     id: MOCK_LOAD_TEST_DEFAULT_MODEL_ID,
+    aliases: ["legacy-five-minute-stream"],
     label: "Five minute stream",
     description:
       "Realistic agent flow streamed as sub-word tokens for five minutes (good for scroll/coalesce debugging).",

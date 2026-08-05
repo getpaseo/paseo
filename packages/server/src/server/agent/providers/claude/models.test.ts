@@ -437,10 +437,20 @@ describe("Claude Fable 5 catalog", () => {
   it("offers a single Fable 5 entry with a 1M context window", () => {
     const fable5Models = getClaudeModels()
       .filter((model) => model.id.startsWith("claude-fable-5"))
-      .map(({ id, label, contextWindowMaxTokens }) => ({ id, label, contextWindowMaxTokens }));
+      .map(({ id, aliases, label, contextWindowMaxTokens }) => ({
+        id,
+        aliases,
+        label,
+        contextWindowMaxTokens,
+      }));
 
     expect(fable5Models).toEqual([
-      { id: "claude-fable-5", label: "Fable 5", contextWindowMaxTokens: 1_000_000 },
+      {
+        id: "claude-fable-5",
+        aliases: ["claude-fable-5[1m]"],
+        label: "Fable 5",
+        contextWindowMaxTokens: 1_000_000,
+      },
     ]);
   });
 
