@@ -20,11 +20,14 @@ class FakeDebugger {
   public blockCommands = false;
   public readonly blockedCommandNames = new Set<string>();
   public readonly failedCommandNames = new Set<string>();
+  public readonly failedCommandErrors = new Map<string, Error>();
   public readonly promptDialogs: unknown[] = [];
   public failPromptDrain = false;
+  public beforeCommand: ((command: string) => void) | null = null;
   private messageListener:
     | ((event: unknown, method: string, params?: Record<string, unknown>) => void)
     | null = null;
+  private detachListener: (() => void) | null = null;
   private readonly blockedCommands: Array<() => void> = [];
 
   public isAttached(): boolean {
@@ -37,6 +40,11 @@ class FakeDebugger {
 
   public async sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown> {
     this.commands.push({ command, params: params ?? {} });
+    this.beforeCommand?.(command);
+    const commandError = this.failedCommandErrors.get(command);
+    if (commandError) {
+      throw commandError;
+    }
     if (this.failedCommandNames.has(command)) {
       throw new Error(`${command} failed`);
     }
@@ -58,10 +66,15 @@ class FakeDebugger {
   }
 
   public on(
-    event: "message",
-    listener: (event: unknown, method: string, params?: Record<string, unknown>) => void,
+    event: "message" | "detach",
+    listener:
+      | ((event: unknown, method: string, params?: Record<string, unknown>) => void)
+      | (() => void),
   ): void {
-    expect(event).toBe("message");
+    if (event === "detach") {
+      this.detachListener = listener;
+      return;
+    }
     this.messageListener = listener;
   }
 
@@ -70,6 +83,10 @@ class FakeDebugger {
       throw new Error("Debugger message listener was not registered");
     }
     this.messageListener({}, method, params);
+  }
+
+  public emitDetach(): void {
+    this.detachListener?.();
   }
 
   public finishNextCommand(): void {
@@ -92,6 +109,7 @@ type ConsoleMessageListener = (
 class FakeWebContents {
   public readonly debugger = new FakeDebugger();
   public readonly inputEvents: IsolatedKeyboardInputEvent[] = [];
+  public readonly loadedUrls: string[] = [];
   public readonly captures: Array<{
     rect: Rectangle | undefined;
     options: { stayHidden?: boolean } | undefined;
@@ -138,7 +156,9 @@ class FakeWebContents {
     return null;
   }
 
-  public async loadURL(): Promise<void> {}
+  public async loadURL(url: string): Promise<void> {
+    this.loadedUrls.push(url);
+  }
 
   public goBack(): void {}
 
@@ -186,6 +206,7 @@ class FakeWebContents {
 
   public destroy(): void {
     this.destroyed = true;
+    this.debugger.emitDetach();
     this.destroyedListener?.();
   }
 }
@@ -569,6 +590,29 @@ describe("browser automation IPC adapter", () => {
       "[browser-automation] Dialog capture unavailable; running command without it",
       { contentsId: 30, error: expect.any(Error) },
     );
+    warn.mockRestore();
+  });
+
+  test("does not run the command after the debugger target closes during setup", async () => {
+    const contents = new FakeWebContents(31);
+    contents.debugger.beforeCommand = (command) => {
+      if (command === "Page.enable") {
+        contents.destroy();
+      }
+    };
+    contents.debugger.failedCommandErrors.set(
+      "Page.enable",
+      new Error("target closed while handling command"),
+    );
+    const tab = adaptWebContents(contents);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(
+      tab.captureDialogs?.(() => tab.loadURL("https://replacement.example.com")),
+    ).rejects.toThrow("target closed while handling command");
+    expect(contents.loadedUrls).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+
     warn.mockRestore();
   });
 });

@@ -74,6 +74,7 @@ interface WebContentsDebugger {
     event: "message",
     listener: (event: unknown, method: string, params?: Record<string, unknown>) => void,
   ): void;
+  on?(event: "detach", listener: () => void): void;
 }
 
 interface ConsoleMessageEmitter {
@@ -188,6 +189,7 @@ function getDialogMonitor(
 class DialogMonitor {
   private enabled = false;
   private listenerRegistered = false;
+  private targetClosed = false;
   private readonly activeCollectors: DialogCollector[] = [];
 
   public constructor(
@@ -204,6 +206,9 @@ class DialogMonitor {
       await this.enable();
       await this.installPromptShim();
     } catch (error) {
+      if (this.targetClosed || this.contents.isDestroyed()) {
+        throw error;
+      }
       console.warn("[browser-automation] Dialog capture unavailable; running command without it", {
         contentsId: this.contentsId,
         error,
@@ -243,6 +248,9 @@ class DialogMonitor {
           return;
         }
         void this.handleOpening(params ?? {});
+      });
+      this.contents.debugger.on("detach", () => {
+        this.targetClosed = true;
       });
     }
     await this.sendDebugCommand("Page.enable");
