@@ -14,6 +14,14 @@ describe("sanitizeUiStateKey", () => {
   it("replaces path separators", () => {
     expect(sanitizeUiStateKey("a/b\\c")).toBe("a_b_c");
   });
+
+  it("replaces Windows-reserved filename characters", () => {
+    expect(sanitizeUiStateKey("agent:agt_1")).toBe("agent_agt_1");
+    expect(sanitizeUiStateKey("review:workspace=ws1:mode=working")).toBe(
+      "review_workspace=ws1_mode=working",
+    );
+    expect(sanitizeUiStateKey('a*b?c"d<e>f|g')).toBe("a_b_c_d_e_f_g");
+  });
 });
 
 describe("UiStateStore", () => {
