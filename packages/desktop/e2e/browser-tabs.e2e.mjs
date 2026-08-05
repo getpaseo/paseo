@@ -285,6 +285,9 @@ async function readPresentation(page, browserId) {
     if (!(surface instanceof HTMLElement) || !(clip instanceof HTMLElement)) return null;
     const surfaceRect = surface.getBoundingClientRect();
     const clipRect = clip.getBoundingClientRect();
+    const webview = surface.querySelector(`[data-paseo-browser-id="${id}"]`);
+    if (!(webview instanceof HTMLElement)) return null;
+    const webviewRect = webview.getBoundingClientRect();
     const outsidePoint = {
       x: Math.max(0, Math.round(clipRect.left - 1)),
       y: Math.round(clipRect.top + clipRect.height / 2),
@@ -302,6 +305,10 @@ async function readPresentation(page, browserId) {
         top: Math.round(clipRect.top),
         right: Math.round(clipRect.right),
         bottom: Math.round(clipRect.bottom),
+      },
+      webview: {
+        left: Math.round(webviewRect.left),
+        top: Math.round(webviewRect.top),
       },
       capturesOutsideInput: surface.contains(outsideTarget),
     };
@@ -405,6 +412,17 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId 
   }
   if (presentation.capturesOutsideInput) {
     failures.push("oversized browser surface captures input outside its pane");
+  }
+  await callBrowserTool(client, "browser_resize", { browserId, ...oversizedViewport });
+  const repeatedResizePresentation = await readPresentation(page, browserId);
+  assert(repeatedResizePresentation, "Repeated resize presentation geometry was unavailable");
+  if (
+    repeatedResizePresentation.webview.left !== presentation.webview.left ||
+    repeatedResizePresentation.webview.top !== presentation.webview.top
+  ) {
+    failures.push(
+      `repeating an oversized resize preserves the guest offset: before ${JSON.stringify(presentation.webview)}, after ${JSON.stringify(repeatedResizePresentation.webview)}`,
+    );
   }
   await callBrowserTool(client, "browser_resize", { browserId, ...requestedViewport });
 
@@ -515,6 +533,16 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId 
     await readViewport(client, browserId),
     requestedViewport,
   );
+
+  await originalDeck.getByRole("button", { name: "Annotate element" }).click();
+  await page.waitForTimeout(250);
+  const selectorResult = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: "() => Boolean(globalThis.__paseoSelector)",
+  });
+  if (JSON.parse(selectorResult.resultJson) !== true) {
+    failures.push("reused loaded browser remains ready for element annotation after remount");
+  }
 
   if (failures.length > 0) {
     throw new Error(`Browser viewport regressions:\n- ${failures.join("\n- ")}`);

@@ -14,6 +14,7 @@ const RESIDENT_VIEWPORT_HEIGHT = 800;
 const residentWebviewsByBrowserId = new Map<string, HTMLElement>();
 const residentSurfacesByBrowserId = new Map<string, HTMLElement>();
 const residentWebviewSizesByBrowserId = new Map<string, { width: number; height: number }>();
+const readyResidentWebviews = new WeakSet<HTMLElement>();
 
 interface BrowserWebviewElement extends HTMLElement {
   src: string;
@@ -70,6 +71,15 @@ function registerBrowserWhenAttached(
       .catch((error) => {
         console.error("[browser-webview] attached registration failed", error);
       });
+  });
+}
+
+function registerBrowserReadiness(webview: HTMLElement): void {
+  webview.addEventListener("did-start-loading", () => {
+    readyResidentWebviews.delete(webview);
+  });
+  webview.addEventListener("dom-ready", () => {
+    readyResidentWebviews.add(webview);
   });
 }
 
@@ -210,8 +220,7 @@ export function rememberBrowserWebviewSize(input: {
   return dimensions;
 }
 
-export function applyBrowserWebviewViewport(webview: HTMLElement, viewport: BrowserViewport): void {
-  clearResidentWebviewParkingStyle(webview);
+function applyBrowserWebviewDimensions(webview: HTMLElement, viewport: BrowserViewport): void {
   webview.style.display = "flex";
   webview.style.border = "0";
   webview.style.background = "transparent";
@@ -224,6 +233,11 @@ export function applyBrowserWebviewViewport(webview: HTMLElement, viewport: Brow
   webview.style.flex = "0 0 auto";
   webview.style.width = `${viewport.width}px`;
   webview.style.height = `${viewport.height}px`;
+}
+
+export function applyBrowserWebviewViewport(webview: HTMLElement, viewport: BrowserViewport): void {
+  clearResidentWebviewParkingStyle(webview);
+  applyBrowserWebviewDimensions(webview, viewport);
 }
 
 export function applyInactiveBrowserWebviewViewport(browserId: string, webview: HTMLElement): void {
@@ -300,6 +314,11 @@ export function prepareBrowserWebview(
     (webview as BrowserWebviewElement).src = input.initialUrl;
   }
   registerBrowserWhenAttached(webview as BrowserWebviewElement, input, browser);
+  registerBrowserReadiness(webview);
+}
+
+export function isResidentBrowserWebviewReady(webview: HTMLElement): boolean {
+  return readyResidentWebviews.has(webview);
 }
 
 export function ensureResidentBrowserWebview(input: {
@@ -406,10 +425,7 @@ export function resizeResidentBrowserWebview(input: {
   const ownerDocument = readDocument();
   const webview = ownerDocument ? findBrowserWebview(normalizedBrowserId, ownerDocument) : null;
   if (webview) {
-    applyBrowserWebviewViewport(webview, { mode: "fixed", ...dimensions });
-    if (webview.parentElement?.hasAttribute(BROWSER_SURFACE_ATTRIBUTE)) {
-      applyResidentWebviewStyle(webview, normalizedBrowserId);
-    }
+    applyBrowserWebviewDimensions(webview, { mode: "fixed", ...dimensions });
   }
 
   return dimensions;

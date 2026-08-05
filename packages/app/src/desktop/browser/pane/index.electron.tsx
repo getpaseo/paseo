@@ -60,6 +60,7 @@ import {
 import {
   applyBrowserWebviewViewport,
   applyInactiveBrowserWebviewViewport,
+  isResidentBrowserWebviewReady,
   prepareBrowserWebview,
   presentBrowserWebview,
   rememberBrowserWebviewSize,
@@ -776,6 +777,7 @@ export function BrowserPane({
     const residentWebview = takeResidentBrowserWebview(browserId) as ElectronWebview | null;
     const webview = residentWebview ?? (document.createElement("webview") as ElectronWebview);
     webviewRef.current = webview;
+    domReadyRef.current = isResidentBrowserWebviewReady(webview);
     if (!residentWebview) {
       prepareBrowserWebview(webview, {
         browserId,
@@ -809,6 +811,7 @@ export function BrowserPane({
           });
 
     const handleStartLoading = () => {
+      domReadyRef.current = false;
       updateBrowser(browserId, { isLoading: true, lastError: null });
       syncNavigationState({ syncUrl: false });
     };
