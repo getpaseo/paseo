@@ -56,10 +56,12 @@ describe("resolveLocalSpeechConfig modelsDir", () => {
     ).toBe(path.join(PASEO_HOME, "models", "speech"));
   });
 
+  // Verbatim, not `path.resolve`d: on Windows that would anchor a POSIX-style
+  // path onto the current drive.
   it("leaves an absolute configured path alone", () => {
     expect(
       resolveModelsDir({ persisted: { providers: { local: { modelsDir: "/opt/speech" } } } }),
-    ).toBe(path.resolve("/opt/speech"));
+    ).toBe("/opt/speech");
   });
 
   it("defaults under paseoHome", () => {
