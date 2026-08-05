@@ -33,10 +33,12 @@ import {
   findClaudeModel,
   getClaudeModelsWithSettings,
   normalizeClaudeRuntimeModelId,
+  resolveConfiguredClaudeModel,
 } from "./models.js";
 import {
   CLAUDE_DISABLED_THINKING_OPTION_ID,
   CLAUDE_ULTRACODE_THINKING_OPTION_ID,
+  normalizeClaudeConfiguredModelId,
   parseClaudeCodeVersion,
   resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
@@ -85,6 +87,7 @@ import {
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
+  type AgentModelDefinition,
   type AgentPermissionRequest,
   type AgentPermissionRequestKind,
   type AgentPermissionResponse,
@@ -1467,6 +1470,10 @@ export class ClaudeAgentClient implements AgentClient {
     this.configDir = options.configDir;
   }
 
+  resolveConfiguredModel(model: AgentModelDefinition): AgentModelDefinition {
+    return resolveConfiguredClaudeModel(model);
+  }
+
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
@@ -1629,7 +1636,11 @@ export class ClaudeAgentClient implements AgentClient {
     if (config.provider !== "claude") {
       throw new Error(`ClaudeAgentClient received config for provider '${config.provider}'`);
     }
-    return { ...config, provider: "claude" } as ClaudeAgentConfig;
+    return {
+      ...config,
+      provider: "claude",
+      model: config.model ? normalizeClaudeConfiguredModelId(config.model) : undefined,
+    } as ClaudeAgentConfig;
   }
 }
 
@@ -2287,7 +2298,9 @@ class ClaudeAgentSession implements AgentSession {
 
   async setModel(modelId: string | null): Promise<void> {
     const normalizedModelId =
-      typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+      typeof modelId === "string" && modelId.trim().length > 0
+        ? normalizeClaudeConfiguredModelId(modelId)
+        : null;
     const activeQuery = await this.ensureQuery();
     await activeQuery.setModel(normalizedModelId ?? undefined);
     this.config.model = normalizedModelId ?? undefined;

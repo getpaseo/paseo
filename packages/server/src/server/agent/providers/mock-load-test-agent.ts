@@ -61,6 +61,12 @@ const MODELS: AgentModelDefinition[] = [
     description:
       "Realistic agent flow streamed as sub-word tokens for five minutes (good for scroll/coalesce debugging).",
     isDefault: true,
+    thinkingOptions: [
+      { id: "low", label: "Low", isDefault: true },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ],
+    defaultThinkingOptionId: "low",
     metadata: {
       durationMs: MOCK_LOAD_TEST_DURATION_MS,
       intervalMs: MOCK_LOAD_TEST_INTERVAL_MS,
@@ -91,6 +97,12 @@ const MODELS: AgentModelDefinition[] = [
     id: "ten-second-stream",
     label: "Ten second stream",
     description: "Fast realistic stream for tests and smoke checks.",
+    thinkingOptions: [
+      { id: "low", label: "Low", isDefault: true },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ],
+    defaultThinkingOptionId: "low",
     metadata: {
       durationMs: 10_000,
       intervalMs: 5,

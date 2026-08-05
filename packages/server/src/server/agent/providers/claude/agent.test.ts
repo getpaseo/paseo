@@ -417,7 +417,6 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
 
       expect(models.map((m) => m.id)).toEqual([
         "claude-opus-5",
-        "claude-fable-5[1m]",
         "claude-fable-5",
         "claude-opus-4-8[1m]",
         "claude-opus-4-8",
@@ -461,7 +460,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       });
 
       expect(models.find((model) => model.isDefault)?.id).toBe("claude-opus-5");
-      expect(models.map((model) => model.id)).toContain("claude-fable-5[1m]");
+      expect(models.map((model) => model.id)).toContain("claude-fable-5");
     } finally {
       await fs.rm(emptyConfigDir, { recursive: true, force: true });
     }
@@ -626,6 +625,31 @@ describe("ClaudeAgentSession features", () => {
     return { queryFactory, queryMock, launches };
   }
 
+  test("canonicalizes retired Fable 5 IDs inside the Claude provider", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-fable-5[1m]",
+    });
+
+    await (
+      session as unknown as {
+        ensureQuery(): Promise<unknown>;
+      }
+    ).ensureQuery();
+    expect(queryFactory.mock.calls[0]?.[0].options.model).toBe("claude-fable-5");
+
+    await session.setModel?.("claude-fable-5[1m]");
+    expect(queryMock.setModel).toHaveBeenCalledWith("claude-fable-5");
+    await session.close();
+  });
+
   test("lists fast mode only for supported Opus models", async () => {
     const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
 
@@ -751,7 +775,7 @@ describe("ClaudeAgentSession features", () => {
 
   test.each([
     ["supported model", "claude-opus-4-8", { type: "disabled" }, undefined],
-    ["unsupported model", "claude-fable-5", { type: "adaptive" }, "low"],
+    ["unsupported model", "claude-fable-5", { type: "adaptive" }, "high"],
     ["custom model", "openrouter/anthropic/claude-opus-4-8", undefined, undefined],
     ["provider default", null, undefined, undefined],
   ])("reconciles Off when switching to a %s", async (_label, modelId, thinking, effort) => {

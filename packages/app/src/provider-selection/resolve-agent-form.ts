@@ -98,6 +98,7 @@ export type AgentFormAction =
       type: "SET_MODEL_FROM_USER";
       modelId: string;
       availableModels: AgentModelDefinition[] | null;
+      providerPrefs: ProviderPrefs | undefined;
     }
   | { type: "CLEAR_PROVIDER_SELECTION_FROM_USER" }
   | { type: "SET_THINKING_OPTION_FROM_USER"; thinkingOptionId: string }
@@ -506,6 +507,25 @@ function pickNextThinkingOptionForProvider(input: {
   });
 }
 
+function pickNextThinkingOptionForTarget(input: {
+  availableModels: AgentModelDefinition[] | null;
+  providerPrefs: ProviderPrefs | undefined;
+  modelId: string;
+  currentModelId: string;
+  currentThinkingOptionId: string;
+  isSameProvider: boolean;
+}): string {
+  const requestedThinkingOptionId =
+    input.isSameProvider && input.currentModelId === input.modelId
+      ? input.currentThinkingOptionId
+      : (input.providerPrefs?.thinkingByModel?.[input.modelId] ?? "");
+  return resolveThinkingOptionId({
+    availableModels: input.availableModels,
+    modelId: input.modelId,
+    requestedThinkingOptionId,
+  });
+}
+
 function completeResolution(
   state: AgentFormReducerState,
   action: CompleteResolutionAction,
@@ -581,10 +601,13 @@ export function resolveAgentForm(
     case "SET_PROVIDER_AND_MODEL_FROM_USER": {
       const normalizedModelId = normalizeSelectedModelId(action.modelId);
       const nextModelId = normalizedModelId || resolveDefaultModelId(action.providerModels);
-      const nextThinkingOptionId = resolveThinkingOptionId({
+      const nextThinkingOptionId = pickNextThinkingOptionForTarget({
         availableModels: action.providerModels,
         modelId: nextModelId,
-        requestedThinkingOptionId: "",
+        providerPrefs: action.providerPrefs,
+        currentModelId: state.form.model,
+        currentThinkingOptionId: state.form.thinkingOptionId,
+        isSameProvider: state.form.provider === action.provider,
       });
       const nextModeId = pickNextModeForProviderAndModel({
         currentProvider: state.form.provider,
@@ -616,12 +639,13 @@ export function resolveAgentForm(
     case "SET_MODEL_FROM_USER": {
       const normalizedModelId = normalizeSelectedModelId(action.modelId);
       const nextModelId = normalizedModelId || resolveDefaultModelId(action.availableModels);
-      const nextThinkingOptionId = resolveThinkingOptionId({
+      const nextThinkingOptionId = pickNextThinkingOptionForTarget({
         availableModels: action.availableModels,
         modelId: nextModelId,
-        requestedThinkingOptionId: state.userModified.thinkingOptionId
-          ? state.form.thinkingOptionId
-          : "",
+        providerPrefs: action.providerPrefs,
+        currentModelId: state.form.model,
+        currentThinkingOptionId: state.form.thinkingOptionId,
+        isSameProvider: true,
       });
       return {
         ...state,

@@ -843,6 +843,7 @@ describe("resolveAgentForm", () => {
         type: "SET_MODEL_FROM_USER",
         modelId: "gpt-5.4-codex",
         availableModels: alternateModels,
+        providerPrefs: undefined,
       });
       const next = resolveAgentForm(userChanged, {
         type: "COMPLETE_RESOLUTION",
@@ -981,9 +982,10 @@ describe("resolveAgentForm", () => {
         modelId: "gpt-5.3-codex",
         providerDef: TEST_CODEX_DEFINITION,
         providerModels: CODEX_MODELS,
+        providerPrefs: { thinkingByModel: { "gpt-5.3-codex": "low" } },
       });
 
-      expect(next.form.thinkingOptionId).toBe("xhigh");
+      expect(next.form.thinkingOptionId).toBe("low");
     });
   });
 
@@ -1004,6 +1006,7 @@ describe("resolveAgentForm", () => {
         type: "SET_MODEL_FROM_USER",
         modelId: "gpt-5.3-codex",
         availableModels: CODEX_MODELS,
+        providerPrefs: undefined,
       });
 
       expect(next.form.model).toBe("gpt-5.3-codex");
@@ -1020,6 +1023,7 @@ describe("resolveAgentForm", () => {
         type: "SET_MODEL_FROM_USER",
         modelId: "gpt-5.3-codex",
         availableModels: CODEX_MODELS,
+        providerPrefs: { thinkingByModel: { "gpt-5.3-codex": "xhigh" } },
       });
 
       expect(next.form.thinkingOptionId).toBe("low");
@@ -1031,9 +1035,36 @@ describe("resolveAgentForm", () => {
         type: "SET_MODEL_FROM_USER",
         modelId: "  ",
         availableModels: CODEX_MODELS,
+        providerPrefs: undefined,
       });
 
       expect(next.form.model).toBe("gpt-5.3-codex");
+    });
+
+    it("restores the target model's saved thinking option", () => {
+      const models = [
+        ...CODEX_MODELS,
+        {
+          provider: "codex" as const,
+          id: "gpt-other",
+          label: "Other",
+          defaultThinkingOptionId: "xhigh",
+          thinkingOptions: CODEX_MODELS[0].thinkingOptions,
+        },
+      ];
+      const state = makeState({
+        provider: "codex",
+        model: "gpt-other",
+        thinkingOptionId: "xhigh",
+      });
+      const next = resolveAgentForm(state, {
+        type: "SET_MODEL_FROM_USER",
+        modelId: "gpt-5.3-codex",
+        availableModels: models,
+        providerPrefs: { thinkingByModel: { "gpt-5.3-codex": "low" } },
+      });
+
+      expect(next.form.thinkingOptionId).toBe("low");
     });
   });
 
