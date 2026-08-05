@@ -249,18 +249,29 @@ export interface SetupFinishNotificationParams {
   logger: Logger;
 }
 
+// "was closed" covers a watched child that is killed/closed before finishing.
+type FinishNotificationReason = "finished" | "errored" | "needs permission" | "was closed";
+
+// Caps the child response embedded in a finish notification so one verbose
+// child cannot blow out the caller's context window.
+const FINISH_NOTIFICATION_MESSAGE_LIMIT = 4000;
+
 interface FinishNotificationBodyInput {
   childAgentId: string;
   title: string;
-  reason: "finished" | "errored" | "needs permission";
+  reason: FinishNotificationReason;
   lastAssistantMessage: string | null;
 }
 
 function formatFinishNotificationBody(params: FinishNotificationBodyInput): string {
   const statusLine = `Agent ${params.childAgentId} (${params.title}) ${params.reason}.`;
-  const lastAssistantMessage = params.lastAssistantMessage?.trim();
+  let lastAssistantMessage = params.lastAssistantMessage?.trim();
   if (!lastAssistantMessage) {
     return statusLine;
+  }
+  if (lastAssistantMessage.length > FINISH_NOTIFICATION_MESSAGE_LIMIT) {
+    const omitted = lastAssistantMessage.length - FINISH_NOTIFICATION_MESSAGE_LIMIT;
+    lastAssistantMessage = `${lastAssistantMessage.slice(0, FINISH_NOTIFICATION_MESSAGE_LIMIT)}\n[truncated ${omitted} chars — use get_agent_activity for the full response]`;
   }
   return `${statusLine}\n\n<agent-response>\n${lastAssistantMessage}\n</agent-response>`;
 }
@@ -278,7 +289,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   let fired = false;
   let unsubscribe: (() => void) | null = null;
 
-  async function notify(reason: "finished" | "errored" | "needs permission"): Promise<void> {
+  async function notify(reason: FinishNotificationReason): Promise<void> {
     if (fired) {
       return;
     }
@@ -313,7 +324,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     });
   }
 
-  function notifySafely(reason: "finished" | "errored" | "needs permission"): void {
+  function notifySafely(reason: FinishNotificationReason): void {
     void notify(reason).catch((error) => {
       logger.error(
         { err: error, childAgentId, callerAgentId, reason },
@@ -342,8 +353,9 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
           return;
         }
         if (event.agent.lifecycle === "closed") {
-          fired = true;
-          unsubscribe?.();
+          // A kill/close while being watched is an outcome the caller must
+          // hear about; dropping it leaves the watcher waiting forever.
+          notifySafely("was closed");
           return;
         }
         return;

@@ -48,6 +48,7 @@ interface FinishNotificationScenario {
   startWatchingChild(): void;
   finishChild(): void;
   finishChildAndReadParentPrompt(): Promise<string>;
+  closeChildAndReadParentPrompt(): Promise<string>;
   wasParentPrompted(): boolean;
 }
 
@@ -144,6 +145,25 @@ function createFinishNotificationScenario(
 
       return parentPrompt;
     },
+    async closeChildAndReadParentPrompt() {
+      const parentPrompt = new Promise<string>((resolve) => {
+        resolveParentPrompt = resolve;
+      });
+
+      childAgent.lifecycle = "running";
+      subscriber?.({
+        type: "agent_state",
+        agent: childAgent,
+      });
+
+      childAgent.lifecycle = "closed";
+      subscriber?.({
+        type: "agent_state",
+        agent: childAgent,
+      });
+
+      return parentPrompt;
+    },
     wasParentPrompted() {
       return parentPrompted;
     },
@@ -207,6 +227,35 @@ test("finish notifications tell the parent the child's last assistant message", 
       "Agent child-agent (Child Agent) finished.\n\n<agent-response>\nImplemented the cleanup and all checks pass.\n</agent-response>",
     ),
   );
+});
+
+test("closing a watched child notifies the caller it was closed", async () => {
+  const scenario = createFinishNotificationScenario({
+    childLastAssistantMessage: null,
+  });
+
+  scenario.startWatchingChild();
+  const parentPrompt = await scenario.closeChildAndReadParentPrompt();
+
+  expect(parentPrompt).toEqual(
+    formatSystemNotificationPrompt("Agent child-agent (Child Agent) was closed."),
+  );
+});
+
+test("finish notifications truncate oversized child responses", async () => {
+  const head = "x".repeat(4000);
+  const tail = "TAIL-MARKER".repeat(50);
+  const scenario = createFinishNotificationScenario({
+    childLastAssistantMessage: head + tail,
+  });
+
+  scenario.startWatchingChild();
+  const parentPrompt = await scenario.finishChildAndReadParentPrompt();
+
+  expect(parentPrompt).toContain(
+    `[truncated ${tail.length} chars — use get_agent_activity for the full response]`,
+  );
+  expect(parentPrompt).not.toContain("TAIL-MARKER");
 });
 
 test("detaching a child ends its parent-owned finish notification", async () => {
