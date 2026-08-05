@@ -28,6 +28,22 @@ class AudioEngine {
     private var hasFirstInputBeenDiscarded = false
     private var discardRecording = false
     private var discardFirstInputMillis = 2000
+
+    /// Buffers scheduled on `speechPlayer` that have not finished rendering yet.
+    ///
+    /// `AVAudioPlayerNode.isPlaying` cannot answer "is audio still in flight": it stays true from
+    /// `play()` until an explicit `stop()`/`pause()`, and draining every scheduled buffer does not
+    /// clear it. Using it as the release guard meant the session was never handed back after the
+    /// first spoken response. Decremented from the scheduling completion handler, which runs on an
+    /// AVAudioEngine-internal thread, so all access goes through `playbackCountLock`.
+    private var pendingPlaybackBuffers = 0
+    private let playbackCountLock = NSLock()
+
+    private var hasPendingPlayback: Bool {
+        playbackCountLock.lock()
+        defer { playbackCountLock.unlock() }
+        return pendingPlaybackBuffers > 0
+    }
     
     enum AudioEngineError: Error {
         case audioFormatError
@@ -119,7 +135,7 @@ class AudioEngine {
         // The native engine is a singleton shared by every JS-side engine wrapper, so it is the
         // only layer that knows whether *anything* is still using the session. Never release
         // while capture or playback is live — the JS callers each only see their own queue.
-        guard isSessionActive, !isRecording, !speechPlayer.isPlaying else { return }
+        guard isSessionActive, !isRecording, !hasPendingPlayback else { return }
 
         avAudioEngine.pause()
 
@@ -241,8 +257,18 @@ class AudioEngine {
             print("Failed to create audio buffer")
             return
         }
-        speechPlayer.scheduleBuffer(buffer)
-        
+        playbackCountLock.lock()
+        pendingPlaybackBuffers += 1
+        playbackCountLock.unlock()
+        speechPlayer.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            guard let self = self else { return }
+            self.playbackCountLock.lock()
+            if self.pendingPlaybackBuffers > 0 {
+                self.pendingPlaybackBuffers -= 1
+            }
+            self.playbackCountLock.unlock()
+        }
+
         if !speechPlayer.isPlaying {
             speechPlayer.play()
         }
@@ -299,8 +325,17 @@ class AudioEngine {
     func stopRecordingAndPlayer(){
         toggleRecording(false)
         speechPlayer.stop()
+        resetPendingPlayback()
         updateOutputVolume()
         releaseAudioSession()
+    }
+
+    /// `stop()` discards whatever is still scheduled, so the pending count has to be cleared with
+    /// it. Leaving it non-zero would block every later release.
+    private func resetPendingPlayback() {
+        playbackCountLock.lock()
+        pendingPlaybackBuffers = 0
+        playbackCountLock.unlock()
     }
 
     func resumeRecordingAndPlayer(){
@@ -321,6 +356,7 @@ class AudioEngine {
 
     func stopPlayback() {
         speechPlayer.stop()
+        resetPendingPlayback()
         // Clear any scheduled buffers
         outputBuffer = [Float](repeating: 0, count: 2048)
         updateOutputVolume()
