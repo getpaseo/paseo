@@ -454,10 +454,11 @@ describe("daemon-manager commands", () => {
         stdio: ["ignore", "ignore", "ignore"],
         envOverlay: expect.objectContaining({
           PASEO_CLI: getBundledCliShimPath(),
-          PASEO_WEB_UI_ENABLED: "false",
         }),
       }),
     );
+    const spawnOptions = mocks.spawnProcess.mock.calls.at(-1)?.[2];
+    expect(spawnOptions?.envOverlay).not.toHaveProperty("PASEO_WEB_UI_ENABLED");
   });
 
   it("passes stale lock reclaim only after a live desktop daemon is confirmed unresponsive", async () => {
