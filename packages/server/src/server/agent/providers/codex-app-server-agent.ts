@@ -199,6 +199,43 @@ function codexVersionAtLeast(
   return true;
 }
 
+// Codex reports a dropped realtime call as a raw transport error, e.g.
+// `stream disconnected before completion: ... Connection reset without closing
+// handshake`. That text names no component and no next step, so a Live Voice
+// call that dies mid-session looks like a Paseo bug. These are the shapes Codex
+// uses for its own realtime/WebSocket transport giving up.
+const CODEX_REALTIME_TRANSPORT_FAILURE_PATTERNS: readonly RegExp[] = [
+  /stream disconnected before completion/i,
+  /connection reset without closing handshake/i,
+  /realtime websocket/i,
+  /websocket (?:closed|error|connect)/i,
+];
+
+// The last Codex whose realtime transport we have seen hold up end to end.
+// Reported failures cluster on newer builds, and this is the one lever a user
+// has, so name it in the error rather than making them guess.
+const CODEX_LIVE_VOICE_KNOWN_GOOD_VERSION = "0.145.0";
+
+/**
+ * Turns a Codex realtime error into something the user can act on. Non-transport
+ * errors (auth, entitlement, bad request) already say what is wrong and pass
+ * through untouched.
+ */
+export function describeCodexRealtimeError(params: {
+  message: string;
+  codexVersion: string | null;
+}): string {
+  const message = params.message.trim();
+  if (!CODEX_REALTIME_TRANSPORT_FAILURE_PATTERNS.some((pattern) => pattern.test(message))) {
+    return params.message;
+  }
+  const version = params.codexVersion ? ` (${params.codexVersion})` : "";
+  return (
+    `${message} — Codex's own realtime transport${version} dropped the call. ` +
+    `If every call fails this way, pin @openai/codex to ${CODEX_LIVE_VOICE_KNOWN_GOOD_VERSION}.`
+  );
+}
+
 type GoalSubcommand =
   | { kind: "set"; objective: string }
   | { kind: "pause" }
@@ -3597,6 +3634,8 @@ export class CodexAppServerAgentSession implements AgentSession, AgentRealtimeVo
     private readonly agentId?: string,
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
     liveVoiceEnabled: boolean = false,
+    /** `codex --version` output, used to make realtime failures legible. */
+    private readonly codexVersion: string | null = null,
   ) {
     this.capabilities = {
       ...CODEX_APP_SERVER_CAPABILITIES,
@@ -5137,7 +5176,13 @@ export class CodexAppServerAgentSession implements AgentSession, AgentRealtimeVo
         });
         return true;
       case "realtime_error":
-        this.notifyRealtimeSubscribers({ kind: "error", message: parsed.message });
+        this.notifyRealtimeSubscribers({
+          kind: "error",
+          message: describeCodexRealtimeError({
+            message: parsed.message,
+            codexVersion: this.codexVersion,
+          }),
+        });
         return true;
       case "realtime_closed":
         this.notifyRealtimeSubscribers({ kind: "closed", reason: parsed.reason });
@@ -7191,6 +7236,7 @@ export class CodexAppServerAgentSession implements AgentSession, AgentRealtimeVo
 export class CodexAppServerAgentClient implements AgentClient {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
+  private codexVersionPromise: Promise<string | null> | null = null;
   private goalsEnabledPromise: Promise<boolean> | null = null;
   private autoReviewEnabledPromise: Promise<boolean> | null = null;
   private liveVoiceEnabledPromise: Promise<boolean> | null = null;
@@ -7212,12 +7258,36 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
   }
 
+  /**
+   * `codex --version`, probed once per provider. Every version gate reads this,
+   * so the binary is spawned once instead of once per gate.
+   */
+  private resolveCodexVersion(): Promise<string | null> {
+    if (!this.codexVersionPromise) {
+      this.codexVersionPromise = (async () => {
+        try {
+          const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+          const version = await resolveBinaryVersion(launchPrefix.command);
+          // `resolveBinaryVersion` reports failure in band as `error: ...`.
+          // That is a diagnostic string, not a version, and it must not reach
+          // the user inside a realtime error message.
+          return version.startsWith("error:") ? null : version;
+        } catch {
+          // The promise is cached, so a throw here would resurface at every
+          // later caller — including session creation, which does not guard it.
+          // Not knowing the version only costs a less specific error message.
+          return null;
+        }
+      })();
+    }
+    return this.codexVersionPromise;
+  }
+
   private resolveGoalsEnabled(): Promise<boolean> {
     if (!this.goalsEnabledPromise) {
       this.goalsEnabledPromise = (async () => {
         try {
-          const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
-          const versionOutput = await resolveBinaryVersion(launchPrefix.command);
+          const versionOutput = (await this.resolveCodexVersion()) ?? "";
           const enabled = codexVersionAtLeast(versionOutput, CODEX_GOALS_MIN_VERSION);
           this.logger.trace(
             {
@@ -7268,8 +7338,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     if (!this.liveVoiceEnabledPromise) {
       this.liveVoiceEnabledPromise = (async () => {
         try {
-          const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
-          const versionOutput = await resolveBinaryVersion(launchPrefix.command);
+          const versionOutput = (await this.resolveCodexVersion()) ?? "";
           const enabled = codexVersionAtLeast(versionOutput, CODEX_LIVE_VOICE_MIN_VERSION);
           this.logger.trace(
             {
@@ -7356,6 +7425,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       launchContext?.agentId,
       undefined,
       liveVoiceEnabled,
+      await this.resolveCodexVersion(),
     );
     await session.connect();
     return session;
@@ -7394,6 +7464,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       launchContext?.agentId,
       options?.purpose ?? "interactive",
       liveVoiceEnabled,
+      await this.resolveCodexVersion(),
     );
     await session.connect();
     return session;

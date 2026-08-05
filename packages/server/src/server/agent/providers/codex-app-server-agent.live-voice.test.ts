@@ -43,7 +43,10 @@ function createClientWithFakeAppServer(
   return client;
 }
 
-function createSession(liveVoiceEnabled: boolean): {
+function createSession(
+  liveVoiceEnabled: boolean,
+  codexVersion: string | null = null,
+): {
   session: CodexLiveVoiceTestSession;
   requests: Array<{ method: string; params?: unknown }>;
 } {
@@ -62,6 +65,7 @@ function createSession(liveVoiceEnabled: boolean): {
     "agent-live-voice",
     undefined,
     liveVoiceEnabled,
+    codexVersion,
   ) as unknown as CodexLiveVoiceTestSession;
   session.connected = true;
   session.currentThreadId = THREAD_ID;
@@ -217,6 +221,48 @@ describe("codex live voice", () => {
     });
 
     expect(realtimeEvents).toEqual([]);
+  });
+
+  test("a codex transport disconnect names the codex build and the pin that fixes it", () => {
+    const { session } = createSession(true, "codex-cli 0.146.0");
+    const realtimeEvents: AgentRealtimeVoiceEvent[] = [];
+    session.subscribeRealtimeEvents((event) => realtimeEvents.push(event));
+
+    session.handleNotification("thread/realtime/error", {
+      threadId: THREAD_ID,
+      message: "stream disconnected before completion: Connection reset without closing handshake",
+    });
+
+    expect(realtimeEvents).toEqual([
+      {
+        kind: "error",
+        message:
+          "stream disconnected before completion: Connection reset without closing handshake" +
+          " — Codex's own realtime transport (codex-cli 0.146.0) dropped the call." +
+          " If every call fails this way, pin @openai/codex to 0.145.0.",
+      },
+    ]);
+  });
+
+  test("a transport disconnect stays legible when the codex version is unknown", () => {
+    const { session } = createSession(true);
+    const realtimeEvents: AgentRealtimeVoiceEvent[] = [];
+    session.subscribeRealtimeEvents((event) => realtimeEvents.push(event));
+
+    session.handleNotification("thread/realtime/error", {
+      threadId: THREAD_ID,
+      message: "failed to connect realtime websocket: HTTP error: 404 Not Found",
+    });
+
+    expect(realtimeEvents).toEqual([
+      {
+        kind: "error",
+        message:
+          "failed to connect realtime websocket: HTTP error: 404 Not Found" +
+          " — Codex's own realtime transport dropped the call." +
+          " If every call fails this way, pin @openai/codex to 0.145.0.",
+      },
+    ]);
   });
 
   test("a malformed closed notification still closes the call", () => {
