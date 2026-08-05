@@ -83,6 +83,11 @@ import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 import { revertOpenCodeConversationAndFiles } from "./opencode/rewind.js";
+import {
+  foldOpenCodeSubagentPresentation,
+  type OpenCodeSubagentPresentationFacts,
+  type OpenCodeSubagentPresentationState,
+} from "./opencode/subagent-presentation.js";
 import type { ManagedProcessRegistry } from "../../managed-processes/managed-processes.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
@@ -1724,6 +1729,7 @@ export interface OpenCodeEventTranslationState {
   subAgentsByCallId?: Map<string, OpenCodeSubAgentActivityState>;
   subAgentCallIdByChildSessionId?: Map<string, string>;
   knownChildSessionIds?: Set<string>;
+  subagentPresentationByChildId?: Map<string, OpenCodeSubagentPresentationState>;
   modelContextWindowsByModelKey?: ReadonlyMap<string, number>;
   onAssistantModelContextWindowResolved?: (contextWindowMaxTokens: number) => void;
 }
@@ -1761,6 +1767,8 @@ interface OpenCodeChildSessionInfo {
   title?: string;
   directory?: string;
   revert?: OpenCodePersistedSession["revert"];
+  agent?: string;
+  model?: { id: string; variant?: string };
 }
 
 interface OpenCodeSubAgentActivityState {
@@ -2102,6 +2110,62 @@ function getOpenCodeKnownChildSessionIds(state: OpenCodeEventTranslationState): 
   return state.knownChildSessionIds;
 }
 
+function getOpenCodeSubagentPresentationState(
+  childSessionId: string,
+  state: OpenCodeEventTranslationState,
+): OpenCodeSubagentPresentationState {
+  state.subagentPresentationByChildId ??= new Map();
+  const existing = state.subagentPresentationByChildId.get(childSessionId);
+  if (existing) {
+    return existing;
+  }
+  const created: OpenCodeSubagentPresentationState = { facts: {} };
+  state.subagentPresentationByChildId.set(childSessionId, created);
+  return created;
+}
+
+function sumOpenCodeAssistantMessageTokens(
+  tokens: OpenCodeAssistantMessage["tokens"] | undefined,
+): number {
+  if (!tokens) {
+    return 0;
+  }
+  return (
+    (readPositiveFiniteNumber(tokens.input) ?? 0) +
+    (readPositiveFiniteNumber(tokens.output) ?? 0) +
+    (readPositiveFiniteNumber(tokens.reasoning) ?? 0) +
+    (readPositiveFiniteNumber(tokens.cache?.read) ?? 0) +
+    (readPositiveFiniteNumber(tokens.cache?.write) ?? 0)
+  );
+}
+
+/** Presentation facts observable on a child assistant message. Token sums only count once the
+ * message completes, so partial frames don't publish a shrinking total. */
+function readOpenCodeAssistantPresentationFacts(
+  info: OpenCodeAssistantMessage,
+): OpenCodeSubagentPresentationFacts | null {
+  const facts: OpenCodeSubagentPresentationFacts = {};
+  const agentName = readNonEmptyString(info.agent);
+  if (agentName) {
+    facts.agentName = agentName;
+  }
+  const modelId = readNonEmptyString(info.modelID);
+  if (modelId) {
+    facts.modelId = modelId;
+  }
+  const variant = readNonEmptyString(info.variant);
+  if (variant) {
+    facts.variant = variant;
+  }
+  if (info.time?.completed !== undefined) {
+    const totalTokens = sumOpenCodeAssistantMessageTokens(info.tokens);
+    if (totalTokens > 0) {
+      facts.totalTokens = totalTokens;
+    }
+  }
+  return Object.keys(facts).length > 0 ? facts : null;
+}
+
 function isOpenCodeSessionTrackedByParent(
   sessionId: string,
   state: OpenCodeEventTranslationState,
@@ -2127,20 +2191,33 @@ function appendOpenCodeChildSessionDetected(
   }
 
   const knownChildSessionIds = getOpenCodeKnownChildSessionIds(state);
+  // Known limitation: detection runs once per child, so a session record that gains `agent`
+  // only in a later session.updated never sets the descriptor title here. Assistant-frame
+  // facts still recover the subtitle via appendChildAssistantPresentationUpsert.
   if (knownChildSessionIds.has(child.id)) {
     return false;
   }
 
   knownChildSessionIds.add(child.id);
+  const presentation = getOpenCodeSubagentPresentationState(child.id, state);
+  const subtitle = foldOpenCodeSubagentPresentation(presentation, {
+    ...(child.agent ? { agentName: child.agent } : {}),
+    ...(child.model?.id ? { modelId: child.model.id } : {}),
+    ...(child.model?.variant ? { variant: child.model.variant } : {}),
+  });
+  // The row label contract: `description` carries the task (session title fallback), `title`
+  // carries the subagent type. Neither gets a placeholder — absent facts render as nothing.
   events.push({
     type: "provider_subagent",
     provider: "opencode",
     event: {
       type: "upsert",
       id: child.id,
-      title: child.title ?? "OpenCode subagent",
+      ...(child.agent && !presentation.titleFromLink ? { title: child.agent } : {}),
+      ...(child.title && !presentation.descriptionFromLink ? { description: child.title } : {}),
       status,
       ...(child.directory ? { cwd: child.directory } : {}),
+      ...(subtitle ? { subtitle } : {}),
     },
   });
   return true;
@@ -2169,10 +2246,58 @@ function linkOpenCodeSubAgentChildSession(
   activity: OpenCodeSubAgentActivityState,
   childSessionId: string,
   state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
 ): void {
   activity.childSessionId = childSessionId;
   const maps = getOpenCodeSubAgentMaps(state);
   maps.callIdByChildSessionId.set(childSessionId, activity.toolCall.callId);
+  appendOpenCodeSubAgentLinkPresentation(activity, childSessionId, state, events);
+}
+
+/**
+ * When a child session ties to a parent `task` tool call, publish the task's identity onto the
+ * descriptor: `description` (task input), `title` (subagent type), `toolCallId`. Presentation
+ * only — no `status`, so it can never revert a finished child.
+ */
+function appendOpenCodeSubAgentLinkPresentation(
+  activity: OpenCodeSubAgentActivityState,
+  childSessionId: string,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  const detail = activity.toolCall.detail;
+  if (detail.type !== "sub_agent") {
+    return;
+  }
+  const presentation = getOpenCodeSubagentPresentationState(childSessionId, state);
+  if (presentation.linkedToolCallId === activity.toolCall.callId) {
+    return;
+  }
+  presentation.linkedToolCallId = activity.toolCall.callId;
+  const subAgentType = readNonEmptyString(detail.subAgentType);
+  const description = readNonEmptyString(detail.description);
+  if (subAgentType) {
+    presentation.titleFromLink = true;
+  }
+  if (description) {
+    presentation.descriptionFromLink = true;
+  }
+  const subtitle = foldOpenCodeSubagentPresentation(
+    presentation,
+    subAgentType ? { agentName: subAgentType } : {},
+  );
+  events.push({
+    type: "provider_subagent",
+    provider: "opencode",
+    event: {
+      type: "upsert",
+      id: childSessionId,
+      toolCallId: activity.toolCall.callId,
+      ...(subAgentType ? { title: subAgentType } : {}),
+      ...(description ? { description } : {}),
+      ...(subtitle ? { subtitle } : {}),
+    },
+  });
 }
 
 function buildOpenCodeSubAgentTimelineItem(
@@ -2195,13 +2320,14 @@ function buildOpenCodeSubAgentTimelineItem(
 function registerOpenCodeSubAgentToolCall(
   item: ToolCallTimelineItem,
   state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
 ): ToolCallTimelineItem {
   if (item.detail.type !== "sub_agent") {
     return item;
   }
   const activity = getOpenCodeSubAgentState(item.callId, state, item);
   if (item.detail.childSessionId) {
-    linkOpenCodeSubAgentChildSession(activity, item.detail.childSessionId, state);
+    linkOpenCodeSubAgentChildSession(activity, item.detail.childSessionId, state, events);
   }
   return buildOpenCodeSubAgentTimelineItem(activity);
 }
@@ -2224,7 +2350,7 @@ function appendOpenCodeToolCallTimelineItem(
   state: OpenCodeEventTranslationState,
   events: AgentStreamEvent[],
 ): void {
-  const timelineItem = registerOpenCodeSubAgentToolCall(item, state);
+  const timelineItem = registerOpenCodeSubAgentToolCall(item, state, events);
   events.push({
     type: "timeline",
     provider: "opencode",
@@ -2241,7 +2367,7 @@ function appendOpenCodeSubAgentChildSessionLinked(
   if (!activity) {
     return;
   }
-  linkOpenCodeSubAgentChildSession(activity, childSessionId, state);
+  linkOpenCodeSubAgentChildSession(activity, childSessionId, state, events);
   events.push({
     type: "timeline",
     provider: "opencode",
@@ -2271,20 +2397,14 @@ function appendOpenCodeSessionCreatedOrUpdated(
 
   const parentSessionId = readNonEmptyString(info?.parentID) ?? readNonEmptyString(info?.parentId);
   if (parentSessionId) {
-    appendOpenCodeChildSessionDetected(
-      {
-        id: event.properties.info.id,
-        parentSessionId,
-        ...(readNonEmptyString(info?.title)
-          ? { title: readNonEmptyString(info?.title) ?? undefined }
-          : {}),
-        ...(readNonEmptyString(info?.directory)
-          ? { directory: readNonEmptyString(info?.directory) ?? undefined }
-          : {}),
-      },
-      state,
-      events,
-    );
+    const child = readOpenCodeChildSessionInfo({
+      ...info,
+      id: event.properties.info.id,
+      parentID: parentSessionId,
+    });
+    if (child) {
+      appendOpenCodeChildSessionDetected(child, state, events);
+    }
   }
   if (parentSessionId === state.sessionId) {
     appendOpenCodeSubAgentChildSessionLinked(event.properties.info.id, state, events);
@@ -2302,6 +2422,7 @@ function appendOpenCodeSessionDeleted(
   }
   state.knownChildSessionIds?.delete(sessionId);
   state.subAgentCallIdByChildSessionId?.delete(sessionId);
+  state.subagentPresentationByChildId?.delete(sessionId);
   events.push({
     type: "provider_subagent",
     provider: "opencode",
@@ -2857,12 +2978,29 @@ function readOpenCodeChildSessionInfo(value: unknown): OpenCodeChildSessionInfo 
   const title = readNonEmptyString(record.title);
   const directory = readNonEmptyString(record.directory);
   const revert = readOpenCodeRecord(record.revert) as OpenCodePersistedSession["revert"] | null;
+  const agent = readNonEmptyString(record.agent);
+  const model = readOpenCodeChildSessionModel(record.model);
   return {
     id,
     parentSessionId,
     ...(title ? { title } : {}),
     ...(directory ? { directory } : {}),
     ...(revert ? { revert } : {}),
+    ...(agent ? { agent } : {}),
+    ...(model ? { model } : {}),
+  };
+}
+
+function readOpenCodeChildSessionModel(value: unknown): OpenCodeChildSessionInfo["model"] | null {
+  const record = readOpenCodeRecord(value);
+  const id = readNonEmptyString(record?.id);
+  if (!record || !id) {
+    return null;
+  }
+  const variant = readNonEmptyString(record.variant);
+  return {
+    id,
+    ...(variant ? { variant } : {}),
   };
 }
 
@@ -2956,6 +3094,10 @@ class OpenCodeAgentSession implements AgentSession {
   private subAgentsByCallId = new Map<string, OpenCodeSubAgentActivityState>();
   private subAgentCallIdByChildSessionId = new Map<string, string>();
   private knownChildSessionIds = new Set<string>();
+  private readonly subagentPresentationByChildId = new Map<
+    string,
+    OpenCodeSubagentPresentationState
+  >();
   private readonly childTranslationStates = new Map<string, OpenCodeEventTranslationState>();
   private readonly childSessionCwds = new Map<string, string>();
   private readonly pendingPermissionDirectories = new Map<string, string>();
@@ -3544,6 +3686,44 @@ class OpenCodeAgentSession implements AgentSession {
         translationState.hydratedPartFingerprints?.set(part.id, JSON.stringify(part));
       }
     }
+    this.emitHydratedChildPresentation(child, messages);
+  }
+
+  /**
+   * After replaying a historical child, derive presentation facts from the last assistant
+   * message (the session record's agent/model were already folded at detection) and publish
+   * the subtitle once. Presentation-only: no `status`.
+   */
+  private emitHydratedChildPresentation(
+    child: OpenCodeChildSessionInfo,
+    messages: ReadonlyArray<OpenCodeSessionMessage>,
+  ): void {
+    const lastAssistant = messages.findLast(
+      (message): message is OpenCodeSessionMessage & { info: OpenCodeAssistantMessage } =>
+        message.info.role === "assistant",
+    );
+    if (!lastAssistant) {
+      return;
+    }
+    const facts = readOpenCodeAssistantPresentationFacts(lastAssistant.info);
+    if (!facts) {
+      return;
+    }
+    const presentation = getOpenCodeSubagentPresentationState(
+      child.id,
+      this.getChildTranslationState(child.id),
+    );
+    const subtitle = foldOpenCodeSubagentPresentation(presentation, facts);
+    if (!subtitle) {
+      return;
+    }
+    const event: AgentStreamEvent = {
+      type: "provider_subagent",
+      provider: "opencode",
+      event: { type: "upsert", id: child.id, subtitle },
+    };
+    this.recordProviderInternalEvent(event);
+    this.notifySubscribers(event, null);
   }
 
   private recordProviderInternalEvent(event: AgentStreamEvent): void {
@@ -3562,6 +3742,7 @@ class OpenCodeAgentSession implements AgentSession {
       unregisterOpenCodeChildSessionServerUrl(event.event.id);
       this.childTranslationStates.delete(event.event.id);
       this.childSessionCwds.delete(event.event.id);
+      this.subagentPresentationByChildId.delete(event.event.id);
     }
   }
 
@@ -4335,6 +4516,7 @@ class OpenCodeAgentSession implements AgentSession {
       subAgentsByCallId: this.subAgentsByCallId,
       subAgentCallIdByChildSessionId: this.subAgentCallIdByChildSessionId,
       knownChildSessionIds: this.knownChildSessionIds,
+      subagentPresentationByChildId: this.subagentPresentationByChildId,
       modelContextWindowsByModelKey: this.modelContextWindowsByModelKey,
       onAssistantModelContextWindowResolved: (contextWindowMaxTokens) => {
         this.accumulatedUsage.contextWindowMaxTokens = contextWindowMaxTokens;
@@ -4367,6 +4549,7 @@ class OpenCodeAgentSession implements AgentSession {
       subAgentsByCallId: new Map(),
       subAgentCallIdByChildSessionId: new Map(),
       knownChildSessionIds: new Set(),
+      subagentPresentationByChildId: this.subagentPresentationByChildId,
       modelContextWindowsByModelKey: this.modelContextWindowsByModelKey,
     };
     this.childTranslationStates.set(sessionId, state);
@@ -4401,6 +4584,7 @@ class OpenCodeAgentSession implements AgentSession {
     if (event.type === "session.status" && event.properties.status.type === "busy") {
       markRunning();
     }
+    this.appendChildAssistantPresentationUpsert(sessionId, event, events);
     for (const childEvent of translated) {
       if (childEvent.type === "timeline") {
         markRunning();
@@ -4442,6 +4626,42 @@ class OpenCodeAgentSession implements AgentSession {
       }
     }
     return events;
+  }
+
+  /**
+   * Fold presentation facts (agent, model, variant, completed-message tokens) off a child
+   * assistant `message.updated` frame and emit a subtitle-only upsert when it changes.
+   * Never carries `status`: a presentation upsert must not revert a finished child.
+   */
+  private appendChildAssistantPresentationUpsert(
+    sessionId: string,
+    event: OpenCodeEvent,
+    events: AgentStreamEvent[],
+  ): void {
+    if (event.type !== "message.updated") {
+      return;
+    }
+    const info = event.properties.info;
+    if (info.sessionID !== sessionId || info.role !== "assistant") {
+      return;
+    }
+    const facts = readOpenCodeAssistantPresentationFacts(info);
+    if (!facts) {
+      return;
+    }
+    const presentation = getOpenCodeSubagentPresentationState(
+      sessionId,
+      this.getChildTranslationState(sessionId),
+    );
+    const subtitle = foldOpenCodeSubagentPresentation(presentation, facts);
+    if (!subtitle) {
+      return;
+    }
+    events.push({
+      type: "provider_subagent",
+      provider: "opencode",
+      event: { type: "upsert", id: sessionId, subtitle },
+    });
   }
 
   private async translateEvent(event: OpenCodeEvent): Promise<AgentStreamEvent[]> {
