@@ -4415,7 +4415,7 @@ describe("OpenCode provider subagent contract", () => {
     });
   });
 
-  test("links a task tool call whose output resolves the child session id after detection", () => {
+  test("links a task tool call whose metadata resolves the child session id after detection", () => {
     const state = createOpenCodeTranslationState("ses_parent");
     const events: AgentStreamEvent[] = [];
 
@@ -4444,7 +4444,8 @@ describe("OpenCode provider subagent contract", () => {
               state: {
                 status: "completed",
                 input: { subagent_type: "plan", description: "Draft the plan" },
-                output: "Done. task_id: ses_childlatelink",
+                output: '<task id="ses_childlatelink">Done.</task>',
+                metadata: { sessionId: "ses_childlatelink" },
               },
             },
           },
@@ -4465,6 +4466,112 @@ describe("OpenCode provider subagent contract", () => {
         subtitle: "plan",
       },
     });
+  });
+
+  test("links parallel task calls from their canonical child session metadata", () => {
+    const state = createOpenCodeTranslationState("ses_parent");
+    const events: AgentStreamEvent[] = [];
+
+    for (const task of [
+      { callId: "call_alpha", description: "Inspect alpha" },
+      { callId: "call_beta", description: "Inspect beta" },
+    ]) {
+      events.push(
+        ...translateOpenCodeEvent(
+          {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: `prt_${task.callId}`,
+                sessionID: "ses_parent",
+                messageID: "msg_parent",
+                type: "tool",
+                tool: "task",
+                callID: task.callId,
+                state: {
+                  status: "running",
+                  input: { subagent_type: "explore", description: task.description },
+                },
+              },
+            },
+          } as OpenCodeEvent,
+          state,
+        ),
+      );
+    }
+
+    for (const childSessionId of ["ses_child_alpha", "ses_child_beta"]) {
+      events.push(
+        ...translateOpenCodeEvent(
+          {
+            type: "session.created",
+            properties: {
+              info: { id: childSessionId, parentID: "ses_parent", title: "Child session" },
+            },
+          } as OpenCodeEvent,
+          state,
+        ),
+      );
+    }
+
+    for (const task of [
+      { callId: "call_alpha", childSessionId: "ses_child_alpha", description: "Inspect alpha" },
+      { callId: "call_beta", childSessionId: "ses_child_beta", description: "Inspect beta" },
+    ]) {
+      events.push(
+        ...translateOpenCodeEvent(
+          {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: `prt_${task.callId}`,
+                sessionID: "ses_parent",
+                messageID: "msg_parent",
+                type: "tool",
+                tool: "task",
+                callID: task.callId,
+                state: {
+                  status: "completed",
+                  input: { subagent_type: "explore", description: task.description },
+                  output: `<task id="${task.childSessionId}">Done.</task>`,
+                  metadata: { sessionId: task.childSessionId },
+                },
+              },
+            },
+          } as OpenCodeEvent,
+          state,
+        ),
+      );
+    }
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "upsert",
+            id: "ses_child_alpha",
+            toolCallId: "call_alpha",
+            title: "explore",
+            description: "Inspect alpha",
+            subtitle: "explore",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "upsert",
+            id: "ses_child_beta",
+            toolCallId: "call_beta",
+            title: "explore",
+            description: "Inspect beta",
+            subtitle: "explore",
+          },
+        },
+      ]),
+    );
   });
 
   test("linking after detection keeps the task description over the session title", () => {
