@@ -2467,6 +2467,10 @@ export class Session {
       ...(msg.customVoiceInstructions
         ? { customVoiceInstructions: msg.customVoiceInstructions }
         : {}),
+      ...(msg.backendModel ? { backendModel: msg.backendModel } : {}),
+      ...(msg.backendThinkingOptionId
+        ? { backendThinkingOptionId: msg.backendThinkingOptionId }
+        : {}),
     });
     if (result.accepted) {
       respond({

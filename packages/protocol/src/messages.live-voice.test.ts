@@ -61,6 +61,19 @@ describe("live voice messages", () => {
     expect(parsed.customVoiceInstructions).toBe("Always answer in one sentence.");
   });
 
+  test("parses a start request carrying a backend model override", () => {
+    const parsed = VoiceLiveStartRequestSchema.parse({
+      type: "voice.live.start.request",
+      requestId: "request-1",
+      offerSdp: "v=0\r\n",
+      backendModel: "gpt-5.6-sol",
+      backendThinkingOptionId: "high",
+    });
+
+    expect(parsed.backendModel).toBe("gpt-5.6-sol");
+    expect(parsed.backendThinkingOptionId).toBe("high");
+  });
+
   test("parses accepted and rejected start responses", () => {
     expect(
       VoiceLiveStartResponseSchema.parse({

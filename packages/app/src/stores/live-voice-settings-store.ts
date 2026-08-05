@@ -58,11 +58,19 @@ interface LiveVoiceSettingsState {
   disabledPromptComponents: string[];
   /** Standing instructions for the whole call, handed to the model verbatim. */
   customVoiceInstructions: string;
+  /**
+   * Backend-executor model for new calls; null uses the daemon's fast default.
+   * This is the model that runs the call's actions, not the realtime voice.
+   */
+  backendModel: string | null;
+  backendThinkingOptionId: string | null;
   setVoice: (voice: string | null) => void;
   setAmbientAgentReports: (enabled: boolean) => void;
   setAmbientAgentGuidance: (guidance: string) => void;
   setPromptComponentEnabled: (id: LiveVoiceOptionalPromptComponent, enabled: boolean) => void;
   setCustomVoiceInstructions: (instructions: string) => void;
+  setBackendModel: (model: string | null) => void;
+  setBackendThinkingOptionId: (thinkingOptionId: string | null) => void;
 }
 
 export const useLiveVoiceSettingsStore = create<LiveVoiceSettingsState>()(
@@ -75,6 +83,8 @@ export const useLiveVoiceSettingsStore = create<LiveVoiceSettingsState>()(
       ambientAgentGuidance: "",
       disabledPromptComponents: [],
       customVoiceInstructions: "",
+      backendModel: null,
+      backendThinkingOptionId: null,
       setVoice: (voice) => set({ voice }),
       setAmbientAgentReports: (enabled) => set({ ambientAgentReports: enabled }),
       setAmbientAgentGuidance: (guidance) =>
@@ -91,6 +101,9 @@ export const useLiveVoiceSettingsStore = create<LiveVoiceSettingsState>()(
         set({
           customVoiceInstructions: instructions.slice(0, MAX_CUSTOM_VOICE_INSTRUCTIONS_LENGTH),
         }),
+      setBackendModel: (model) => set({ backendModel: model }),
+      setBackendThinkingOptionId: (thinkingOptionId) =>
+        set({ backendThinkingOptionId: thinkingOptionId }),
     }),
     {
       name: "paseo-live-voice-settings",
@@ -121,9 +134,11 @@ export function getLiveVoiceAmbientSettings(): {
 }
 
 /** Read outside React, like the ambient settings: calls start from event handlers. */
-export function getLiveVoicePromptSettings(): {
+export function getLiveVoiceCallSettings(): {
   disabledPromptComponents: string[] | undefined;
   customVoiceInstructions: string | undefined;
+  backendModel: string | undefined;
+  backendThinkingOptionId: string | undefined;
 } {
   const state = useLiveVoiceSettingsStore.getState();
   const instructions = state.customVoiceInstructions.trim();
@@ -132,5 +147,7 @@ export function getLiveVoicePromptSettings(): {
       ? [...state.disabledPromptComponents]
       : undefined,
     customVoiceInstructions: instructions || undefined,
+    backendModel: state.backendModel?.trim() || undefined,
+    backendThinkingOptionId: state.backendThinkingOptionId?.trim() || undefined,
   };
 }

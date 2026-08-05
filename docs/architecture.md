@@ -244,12 +244,15 @@ diffs, or step lists into a prompt, because it composes arguments serially
 while the user hears silence, and the session it delegates to is the stronger
 coder.
 
-The hidden host session is pinned to a fast, cheap model at moderate thinking
+The hidden host session defaults to a fast, cheap model at moderate thinking
 (`gpt-5.6-luna`, medium). Codex routes realtime delegations into text turns on
 the host thread, so that model is the backend executor for every action the
 call takes — a dispatcher, not a coder, where turn latency is what the user
-feels. Codex resolves an unknown model id to its default, so an older codex
-still hosts calls.
+feels. The Live Voice settings can override model and thinking per user, sent
+as optional fields on `voice.live.start`; the picker offers only models every
+eligible host reports, and codex resolves an unknown id to its default, so a
+stale selection or an older codex degrades to a working call rather than a
+failed one.
 
 Every routed tool call logs `live_voice.timing.tool_start` / `tool_end` lines
 to `daemon.log` (see `observeRoutedOperation` in `live-voice-coordinator.ts`).

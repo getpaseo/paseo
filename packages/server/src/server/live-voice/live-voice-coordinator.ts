@@ -120,6 +120,30 @@ export interface LiveVoiceStartRequest {
   disabledPromptComponents?: readonly string[] | undefined;
   /** The user's standing instructions for the whole call, verbatim. */
   customVoiceInstructions?: string | undefined;
+  /** Backend-executor model override; absent uses the daemon's fast default. */
+  backendModel?: string | undefined;
+  backendThinkingOptionId?: string | undefined;
+}
+
+/** Only the fields the context builder reads, with absent ones dropped. */
+function toContextBuildOptions(request: LiveVoiceStartRequest): {
+  crossHostRoutingAvailable: boolean;
+  ambientAgentReports?: boolean;
+  ambientAgentGuidance?: string | undefined;
+  disabledPromptComponents?: readonly string[] | undefined;
+  customVoiceInstructions?: string | undefined;
+} {
+  return {
+    crossHostRoutingAvailable: request.sendRouteRequest !== undefined,
+    ...(request.ambientAgentReports ? { ambientAgentReports: true } : {}),
+    ...(request.ambientAgentGuidance ? { ambientAgentGuidance: request.ambientAgentGuidance } : {}),
+    ...(request.disabledPromptComponents?.length
+      ? { disabledPromptComponents: request.disabledPromptComponents }
+      : {}),
+    ...(request.customVoiceInstructions
+      ? { customVoiceInstructions: request.customVoiceInstructions }
+      : {}),
+  };
 }
 
 export type LiveVoiceStartResult =
@@ -452,29 +476,15 @@ export class LiveVoiceCoordinator {
       throw new Error("Live voice call closed while checking host availability");
     }
 
-    const context = this.context
-      ? await this.buildContext({
-          crossHostRoutingAvailable: request.sendRouteRequest !== undefined,
-          ...(request.ambientAgentReports ? { ambientAgentReports: true } : {}),
-          ...(request.ambientAgentGuidance
-            ? { ambientAgentGuidance: request.ambientAgentGuidance }
-            : {}),
-          ...(request.disabledPromptComponents?.length
-            ? { disabledPromptComponents: request.disabledPromptComponents }
-            : {}),
-          ...(request.customVoiceInstructions
-            ? { customVoiceInstructions: request.customVoiceInstructions }
-            : {}),
-        })
-      : null;
+    const context = this.context ? await this.buildContext(toContextBuildOptions(request)) : null;
     if (call.state !== "starting" || this.calls.get(call.liveSessionId) !== call) {
       throw new Error("Live voice call closed while building context");
     }
 
     const config: AgentSessionConfig = {
       provider: HOST_PROVIDER,
-      model: HOST_MODEL,
-      thinkingOptionId: HOST_THINKING_OPTION_ID,
+      model: request.backendModel ?? HOST_MODEL,
+      thinkingOptionId: request.backendThinkingOptionId ?? HOST_THINKING_OPTION_ID,
       cwd: this.hostCwd,
       title: HOST_TITLE,
       internal: true,

@@ -82,6 +82,8 @@ export interface LiveVoiceDaemonClient {
     ambientAgentGuidance?: string;
     disabledPromptComponents?: string[];
     customVoiceInstructions?: string;
+    backendModel?: string;
+    backendThinkingOptionId?: string;
   }): Promise<{ liveSessionId: string; answerSdp: string }>;
   stopLiveVoice(input: { liveSessionId: string }): Promise<void>;
   listLiveVoiceVoices?(): Promise<string[]>;
@@ -117,11 +119,13 @@ export interface LiveVoiceRuntimeDeps {
   voice?: {
     read(): string | undefined;
   };
-  /** The user's prompt configuration, read once when a new call starts. */
-  promptSettings?: {
+  /** The user's call configuration — prompt and backend model — read once at start. */
+  callSettings?: {
     read(): {
       disabledPromptComponents: string[] | undefined;
       customVoiceInstructions: string | undefined;
+      backendModel: string | undefined;
+      backendThinkingOptionId: string | undefined;
     };
   };
 }
@@ -241,14 +245,14 @@ export function createDefaultLiveVoiceRuntimeDeps(
   pinConnection?: (serverId: string) => LiveVoiceConnectionPin | null,
   ambientAgentReports?: LiveVoiceRuntimeDeps["ambientAgentReports"],
   voice?: LiveVoiceRuntimeDeps["voice"],
-  promptSettings?: LiveVoiceRuntimeDeps["promptSettings"],
+  callSettings?: LiveVoiceRuntimeDeps["callSettings"],
 ): LiveVoiceRuntimeDeps {
   return {
     getClient,
     ...(pinConnection ? { pinConnection } : {}),
     ...(ambientAgentReports ? { ambientAgentReports } : {}),
     ...(voice ? { voice } : {}),
-    ...(promptSettings ? { promptSettings } : {}),
+    ...(callSettings ? { callSettings } : {}),
     startSession: startLiveVoiceSession,
     isSessionSupported: isLiveVoiceSessionSupported,
     lease: audioSessionLease,
@@ -504,7 +508,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       // Read once, before negotiating: the prompt the model gets is fixed at
       // start, so a switch flipped mid-call must not leave the two disagreeing.
       const ambientStartFields = toAmbientStartFields(deps.ambientAgentReports?.read());
-      const promptSettings = deps.promptSettings?.read();
+      const callSettings = deps.callSettings?.read();
       const voice = await resolveSelectedLiveVoice(deps.voice?.read(), client);
       if (generation !== startGeneration) {
         return;
@@ -516,11 +520,15 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
             offerSdp,
             ...(voice ? { voice } : {}),
             ...ambientStartFields,
-            ...(promptSettings?.disabledPromptComponents?.length
-              ? { disabledPromptComponents: promptSettings.disabledPromptComponents }
+            ...(callSettings?.disabledPromptComponents?.length
+              ? { disabledPromptComponents: callSettings.disabledPromptComponents }
               : {}),
-            ...(promptSettings?.customVoiceInstructions
-              ? { customVoiceInstructions: promptSettings.customVoiceInstructions }
+            ...(callSettings?.customVoiceInstructions
+              ? { customVoiceInstructions: callSettings.customVoiceInstructions }
+              : {}),
+            ...(callSettings?.backendModel ? { backendModel: callSettings.backendModel } : {}),
+            ...(callSettings?.backendThinkingOptionId
+              ? { backendThinkingOptionId: callSettings.backendThinkingOptionId }
               : {}),
           }),
         onAudioBlocked: () => {

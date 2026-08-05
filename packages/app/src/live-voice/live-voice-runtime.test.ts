@@ -46,7 +46,7 @@ function createHarness(
     getClient?: LiveVoiceRuntimeDeps["getClient"];
     pinConnection?: "active" | LiveVoiceRuntimeDeps["pinConnection"];
     voice?: string;
-    promptSettings?: LiveVoiceRuntimeDeps["promptSettings"];
+    callSettings?: LiveVoiceRuntimeDeps["callSettings"];
   } = {},
 ): Harness {
   const lease = createAudioSessionLease();
@@ -100,7 +100,7 @@ function createHarness(
     isSessionSupported: overrides.isSessionSupported ?? true,
     lease,
     ...(overrides.voice ? { voice: { read: () => overrides.voice } } : {}),
-    ...(overrides.promptSettings ? { promptSettings: overrides.promptSettings } : {}),
+    ...(overrides.callSettings ? { callSettings: overrides.callSettings } : {}),
   });
 
   return {
@@ -172,10 +172,12 @@ describe("live voice runtime", () => {
 
   it("sends the user's prompt configuration with the start request", async () => {
     harness = createHarness({
-      promptSettings: {
+      callSettings: {
         read: () => ({
           disabledPromptComponents: ["recipes", "speech-style"],
           customVoiceInstructions: "Always answer in one sentence.",
+          backendModel: "gpt-5.6-sol",
+          backendThinkingOptionId: "high",
         }),
       },
     });
@@ -186,15 +188,19 @@ describe("live voice runtime", () => {
       offerSdp: OFFER_SDP,
       disabledPromptComponents: ["recipes", "speech-style"],
       customVoiceInstructions: "Always answer in one sentence.",
+      backendModel: "gpt-5.6-sol",
+      backendThinkingOptionId: "high",
     });
   });
 
   it("sends nothing extra when the prompt configuration is default", async () => {
     harness = createHarness({
-      promptSettings: {
+      callSettings: {
         read: () => ({
           disabledPromptComponents: undefined,
           customVoiceInstructions: undefined,
+          backendModel: undefined,
+          backendThinkingOptionId: undefined,
         }),
       },
     });

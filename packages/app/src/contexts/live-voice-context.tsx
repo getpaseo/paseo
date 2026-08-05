@@ -27,7 +27,7 @@ import {
 } from "@/live-voice/live-voice-ambient-watch";
 import {
   getLiveVoiceAmbientSettings,
-  getLiveVoicePromptSettings,
+  getLiveVoiceCallSettings,
   getLiveVoiceVoice,
 } from "@/stores/live-voice-settings-store";
 import { handleClientObservedLiveVoiceAgentStopped } from "@/live-voice/live-voice-cross-host-router";
@@ -164,7 +164,7 @@ export function LiveVoiceProvider({ children }: LiveVoiceProviderProps) {
             disableAmbientLiveVoiceWatches({ liveSessionId, deps: ambientWatchDeps }),
         },
         { read: getLiveVoiceVoice },
-        { read: getLiveVoicePromptSettings },
+        { read: getLiveVoiceCallSettings },
       ),
     );
   }

@@ -1148,6 +1148,17 @@ export const VoiceLiveStartRequestSchema = z.object({
   disabledPromptComponents: z.array(z.string()).optional(),
   /** The user's standing instructions for the whole call, passed verbatim. */
   customVoiceInstructions: z.string().optional(),
+  /**
+   * Model for the call's backend executor — the text turns that run its
+   * actions, not the realtime voice model. Absent means the daemon's default
+   * (a fast, cheap model). Codex resolves an unknown id to its own default, so
+   * a stale selection degrades to a working call rather than a failed one.
+   *
+   * COMPAT(liveVoiceBackendModel): added in v0.3.0, remove after 2027-02-28.
+   * An older daemon drops both fields and uses its built-in default.
+   */
+  backendModel: z.string().optional(),
+  backendThinkingOptionId: z.string().optional(),
 });
 
 // Stopping is idempotent: a stop for an already-closed or superseded

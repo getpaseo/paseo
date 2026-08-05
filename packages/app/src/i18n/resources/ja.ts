@@ -1764,6 +1764,17 @@ export const ja: TranslationResources = {
         description: "新しい通話に使用されます。通話中の音声は変更されません。",
         default: "デフォルト",
       },
+      backendModel: {
+        label: "アクションモデル",
+        description:
+          "通話のアクションを裏で実行します。既定は高速で低コストです。より高い判断力が必要なら強力なモデルを選んでください。",
+        default: "既定（高速）",
+      },
+      backendThinking: {
+        label: "アクションの思考",
+        description: "アクションモデルの推論の深さです。",
+        default: "既定",
+      },
       agentReports: {
         label: "エージェントの動きを知らせる",
         description:
@@ -2048,6 +2059,7 @@ export const ja: TranslationResources = {
     groupInfo: "{{title}}について",
     sections: {
       general: "一般",
+      voice: "ライブ音声",
       appearance: "外観",
       layout: en.settings.sections.layout,
       editor: "エディター",

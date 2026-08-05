@@ -3530,6 +3530,9 @@ export class DaemonClient {
     disabledPromptComponents?: string[];
     /** The user's standing instructions for the whole call, verbatim. */
     customVoiceInstructions?: string;
+    /** Backend-executor model override; the daemon defaults to its fast model. */
+    backendModel?: string;
+    backendThinkingOptionId?: string;
   }): Promise<AcceptedLiveVoiceStart> {
     const payload = await this.sendNamespacedCorrelatedSessionRequest<"voice.live.start.response">({
       ...(input.requestId ? { requestId: input.requestId } : {}),
@@ -3544,6 +3547,10 @@ export class DaemonClient {
           : {}),
         ...(input.customVoiceInstructions
           ? { customVoiceInstructions: input.customVoiceInstructions }
+          : {}),
+        ...(input.backendModel ? { backendModel: input.backendModel } : {}),
+        ...(input.backendThinkingOptionId
+          ? { backendThinkingOptionId: input.backendThinkingOptionId }
           : {}),
       },
       // The daemon awaits the provider's answer SDP before responding.

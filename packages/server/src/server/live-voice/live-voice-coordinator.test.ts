@@ -620,6 +620,25 @@ describe("LiveVoiceCoordinator", () => {
     );
   });
 
+  it("lets the user override the backend executor model for a call", async () => {
+    const harness = createHarness();
+
+    const result = await harness.coordinator.start({
+      offerSdp: OFFER_SDP,
+      owner: harness.owner,
+      emit: (update) => harness.updates.push(update),
+      sendRouteRequest: (request) => harness.routeRequests.push(request),
+      backendModel: "gpt-5.6-sol",
+      backendThinkingOptionId: "high",
+    });
+
+    expect(result).toMatchObject({ accepted: true });
+    expect(harness.createConfigs[0]).toMatchObject({
+      model: "gpt-5.6-sol",
+      thinkingOptionId: "high",
+    });
+  });
+
   it("hands the user's prompt configuration to the context builder", async () => {
     const buildOptions: unknown[] = [];
     const context: LiveVoiceContextProvider = {
