@@ -1,5 +1,5 @@
 import * as Clipboard from "expo-clipboard";
-import { AlertTriangle, Copy, FileText, Plus, RotateCw, Trash2 } from "lucide-react-native";
+import { AlertTriangle, Copy, FileText, Pencil, Plus, RotateCw, Trash2 } from "lucide-react-native";
 import type { TFunction } from "i18next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -72,19 +72,36 @@ function DiscoveredModelRow({ model }: { model: AgentModelDefinition }) {
   );
 }
 
+function formatContextWindowTokens(tokens: number | undefined): string | null {
+  if (typeof tokens !== "number" || !Number.isFinite(tokens) || tokens <= 0) {
+    return null;
+  }
+  if (tokens % 1000 === 0) {
+    const thousands = tokens / 1000;
+    if (thousands % 1000 === 0) {
+      return `${thousands / 1000}M`;
+    }
+    return `${thousands}k`;
+  }
+  return String(tokens);
+}
+
 function CustomModelRow({
   model,
   deleting,
+  onEdit,
   onDelete,
 }: {
   model: ProviderProfileModel;
   deleting: boolean;
+  onEdit: (model: ProviderProfileModel) => void;
   onDelete: (modelId: string) => void;
 }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
+  const handleEdit = useCallback(() => onEdit(model), [model, onEdit]);
   const handleDelete = useCallback(() => onDelete(model.id), [model.id, onDelete]);
-  const deleteButtonStyle = useCallback(
+  const iconButtonStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       sheetStyles.iconButton,
       (Boolean(hovered) || pressed) && sheetStyles.iconButtonHovered,
@@ -92,6 +109,7 @@ function CustomModelRow({
     ],
     [deleting],
   );
+  const contextWindowLabel = formatContextWindowTokens(model.contextWindowMaxTokens);
 
   return (
     <View style={sheetStyles.modelRow}>
@@ -106,12 +124,27 @@ function CustomModelRow({
       >
         {model.id}
       </Text>
+      {contextWindowLabel ? (
+        <Text style={sheetStyles.descriptionInline} numberOfLines={1}>
+          {contextWindowLabel}
+        </Text>
+      ) : null}
       <View style={sheetStyles.modelRowFiller} />
+      <Pressable
+        onPress={handleEdit}
+        disabled={deleting}
+        hitSlop={8}
+        style={iconButtonStyle}
+        accessibilityRole="button"
+        accessibilityLabel={t("settings.providers.models.editModel", { id: model.id })}
+      >
+        <Pencil size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+      </Pressable>
       <Pressable
         onPress={handleDelete}
         disabled={deleting}
         hitSlop={8}
-        style={deleteButtonStyle}
+        style={iconButtonStyle}
         accessibilityRole="button"
         accessibilityLabel={t("settings.providers.models.removeModel", { id: model.id })}
       >
@@ -138,62 +171,258 @@ function SectionHeader({ title, count, hint }: { title: string; count?: number; 
   );
 }
 
-function AddCustomModelSubSheet({
+function parseContextWindowInput(value: string): number | undefined | "invalid" {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (!/^\d+$/.test(trimmed)) {
+    return "invalid";
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return "invalid";
+  }
+  return Math.trunc(parsed);
+}
+
+function resolveCustomModelFormFields(
+  mode:
+    | {
+        kind: "add";
+      }
+    | {
+        kind: "edit";
+        model: ProviderProfileModel;
+      },
+): { modelId: string; label: string; contextWindow: string } {
+  if (mode.kind !== "edit") {
+    return { modelId: "", label: "", contextWindow: "" };
+  }
+  return {
+    modelId: mode.model.id,
+    label: mode.model.label === mode.model.id ? "" : mode.model.label,
+    contextWindow:
+      typeof mode.model.contextWindowMaxTokens === "number"
+        ? String(mode.model.contextWindowMaxTokens)
+        : "",
+  };
+}
+
+function resolveCustomModelSaveLabel(
+  t: TFunction,
+  options: { isEdit: boolean; saving: boolean },
+): string {
+  if (options.saving) {
+    if (options.isEdit) {
+      return t("settings.providers.models.saving");
+    }
+    return t("settings.providers.models.adding");
+  }
+  if (options.isEdit) {
+    return t("settings.providers.models.save");
+  }
+  return t("settings.providers.models.add");
+}
+
+function buildCustomModelList(
+  additionalModels: ProviderProfileModel[],
+  nextModel: ProviderProfileModel,
+  originalId: string | null,
+): ProviderProfileModel[] {
+  if (originalId === null) {
+    return [...additionalModels, nextModel];
+  }
+  return additionalModels.map((model) => (model.id === originalId ? nextModel : model));
+}
+
+const ADD_CUSTOM_MODEL_MODE = { kind: "add" } as const;
+
+function CustomModelFormSubSheet({
   provider,
   serverId,
   visible,
+  mode,
   onClose,
   refresh,
 }: {
   provider: string;
   serverId: string;
   visible: boolean;
+  mode: { kind: "add" } | { kind: "edit"; model: ProviderProfileModel };
   onClose: () => void;
   refresh: (providers?: AgentProvider[]) => Promise<void>;
 }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
+  const client = useHostRuntimeClient(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
-  const [input, setInput] = useState("");
+  const [modelId, setModelId] = useState("");
+  const [label, setLabel] = useState("");
+  const [contextWindow, setContextWindow] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [lookupHint, setLookupHint] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [lookingUp, setLookingUp] = useState(false);
+  const lastAutofilledContextRef = useRef<string | null>(null);
+  const lastAutofilledLabelRef = useRef<string | null>(null);
+  const lookupRequestIdRef = useRef(0);
 
   const additionalModels = useMemo(
     () => config?.providers?.[provider]?.additionalModels ?? [],
     [config?.providers, provider],
   );
-  const trimmed = input.trim();
-  const canAdd = trimmed.length > 0 && !additionalModels.some((model) => model.id === trimmed);
+  const isEdit = mode.kind === "edit";
+  const originalId = mode.kind === "edit" ? mode.model.id : null;
+  const trimmedId = modelId.trim();
+  const trimmedLabel = label.trim();
+  const parsedContext = parseContextWindowInput(contextWindow);
+  const idConflict =
+    trimmedId.length > 0 &&
+    additionalModels.some((model) => model.id === trimmedId && model.id !== originalId);
+  const canSave = trimmedId.length > 0 && !idConflict && parsedContext !== "invalid" && !saving;
+  const saveLabel = resolveCustomModelSaveLabel(t, { isEdit, saving });
 
   useEffect(() => {
     if (!visible) {
-      setInput("");
+      setModelId("");
+      setLabel("");
+      setContextWindow("");
       setError(null);
+      setLookupHint(null);
+      setLookingUp(false);
+      lastAutofilledContextRef.current = null;
+      lastAutofilledLabelRef.current = null;
+      return;
     }
-  }, [visible]);
+    const fields = resolveCustomModelFormFields(mode);
+    setModelId(fields.modelId);
+    setLabel(fields.label);
+    setContextWindow(fields.contextWindow);
+    setError(null);
+    setLookupHint(null);
+    lastAutofilledContextRef.current = null;
+    lastAutofilledLabelRef.current = null;
+  }, [mode, visible]);
 
-  const handleAdd = useCallback(() => {
-    if (!canAdd) return;
+  const runModelsDevLookup = useCallback(async () => {
+    const query = modelId.trim();
+    if (!query || !client) {
+      return;
+    }
+    const supportsLookup = client.getLastServerInfoMessage?.()?.features?.modelsDevLookup === true;
+    if (!supportsLookup || typeof client.lookupModelsDevModel !== "function") {
+      return;
+    }
+
+    const requestId = ++lookupRequestIdRef.current;
+    setLookingUp(true);
+    setLookupHint(t("settings.providers.models.lookingUpModel"));
+    try {
+      const result = await client.lookupModelsDevModel(query);
+      if (requestId !== lookupRequestIdRef.current) {
+        return;
+      }
+      if (!result.found || typeof result.contextWindowMaxTokens !== "number") {
+        setLookupHint(t("settings.providers.models.modelsDevNotFound"));
+        return;
+      }
+
+      const nextContext = String(result.contextWindowMaxTokens);
+      setContextWindow((current) => {
+        const canFill =
+          current.trim().length === 0 || current.trim() === lastAutofilledContextRef.current;
+        if (!canFill) {
+          return current;
+        }
+        lastAutofilledContextRef.current = nextContext;
+        return nextContext;
+      });
+
+      if (result.name) {
+        const nextLabel = result.name;
+        setLabel((current) => {
+          const canFill =
+            current.trim().length === 0 ||
+            current.trim() === query ||
+            current.trim() === lastAutofilledLabelRef.current;
+          if (!canFill) {
+            return current;
+          }
+          lastAutofilledLabelRef.current = nextLabel;
+          return nextLabel;
+        });
+      }
+      setLookupHint(t("settings.providers.models.modelsDevAutofilled"));
+    } catch {
+      if (requestId === lookupRequestIdRef.current) {
+        setLookupHint(t("settings.providers.models.modelsDevLookupFailed"));
+      }
+    } finally {
+      if (requestId === lookupRequestIdRef.current) {
+        setLookingUp(false);
+      }
+    }
+  }, [client, modelId, t]);
+
+  const handleModelIdLookup = useCallback(() => {
+    void runModelsDevLookup();
+  }, [runModelsDevLookup]);
+
+  const handleSave = useCallback(() => {
+    const contextTokens = parseContextWindowInput(contextWindow);
+    if (!canSave || contextTokens === "invalid") {
+      return;
+    }
+    if (idConflict) {
+      setError(t("settings.providers.models.duplicateId"));
+      return;
+    }
+
+    const nextModel: ProviderProfileModel = {
+      id: trimmedId,
+      label: trimmedLabel.length > 0 ? trimmedLabel : trimmedId,
+      ...(contextTokens !== undefined ? { contextWindowMaxTokens: contextTokens } : {}),
+    };
+    const nextModels = buildCustomModelList(additionalModels, nextModel, originalId);
+
     setError(null);
     setSaving(true);
     void patchConfig({
       providers: {
         [provider]: {
-          additionalModels: [...additionalModels, { id: trimmed, label: trimmed }],
+          additionalModels: nextModels,
         },
       },
     })
-      .then(() => refresh([provider]))
+      .then(() => refresh([provider as AgentProvider]))
       .then(() => onClose())
       .catch((err) => {
         setError(err instanceof Error ? err.message : t("settings.providers.models.failedToSave"));
       })
       .finally(() => setSaving(false));
-  }, [additionalModels, canAdd, onClose, patchConfig, provider, refresh, t, trimmed]);
+  }, [
+    additionalModels,
+    canSave,
+    contextWindow,
+    idConflict,
+    onClose,
+    originalId,
+    patchConfig,
+    provider,
+    refresh,
+    t,
+    trimmedId,
+    trimmedLabel,
+  ]);
 
   const header = useMemo<SheetHeader>(
-    () => ({ title: t("settings.providers.models.addCustomTitle") }),
-    [t],
+    () => ({
+      title: isEdit
+        ? t("settings.providers.models.editCustomTitle")
+        : t("settings.providers.models.addCustomTitle"),
+    }),
+    [isEdit, t],
   );
 
   return (
@@ -203,31 +432,74 @@ function AddCustomModelSubSheet({
       onClose={onClose}
       desktopMaxWidth={420}
       snapPoints={ADD_SNAP_POINTS}
-      testID="add-custom-model-sheet"
+      testID={isEdit ? "edit-custom-model-sheet" : "add-custom-model-sheet"}
     >
       <View style={sheetStyles.formGroup}>
         <Text style={sheetStyles.formLabel}>{t("settings.providers.models.modelId")}</Text>
         <AdaptiveTextInput
-          initialValue={input}
-          resetKey={`add-custom-${visible}`}
-          value={input}
-          onChangeText={setInput}
-          onSubmitEditing={handleAdd}
+          initialValue={modelId}
+          resetKey={`custom-model-id-${visible}-${originalId ?? "add"}`}
+          value={modelId}
+          onChangeText={setModelId}
+          onBlur={handleModelIdLookup}
+          onSubmitEditing={handleModelIdLookup}
           placeholder={t("settings.providers.models.modelIdPlaceholder")}
           placeholderTextColor={theme.colors.foregroundMuted}
           autoCapitalize="none"
           autoCorrect={false}
+          returnKeyType="next"
+          // @ts-expect-error - outlineStyle is web-only
+          style={[sheetStyles.formInput, isWeb && { outlineStyle: "none" }]}
+        />
+
+        <Text style={sheetStyles.formLabel}>{t("settings.providers.models.label")}</Text>
+        <AdaptiveTextInput
+          initialValue={label}
+          resetKey={`custom-model-label-${visible}-${originalId ?? "add"}`}
+          value={label}
+          onChangeText={setLabel}
+          placeholder={t("settings.providers.models.labelPlaceholder")}
+          placeholderTextColor={theme.colors.foregroundMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          // @ts-expect-error - outlineStyle is web-only
+          style={[sheetStyles.formInput, isWeb && { outlineStyle: "none" }]}
+        />
+
+        <Text style={sheetStyles.formLabel}>{t("settings.providers.models.contextWindow")}</Text>
+        <AdaptiveTextInput
+          initialValue={contextWindow}
+          resetKey={`custom-model-window-${visible}-${originalId ?? "add"}`}
+          value={contextWindow}
+          onChangeText={setContextWindow}
+          onSubmitEditing={handleSave}
+          placeholder={t("settings.providers.models.contextWindowPlaceholder")}
+          placeholderTextColor={theme.colors.foregroundMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="number-pad"
           returnKeyType="done"
           // @ts-expect-error - outlineStyle is web-only
           style={[sheetStyles.formInput, isWeb && { outlineStyle: "none" }]}
         />
+        <Text style={sheetStyles.descriptionInline}>
+          {t("settings.providers.models.contextWindowHint")}
+        </Text>
+        {lookingUp || lookupHint ? (
+          <Text style={sheetStyles.descriptionInline}>{lookupHint}</Text>
+        ) : null}
+        {parsedContext === "invalid" ? (
+          <Text style={sheetStyles.errorText}>
+            {t("settings.providers.models.contextWindowInvalid")}
+          </Text>
+        ) : null}
         {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
         <View style={sheetStyles.formActions}>
           <Button variant="secondary" size="sm" onPress={onClose} disabled={saving}>
             {t("common.actions.cancel")}
           </Button>
-          <Button variant="default" size="sm" onPress={handleAdd} disabled={!canAdd || saving}>
-            {saving ? t("settings.providers.models.adding") : t("settings.providers.models.add")}
+          <Button variant="default" size="sm" onPress={handleSave} disabled={!canSave}>
+            {saveLabel}
           </Button>
         </View>
       </View>
@@ -405,6 +677,7 @@ interface ProviderModalBodyProps {
   filteredCustom: ProviderProfileModel[];
   deletingModelId: string | null;
   onRefresh: () => void;
+  onEditCustom: (model: ProviderProfileModel) => void;
   onDeleteCustom: (modelId: string) => void;
   theme: { iconSize: { md: number }; colors: { foregroundMuted: string } };
 }
@@ -491,6 +764,7 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
     filteredCustom,
     deletingModelId,
     onRefresh,
+    onEditCustom,
     onDeleteCustom,
     theme,
   } = props;
@@ -557,6 +831,7 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
                 key={model.id}
                 model={model}
                 deleting={deletingModelId === model.id}
+                onEdit={onEditCustom}
                 onDelete={onDeleteCustom}
               />
             ))}
@@ -579,7 +854,9 @@ export function ProviderDiagnosticSheet({
   const { entries: snapshotEntries, refresh, isRefreshing } = useProvidersSnapshot(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
   const [query, setQuery] = useState("");
-  const [addSheetOpen, setAddSheetOpen] = useState(false);
+  const [formMode, setFormMode] = useState<
+    null | { kind: "add" } | { kind: "edit"; model: ProviderProfileModel }
+  >(null);
   const [diagSheetOpen, setDiagSheetOpen] = useState(false);
   const [deletingModelId, setDeletingModelId] = useState<string | null>(null);
 
@@ -625,7 +902,7 @@ export function ProviderDiagnosticSheet({
   useEffect(() => {
     if (!visible) {
       setQuery("");
-      setAddSheetOpen(false);
+      setFormMode(null);
       setDiagSheetOpen(false);
     }
   }, [visible]);
@@ -644,10 +921,13 @@ export function ProviderDiagnosticSheet({
     void refresh([provider]);
   }, [provider, refresh]);
 
-  const handleOpenAddSheet = useCallback(() => setAddSheetOpen(true), []);
-  const handleCloseAddSheet = useCallback(() => setAddSheetOpen(false), []);
+  const handleOpenAddSheet = useCallback(() => setFormMode({ kind: "add" }), []);
+  const handleCloseFormSheet = useCallback(() => setFormMode(null), []);
   const handleOpenDiagSheet = useCallback(() => setDiagSheetOpen(true), []);
   const handleCloseDiagSheet = useCallback(() => setDiagSheetOpen(false), []);
+  const handleEditCustom = useCallback((model: ProviderProfileModel) => {
+    setFormMode({ kind: "edit", model });
+  }, []);
 
   const handleDeleteCustom = useCallback(
     (modelId: string) => {
@@ -708,15 +988,17 @@ export function ProviderDiagnosticSheet({
           filteredCustom={filteredCustom}
           deletingModelId={deletingModelId}
           onRefresh={handleRefreshModels}
+          onEditCustom={handleEditCustom}
           onDeleteCustom={handleDeleteCustom}
           theme={theme}
         />
       </AdaptiveModalSheet>
-      <AddCustomModelSubSheet
+      <CustomModelFormSubSheet
         provider={provider}
         serverId={serverId}
-        visible={addSheetOpen}
-        onClose={handleCloseAddSheet}
+        visible={formMode !== null}
+        mode={formMode ?? ADD_CUSTOM_MODEL_MODE}
+        onClose={handleCloseFormSheet}
         refresh={refresh}
       />
       <DiagnosticSubSheet

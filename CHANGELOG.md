@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.921 - 2026-08-05
+
+### Features
+
+- Custom model settings: edit existing models, set context window tokens, and autofill from models.dev via the daemon
+- Claude Code sessions use configured custom-model context windows for `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and the composer context meter max
+
 ## 0.2.920 - 2026-08-03
 
 ### Added

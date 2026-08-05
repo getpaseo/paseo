@@ -1,10 +1,12 @@
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { AgentLaunchContext } from "../../agent-sdk-types.js";
 import { ClaudeAgentClient } from "./agent.js";
 import type { ClaudeQueryInput } from "./query.js";
+import { CLAUDE_CUSTOM_MODEL_PIN_ENV_KEYS } from "./models.js";
+import { CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY } from "./models.js";
 
 function createQueryMock(events: unknown[]): Query {
   let index = 0;
@@ -29,6 +31,17 @@ function createQueryMock(events: unknown[]): Query {
 }
 
 describe("Claude SDK env", () => {
+  beforeEach(() => {
+    for (const key of CLAUDE_CUSTOM_MODEL_PIN_ENV_KEYS) {
+      vi.stubEnv(key, "");
+    }
+    vi.stubEnv(CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY, "");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   test("forwards launch-context env through Claude process env", async () => {
     let capturedEnv: Record<string, string | undefined> | undefined;
     const launchContext: AgentLaunchContext = {
@@ -198,6 +211,55 @@ describe("Claude SDK env", () => {
       expect(capturedEnv?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("glm-5.1");
       expect(capturedEnv?.ANTHROPIC_DEFAULT_FABLE_MODEL).toBe("glm-5.1");
       expect(capturedEnv?.CLAUDE_CODE_SUBAGENT_MODEL).toBe("glm-5.1");
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("sets CLAUDE_CODE_AUTO_COMPACT_WINDOW from profile model context window", async () => {
+    let capturedEnv: Record<string, string | undefined> | undefined;
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      capturedEnv = options.env;
+      return createQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "custom-model-compact-window-session",
+          permissionMode: "default",
+          model: "glm-5.1",
+        },
+        {
+          type: "assistant",
+          message: { content: "done" },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          usage: {
+            input_tokens: 1,
+            cache_read_input_tokens: 0,
+            output_tokens: 1,
+          },
+          total_cost_usd: 0,
+        },
+      ]);
+    });
+
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+      profileModels: [{ id: "glm-5.1", contextWindowMaxTokens: 500_000 }],
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "glm-5.1",
+    });
+
+    try {
+      await session.run("compact window check");
+      expect(capturedEnv?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("500000");
     } finally {
       await session.close();
     }

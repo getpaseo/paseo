@@ -15,13 +15,16 @@ import {
   resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
 import {
+  applyClaudeAutoCompactWindowEnv,
   applyClaudeCustomModelEnvPins,
   buildClaudeCustomModelEnvPins,
+  CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY,
   CLAUDE_CUSTOM_MODEL_PIN_ENV_KEYS,
   findClaudeModel,
   getClaudeModels,
   isClaudeCustomNonFamilyModel,
   normalizeClaudeRuntimeModelId,
+  resolveClaudeContextWindowMaxTokens,
 } from "./models.js";
 
 const createdClaudeConfigDirs: string[] = [];
@@ -411,6 +414,45 @@ describe("Claude custom model env pins", () => {
     expect(applied).not.toBe(base);
     expect(base).toEqual({ PATH: "/usr/bin" });
     expect(applied.CLAUDE_CODE_SUBAGENT_MODEL).toBe("glm-5.1");
+  });
+});
+
+describe("Claude auto compact window env", () => {
+  it("resolveClaudeContextWindowMaxTokens prefers profile models over first-party", () => {
+    expect(
+      resolveClaudeContextWindowMaxTokens({
+        modelId: "glm-5.1",
+        profileModels: [{ id: "glm-5.1", contextWindowMaxTokens: 500_000 }],
+      }),
+    ).toBe(500_000);
+
+    const firstParty = findClaudeModel("claude-sonnet-4-6");
+    expect(
+      resolveClaudeContextWindowMaxTokens({
+        modelId: "claude-sonnet-4-6",
+        profileModels: [],
+      }),
+    ).toBe(firstParty?.contextWindowMaxTokens);
+  });
+
+  it("applyClaudeAutoCompactWindowEnv fills missing compact window", () => {
+    const applied = applyClaudeAutoCompactWindowEnv({ PATH: "/usr/bin" }, 500_000);
+    expect(applied[CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY]).toBe("500000");
+    expect(applied.PATH).toBe("/usr/bin");
+  });
+
+  it("applyClaudeAutoCompactWindowEnv preserves user env", () => {
+    const applied = applyClaudeAutoCompactWindowEnv(
+      { [CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY]: "200000" },
+      500_000,
+    );
+    expect(applied[CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY]).toBe("200000");
+  });
+
+  it("applyClaudeAutoCompactWindowEnv is a no-op without a positive window", () => {
+    const base = { PATH: "/usr/bin" };
+    expect(applyClaudeAutoCompactWindowEnv(base, undefined)).toEqual(base);
+    expect(applyClaudeAutoCompactWindowEnv(base, 0)).toEqual(base);
   });
 });
 

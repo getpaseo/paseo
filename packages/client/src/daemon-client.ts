@@ -5038,6 +5038,39 @@ export class DaemonClient {
     };
   }
 
+  async lookupModelsDevModel(
+    modelId: string,
+    requestId?: string,
+  ): Promise<{
+    found: boolean;
+    modelId: string;
+    matchedId?: string;
+    name?: string;
+    contextWindowMaxTokens?: number;
+    providerId?: string;
+    error?: string | null;
+  }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "models.dev.lookup_model.request",
+        modelId,
+      },
+      responseType: "models.dev.lookup_model.response",
+    });
+    return {
+      found: payload.found,
+      modelId: payload.modelId,
+      ...(payload.matchedId !== undefined ? { matchedId: payload.matchedId } : {}),
+      ...(payload.name !== undefined ? { name: payload.name } : {}),
+      ...(payload.contextWindowMaxTokens !== undefined
+        ? { contextWindowMaxTokens: payload.contextWindowMaxTokens }
+        : {}),
+      ...(payload.providerId !== undefined ? { providerId: payload.providerId } : {}),
+      ...(payload.error !== undefined ? { error: payload.error } : {}),
+    };
+  }
+
   sendBrowserAutomationExecuteResponse(response: BrowserAutomationExecuteResponse): void {
     this.sendSessionMessageStrict(response);
   }

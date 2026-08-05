@@ -206,3 +206,53 @@ export function applyClaudeCustomModelEnvPins(
   }
   return changed ? next : env;
 }
+
+export const CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
+
+/**
+ * Resolve the preferred context-window max for a selected Claude model.
+ * Configured profile/additional model windows win over first-party catalog defaults.
+ */
+export function resolveClaudeContextWindowMaxTokens(options: {
+  modelId: string | null | undefined;
+  profileModels?: Array<{ id: string; contextWindowMaxTokens?: number }>;
+}): number | undefined {
+  const trimmed = typeof options.modelId === "string" ? options.modelId.trim() : "";
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const profileMatch = options.profileModels?.find((model) => model.id === trimmed);
+  if (
+    typeof profileMatch?.contextWindowMaxTokens === "number" &&
+    Number.isFinite(profileMatch.contextWindowMaxTokens) &&
+    profileMatch.contextWindowMaxTokens > 0
+  ) {
+    return Math.trunc(profileMatch.contextWindowMaxTokens);
+  }
+
+  return findClaudeModel(trimmed)?.contextWindowMaxTokens;
+}
+
+/**
+ * Fill-if-missing CLAUDE_CODE_AUTO_COMPACT_WINDOW from a configured context window.
+ */
+export function applyClaudeAutoCompactWindowEnv(
+  env: NodeJS.ProcessEnv,
+  contextWindowMaxTokens: number | undefined,
+): NodeJS.ProcessEnv {
+  if (
+    typeof contextWindowMaxTokens !== "number" ||
+    !Number.isFinite(contextWindowMaxTokens) ||
+    contextWindowMaxTokens <= 0
+  ) {
+    return env;
+  }
+  if (hasNonEmptyEnvValue(env[CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY])) {
+    return env;
+  }
+  return {
+    ...env,
+    [CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY]: String(Math.trunc(contextWindowMaxTokens)),
+  };
+}

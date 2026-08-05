@@ -91,6 +91,7 @@ interface ProviderClientFactoryOptions extends Pick<
   "workspaceGitService" | "managedProcesses" | "ompRuntime"
 > {
   providerParams?: unknown;
+  profileModels?: ProviderProfileModel[];
   customProvider?: {
     id: string;
     label: string;
@@ -117,10 +118,11 @@ interface ResolvedProvider {
 }
 
 const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
-  claude: (logger, runtimeSettings) =>
+  claude: (logger, runtimeSettings, options) =>
     new ClaudeAgentClient({
       logger,
       runtimeSettings,
+      profileModels: options?.profileModels,
     }),
   codex: (logger, runtimeSettings, options) =>
     new CodexAppServerAgentClient(logger, runtimeSettings, {
@@ -624,6 +626,7 @@ function buildResolvedBuiltinProviders(
           managedProcesses: options.managedProcesses,
           ompRuntime: options.ompRuntime,
           providerParams: override?.params,
+          profileModels: [...(override?.models ?? []), ...(override?.additionalModels ?? [])],
         }),
     });
   }
@@ -724,6 +727,7 @@ function addDerivedProviders(
         baseFactory(logger, mergedRuntimeSettings, {
           managedProcesses: options.managedProcesses,
           providerParams,
+          profileModels: [...(override.models ?? []), ...(override.additionalModels ?? [])],
           customProvider: {
             id: providerId,
             label: override.label ?? providerId,

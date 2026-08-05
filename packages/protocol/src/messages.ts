@@ -124,6 +124,7 @@ const MutableDaemonProviderModelSchema = z
     label: z.string().min(1),
     description: z.string().optional(),
     isDefault: z.boolean().optional(),
+    contextWindowMaxTokens: z.number().int().positive().optional(),
   })
   .passthrough();
 
@@ -1247,6 +1248,12 @@ export const MetadataCustomEndpointListModelsRequestSchema = z.object({
   requestId: z.string(),
   baseUrl: z.string().optional(),
   apiKey: z.string().optional(),
+});
+
+export const ModelsDevLookupModelRequestSchema = z.object({
+  type: z.literal("models.dev.lookup_model.request"),
+  requestId: z.string(),
+  modelId: z.string(),
 });
 
 export const ReadProjectConfigRequestMessageSchema = z.object({
@@ -2614,6 +2621,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
   MetadataCustomEndpointListModelsRequestSchema,
+  ModelsDevLookupModelRequestSchema,
   ReadProjectConfigRequestMessageSchema,
   WriteProjectConfigRequestMessageSchema,
   DictationStreamStartMessageSchema,
@@ -3031,6 +3039,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceScriptManagement: z.boolean().optional(),
         // COMPAT(metadataCustomEndpoint): added 2026-07-28, remove after 2027-01-28 once daemon floor advertises it.
         metadataCustomEndpoint: z.boolean().optional(),
+        // COMPAT(modelsDevLookup): added in v0.2.921, remove after 2027-02-05 once daemon floor >= v0.2.921.
+        modelsDevLookup: z.boolean().optional(),
       })
       .optional(),
   })
@@ -4111,6 +4121,22 @@ export const MetadataCustomEndpointListModelsResponseSchema = z.object({
           message: z.string(),
         })
         .nullable(),
+    })
+    .passthrough(),
+});
+
+export const ModelsDevLookupModelResponseSchema = z.object({
+  type: z.literal("models.dev.lookup_model.response"),
+  payload: z
+    .object({
+      requestId: z.string(),
+      found: z.boolean(),
+      modelId: z.string(),
+      matchedId: z.string().optional(),
+      name: z.string().optional(),
+      contextWindowMaxTokens: z.number().int().positive().optional(),
+      providerId: z.string().optional(),
+      error: z.string().nullable().optional(),
     })
     .passthrough(),
 });
@@ -5643,6 +5669,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
   MetadataCustomEndpointListModelsResponseSchema,
+  ModelsDevLookupModelResponseSchema,
   ReadProjectConfigResponseMessageSchema,
   WriteProjectConfigResponseMessageSchema,
   SetAgentModeResponseMessageSchema,

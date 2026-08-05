@@ -106,6 +106,7 @@ import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
 import { buildAgentPrompt } from "./agent/prompt-attachments.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
 import { listMetadataOpenAIModels } from "./agent/metadata-openai-client.js";
+import { lookupModelsDevModel } from "./models-dev/catalog.js";
 import {
   getAgentStreamEventTurnId,
   type AgentPersistenceHandle,
@@ -1357,6 +1358,31 @@ export class Session {
     };
   }
 
+  private async handleModelsDevLookupModelRequest(
+    msg: Extract<SessionInboundMessage, { type: "models.dev.lookup_model.request" }>,
+  ): Promise<void> {
+    const result = await lookupModelsDevModel(msg.modelId);
+    this.emit({
+      type: "models.dev.lookup_model.response",
+      payload: {
+        requestId: msg.requestId,
+        found: result.found,
+        modelId: result.query,
+        ...(result.found
+          ? {
+              matchedId: result.matchedId,
+              ...(result.name ? { name: result.name } : {}),
+              contextWindowMaxTokens: result.contextWindowMaxTokens,
+              providerId: result.providerId,
+              error: null,
+            }
+          : {
+              error: result.error ?? null,
+            }),
+      },
+    });
+  }
+
   private async handleMetadataCustomEndpointListModelsRequest(
     msg: Extract<
       SessionInboundMessage,
@@ -2189,6 +2215,8 @@ export class Session {
         return undefined;
       case "metadataGeneration.customEndpoint.listModels.request":
         return this.handleMetadataCustomEndpointListModelsRequest(msg);
+      case "models.dev.lookup_model.request":
+        return this.handleModelsDevLookupModelRequest(msg);
       case "read_project_config_request":
         return this.projectConfigSession.handleReadProjectConfigRequest(msg);
       case "write_project_config_request":

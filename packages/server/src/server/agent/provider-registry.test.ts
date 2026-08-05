@@ -1531,7 +1531,13 @@ describe("fetchCatalog", () => {
       providerOverrides: {
         codex: {
           models: [{ id: "shared-model", label: "Profile Label" }],
-          additionalModels: [{ id: "shared-model", label: "Additional Label" }],
+          additionalModels: [
+            {
+              id: "shared-model",
+              label: "Additional Label",
+              contextWindowMaxTokens: 500_000,
+            },
+          ],
         },
       },
     });
@@ -1547,6 +1553,7 @@ describe("fetchCatalog", () => {
         provider: "codex",
         id: "shared-model",
         label: "Additional Label",
+        contextWindowMaxTokens: 500_000,
       },
     ]);
   });

@@ -668,15 +668,18 @@ Every entry under `agents.providers` accepts these fields:
 
 ### Model definition
 
-Each entry in the `models` array:
+Each entry in the `models` / `additionalModels` array:
 
-| Field             | Type               | Required | Description                           |
-| ----------------- | ------------------ | -------- | ------------------------------------- |
-| `id`              | `string`           | Yes      | Model identifier sent to the provider |
-| `label`           | `string`           | Yes      | Display name in the UI                |
-| `description`     | `string`           | No       | Short description                     |
-| `isDefault`       | `boolean`          | No       | Mark as the default model selection   |
-| `thinkingOptions` | `ThinkingOption[]` | No       | Available thinking/reasoning levels   |
+| Field                    | Type               | Required | Description                                                              |
+| ------------------------ | ------------------ | -------- | ------------------------------------------------------------------------ |
+| `id`                     | `string`           | Yes      | Model identifier sent to the provider                                    |
+| `label`                  | `string`           | Yes      | Display name in the UI                                                   |
+| `description`            | `string`           | No       | Short description                                                        |
+| `isDefault`              | `boolean`          | No       | Mark as the default model selection                                      |
+| `contextWindowMaxTokens` | `number`           | No       | Context window size in tokens (used by usage meter + Claude compact env) |
+| `thinkingOptions`        | `ThinkingOption[]` | No       | Available thinking/reasoning levels                                      |
+
+In Settings → Providers → a provider sheet, custom models can be **added and edited**. The form accepts Model ID, optional Label, and optional Context window. On Model ID blur, the daemon looks up [models.dev](https://models.dev) (`limit.context`) when `server_info.features.modelsDevLookup` is present and autofills the context window (and label when empty). Manual values always win over autofill.
 
 ### Thinking option
 
@@ -710,6 +713,15 @@ Rules:
 - First-party Claude models and family aliases are unchanged.
 - User-provided values win: if a pin key is already set in process env, `agents.providers.*.env`, or launch env, Paseo leaves it alone.
 - The main chat model is still enforced separately via the Claude Agent SDK `model` option.
+
+### Custom model context window + Claude auto-compact
+
+When a Claude model entry under `agents.providers.claude.models` / `additionalModels` sets `contextWindowMaxTokens` (for example `500000`), Paseo:
+
+1. Merges that value into the runtime model catalog and seeds the composer context-window meter max for sessions on that model.
+2. Fill-if-missing sets session env `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to the token count as a string (`"500000"`).
+
+User/provider process env still wins for `CLAUDE_CODE_AUTO_COMPACT_WINDOW`. Runtime Claude-reported windows may still update the meter max after usage events.
 
 ### Gotcha: `extends: "claude"` with third-party endpoints
 

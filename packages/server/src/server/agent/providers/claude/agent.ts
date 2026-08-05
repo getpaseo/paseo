@@ -35,8 +35,9 @@ import {
 } from "./background-tasks.js";
 import { mapClaudeProviderHeartbeatToolEvent } from "./provider-heartbeats.js";
 import {
+  applyClaudeAutoCompactWindowEnv,
   applyClaudeCustomModelEnvPins,
-  findClaudeModel,
+  resolveClaudeContextWindowMaxTokens,
   getClaudeModelsWithSettings,
   normalizeClaudeRuntimeModelId,
 } from "./models.js";
@@ -373,6 +374,7 @@ interface ClaudeAgentClientOptions {
   defaults?: { agents?: Record<string, AgentDefinition> };
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
+  profileModels?: Array<{ id: string; contextWindowMaxTokens?: number }>;
   queryFactory?: ClaudeQueryFactory;
   resolveBinary?: () => Promise<string>;
   resolveVersion?: () => Promise<string>;
@@ -382,6 +384,7 @@ interface ClaudeAgentClientOptions {
 interface ClaudeAgentSessionOptions {
   defaults?: { agents?: Record<string, AgentDefinition> };
   runtimeSettings?: ProviderRuntimeSettings;
+  profileModels?: Array<{ id: string; contextWindowMaxTokens?: number }>;
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
@@ -1450,6 +1453,7 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
+  private readonly profileModels?: Array<{ id: string; contextWindowMaxTokens?: number }>;
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: () => Promise<string>;
@@ -1459,6 +1463,7 @@ export class ClaudeAgentClient implements AgentClient {
     this.defaults = options.defaults;
     this.logger = options.logger.child({ module: "agent", provider: "claude" });
     this.runtimeSettings = options.runtimeSettings;
+    this.profileModels = options.profileModels;
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary ?? (() => resolveClaudeBinary(this.runtimeSettings));
     this.resolveVersion =
@@ -1475,6 +1480,7 @@ export class ClaudeAgentClient implements AgentClient {
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
+      profileModels: this.profileModels,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       persistSession: options?.persistSession,
@@ -1503,6 +1509,7 @@ export class ClaudeAgentClient implements AgentClient {
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
+      profileModels: this.profileModels,
       handle,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
@@ -1974,6 +1981,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly agentId?: string;
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly runtimeSettings?: ProviderRuntimeSettings;
+  private readonly profileModels?: Array<{ id: string; contextWindowMaxTokens?: number }>;
   private readonly persistSession?: boolean;
   private readonly logger: Logger;
   private readonly queryFactory?: ClaudeQueryFactory;
@@ -2030,12 +2038,16 @@ class ClaudeAgentSession implements AgentSession {
     this.agentId = options.agentId;
     this.defaults = options.defaults;
     this.runtimeSettings = options.runtimeSettings;
+    this.profileModels = options.profileModels;
     this.persistSession = options.persistSession;
     this.logger = options.logger.child({ agentId: this.agentId });
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
     this.contextUsage = new ClaudeContextUsageState(
-      findClaudeModel(this.config.model)?.contextWindowMaxTokens,
+      resolveClaudeContextWindowMaxTokens({
+        modelId: this.config.model,
+        profileModels: this.profileModels,
+      }),
     );
     const handle = options.handle;
 
@@ -2375,7 +2387,10 @@ class ClaudeAgentSession implements AgentSession {
       await this.applyFastModeFeature(false, activeQuery);
     }
     this.contextUsage.setInitialContextWindowMaxTokens(
-      findClaudeModel(this.config.model)?.contextWindowMaxTokens,
+      resolveClaudeContextWindowMaxTokens({
+        modelId: this.config.model,
+        profileModels: this.profileModels,
+      }),
     );
     this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
     this.lastRuntimeModel = null;
@@ -3121,7 +3136,12 @@ class ClaudeAgentSession implements AgentSession {
         this.launchEnv,
       ],
     });
-    return applyClaudeCustomModelEnvPins(env, this.config.model);
+    const pinned = applyClaudeCustomModelEnvPins(env, this.config.model);
+    const configuredWindow = resolveClaudeContextWindowMaxTokens({
+      modelId: this.config.model,
+      profileModels: this.profileModels,
+    });
+    return applyClaudeAutoCompactWindowEnv(pinned, configuredWindow);
   }
 
   private async buildOptions(): Promise<ClaudeOptions> {

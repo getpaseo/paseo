@@ -40,6 +40,7 @@ export const ProviderProfileModelSchema = z.object({
   label: z.string().min(1),
   description: z.string().optional(),
   isDefault: z.boolean().optional(),
+  contextWindowMaxTokens: z.number().int().positive().optional(),
   thinkingOptions: z.array(ProviderProfileThinkingOptionSchema).optional(),
 });
 
