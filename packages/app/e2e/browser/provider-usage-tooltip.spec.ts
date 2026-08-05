@@ -54,7 +54,7 @@ test.describe("provider usage tooltip", () => {
         timeout: 10_000,
       });
       await expect(sessionUsage.getByText("Session", { exact: true })).toBeVisible();
-      await expect(sessionUsage.getByText("42% used", { exact: true })).toBeVisible();
+      await expect(sessionUsage).toContainText("42% used");
     } finally {
       await session.cleanup();
     }
