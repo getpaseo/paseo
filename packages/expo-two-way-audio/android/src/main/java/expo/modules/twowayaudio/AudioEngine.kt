@@ -188,6 +188,29 @@ class AudioEngine (context: Context) {
         }
     }
 
+    /**
+     * Take the audio session back before playing, mirroring iOS `activateAudioSessionIfNeeded()`.
+     *
+     * `releaseAudioSession()` abandons focus and pauses the track once we go idle, so a playback
+     * turn that starts after that release has to reclaim both. Without this, the assistant's
+     * response plays with no focus held and competes with whatever the user is listening to.
+     * A null [audioFocusRequest] is what "we released" looks like, so it is the guard.
+     */
+    @SuppressLint("NewApi")
+    private fun acquireAudioSessionIfNeeded(): Boolean {
+        if (audioFocusRequest != null) {
+            return true
+        }
+        if (!requestAudioFocus()) {
+            handleAudioFocusBlocked()
+            return false
+        }
+        if (::audioTrack.isInitialized) {
+            audioTrack.play()
+        }
+        return true
+    }
+
     @SuppressLint("NewApi")
     private fun requestAudioFocus(): Boolean {
         audioFocusRequest?.let { request ->
@@ -346,7 +369,11 @@ class AudioEngine (context: Context) {
         return isRecording
     }
 
+    @SuppressLint("NewApi")
     fun playPCMData(data: ByteArray) {
+        if (!acquireAudioSessionIfNeeded()) {
+            return
+        }
         audioSampleQueue.add(data)
         playbackEvents += 1
         playbackQueuedBytes += data.size.toLong()
@@ -442,7 +469,11 @@ class AudioEngine (context: Context) {
         Log.d("AudioEngine", "Playback paused")
     }
 
+    @SuppressLint("NewApi")
     fun resumePlayback() {
+        if (!acquireAudioSessionIfNeeded()) {
+            return
+        }
         audioTrack.play()
         Log.d("AudioEngine", "Playback resumed")
     }
