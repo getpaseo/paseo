@@ -76,6 +76,7 @@ export interface AgentModelDefinition {
   provider: AgentProvider;
   id: string;
   aliases?: string[];
+  isSelectable?: boolean;
   label: string;
   description?: string;
   isDefault?: boolean;

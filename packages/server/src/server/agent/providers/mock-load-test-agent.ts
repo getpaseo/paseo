@@ -85,6 +85,22 @@ const MODELS: AgentModelDefinition[] = [
   },
   {
     provider: MOCK_LOAD_TEST_PROVIDER_ID,
+    id: "legacy-five-minute-stream",
+    label: "Legacy five minute stream",
+    isSelectable: false,
+    thinkingOptions: [
+      { id: "low", label: "Low", isDefault: true },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ],
+    defaultThinkingOptionId: "low",
+    metadata: {
+      durationMs: MOCK_LOAD_TEST_DURATION_MS,
+      intervalMs: MOCK_LOAD_TEST_INTERVAL_MS,
+    },
+  },
+  {
+    provider: MOCK_LOAD_TEST_PROVIDER_ID,
     id: "one-minute-stream",
     label: "One minute stream",
     description: "Shorter realistic stream for quick manual checks.",

@@ -9,6 +9,7 @@ import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import {
   buildSelectableProviderSelectorProviders,
+  filterSelectableModels,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import {
@@ -221,7 +222,7 @@ function resolveProjectDisplay(input: {
 function buildProviderModelsByProvider(entries: ProviderSnapshotEntry[]): ProviderModelsByProvider {
   const map: ProviderModelsByProvider = new Map();
   for (const entry of entries) {
-    map.set(entry.provider, entry.models ?? null);
+    map.set(entry.provider, filterSelectableModels(entry.models ?? null));
   }
   return map;
 }
@@ -247,7 +248,7 @@ function resolveAvailableModels(
   entries: readonly ProviderSnapshotEntry[],
   provider: AgentProvider | null,
 ): AgentModelDefinition[] | null {
-  return resolveSelectedEntry(entries, provider)?.models ?? null;
+  return filterSelectableModels(resolveSelectedEntry(entries, provider)?.models ?? null);
 }
 
 function resolveEffectiveModel(

@@ -52,6 +52,7 @@ describe("getClaudeModels", () => {
     expect(models.map((m) => m.id)).toEqual([
       "claude-opus-5",
       "claude-fable-5",
+      "claude-fable-5[1m]",
       "claude-opus-4-8[1m]",
       "claude-opus-4-8",
       "claude-sonnet-5",
@@ -82,6 +83,7 @@ describe("getClaudeModels", () => {
       new Map([
         ["claude-opus-5", 1_000_000],
         ["claude-fable-5", 1_000_000],
+        ["claude-fable-5[1m]", 1_000_000],
         ["claude-opus-4-8[1m]", 1_000_000],
         ["claude-opus-4-8", 200_000],
         ["claude-sonnet-5", 200_000],
@@ -434,12 +436,13 @@ describe("Claude Opus 5 catalog", () => {
 });
 
 describe("Claude Fable 5 catalog", () => {
-  it("offers a single Fable 5 entry with a 1M context window", () => {
+  it("offers one selectable Fable 5 entry and a compatibility entry for old apps", () => {
     const fable5Models = getClaudeModels()
       .filter((model) => model.id.startsWith("claude-fable-5"))
-      .map(({ id, aliases, label, contextWindowMaxTokens }) => ({
+      .map(({ id, aliases, isSelectable, label, contextWindowMaxTokens }) => ({
         id,
         aliases,
+        isSelectable,
         label,
         contextWindowMaxTokens,
       }));
@@ -448,6 +451,14 @@ describe("Claude Fable 5 catalog", () => {
       {
         id: "claude-fable-5",
         aliases: ["claude-fable-5[1m]"],
+        isSelectable: undefined,
+        label: "Fable 5",
+        contextWindowMaxTokens: 1_000_000,
+      },
+      {
+        id: "claude-fable-5[1m]",
+        aliases: undefined,
+        isSelectable: false,
         label: "Fable 5",
         contextWindowMaxTokens: 1_000_000,
       },

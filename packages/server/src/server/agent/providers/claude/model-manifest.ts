@@ -183,7 +183,8 @@ export function getClaudeManifestModels(claudeCodeVersion?: string): AgentModelD
     undefined,
   );
 
-  return availableModels.map((model) => {
+  const definitions: AgentModelDefinition[] = [];
+  for (const model of availableModels) {
     const thinkingOptions = buildThinkingOptions(
       model.effortLevels,
       model.supportsThinkingDisabled === true,
@@ -207,8 +208,22 @@ export function getClaudeManifestModels(claudeCodeVersion?: string): AgentModelD
       definition.thinkingOptions = thinkingOptions;
       definition.defaultThinkingOptionId = CLAUDE_DEFAULT_THINKING_OPTION_ID;
     }
-    return definition;
-  });
+    definitions.push(definition);
+    if (!("aliases" in model) || !model.aliases) {
+      continue;
+    }
+    // COMPAT(claudeFable5LegacyCatalogEntry): added in v0.3.0, remove after 2027-02-06 once pre-v0.3.0 apps are outside support.
+    for (const alias of model.aliases) {
+      definitions.push({
+        ...definition,
+        id: alias,
+        aliases: undefined,
+        isDefault: undefined,
+        isSelectable: false,
+      });
+    }
+  }
+  return definitions;
 }
 
 function isModelAvailableInClaudeCode(

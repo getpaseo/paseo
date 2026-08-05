@@ -37,6 +37,12 @@ export interface ProviderSelectionReadiness {
   reason?: string;
 }
 
+export function filterSelectableModels(
+  models: AgentModelDefinition[] | null,
+): AgentModelDefinition[] | null {
+  return models?.filter((model) => model.isSelectable !== false) ?? null;
+}
+
 function buildModelRows(
   provider: string,
   providerLabel: string,
@@ -76,10 +82,11 @@ function buildModelSelection(
   if (models === null) {
     return { kind: "loading" };
   }
-  if (models.length === 0) {
+  const selectableModels = filterSelectableModels(models) ?? [];
+  if (selectableModels.length === 0) {
     return { kind: "models", rows: [buildSyntheticDefaultRow(provider, providerLabel)] };
   }
-  return { kind: "models", rows: buildModelRows(provider, providerLabel, models) };
+  return { kind: "models", rows: buildModelRows(provider, providerLabel, selectableModels) };
 }
 
 function buildEntryModelSelection(

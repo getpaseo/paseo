@@ -30,6 +30,7 @@ import { CombinedModelSelector } from "@/components/combined-model-selector";
 import {
   buildProviderSelectorProviders,
   buildSelectableProviderSelectorProviders,
+  filterSelectableModels,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { useSessionStore } from "@/stores/session-store";
@@ -1448,7 +1449,7 @@ export const AgentControls = memo(function AgentControls({
     [snapshotEntries, agent?.provider],
   );
 
-  const models = snapshotSelectedEntry?.models ?? null;
+  const models = filterSelectableModels(snapshotSelectedEntry?.models ?? null);
   const selectedProviderIsLoading = snapshotSelectedEntry?.status === "loading";
 
   const agentProviderDefinitions = useMemo(
