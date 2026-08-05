@@ -7,10 +7,11 @@ import {
   StyleSheet as RNStyleSheet,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import type { InstalledPlugin } from "@getpaseo/protocol/plugin/types";
 import Animated, { useAnimatedStyle, useSharedValue, runOnJS } from "react-native-reanimated";
 import { Gesture } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { X } from "lucide-react-native";
+import { Puzzle, X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import {
   formatPrTabLabel,
@@ -41,6 +42,10 @@ import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { resolveFocusedChatTarget } from "@/composer/focused-chat-target";
 import { createWorkspaceFileAttachment } from "@/attachments/workspace-file";
 import { useDraftStore } from "@/stores/draft-store";
+import { buildPluginExplorerTab, isPluginExplorerTab } from "@/stores/explorer-tab-memory";
+import { usePluginEntry, usePlugins } from "@/plugins/queries";
+import { PluginSandbox } from "@/plugins/sandbox";
+import type { PluginContext } from "@/plugins/bridge";
 
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
 
@@ -303,9 +308,14 @@ function ExplorerSidebarContent({
   });
   const hasPullRequest = prPane.prNumber !== null;
   const showPrTab = hasPullRequest || (activeTab === "pr" && prPane.isLoading);
-  const requestedTab: ExplorerTab =
-    !isGit && (activeTab === "changes" || activeTab === "pr") ? "files" : activeTab;
-  const resolvedTab: ExplorerTab = requestedTab === "pr" && !showPrTab ? "changes" : requestedTab;
+  const { plugins } = usePlugins(serverId);
+  const pluginTabs = useMemo(() => resolvePluginSidebarTabs(plugins), [plugins]);
+  const { resolvedTab, activePluginTab } = resolveExplorerTab({
+    activeTab,
+    isGit,
+    showPrTab,
+    pluginTabs,
+  });
   const prTabLabel = formatPrTabLabel(prPane.prNumber);
   const refreshGitActions = useCheckoutGitActionsStore((s) => s.refresh);
   const handlePrRetry = useCallback(() => {
@@ -362,6 +372,11 @@ function ExplorerSidebarContent({
               />
             </ExplorerTabButton>
           )}
+          <PluginTabButtons
+            pluginTabs={pluginTabs}
+            resolvedTab={resolvedTab}
+            onTabPress={onTabPress}
+          />
         </View>
         <View style={styles.headerRightSection}>
           {!hasRightWindowControls && (
@@ -416,8 +431,152 @@ function ExplorerSidebarContent({
             onRetry={handlePrRetry}
           />
         )}
+        {activePluginTab && (
+          <PluginTabContent
+            key={activePluginTab.tab}
+            serverId={serverId}
+            workspaceId={workspaceId ?? null}
+            workspaceRoot={workspaceRoot}
+            panel={activePluginTab}
+            onOpenFile={onOpenFile}
+          />
+        )}
       </View>
     </View>
+  );
+}
+
+interface PluginSidebarTab {
+  tab: ExplorerTab;
+  pluginId: string;
+  pluginName: string;
+  title: string;
+  entry: string;
+}
+
+/** Enabled, usable plugins' sidebar panels, ordered stably by plugin id. */
+function resolvePluginSidebarTabs(
+  plugins: readonly InstalledPlugin[],
+): readonly PluginSidebarTab[] {
+  return [...plugins]
+    .filter((plugin) => plugin.enabled && plugin.unavailableReason === null)
+    .sort((left, right) => left.manifest.id.localeCompare(right.manifest.id))
+    .flatMap((plugin) =>
+      (plugin.manifest.contributes.sidebarPanels ?? []).map((panel) => ({
+        tab: buildPluginExplorerTab(plugin.manifest.id, panel.id),
+        pluginId: plugin.manifest.id,
+        pluginName: plugin.manifest.name,
+        title: panel.title,
+        entry: panel.entry,
+      })),
+    );
+}
+
+function PluginTabButtons({
+  pluginTabs,
+  resolvedTab,
+  onTabPress,
+}: {
+  pluginTabs: readonly PluginSidebarTab[];
+  resolvedTab: ExplorerTab;
+  onTabPress: (tab: ExplorerTab) => void;
+}) {
+  const { theme } = useUnistyles();
+  return (
+    <>
+      {pluginTabs.map((panel) => (
+        <ExplorerTabButton
+          key={panel.tab}
+          tab={panel.tab}
+          active={resolvedTab === panel.tab}
+          label={panel.title}
+          onTabPress={onTabPress}
+          testID={`explorer-tab-${panel.tab}`}
+        >
+          {/* ponytail: one generic icon for every plugin. Honouring the
+              manifest's Lucide icon name means bundling all of lucide;
+              add a curated name→component map if plugins ask for it. */}
+          <Puzzle
+            size={13}
+            color={
+              resolvedTab === panel.tab ? theme.colors.foreground : theme.colors.foregroundMuted
+            }
+          />
+        </ExplorerTabButton>
+      ))}
+    </>
+  );
+}
+
+function resolveExplorerTab(input: {
+  activeTab: ExplorerTab;
+  isGit: boolean;
+  showPrTab: boolean;
+  pluginTabs: readonly PluginSidebarTab[];
+}): { resolvedTab: ExplorerTab; activePluginTab: PluginSidebarTab | null } {
+  const requestedTab: ExplorerTab =
+    !input.isGit && (input.activeTab === "changes" || input.activeTab === "pr")
+      ? "files"
+      : input.activeTab;
+  const fallback: ExplorerTab = input.isGit ? "changes" : "files";
+  // A remembered plugin tab outlives its plugin: fall back rather than render
+  // a tab nothing can fill.
+  const activePluginTab = input.pluginTabs.find((panel) => panel.tab === requestedTab) ?? null;
+  if (requestedTab === "pr" && !input.showPrTab) {
+    return { resolvedTab: "changes", activePluginTab: null };
+  }
+  if (isPluginExplorerTab(requestedTab) && !activePluginTab) {
+    return { resolvedTab: fallback, activePluginTab: null };
+  }
+  return { resolvedTab: requestedTab, activePluginTab };
+}
+
+function PluginTabContent({
+  serverId,
+  workspaceId,
+  workspaceRoot,
+  panel,
+  onOpenFile,
+}: {
+  serverId: string;
+  workspaceId: string | null;
+  workspaceRoot: string;
+  panel: PluginSidebarTab;
+  onOpenFile?: (filePath: string) => void;
+}) {
+  const { t } = useTranslation();
+  const entry = usePluginEntry({ serverId, pluginId: panel.pluginId, entry: panel.entry });
+  const context = useMemo<PluginContext>(
+    () => ({ kind: "sidebar-panel", cwd: workspaceRoot, workspaceId }),
+    [workspaceRoot, workspaceId],
+  );
+  const handleOpenFile = useCallback(
+    (input: { path: string }) => onOpenFile?.(input.path),
+    [onOpenFile],
+  );
+
+  if (entry.data === undefined) {
+    return (
+      <View style={styles.pluginState}>
+        <Text style={styles.pluginStateText}>
+          {entry.error
+            ? t("plugins.errors.panelFailed", {
+                plugin: panel.pluginName,
+                reason: entry.error.message,
+              })
+            : t("plugins.panelLoading")}
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <PluginSandbox
+      html={entry.data}
+      context={context}
+      onOpenFile={handleOpenFile}
+      testID={`plugin-sidebar-${panel.pluginId}`}
+    />
   );
 }
 
@@ -597,5 +756,16 @@ const styles = StyleSheet.create((theme) => ({
   contentArea: {
     flex: 1,
     minHeight: 0,
+  },
+  pluginState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: theme.spacing[4],
+  },
+  pluginStateText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
   },
 }));

@@ -20,7 +20,13 @@ import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
-import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
+import {
+  resolveFilePreviewRenderer,
+  type FilePreviewRenderer,
+} from "@/components/file-pane-render-mode";
+import { PluginSandbox } from "@/plugins/sandbox";
+import { usePluginEntry, usePlugins } from "@/plugins/queries";
+import type { PluginContext } from "@/plugins/bridge";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes } from "@/attachments/service";
@@ -57,12 +63,15 @@ interface CodeLineProps {
 }
 
 interface FilePreviewBodyProps {
+  serverId: string;
   preview: ExplorerFile | null;
+  renderer: FilePreviewRenderer;
   isLoading: boolean;
   isMobile: boolean;
   location: WorkspaceFileLocation;
   navigationRevision: number;
   imagePreviewUri: string | null;
+  onOpenFile?: (input: { path: string; lineStart?: number }) => void;
 }
 
 type TextExplorerFile = ExplorerFile & { kind: "text" };
@@ -208,28 +217,30 @@ const codeLineStyles = StyleSheet.create((theme) => ({
 }));
 
 function FilePreviewBody({
+  serverId,
   preview,
+  renderer,
   isLoading,
   isMobile,
   location,
   navigationRevision,
   imagePreviewUri,
+  onOpenFile,
 }: FilePreviewBodyProps) {
   const theme = UnistylesRuntime.getTheme();
   const { t } = useTranslation();
   const filePath = location.path;
-  const isMarkdownFile =
-    preview?.kind === "text" && isRenderedMarkdownFile(filePath) && !location.lineStart;
+  const isMarkdownFile = preview?.kind === "text" && renderer.kind === "markdown";
 
   const previewScrollRef = useRef<RNScrollView>(null);
 
   const highlightedLines = useMemo(() => {
-    if (!preview || preview.kind !== "text" || isMarkdownFile) {
+    if (!preview || preview.kind !== "text" || renderer.kind !== "code") {
       return null;
     }
 
     return highlightCode(preview.content ?? "", filePath);
-  }, [isMarkdownFile, preview, filePath]);
+  }, [renderer.kind, preview, filePath]);
 
   const gutterWidth = useMemo(() => {
     if (!highlightedLines) return 0;
@@ -283,6 +294,18 @@ function FilePreviewBody({
   }
 
   if (preview.kind === "text") {
+    if (renderer.kind === "plugin") {
+      return (
+        <PluginFilePreview
+          serverId={serverId}
+          renderer={renderer}
+          path={filePath}
+          content={preview.content ?? ""}
+          onOpenFile={onOpenFile}
+        />
+      );
+    }
+
     if (isMarkdownFile) {
       return (
         <View style={styles.previewScrollContainer}>
@@ -382,20 +405,77 @@ function FilePreviewBody({
   );
 }
 
+function PluginFilePreview({
+  serverId,
+  renderer,
+  path,
+  content,
+  onOpenFile,
+}: {
+  serverId: string;
+  renderer: Extract<FilePreviewRenderer, { kind: "plugin" }>;
+  path: string;
+  content: string;
+  onOpenFile?: (input: { path: string; lineStart?: number }) => void;
+}) {
+  const { t } = useTranslation();
+  const entry = usePluginEntry({
+    serverId,
+    pluginId: renderer.pluginId,
+    entry: renderer.entry,
+  });
+  const context = useMemo<PluginContext>(
+    () => ({ kind: "file-preview", path, content }),
+    [path, content],
+  );
+
+  if (entry.data === undefined) {
+    if (entry.error) {
+      return (
+        <View style={styles.centerState}>
+          <Text style={styles.errorText}>
+            {t("plugins.errors.previewFailed", {
+              plugin: renderer.pluginName,
+              reason: entry.error.message,
+            })}
+          </Text>
+        </View>
+      );
+    }
+    return (
+      <View style={styles.centerState}>
+        <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+        <Text style={styles.loadingText}>{t("panels.file.loading")}</Text>
+      </View>
+    );
+  }
+
+  return (
+    <PluginSandbox
+      html={entry.data}
+      context={context}
+      onOpenFile={onOpenFile}
+      testID="plugin-file-preview"
+    />
+  );
+}
+
 export function FilePane({
   serverId,
   workspaceRoot,
   location,
   navigationRevision,
+  onOpenFile,
 }: {
   serverId: string;
   workspaceRoot: string;
   location: WorkspaceFileLocation;
   navigationRevision: number;
+  onOpenFile?: (input: { path: string; lineStart?: number }) => void;
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
-  const [markdownMode, setMarkdownMode] = useState<"preview" | "source">("preview");
+  const [previewMode, setPreviewMode] = useState<"preview" | "source">("preview");
   const [resolvedPreview, setResolvedPreview] = useState<{
     key: string | null;
     file: ExplorerFile | null;
@@ -451,19 +531,28 @@ export function FilePane({
     };
   }, [liveFile.file, readTarget]);
 
-  useEffect(() => setMarkdownMode("preview"), [readTarget?.path]);
+  useEffect(() => setPreviewMode("preview"), [readTarget?.path]);
 
   const previewKey = readTarget ? `${readTarget.cwd}:${readTarget.path}` : null;
   const preview = resolvedPreview.key === previewKey ? resolvedPreview.file : null;
   const imagePreviewUri = useAttachmentPreviewUrl(
     resolvedPreview.key === previewKey ? resolvedPreview.imageAttachment : null,
   );
-  const isMarkdown = isMarkdownPreview(preview, location.path);
+  const { plugins } = usePlugins(serverId);
+  const renderer = useMemo<FilePreviewRenderer>(() => {
+    // A line target means the user asked for a specific line, which only the
+    // code view can honour.
+    if (preview?.kind !== "text" || location.lineStart) {
+      return { kind: "code" };
+    }
+    return resolveFilePreviewRenderer({ filePath: location.path, plugins });
+  }, [location.lineStart, location.path, plugins, preview?.kind]);
   const editable = isEditableTextFile({
     preview,
     supportsEditing,
   });
-  const canToggleMarkdownMode = isMarkdown && editable;
+  const canTogglePreviewMode =
+    renderer.kind === "plugin" || (renderer.kind === "markdown" && editable);
   const lineCount =
     preview?.kind === "text" ? (preview.content ?? "").split("\n").length : undefined;
   const errorMessage = getFileErrorMessage(liveFile.error, t("panels.file.failedToLoad"));
@@ -479,8 +568,10 @@ export function FilePane({
       retryingRead={liveFile.isRetrying}
       retryLabel={t("common.actions.retry")}
       filename={getFileNameFromPath(location.path) ?? location.path}
-      markdownMode={canToggleMarkdownMode ? markdownMode : undefined}
-      onMarkdownModeChange={canToggleMarkdownMode ? setMarkdownMode : undefined}
+      renderer={renderer}
+      previewMode={canTogglePreviewMode ? previewMode : undefined}
+      onPreviewModeChange={canTogglePreviewMode ? setPreviewMode : undefined}
+      previewLabel={renderer.kind === "plugin" ? renderer.title : undefined}
       lineCount={lineCount}
       editable={editable}
       disconnectedMessage={t("workspace.terminal.hostDisconnected")}
@@ -490,12 +581,9 @@ export function FilePane({
       location={location}
       navigationRevision={navigationRevision}
       imagePreviewUri={imagePreviewUri}
+      onOpenFile={onOpenFile}
     />
   );
-}
-
-function isMarkdownPreview(preview: ExplorerFile | null, path: string): boolean {
-  return preview?.kind === "text" && isRenderedMarkdownFile(path);
 }
 
 function getFileErrorMessage(error: unknown, fallback: string): string | null {
@@ -526,8 +614,10 @@ function FilePanePresentation({
   retryingRead,
   retryLabel,
   filename,
-  markdownMode,
-  onMarkdownModeChange,
+  renderer,
+  previewMode,
+  onPreviewModeChange,
+  previewLabel,
   lineCount,
   editable,
   disconnectedMessage,
@@ -537,6 +627,7 @@ function FilePanePresentation({
   location,
   navigationRevision,
   imagePreviewUri,
+  onOpenFile,
 }: {
   serverId: string;
   client: DaemonClient | null;
@@ -547,8 +638,10 @@ function FilePanePresentation({
   retryingRead: boolean;
   retryLabel: string;
   filename: string;
-  markdownMode?: "preview" | "source";
-  onMarkdownModeChange?: (mode: "preview" | "source") => void;
+  renderer: FilePreviewRenderer;
+  previewMode?: "preview" | "source";
+  onPreviewModeChange?: (mode: "preview" | "source") => void;
+  previewLabel?: string;
   lineCount?: number;
   editable: boolean;
   disconnectedMessage: string;
@@ -558,6 +651,7 @@ function FilePanePresentation({
   location: WorkspaceFileLocation;
   navigationRevision: number;
   imagePreviewUri: string | null;
+  onOpenFile?: (input: { path: string; lineStart?: number }) => void;
 }) {
   if (!client && readTarget) {
     return (
@@ -581,12 +675,16 @@ function FilePanePresentation({
         onRetryRead={onRetryRead}
         retryingRead={retryingRead}
         filename={filename}
-        mode={markdownMode}
-        onModeChange={onMarkdownModeChange}
+        renderer={renderer}
+        mode={previewMode}
+        onModeChange={onPreviewModeChange}
+        previewLabel={previewLabel}
         isLoading={isLoading}
         isMobile={isMobile}
         location={location}
         navigationRevision={navigationRevision}
+        onOpenFile={onOpenFile}
+        serverId={serverId}
       />
     );
   }
@@ -610,21 +708,27 @@ function FilePanePresentation({
         <FilePanelBar
           size={preview.size}
           lineCount={lineCount}
-          mode={markdownMode}
-          onModeChange={onMarkdownModeChange}
+          mode={previewMode}
+          onModeChange={onPreviewModeChange}
+          previewLabel={previewLabel}
         />
       ) : null}
       <FilePreviewBody
+        serverId={serverId}
         preview={preview}
+        renderer={previewMode === "source" ? SOURCE_RENDERER : renderer}
         isLoading={isLoading}
         isMobile={isMobile}
         location={location}
         navigationRevision={navigationRevision}
         imagePreviewUri={imagePreviewUri}
+        onOpenFile={onOpenFile}
       />
     </View>
   );
 }
+
+const SOURCE_RENDERER: FilePreviewRenderer = { kind: "code" };
 
 function EditableFilePane({
   client,
@@ -635,12 +739,16 @@ function EditableFilePane({
   onRetryRead,
   retryingRead,
   filename,
+  renderer,
   mode,
   onModeChange,
+  previewLabel,
   isLoading,
   isMobile,
   location,
   navigationRevision,
+  onOpenFile,
+  serverId,
 }: {
   client: DaemonClient;
   cwd: string;
@@ -650,12 +758,16 @@ function EditableFilePane({
   onRetryRead: () => void;
   retryingRead: boolean;
   filename: string;
+  renderer: FilePreviewRenderer;
   mode?: "preview" | "source";
   onModeChange?: (mode: "preview" | "source") => void;
+  previewLabel?: string;
   isLoading: boolean;
   isMobile: boolean;
   location: WorkspaceFileLocation;
   navigationRevision: number;
+  onOpenFile?: (input: { path: string; lineStart?: number }) => void;
+  serverId: string;
 }) {
   const { settings } = useAppSettings();
   const { t } = useTranslation();
@@ -773,6 +885,7 @@ function EditableFilePane({
         conflict={conflict}
         mode={mode}
         onModeChange={onModeChange}
+        previewLabel={previewLabel}
       />
       {showSource ? (
         <FileEditorView
@@ -787,12 +900,15 @@ function EditableFilePane({
         />
       ) : (
         <FilePreviewBody
+          serverId={serverId}
           preview={renderedPreview}
+          renderer={renderer}
           isLoading={isLoading}
           isMobile={isMobile}
           location={location}
           navigationRevision={navigationRevision}
           imagePreviewUri={null}
+          onOpenFile={onOpenFile}
         />
       )}
     </View>

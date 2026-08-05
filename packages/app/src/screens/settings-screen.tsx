@@ -35,6 +35,7 @@ import {
   SquareTerminal,
   Code2,
   Smartphone,
+  Blocks,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -72,6 +73,7 @@ import { AddHostModal } from "@/components/add-host-modal";
 import { PairLinkModal } from "@/components/pair-link-modal";
 import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-section";
 import { EditorSection } from "@/screens/settings/editor-section";
+import { PluginsSection } from "@/screens/settings/plugins-section";
 import { Button } from "@/components/ui/button";
 import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
@@ -143,6 +145,7 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "appearance", labelKey: "settings.sections.appearance", icon: Palette },
   { id: "editor", labelKey: "settings.sections.editor", icon: Code2 },
   { id: "shortcuts", labelKey: "settings.sections.shortcuts", icon: Keyboard, desktopOnly: true },
+  { id: "plugins", labelKey: "settings.sections.plugins", icon: Blocks },
   {
     id: "integrations",
     labelKey: "settings.sections.integrations",
@@ -1384,6 +1387,8 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
           return <EditorSection />;
         case "shortcuts":
           return isDesktopApp ? <KeyboardShortcutsSection /> : null;
+        case "plugins":
+          return <PluginsSection serverId={activeHostServerId} />;
         case "integrations":
           return isDesktopApp ? <IntegrationsSection /> : null;
         case "permissions":
