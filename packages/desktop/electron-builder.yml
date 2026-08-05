@@ -17,6 +17,12 @@ files:
   - "!node_modules/@getpaseo/**/*.test.*"
   - "!node_modules/@getpaseo/**/*.spec.*"
   - "!node_modules/@getpaseo/server/dist/server/web-ui/**"
+  # Workspace packages are symlinked, so anything a dev generates inside them
+  # lands in the asar. CI never has these; a local .debug run adds gigabytes.
+  - "!node_modules/@getpaseo/*/.debug/**"
+  - "!node_modules/@getpaseo/*/.tasks/**"
+  - "!node_modules/@getpaseo/*/conversations/**"
+  - "!node_modules/@getpaseo/*/test-results/**"
 asarUnpack:
   - dist/daemon/node-entrypoint-runner.js
   - node_modules/@getpaseo/server/dist/server/terminal/shell-integration/**/*
@@ -42,6 +48,8 @@ mac:
   extraResources:
     - from: bin/paseo
       to: bin/paseo
+    - from: assets/icon.png
+      to: icon.png
   target:
     - dmg
     - zip

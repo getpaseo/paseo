@@ -6,7 +6,10 @@ import type pino from "pino";
 import { afterEach, expect, test, vi } from "vitest";
 import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
-import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
+import {
+  subscribeToWorkspaceFileChanges,
+  WorkspaceGitServiceImpl,
+} from "./workspace-git-service.js";
 
 function createLogger(): pino.Logger {
   const logger = {
@@ -83,7 +86,7 @@ test("native recursive observation updates tracked state and prunes ignored stor
     events: parcelWatcher.Event[];
   }> = [];
   const subscribe: typeof parcelWatcher.subscribe = async (directory, callback, options) => {
-    const subscription = await parcelWatcher.subscribe(
+    const subscription = await subscribeToWorkspaceFileChanges(
       directory,
       (error, events) => {
         deliveredEvents.push({ directory, events });
@@ -194,9 +197,19 @@ test("native recursive observation updates tracked state and prunes ignored stor
     { timeout: 5_000 },
   );
 
-  // Parcel may deliver a startup batch before subscribe resolves. Let its
-  // already-scheduled consumer debounce finish inside the bootstrap phase.
-  await new Promise((resolve) => setTimeout(resolve, 250));
+  writeFileSync(trackedPath, "base\n");
+  await vi.waitFor(
+    () => {
+      const events = deliveredEvents.flatMap((batch) => batch.events);
+      expect(events.map((event) => event.path)).toContain(trackedPath);
+      expect(getCheckoutWorktreeState).toHaveBeenCalled();
+      expect(service.getMetrics()).toMatchObject({
+        workspaceRefreshInFlightCount: 0,
+        workspaceRefreshQueuedCount: 0,
+      });
+    },
+    { timeout: 5_000 },
+  );
 
   getCheckoutSnapshotFacts.mockClear();
   getCheckoutStatus.mockClear();
@@ -206,7 +219,6 @@ test("native recursive observation updates tracked state and prunes ignored stor
   runGitCommand.mockClear();
   deliveredEvents.length = 0;
 
-  await new Promise((resolve) => setTimeout(resolve, 250));
   expect(runGitCommand).not.toHaveBeenCalled();
   expect(getCheckoutWorktreeState).not.toHaveBeenCalled();
   expect(getCheckoutDiff, JSON.stringify(deliveredEvents)).not.toHaveBeenCalled();

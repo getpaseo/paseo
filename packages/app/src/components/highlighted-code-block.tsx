@@ -11,6 +11,10 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { highlightToKeyedLines, type KeyedLine } from "@/utils/highlight-cache";
+import {
+  markdownCopyCodeBlockDataSet,
+  markdownCopyDataSet,
+} from "@/assistant-selection-copy/markup";
 
 interface HighlightedCodeBlockProps {
   code: string;
@@ -63,6 +67,10 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
     [inheritedStyles, textStyle],
   );
   const renderedCode = useMemo(() => stripTerminalFenceNewline(code), [code]);
+  const copyDataSet = useMemo(
+    () => ({ ...CODE_SURFACE_DATASET, ...markdownCopyCodeBlockDataSet(language) }),
+    [language],
+  );
 
   const keyedLines = useMemo<KeyedLine[] | null>(
     () => highlightToKeyedLines(renderedCode, fenceLanguageToExtension(language)),
@@ -79,14 +87,18 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   return (
     <View
       style={containerStyle}
-      dataSet={CODE_SURFACE_DATASET}
+      dataSet={copyDataSet}
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
     >
       {keyedLines ? (
-        <MarkdownTextSpan style={innerTextStyle}>{renderCodeSegments(keyedLines)}</MarkdownTextSpan>
+        <MarkdownTextSpan style={innerTextStyle} copyTag="code">
+          {renderCodeSegments(keyedLines)}
+        </MarkdownTextSpan>
       ) : (
-        <MarkdownTextSpan style={innerTextStyle}>{renderedCode}</MarkdownTextSpan>
+        <MarkdownTextSpan style={innerTextStyle} copyTag="code">
+          {renderedCode}
+        </MarkdownTextSpan>
       )}
       <CopyButton getCode={getCode} visible={controlsVisible} />
     </View>
@@ -195,6 +207,7 @@ const CopyButton = React.memo(function CopyButton({ getCode, visible }: CopyButt
       accessibilityRole="button"
       accessibilityLabel={copied ? t("message.actions.copied") : t("message.actions.copyCode")}
       hitSlop={8}
+      dataSet={markdownCopyDataSet.ignore}
     >
       {({ hovered }) => {
         const iconColor = hovered

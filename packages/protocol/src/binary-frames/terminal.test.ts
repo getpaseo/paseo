@@ -31,16 +31,16 @@ describe("terminal binary frames", () => {
     });
   });
 
-  it("round-trips resize payloads", () => {
-    const payload = encodeTerminalResizePayload({
-      rows: 24,
-      cols: 80,
-    });
+  it.each(["claim", "update"] as const)("round-trips %s resize payloads", (intent) => {
+    const payload = encodeTerminalResizePayload({ rows: 24, cols: 80, intent });
 
-    expect(decodeTerminalResizePayload(payload)).toEqual({
-      rows: 24,
-      cols: 80,
-    });
+    expect(decodeTerminalResizePayload(payload)).toEqual({ rows: 24, cols: 80, intent });
+  });
+
+  it("accepts legacy resize payloads without an intent", () => {
+    const payload = encodeTerminalResizePayload({ rows: 24, cols: 80 });
+
+    expect(decodeTerminalResizePayload(payload)).toEqual({ rows: 24, cols: 80 });
   });
 
   it("round-trips snapshot payloads", () => {

@@ -70,6 +70,8 @@ The daemon keeps provider snapshots per resolved working directory, with a separ
 
 Snapshot reads may probe providers only while the requested cwd scope is cold. Once an entry is warm, its `ready`, `error`, or `unavailable` state stays cached until an explicit refresh. Do not add TTL revalidation, focus-triggered refreshes, selector-open refreshes, or config-reload refreshes. Selector-open refetches may read an already-loading or stale React Query, but they must not force provider probing on their own.
 
+Capable clients receive a compact, content-addressed snapshot. Model rows derive their provider from the containing entry and reference snapshot-level thinking sets. The app persists that compact shape per server and cwd, then sends its hash on the next pull; an unchanged response carries no catalog body. Keep the legacy encoding for clients without the capability. The hash covers the complete client-visible compact snapshot, including status and `fetchedAt`, so explicit refreshes invalidate it even when the discovered catalog is otherwise equal.
+
 Settings refresh is the user-facing "forget stale provider knowledge everywhere" action. A settings refresh clears provider snapshot caches and in-flight loads across all cwd scopes, then immediately refreshes only the global snapshot with `force: true`. Workspace snapshots are re-probed lazily on the next scoped read; do not fan out a settings refresh across every known workspace.
 
 Registry/config replacement may update visible metadata such as label, description, default mode, enabled state, and provider membership, but it must not spawn provider processes. If a provider needs to be re-probed after a config change, route that through the explicit settings refresh path.

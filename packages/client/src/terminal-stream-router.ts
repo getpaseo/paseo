@@ -76,6 +76,7 @@ export class TerminalStreamRouter {
         payload: encodeTerminalResizePayload({
           rows: message.rows,
           cols: message.cols,
+          ...(message.intent ? { intent: message.intent } : {}),
         }),
       });
     }

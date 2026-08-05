@@ -5,6 +5,7 @@ import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-cli
 import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
+import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { getVisibleWorkspaceAgentTabIds } from "../support/helpers/workspace-tabs";
 
@@ -132,8 +133,7 @@ test.describe("Model B sidebar shape", () => {
       await expect(workspaceRow(page, idleProject.workspaceId)).toBeVisible({ timeout: 30_000 });
 
       // Switch to status grouping.
-      await page.getByTestId("sidebar-display-preferences-menu").click();
-      await page.getByTestId("sidebar-grouping-status").click();
+      await selectSidebarStatusGrouping(page);
 
       const sidebar = page.getByTestId("sidebar-sessions").filter({ visible: true }).first();
 
@@ -149,6 +149,12 @@ test.describe("Model B sidebar shape", () => {
       await expect(workspaceRow(page, activeMock.workspaceId).first()).toBeVisible({
         timeout: 60_000,
       });
+      await expect(workspaceRow(page, idleProject.workspaceId).first()).toHaveAccessibleName(
+        `${idleProject.projectDisplayName}, ${idleProject.workspaceName}`,
+      );
+      await expect(workspaceRow(page, activeMock.workspaceId).first()).toHaveAccessibleName(
+        /Working$/,
+      );
 
       // Only workspace rows are shown — no tab/agent/terminal leaves leak into
       // the status view.

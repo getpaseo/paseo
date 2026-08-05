@@ -1,6 +1,5 @@
 import { test, expect, type Page } from "../support/fixtures";
 import { TerminalE2EHarness } from "../support/helpers/terminal-dsl";
-import { getTerminalBufferText } from "../support/helpers/terminal-perf";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 import { getServerId } from "../support/helpers/server-id";
 
@@ -90,6 +89,14 @@ function parseLatestSttySize(bufferText: string): RenderedTerminalSize | null {
   return match?.[1] && match[2] ? { rows: Number(match[1]), cols: Number(match[2]) } : null;
 }
 
+async function captureTerminalText(
+  harness: TerminalE2EHarness,
+  terminalId: string,
+): Promise<string> {
+  const capture = await harness.client.captureTerminal(terminalId, { stripAnsi: true });
+  return capture.lines.join("\n");
+}
+
 test.describe("terminal PTY size claim under lost window focus", () => {
   let harness: TerminalE2EHarness;
 
@@ -140,7 +147,7 @@ test.describe("terminal PTY size claim under lost window focus", () => {
       data: 'echo "S0=$(stty size)="\n',
     });
     await expect
-      .poll(async () => getTerminalBufferText(page), { timeout: 15_000 })
+      .poll(async () => captureTerminalText(harness, newTerminalId), { timeout: 15_000 })
       .toMatch(/S0=24 80=/);
 
     // ...and comes back.
@@ -161,7 +168,7 @@ test.describe("terminal PTY size claim under lost window focus", () => {
             type: "input",
             data: `echo "S${probe++}=$(stty size)="\n`,
           });
-          return parseLatestSttySize(await getTerminalBufferText(page));
+          return parseLatestSttySize(await captureTerminalText(harness, newTerminalId));
         },
         { timeout: 15_000, intervals: [100, 250, 500] },
       )

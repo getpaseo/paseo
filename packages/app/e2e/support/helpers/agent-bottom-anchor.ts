@@ -102,6 +102,8 @@ export async function waitForScrollableChat(
     .toBeGreaterThan(input.minScrollableDistance);
 }
 
+const WHEEL_SETTLE_TIMEOUT_MS = 5_000;
+
 export async function scrollChatAwayFromBottom(
   page: Page,
   input: { deltaY: number; minDistanceFromBottom: number },
@@ -111,31 +113,41 @@ export async function scrollChatAwayFromBottom(
   if (!box) {
     throw new Error("Agent chat scroll container is not visible");
   }
-  const wheelSettled = scroll.evaluate(
-    (root: Element) =>
-      new Promise<void>((resolve) => {
-        root.addEventListener(
-          "wheel",
-          () => {
-            const scrollElement = root as HTMLElement;
-            let previousOffset = scrollElement.scrollTop;
-            let stableFrames = 0;
-            const sample = () => {
-              const currentOffset = scrollElement.scrollTop;
-              stableFrames = Math.abs(currentOffset - previousOffset) <= 0.5 ? stableFrames + 1 : 0;
-              previousOffset = currentOffset;
-              if (stableFrames >= 3) {
-                resolve();
-                return;
-              }
-              requestAnimationFrame(sample);
-            };
-            requestAnimationFrame(sample);
-          },
-          { once: true },
-        );
-      }),
-  );
+  // Letting the scroll animation stop before measuring is an optimization, so it must never be
+  // the thing that decides the test — the assertion below is. The old wait could not say that:
+  // it resolved only from a `requestAnimationFrame` sampler started by a `wheel` listener, and
+  // rAF does not fire at all while the page is occluded, which is reachable on a CI runner and
+  // stalls the sampler on its first frame. A missed wheel event did the same. Either way the
+  // test hung until its own timeout with nothing to read. A timed sampler with a deadline
+  // cannot: worst case it gives up and the poll below reports what the scroll actually did.
+  const wheelSettled = scroll.evaluate((root: Element, timeoutMs: number) => {
+    const scrollElement = root as HTMLElement;
+    return new Promise<void>((resolve) => {
+      const startedAt = Date.now();
+      let sawWheel = false;
+      let previousOffset = scrollElement.scrollTop;
+      let stableSamples = 0;
+      root.addEventListener(
+        "wheel",
+        () => {
+          sawWheel = true;
+        },
+        { once: true },
+      );
+      const sample = () => {
+        const currentOffset = scrollElement.scrollTop;
+        const isStable = sawWheel && Math.abs(currentOffset - previousOffset) <= 0.5;
+        stableSamples = isStable ? stableSamples + 1 : 0;
+        previousOffset = currentOffset;
+        if (stableSamples >= 3 || Date.now() - startedAt >= timeoutMs) {
+          resolve();
+          return;
+        }
+        setTimeout(sample, 16);
+      };
+      sample();
+    });
+  }, WHEEL_SETTLE_TIMEOUT_MS);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.wheel(0, input.deltaY);
   await wheelSettled;

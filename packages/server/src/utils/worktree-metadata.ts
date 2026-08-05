@@ -9,15 +9,20 @@ const ChangeRequestLookupTargetSchema = z.object({
   localBranchName: z.string().min(1).optional(),
 });
 
+// baseRefName is the display name; baseRef is the exact ref the worktree was cut from
+// ("refs/remotes/upstream/main"). baseRef is optional because worktrees written before it
+// existed only have the name — there are no migrations, so readers fall back.
 const PaseoWorktreeMetadataV1Schema = z.object({
   version: z.literal(1),
   baseRefName: z.string().min(1),
+  baseRef: z.string().min(1).optional(),
   changeRequestLookupTarget: ChangeRequestLookupTargetSchema.optional(),
 });
 
 const PaseoWorktreeMetadataV2Schema = z.object({
   version: z.literal(2),
   baseRefName: z.string().min(1),
+  baseRef: z.string().min(1).optional(),
   changeRequestLookupTarget: ChangeRequestLookupTargetSchema.optional(),
   firstAgentBranchAutoName: z
     .discriminatedUnion("status", [
@@ -133,44 +138,72 @@ export function getPaseoWorktreeMetadataPath(worktreeRoot: string): string {
   return join(gitDir, "paseo", "worktree.json");
 }
 
-export function normalizeBaseRefName(input: string): string {
-  const trimmed = input.trim();
-  if (!trimmed) {
-    throw new Error("Base branch is required");
-  }
+const REMOTE_TRACKING_PREFIX = "refs/remotes/";
+
+/**
+ * The human-readable branch name behind a ref. Display and legacy identity only — it cannot
+ * round-trip, so anything that has to resolve to a commit keeps the exact ref instead.
+ *
+ * refs/remotes/<remote>/<branch> works for any remote, not just origin. Git allows slashes in
+ * remote names, so refs/remotes/a/b/c is ambiguous and the first segment is read as the
+ * remote: slashes are everywhere in branch names and rare in remote names. A remote genuinely
+ * named "team/upstream" therefore displays as "upstream/main" rather than "main"; the exact
+ * ref is unaffected, which is why this is display-only.
+ */
+export function branchNameFromRef(ref: string): string {
+  const trimmed = ref.trim();
   if (trimmed.startsWith("refs/heads/")) {
     return trimmed.slice("refs/heads/".length);
   }
-  if (trimmed.startsWith("refs/remotes/origin/")) {
-    return trimmed.slice("refs/remotes/origin/".length);
+  if (trimmed.startsWith(REMOTE_TRACKING_PREFIX)) {
+    const remainder = trimmed.slice(REMOTE_TRACKING_PREFIX.length);
+    const separator = remainder.indexOf("/");
+    return separator === -1 ? remainder : remainder.slice(separator + 1);
   }
+  // Short form. It cannot be generalized to any remote the way the qualified form can:
+  // without the remote list, "feature/x" is indistinguishable from "<remote>/x".
   if (trimmed.startsWith("origin/")) {
     return trimmed.slice("origin/".length);
   }
   return trimmed;
 }
 
+export function normalizeBaseRefName(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    throw new Error("Base branch is required");
+  }
+  return branchNameFromRef(trimmed);
+}
+
+function assertValidBaseRef(value: string): void {
+  if (value === "HEAD") {
+    throw new Error("Base branch cannot be HEAD");
+  }
+  if (value.includes("..") || value.includes("@{")) {
+    throw new Error(`Invalid base branch: ${value}`);
+  }
+}
+
 export function writePaseoWorktreeMetadata(
   worktreeRoot: string,
   options: {
     baseRefName: string;
+    baseRef?: string;
     changeRequestLookupTarget?: PaseoWorktreeChangeRequestHint;
   },
 ): void {
   const baseRefName = normalizeBaseRefName(options.baseRefName);
-  if (baseRefName === "HEAD") {
-    throw new Error("Base branch cannot be HEAD");
-  }
-  if (baseRefName.includes("..") || baseRefName.includes("@{")) {
-    throw new Error(`Invalid base branch: ${baseRefName}`);
-  }
-  if (!/^[0-9A-Za-z._/-]+$/.test(baseRefName)) {
-    throw new Error(`Invalid base branch: ${baseRefName}`);
+  assertValidBaseRef(baseRefName);
+  const baseRef = options.baseRef?.trim();
+  if (baseRef) {
+    assertValidBaseRef(baseRef);
   }
 
   const metadata: PaseoWorktreeMetadata = {
     version: 1,
     baseRefName,
+    ...(baseRef ? { baseRef } : {}),
     ...(options.changeRequestLookupTarget
       ? { changeRequestLookupTarget: options.changeRequestLookupTarget }
       : {}),
@@ -192,14 +225,8 @@ export function writePaseoWorktreeRuntimeMetadata(
   }
 
   const next: PaseoWorktreeMetadata = {
+    ...current,
     version: 2,
-    baseRefName: current.baseRefName,
-    ...(current.changeRequestLookupTarget
-      ? { changeRequestLookupTarget: current.changeRequestLookupTarget }
-      : {}),
-    ...(current.version === 2 && current.firstAgentBranchAutoName
-      ? { firstAgentBranchAutoName: current.firstAgentBranchAutoName }
-      : {}),
     runtime: {
       worktreePort: options.worktreePort,
     },
@@ -222,16 +249,12 @@ export function writePaseoWorktreeFirstAgentBranchAutoNameMetadata(
   }
 
   writePaseoWorktreeMetadataFile(worktreeRoot, {
+    ...current,
     version: 2,
-    baseRefName: current.baseRefName,
-    ...(current.changeRequestLookupTarget
-      ? { changeRequestLookupTarget: current.changeRequestLookupTarget }
-      : {}),
     firstAgentBranchAutoName: {
       status: "pending",
       placeholderBranchName,
     },
-    ...(current.version === 2 && current.runtime ? { runtime: current.runtime } : {}),
   });
 }
 
@@ -245,17 +268,12 @@ export function markPaseoWorktreeFirstAgentBranchAutoNameAttempted(
   }
 
   const next: PaseoWorktreeMetadata = {
-    version: 2,
-    baseRefName: current.baseRefName,
-    ...(current.changeRequestLookupTarget
-      ? { changeRequestLookupTarget: current.changeRequestLookupTarget }
-      : {}),
+    ...current,
     firstAgentBranchAutoName: {
       status: "attempted",
       placeholderBranchName: current.firstAgentBranchAutoName.placeholderBranchName,
       attemptedAt: options.attemptedAt ?? new Date().toISOString(),
     },
-    ...(current.runtime ? { runtime: current.runtime } : {}),
   };
   writePaseoWorktreeMetadataFile(worktreeRoot, next);
   return next;

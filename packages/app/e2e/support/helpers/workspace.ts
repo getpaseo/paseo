@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { mkdtemp, writeFile, rm, mkdir, realpath } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -156,6 +156,80 @@ export async function createTempDirectory(prefix = "paseo-e2e-dir-"): Promise<Te
         retryDelay: TEMP_CLEANUP_RETRY_DELAY_MS,
       });
     },
+  };
+}
+
+/**
+ * A commit that exists only in the local checkout. The whole point of defaulting a new
+ * worktree to the upstream is that these commits do not leak into it.
+ */
+export function commitLocalOnly(repoPath: string, marker: string): string {
+  execSync(`git commit --allow-empty -m ${JSON.stringify(`local only ${marker}`)}`, {
+    cwd: repoPath,
+    stdio: "ignore",
+  });
+  return execSync("git rev-parse HEAD", { cwd: repoPath, stdio: "pipe" }).toString().trim();
+}
+
+/**
+ * A fork checkout: `origin` is the fork, `upstream` is the source repo, and the current
+ * branch tracks `upstream/main`. Upstream carries a commit origin does not, so a worktree
+ * based on the wrong remote is provable rather than coincidentally identical.
+ */
+export async function trackForkUpstream(repoPath: string): Promise<string> {
+  const upstreamDir = path.join(repoPath, "upstream.git");
+  const upstreamClone = await mkdtemp(path.join(await resolveTempRoot(), "paseo-e2e-upstream-"));
+  await mkdir(upstreamDir, { recursive: true });
+  execSync(`git init --bare -b main ${upstreamDir}`, { cwd: repoPath, stdio: "ignore" });
+  execSync(`git remote add upstream ${upstreamDir}`, { cwd: repoPath, stdio: "ignore" });
+  execSync("git push upstream main", { cwd: repoPath, stdio: "ignore" });
+
+  execSync(`git clone ${upstreamDir} ${upstreamClone}`, { stdio: "ignore" });
+  execSync('git config user.email "e2e@paseo.test"', { cwd: upstreamClone, stdio: "ignore" });
+  execSync('git config user.name "Paseo E2E"', { cwd: upstreamClone, stdio: "ignore" });
+  execSync("git config commit.gpgsign false", { cwd: upstreamClone, stdio: "ignore" });
+  execSync('git commit --allow-empty -m "upstream only"', {
+    cwd: upstreamClone,
+    stdio: "ignore",
+  });
+  execSync("git push origin main", { cwd: upstreamClone, stdio: "ignore" });
+  await rm(upstreamClone, { recursive: true, force: true });
+
+  execSync("git fetch upstream", { cwd: repoPath, stdio: "ignore" });
+  execSync("git branch --set-upstream-to=upstream/main main", {
+    cwd: repoPath,
+    stdio: "ignore",
+  });
+  return execSync("git rev-parse refs/remotes/upstream/main", { cwd: repoPath, stdio: "pipe" })
+    .toString()
+    .trim();
+}
+
+export function readRepoRef(repoPath: string, ref: string): string {
+  return execSync(`git rev-parse ${JSON.stringify(ref)}`, { cwd: repoPath, stdio: "pipe" })
+    .toString()
+    .trim();
+}
+
+/**
+ * The base identity the daemon recorded in worktree.json: the display name the UI reads back,
+ * and the exact ref every comparison and action resolves through.
+ */
+export async function readWorktreeBaseMetadata(
+  worktreePath: string,
+): Promise<{ baseRefName: string; baseRef?: string }> {
+  const gitDir = execSync("git rev-parse --absolute-git-dir", { cwd: worktreePath, stdio: "pipe" })
+    .toString()
+    .trim();
+  const metadata = JSON.parse(
+    await readFile(path.join(gitDir, "paseo", "worktree.json"), "utf8"),
+  ) as { baseRefName?: string; baseRef?: string };
+  if (!metadata.baseRefName) {
+    throw new Error(`worktree.json has no baseRefName: ${worktreePath}`);
+  }
+  return {
+    baseRefName: metadata.baseRefName,
+    ...(metadata.baseRef ? { baseRef: metadata.baseRef } : {}),
   };
 }
 

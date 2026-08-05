@@ -21,6 +21,7 @@ import {
   selectNewWorkspaceProject,
   submitNewWorkspaceEmpty,
 } from "../support/helpers/new-workspace";
+import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { getVisibleWorkspaceAgentTabIds } from "../support/helpers/workspace-tabs";
 
@@ -397,8 +398,7 @@ async function expectWorkspaceRowInStatusBucket(
   page: Page,
   input: { serverId: string; workspaceId: string; bucket: string },
 ) {
-  await page.getByTestId("sidebar-display-preferences-menu").click();
-  await page.getByTestId("sidebar-grouping-status").click();
+  await selectSidebarStatusGrouping(page);
   await expect(
     page
       .getByTestId(`sidebar-status-group-rows-${input.bucket}`)

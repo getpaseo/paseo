@@ -235,6 +235,33 @@ export async function expectNewWorkspaceProjectSelected(
   await expect(projectPicker).toContainText(projectDisplayName);
 }
 
+export async function expectNewWorkspaceTriggerLabelsAligned(
+  page: Page,
+  input: { projectLabel: string; hostLabel: string },
+): Promise<void> {
+  const projectTrigger = page.getByRole("button", { name: "Workspace project" });
+  const hostTrigger = page.getByRole("button", { name: "Host", exact: true });
+  const projectLabel = projectTrigger.getByText(input.projectLabel, { exact: true });
+  const hostLabel = hostTrigger.getByText(input.hostLabel, { exact: true });
+  await Promise.all([
+    expect(projectLabel).toBeVisible({ timeout: 30_000 }),
+    expect(hostLabel).toBeVisible({ timeout: 30_000 }),
+  ]);
+  const [projectTriggerBox, projectLabelBox, hostTriggerBox, hostLabelBox] = await Promise.all([
+    projectTrigger.boundingBox(),
+    projectLabel.boundingBox(),
+    hostTrigger.boundingBox(),
+    hostLabel.boundingBox(),
+  ]);
+  if (!projectTriggerBox || !projectLabelBox || !hostTriggerBox || !hostLabelBox) {
+    throw new Error("New Workspace trigger geometry could not be measured");
+  }
+
+  const projectLabelInset = projectLabelBox.x - projectTriggerBox.x;
+  const hostLabelInset = hostLabelBox.x - hostTriggerBox.x;
+  expect(hostLabelInset).toBeCloseTo(projectLabelInset, 0);
+}
+
 export async function fillNewWorkspaceDraft(page: Page, draft: string): Promise<void> {
   const composer = page.getByRole("textbox", { name: "Message agent..." });
   await expect(composer).toBeVisible({ timeout: 30_000 });
@@ -346,6 +373,23 @@ export async function searchAndSelectBranchInPicker(page: Page, name: string): P
   await expect(searchInput).toBeVisible({ timeout: 30_000 });
   await searchInput.fill(name);
   await selectBranchInPicker(page, name);
+}
+
+// Ref picker rows are named for a user: "main, origin branch" is the upstream copy and
+// "main, local branch, 2 commits ahead of origin main" is the local one.
+export function startingRefRow(page: Page, accessibleName: string) {
+  return page.getByRole("button", { name: accessibleName, exact: true });
+}
+
+export async function expectStartingRefRows(page: Page, accessibleNames: string[]): Promise<void> {
+  for (const name of accessibleNames) {
+    await expect(startingRefRow(page, name)).toBeVisible({ timeout: 30_000 });
+  }
+}
+
+export async function captureStartingRefPicker(page: Page, screenshotPath: string): Promise<void> {
+  await expect(page.getByTestId("combobox-desktop-container")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("combobox-desktop-container").screenshot({ path: screenshotPath });
 }
 
 export async function selectGitHubPrInPicker(page: Page, number: number): Promise<void> {

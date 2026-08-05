@@ -23,6 +23,13 @@ import {
 } from "./worktree";
 import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
 import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
+import {
+  getCheckoutDiff,
+  getCheckoutStatus,
+  listCheckoutCommits,
+  mergeFromBase,
+  mergeToBase,
+} from "./checkout-git.js";
 import { execFileSync } from "child_process";
 import { isPlatform } from "../test-utils/platform.js";
 import {
@@ -436,7 +443,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       const localResult = await createLegacyWorktreeForTest({
         branchName: "prefer-local-feature",
         cwd: repoDir,
-        baseBranch: "main",
+        baseBranch: "refs/heads/main",
         worktreeSlug: "prefer-local-feature",
         runSetup: false,
         paseoHome,
@@ -451,12 +458,152 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       });
 
       expect(readFileSync(join(localResult.worktreePath, "file.txt"), "utf8")).toBe("from-local\n");
+      const localStatus = await getCheckoutStatus(localResult.worktreePath, { paseoHome });
+      expect(localStatus.isGit).toBe(true);
+      if (!localStatus.isGit) {
+        return;
+      }
+      expect(localStatus.aheadBehind).toEqual({ ahead: 0, behind: 0 });
+      await expect(
+        getCheckoutDiff(localResult.worktreePath, { mode: "base", baseRef: "main" }, { paseoHome }),
+      ).resolves.toMatchObject({ diff: "" });
       expect(readFileSync(join(originResult.worktreePath, "file.txt"), "utf8")).toBe(
         "from-origin\n",
       );
       expect(
         JSON.parse(readFileSync(getPaseoWorktreeMetadataPath(originResult.worktreePath), "utf8")),
       ).toMatchObject({ baseRefName: "main" });
+    });
+
+    it("records the branch name when the base is on a remote other than origin", async () => {
+      const forkDir = join(tempDir, "fork.git");
+      const forkCloneDir = join(tempDir, "fork-clone");
+      execFileSync("git", ["init", "--bare", forkDir]);
+      execFileSync("git", ["remote", "add", "upstream", forkDir], { cwd: repoDir });
+      execFileSync("git", ["push", "-u", "upstream", "main"], { cwd: repoDir });
+
+      execFileSync("git", ["clone", "--branch", "main", forkDir, forkCloneDir]);
+      execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: forkCloneDir });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: forkCloneDir });
+      writeFileSync(join(forkCloneDir, "file.txt"), "from-upstream\n");
+      execFileSync("git", ["add", "file.txt"], { cwd: forkCloneDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "advance upstream main"], {
+        cwd: forkCloneDir,
+      });
+      execFileSync("git", ["push", "origin", "main"], { cwd: forkCloneDir });
+      execFileSync("git", ["fetch", "upstream"], { cwd: repoDir });
+      const localMainHead = execFileSync("git", ["rev-parse", "refs/heads/main"], {
+        cwd: repoDir,
+      })
+        .toString()
+        .trim();
+
+      const result = await createLegacyWorktreeForTest({
+        branchName: "fork-base-feature",
+        cwd: repoDir,
+        baseBranch: "refs/remotes/upstream/main",
+        worktreeSlug: "fork-base-feature",
+        runSetup: false,
+        paseoHome,
+      });
+
+      expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-upstream\n");
+      // The display name and the exact ref are both recorded. Only the ref can resolve back
+      // to the commit the worktree was cut from: "main" resolves local-first, which here is
+      // a different commit than the fork's upstream.
+      expect(
+        JSON.parse(readFileSync(getPaseoWorktreeMetadataPath(result.worktreePath), "utf8")),
+      ).toMatchObject({ baseRefName: "main", baseRef: "refs/remotes/upstream/main" });
+
+      // An untouched child must report no work of its own. Comparing against the wrong base
+      // shows the upstream-only commit as if the workspace had written it.
+      const status = await getCheckoutStatus(result.worktreePath, { paseoHome });
+      expect(status.isGit).toBe(true);
+      if (!status.isGit) {
+        return;
+      }
+      // The wire keeps the display name; the exact ref above is what the comparison used,
+      // which is why an untouched child reports no work of its own.
+      expect(status.baseRef).toBe("main");
+      expect(status.aheadBehind).toEqual({ ahead: 0, behind: 0 });
+      await expect(
+        getCheckoutDiff(
+          result.worktreePath,
+          { mode: "base", baseRef: "refs/remotes/origin/main" },
+          { paseoHome },
+        ),
+      ).rejects.toThrow(
+        "Base ref mismatch: stored refs/remotes/upstream/main, requested refs/remotes/origin/main",
+      );
+      expect(
+        await getCheckoutDiff(
+          result.worktreePath,
+          { mode: "base", baseRef: "main" },
+          { paseoHome },
+        ),
+      ).toMatchObject({ diff: "" });
+      const history = await listCheckoutCommits({
+        cwd: result.worktreePath,
+        context: { paseoHome },
+      });
+      expect(history.commits.every((commit) => commit.isOnBase)).toBe(true);
+      await expect(
+        mergeToBase(result.worktreePath, { baseRef: "main" }, { paseoHome }),
+      ).rejects.toThrow(
+        "No local merge target is recorded for base ref refs/remotes/upstream/main",
+      );
+      expect(
+        execFileSync("git", ["rev-parse", "refs/heads/main"], { cwd: repoDir }).toString().trim(),
+      ).toBe(localMainHead);
+
+      writeFileSync(join(forkCloneDir, "later.txt"), "later\n");
+      execFileSync("git", ["add", "later.txt"], { cwd: forkCloneDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "advance again"], {
+        cwd: forkCloneDir,
+      });
+      execFileSync("git", ["push", "origin", "main"], { cwd: forkCloneDir });
+      execFileSync("git", ["fetch", "upstream"], { cwd: result.worktreePath });
+      await mergeFromBase(result.worktreePath, { baseRef: "main" }, { paseoHome });
+      expect(readFileSync(join(result.worktreePath, "later.txt"), "utf8")).toBe("later\n");
+
+      execFileSync("git", ["update-ref", "-d", "refs/remotes/upstream/main"], {
+        cwd: result.worktreePath,
+      });
+      await expect(
+        getCheckoutDiff(result.worktreePath, { mode: "base", baseRef: "main" }, { paseoHome }),
+      ).rejects.toThrow("Base ref not found: refs/remotes/upstream/main");
+      await expect(
+        mergeFromBase(result.worktreePath, { baseRef: "main" }, { paseoHome }),
+      ).rejects.toThrow("Base ref not found: refs/remotes/upstream/main");
+      await expect(
+        listCheckoutCommits({ cwd: result.worktreePath, context: { paseoHome } }),
+      ).rejects.toThrow("Base ref not found: refs/remotes/upstream/main");
+    });
+
+    it("records Git-valid characters in a remote base branch", async () => {
+      const upstreamDir = join(tempDir, "upstream.git");
+      execFileSync("git", ["init", "--bare", upstreamDir]);
+      execFileSync("git", ["remote", "add", "upstream", upstreamDir], { cwd: repoDir });
+      execFileSync("git", ["push", "upstream", "refs/heads/main:refs/heads/release+hotfix"], {
+        cwd: repoDir,
+      });
+      execFileSync("git", ["fetch", "upstream"], { cwd: repoDir });
+
+      const result = await createLegacyWorktreeForTest({
+        branchName: "release-hotfix-feature",
+        cwd: repoDir,
+        baseBranch: "refs/remotes/upstream/release+hotfix",
+        worktreeSlug: "release-hotfix-feature",
+        runSetup: false,
+        paseoHome,
+      });
+
+      expect(
+        JSON.parse(readFileSync(getPaseoWorktreeMetadataPath(result.worktreePath), "utf8")),
+      ).toMatchObject({
+        baseRefName: "release+hotfix",
+        baseRef: "refs/remotes/upstream/release+hotfix",
+      });
     });
 
     it("uses a local branch when origin/{branch} does not exist", async () => {

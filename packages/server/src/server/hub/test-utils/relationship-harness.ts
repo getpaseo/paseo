@@ -63,53 +63,6 @@ const HUB_ORIGIN = "https://hub.test";
 const SOCKET_URL = "wss://hub.test/daemon";
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, "../../../../../..");
 
-export interface ArchiveWatcher {
-  close(): void;
-  onError(listener: (error: Error) => void): void;
-}
-
-export interface ArchiveWatchFiles {
-  watchDirectory(path: string, onChange: () => void): ArchiveWatcher;
-}
-
-const nodeArchiveWatchFiles: ArchiveWatchFiles = {
-  watchDirectory(directory, onChange) {
-    const watcher = watch(directory, onChange);
-    return {
-      close: () => watcher.close(),
-      onError: (listener) => watcher.on("error", listener),
-    };
-  },
-};
-
-export class SetupFailingArchiveWatchFiles implements ArchiveWatchFiles {
-  private attempts = 0;
-  private readonly openDirectories = new Set<string>();
-
-  constructor(private readonly failOnAttempt: number) {}
-
-  watchDirectory(directory: string): ArchiveWatcher {
-    this.attempts++;
-    if (this.attempts === this.failOnAttempt) {
-      throw new Error(`Cannot watch ${directory}`);
-    }
-    this.openDirectories.add(directory);
-    let open = true;
-    return {
-      close: () => {
-        if (!open) return;
-        open = false;
-        this.openDirectories.delete(directory);
-      },
-      onError: () => {},
-    };
-  }
-
-  activeDirectories(): string[] {
-    return [...this.openDirectories];
-  }
-}
-
 interface PersistedRelationship {
   version: number;
   state: string;
@@ -463,29 +416,38 @@ export class HubRelationshipHarness {
   private failNextSessionClose = false;
   private observedEnrollments = 0;
   private observedSockets = 0;
-  private readonly codex = new ControlledAgentClient(
-    createTestAgentClients({
-      closeSession: async () => {
-        if (!this.failNextSessionClose) return;
-        this.failNextSessionClose = false;
-        throw new Error("Requested provider session close failure");
-      },
-      onStartTurn: (prompt) => {
-        const promptText = typeof prompt === "string" ? prompt : JSON.stringify(prompt);
-        if (this.promptsToFail.delete(promptText)) {
-          throw new Error("Requested provider prompt startup failure");
-        }
-        this.providerPrompts.push(prompt);
-      },
-    }).codex,
-  );
+  private readonly codex: ControlledAgentClient;
 
-  private constructor(private readonly archiveWatchFiles: ArchiveWatchFiles) {}
+  private constructor(private readonly mcpEnabled: boolean) {
+    this.codex = new ControlledAgentClient(
+      createTestAgentClients({
+        supportsMcpServers: mcpEnabled,
+        closeSession: async () => {
+          if (!this.failNextSessionClose) return;
+          this.failNextSessionClose = false;
+          throw new Error("Requested provider session close failure");
+        },
+        onStartTurn: (prompt) => {
+          const promptText = typeof prompt === "string" ? prompt : JSON.stringify(prompt);
+          if (this.promptsToFail.delete(promptText)) {
+            throw new Error("Requested provider prompt startup failure");
+          }
+          this.providerPrompts.push(prompt);
+        },
+      }).codex,
+    );
+  }
 
-  static async start(
-    archiveWatchFiles: ArchiveWatchFiles = nodeArchiveWatchFiles,
-  ): Promise<HubRelationshipHarness> {
-    const harness = new HubRelationshipHarness(archiveWatchFiles);
+  static async start(): Promise<HubRelationshipHarness> {
+    return this.launch(false);
+  }
+
+  static async startWithAgentMcp(): Promise<HubRelationshipHarness> {
+    return this.launch(true);
+  }
+
+  private static async launch(mcpEnabled: boolean): Promise<HubRelationshipHarness> {
+    const harness = new HubRelationshipHarness(mcpEnabled);
     await harness.createHome();
     await harness.startDaemon();
     return harness;
@@ -675,6 +637,7 @@ export class HubRelationshipHarness {
       worktree?: CreateAgentWorktreeTarget;
       prompt?: string;
       modeId?: string;
+      mcpServers?: AgentSessionConfig["mcpServers"];
     } = {},
   ): void {
     const { prompt = "Create through the Hub", ...requestOptions } = options;
@@ -775,6 +738,13 @@ export class HubRelationshipHarness {
     return (await this.daemon!.agentStorage.get(agentId))?.archivedAt ?? null;
   }
 
+  async ownedWorkspaceArchivedAt(agentId: string): Promise<string | null> {
+    const agent = await this.daemon!.agentStorage.get(agentId);
+    if (!agent) throw new Error(`Owned agent ${agentId} does not exist`);
+    if (!agent.workspaceId) throw new Error(`Owned agent ${agentId} has no workspace`);
+    return this.workspaceArchivedAt(agent.workspaceId);
+  }
+
   async createForeignExecution(executionId: string): Promise<string> {
     const agent = await this.daemon!.agentManager.createAgent(
       { provider: "codex", cwd: this.root },
@@ -826,6 +796,14 @@ export class HubRelationshipHarness {
     );
   }
 
+  latestProviderCreateConfig(): AgentSessionConfig | null {
+    return this.codex.createdConfigs.at(-1) ?? null;
+  }
+
+  hubMessages(): SessionOutboundMessage[] {
+    return this.remote.sockets.flatMap(({ socket }) => socket.sent);
+  }
+
   latestCreatedCwd(): string | null {
     return this.codex.createdConfigs.at(-1)?.cwd ?? null;
   }
@@ -836,65 +814,6 @@ export class HubRelationshipHarness {
 
   repoExists(): boolean {
     return existsSync(this.root);
-  }
-
-  async waitForOwnedArchiveCompletion(
-    agentId: string,
-  ): Promise<{ agentArchivedAt: string; workspaceArchivedAt: string }> {
-    const created = await this.daemon!.agentStorage.get(agentId);
-    if (!created) throw new Error(`Owned agent ${agentId} does not exist`);
-    if (!created.workspaceId) throw new Error(`Owned agent ${agentId} has no workspace`);
-    return new Promise<{ agentArchivedAt: string; workspaceArchivedAt: string }>(
-      (resolve, reject) => {
-        const watchers: ArchiveWatcher[] = [];
-        let settled = false;
-        const timeout = setTimeout(
-          () => finish(new Error(`Timed out waiting for owned agent ${agentId} to archive`)),
-          15_000,
-        );
-        timeout.unref?.();
-        const closeWatchers = () => {
-          clearTimeout(timeout);
-          for (const watcher of watchers) watcher.close();
-        };
-        const finish = (
-          result: Error | { agentArchivedAt: string; workspaceArchivedAt: string },
-        ) => {
-          if (settled) return;
-          settled = true;
-          closeWatchers();
-          if (result instanceof Error) reject(result);
-          else resolve(result);
-        };
-        const observeCompletion = async () => {
-          try {
-            const archived = await this.daemon!.agentStorage.get(agentId);
-            const workspaceArchivedAt = this.workspaceArchivedAt(created.workspaceId!);
-            if (!archived?.archivedAt || !workspaceArchivedAt || existsSync(created.cwd)) return;
-            finish({ agentArchivedAt: archived.archivedAt, workspaceArchivedAt });
-          } catch (error) {
-            finish(error instanceof Error ? error : new Error(String(error)));
-          }
-        };
-        try {
-          const projectsWatcher = this.archiveWatchFiles.watchDirectory(
-            path.join(this.paseoHome, "projects"),
-            observeCompletion,
-          );
-          watchers.push(projectsWatcher);
-          projectsWatcher.onError(finish);
-          const worktreeWatcher = this.archiveWatchFiles.watchDirectory(
-            path.dirname(created.cwd),
-            observeCompletion,
-          );
-          watchers.push(worktreeWatcher);
-          worktreeWatcher.onError(finish);
-          void observeCompletion();
-        } catch (error) {
-          finish(error instanceof Error ? error : new Error(String(error)));
-        }
-      },
-    );
   }
 
   private workspaceArchivedAt(workspaceId: string): string | null {
@@ -1285,7 +1204,7 @@ export class HubRelationshipHarness {
       paseoHome: this.paseoHome,
       corsAllowedOrigins: [],
       hostnames: true,
-      mcpEnabled: false,
+      mcpEnabled: this.mcpEnabled,
       staticDir,
       mcpDebug: false,
       agentClients: {

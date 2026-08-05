@@ -112,6 +112,7 @@ export const zhCN: TranslationResources = {
     },
     attachments: {
       addImage: "添加图片",
+      pasteImage: "粘贴图片",
       addFile: "Upload file",
       addIssueOrPr: "添加 issue 或 PR",
       addIssueOrPr_mr: "添加 issue 或 MR",
@@ -137,6 +138,8 @@ export const zhCN: TranslationResources = {
       initialPromptRequired: "初始 prompt 必填",
       alreadyLoading: "正在加载",
       uploadFailed: "Failed to upload file",
+      noClipboardImage: "剪贴板中没有图片",
+      pasteImageFailed: "无法粘贴图片",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
@@ -187,6 +190,7 @@ export const zhCN: TranslationResources = {
   agentStream: {
     empty: "开始和这个 Agent 对话...",
     scrollToBottom: "滚动到底部",
+    historyLoadFailed: "无法加载智能体历史记录",
     permission: {
       plan: "Plan",
       required: "需要权限",
@@ -380,7 +384,7 @@ export const zhCN: TranslationResources = {
       openFile: "打开文件",
       copyPath: "复制路径",
       download: "下载",
-      addToChat: "添加到聊天…",
+      addToChat: "添加到聊天",
       moreActions: "更多操作",
     },
     fileExplorer: {
@@ -477,6 +481,7 @@ export const zhCN: TranslationResources = {
     },
     terminal: {
       hostDisconnected: "Host 未连接",
+      updateHost: "请更新主机以使用原生终端渲染器。",
       unableToSubscribe: "无法订阅 Terminal",
     },
     tabs: {
@@ -822,6 +827,14 @@ export const zhCN: TranslationResources = {
           viewPullRequest: "查看",
           openOn: "在 {{brand}} 上打开",
         },
+        checksSummary: {
+          passedLabel: "通过",
+          failedLabel: "失败",
+          runningLabel: "运行中",
+          passedAccessible: "检查通过",
+          failedAccessible: "检查失败",
+          runningAccessible: "检查运行中",
+        },
         sections: {
           checks: "Checks",
           pipeline: "流水线",
@@ -869,6 +882,33 @@ export const zhCN: TranslationResources = {
     },
   },
   sidebar: {
+    display: {
+      trigger: "显示偏好",
+      heading: "显示",
+      grouping: {
+        label: "分组",
+        project: "项目",
+        status: "状态",
+      },
+      titleSource: {
+        label: "标题",
+        title: "标题",
+        branch: "分支名称",
+      },
+      show: {
+        label: "显示",
+        host: "主机",
+        changeRequest: "拉取请求",
+        checks: "检查",
+        scripts: "脚本",
+        diff: "差异统计",
+        timestamp: "最近活动",
+      },
+      hostFilter: {
+        label: "主机",
+        all: "所有主机",
+      },
+    },
     pinned: {
       title: "已置顶",
     },
@@ -1694,6 +1734,11 @@ export const zhCN: TranslationResources = {
     },
     diagnostics: {
       title: "诊断",
+      legacyTerminalRenderer: {
+        label: "使用旧版终端渲染器",
+        description: "重新打开终端后使用之前的 WebView 终端",
+        accessibilityLabel: "使用旧版终端渲染器",
+      },
       testAudio: "测试音频",
       playTest: "播放测试",
       playing: "正在播放...",
@@ -1759,6 +1804,10 @@ export const zhCN: TranslationResources = {
       },
       detailLevel: {
         title: "详细程度",
+      },
+      chatOutline: {
+        title: "聊天大纲",
+        description: "显示用于在提示词之间跳转的大纲",
       },
       fonts: {
         title: "字体",
@@ -1911,6 +1960,41 @@ export const zhCN: TranslationResources = {
       },
     },
     host: {
+      appearance: {
+        title: "外观",
+        name: {
+          label: "名称",
+        },
+        color: {
+          label: "颜色",
+          accessibilityLabel: "颜色，{{value}}",
+          options: {
+            none: "默认",
+            violet: "紫罗兰",
+            sky: "天蓝",
+            emerald: "翠绿",
+            orange: "橙色",
+            pink: "粉色",
+            indigo: "靛蓝",
+            teal: "青色",
+            red: "红色",
+            amber: "琥珀",
+            blue: "蓝色",
+          },
+        },
+        badge: {
+          label: "侧边栏徽章",
+          accessibilityLabel: "侧边栏徽章，{{value}}",
+          options: {
+            name: "名称",
+            icon: "仅图标",
+            hidden: "隐藏",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "Host 未找到",
       badges: {
         relay: "Relay",

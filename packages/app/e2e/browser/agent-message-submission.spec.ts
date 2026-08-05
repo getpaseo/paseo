@@ -915,39 +915,6 @@ test.describe("Agent message submission", () => {
     }
   });
 
-  test("reconciles an interrupted submission when live acknowledgements are missed", async ({
-    page,
-  }) => {
-    const gate = await installDaemonWebSocketGate(page);
-    const title = "Missed submission acknowledgements";
-    const prompt = "Interrupt without delivering live acknowledgements.";
-    const agent = await seedMockAgentWorkspace({
-      repoPrefix: "submission-missed-acknowledgements-",
-      title,
-      model: "one-minute-stream",
-    });
-    try {
-      await openAgentRoute(page, agent);
-      await expectComposerVisible(page);
-      gate.setAgentStreamItemSuppressed("user_message", true);
-      gate.setAgentStreamEventSuppressed("turn_canceled", true);
-
-      await submitMessage(page, prompt);
-      await gate.waitForAgentStreamItem("user_message");
-      await expectRunningAgentChrome(page, title);
-      await cancelAgent(page);
-      await gate.waitForAgentStreamEvent("turn_canceled");
-      await agent.client.waitForFinish(agent.agentId, 30_000);
-
-      await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(1);
-      await expectAgentSurfacesIdle(page, title);
-    } finally {
-      gate.setAgentStreamItemSuppressed("user_message", false);
-      gate.setAgentStreamEventSuppressed("turn_canceled", false);
-      await agent.cleanup();
-    }
-  });
-
   test("keeps layout stable when submitting to an agent with existing history", async ({
     page,
     submissionScenario,

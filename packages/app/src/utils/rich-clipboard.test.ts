@@ -74,6 +74,20 @@ describe("createMarkdownClipboardContent", () => {
     expect(content.html).not.toContain('href="javascript:');
     expect(content.html).toContain("&lt;script&gt;");
   });
+
+  it("preserves assistant file links without allowing unsafe link schemes", () => {
+    const content = createMarkdownClipboardContent(
+      [
+        "[file](file:///tmp/paseo%20notes.md#L4)",
+        '[javascript](javascript:alert("x"))',
+        "[data](data:text/html,unsafe)",
+        "[vbscript](vbscript:msgbox(1))",
+      ].join("\n\n"),
+    );
+
+    expect(content.html).toContain('<a href="file:///tmp/paseo%20notes.md#L4">file</a>');
+    expect(content.html).not.toMatch(/href="(?:javascript|data|vbscript):/);
+  });
 });
 
 describe("writeMarkdownToRichClipboard", () => {

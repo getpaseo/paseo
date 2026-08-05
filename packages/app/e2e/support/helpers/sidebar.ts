@@ -1,6 +1,110 @@
 import { expect, type Page } from "@playwright/test";
 import { getServerId } from "./server-id";
 
+interface ContextMenuAnchor {
+  x: number;
+  y: number;
+}
+
+async function openContextMenuAtRowPoint(
+  page: Page,
+  rowTestID: string,
+  menuTestID: string,
+): Promise<ContextMenuAnchor> {
+  const row = page.getByTestId(rowTestID);
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  const bounds = await row.boundingBox();
+  if (!bounds) throw new Error(`Could not measure ${rowTestID}`);
+
+  const anchor = {
+    x: bounds.x + Math.min(60, bounds.width / 2),
+    y: bounds.y + bounds.height / 2,
+  };
+  await page.mouse.click(anchor.x, anchor.y, { button: "right" });
+  await expect(page.getByTestId(menuTestID)).toBeVisible({ timeout: 10_000 });
+  return anchor;
+}
+
+async function expectContextMenuAtPointer(
+  page: Page,
+  menuTestID: string,
+  anchor: ContextMenuAnchor,
+): Promise<void> {
+  const bounds = await page.getByTestId(menuTestID).boundingBox();
+  if (!bounds) throw new Error(`Could not measure ${menuTestID}`);
+  expect(Math.abs(bounds.x - anchor.x)).toBeLessThanOrEqual(2);
+  expect(Math.abs(bounds.y - (anchor.y + 4))).toBeLessThanOrEqual(2);
+}
+
+export async function openWorkspaceContextMenu(page: Page, workspaceId: string): Promise<void> {
+  const workspaceKey = `${getServerId()}:${workspaceId}`;
+  const menuTestID = `sidebar-workspace-context-menu-${workspaceKey}`;
+  const anchor = await openContextMenuAtRowPoint(
+    page,
+    `sidebar-workspace-row-${workspaceKey}`,
+    menuTestID,
+  );
+  await expectContextMenuAtPointer(page, menuTestID, anchor);
+}
+
+export async function showWorkspaceHoverCard(page: Page, workspaceId: string): Promise<void> {
+  const workspaceKey = `${getServerId()}:${workspaceId}`;
+  await page.getByTestId(`sidebar-workspace-row-${workspaceKey}`).hover();
+  await expect(page.getByTestId("workspace-hover-card")).toBeVisible();
+}
+
+export async function closeWorkspaceContextMenu(page: Page, workspaceId: string): Promise<void> {
+  const workspaceKey = `${getServerId()}:${workspaceId}`;
+  await page.getByTestId(`sidebar-workspace-context-menu-${workspaceKey}-backdrop`).click();
+}
+
+export async function expectWorkspaceContextMenuOwnsAttention(page: Page): Promise<void> {
+  await expect(page.getByTestId("workspace-hover-card")).toHaveCount(0);
+}
+
+export async function expectWorkspaceRowHoverCleared(
+  page: Page,
+  workspaceId: string,
+): Promise<void> {
+  const workspaceKey = `${getServerId()}:${workspaceId}`;
+  await expect(page.getByTestId(`sidebar-workspace-kebab-${workspaceKey}`)).toBeHidden();
+  await expect(page.getByTestId("workspace-hover-card")).toHaveCount(0);
+}
+
+export async function expectWorkspaceContextMenuActions(
+  page: Page,
+  workspaceId: string,
+): Promise<void> {
+  const workspaceKey = `${getServerId()}:${workspaceId}`;
+  const menu = page.getByTestId(`sidebar-workspace-context-menu-${workspaceKey}`);
+  await expect(menu.getByRole("button", { name: "Copy path" })).toBeVisible();
+  await expect(menu.getByRole("button", { name: "Rename workspace" })).toBeVisible();
+  await expect(menu.getByRole("button", { name: "Archive" })).toBeVisible();
+}
+
+export async function openProjectContextMenu(page: Page, projectViewKey: string): Promise<void> {
+  const menuTestID = `sidebar-project-context-menu-${projectViewKey}`;
+  const anchor = await openContextMenuAtRowPoint(
+    page,
+    `sidebar-project-row-${projectViewKey}`,
+    menuTestID,
+  );
+  await expectContextMenuAtPointer(page, menuTestID, anchor);
+}
+
+export async function closeProjectContextMenu(page: Page, projectViewKey: string): Promise<void> {
+  await page.getByTestId(`sidebar-project-context-menu-${projectViewKey}-backdrop`).click();
+}
+
+export async function expectProjectContextMenuActions(
+  page: Page,
+  projectViewKey: string,
+): Promise<void> {
+  const menu = page.getByTestId(`sidebar-project-context-menu-${projectViewKey}`);
+  await expect(menu.getByRole("button", { name: "Open project settings" })).toBeVisible();
+  await expect(menu.getByRole("button", { name: "Remove project" })).toBeVisible();
+}
+
 export async function selectWorkspaceInSidebar(page: Page, workspaceId: string): Promise<void> {
   const row = page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`);
   await expect(row).toBeVisible({ timeout: 30_000 });
@@ -60,6 +164,19 @@ export async function expectWorkspaceAbsentFromSidebar(
   await expect(
     page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`),
   ).toHaveCount(0, { timeout: 30_000 });
+}
+
+// The display-preferences menu is one row per decision, and the options sit a page below that
+// row. Every caller has to walk the same path, so it lives here: when the menu's shape moves
+// again, this is the only place that has to follow.
+export async function openSidebarDisplayPage(page: Page, branchTestID: string): Promise<void> {
+  await page.getByTestId("sidebar-display-preferences-menu").click();
+  await page.getByTestId(branchTestID).click();
+}
+
+export async function selectSidebarStatusGrouping(page: Page): Promise<void> {
+  await openSidebarDisplayPage(page, "sidebar-display-grouping");
+  await page.getByTestId("sidebar-grouping-status").click();
 }
 
 export async function openMobileAgentSidebar(page: Page): Promise<void> {

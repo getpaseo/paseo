@@ -19,6 +19,7 @@ import {
 } from "../utils/checkout-git.js";
 import { runGitCommand as runGitCommandReal } from "../utils/run-git-command.js";
 import {
+  getWorkspaceFileWatcherBackend,
   getWorkspaceGitSelfHealPhaseMs,
   WorkspaceGitServiceImpl,
   type WorkspaceGitRuntimeSnapshot,
@@ -891,6 +892,20 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     expect(getWorkspaceGitSelfHealPhaseMs("/tmp/staggered-repo")).toBe(9_817);
   });
 
+  test.each([
+    ["darwin", "fs-events"],
+    ["linux", "inotify"],
+    ["win32", "windows"],
+  ] as const)("uses the native %s file watcher backend", (platform, backend) => {
+    expect(getWorkspaceFileWatcherBackend(platform)).toBe(backend);
+  });
+
+  test("rejects unsupported watcher platforms instead of using backend auto-detection", () => {
+    expect(() => getWorkspaceFileWatcherBackend("freebsd")).toThrow(
+      "No native workspace file watcher configured for freebsd",
+    );
+  });
+
   test("self-heal staggers workspaces and settles into a 120 second cadence", async () => {
     vi.setSystemTime(0);
     const otherRepoCwd = resolvePath("/tmp/staggered-repo");
@@ -1153,12 +1168,13 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
   test("settled GitHub self-heal reads stay on the slow poll window without refreshing git", async () => {
     let nowMs = 0;
     const githubReadCalls: Array<{ reason: string | undefined; tickMs: number }> = [];
+    const runner = vi.fn(async () => ({
+      stdout: currentPullRequestJson(),
+      stderr: "",
+    }));
     const github = createGitHubService({
       ttlMs: 0,
-      runner: vi.fn(async () => ({
-        stdout: currentPullRequestJson(),
-        stderr: "",
-      })),
+      runner,
       resolveGhPath: async () => "/usr/bin/gh",
       now: () => nowMs,
     });
@@ -1180,6 +1196,9 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await flushPromises();
     await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => {
+      expect(runner).toHaveBeenCalledTimes(1);
+    });
     await flushPromises();
     const gitReadsAfterInitialSnapshot = getCheckoutStatus.mock.calls.length;
 
