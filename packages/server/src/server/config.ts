@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolvePaseoNodeEnv } from "./paseo-env.js";
 import { z } from "zod";
-import { expandTilde } from "../utils/path.js";
+import { resolveConfiguredPath } from "../utils/path.js";
 
 import type { PaseoDaemonConfig } from "./bootstrap.js";
 import {
@@ -386,7 +386,7 @@ function resolveWebUiConfig(
   const rawDistDir = env.PASEO_WEB_UI_DIST_DIR ?? persisted.features?.webUi?.distDir;
   const trimmedDistDir = rawDistDir?.trim();
   const distDir = trimmedDistDir
-    ? path.resolve(path.isAbsolute(trimmedDistDir) ? trimmedDistDir : paseoHome, trimmedDistDir)
+    ? resolveConfiguredPath(paseoHome, trimmedDistDir)
     : BUNDLED_WEB_UI_DIST_DIR;
   return {
     enabled,
@@ -493,10 +493,7 @@ function resolveWorktreesRoot(
     return undefined;
   }
 
-  const expandedRoot = expandTilde(configuredRoot);
-  return path.isAbsolute(expandedRoot)
-    ? path.resolve(expandedRoot)
-    : path.resolve(paseoHome, expandedRoot);
+  return resolveConfiguredPath(paseoHome, configuredRoot);
 }
 
 function resolveAppendSystemPrompt(persisted: ReturnType<typeof loadPersistedConfig>): string {
