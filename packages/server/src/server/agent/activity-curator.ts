@@ -117,6 +117,13 @@ function formatToolCallEntry(
   item: Extract<AgentTimelineItem, { type: "tool_call" }>,
   options?: ActivityCuratorOptions,
 ): ActivityEntry {
+  // Agent-context attachments must expose only Paseo-owned markers. Take this
+  // path before inspecting provider details so excluded raw input, summaries,
+  // and error display data are never materialized for curation.
+  if (options?.portableToolMarkersOnly) {
+    return activityEntry(`[${getPortableToolMarker(item.detail)}]`);
+  }
+
   const inputJson = formatToolInputJson(inputFromUnknownDetail(item.detail));
   const display = buildToolCallDisplayModel({
     name: item.name,
@@ -125,9 +132,7 @@ function formatToolCallEntry(
     detail: item.detail,
     metadata: item.metadata,
   });
-  const displayName = options?.portableToolMarkersOnly
-    ? getPortableToolMarker(item.detail)
-    : display.displayName;
+  const displayName = display.displayName;
   const summary = options?.includeToolSummary === false ? null : formatToolSummary(display.summary);
   if (
     (options?.includeExternalToolInput ?? true) &&

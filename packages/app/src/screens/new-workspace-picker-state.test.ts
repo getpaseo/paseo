@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
 import {
+  clearAttachmentsForWorkspaceHostChange,
   clearPickerPrAttachmentForTargetChange,
   initialPickerSelectionState,
   reducePickerSelection,
@@ -49,6 +50,17 @@ function makeIssueItem(number: number): ForgeSearchItem {
 
 function issueAttachment(number: number): UserComposerAttachment {
   return { kind: "github_issue", item: makeIssueItem(number) };
+}
+
+function agentContextAttachment(serverId: string, agentId: string): UserComposerAttachment {
+  return {
+    kind: "agent_context",
+    source: {
+      serverId,
+      agentId,
+      title: `Agent ${agentId}`,
+    },
+  };
 }
 
 describe("syncPickerPrAttachment", () => {
@@ -159,6 +171,24 @@ describe("clearPickerPrAttachmentForTargetChange", () => {
         nextTargetId: "server-b",
       }),
     ).toEqual([issue]);
+  });
+});
+
+describe("clearAttachmentsForWorkspaceHostChange", () => {
+  it("does not restore a cleared PR while removing foreign agent context", () => {
+    const pickerPr = prAttachment(makePrItem(202, "Picker PR"), "new-workspace-picker");
+    const currentHostAgent = agentContextAttachment("server-b", "source-b");
+    const foreignHostAgent = agentContextAttachment("server-a", "source-a");
+    const issue = issueAttachment(44);
+
+    expect(
+      clearAttachmentsForWorkspaceHostChange({
+        attachments: [issue, pickerPr, currentHostAgent, foreignHostAgent],
+        currentTargetId: "server-a",
+        nextTargetId: "server-b",
+        nextServerId: "server-b",
+      }),
+    ).toEqual([issue, currentHostAgent]);
   });
 });
 
