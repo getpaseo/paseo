@@ -246,15 +246,13 @@ export interface SetupFinishNotificationParams {
   childAgentId: string;
   callerAgentId: string;
   requireParentOwnership?: boolean;
-  // "once" (the default) fires a single
-  // notification then disarms. "each" re-arms after every finish so an
-  // orchestrator hears about every turn of a long-lived child; it disarms only
-  // when the child closes or the caller is archived.
-  notifyMode?: FinishNotifyMode;
   logger: Logger;
 }
 
-export type FinishNotifyMode = "once" | "each";
+// The watcher stays armed and re-notifies on every finish of the child; it
+// disarms only when the child closes or the caller is archived. Watchers only
+// exist for agent callers, so an orchestrator hears about every turn of a
+// long-lived child.
 
 // "was closed" covers a watched child that is killed/closed before finishing.
 type FinishNotificationReason = "finished" | "errored" | "needs permission" | "was closed";
@@ -290,7 +288,6 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     childAgentId,
     callerAgentId,
     requireParentOwnership = false,
-    notifyMode = "once",
     logger,
   } = params;
   let hasSeenRunning = false;
@@ -301,25 +298,22 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     if (fired) {
       return;
     }
-    if (notifyMode === "once" || reason === "was closed") {
+    if (reason === "was closed") {
       fired = true;
       unsubscribe?.();
     } else if (reason !== "needs permission") {
-      // notifyMode "each": stay armed — reset the run gate so the
-      // child's next running→idle cycle notifies again. Permission requests
-      // fire mid-turn: the child is still running, so leave the gate up or
-      // the turn's own finish would be swallowed.
+      // Stay armed — reset the run gate so the child's next running→idle
+      // cycle notifies again. Permission requests fire mid-turn: the child is
+      // still running, so leave the gate up or the turn's own finish would be
+      // swallowed.
       hasSeenRunning = false;
     }
 
     const callerRecord = await agentStorage.get(callerAgentId);
-    if (notifyMode === "each" && callerRecord?.archivedAt) {
+    if (callerRecord?.archivedAt) {
       // Archived caller can never hear us — disarm.
       fired = true;
       unsubscribe?.();
-      return;
-    }
-    if (callerRecord?.archivedAt) {
       return;
     }
 
