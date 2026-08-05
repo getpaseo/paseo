@@ -1,11 +1,14 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import {
   openFileExplorer,
   openFileFromExplorer,
   expectFileTabOpen,
 } from "../support/helpers/file-explorer";
+import { openSettings } from "../support/helpers/app";
+import { openSettingsSection, clickSettingsBackToWorkspace } from "../support/helpers/settings";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
@@ -49,6 +52,11 @@ async function openWorkspaceFile(page: Page, filename: string): Promise<void> {
   if (!(await tree.isVisible())) await openFileExplorer(page);
   await openFileFromExplorer(page, filename);
   await expectFileTabOpen(page, filename);
+}
+
+async function columnWidth(header: Locator): Promise<number> {
+  const box = await header.boundingBox();
+  return box ? box.width : 0;
 }
 
 function tableRows(page: Page): Promise<string[][]> {
@@ -577,6 +585,34 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(editor(page)).toContainText("katherine,42");
     await selectFileView(page, "Preview");
     await expect(page.getByTestId("file-table-preview")).toBeVisible();
+  });
+
+  test("resizes table columns when the code font size changes", async ({ page, withWorkspace }) => {
+    test.setTimeout(120_000);
+    const workspace = await withWorkspace({ prefix: "file-editing-table-appearance-" });
+    await writeFile(
+      path.join(workspace.repoPath, "sizes.csv"),
+      "region,owner\nus-east,ada\n",
+      "utf8",
+    );
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "sizes.csv");
+
+    const header = page.getByTestId("file-table-sort-0");
+    await expect(header).toBeVisible();
+    const initialWidth = await columnWidth(header);
+
+    await openSettings(page);
+    await openSettingsSection(page, "appearance");
+    const codeSize = page.getByLabel("Code font size");
+    await codeSize.fill("22");
+    await codeSize.press("Enter");
+    await clickSettingsBackToWorkspace(page);
+
+    // Column widths and row height are derived from the code font size, and that
+    // token is patched at runtime rather than through a React render.
+    await expect(header).toBeVisible();
+    await expect.poll(() => columnWidth(header)).toBeGreaterThan(initialWidth);
   });
 
   test("names a header-only CSV empty rather than filtered", async ({ page, withWorkspace }) => {
