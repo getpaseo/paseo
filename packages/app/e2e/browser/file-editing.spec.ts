@@ -587,6 +587,29 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(page.getByTestId("file-table-preview")).toBeVisible();
   });
 
+  test("survives a CSV that loses the column it was sorted and filtered by", async ({
+    page,
+    withWorkspace,
+  }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "file-editing-table-shrink-" });
+    const csvPath = path.join(workspace.repoPath, "shrinking.csv");
+    await writeFile(csvPath, "name,runs\ngrace,10\nada,9\n", "utf8");
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "shrinking.csv");
+
+    await page.getByTestId("file-table-sort-1").click();
+    await page.getByTestId("file-table-filter-1").fill("9");
+    await expect.poll(() => tableRows(page)).toEqual([["ada", "9"]]);
+
+    // The runs column disappears under an active sort and filter on it.
+    await writeFile(csvPath, "name\ngrace\nada\n", "utf8");
+
+    await expect(page.getByTestId("file-table-sort-1")).toHaveCount(0);
+    await expect(page.getByTestId("file-table-row-count")).toHaveText("2 rows");
+    await expect.poll(() => tableRows(page)).toEqual([["grace"], ["ada"]]);
+  });
+
   test("resizes table columns when the code font size changes", async ({ page, withWorkspace }) => {
     test.setTimeout(120_000);
     const workspace = await withWorkspace({ prefix: "file-editing-table-appearance-" });

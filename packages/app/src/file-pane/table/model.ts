@@ -23,6 +23,11 @@ export interface TableSort {
 /** Filter text per column index. A column with no entry is unfiltered. */
 export type TableFilters = ReadonlyMap<number, string>;
 
+export interface TableViewState {
+  sort: TableSort | null;
+  filters: TableFilters;
+}
+
 interface TableViewInput {
   rows: TableRow[];
   filters: TableFilters;
@@ -77,6 +82,24 @@ export function tableRowsInView({ rows, filters, sort }: TableViewInput): TableR
     const order = compareCells(leftCell, rightCell) * direction;
     return order === 0 ? left.index - right.index : order;
   });
+}
+
+// Sort and filter state outlives the parse, and a file can lose columns while it
+// is open. Resolving the state against the current column count keeps a stale
+// index from reaching a row, and drops a filter the user could no longer see to
+// clear.
+export function tableViewWithinColumns(state: TableViewState, columnCount: number): TableViewState {
+  const sort = state.sort && state.sort.column < columnCount ? state.sort : null;
+  const stale = [...state.filters.keys()].filter((column) => column >= columnCount);
+  if (sort === state.sort && stale.length === 0) {
+    return state;
+  }
+
+  const filters = new Map(state.filters);
+  for (const column of stale) {
+    filters.delete(column);
+  }
+  return { sort, filters };
 }
 
 export function nextTableSort(current: TableSort | null, column: number): TableSort | null {
@@ -135,9 +158,9 @@ function padCells(cells: string[], width: number): string[] {
   return Array.from({ length: width }, (_, index) => cells[index] ?? "");
 }
 
-// An extension that names its delimiter wins whenever that delimiter is present:
-// a .tsv header holding "last, first" has as many commas as tabs, and counting
-// alone would split the name in half.
+// An extension that names its delimiter is taken at its word: a .tsv header
+// holding "last, first" has as many commas as tabs, and a single-column .tsv
+// holding prose has more commas than tabs. Counting loses both.
 function namedDelimiter(filePath: string): string | null {
   const normalizedPath = filePath.trim().toLowerCase();
   const named = EXTENSION_DELIMITERS.find((entry) => normalizedPath.endsWith(entry.extension));
@@ -145,11 +168,9 @@ function namedDelimiter(filePath: string): string | null {
 }
 
 function detectDelimiter(text: string, named: string | null): string {
-  const header = headerRecord(text);
-  if (named && countUnquoted(header, named) > 0) {
-    return named;
-  }
+  if (named) return named;
 
+  const header = headerRecord(text);
   let best = DELIMITERS[0];
   let bestCount = 0;
   for (const candidate of DELIMITERS) {

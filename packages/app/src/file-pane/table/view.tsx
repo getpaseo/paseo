@@ -13,6 +13,7 @@ import {
   nextTableSort,
   parseDelimitedTable,
   tableRowsInView,
+  tableViewWithinColumns,
   type TableColumn,
   type TableFilters,
   type TableGrid,
@@ -64,9 +65,15 @@ export function FileTablePreview({ content, filePath, testID }: FileTablePreview
   const table = useMemo(() => parseDelimitedTable(content, filePath), [content, filePath]);
   const [sort, setSort] = useState<TableSort | null>(null);
   const [filters, setFilters] = useState<TableFilters>(EMPTY_FILTERS);
+  // The live file can lose columns while it is open, so what the user asked for
+  // is resolved against what the file currently has.
+  const view = useMemo(
+    () => tableViewWithinColumns({ sort, filters }, table.columns.length),
+    [sort, filters, table.columns.length],
+  );
   const rows = useMemo(
-    () => tableRowsInView({ rows: table.rows, filters, sort }),
-    [table.rows, filters, sort],
+    () => tableRowsInView({ rows: table.rows, filters: view.filters, sort: view.sort }),
+    [table.rows, view],
   );
 
   const toggleSort = useCallback((column: number) => {
@@ -102,8 +109,8 @@ export function FileTablePreview({ content, filePath, testID }: FileTablePreview
         <TableSurface
           table={table}
           rows={rows}
-          filters={filters}
-          sort={sort}
+          filters={view.filters}
+          sort={view.sort}
           onSort={toggleSort}
           onFilter={setColumnFilter}
         />

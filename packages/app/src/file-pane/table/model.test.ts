@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { nextTableSort, parseDelimitedTable, tableRowsInView, type TableRow } from "./model";
+import {
+  nextTableSort,
+  parseDelimitedTable,
+  tableRowsInView,
+  tableViewWithinColumns,
+  type TableRow,
+  type TableSort,
+} from "./model";
 
 describe("parseDelimitedTable", () => {
   it("reads the first row as column labels and the rest as rows", () => {
@@ -62,6 +69,13 @@ describe("parseDelimitedTable", () => {
 
     expect(table.columns.map((column) => column.label)).toEqual(["last, first", "age"]);
     expect(table.rows).toEqual([{ index: 0, cells: ["lovelace, ada", "36"] }]);
+  });
+
+  it("keeps a .tsv single column whose text contains commas", () => {
+    const table = parseDelimitedTable("description, notes\nhello, world\n", "notes.tsv");
+
+    expect(table.columns.map((column) => column.label)).toEqual(["description, notes"]);
+    expect(table.rows).toEqual([{ index: 0, cells: ["hello, world"] }]);
   });
 
   it("still sniffs the delimiter when the extension does not name one", () => {
@@ -218,6 +232,52 @@ describe("tableRowsInView", () => {
     tableRowsInView({ rows, filters: new Map(), sort: { column: 1, direction: "desc" } });
 
     expect(rows).toEqual(original);
+  });
+});
+
+describe("tableViewWithinColumns", () => {
+  it("keeps a sort and filters that still have columns", () => {
+    const sort: TableSort = { column: 1, direction: "asc" };
+    const filters = new Map([[0, "ada"]]);
+
+    const view = tableViewWithinColumns({ sort, filters }, 2);
+
+    expect(view.sort).toBe(sort);
+    expect(view.filters).toBe(filters);
+  });
+
+  it("drops a sort whose column the file no longer has", () => {
+    const view = tableViewWithinColumns(
+      { sort: { column: 2, direction: "desc" }, filters: new Map() },
+      2,
+    );
+
+    expect(view.sort).toBe(null);
+  });
+
+  it("drops filters past the last column and keeps the rest", () => {
+    const view = tableViewWithinColumns(
+      {
+        sort: null,
+        filters: new Map([
+          [0, "ada"],
+          [3, "gone"],
+        ]),
+      },
+      2,
+    );
+
+    expect([...view.filters]).toEqual([[0, "ada"]]);
+  });
+
+  it("drops everything when the file has no columns", () => {
+    const view = tableViewWithinColumns(
+      { sort: { column: 0, direction: "asc" }, filters: new Map([[0, "ada"]]) },
+      0,
+    );
+
+    expect(view.sort).toBe(null);
+    expect([...view.filters]).toEqual([]);
   });
 });
 
