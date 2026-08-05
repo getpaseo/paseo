@@ -10,7 +10,8 @@ import { useIsLiveVoiceStripDocked } from "@/live-voice/live-voice-placement";
  * strip renders on, so the inset never lags a frame behind it.
  *
  * Not for window-covering overlays — modals, sheets, and toasts render over the
- * strip rather than above it, so they keep `useSafeAreaInsets`.
+ * strip rather than above it, so they keep `useSafeAreaInsets`. Compact panels
+ * do use it: they cover the content row only, so the strip stays below them.
  */
 export function useScreenBottomInset(): number {
   const insets = useSafeAreaInsets();
