@@ -37,10 +37,11 @@ interface TableFilterTerm {
 // Ordered by how often a file in the wild uses them, which is also the tie-break
 // order when the header row has the same count of two candidates.
 const DELIMITERS = [",", "\t", ";", "|"];
+const EXTENSION_DELIMITERS = [{ extension: ".tsv", delimiter: "\t" }];
 const QUOTE = '"';
 
-export function parseDelimitedTable(text: string): TableGrid {
-  const delimiter = detectDelimiter(text);
+export function parseDelimitedTable(text: string, filePath = ""): TableGrid {
+  const delimiter = detectDelimiter(text, namedDelimiter(filePath));
   const records = splitRecords(text, delimiter);
   if (records.length === 0) {
     return { columns: [], rows: [] };
@@ -134,8 +135,21 @@ function padCells(cells: string[], width: number): string[] {
   return Array.from({ length: width }, (_, index) => cells[index] ?? "");
 }
 
-function detectDelimiter(text: string): string {
+// An extension that names its delimiter wins whenever that delimiter is present:
+// a .tsv header holding "last, first" has as many commas as tabs, and counting
+// alone would split the name in half.
+function namedDelimiter(filePath: string): string | null {
+  const normalizedPath = filePath.trim().toLowerCase();
+  const named = EXTENSION_DELIMITERS.find((entry) => normalizedPath.endsWith(entry.extension));
+  return named ? named.delimiter : null;
+}
+
+function detectDelimiter(text: string, named: string | null): string {
   const header = headerRecord(text);
+  if (named && countUnquoted(header, named) > 0) {
+    return named;
+  }
+
   let best = DELIMITERS[0];
   let bestCount = 0;
   for (const candidate of DELIMITERS) {
@@ -183,6 +197,10 @@ function splitRecords(text: string, delimiter: string): string[][] {
   let cells: string[] = [];
   let cell = "";
   let quoted = false;
+  // A blank line is a separator; a line of empty cells is data. They both parse
+  // to empty strings, so the difference has to be caught while reading: a
+  // delimiter, a quote, or any character means the line said something.
+  let written = false;
 
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index];
@@ -204,31 +222,34 @@ function splitRecords(text: string, delimiter: string): string[][] {
     // rest of the file.
     if (char === QUOTE && cell.length === 0) {
       quoted = true;
+      written = true;
       continue;
     }
     if (char === delimiter) {
       cells.push(cell);
       cell = "";
+      written = true;
       continue;
     }
     if (char === "\n" || char === "\r") {
       if (char === "\r" && text[index + 1] === "\n") index += 1;
-      cells.push(cell);
-      records.push(cells);
+      if (written) {
+        cells.push(cell);
+        records.push(cells);
+      }
       cells = [];
       cell = "";
+      written = false;
       continue;
     }
     cell += char;
+    written = true;
   }
 
-  if (cell.length > 0 || cells.length > 0) {
+  if (written) {
     cells.push(cell);
     records.push(cells);
   }
 
-  // Blank records are separators, not data: a trailing newline, a Windows file
-  // ending in CRLF CRLF, or a stray gap between blocks. Row indexes are view
-  // positions rather than file line numbers, so dropping them costs nothing.
-  return records.filter((record) => record.some((value) => value.length > 0));
+  return records;
 }

@@ -573,8 +573,23 @@ test.describe("CodeMirror workspace file editing", () => {
     await selectFileView(page, "Source");
     await expect(page.getByTestId("file-source-editor")).toBeVisible();
     await expect(page.getByTestId("file-table-preview")).toHaveCount(0);
+    await expect(editor(page)).toContainText("name,runs");
+    await expect(editor(page)).toContainText("katherine,42");
     await selectFileView(page, "Preview");
     await expect(page.getByTestId("file-table-preview")).toBeVisible();
+  });
+
+  test("names a header-only CSV empty rather than filtered", async ({ page, withWorkspace }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "file-editing-table-empty-" });
+    await writeFile(path.join(workspace.repoPath, "headers.csv"), "region,owner\n", "utf8");
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "headers.csv");
+
+    await expect(page.getByTestId("file-table-preview")).toBeVisible();
+    await expect(page.getByTestId("file-table-sort-0")).toHaveText("region");
+    await expect(page.getByText("No rows", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("file-table-row-count")).toHaveText("0 rows");
   });
 
   test("runs inline scripts without allowing fetch egress", async ({ page, withWorkspace }) => {

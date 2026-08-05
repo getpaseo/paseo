@@ -4,6 +4,7 @@ import { StyleSheet, UnistylesRuntime, withUnistyles } from "react-native-unisty
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react-native";
+import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { Button } from "@/components/ui/button";
 import { createControlGeometry } from "@/components/ui/control-geometry";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
@@ -14,6 +15,7 @@ import {
   tableRowsInView,
   type TableColumn,
   type TableFilters,
+  type TableGrid,
   type TableRow,
   type TableSort,
   type TableSortDirection,
@@ -41,6 +43,9 @@ const CELL_PADDING = 24;
 // the header row stops lining up with the data.
 const HEADER_CHROME = 52;
 const MONO_CHARACTER_RATIO = 0.62;
+// Shared by the rendered cell and by getItemLayout, so a row's reported height
+// is the height it actually draws at.
+const CELL_LINE_HEIGHT_RATIO = 1.45;
 
 interface TableCellStyle {
   width: number;
@@ -48,29 +53,21 @@ interface TableCellStyle {
 
 const EMPTY_FILTERS: TableFilters = new Map();
 
-export function FileTablePreview({ content, testID }: { content: string; testID?: string }) {
+interface FileTablePreviewProps {
+  content: string;
+  filePath: string;
+  testID?: string;
+}
+
+export function FileTablePreview({ content, filePath, testID }: FileTablePreviewProps) {
   const { t } = useTranslation();
-  const table = useMemo(() => parseDelimitedTable(content), [content]);
+  const table = useMemo(() => parseDelimitedTable(content, filePath), [content, filePath]);
   const [sort, setSort] = useState<TableSort | null>(null);
   const [filters, setFilters] = useState<TableFilters>(EMPTY_FILTERS);
   const rows = useMemo(
     () => tableRowsInView({ rows: table.rows, filters, sort }),
     [table.rows, filters, sort],
   );
-  const theme = UnistylesRuntime.getTheme();
-  const cellWidths = useMemo(
-    () => columnWidths({ table, fontSize: theme.fontSize.code }),
-    [table, theme.fontSize.code],
-  );
-  const cellStyles = useMemo(
-    () => cellWidths.map((width) => inlineUnistylesStyle({ width })),
-    [cellWidths],
-  );
-  const rowHeight = Math.round(theme.fontSize.code * 1.45) + theme.spacing[2] * 2;
-  const gridStyle = useMemo(() => {
-    const totalWidth = cellWidths.reduce((sum, width) => sum + width, 0);
-    return inlineUnistylesStyle({ width: totalWidth });
-  }, [cellWidths]);
 
   const toggleSort = useCallback((column: number) => {
     setSort((current) => nextTableSort(current, column));
@@ -83,6 +80,74 @@ export function FileTablePreview({ content, testID }: { content: string; testID?
       return next;
     });
   }, []);
+
+  if (table.columns.length === 0) {
+    return (
+      <View style={styles.centerState} testID={testID}>
+        <Text style={styles.emptyText}>{t("panels.file.table.empty")}</Text>
+      </View>
+    );
+  }
+
+  const hasRows = rows.length > 0;
+  const emptyMessage = table.rows.length === 0 ? "empty" : "noMatches";
+
+  return (
+    <View style={styles.container} testID={testID}>
+      {/* The grid sizes itself from the code font, which appearance settings
+          patch at runtime without re-rendering React. Remounting it there keeps
+          the column widths and row height honest. Sort and filter state lives
+          out here so it survives that remount. */}
+      <AppearanceStyleBoundary>
+        <TableSurface
+          table={table}
+          rows={rows}
+          filters={filters}
+          sort={sort}
+          onSort={toggleSort}
+          onFilter={setColumnFilter}
+        />
+      </AppearanceStyleBoundary>
+      {hasRows ? null : (
+        // Outside the scroller so a wide table cannot push the message off screen
+        // while the filter that emptied it stays reachable.
+        <View style={styles.centerState}>
+          <Text style={styles.emptyText}>{t(`panels.file.table.${emptyMessage}`)}</Text>
+        </View>
+      )}
+      <View style={styles.footer}>
+        <Text style={styles.footerText} testID="file-table-row-count">
+          {rowCountLabel({ visible: rows.length, total: table.rows.length, t })}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+interface TableSurfaceProps {
+  table: TableGrid;
+  rows: TableRow[];
+  filters: TableFilters;
+  sort: TableSort | null;
+  onSort(column: number): void;
+  onFilter(column: number, term: string): void;
+}
+
+function TableSurface({ table, rows, filters, sort, onSort, onFilter }: TableSurfaceProps) {
+  const theme = UnistylesRuntime.getTheme();
+  const cellWidths = useMemo(
+    () => columnWidths({ table, fontSize: theme.fontSize.code }),
+    [table, theme.fontSize.code],
+  );
+  const cellStyles = useMemo(
+    () => cellWidths.map((width) => inlineUnistylesStyle({ width })),
+    [cellWidths],
+  );
+  const rowHeight = Math.round(theme.fontSize.code * CELL_LINE_HEIGHT_RATIO) + theme.spacing[2] * 2;
+  const gridStyle = useMemo(() => {
+    const totalWidth = cellWidths.reduce((sum, width) => sum + width, 0);
+    return inlineUnistylesStyle({ width: totalWidth });
+  }, [cellWidths]);
   const renderRow = useCallback(
     ({ item }: ListRenderItemInfo<TableRow>) => (
       <TableBodyRow row={item} columns={table.columns} cellStyles={cellStyles} />
@@ -97,74 +162,52 @@ export function FileTablePreview({ content, testID }: { content: string; testID?
     }),
     [rowHeight],
   );
-
-  if (table.columns.length === 0) {
-    return (
-      <View style={styles.centerState} testID={testID}>
-        <Text style={styles.emptyText}>{t("panels.file.table.empty")}</Text>
-      </View>
-    );
-  }
-
   const hasRows = rows.length > 0;
 
+  // The header, the filters, and the rows share one horizontal scroller so a
+  // cell never drifts out from under its column.
   return (
-    <View style={styles.container} testID={testID}>
-      {/* The header, the filters, and the rows share one horizontal scroller so
-          a cell never drifts out from under its column. */}
-      <ScrollView
-        horizontal
-        style={hasRows ? styles.gridFill : styles.gridChrome}
-        contentContainerStyle={styles.gridScrollContent}
-      >
-        <View style={gridStyle}>
-          <View style={styles.headerRow}>
-            {table.columns.map((column) => (
-              <TableHeaderCell
-                key={column.index}
-                column={column}
-                cellStyle={cellStyles[column.index]}
-                sort={sort}
-                onPress={toggleSort}
-              />
-            ))}
-          </View>
-          <View style={styles.filterRow}>
-            {table.columns.map((column) => (
-              <TableFilterCell
-                key={column.index}
-                column={column}
-                cellStyle={cellStyles[column.index]}
-                onChange={setColumnFilter}
-              />
-            ))}
-          </View>
-          {hasRows ? (
-            <FlatList
-              data={rows}
-              renderItem={renderRow}
-              keyExtractor={rowKey}
-              getItemLayout={rowLayout}
-              style={styles.body}
-              nestedScrollEnabled
-              showsVerticalScrollIndicator
+    <ScrollView
+      horizontal
+      style={hasRows ? styles.gridFill : styles.gridChrome}
+      contentContainerStyle={styles.gridScrollContent}
+    >
+      <View style={gridStyle}>
+        <View style={styles.headerRow}>
+          {table.columns.map((column) => (
+            <TableHeaderCell
+              key={column.index}
+              column={column}
+              cellStyle={cellStyles[column.index]}
+              sort={sort}
+              onPress={onSort}
             />
-          ) : null}
+          ))}
         </View>
-      </ScrollView>
-      {hasRows ? null : (
-        // Outside the scroller so a wide table cannot push the message off screen
-        // while the filter that emptied it stays reachable.
-        <View style={styles.centerState}>
-          <Text style={styles.emptyText}>{t("panels.file.table.noMatches")}</Text>
+        <View style={styles.filterRow}>
+          {table.columns.map((column) => (
+            <TableFilterCell
+              key={column.index}
+              column={column}
+              cellStyle={cellStyles[column.index]}
+              term={filters.get(column.index) ?? ""}
+              onChange={onFilter}
+            />
+          ))}
         </View>
-      )}
-      <View style={styles.footer}>
-        <Text style={styles.footerText} testID="file-table-row-count">
-          {rowCountLabel({ visible: rows.length, total: table.rows.length, t })}
-        </Text>
+        {hasRows ? (
+          <FlatList
+            data={rows}
+            renderItem={renderRow}
+            keyExtractor={rowKey}
+            getItemLayout={rowLayout}
+            style={styles.body}
+            nestedScrollEnabled
+            showsVerticalScrollIndicator
+          />
+        ) : null}
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
@@ -258,18 +301,20 @@ function TableSortIndicator({ direction }: { direction: TableSortDirection | nul
 interface TableFilterCellProps {
   column: TableColumn;
   cellStyle: TableCellStyle;
+  term: string;
   onChange(column: number, term: string): void;
 }
 
 const TableFilterCell = memo(function TableFilterCell({
   column,
   cellStyle,
+  term,
   onChange,
 }: TableFilterCellProps) {
   const { t } = useTranslation();
   const [focused, setFocused] = useState(false);
   const change = useCallback(
-    (term: string) => onChange(column.index, term),
+    (nextTerm: string) => onChange(column.index, nextTerm),
     [column.index, onChange],
   );
   const focus = useCallback(() => setFocused(true), []);
@@ -283,6 +328,10 @@ const TableFilterCell = memo(function TableFilterCell({
     <View style={[styles.filterCell, cellStyle]}>
       <ThemedFilterInput
         style={[styles.filterInput, focused ? styles.filterInputFocused : null]}
+        // Uncontrolled on purpose: a controlled TextInput replays stale values
+        // during fast typing. The seed only matters when the grid remounts under
+        // an active filter, which is what an appearance change does.
+        defaultValue={term}
         placeholder={t("panels.file.table.filter")}
         accessibilityLabel={t("panels.file.table.filterColumn", { column: label })}
         autoCapitalize="none"
@@ -421,7 +470,7 @@ const styles = StyleSheet.create((theme) => {
       color: theme.colors.foreground,
       fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
-      lineHeight: Math.round(theme.fontSize.code * 1.45),
+      lineHeight: Math.round(theme.fontSize.code * CELL_LINE_HEIGHT_RATIO),
       paddingHorizontal: theme.spacing[3],
       paddingVertical: theme.spacing[2],
     },

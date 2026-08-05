@@ -234,7 +234,12 @@ function RenderedTextPreview({ renderKind, content, filePath }: RenderedTextPrev
     // to whichever file the pane opened first.
     return (
       <View style={styles.previewScrollContainer}>
-        <FileTablePreview key={filePath} content={content} testID="file-table-preview" />
+        <FileTablePreview
+          key={filePath}
+          content={content}
+          filePath={filePath}
+          testID="file-table-preview"
+        />
       </View>
     );
   }

@@ -57,6 +57,46 @@ describe("parseDelimitedTable", () => {
     ]);
   });
 
+  it("splits a .tsv file on tabs even when the header also holds a comma", () => {
+    const table = parseDelimitedTable("last, first\tage\nlovelace, ada\t36", "people.tsv");
+
+    expect(table.columns.map((column) => column.label)).toEqual(["last, first", "age"]);
+    expect(table.rows).toEqual([{ index: 0, cells: ["lovelace, ada", "36"] }]);
+  });
+
+  it("still sniffs the delimiter when the extension does not name one", () => {
+    const table = parseDelimitedTable("a;b\n1;2", "data.csv");
+
+    expect(table.columns.map((column) => column.label)).toEqual(["a", "b"]);
+  });
+
+  it("keeps a row whose cells are all empty", () => {
+    const table = parseDelimitedTable("a,b\n,\n1,2");
+
+    expect(table.rows).toEqual([
+      { index: 0, cells: ["", ""] },
+      { index: 1, cells: ["1", "2"] },
+    ]);
+  });
+
+  it("keeps a row holding a single quoted empty cell", () => {
+    const table = parseDelimitedTable('value\n""\nkept');
+
+    expect(table.rows).toEqual([
+      { index: 0, cells: [""] },
+      { index: 1, cells: ["kept"] },
+    ]);
+  });
+
+  it("drops blank lines between records", () => {
+    const table = parseDelimitedTable("a,b\n1,2\n\n3,4\n");
+
+    expect(table.rows).toEqual([
+      { index: 0, cells: ["1", "2"] },
+      { index: 1, cells: ["3", "4"] },
+    ]);
+  });
+
   it("accepts CRLF line endings and a trailing newline", () => {
     const table = parseDelimitedTable("a,b\r\n1,2\r\n");
 
