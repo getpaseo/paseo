@@ -80,7 +80,12 @@ function AutocompleteRow({
   );
 
   const row = (
-    <Pressable onLayout={handleLayout} onPress={handlePress} style={pressableStyle}>
+    <Pressable
+      testID={`composer-autocomplete-option-${option.id}`}
+      onLayout={handleLayout}
+      onPress={handlePress}
+      style={pressableStyle}
+    >
       {isFileOrDir ? (
         <>
           <View style={styles.itemLeading}>
@@ -121,7 +126,12 @@ function AutocompleteRow({
     return (
       <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild>{row}</TooltipTrigger>
-        <TooltipContent side="top" align="start" maxWidth={360}>
+        <TooltipContent
+          side="top"
+          align="start"
+          maxWidth={360}
+          testID={`composer-autocomplete-tooltip-${option.id}`}
+        >
           <Text style={styles.tooltipText}>{optionDescription}</Text>
         </TooltipContent>
       </Tooltip>
