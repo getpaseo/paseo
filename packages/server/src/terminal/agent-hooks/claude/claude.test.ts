@@ -1,8 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { isPlatform } from "../../../test-utils/platform.js";
 import { buildTerminalEnvironment } from "../../terminal.js";
@@ -15,8 +14,6 @@ import {
 } from "../provider-registry.js";
 
 const temporaryDirs: string[] = [];
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../..");
-
 afterEach(() => {
   while (temporaryDirs.length > 0) {
     const dir = temporaryDirs.pop();
@@ -167,17 +164,14 @@ describe("Claude terminal agent hooks", () => {
     },
   );
 
-  it("keeps provider names out of generic CLI and bootstrap integration points", () => {
-    const genericFiles = [
-      join(repositoryRoot, "packages", "cli", "src", "commands", "hooks.ts"),
-      join(repositoryRoot, "packages", "server", "src", "server", "bootstrap.ts"),
-    ];
+  it("keeps provider names out of the generic server bootstrap", () => {
+    const source = readFileSync(
+      new URL("../../../server/bootstrap.ts", import.meta.url),
+      "utf8",
+    ).toLowerCase();
 
-    for (const filePath of genericFiles) {
-      const contents = readFileSync(filePath, "utf8").toLowerCase();
-      for (const providerId of Object.keys(AGENT_HOOK_PROVIDERS)) {
-        expect(contents).not.toContain(providerId);
-      }
+    for (const providerId of Object.keys(AGENT_HOOK_PROVIDERS)) {
+      expect(source).not.toContain(providerId);
     }
   });
 

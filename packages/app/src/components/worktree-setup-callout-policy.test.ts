@@ -51,7 +51,7 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
       }),
     ).toMatchObject({
       id: "worktree-setup-missing:server-1:prj_local",
-      projectSettingsRoute: "/settings/projects/server-1/prj_local",
+      projectSettingsRoute: "/settings/hosts/server-1/projects/prj_local",
       testID: "worktree-setup-callout-prj_local",
     });
   });

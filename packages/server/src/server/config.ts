@@ -22,6 +22,7 @@ import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
 import { hashDaemonPassword } from "./auth.js";
 import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
+import { resolveGitProcessPolicy } from "../utils/git-process-scheduler.js";
 
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
@@ -85,6 +86,16 @@ function normalizeLogEnv(value: string | undefined): string | undefined {
   }
 
   return value.trim().toLowerCase();
+}
+
+function resolveGitProcessConfig(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): NonNullable<PaseoDaemonConfig["git"]> {
+  return resolveGitProcessPolicy({
+    env,
+    persisted: persisted.daemon?.git,
+  });
 }
 
 export type CliConfigOverrides = Partial<{
@@ -187,6 +198,7 @@ interface ResolveRelayInput {
 
 interface ResolvedRelay {
   enabled: boolean;
+  enabledMutable: boolean;
   endpoint: string;
   publicEndpoint: string;
   useTls: boolean;
@@ -210,11 +222,11 @@ function resolveTlsFromEnv(
 }
 
 function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
+  const environmentEnabled = parseBooleanEnv(input.env.PASEO_RELAY_ENABLED);
+  // COMPAT(relayOptInDefault): configs created before v0.2.6 may omit this field.
+  // Preserve their relay-on behavior until 2027-01-31; new homes materialize false.
   const enabled =
-    input.cliRelayEnabled ??
-    parseBooleanEnv(input.env.PASEO_RELAY_ENABLED) ??
-    input.persisted.daemon?.relay?.enabled ??
-    true;
+    input.cliRelayEnabled ?? environmentEnabled ?? input.persisted.daemon?.relay?.enabled ?? true;
   const endpoint =
     input.env.PASEO_RELAY_ENDPOINT ??
     input.persisted.daemon?.relay?.endpoint ??
@@ -235,7 +247,14 @@ function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
     input.persisted.daemon?.relay?.publicUseTls,
     useTls,
   );
-  return { enabled, endpoint, publicEndpoint, useTls, publicUseTls };
+  return {
+    enabled,
+    enabledMutable: input.cliRelayEnabled === undefined && environmentEnabled === undefined,
+    endpoint,
+    publicEndpoint,
+    useTls,
+    publicUseTls,
+  };
 }
 
 interface ResolvedVoiceLlm {
@@ -496,6 +515,7 @@ export function loadConfig(
     mcpEnabled,
     mcpInjectIntoAgents,
     browserToolsEnabled,
+    git: resolveGitProcessConfig(env, persisted),
     autoArchiveAfterMerge,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
     appendSystemPrompt,
@@ -506,6 +526,7 @@ export function loadConfig(
     staticDir: "public",
     agentClients: {},
     relayEnabled: relay.enabled,
+    relayEnabledMutable: relay.enabledMutable,
     relayEndpoint: relay.endpoint,
     relayPublicEndpoint: relay.publicEndpoint,
     relayUseTls: relay.useTls,

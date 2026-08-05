@@ -2,20 +2,32 @@
 
 The file explorer uses colored SVG icons from [`material-icon-theme`](https://github.com/material-extensions/vscode-material-icon-theme) (installed as a dev dependency in `packages/app`).
 
-Icons are inlined as SVG strings in:
-
-```
-packages/app/src/components/material-file-icons.ts
-```
-
-This file is auto-generated. Do not edit it by hand.
-
 ## How it works
 
-- `SVG_ICONS` maps icon names (e.g. `"typescript"`) to raw SVG strings
-- `EXTENSION_TO_ICON` maps file extensions (e.g. `"ts"`) to icon names
-- `getFileIconSvg(fileName)` returns the SVG string for a given filename, falling back to a generic file icon
-- `packages/app/src/components/file-explorer-pane.tsx` is the only consumer; it renders the SVG with `SvgXml` from `react-native-svg`
+Two files:
+
+- `packages/app/src/components/material-file-icons.ts` — the vendor table. `SVG_ICONS` maps icon
+  names to SVG strings copied verbatim from the theme, `EXTENSION_TO_ICON` maps extensions to icon
+  names, and `getRawFileIconSvg(fileName)` looks one up with a generic fallback. Keep it a faithful
+  copy so re-copying an icon stays a mechanical edit.
+- `packages/app/src/components/file-icon-svg.ts` — `getFileIconSvg(fileName)`, the only thing
+  anyone should import. It desaturates the vendor colours and caches the result.
+
+Render with `<MaterialFileIcon fileName size />` rather than reaching for `SvgXml` yourself.
+
+## Why the colours are toned down
+
+material-icon-theme picks its palette for VS Code's file tree, where the icon is the only colour on
+the row. Ours share rows with status dots, diff stats, and check badges, and a column of them at
+full chroma is the loudest thing in the panel.
+
+Every hex in the SVG is pulled toward neutral at the same perceived lightness (`desaturateHexColor`
+in `packages/app/src/utils/color.ts`, OKLab — scaling HSL saturation instead would darken the
+yellows and barely touch the blues). Hue survives, which is the only part of an icon's colour that
+carries meaning at 16pt.
+
+`ICON_CHROMA` in `file-icon-svg.ts` is the single knob. Move it; do not add per-icon overrides, or
+we are back to hand-picking 53 colours.
 
 ## Adding a new icon
 

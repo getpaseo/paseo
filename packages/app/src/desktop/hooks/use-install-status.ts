@@ -3,12 +3,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
   getCliInstallStatus,
-  getSkillsStatus,
+  getSkillsSnapshot,
   installCli,
   installSkills,
+  saveSkillsSelection,
   shouldUseDesktopDaemon,
   type InstallStatus,
-  type SkillsStatus,
+  type SkillSelection,
+  type SkillsSaveResult,
+  type SkillsSnapshot,
   uninstallSkills,
   updateSkills,
 } from "@/desktop/daemon/desktop-daemon";
@@ -79,7 +82,7 @@ export function useCliInstall(): DesktopInstallHookResult {
 }
 
 export interface SkillsStatusHookResult {
-  status: SkillsStatus | null;
+  status: SkillsSnapshot | null;
   isLoading: boolean;
   isWorking: boolean;
   error: Error | null;
@@ -87,6 +90,10 @@ export interface SkillsStatusHookResult {
   install: () => Promise<void>;
   update: () => Promise<void>;
   uninstall: () => Promise<void>;
+  saveSelection: (
+    selection: SkillSelection,
+    confirmedRemovals?: readonly string[],
+  ) => Promise<SkillsSaveResult>;
 }
 
 export function useSkillsStatus(): SkillsStatusHookResult {
@@ -95,9 +102,9 @@ export function useSkillsStatus(): SkillsStatusHookResult {
   const reportError = useDesktopIpcErrorReporter();
   const enabled = shouldUseDesktopDaemon();
 
-  const statusQuery = useQuery<SkillsStatus, Error>({
+  const statusQuery = useQuery<SkillsSnapshot, Error>({
     queryKey: SKILLS_STATUS_QUERY_KEY,
-    queryFn: getSkillsStatus,
+    queryFn: getSkillsSnapshot,
     enabled,
     retry: false,
   });
@@ -109,13 +116,13 @@ export function useSkillsStatus(): SkillsStatusHookResult {
   });
 
   const setStatus = useCallback(
-    (next: SkillsStatus) => {
-      queryClient.setQueryData<SkillsStatus>(SKILLS_STATUS_QUERY_KEY, next);
+    (next: SkillsSnapshot) => {
+      queryClient.setQueryData<SkillsSnapshot>(SKILLS_STATUS_QUERY_KEY, next);
     },
     [queryClient],
   );
 
-  const installMutation = useMutation<SkillsStatus, Error>({
+  const installMutation = useMutation<SkillsSnapshot, Error>({
     mutationFn: installSkills,
     onError: (error) => {
       reportError({
@@ -127,7 +134,7 @@ export function useSkillsStatus(): SkillsStatusHookResult {
     onSuccess: setStatus,
   });
 
-  const updateMutation = useMutation<SkillsStatus, Error>({
+  const updateMutation = useMutation<SkillsSnapshot, Error>({
     mutationFn: updateSkills,
     onError: (error) => {
       reportError({
@@ -139,7 +146,7 @@ export function useSkillsStatus(): SkillsStatusHookResult {
     onSuccess: setStatus,
   });
 
-  const uninstallMutation = useMutation<SkillsStatus, Error>({
+  const uninstallMutation = useMutation<SkillsSnapshot, Error>({
     mutationFn: uninstallSkills,
     onError: (error) => {
       reportError({
@@ -151,8 +158,28 @@ export function useSkillsStatus(): SkillsStatusHookResult {
     onSuccess: setStatus,
   });
 
+  const saveSelectionMutation = useMutation<
+    SkillsSaveResult,
+    Error,
+    { selection: SkillSelection; confirmedRemovals: readonly string[] }
+  >({
+    mutationFn: ({ selection, confirmedRemovals }) =>
+      saveSkillsSelection(selection, confirmedRemovals),
+    onError: (error) => {
+      reportError({
+        error,
+        message: t("desktop.integrations.skills.saveSelectionFailed"),
+        logLabel: "[Integrations] Failed to save skills selection",
+      });
+    },
+    onSuccess: setStatus,
+  });
+
   const isWorking =
-    installMutation.isPending || updateMutation.isPending || uninstallMutation.isPending;
+    installMutation.isPending ||
+    updateMutation.isPending ||
+    uninstallMutation.isPending ||
+    saveSelectionMutation.isPending;
 
   const refresh = useCallback(async () => {
     await refetch();
@@ -170,6 +197,12 @@ export function useSkillsStatus(): SkillsStatusHookResult {
     await uninstallMutation.mutateAsync().catch(() => undefined);
   }, [uninstallMutation]);
 
+  const saveSelection = useCallback(
+    async (selection: SkillSelection, confirmedRemovals: readonly string[] = []) =>
+      saveSelectionMutation.mutateAsync({ selection, confirmedRemovals }),
+    [saveSelectionMutation],
+  );
+
   return {
     status: status ?? null,
     isLoading,
@@ -179,10 +212,12 @@ export function useSkillsStatus(): SkillsStatusHookResult {
       installMutation.error ??
       updateMutation.error ??
       uninstallMutation.error ??
+      saveSelectionMutation.error ??
       null,
     refresh,
     install,
     update,
     uninstall,
+    saveSelection,
   };
 }

@@ -30,9 +30,10 @@ type InboundMessage =
   | { type: "writeOutput"; streamKey: string; text: string }
   | { type: "restoreOutput"; streamKey: string; text: string }
   | { type: "renderSnapshot"; streamKey: string; state: TerminalState | null }
+  | { type: "paste"; streamKey: string; text: string }
   | { type: "clear"; streamKey: string }
   | { type: "focus"; streamKey: string; forceRefocus?: boolean }
-  | { type: "resize"; streamKey: string; shouldClaim?: boolean }
+  | { type: "resize"; streamKey: string; forceClaim: boolean; shouldClaim?: boolean }
   | { type: "setTheme"; streamKey: string; theme: ITheme }
   | { type: "setScrollback"; streamKey: string; lines: number }
   | { type: "setFont"; streamKey: string; fontFamily?: string; fontSize?: number }
@@ -49,7 +50,14 @@ type OutboundMessage =
   | { type: "bridgeReady" }
   | { type: "rendererReady"; streamKey: string; isReady: boolean }
   | { type: "input"; streamKey: string; data: string }
-  | { type: "resize"; streamKey: string; rows: number; cols: number; shouldClaim?: boolean }
+  | {
+      type: "resize";
+      streamKey: string;
+      rows: number;
+      cols: number;
+      shouldClaim?: boolean;
+      forceClaim?: boolean;
+    }
   | {
       type: "terminalKey";
       streamKey: string;
@@ -242,6 +250,9 @@ class TerminalWebViewBridge {
       case "renderSnapshot":
         this.runtime?.renderSnapshot({ state: message.state });
         break;
+      case "paste":
+        this.runtime?.paste(message.text);
+        break;
       case "clear":
         this.runtime?.clear();
         break;
@@ -249,7 +260,10 @@ class TerminalWebViewBridge {
         this.runtime?.focus({ forceRefocus: message.forceRefocus });
         break;
       case "resize":
-        this.runtime?.resize({ force: true, shouldClaim: message.shouldClaim !== false });
+        this.runtime?.resize({
+          shouldClaim: message.shouldClaim ?? true,
+          forceClaim: message.forceClaim,
+        });
         break;
     }
   }
@@ -293,8 +307,15 @@ class TerminalWebViewBridge {
     runtime.setCallbacks({
       callbacks: {
         onInput: (data) => sendToNative({ type: "input", streamKey: message.streamKey, data }),
-        onResize: ({ rows, cols, shouldClaim }) =>
-          sendToNative({ type: "resize", streamKey: message.streamKey, rows, cols, shouldClaim }),
+        onResize: ({ rows, cols, shouldClaim, forceClaim }) =>
+          sendToNative({
+            type: "resize",
+            streamKey: message.streamKey,
+            rows,
+            cols,
+            shouldClaim,
+            forceClaim,
+          }),
         onTerminalKey: (input) =>
           sendToNative({ type: "terminalKey", streamKey: message.streamKey, ...input }),
         onPendingModifiersConsumed: () =>

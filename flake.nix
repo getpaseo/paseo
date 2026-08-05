@@ -26,17 +26,22 @@
         let
           pkgs = pkgsFor system;
           paseo = pkgs.callPackage ./nix/package.nix { };
-          isLinux = nixpkgs.lib.elem system [
-            "x86_64-linux"
-            "aarch64-linux"
+          versionParts = pkgs.lib.splitString "." paseo.version;
+          sourceRevision = if self ? revCount && self.revCount != null then self.revCount else 0;
+          buildRevision = sourceRevision - (sourceRevision / 10000) * 10000;
+          desktopBuildVersion = pkgs.lib.concatStringsSep "." [
+            (builtins.elemAt versionParts 0)
+            (builtins.elemAt versionParts 1)
+            (toString buildRevision)
           ];
         in
         {
           default = paseo;
           paseo = paseo;
-        }
-        // nixpkgs.lib.optionalAttrs isLinux {
-          desktop = pkgs.callPackage ./nix/desktop-package.nix { inherit paseo; };
+          desktop = pkgs.callPackage ./nix/desktop-package.nix {
+            inherit paseo;
+            buildVersion = desktopBuildVersion;
+          };
         }
       );
 

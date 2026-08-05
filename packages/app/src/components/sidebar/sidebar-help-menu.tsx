@@ -15,9 +15,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative } from "@/constants/platform";
 import { useAppDiagnosticStore } from "@/diagnostics/store";
+import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useSessionStore } from "@/stores/session-store";
@@ -78,11 +77,10 @@ function HostVersionHint({ host }: { host: HostProfile }) {
 
 export function SidebarHelpMenu() {
   const { t } = useTranslation();
-  const isCompactLayout = useIsCompactFormFactor();
+  const shortcutsAvailable = useKeyboardShortcutsAvailable();
   const openAppDiagnostic = useAppDiagnosticStore((state) => state.open);
   const setShortcutsDialogOpen = useKeyboardShortcutsStore((state) => state.setShortcutsDialogOpen);
   const [open, setOpen] = useState(false);
-  const showKeyboardShortcuts = !isNative && !isCompactLayout;
   const version = formatVersionWithPrefix(resolveAppVersion());
   const hosts = useHosts();
 
@@ -128,7 +126,7 @@ export function SidebarHelpMenu() {
       </Tooltip>
       <DropdownMenuContent side="top" align="end" offset={8} width={280} testID="sidebar-help-menu">
         <DropdownMenuLabel>{t("sidebar.help.sectionHelp")}</DropdownMenuLabel>
-        {showKeyboardShortcuts ? (
+        {shortcutsAvailable ? (
           <DropdownMenuItem
             testID="sidebar-help-shortcuts"
             leading={shortcutsLeadingIcon}

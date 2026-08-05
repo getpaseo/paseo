@@ -6,6 +6,7 @@ import type {
   MessageInputKeyboardActionKind,
 } from "@/keyboard/actions";
 import { type KeyCombo, parseChordString } from "@/keyboard/shortcut-string";
+import { chordStringToShortcutKeys } from "@/keyboard/shortcut-string";
 
 export type { KeyCombo } from "@/keyboard/shortcut-string";
 
@@ -1404,6 +1405,19 @@ export function getDefaultKeysForAction(
     return binding.help.keys;
   }
   return null;
+}
+
+export function resolveShortcutKeysForAction(
+  actionId: string,
+  overrides: Readonly<Record<string, string>>,
+  platform: { isMac: boolean; isDesktop: boolean },
+): ShortcutKey[][] | null {
+  const bindingId = getBindingIdForAction(actionId, platform);
+  if (!bindingId) return null;
+  const override = overrides[bindingId];
+  if (override) return chordStringToShortcutKeys(override);
+  const defaultKeys = getDefaultKeysForAction(actionId, platform);
+  return defaultKeys ? [defaultKeys] : null;
 }
 
 /**

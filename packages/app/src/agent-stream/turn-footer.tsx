@@ -17,6 +17,7 @@ import {
   type AssistantForkTarget,
 } from "@/components/message";
 import type { TurnFooterHost } from "./layout";
+import { AssistantForkMenu } from "@/components/assistant-fork-menu";
 import { SyncedLoader } from "@/components/synced-loader";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 
@@ -33,6 +34,17 @@ export type AssistantTurnForkHandler = (input: {
   target: AssistantForkTarget;
   boundary: AssistantTurnForkBoundary;
 }) => Promise<void> | void;
+/**
+ * Fork handler for the turn that is still streaming. It deliberately takes no
+ * boundary: `selectForkContextRows` projects the entire timeline when neither
+ * boundary field is given, which is what captures the partially streamed text
+ * the user is watching. Pinning a boundary here would silently drop the live
+ * response — the opposite of what a fork button next to the loader promises.
+ *
+ * Kept separate from `AssistantTurnForkHandler` (whose `boundary` stays
+ * required) so the compiler keeps enforcing that completed turns always pin one.
+ */
+export type InFlightTurnForkHandler = (target: AssistantForkTarget) => Promise<void> | void;
 
 export const TurnFooter = memo(function TurnFooter({
   isRunning,
@@ -41,6 +53,7 @@ export const TurnFooter = memo(function TurnFooter({
   strategy,
   supportsTimelineCursor,
   onForkAssistantTurn,
+  onForkInFlightTurn,
 }: {
   isRunning: boolean;
   inFlightTurnStartedAt: Date | null;
@@ -48,11 +61,15 @@ export const TurnFooter = memo(function TurnFooter({
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
+  onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   if (isRunning) {
     return (
       <TurnFooterRow>
-        <RunningTurnFooter inFlightTurnStartedAt={inFlightTurnStartedAt} />
+        <RunningTurnFooter
+          inFlightTurnStartedAt={inFlightTurnStartedAt}
+          onForkInFlightTurn={onForkInFlightTurn}
+        />
       </TurnFooterRow>
     );
   }
@@ -102,8 +119,10 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
 
 const WorkingIndicator = memo(function WorkingIndicator({
   inFlightTurnStartedAt = null,
+  onForkInFlightTurn,
 }: {
   inFlightTurnStartedAt?: Date | null;
+  onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   const active = useRetainedPanelActive();
   return (
@@ -111,6 +130,8 @@ const WorkingIndicator = memo(function WorkingIndicator({
       <View style={stylesheet.workingLoader}>
         <ThemedSyncedLoader size={14} uniProps={workingIndicatorColorMapping} />
       </View>
+      {/* Match the completed-turn footer: actions precede timing metadata. */}
+      {onForkInFlightTurn ? <AssistantForkMenu onFork={onForkInFlightTurn} /> : null}
       {inFlightTurnStartedAt ? (
         <LiveElapsed
           startedAt={inFlightTurnStartedAt}
@@ -123,10 +144,19 @@ const WorkingIndicator = memo(function WorkingIndicator({
   );
 });
 
-function RunningTurnFooter({ inFlightTurnStartedAt }: { inFlightTurnStartedAt: Date | null }) {
+function RunningTurnFooter({
+  inFlightTurnStartedAt,
+  onForkInFlightTurn,
+}: {
+  inFlightTurnStartedAt: Date | null;
+  onForkInFlightTurn?: InFlightTurnForkHandler;
+}) {
   return (
     <View style={stylesheet.turnFooterSlot} testID="turn-working-indicator">
-      <WorkingIndicator inFlightTurnStartedAt={inFlightTurnStartedAt} />
+      <WorkingIndicator
+        inFlightTurnStartedAt={inFlightTurnStartedAt}
+        onForkInFlightTurn={onForkInFlightTurn}
+      />
     </View>
   );
 }

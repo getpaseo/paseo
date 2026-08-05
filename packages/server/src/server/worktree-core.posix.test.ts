@@ -879,6 +879,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(metadata?.changeRequestLookupTarget).toEqual({
         headRef: "feature/gitlab-mr",
         changeRequestNumber: 14,
+        localBranchName: "feature/gitlab-mr-1",
       });
       expect(facts).toMatchObject({
         isGit: true,

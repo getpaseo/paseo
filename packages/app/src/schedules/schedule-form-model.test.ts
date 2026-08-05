@@ -54,7 +54,7 @@ function target(input: {
     optionId: buildProjectOptionId(input.serverId, input.projectKey),
     serverId: input.serverId,
     serverName: input.serverId === "host-a" ? "Host A" : "Host B",
-    projectKey: input.projectKey,
+    projectViewKey: input.projectKey,
     projectName: input.projectName,
     cwd: input.cwd,
     isGit: input.isGit ?? true,

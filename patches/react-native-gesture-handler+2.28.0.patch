@@ -1,5 +1,171 @@
+diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt
+index a532cf6..7b66222 100644
+--- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt
++++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt
+@@ -2,6 +2,7 @@ package com.swmansion.gesturehandler.core
+ 
+ import android.graphics.Matrix
+ import android.graphics.PointF
++import android.util.SparseArray
+ import android.view.MotionEvent
+ import android.view.View
+ import android.view.ViewGroup
+@@ -24,6 +25,10 @@ class GestureHandlerOrchestrator(
+   private val awaitingHandlers = arrayListOf<GestureHandler>()
+   private val preparedHandlers = arrayListOf<GestureHandler>()
+ 
++  // Used by `cancelTouchesInInterceptedViews`.
++  private val viewsToCancel = arrayListOf<View>()
++  private val pointerDownPoints = SparseArray<PointF>()
++
+   // In `onHandlerStateChange` method we iterate through `awaitingHandlers`, but calling `tryActivate` may modify this list.
+   // To avoid `ConcurrentModificationException` we iterate through copy. There is one more problem though - if handler was
+   // removed from `awaitingHandlers`, it was still present in copy of original list. This hashset helps us identify which handlers
+@@ -42,6 +47,7 @@ class GestureHandlerOrchestrator(
+   fun onTouchEvent(event: MotionEvent): Boolean {
+     isHandlingTouch = true
+     val action = event.actionMasked
++    trackPointerDownPoints(event)
+     if (action == MotionEvent.ACTION_DOWN ||
+       action == MotionEvent.ACTION_POINTER_DOWN ||
+       action == MotionEvent.ACTION_HOVER_MOVE
+@@ -562,6 +568,107 @@ class GestureHandlerOrchestrator(
+     extractGestureHandlers(wrapperView, tempCoords, pointerId, event)
+   }
+ 
++  private fun trackPointerDownPoints(event: MotionEvent) {
++    val index = event.actionIndex
++    when (event.actionMasked) {
++      MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN ->
++        pointerDownPoints.put(event.getPointerId(index), PointF(event.getX(index), event.getY(index)))
++      MotionEvent.ACTION_POINTER_UP ->
++        pointerDownPoints.remove(event.getPointerId(index))
++      MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
++        pointerDownPoints.clear()
++    }
++  }
++
++  fun cancelTouchesInInterceptedViews(event: MotionEvent) {
++    viewsToCancel.clear()
++    for (i in 0 until pointerDownPoints.size()) {
++      val point = pointerDownPoints.valueAt(i)
++      tempCoords[0] = point.x
++      tempCoords[1] = point.y
++      collectViewsAtPoint(wrapperView, tempCoords, viewsToCancel)
++    }
++
++    if (viewsToCancel.isEmpty()) {
++      return
++    }
++
++    val activeHandlers = gestureHandlers.filter { it.isActive }
++    val cancelEvent = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
++
++    for (view in viewsToCancel) {
++      if (view === wrapperView || isViewDrivenByActiveNativeGesture(view, activeHandlers)) {
++        continue
++      }
++      view.onTouchEvent(cancelEvent)
++    }
++
++    cancelEvent.recycle()
++    viewsToCancel.clear()
++  }
++
++  // Whether the view's touch is still owned by a NativeViewGestureHandler that survived arbitration.
++  // Only those are fed through `onTouchEvent`, so only those break if cancelled. Other handlers are
++  // orchestrator-driven and unaffected.
++  private fun isViewDrivenByActiveNativeGesture(view: View, activeHandlers: List<GestureHandler>) =
++    handlerRegistry.getHandlersForView(view)?.let { handlers ->
++      synchronized(handlers) {
++        handlers.any { nativeGestureSurvivesArbitration(it, activeHandlers) }
++      }
++    } ?: false
++
++  // A native handler survives arbitration if it is active, or it does not conflict with any active handler.
++  private fun nativeGestureSurvivesArbitration(handler: GestureHandler, activeHandlers: List<GestureHandler>) =
++    handler is NativeViewGestureHandler &&
++      (handler.isActive || activeHandlers.none { shouldHandlerBeCancelledBy(handler, it) })
++
++  // Collects the view path under the point (topmost child first, like touch dispatch), leaf to root.
++  private fun collectViewsAtPoint(view: View, coords: FloatArray, out: MutableList<View>): Boolean {
++    val pointerEvents = viewConfigHelper.getPointerEventsConfigForView(view)
++    if (pointerEvents == PointerEventsConfig.NONE) {
++      return false
++    }
++
++    var found = false
++    if (view is ViewGroup && pointerEvents != PointerEventsConfig.BOX_ONLY) {
++      for (i in view.childCount - 1 downTo 0) {
++        val child = viewConfigHelper.getChildInDrawingOrderAtIndex(view, i)
++        if (!canReceiveEvents(child)) {
++          continue
++        }
++        val childPoint = tempPoint
++        transformPointToChildViewCoords(coords[0], coords[1], view, child, childPoint)
++        if (isClipping(child) && !isTransformedTouchPointInView(childPoint.x, childPoint.y, child)) {
++          continue
++        }
++        val restoreX = coords[0]
++        val restoreY = coords[1]
++        coords[0] = childPoint.x
++        coords[1] = childPoint.y
++        found = collectViewsAtPoint(child, coords, out)
++        coords[0] = restoreX
++        coords[1] = restoreY
++
++        if (found) {
++          break
++        }
++      }
++    }
++
++    // BOX_NONE views can't be the target themselves, only their children can.
++    val selfIsTarget = pointerEvents != PointerEventsConfig.BOX_NONE &&
++      isTransformedTouchPointInView(coords[0], coords[1], view)
++
++    if (found || selfIsTarget) {
++      // `out` may already contain this view when several pointers share part of their path.
++      if (!out.contains(view)) {
++        out.add(view)
++      }
++      return true
++    }
++    return false
++  }
++
+   private fun extractGestureHandlers(
+     viewGroup: ViewGroup,
+     coords: FloatArray,
+diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
+index d8f8fd6..ed101b9 100644
+--- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
++++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
+@@ -19,6 +19,7 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
+   private val jsGestureHandler: GestureHandler?
+   val rootView: ViewGroup
+   private var shouldIntercept = false
++  private var wasIntercepting = false
+   private var passingTouch = false
+ 
+   init {
+@@ -117,6 +118,14 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
+     passingTouch = true
+     orchestrator!!.onTouchEvent(ev)
+     passingTouch = false
++
++    // On the transition into interception, cancel the native views the pointers landed on - the
++    // framework's ACTION_CANCEL never reaches them since RNGH ignores `onInterceptTouchEvent`.
++    if (shouldIntercept && !wasIntercepting) {
++      orchestrator!!.cancelTouchesInInterceptedViews(ev)
++    }
++    wasIntercepting = shouldIntercept
++
+     return shouldIntercept
+   }
+ 
 diff --git a/node_modules/react-native-gesture-handler/lib/commonjs/web/tools/PointerEventManager.js b/node_modules/react-native-gesture-handler/lib/commonjs/web/tools/PointerEventManager.js
-index 76eb808..0debe83 100644
+index 76eb808..7c40526 100644
 --- a/node_modules/react-native-gesture-handler/lib/commonjs/web/tools/PointerEventManager.js
 +++ b/node_modules/react-native-gesture-handler/lib/commonjs/web/tools/PointerEventManager.js
 @@ -58,7 +58,14 @@ class PointerEventManager extends _EventManager.default {
@@ -19,7 +185,7 @@ index 76eb808..0debe83 100644
      this.markAsOutOfBounds(adaptedEvent.pointerId);
      this.trackedPointers.delete(adaptedEvent.pointerId);
 diff --git a/node_modules/react-native-gesture-handler/lib/module/web/tools/PointerEventManager.js b/node_modules/react-native-gesture-handler/lib/module/web/tools/PointerEventManager.js
-index 6ce3b8f..3976f3f 100644
+index 6ce3b8f..8fe28bc 100644
 --- a/node_modules/react-native-gesture-handler/lib/module/web/tools/PointerEventManager.js
 +++ b/node_modules/react-native-gesture-handler/lib/module/web/tools/PointerEventManager.js
 @@ -53,7 +53,14 @@ export default class PointerEventManager extends EventManager {

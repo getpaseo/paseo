@@ -1,3 +1,4 @@
+import React from "react";
 import { ActivityIndicator, type ActivityIndicatorProps } from "react-native";
 
 interface LoadingSpinnerProps {

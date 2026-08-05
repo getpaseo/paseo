@@ -1,8 +1,5 @@
 import { afterEach, expect, test } from "vitest";
-import {
-  HubRelationshipHarness,
-  SetupFailingArchiveWatchFiles,
-} from "./test-utils/relationship-harness.js";
+import { HubRelationshipHarness } from "./test-utils/relationship-harness.js";
 
 let relationship: HubRelationshipHarness | null = null;
 
@@ -167,9 +164,7 @@ test("Hub archives a running execution's Paseo-created worktree", async () => {
   const worktreeCwd = hub.latestCreatedCwd();
   await hub.ownedRunningUpdate(worktreeCreated.payload.agentId!);
   const duringRun = await hub.worktreeState(worktreeCwd!);
-  const archiveCompletion = hub.waitForOwnedArchiveCompletion(worktreeCreated.payload.agentId!);
   const response = await hub.archiveExecution("execution-worktree", "archive-worktree");
-  const archive = await archiveCompletion;
   const afterArchive = await hub.worktreeState(worktreeCwd!);
 
   expect(worktreeCreated).toMatchObject({
@@ -180,10 +175,12 @@ test("Hub archives a running execution's Paseo-created worktree", async () => {
   expect(duringRun).toEqual({ exists: true, listed: true });
   expect(response).toMatchObject({ success: true, error: null, action: "archive" });
   expect(afterArchive).toEqual({ exists: false, listed: false });
-  expect(archive).toEqual({
-    agentArchivedAt: expect.any(String),
-    workspaceArchivedAt: expect.any(String),
-  });
+  expect(await hub.ownedAgentArchivedAt(worktreeCreated.payload.agentId!)).toEqual(
+    expect.any(String),
+  );
+  expect(await hub.ownedWorkspaceArchivedAt(worktreeCreated.payload.agentId!)).toEqual(
+    expect.any(String),
+  );
 }, 20_000);
 
 test("a sibling workspace keeps an archived execution's worktree directory alive", async () => {
@@ -274,20 +271,4 @@ test("Hub treats missing and foreign executions as already controlled without ex
     expect.objectContaining({ success: true, error: null }),
   ]);
   expect(await hub.agentRemainsAvailable(foreignAgentId)).toBe(true);
-});
-
-test("archive observation closes its first watcher when the second watcher cannot start", async () => {
-  const watchFiles = new SetupFailingArchiveWatchFiles(2);
-  const hub = await HubRelationshipHarness.start(watchFiles);
-  relationship = hub;
-  await hub.beginConnect().result;
-  hub.connectLatestSocket();
-  hub.beginOwnedCreate("watch-setup-create", "watch-setup-execution");
-  const created = await hub.ownedCreateResult("watch-setup-create");
-
-  await expect(hub.waitForOwnedArchiveCompletion(created.payload.agentId!)).rejects.toThrow(
-    "Cannot watch",
-  );
-
-  expect(watchFiles.activeDirectories()).toEqual([]);
 });

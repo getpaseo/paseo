@@ -499,6 +499,26 @@ describe("workspace message schemas", () => {
       throw new Error("Expected workspace_update upsert payload");
     }
     expect(parsed.payload.workspace.workspaceDirectory).toBe("/repo");
+    expect(parsed.payload.workspace.worktreeSlug).toBeUndefined();
+  });
+
+  test("preserves a Paseo-owned worktree slug", () => {
+    const parsed = WorkspaceDescriptorPayloadSchema.parse({
+      id: "owned-worktree",
+      projectId: "project",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/paseo/worktrees/project/feature/packages/app",
+      worktreeSlug: "feature",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "feature",
+      status: "done",
+      activityAt: null,
+      scripts: [],
+    });
+
+    expect(parsed.worktreeSlug).toBe("feature");
   });
 
   test("defaults omitted workspace archiving state and preserves present timestamps", () => {

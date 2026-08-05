@@ -19,6 +19,7 @@ import {
   CircleX,
   Copy,
   ExternalLink,
+  FileDiff,
   Folder,
   GitBranch,
   Server,
@@ -34,7 +35,6 @@ import { useBottomSheetModalInternal } from "@gorhom/bottom-sheet";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { PrHint } from "@/git/use-pr-status-query";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { shortenPath } from "@/utils/shorten-path";
 import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import { PrBadge } from "@/components/sidebar-workspace-list";
 import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
@@ -95,12 +95,14 @@ interface WorkspaceHoverCardProps {
   workspace: SidebarWorkspaceEntry;
   prHint: PrHint | null;
   isDragging: boolean;
+  disabled?: boolean;
 }
 
 export function WorkspaceHoverCard({
   workspace,
   prHint,
   isDragging,
+  disabled = false,
   children,
 }: PropsWithChildren<WorkspaceHoverCardProps>): ReactNode {
   const isCompact = useIsCompactFormFactor();
@@ -110,7 +112,12 @@ export function WorkspaceHoverCard({
   }
 
   return (
-    <WorkspaceHoverCardDesktop workspace={workspace} prHint={prHint} isDragging={isDragging}>
+    <WorkspaceHoverCardDesktop
+      workspace={workspace}
+      prHint={prHint}
+      isDragging={isDragging}
+      disabled={disabled}
+    >
       {children}
     </WorkspaceHoverCardDesktop>
   );
@@ -120,6 +127,7 @@ function WorkspaceHoverCardDesktop({
   workspace,
   prHint,
   isDragging,
+  disabled = false,
   children,
 }: PropsWithChildren<WorkspaceHoverCardProps>): ReactElement {
   const triggerRef = useRef<View>(null);
@@ -146,10 +154,10 @@ function WorkspaceHoverCardDesktop({
   const handleTriggerEnter = useCallback(() => {
     triggerHoveredRef.current = true;
     clearGraceTimer();
-    if (!isDragging) {
+    if (!isDragging && !disabled) {
       setOpen(true);
     }
-  }, [clearGraceTimer, isDragging]);
+  }, [clearGraceTimer, disabled, isDragging]);
 
   const handleTriggerLeave = useCallback(() => {
     triggerHoveredRef.current = false;
@@ -167,13 +175,13 @@ function WorkspaceHoverCardDesktop({
     onLeaveSafeZone: scheduleClose,
   });
 
-  // Close when drag starts
+  // Close while another row interaction owns attention.
   useEffect(() => {
-    if (isDragging) {
+    if (isDragging || disabled) {
       clearGraceTimer();
       setOpen(false);
     }
-  }, [isDragging, clearGraceTimer]);
+  }, [clearGraceTimer, disabled, isDragging]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -214,7 +222,6 @@ function WorkspaceHoverCardContent({
   contentRef: React.RefObject<View | null>;
 }): ReactElement | null {
   const { t } = useTranslation();
-  const cwdDisplay = shortenPath(workspace.workspaceDirectory);
   const bottomSheetInternal = useBottomSheetModalInternal(true);
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
@@ -287,6 +294,16 @@ function WorkspaceHoverCardContent({
               {workspace.name}
             </Text>
           </View>
+          {prHint ? <PrBadge hint={prHint} style={styles.cardInfoRow} /> : null}
+          {workspace.diffStat ? (
+            <View style={styles.cardInfoRow}>
+              <ThemedFileDiff size={12} uniProps={foregroundMutedColorMapping} />
+              <DiffStat
+                additions={workspace.diffStat.additions}
+                deletions={workspace.diffStat.deletions}
+              />
+            </View>
+          ) : null}
           <HostRow serverId={workspace.serverId} />
           {workspace.currentBranch ? (
             <CopyableInfoRow
@@ -297,25 +314,14 @@ function WorkspaceHoverCardContent({
               testID="hover-card-workspace-branch"
             />
           ) : null}
-          {cwdDisplay ? (
+          {workspace.workspaceDirectoryLabel ? (
             <CopyableInfoRow
               icon={ThemedFolder}
-              value={cwdDisplay}
-              copyValue={workspace.workspaceDirectory ?? ""}
+              value={workspace.workspaceDirectoryLabel}
+              copyValue={workspace.workspaceDirectory}
               copyLabel={t("workspace.hoverCard.copyPath")}
               testID="hover-card-workspace-cwd"
             />
-          ) : null}
-          {prHint || workspace.diffStat ? (
-            <View style={styles.cardMetaRow}>
-              {workspace.diffStat ? (
-                <DiffStat
-                  additions={workspace.diffStat.additions}
-                  deletions={workspace.diffStat.deletions}
-                />
-              ) : null}
-              {prHint ? <PrBadge hint={prHint} /> : null}
-            </View>
           ) : null}
           {prHint?.checks && prHint.checks.length > 0 ? (
             <>
@@ -336,6 +342,7 @@ function WorkspaceHoverCardContent({
 const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedServer = withUnistyles(Server);
+const ThemedFileDiff = withUnistyles(FileDiff);
 
 type CardInfoIcon = React.ComponentType<React.ComponentProps<typeof ThemedGitBranch>>;
 
@@ -356,9 +363,9 @@ const ThemedCheck = withUnistyles(Check);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const successColorMapping = (theme: Theme) => ({ color: theme.colors.statusSuccess });
-const warningColorMapping = (theme: Theme) => ({ color: theme.colors.statusWarning });
-const dangerColorMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
+const successColorMapping = (theme: Theme) => ({ color: theme.colors.statusMutedSuccess });
+const warningColorMapping = (theme: Theme) => ({ color: theme.colors.statusMutedWarning });
+const dangerColorMapping = (theme: Theme) => ({ color: theme.colors.statusMutedDanger });
 
 function InfoRow({
   icon: Icon,
@@ -598,13 +605,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
   },
-  cardMetaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: theme.spacing[3],
-    paddingBottom: theme.spacing[2],
-  },
   cardInfoRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -660,16 +660,16 @@ const styles = StyleSheet.create((theme) => ({
   checksStatusTextFailed: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.statusDanger,
+    color: theme.colors.statusMutedDanger,
   },
   checksStatusTextPending: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.statusWarning,
+    color: theme.colors.statusMutedWarning,
   },
   checksStatusTextPassed: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.statusSuccess,
+    color: theme.colors.statusMutedSuccess,
   },
 }));
