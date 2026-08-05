@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.920 - 2026-08-03
+
+### Added
+
+- **Steer** mid-turn redirects for Claude, Codex, and OMP (`supportsSteer`), with composer send behavior that can inject without canceling the active turn
+- **Claude native fork**: fork a session at a message into a new agent tab (`agent.native_fork` / `supportsNativeFork`)
+- **Host ui_state**: sync composer and review drafts across clients (protocol + store + app rehydrate)
+- **Interaction lock**: read-only monitoring mode, with Android whole-app lock and biometric unlock
+- Claude custom-model family/subagent env pins for non-family models (#43)
+
+### Notes
+
+- Ships the unshipped P0/P1 train that lived on `backlog-sync-and-release-resolution` (ui_state, lock, native fork, steer), rebased onto main after Background Tasks / Heartbeats / Loops
+
 ## 0.2.918 - 2026-08-02
 
 ### Fixed
