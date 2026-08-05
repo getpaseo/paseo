@@ -86,7 +86,7 @@ const AUTHORITATIVE_PASEO_STATE_RULES = [
 ];
 
 const AUTHORITATIVE_PASEO_STATE_WITH_ROUTING = [
-  "- For any question about Paseo hosts, workspaces, agent sessions, their status, or what an agent said, did, or is doing, use Paseo MCP first. Call list_hosts to identify the host, then route ordinary host tools such as list_agents, get_agent_status, and get_agent_activity as appropriate; use list_pending_permissions when work may be blocked.",
+  "- For any question about Paseo hosts, workspaces, agent sessions, their status, or what an agent said, did, or is doing, use Paseo MCP first: run_paseo_tool_on_all_hosts when the question spans machines, and reads like get_agent_status or get_agent_activity on the machine that owns the session; use list_pending_permissions when work may be blocked.",
   ...AUTHORITATIVE_PASEO_STATE_RULES,
 ];
 
@@ -117,9 +117,45 @@ const READ_BEFORE_PROMPTING = [
  * without this it opens each request by asking what tools exist, and a
  * multi-word guess at `query` narrows to nothing, costing another turn on top.
  * Anything not listed here is still discoverable.
+ *
+ * Structured rather than prose because the prompt calls these "exact and
+ * stable", which nothing in this file can guarantee — a test holds every entry
+ * against the real catalog. The first version of this list already named a tool
+ * that does not exist on this daemon (`snooze_workspace`, present only in newer
+ * builds), and a wrong name here costs the user a failed turn and an apology.
  */
+export interface LiveVoiceCanonicalTool {
+  name: string;
+  /** The arguments worth spelling out — required ones and identifying ids. */
+  args?: readonly string[];
+}
+
+export const LIVE_VOICE_CANONICAL_TOOLS: readonly LiveVoiceCanonicalTool[] = [
+  { name: "list_workspaces" },
+  { name: "create_workspace" },
+  { name: "archive_workspace", args: ["workspaceId"] },
+  { name: "rename_workspace", args: ["workspaceId", "title"] },
+  { name: "list_agents" },
+  { name: "create_agent", args: ["workspaceId", "provider", "initialPrompt", "title"] },
+  { name: "send_agent_prompt", args: ["agentId", "prompt"] },
+  { name: "get_agent_status", args: ["agentId"] },
+  { name: "get_agent_activity", args: ["agentId"] },
+  { name: "cancel_agent", args: ["agentId"] },
+  { name: "archive_agent", args: ["agentId"] },
+  { name: "list_pending_permissions" },
+  { name: "respond_to_permission", args: ["agentId", "requestId", "response"] },
+  { name: "list_terminals" },
+  { name: "create_terminal" },
+  { name: "list_schedules" },
+  { name: "create_schedule" },
+];
+
+function describeCanonicalTool(tool: LiveVoiceCanonicalTool): string {
+  return tool.args?.length ? `${tool.name}{${tool.args.join(",")}}` : tool.name;
+}
+
 const CANONICAL_PASEO_TOOL_NAMES = [
-  "- These Paseo tool names and their key arguments are exact and stable. Call them straight away instead of looking them up: list_workspaces, create_workspace, archive_workspace{workspaceId}, rename_workspace{workspaceId,title}, snooze_workspace, list_agents, create_agent{workspaceId,provider,initialPrompt,title}, send_agent_prompt{agentId,prompt}, get_agent_status{agentId}, get_agent_activity{agentId}, cancel_agent{agentId}, archive_agent{agentId}, list_pending_permissions, respond_to_permission, list_terminals, create_terminal, list_schedules, create_schedule.",
+  `- These Paseo tool names and their key arguments are exact and stable. Call them straight away instead of looking them up: ${LIVE_VOICE_CANONICAL_TOOLS.map(describeCanonicalTool).join(", ")}.`,
   "- Look a tool up only when it is not in that list, and then pass one exact toolName. The query argument is a keyword filter, not a sentence.",
 ];
 
@@ -138,7 +174,7 @@ const CROSS_HOST_REACH = [
   "- The state below is only the machine that placed this call. Every other machine of theirs exists to you only through these tools; there is no other way in and no cached copy of what is on them.",
   "- What the user feels is the number of calls you make, not how much each one does, because they wait through every one in silence. Prefer the call that answers the whole question: one that reads every machine beats five that each read one.",
   `- These reads go to every machine at once through run_paseo_tool_on_all_hosts: ${LIVE_VOICE_ALL_HOSTS_READ_TOOLS.join(", ")}. Everything else runs on one named machine through run_paseo_tool_on_host, so one sentence from the user can never change several machines at once.`,
-  "- Any of these can come back having failed to reach a machine, in unavailableHosts. Name that machine and say you could not see it. Never answer as though it held nothing.",
+  "- A result can name machines that have no answer, in two different ways. unavailableHosts could not be reached — say you could not see them. erroredHosts answered but that one read failed there — say what failed, and expect these when you fan out an id to find which machine owns it. Neither ever means the machine held nothing.",
 ];
 
 /**
@@ -152,8 +188,7 @@ const ROUTED_RECIPES = [
   '- The user names a workspace ("archive the Refresh Paseo assembly workspace"): call find_workspace with the name as they said it, then run_paseo_tool_on_host with the serverId and workspaceId it returns. Do not call list_hosts or list_workspaces for this.',
   "- find_workspace tells you how sure it is. Act on unique_exact. On ambiguous_exact, more than one machine has a workspace by that name, so say which and ask — never pick one yourself for archiving or anything else destructive. On unique_partial or ambiguous_partial nothing matched exactly, so say what you found and confirm first. On none, say nothing matched, and mention any host it could not reach.",
   "- New work in a workspace the user names: find_workspace, then send_agent_prompt or create_agent against the serverId and workspaceId it returns.",
-  '- The user asks about their machines as a whole ("what\'s running?", "is anything waiting on me?"): run_paseo_tool_on_all_hosts with list_agents or list_pending_permissions. One call covers every machine, so do not ask which one they meant.',
-  "- The user asks about one machine they named: run_paseo_tool_on_host with list_agents on that host.",
+  '- The user asks about their machines as a whole ("what\'s running?", "is anything waiting on me?"): one run_paseo_tool_on_all_hosts call with list_agents or list_pending_permissions — do not ask which machine they meant.',
 ];
 
 const DELEGATION_WITH_PASEO_TOOLS = [

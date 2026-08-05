@@ -183,8 +183,10 @@ hidden Live Voice host on A
 Each hop of that route is cheap; what is expensive is a model turn, because the
 user hears silence for the whole of it. So the tools are shaped to spend hops
 instead of turns — every one of them fans out concurrently rather than walking
-the hosts. `find_workspace` takes the name as the user said it, fans out
-`list_workspaces`, and returns the `serverId` and `workspaceId` to act on,
+the hosts, and the routing layer caches the host list for thirty seconds so a
+fan-out does not pay a serial round trip through the owning app before its first
+target is contacted. `find_workspace` takes the name as the user said it, fans
+out `list_workspaces`, and returns the `serverId` and `workspaceId` to act on,
 turning "archive the Refresh Paseo assembly workspace" into two turns rather
 than one per host plus one per lookup. `run_paseo_tool_on_all_hosts` does the
 same for any read, so "what's running?" is one turn regardless of how many
@@ -192,17 +194,27 @@ machines the user owns. The prompt hands the model the exact names of the common
 Paseo tools for the same reason, so discovery is a fallback rather than an
 opening move.
 
-Only reads fan out, against a hand-written allowlist rather than a denylist, so
-a tool added later is not fannable until someone decides it should be. Mass
-mutation is what is being kept out: "archive it on all of them" is a sentence a
-user can say by accident, and one misheard word should not reach five machines.
-The allowlist is an ergonomic guard, not a privilege boundary — it is enforced
-on the requesting side, and the model gains no authority it did not already have
-against a single host. Two tests pin it down, because both of its neighbours can
-drift away from it silently: one checks every allowlisted name is a real tool on
-the target catalog, since a rename would become `tool_not_found` on every host at
-once, and one checks the call's prompt offers exactly the names the fan-out
-accepts, since advertising a rejected tool costs the user a turn.
+An app-side fan-out operation — one route message the app expands against its
+own host connections — was considered and rejected. With the cached host list,
+the requests already travel in parallel, so the critical path is one app round
+trip plus the slowest target either way; what an app-side operation would save
+is per-host message count on the app link, at the price of a new protocol
+operation and a capability gate. Revisit only if measurement shows the app relay
+itself hurting.
+
+Only reads fan out, against an allowlist rather than a denylist, so a tool added
+later is not fannable until someone decides it should be. Mass mutation is what
+is being kept out: "archive it on all of them" is a sentence a user can say by
+accident, and one misheard word should not reach five machines. The allowlist is
+an ergonomic guard, not a privilege boundary — it is enforced on the requesting
+side, and the model gains no authority it did not already have against a single
+host. Read-ness itself is declared where each tool is written (`readOnly` on the
+tool config, surfaced to MCP clients as `readOnlyHint`), and tests hold the
+pieces together: the allowlist must equal the set of tools the catalog declares
+read-only, the prompt must offer exactly the names the fan-out accepts, and
+every tool the prompt calls "exact and stable" must exist in the catalog with
+the arguments the prompt names — the first draft of that list already named a
+tool this daemon does not have.
 
 The prompt carries what a tool description cannot. A description is read once the
 model is already considering that tool; the prompt shapes the decision before it
@@ -217,8 +229,25 @@ Resolution is classified, never decided: `find_workspace` returns
 holding a workspace with the same name is a question for the user, not a coin
 flip, and the destructive tools still take a `workspaceId`. Matching folds case,
 punctuation, and hyphens because the name arrives through a transcriber, and it
-covers the directory name as well as the title. A host that fails to answer is
-reported in `unavailableHosts` rather than folded into "no match".
+covers the directory name as well as the title.
+
+Resolving and acting stay two separate turns on purpose. A combined
+resolve-and-act tool would enforce the `unique_exact` rule mechanically instead
+of by prompt, but the beat between the turns is where the model says "found it
+on Desktop — archiving", which is the user's one interrupt window before a
+destructive act on transcribed input. Keeping that window is worth the turn;
+prompt-level enforcement of the ambiguous cases is the accepted residual risk.
+
+A host with no result lands in one of two buckets, because a voice call must
+narrate them differently: `unavailableHosts` could not be reached at all, while
+`erroredHosts` answered and the tool failed there — which is the expected shape
+when an agent-scoped read is fanned out to learn which machine owns the agent.
+Classification reads the route error's code, kept on the broker's rejection;
+unknown codes count as tool failures, because "that read failed on Desktop" is a
+mild miss where "I could not see Desktop" claims an outage that is not
+happening. A workspace listing that does not parse is reported the same way
+rather than counted as an empty host. Neither bucket is ever presented as the
+machine holding nothing.
 
 Routed discovery uses a 30-second timeout instead of the broker's ten-minute
 default. That default is sized for tools that wait on an agent turn; inherited

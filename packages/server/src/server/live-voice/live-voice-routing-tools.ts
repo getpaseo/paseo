@@ -5,7 +5,10 @@ import {
   type VoiceLiveRouteHost,
 } from "@getpaseo/protocol/live-voice-routing";
 import { z } from "zod";
-import type { LiveVoiceRouteBroker } from "./live-voice-route-broker.js";
+import {
+  LiveVoiceRoutedRequestError,
+  type LiveVoiceRouteBroker,
+} from "./live-voice-route-broker.js";
 import {
   canRunOnAllLiveVoiceHosts,
   LIVE_VOICE_ALL_HOSTS_READ_TOOLS,
@@ -27,10 +30,23 @@ import type {
  */
 const DISCOVERY_TIMEOUT_MS = 30_000;
 
+/**
+ * Saved hosts change when the user edits them, not mid-sentence. Without this,
+ * every fan-out pays a serial round trip through the owning app — possibly on
+ * cellular — before any target is contacted. Stale entries self-correct: a host
+ * that has since gone away fails its own read and is reported by name, and an
+ * explicitly named host missing from the cache triggers one fresh fetch.
+ */
+const HOSTS_CACHE_TTL_MS = 30_000;
+
 const WorkspaceRowSchema = z.object({
   workspaceId: z.string().min(1),
   title: z.string().nullish(),
   cwd: z.string().nullish(),
+});
+
+const WorkspaceListingSchema = z.object({
+  workspaces: z.array(WorkspaceRowSchema),
 });
 
 const LiveVoiceWorkspaceMatchSchema = z.object({
@@ -42,7 +58,8 @@ const LiveVoiceWorkspaceMatchSchema = z.object({
   matchKind: z.enum(["exact", "partial"]),
 });
 
-const UnavailableHostSchema = z.object({
+/** One host, one sentence about why it has no result. Used for both failure buckets. */
+const HostReportSchema = z.object({
   serverId: z.string(),
   label: z.string(),
   reason: z.string(),
@@ -80,8 +97,62 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Codes the app produces before the target daemon runs anything, plus
+ * `target_request_failed` for a transport that broke mid-request. Everything
+ * else — the executor's own codes and any code a newer peer invents — means the
+ * host answered, so it is classified as a tool failure. That is the safer wrong
+ * guess for an unknown code: "that read failed on Desktop" is mildly off when
+ * the host was in fact unreachable, but "I could not see Desktop" when the host
+ * answered fine claims an outage that is not happening.
+ */
+const UNREACHABLE_ROUTE_CODES = new Set([
+  "host_offline",
+  "unknown_host",
+  "tool_execution_unsupported",
+  "agent_notifications_unsupported",
+  "unauthorized_source_call",
+  "target_request_failed",
+]);
+
+function isUnreachableFailure(error: unknown): boolean {
+  if (error instanceof LiveVoiceRoutedRequestError) {
+    return UNREACHABLE_ROUTE_CODES.has(error.code);
+  }
+  // No response ever arrived: broker timeout, send failure, call teardown.
+  return true;
+}
+
+interface HostReport {
+  serverId: string;
+  label: string;
+  reason: string;
+}
+
+function toHostReport(host: VoiceLiveRouteHost, reason: string): HostReport {
+  return { serverId: host.serverId, label: host.label, reason };
+}
+
+/** A tool that reports failure via `isError` puts the explanation in its text content. */
+function describeIsErrorResult(content: unknown): string {
+  if (Array.isArray(content)) {
+    for (const item of content) {
+      if (
+        item &&
+        typeof item === "object" &&
+        typeof (item as { text?: unknown }).text === "string"
+      ) {
+        return (item as { text: string }).text;
+      }
+    }
+  }
+  return "the tool reported an error";
+}
+
 export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingToolsOptions): void {
-  async function listHosts(): Promise<VoiceLiveRouteHost[]> {
+  let cachedHosts: { hosts: VoiceLiveRouteHost[]; expiresAt: number } | null = null;
+
+  async function listHostsFresh(): Promise<VoiceLiveRouteHost[]> {
     const result = await options.broker.execute(
       options.hostAgentId,
       { kind: "list_hosts" },
@@ -90,14 +161,22 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
     if (result.kind !== "list_hosts") {
       throw new Error(`Unexpected routed result '${result.kind}' for list_hosts`);
     }
+    cachedHosts = { hosts: result.hosts, expiresAt: Date.now() + HOSTS_CACHE_TTL_MS };
     return result.hosts;
+  }
+
+  async function listHostsCached(): Promise<VoiceLiveRouteHost[]> {
+    if (cachedHosts && Date.now() < cachedHosts.expiresAt) {
+      return cachedHosts.hosts;
+    }
+    return listHostsFresh();
   }
 
   async function runOnHost(
     host: VoiceLiveRouteHost,
     toolName: string,
     args: LiveVoiceJsonObject,
-  ): Promise<unknown> {
+  ): Promise<{ structuredContent: unknown; content: unknown; isError: boolean }> {
     const result = await options.broker.execute(
       options.hostAgentId,
       {
@@ -111,7 +190,11 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
     if (result.kind !== "execute_tool") {
       throw new Error(`Unexpected routed result '${result.kind}' for ${toolName}`);
     }
-    return result.toolResult.structuredContent ?? null;
+    return {
+      structuredContent: result.toolResult.structuredContent ?? null,
+      content: result.toolResult.content,
+      isError: result.toolResult.isError === true,
+    };
   }
 
   interface FanOutSuccess {
@@ -122,19 +205,32 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
   interface FanOutOutcome {
     successes: FanOutSuccess[];
     searchedHosts: Array<{ serverId: string; label: string }>;
-    unavailableHosts: Array<{ serverId: string; label: string; reason: string }>;
+    /** Could not be reached at all: offline, needs upgrade, route died. */
+    unavailableHosts: HostReport[];
+    /** Answered, and this particular tool failed there. Not an outage. */
+    erroredHosts: HostReport[];
   }
 
   /**
    * One read, every ready host, one model turn. The hops are cheap; the turn the
    * user waits through is not, so nothing here is sequential.
+   *
+   * Every host lands in exactly one bucket. The two failure buckets exist
+   * because a voice call narrates them differently: an unreachable machine is
+   * "I could not see it", a tool error is "it answered but this read failed" —
+   * and an agent-scoped read fanned out to find which machine owns the agent
+   * *expects* clean failures everywhere but one.
    */
   async function fanOut(input: {
     toolName: string;
     arguments: LiveVoiceJsonObject;
     serverId?: string | undefined;
   }): Promise<FanOutOutcome> {
-    const hosts = await listHosts();
+    let hosts = await listHostsCached();
+    if (input.serverId && !hosts.some((host) => host.serverId === input.serverId)) {
+      // The named host may have been saved after the cache was filled.
+      hosts = await listHostsFresh();
+    }
     const requested = input.serverId
       ? hosts.filter((host) => host.serverId === input.serverId)
       : hosts;
@@ -144,11 +240,8 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
 
     const unavailableHosts = requested
       .filter((host) => !isReadyHost(host))
-      .map((host) => ({
-        serverId: host.serverId,
-        label: host.label,
-        reason: describeUnreadyHost(host),
-      }));
+      .map((host) => toHostReport(host, describeUnreadyHost(host)));
+    const erroredHosts: HostReport[] = [];
     const readyHosts = requested.filter(isReadyHost);
 
     const settled = await Promise.allSettled(
@@ -162,37 +255,24 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
         return;
       }
       if (outcome.status === "fulfilled") {
-        successes.push({ host, structuredContent: outcome.value });
+        if (outcome.value.isError) {
+          erroredHosts.push(toHostReport(host, describeIsErrorResult(outcome.value.content)));
+          return;
+        }
+        successes.push({ host, structuredContent: outcome.value.structuredContent });
         searchedHosts.push({ serverId: host.serverId, label: host.label });
         return;
       }
-      // A host that failed to answer is reported, never folded into an empty
-      // result — what the user asked about may well be on it.
-      unavailableHosts.push({
-        serverId: host.serverId,
-        label: host.label,
-        reason: errorMessage(outcome.reason),
-      });
+      // A host that failed is reported, never folded into an empty result —
+      // what the user asked about may well be on it.
+      const report = toHostReport(host, errorMessage(outcome.reason));
+      if (isUnreachableFailure(outcome.reason)) {
+        unavailableHosts.push(report);
+      } else {
+        erroredHosts.push(report);
+      }
     });
-    return { successes, searchedHosts, unavailableHosts };
-  }
-
-  function toWorkspaceCandidates(outcome: FanOutSuccess): LiveVoiceWorkspaceCandidate[] {
-    const structured = outcome.structuredContent;
-    const rows =
-      structured && typeof structured === "object" && !Array.isArray(structured)
-        ? z
-            .array(WorkspaceRowSchema)
-            .catch([])
-            .parse((structured as { workspaces?: unknown }).workspaces)
-        : [];
-    return rows.map((row) => ({
-      serverId: outcome.host.serverId,
-      hostLabel: outcome.host.label,
-      workspaceId: row.workspaceId,
-      title: row.title ?? null,
-      cwd: row.cwd ?? null,
-    }));
+    return { successes, searchedHosts, unavailableHosts, erroredHosts };
   }
 
   options.registerTool(
@@ -207,7 +287,7 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
     async () => {
       return {
         content: [],
-        structuredContent: { hosts: await listHosts() },
+        structuredContent: { hosts: await listHostsFresh() },
       };
     },
   );
@@ -243,7 +323,8 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
         ]),
         matches: z.array(LiveVoiceWorkspaceMatchSchema),
         searchedHosts: z.array(z.object({ serverId: z.string(), label: z.string() })),
-        unavailableHosts: z.array(UnavailableHostSchema),
+        unavailableHosts: z.array(HostReportSchema),
+        erroredHosts: z.array(HostReportSchema),
       },
     },
     async (input) => {
@@ -259,16 +340,40 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
         arguments: {},
         serverId: parsed.serverId,
       });
-      const candidates: LiveVoiceWorkspaceCandidate[] =
-        outcome.successes.flatMap(toWorkspaceCandidates);
+      // A host whose listing does not parse was not searched, whatever it sent
+      // back. Counting it as "searched, empty" would let a version-skewed host
+      // silently hide the workspace the user just named.
+      const candidates: LiveVoiceWorkspaceCandidate[] = [];
+      const searchedHosts: Array<{ serverId: string; label: string }> = [];
+      const erroredHosts = [...outcome.erroredHosts];
+      for (const success of outcome.successes) {
+        const listing = WorkspaceListingSchema.safeParse(success.structuredContent);
+        if (!listing.success) {
+          erroredHosts.push(
+            toHostReport(success.host, "returned a workspace list this call could not read"),
+          );
+          continue;
+        }
+        searchedHosts.push({ serverId: success.host.serverId, label: success.host.label });
+        candidates.push(
+          ...listing.data.workspaces.map((row) => ({
+            serverId: success.host.serverId,
+            hostLabel: success.host.label,
+            workspaceId: row.workspaceId,
+            title: row.title ?? null,
+            cwd: row.cwd ?? null,
+          })),
+        );
+      }
       const search = searchLiveVoiceWorkspaces(parsed.query, candidates);
       return {
         content: [],
         structuredContent: {
           resolution: search.resolution,
           matches: search.matches,
-          searchedHosts: outcome.searchedHosts,
+          searchedHosts,
           unavailableHosts: outcome.unavailableHosts,
+          erroredHosts,
         },
       };
     },
@@ -278,7 +383,7 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
     "run_paseo_tool_on_all_hosts",
     {
       title: "Run a Paseo read on every host",
-      description: `Run one read-only Paseo tool on every ready host at once and get the results per host, in a single call. Use this for any question about the user's machines as a whole — what is running anywhere, what is waiting on permission anywhere — instead of calling list_hosts and then run_paseo_tool_on_host once per machine. Only these tools can be run this way: ${LIVE_VOICE_ALL_HOSTS_READ_TOOLS.join(", ")}. Anything that changes state runs on one named host through run_paseo_tool_on_host, so the user is never asked one question that mutates several machines. Hosts that could not be reached come back in unavailableHosts; say so rather than reporting their absence as nothing found.`,
+      description: `Run one read-only Paseo tool on every ready host at once and get the results per host, in a single call. Use this for any question about the user's machines as a whole — what is running anywhere, what is waiting on permission anywhere — instead of calling list_hosts and then run_paseo_tool_on_host once per machine. Also use it to locate something by id: fanning get_agent_status out is how to learn which machine owns an agent, and the machines that do not will report a tool error, not an outage. Only these tools can be run this way: ${LIVE_VOICE_ALL_HOSTS_READ_TOOLS.join(", ")}. Anything that changes state runs on one named host through run_paseo_tool_on_host, so the user is never asked one question that mutates several machines. unavailableHosts could not be reached at all; erroredHosts answered but this read failed there — never present either as the machine holding nothing.`,
       inputSchema: {
         toolName: z
           .string()
@@ -298,7 +403,8 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
             result: LiveVoiceJsonObjectSchema.nullable(),
           }),
         ),
-        unavailableHosts: z.array(UnavailableHostSchema),
+        unavailableHosts: z.array(HostReportSchema),
+        erroredHosts: z.array(HostReportSchema),
       },
     },
     async (input) => {
@@ -328,6 +434,7 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
             result: success.structuredContent ?? null,
           })),
           unavailableHosts: outcome.unavailableHosts,
+          erroredHosts: outcome.erroredHosts,
         },
       };
     },

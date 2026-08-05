@@ -146,6 +146,38 @@ describe("LiveVoiceRouteBroker", () => {
     await expect(resultPromise).rejects.toThrow("The selected host is offline.");
   });
 
+  it("keeps the wire error's code and retryability on the rejection", async () => {
+    // The fan-out tools read the code to tell an unreachable machine from a
+    // tool that failed on a machine that answered. A plain Error would erase
+    // that distinction.
+    const { broker, sourceKey } = createHarness();
+    const resultPromise = broker.execute(HOST_AGENT_ID, { kind: "list_hosts" });
+
+    broker.receiveResponse(
+      {
+        type: "voice.live.route.response",
+        payload: {
+          requestId: "route-request-1",
+          liveSessionId: LIVE_SESSION_ID,
+          ok: false,
+          error: {
+            code: "tool_execution_failed",
+            message: "Agent not found: agent-1",
+            retryable: false,
+          },
+        },
+      },
+      sourceKey,
+    );
+
+    await expect(resultPromise).rejects.toMatchObject({
+      name: "LiveVoiceRoutedRequestError",
+      code: "tool_execution_failed",
+      retryable: false,
+      message: "Agent not found: agent-1",
+    });
+  });
+
   it("times out without accepting a later response", async () => {
     vi.useFakeTimers();
     const { broker, sourceKey } = createHarness({ timeoutMs: 10 });

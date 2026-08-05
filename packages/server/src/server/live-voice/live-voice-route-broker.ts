@@ -16,6 +16,25 @@ type VoiceLiveRouteSuccessPayload = Extract<VoiceLiveRouteResponse["payload"], {
 
 export type LiveVoiceRouteResult = VoiceLiveRouteSuccessPayload["result"];
 
+/**
+ * A routed request that came back `ok: false`, with the wire error's code kept
+ * on the exception. The fan-out tools read the code to tell "could not reach
+ * that machine" from "that machine answered and the tool failed there" — two
+ * things a voice call must narrate differently. Timeouts and send failures stay
+ * plain Errors: no response ever arrived, so there is no code to carry.
+ */
+export class LiveVoiceRoutedRequestError extends Error {
+  readonly code: string;
+  readonly retryable: boolean | undefined;
+
+  constructor(message: string, options: { code: string; retryable?: boolean | undefined }) {
+    super(message);
+    this.name = "LiveVoiceRoutedRequestError";
+    this.code = options.code;
+    this.retryable = options.retryable;
+  }
+}
+
 export interface LiveVoiceRouteRegistration {
   hostAgentId: string;
   liveSessionId: string;
@@ -159,7 +178,12 @@ export class LiveVoiceRouteBroker {
     if (payload.ok) {
       pending.resolve(payload.result);
     } else {
-      pending.reject(new Error(payload.error.message));
+      pending.reject(
+        new LiveVoiceRoutedRequestError(payload.error.message, {
+          code: payload.error.code,
+          retryable: payload.error.retryable,
+        }),
+      );
     }
     return true;
   }

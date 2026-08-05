@@ -136,7 +136,7 @@ describe("live voice prompt", () => {
     const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
 
     expect(prompt).toContain("run_paseo_tool_on_all_hosts");
-    expect(prompt).toMatch(/do not ask which one they meant/i);
+    expect(prompt).toMatch(/do not ask which machine they meant/i);
     expect(prompt).toMatch(/never change several machines at once/i);
   });
 
@@ -155,9 +155,12 @@ describe("live voice prompt", () => {
 
     expect(prompt).toMatch(/no other way in and no cached copy/i);
     expect(prompt).toMatch(/they wait through every one in silence/i);
-    // An unreachable host must not be reported as an empty one.
+    // The two ways a machine can have no answer are narrated differently: an
+    // unreachable machine is an outage, a tool error is not.
     expect(prompt).toContain("unavailableHosts");
-    expect(prompt).toMatch(/Never answer as though it held nothing/i);
+    expect(prompt).toContain("erroredHosts");
+    expect(prompt).toMatch(/answered but that one read failed/i);
+    expect(prompt).toMatch(/Neither ever means the machine held nothing/i);
   });
 
   it("gives a local-only call the same tool names but no cross-host recipe", () => {
@@ -177,7 +180,7 @@ describe("live voice prompt", () => {
 
     expect(prompt).toMatch(/use Paseo MCP first/i);
     expect(prompt).toMatch(
-      /Call list_hosts to identify the host, then route ordinary host tools such as list_agents, get_agent_status, and get_agent_activity/i,
+      /run_paseo_tool_on_all_hosts when the question spans machines, and reads like get_agent_status or get_agent_activity on the machine that owns the session/i,
     );
     expect(prompt).toMatch(/Treat Paseo MCP results as authoritative/i);
     expect(prompt.indexOf("use Paseo MCP first")).toBeLessThan(

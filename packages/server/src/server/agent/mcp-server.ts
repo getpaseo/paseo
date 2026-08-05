@@ -42,6 +42,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         title: tool.title,
         description: tool.description,
         inputSchema: tool.inputSchema,
+        ...(tool.readOnly ? { annotations: { readOnlyHint: true } } : {}),
       },
       async (args: unknown, context?: McpToolContext) =>
         toMcpToolResult(await catalog.executeTool(tool.name, args, { signal: context?.signal })),

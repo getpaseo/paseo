@@ -57,6 +57,7 @@ import type { DaemonConfigStore } from "../daemon-config-store.js";
 import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-tools/broker.js";
 import type { LiveVoiceRouteBroker } from "../live-voice/live-voice-route-broker.js";
 import { LIVE_VOICE_ALL_HOSTS_READ_TOOLS } from "../live-voice/live-voice-fanout-tools.js";
+import { LIVE_VOICE_CANONICAL_TOOLS } from "../live-voice/live-voice-context.js";
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
@@ -90,6 +91,7 @@ interface LooseContentBlock {
 
 interface RegisteredMcpTool {
   inputSchema: LooseInputSchema;
+  annotations?: { readOnlyHint?: boolean };
   callback?: (
     input: unknown,
     extra?: unknown,
@@ -5374,7 +5376,7 @@ describe("Live Voice cross-host MCP tools", () => {
     });
   });
 
-  it("keeps every all-hosts read tool a real tool on the target catalog", async () => {
+  it("keeps the all-hosts allowlist equal to the tools the catalog declares read-only", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const target = await createAgentMcpServer({
       agentManager,
@@ -5383,10 +5385,50 @@ describe("Live Voice cross-host MCP tools", () => {
       logger,
     });
 
-    // The allowlist is typed by hand, so a rename on the target side would
-    // otherwise turn into a tool_not_found on every host at once.
-    for (const toolName of LIVE_VOICE_ALL_HOSTS_READ_TOOLS) {
-      expect(lookupTool(target, toolName), `${toolName} is missing`).toBeDefined();
+    // Read-ness is declared where each tool is written (`readOnly: true` on its
+    // config, surfaced as MCP readOnlyHint); the fan-out allowlist is typed by
+    // hand on the routing side because a target's catalog can be a different
+    // version. This equality is what keeps the two honest: a renamed tool would
+    // otherwise become tool_not_found on every host at once, and a newly tagged
+    // read tool must be deliberately admitted to the fan-out.
+    const registeredTools: Record<string, RegisteredMcpTool> = Reflect.get(
+      target,
+      "_registeredTools",
+    );
+    const declaredReadOnly = Object.entries(registeredTools)
+      .filter(([, tool]) => tool.annotations?.readOnlyHint === true)
+      .map(([name]) => name)
+      .sort();
+    expect(declaredReadOnly).toEqual([...LIVE_VOICE_ALL_HOSTS_READ_TOOLS].sort());
+  });
+
+  it("keeps every tool the Live Voice prompt calls exact honest against the catalog", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const target = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+
+    // The prompt tells the voice model these names and arguments are "exact and
+    // stable" so it calls them without discovery. The first draft of that list
+    // already named a tool this daemon does not have (snooze_workspace); each
+    // wrong entry costs the user a failed turn.
+    for (const canonical of LIVE_VOICE_CANONICAL_TOOLS) {
+      const response = await registeredTool(target, "list_paseo_tools").handler({
+        toolName: canonical.name,
+      });
+      const definitions = z
+        .array(z.object({ name: z.string(), inputSchema: z.record(z.string(), z.unknown()) }))
+        .parse(response.structuredContent.tools);
+      expect(definitions, `${canonical.name} is not in the catalog`).toHaveLength(1);
+      const properties = z
+        .record(z.string(), z.unknown())
+        .parse(definitions[0]?.inputSchema.properties ?? {});
+      for (const arg of canonical.args ?? []) {
+        expect(properties, `${canonical.name} has no argument '${arg}'`).toHaveProperty(arg);
+      }
     }
   });
 

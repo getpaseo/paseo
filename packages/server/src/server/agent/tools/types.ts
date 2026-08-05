@@ -15,6 +15,14 @@ export interface PaseoToolResult {
 export interface PaseoToolConfig {
   title?: string;
   description?: string;
+  /**
+   * The tool observes state without changing it — MCP's `readOnlyHint`, kept on
+   * the definition so read-ness is declared where the tool is written. The Live
+   * Voice all-hosts fan-out allowlist must stay equal to the set of tools tagged
+   * here; a test enforces that, so tagging a new read tool is the deliberate
+   * "this may fan out" decision.
+   */
+  readOnly?: boolean;
   inputSchema?: z.ZodRawShape | z.ZodType;
   outputSchema?: z.ZodRawShape;
 }
