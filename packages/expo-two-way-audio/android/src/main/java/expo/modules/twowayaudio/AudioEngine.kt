@@ -194,21 +194,25 @@ class AudioEngine (context: Context) {
      * `releaseAudioSession()` abandons focus and pauses the track once we go idle, so a playback
      * turn that starts after that release has to reclaim both. Without this, the assistant's
      * response plays with no focus held and competes with whatever the user is listening to.
-     * A null [audioFocusRequest] is what "we released" looks like, so it is the guard.
+     * A null [audioFocusRequest] is what "we released" looks like, so it is the guard against
+     * re-requesting focus mid-turn.
+     *
+     * Focus is best effort here, and deliberately not fatal. `playPCMData` is fire-and-forget
+     * from JS — `playAudio()` settles on a duration timer, not on a native ack — so refusing to
+     * queue would report a chunk as played that nobody heard. Playing unfocused is what this
+     * path did before the session was ever released, and it is the better failure. Leaving the
+     * request outstanding instead of abandoning it is also what lets a delayed grant arrive
+     * later through the listener, which is the point of `setAcceptsDelayedFocusGain(true)`.
      */
     @SuppressLint("NewApi")
-    private fun acquireAudioSessionIfNeeded(): Boolean {
+    private fun acquireAudioSessionIfNeeded() {
         if (audioFocusRequest != null) {
-            return true
+            return
         }
-        if (!requestAudioFocus()) {
-            handleAudioFocusBlocked()
-            return false
-        }
+        requestAudioFocus()
         if (::audioTrack.isInitialized) {
             audioTrack.play()
         }
-        return true
     }
 
     @SuppressLint("NewApi")
@@ -371,9 +375,7 @@ class AudioEngine (context: Context) {
 
     @SuppressLint("NewApi")
     fun playPCMData(data: ByteArray) {
-        if (!acquireAudioSessionIfNeeded()) {
-            return
-        }
+        acquireAudioSessionIfNeeded()
         audioSampleQueue.add(data)
         playbackEvents += 1
         playbackQueuedBytes += data.size.toLong()
@@ -471,9 +473,7 @@ class AudioEngine (context: Context) {
 
     @SuppressLint("NewApi")
     fun resumePlayback() {
-        if (!acquireAudioSessionIfNeeded()) {
-            return
-        }
+        acquireAudioSessionIfNeeded()
         audioTrack.play()
         Log.d("AudioEngine", "Playback resumed")
     }
