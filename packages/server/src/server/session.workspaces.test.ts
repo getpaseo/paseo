@@ -278,6 +278,7 @@ function makeStoredAgent(input: {
   id: string;
   cwd: string;
   updatedAt: string;
+  title?: string | null;
   requiresAttention?: boolean;
   attentionReason?: StoredAgentRecord["attentionReason"];
 }): StoredAgentRecord {
@@ -289,7 +290,7 @@ function makeStoredAgent(input: {
     updatedAt: input.updatedAt,
     lastActivityAt: input.updatedAt,
     lastUserMessageAt: null,
-    title: null,
+    title: input.title ?? null,
     labels: {},
     lastStatus: "closed",
     lastModeId: null,
@@ -4024,6 +4025,15 @@ test("import_agent_request registers a workspace for a never-seen cwd", async ()
   ) => {
     workspaces.set(record.workspaceId, record);
   };
+  session.workspaceRegistry.update = async (workspaceId, updater) => {
+    const existing = workspaces.get(workspaceId);
+    if (!existing) {
+      return null;
+    }
+    const updated = updater(existing);
+    workspaces.set(workspaceId, updated);
+    return updated;
+  };
   session.projectRegistry.list = async () => Array.from(projects.values());
   session.workspaceRegistry.list = async () => Array.from(workspaces.values());
   session.buildProjectPlacement = async (cwd: string) => ({
@@ -4051,7 +4061,15 @@ test("import_agent_request registers a workspace for a never-seen cwd", async ()
   session.agentManager.getTimeline = () => [];
   session.agentManager.setTitle = async () => undefined;
   session.agentStorage.list = async () => [];
-  session.agentStorage.get = async () => null;
+  session.agentStorage.get = async (agentId: string) =>
+    agentId === managed.id
+      ? makeStoredAgent({
+          id: managed.id,
+          cwd: importedCwd,
+          updatedAt: managed.updatedAt.toISOString(),
+          title: "Imported session title",
+        })
+      : null;
   session.agentUpdates.forwardLiveAgent = async () => undefined;
 
   session.workspaceUpdatesSubscription = {
@@ -4099,6 +4117,7 @@ test("import_agent_request registers a workspace for a never-seen cwd", async ()
     (workspace) => workspace.cwd === importedCwd,
   );
   expect(importedWorkspace).toBeTruthy();
+  expect(importedWorkspace?.title).toBe("Imported session title");
   const workspaceUpdates = filterByType(emitted, "workspace_update");
   expect(workspaceUpdates.length).toBeGreaterThan(0);
   expect(

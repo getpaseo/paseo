@@ -3428,7 +3428,7 @@ export class Session {
         logger: this.sessionLogger,
       });
       if (createdWorkspace) {
-        await this.registerWorkspaceForImportedAgent(createdWorkspace);
+        await this.registerWorkspaceForImportedAgent(createdWorkspace, snapshot.id);
       }
       const agentPayload = await this.buildAgentPayload(snapshot);
       this.emit({
@@ -5207,14 +5207,38 @@ export class Session {
 
   private async registerWorkspaceForImportedAgent(
     workspace: PersistedWorkspaceRecord,
+    importedAgentId: string,
   ): Promise<void> {
+    let workspaceToRegister = workspace;
     try {
-      await this.syncWorkspaceGitObserverForWorkspace(workspace);
-      await this.describeWorkspaceRecord(workspace);
-      await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+      const importedTitle = (await this.agentStorage.get(importedAgentId))?.title?.trim();
+      if (importedTitle) {
+        workspaceToRegister =
+          (await this.workspaceRegistry.update(workspace.workspaceId, (existing) => {
+            if (existing.title?.trim()) {
+              return existing;
+            }
+            return {
+              ...existing,
+              title: importedTitle,
+              updatedAt: new Date().toISOString(),
+            };
+          })) ?? workspace;
+      }
     } catch (error) {
       this.sessionLogger.warn(
-        { err: error, workspaceId: workspace.workspaceId, cwd: workspace.cwd },
+        { err: error, workspaceId: workspace.workspaceId, agentId: importedAgentId },
+        "Failed to sync imported agent title to workspace",
+      );
+    }
+
+    try {
+      await this.syncWorkspaceGitObserverForWorkspace(workspaceToRegister);
+      await this.describeWorkspaceRecord(workspaceToRegister);
+      await this.emitWorkspaceUpdateForWorkspaceId(workspaceToRegister.workspaceId);
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, workspaceId: workspaceToRegister.workspaceId, cwd: workspaceToRegister.cwd },
         "Failed to register workspace for imported agent",
       );
     }
