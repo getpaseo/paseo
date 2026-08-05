@@ -35,6 +35,7 @@ import {
 } from "./background-tasks.js";
 import { mapClaudeProviderHeartbeatToolEvent } from "./provider-heartbeats.js";
 import {
+  applyClaudeCustomModelEnvPins,
   findClaudeModel,
   getClaudeModelsWithSettings,
   normalizeClaudeRuntimeModelId,
@@ -3064,7 +3065,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private buildSdkEnv(extraClaudeOptions: Partial<ClaudeOptions> | undefined): NodeJS.ProcessEnv {
-    return createProviderEnv({
+    const env = createProviderEnv({
       baseEnv: process.env,
       runtimeSettings: this.runtimeSettings,
       overlays: [
@@ -3077,6 +3078,7 @@ class ClaudeAgentSession implements AgentSession {
         this.launchEnv,
       ],
     });
+    return applyClaudeCustomModelEnvPins(env, this.config.model);
   }
 
   private async buildOptions(): Promise<ClaudeOptions> {

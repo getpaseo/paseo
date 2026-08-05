@@ -16,7 +16,20 @@ const CLAUDE_SETTINGS_MODEL_ENV_KEYS = [
   "ANTHROPIC_DEFAULT_OPUS_MODEL",
   "ANTHROPIC_DEFAULT_SONNET_MODEL",
   "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL",
 ] as const;
+
+export const CLAUDE_CUSTOM_MODEL_PIN_ENV_KEYS = [
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL",
+  "CLAUDE_CODE_SUBAGENT_MODEL",
+] as const;
+
+export type ClaudeCustomModelPinEnvKey = (typeof CLAUDE_CUSTOM_MODEL_PIN_ENV_KEYS)[number];
+
+const CLAUDE_FAMILY_ALIASES = new Set(["opus", "sonnet", "haiku", "fable"]);
 
 export function getClaudeModels(claudeCodeVersion?: string): AgentModelDefinition[] {
   return getClaudeManifestModels(claudeCodeVersion);
@@ -134,4 +147,62 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 export function normalizeClaudeRuntimeModelId(value: string | null | undefined): string | null {
   return normalizeClaudeManifestRuntimeModelId(value);
+}
+
+/**
+ * True when the selected model is a custom non-family ID that should pin Claude Code
+ * family-alias / subagent env vars to itself.
+ */
+export function isClaudeCustomNonFamilyModel(modelId: string | null | undefined): boolean {
+  const trimmed = typeof modelId === "string" ? modelId.trim() : "";
+  if (!trimmed) {
+    return false;
+  }
+  if (CLAUDE_FAMILY_ALIASES.has(trimmed.toLowerCase())) {
+    return false;
+  }
+  // First-party catalog IDs and gateway-prefixed first-party forms normalize to a manifest ID.
+  if (normalizeClaudeRuntimeModelId(trimmed)) {
+    return false;
+  }
+  return true;
+}
+
+export function buildClaudeCustomModelEnvPins(
+  modelId: string,
+): Record<ClaudeCustomModelPinEnvKey, string> {
+  const pins = {} as Record<ClaudeCustomModelPinEnvKey, string>;
+  for (const key of CLAUDE_CUSTOM_MODEL_PIN_ENV_KEYS) {
+    pins[key] = modelId;
+  }
+  return pins;
+}
+
+function hasNonEmptyEnvValue(value: string | undefined): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+/**
+ * Fill missing Claude family/subagent pin env keys from a custom non-family selected model.
+ * User-provided non-empty values are preserved. First-party/family models are a no-op.
+ */
+export function applyClaudeCustomModelEnvPins(
+  env: NodeJS.ProcessEnv,
+  modelId: string | null | undefined,
+): NodeJS.ProcessEnv {
+  if (!isClaudeCustomNonFamilyModel(modelId)) {
+    return env;
+  }
+  const selectedModel = (modelId as string).trim();
+  const pins = buildClaudeCustomModelEnvPins(selectedModel);
+  let changed = false;
+  const next: NodeJS.ProcessEnv = { ...env };
+  for (const key of CLAUDE_CUSTOM_MODEL_PIN_ENV_KEYS) {
+    if (hasNonEmptyEnvValue(next[key])) {
+      continue;
+    }
+    next[key] = pins[key];
+    changed = true;
+  }
+  return changed ? next : env;
 }

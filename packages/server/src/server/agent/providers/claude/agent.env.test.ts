@@ -150,4 +150,113 @@ describe("Claude SDK env", () => {
       await session.close();
     }
   });
+
+  test("pins family and subagent env vars for custom non-family models", async () => {
+    let capturedEnv: Record<string, string | undefined> | undefined;
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      capturedEnv = options.env;
+      return createQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "custom-model-pin-session",
+          permissionMode: "default",
+          model: "glm-5.1",
+        },
+        {
+          type: "assistant",
+          message: { content: "done" },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          usage: {
+            input_tokens: 1,
+            cache_read_input_tokens: 0,
+            output_tokens: 1,
+          },
+          total_cost_usd: 0,
+        },
+      ]);
+    });
+
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "glm-5.1",
+    });
+
+    try {
+      await session.run("pin check");
+      expect(capturedEnv?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("glm-5.1");
+      expect(capturedEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("glm-5.1");
+      expect(capturedEnv?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("glm-5.1");
+      expect(capturedEnv?.ANTHROPIC_DEFAULT_FABLE_MODEL).toBe("glm-5.1");
+      expect(capturedEnv?.CLAUDE_CODE_SUBAGENT_MODEL).toBe("glm-5.1");
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("does not overwrite user-provided Claude model pin env vars", async () => {
+    let capturedEnv: Record<string, string | undefined> | undefined;
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      capturedEnv = options.env;
+      return createQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "custom-model-user-pin-session",
+          permissionMode: "default",
+          model: "glm-5.1",
+        },
+        {
+          type: "assistant",
+          message: { content: "done" },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          usage: {
+            input_tokens: 1,
+            cache_read_input_tokens: 0,
+            output_tokens: 1,
+          },
+          total_cost_usd: 0,
+        },
+      ]);
+    });
+
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession(
+      {
+        provider: "claude",
+        cwd: process.cwd(),
+        model: "glm-5.1",
+      },
+      {
+        env: {
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "user-opus-pin",
+        },
+      },
+    );
+
+    try {
+      await session.run("user pin check");
+      expect(capturedEnv?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("user-opus-pin");
+      expect(capturedEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("glm-5.1");
+      expect(capturedEnv?.CLAUDE_CODE_SUBAGENT_MODEL).toBe("glm-5.1");
+    } finally {
+      await session.close();
+    }
+  });
 });

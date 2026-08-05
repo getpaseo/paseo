@@ -14,7 +14,15 @@ import {
   parseClaudeCodeVersion,
   resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
-import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
+import {
+  applyClaudeCustomModelEnvPins,
+  buildClaudeCustomModelEnvPins,
+  CLAUDE_CUSTOM_MODEL_PIN_ENV_KEYS,
+  findClaudeModel,
+  getClaudeModels,
+  isClaudeCustomNonFamilyModel,
+  normalizeClaudeRuntimeModelId,
+} from "./models.js";
 
 const createdClaudeConfigDirs: string[] = [];
 
@@ -204,6 +212,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         ANTHROPIC_DEFAULT_OPUS_MODEL: "bedrock-opus-from-env",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.1",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5",
+        ANTHROPIC_DEFAULT_FABLE_MODEL: "fable-from-settings",
       },
     });
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
@@ -222,6 +231,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       "bedrock-opus-from-env",
       "glm-5.1",
       "glm-5",
+      "fable-from-settings",
     ];
     expect(models.map((model) => model.id)).toEqual([
       ...getClaudeModels().map((model) => model.id),
@@ -335,6 +345,72 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
 
     expect(models.map((model) => model.id)).not.toContain("claude-opus-5[1m]");
     expect(models.map((model) => model.id)).not.toContain("claude-opus-5");
+  });
+});
+
+describe("Claude custom model env pins", () => {
+  it.each([
+    [null, false],
+    [undefined, false],
+    ["", false],
+    ["   ", false],
+    ["opus", false],
+    ["SONNET", false],
+    ["haiku", false],
+    ["fable", false],
+    ["claude-opus-4-8", false],
+    ["claude-fable-5", false],
+    ["openrouter/anthropic/claude-opus-4-8", false],
+    ["glm-5.1", true],
+    ["qwen3.5-plus", true],
+    ["openrouter/foo/bar", true],
+  ] as const)("isClaudeCustomNonFamilyModel(%j) → %s", (modelId, expected) => {
+    expect(isClaudeCustomNonFamilyModel(modelId)).toBe(expected);
+  });
+
+  it("buildClaudeCustomModelEnvPins maps all pin keys to the selected model", () => {
+    expect(buildClaudeCustomModelEnvPins("glm-5.1")).toEqual({
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.1",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.1",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.1",
+      ANTHROPIC_DEFAULT_FABLE_MODEL: "glm-5.1",
+      CLAUDE_CODE_SUBAGENT_MODEL: "glm-5.1",
+    });
+    expect(Object.keys(buildClaudeCustomModelEnvPins("glm-5.1"))).toEqual([
+      ...CLAUDE_CUSTOM_MODEL_PIN_ENV_KEYS,
+    ]);
+  });
+
+  it("applyClaudeCustomModelEnvPins fills only missing keys for custom models", () => {
+    const applied = applyClaudeCustomModelEnvPins(
+      {
+        PATH: "/usr/bin",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "user-opus-pin",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "",
+      },
+      "glm-5.1",
+    );
+
+    expect(applied.PATH).toBe("/usr/bin");
+    expect(applied.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("user-opus-pin");
+    expect(applied.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("glm-5.1");
+    expect(applied.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("glm-5.1");
+    expect(applied.ANTHROPIC_DEFAULT_FABLE_MODEL).toBe("glm-5.1");
+    expect(applied.CLAUDE_CODE_SUBAGENT_MODEL).toBe("glm-5.1");
+  });
+
+  it("applyClaudeCustomModelEnvPins is a no-op for first-party models", () => {
+    const base = { PATH: "/usr/bin" };
+    expect(applyClaudeCustomModelEnvPins(base, "claude-opus-4-8")).toEqual(base);
+    expect(applyClaudeCustomModelEnvPins(base, "opus")).toEqual(base);
+  });
+
+  it("applyClaudeCustomModelEnvPins does not mutate the input env object", () => {
+    const base: NodeJS.ProcessEnv = { PATH: "/usr/bin" };
+    const applied = applyClaudeCustomModelEnvPins(base, "glm-5.1");
+    expect(applied).not.toBe(base);
+    expect(base).toEqual({ PATH: "/usr/bin" });
+    expect(applied.CLAUDE_CODE_SUBAGENT_MODEL).toBe("glm-5.1");
   });
 });
 

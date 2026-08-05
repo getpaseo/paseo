@@ -689,9 +689,27 @@ Each entry in the `models` array:
 
 ### Claude settings.json model discovery
 
-The built-in `claude` provider appends concrete model IDs from `~/.claude/settings.json` to its first-party Claude model list. Paseo reads the top-level `model` field and these `env` keys: `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL`.
+The built-in `claude` provider appends concrete model IDs from `~/.claude/settings.json` to its first-party Claude model list. Paseo reads the top-level `model` field and these `env` keys: `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, and `ANTHROPIC_DEFAULT_FABLE_MODEL`.
 
 This lets users who already configured Claude Code for Bedrock, OpenRouter, ollama, Z.AI, or another Anthropic-compatible gateway select the exact model ID in Paseo. When `agents.providers.claude.models` is set it **replaces** both the hardcoded first-party Claude list and any settings.json-discovered entries; use `agents.providers.claude.additionalModels` to keep the first-party list and append curated entries on top.
+
+### Custom model family/subagent env pins
+
+When a Claude session's selected model is a **custom non-family** model ID (not a first-party Claude catalog model and not a bare family alias like `opus`/`sonnet`/`haiku`/`fable`), Paseo pins Claude Code's internal model resolution env vars to that selected model:
+
+- `ANTHROPIC_DEFAULT_OPUS_MODEL`
+- `ANTHROPIC_DEFAULT_SONNET_MODEL`
+- `ANTHROPIC_DEFAULT_HAIKU_MODEL`
+- `ANTHROPIC_DEFAULT_FABLE_MODEL`
+- `CLAUDE_CODE_SUBAGENT_MODEL`
+
+This is session-local (recomputed at launch via the Claude Agent SDK `env`) and exists so Claude Code subagents and family aliases do not fall back to Anthropic defaults when you are on a third-party/custom model.
+
+Rules:
+
+- First-party Claude models and family aliases are unchanged.
+- User-provided values win: if a pin key is already set in process env, `agents.providers.*.env`, or launch env, Paseo leaves it alone.
+- The main chat model is still enforced separately via the Claude Agent SDK `model` option.
 
 ### Gotcha: `extends: "claude"` with third-party endpoints
 
