@@ -244,15 +244,37 @@ diffs, or step lists into a prompt, because it composes arguments serially
 while the user hears silence, and the session it delegates to is the stronger
 coder.
 
-The hidden host session defaults to a fast, cheap model at moderate thinking
-(`gpt-5.6-luna`, medium). Codex routes realtime delegations into text turns on
-the host thread, so that model is the backend executor for every action the
-call takes — a dispatcher, not a coder, where turn latency is what the user
-feels. The Live Voice settings can override model and thinking per user, sent
-as optional fields on `voice.live.start`; the picker offers only models every
-eligible host reports, and codex resolves an unknown id to its default, so a
-stale selection or an older codex degrades to a working call rather than a
-failed one.
+The hidden host session defaults to a fast, cheap model (`gpt-5.6-luna`). The
+Live Voice settings can override model and thinking per user, sent as optional
+fields on `voice.live.start`; the picker offers only models every eligible host
+reports, and codex resolves an unknown id to its default, so a stale selection
+or an older codex degrades to a working call rather than a failed one.
+
+Expect little latency from that choice. Codex executes each action on a
+_subagent_ thread it spawns off the host thread (`thread_source: subagent`,
+`parent_thread_id` pointing at the host), and it pins that thread to its own
+model and effort regardless of what the host thread is set to. Measured against
+codex's own rollouts for a real call — 15 actions, one session:
+
+| Stage                                                         | Median | Share |
+| ------------------------------------------------------------- | ------ | ----- |
+| Realtime model deciding, plus codex's handoff to the subagent | 9.5s   | 72%   |
+| Subagent turn: think and emit the tool call                   | 2.4s   | 18%   |
+| Paseo: routing, fan-out, and execution                        | 0.02s  | ~0%   |
+
+So the double hop is real but cheap, Paseo is free, and almost three quarters
+of the wait is inside the realtime API and codex's delegation, where nothing
+here has a lever. What _is_ a lever is the number of actions: at ~13s each,
+collapsing "archive the workspace I named" from ten calls to two is worth about
+100 seconds, which is why the fan-out tools and the recipes exist and why the
+prompt's job is to keep call counts down.
+
+Two things the same measurement ruled out, recorded so they are not
+re-litigated: argument size does not predict latency (Pearson r = +0.077 across
+20–720 characters; two identical 720-character calls took 13.7s and 5.8s), so
+verbose delegation prompts are a speech-quality problem rather than a speed
+one; and the subagent already runs fast and cheap on codex's own preset, so
+tuning the host model tier optimizes the 18% slice.
 
 Every routed tool call logs `live_voice.timing.tool_start` / `tool_end` lines
 to `daemon.log` (see `observeRoutedOperation` in `live-voice-coordinator.ts`).

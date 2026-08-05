@@ -30,11 +30,22 @@ const HOST_PROVIDER: AgentProvider = "codex";
 const HOST_TITLE = "Live Voice host";
 
 /**
- * The backend executor is a dispatcher, not a coder: it routes work through
- * Paseo's tools while the user waits on a live call, so a fast, cheap model at
- * moderate thinking beats a frontier model at high. Codex resolves an unknown
- * model id to its default, so an older codex without this model still hosts
- * calls — on its default backend, not on nothing.
+ * Model for the host thread. A dispatcher, not a coder — it routes work through
+ * Paseo's tools while the user waits — so a fast, cheap model is the right
+ * default. Codex resolves an unknown model id to its own default, so an older
+ * codex still hosts calls.
+ *
+ * Do not expect much latency from this. Measured against codex's own rollouts
+ * (see docs/architecture.md), a median action costs ~13s, of which ~9.5s is the
+ * realtime model deciding plus codex's handoff, ~2.4s is the turn that actually
+ * emits the tool call, and ~20ms is Paseo. That emitting turn runs on a codex
+ * *subagent* thread pinned by codex to its own model and effort, not to
+ * anything set here. The lever that moves the number is making fewer calls.
+ *
+ * Known gap: codex reports this thread at effort `high` even when
+ * `HOST_THINKING_OPTION_ID` says otherwise, so the thinking half of this pin is
+ * not reaching the provider. Worth chasing only if host-thread turns turn out
+ * to sit inside that 9.5s window.
  */
 const HOST_MODEL = "gpt-5.6-luna";
 const HOST_THINKING_OPTION_ID = "medium";
@@ -540,7 +551,20 @@ export class LiveVoiceCoordinator {
         "This daemon's agent provider does not support live voice.",
       );
     }
-    this.logger.debug({ hostAgentId: agent.id, cwd: this.hostCwd }, "live_voice.host.started");
+    // Info, not debug: daemons run at info, and this is the only record of what
+    // the call was actually configured with. Without it, a question as basic as
+    // "did the model override apply?" can only be answered by reading codex's
+    // own rollout files.
+    this.logger.info(
+      {
+        hostAgentId: agent.id,
+        cwd: this.hostCwd,
+        model: config.model,
+        thinkingOptionId: config.thinkingOptionId,
+        overridden: request.backendModel !== undefined,
+      },
+      "live_voice.host.started",
+    );
     return { agentId: agent.id, provider, context };
   }
 
