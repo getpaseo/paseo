@@ -16,12 +16,25 @@ export interface OpenCodeSubagentPresentationFacts {
 export interface OpenCodeSubagentPresentationState {
   facts: OpenCodeSubagentPresentationFacts;
   lastSubtitle?: string;
+  /** A descriptor title has been emitted from detection, linking, or assistant facts. */
+  titleEmitted?: boolean;
   /** Set once the parent `task` tool call has been linked to this child. */
   linkedToolCallId?: string;
   /** The link upsert carried a title (subAgentType); detection must not overwrite it. */
   titleFromLink?: boolean;
   /** The link upsert carried a description (task input); detection must not overwrite it. */
   descriptionFromLink?: boolean;
+}
+
+/** Claim the assistant/session agent as the descriptor title when no stronger title exists. */
+export function claimOpenCodeSubagentFallbackTitle(
+  state: OpenCodeSubagentPresentationState,
+  agentName: string | undefined,
+): string | undefined {
+  const title = readPart(agentName);
+  if (!title || state.titleFromLink || state.titleEmitted) return undefined;
+  state.titleEmitted = true;
+  return title;
 }
 
 /** Build the complete compact subtitle OpenCode exposes to provider-neutral clients. */

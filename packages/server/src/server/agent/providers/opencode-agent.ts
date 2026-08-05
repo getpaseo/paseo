@@ -84,6 +84,7 @@ import { composeSystemPromptParts } from "../system-prompt.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 import { revertOpenCodeConversationAndFiles } from "./opencode/rewind.js";
 import {
+  claimOpenCodeSubagentFallbackTitle,
   foldOpenCodeSubagentPresentation,
   type OpenCodeSubagentPresentationFacts,
   type OpenCodeSubagentPresentationState,
@@ -2192,8 +2193,8 @@ function appendOpenCodeChildSessionDetected(
 
   const knownChildSessionIds = getOpenCodeKnownChildSessionIds(state);
   // Known limitation: detection runs once per child, so a session record that gains `agent`
-  // only in a later session.updated never sets the descriptor title here. Assistant-frame
-  // facts still recover the subtitle via appendChildAssistantPresentationUpsert.
+  // only in a later session.updated is not refreshed here. Assistant-frame facts recover the
+  // descriptor title and subtitle via appendChildAssistantPresentationUpsert.
   if (knownChildSessionIds.has(child.id)) {
     return false;
   }
@@ -2205,6 +2206,7 @@ function appendOpenCodeChildSessionDetected(
     ...(child.model?.id ? { modelId: child.model.id } : {}),
     ...(child.model?.variant ? { variant: child.model.variant } : {}),
   });
+  const title = claimOpenCodeSubagentFallbackTitle(presentation, child.agent);
   // The row label contract: `description` carries the task (session title fallback), `title`
   // carries the subagent type. Neither gets a placeholder — absent facts render as nothing.
   events.push({
@@ -2213,7 +2215,7 @@ function appendOpenCodeChildSessionDetected(
     event: {
       type: "upsert",
       id: child.id,
-      ...(child.agent && !presentation.titleFromLink ? { title: child.agent } : {}),
+      ...(title ? { title } : {}),
       ...(child.title && !presentation.descriptionFromLink ? { description: child.title } : {}),
       status,
       ...(child.directory ? { cwd: child.directory } : {}),
@@ -2278,6 +2280,7 @@ function appendOpenCodeSubAgentLinkPresentation(
   const description = readNonEmptyString(detail.description);
   if (subAgentType) {
     presentation.titleFromLink = true;
+    presentation.titleEmitted = true;
   }
   if (description) {
     presentation.descriptionFromLink = true;
@@ -3692,7 +3695,7 @@ class OpenCodeAgentSession implements AgentSession {
   /**
    * After replaying a historical child, derive presentation facts from the last assistant
    * message (the session record's agent/model were already folded at detection) and publish
-   * the subtitle once. Presentation-only: no `status`.
+   * any missing title plus the updated subtitle once. Presentation-only: no `status`.
    */
   private emitHydratedChildPresentation(
     child: OpenCodeChildSessionInfo,
@@ -3714,13 +3717,19 @@ class OpenCodeAgentSession implements AgentSession {
       this.getChildTranslationState(child.id),
     );
     const subtitle = foldOpenCodeSubagentPresentation(presentation, facts);
-    if (!subtitle) {
+    const title = claimOpenCodeSubagentFallbackTitle(presentation, facts.agentName);
+    if (!subtitle && !title) {
       return;
     }
     const event: AgentStreamEvent = {
       type: "provider_subagent",
       provider: "opencode",
-      event: { type: "upsert", id: child.id, subtitle },
+      event: {
+        type: "upsert",
+        id: child.id,
+        ...(title ? { title } : {}),
+        ...(subtitle ? { subtitle } : {}),
+      },
     };
     this.recordProviderInternalEvent(event);
     this.notifySubscribers(event, null);
@@ -4630,7 +4639,7 @@ class OpenCodeAgentSession implements AgentSession {
 
   /**
    * Fold presentation facts (agent, model, variant, completed-message tokens) off a child
-   * assistant `message.updated` frame and emit a subtitle-only upsert when it changes.
+   * assistant `message.updated` frame and emit the missing title and/or changed subtitle.
    * Never carries `status`: a presentation upsert must not revert a finished child.
    */
   private appendChildAssistantPresentationUpsert(
@@ -4654,13 +4663,19 @@ class OpenCodeAgentSession implements AgentSession {
       this.getChildTranslationState(sessionId),
     );
     const subtitle = foldOpenCodeSubagentPresentation(presentation, facts);
-    if (!subtitle) {
+    const title = claimOpenCodeSubagentFallbackTitle(presentation, facts.agentName);
+    if (!subtitle && !title) {
       return;
     }
     events.push({
       type: "provider_subagent",
       provider: "opencode",
-      event: { type: "upsert", id: sessionId, subtitle },
+      event: {
+        type: "upsert",
+        id: sessionId,
+        ...(title ? { title } : {}),
+        ...(subtitle ? { subtitle } : {}),
+      },
     });
   }
 

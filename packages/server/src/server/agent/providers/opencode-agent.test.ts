@@ -4204,6 +4204,7 @@ describe("OpenCode provider subagent contract", () => {
       {
         type: "upsert",
         id: "ses_child_facts",
+        title: "general",
         subtitle: "general · claude-sonnet-5 · High",
       },
       {
@@ -4216,11 +4217,95 @@ describe("OpenCode provider subagent contract", () => {
     for (const upsert of subtitleUpserts) {
       expect(upsert).not.toHaveProperty("status");
     }
+    expect(subtitleUpserts.filter((upsert) => upsert.title !== undefined)).toHaveLength(1);
     expect(events.at(-1)).toEqual({
       type: "provider_subagent",
       provider: "opencode",
       event: { type: "upsert", id: "ses_child_facts", status: "completed" },
     });
+  });
+
+  test("does not overwrite a link-set title with the assistant-frame agent", async () => {
+    const { parent, openCode } = await createParentSession("ses_parent_link_title");
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    openCode.emitEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "prt_link_title_task",
+          sessionID: "ses_parent_link_title",
+          messageID: "msg_parent_link_title",
+          type: "tool",
+          tool: "task",
+          callID: "call_link_title",
+          state: {
+            status: "running",
+            input: { subagent_type: "explore", description: "Inspect title precedence" },
+          },
+        },
+      },
+    });
+    openCode.emitEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_child_link_title",
+          parentID: "ses_parent_link_title",
+          title: "Inspect title precedence",
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "provider_subagent",
+        provider: "opencode",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "ses_child_link_title",
+          title: "explore",
+          toolCallId: "call_link_title",
+        }),
+      }),
+    );
+
+    openCode.emitEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "msg_child_link_title",
+          sessionID: "ses_child_link_title",
+          role: "assistant",
+          agent: "general",
+          providerID: "anthropic",
+          modelID: "claude-sonnet-5",
+          time: { created: 1 },
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "provider_subagent",
+        provider: "opencode",
+        event: {
+          type: "upsert",
+          id: "ses_child_link_title",
+          subtitle: "general · claude-sonnet-5",
+        },
+      }),
+    );
+
+    const childTitles = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "upsert" &&
+      event.event.id === "ses_child_link_title" &&
+      event.event.title !== undefined
+        ? [event.event.title]
+        : [],
+    );
+    expect(childTitles).toEqual(["explore"]);
+    await parent.close();
   });
 
   test("maps child detection facts onto title, description, and subtitle", () => {
@@ -4606,7 +4691,6 @@ describe("OpenCode provider subagent contract", () => {
             id: "ses_child_hydrated_facts",
             parentID: "ses_parent_facts",
             title: "Chase the regression",
-            agent: "explore",
             model: { providerID: "anthropic", id: "claude-sonnet-5", variant: "max" },
           },
         ],
@@ -4656,10 +4740,9 @@ describe("OpenCode provider subagent contract", () => {
       event: {
         type: "upsert",
         id: "ses_child_hydrated_facts",
-        title: "explore",
         description: "Chase the regression",
         status: "completed",
-        subtitle: "explore · claude-sonnet-5 · Max",
+        subtitle: "claude-sonnet-5 · Max",
       },
     });
     await vi.waitFor(() =>
@@ -4669,6 +4752,7 @@ describe("OpenCode provider subagent contract", () => {
         event: {
           type: "upsert",
           id: "ses_child_hydrated_facts",
+          title: "explore",
           subtitle: "explore · claude-sonnet-5 · Max · 1k tokens",
         },
       }),
