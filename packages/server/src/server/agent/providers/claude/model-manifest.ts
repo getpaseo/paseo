@@ -270,6 +270,48 @@ export function isClaudeManifestModelId(modelId: string): boolean {
   return CLAUDE_MODEL_MANIFEST.some((model) => model.id === modelId);
 }
 
+/**
+ * Resolve the model ID that should be sent to Claude Code for a catalog model.
+ *
+ * The catalog exposes a single Opus 5 entry with a 1M context window, but Claude Code only
+ * opens the 1M window when the model string carries the `[1m]` suffix. Without it, upstreams
+ * that are not the first-party Anthropic API (reverse/relay deployments) fall back to a 200K
+ * window and start emitting compaction instructions long before the catalog's advertised limit.
+ *
+ * Derived from the manifest so any future 1M-context entry that omits the suffix is covered
+ * without another special case here.
+ */
+export function resolveClaudeWireModelId(modelId: string | null | undefined): string | null {
+  const trimmed = typeof modelId === "string" ? modelId.trim() : "";
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.toLowerCase().includes("[1m]")) {
+    return trimmed;
+  }
+
+  // Match the way the catalog resolves a model, so dated, cased and provider-prefixed
+  // spellings get the same window the UI advertises for them.
+  const catalogModelId = normalizeClaudeRuntimeModelId(trimmed);
+  const manifestModel = catalogModelId
+    ? CLAUDE_MODEL_MANIFEST.find((model) => model.id === catalogModelId)
+    : undefined;
+  if (!manifestModel || manifestModel.contextWindowMaxTokens !== 1_000_000) {
+    return trimmed;
+  }
+
+  // Only rewrite when the suffixed form is not itself a separate catalog entry, so models
+  // that ship an explicit 200K/1M pair keep their user-selected window.
+  if (isClaudeManifestModelId(`${catalogModelId}[1m]`)) {
+    return trimmed;
+  }
+
+  // Suffix the caller's own spelling: provider prefixes and date stamps are meaningful
+  // routing information upstream, so they must survive the rewrite.
+  return `${trimmed}[1m]`;
+}
+
 export function claudeManifestModelSupportsFastMode(modelId: string | null | undefined): boolean {
   const normalizedModelId = normalizeClaudeManifestModelId(modelId);
   if (!normalizedModelId) {

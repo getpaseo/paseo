@@ -12,6 +12,7 @@ import {
   normalizeClaudeManifestModelId,
   parseClaudeCodeVersion,
   resolveClaudeDisabledThinkingForModel,
+  resolveClaudeWireModelId,
 } from "./model-manifest.js";
 import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
 
@@ -437,6 +438,77 @@ describe("Claude Opus 5 catalog", () => {
       supported: true,
       fallbackThinkingOptionId: "low",
     });
+  });
+});
+
+describe("resolveClaudeWireModelId", () => {
+  it("requests the 1M window for the single Opus 5 catalog entry", () => {
+    expect(resolveClaudeWireModelId("claude-opus-5")).toBe("claude-opus-5[1m]");
+  });
+
+  it("leaves an explicit [1m] selection untouched", () => {
+    expect(resolveClaudeWireModelId("claude-opus-5[1m]")).toBe("claude-opus-5[1m]");
+    expect(resolveClaudeWireModelId("claude-sonnet-5[1m]")).toBe("claude-sonnet-5[1m]");
+  });
+
+  it("keeps 200K entries on their user-selected window", () => {
+    expect(resolveClaudeWireModelId("claude-sonnet-5")).toBe("claude-sonnet-5");
+    expect(resolveClaudeWireModelId("claude-fable-5")).toBe("claude-fable-5");
+    expect(resolveClaudeWireModelId("claude-opus-4-8")).toBe("claude-opus-4-8");
+    expect(resolveClaudeWireModelId("claude-haiku-4-5")).toBe("claude-haiku-4-5");
+  });
+
+  it("passes through non-catalog model strings unchanged", () => {
+    expect(resolveClaudeWireModelId("glm-5.1")).toBe("glm-5.1");
+    expect(resolveClaudeWireModelId("deepseek-v3")).toBe("deepseek-v3");
+    expect(resolveClaudeWireModelId("my-custom-opus")).toBe("my-custom-opus");
+    expect(resolveClaudeWireModelId("us.anthropic.claude-opus-4-8")).toBe(
+      "us.anthropic.claude-opus-4-8",
+    );
+  });
+
+  it("covers the spellings the catalog resolves to a 1M Opus 5", () => {
+    // These all report a 1M window in the UI, so they all have to request one upstream.
+    for (const modelId of [
+      "claude-opus-5-20260724",
+      "CLAUDE-OPUS-5",
+      "claude_opus_5",
+      "us.anthropic.claude-opus-5",
+      "openrouter/anthropic/claude-opus-5",
+    ]) {
+      expect(findClaudeModel(modelId)?.contextWindowMaxTokens).toBe(1_000_000);
+      expect(resolveClaudeWireModelId(modelId)).toBe(`${modelId}[1m]`);
+    }
+  });
+
+  it("keeps provider prefixes and date stamps intact while suffixing", () => {
+    // The prefix and date stamp are upstream routing information, not decoration.
+    expect(resolveClaudeWireModelId("us.anthropic.claude-opus-5")).toBe(
+      "us.anthropic.claude-opus-5[1m]",
+    );
+    expect(resolveClaudeWireModelId("claude-opus-5-20260724")).toBe("claude-opus-5-20260724[1m]");
+  });
+
+  it("never advertises a window the wire ID does not request", () => {
+    for (const model of getClaudeModels()) {
+      const wireModelId = resolveClaudeWireModelId(model.id) ?? model.id;
+      if (model.contextWindowMaxTokens === 1_000_000) {
+        expect(wireModelId.toLowerCase()).toContain("[1m]");
+      } else {
+        expect(wireModelId.toLowerCase()).not.toContain("[1m]");
+      }
+    }
+  });
+
+  it("returns null for empty input", () => {
+    expect(resolveClaudeWireModelId(null)).toBeNull();
+    expect(resolveClaudeWireModelId(undefined)).toBeNull();
+    expect(resolveClaudeWireModelId("   ")).toBeNull();
+  });
+
+  it("round-trips back to the catalog ID through runtime normalization", () => {
+    const wireModelId = resolveClaudeWireModelId("claude-opus-5");
+    expect(normalizeClaudeRuntimeModelId(wireModelId)).toBe("claude-opus-5");
   });
 });
 
