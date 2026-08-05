@@ -1,3 +1,5 @@
+import { stat } from "node:fs/promises";
+
 import { z } from "zod";
 import { ensureValidJson } from "../../json-utils.js";
 import type { Logger } from "pino";
@@ -265,6 +267,33 @@ function assertOptionsAbsent(
 ): void {
   if (options.some(([, value]) => value !== undefined)) {
     throw new Error(message);
+  }
+}
+
+/**
+ * Local workspace creation adopts a directory that already exists; it never
+ * provisions one. Nothing downstream checked that, so a caller that guessed a
+ * path got a successful-looking workspace record pointing at nothing, and the
+ * failure only surfaced later as an agent that could not start.
+ *
+ * The cost of the guess is highest for callers that cannot see the filesystem —
+ * a Live Voice call routes `create_workspace` to a machine it has no other view
+ * of — so the message says what to do next rather than only what went wrong.
+ */
+async function assertExistingWorkspaceDirectory(cwd: string): Promise<void> {
+  const stats = await stat(cwd).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") {
+      return null;
+    }
+    throw error;
+  });
+  if (!stats) {
+    throw new Error(
+      `No such directory: ${cwd}. Local workspace creation adopts an existing directory and never creates one. Pass a path that exists on this machine — list_workspaces shows directories already in use — or ask the user which directory to use.`,
+    );
+  }
+  if (!stats.isDirectory()) {
+    throw new Error(`Not a directory: ${cwd}. Local workspace creation requires a directory path.`);
   }
 }
 
@@ -1280,13 +1309,15 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Create workspace",
       description:
-        "Create a new workspace. Local placement requires path. Worktree placement requires exactly one source (path or projectId) and an explicit mode.",
+        "Create a new workspace. Local placement adopts an existing directory and requires path. Worktree placement requires exactly one source (path or projectId) and an explicit mode.",
       inputSchema: {
         isolation: z.enum(["local", "worktree"]),
         path: z
           .string()
           .optional()
-          .describe("Explicit local directory or worktree source checkout."),
+          .describe(
+            "Explicit local directory or worktree source checkout. Must already exist on this machine; this tool never creates the directory.",
+          ),
         projectId: z.string().optional().describe("Existing project id to own the workspace."),
         title: z.string().trim().min(1).optional(),
         mode: z
@@ -1341,6 +1372,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           throw new Error("path is required for local workspace creation");
         }
         const cwd = resolveScopedCwd(path, { required: true });
+        await assertExistingWorkspaceDirectory(cwd);
         assertOptionsAbsent(
           [
             ["mode", mode],
