@@ -1849,6 +1849,12 @@ export const fr: TranslationResources = {
         description: "Transmises telles quelles à l’agent vocal, à chaque appel.",
         placeholder: "Réponds toujours en une phrase sauf si j’en demande plus.",
       },
+      defaultWorkspaceDirectory: {
+        label: "Répertoire d'espace de travail par défaut",
+        description:
+          "Où sont créés les nouveaux espaces de travail quand une demande n'en désigne aucun. Laissez vide et l'agent vocal demandera.",
+        placeholder: "~/Projects",
+      },
     },
     diagnostics: {
       title: "Voix en direct",

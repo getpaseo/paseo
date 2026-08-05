@@ -1813,6 +1813,12 @@ export const ja: TranslationResources = {
         description: "毎回の通話で音声エージェントにそのまま伝えます。",
         placeholder: "求めない限り、常に一文で答えて。",
       },
+      defaultWorkspaceDirectory: {
+        label: "デフォルトのワークスペースディレクトリ",
+        description:
+          "リクエストに明確なワークスペースがないときに新しいワークスペースを作成する場所。空にすると音声エージェントが確認します。",
+        placeholder: "~/Projects",
+      },
     },
     diagnostics: {
       title: "ライブ音声",

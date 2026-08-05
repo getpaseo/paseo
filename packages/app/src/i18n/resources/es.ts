@@ -1845,6 +1845,12 @@ export const es: TranslationResources = {
         description: "Se transmiten al agente de voz tal cual, en cada llamada.",
         placeholder: "Responde siempre en una frase salvo que pida más.",
       },
+      defaultWorkspaceDirectory: {
+        label: "Directorio de espacio de trabajo predeterminado",
+        description:
+          "Dónde se crean los espacios de trabajo nuevos cuando una solicitud no tiene uno obvio. Déjalo vacío y el agente de voz preguntará.",
+        placeholder: "~/Projects",
+      },
     },
     diagnostics: {
       title: "Voz en directo",

@@ -1773,6 +1773,11 @@ export const zhCN: TranslationResources = {
         description: "每次通话都原样转达给语音智能体。",
         placeholder: "除非我要求更多，否则始终用一句话回答。",
       },
+      defaultWorkspaceDirectory: {
+        label: "默认工作区目录",
+        description: "当请求没有明确的工作区时，新工作区的创建位置。留空则由语音助手询问。",
+        placeholder: "~/Projects",
+      },
     },
     diagnostics: {
       title: "实时语音",

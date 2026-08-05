@@ -82,6 +82,7 @@ export interface LiveVoiceDaemonClient {
     ambientAgentGuidance?: string;
     disabledPromptComponents?: string[];
     customVoiceInstructions?: string;
+    defaultWorkspaceDirectory?: string;
     backendModel?: string;
     backendThinkingOptionId?: string;
   }): Promise<{ liveSessionId: string; answerSdp: string }>;
@@ -124,6 +125,7 @@ export interface LiveVoiceRuntimeDeps {
     read(): {
       disabledPromptComponents: string[] | undefined;
       customVoiceInstructions: string | undefined;
+      defaultWorkspaceDirectory: string | undefined;
       backendModel: string | undefined;
       backendThinkingOptionId: string | undefined;
     };
@@ -525,6 +527,9 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
               : {}),
             ...(callSettings?.customVoiceInstructions
               ? { customVoiceInstructions: callSettings.customVoiceInstructions }
+              : {}),
+            ...(callSettings?.defaultWorkspaceDirectory
+              ? { defaultWorkspaceDirectory: callSettings.defaultWorkspaceDirectory }
               : {}),
             ...(callSettings?.backendModel ? { backendModel: callSettings.backendModel } : {}),
             ...(callSettings?.backendThinkingOptionId

@@ -44,6 +44,12 @@ function toggleDisabledComponent(
   return [...disabled, id];
 }
 
+/**
+ * A path, so short by nature. Bounded anyway because the daemon bounds it, and
+ * a value rejected there would silently do nothing here.
+ */
+export const MAX_DEFAULT_WORKSPACE_DIRECTORY_LENGTH = 256;
+
 interface LiveVoiceSettingsState {
   /** The Codex realtime voice to use for new calls; null leaves selection to the provider. */
   voice: string | null;
@@ -59,6 +65,13 @@ interface LiveVoiceSettingsState {
   /** Standing instructions for the whole call, handed to the model verbatim. */
   customVoiceInstructions: string;
   /**
+   * Where the call puts a new workspace when a request names none. Empty means
+   * the call asks instead of choosing. Absolute or `~`-rooted; the daemon drops
+   * anything else, since a relative path has no base on the host that would run
+   * the creation.
+   */
+  defaultWorkspaceDirectory: string;
+  /**
    * Backend-executor model for new calls; null uses the daemon's fast default.
    * This is the model that runs the call's actions, not the realtime voice.
    */
@@ -69,6 +82,7 @@ interface LiveVoiceSettingsState {
   setAmbientAgentGuidance: (guidance: string) => void;
   setPromptComponentEnabled: (id: LiveVoiceOptionalPromptComponent, enabled: boolean) => void;
   setCustomVoiceInstructions: (instructions: string) => void;
+  setDefaultWorkspaceDirectory: (directory: string) => void;
   setBackendModel: (model: string | null) => void;
   setBackendThinkingOptionId: (thinkingOptionId: string | null) => void;
 }
@@ -83,6 +97,7 @@ export const useLiveVoiceSettingsStore = create<LiveVoiceSettingsState>()(
       ambientAgentGuidance: "",
       disabledPromptComponents: [],
       customVoiceInstructions: "",
+      defaultWorkspaceDirectory: "",
       backendModel: null,
       backendThinkingOptionId: null,
       setVoice: (voice) => set({ voice }),
@@ -100,6 +115,10 @@ export const useLiveVoiceSettingsStore = create<LiveVoiceSettingsState>()(
       setCustomVoiceInstructions: (instructions) =>
         set({
           customVoiceInstructions: instructions.slice(0, MAX_CUSTOM_VOICE_INSTRUCTIONS_LENGTH),
+        }),
+      setDefaultWorkspaceDirectory: (directory) =>
+        set({
+          defaultWorkspaceDirectory: directory.slice(0, MAX_DEFAULT_WORKSPACE_DIRECTORY_LENGTH),
         }),
       setBackendModel: (model) => set({ backendModel: model }),
       setBackendThinkingOptionId: (thinkingOptionId) =>
@@ -137,6 +156,7 @@ export function getLiveVoiceAmbientSettings(): {
 export function getLiveVoiceCallSettings(): {
   disabledPromptComponents: string[] | undefined;
   customVoiceInstructions: string | undefined;
+  defaultWorkspaceDirectory: string | undefined;
   backendModel: string | undefined;
   backendThinkingOptionId: string | undefined;
 } {
@@ -147,6 +167,7 @@ export function getLiveVoiceCallSettings(): {
       ? [...state.disabledPromptComponents]
       : undefined,
     customVoiceInstructions: instructions || undefined,
+    defaultWorkspaceDirectory: state.defaultWorkspaceDirectory.trim() || undefined,
     backendModel: state.backendModel?.trim() || undefined,
     backendThinkingOptionId: state.backendThinkingOptionId?.trim() || undefined,
   };

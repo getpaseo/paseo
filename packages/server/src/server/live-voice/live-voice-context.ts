@@ -204,27 +204,56 @@ const DELEGATION_BREVITY = [
   "- Never write code, diffs, file contents, or step-by-step plans into a prompt. Every sentence you compose is silence the user sits through, and the session is the better coder anyway.",
 ];
 
-const DELEGATION_ROUTING_CROSS_HOST = [
-  "- To get anything done, route it to a host with compatibility=ready: call run_paseo_tool_on_host with that host's opaque serverId, which find_workspace or list_hosts gives you. Explain when a host requires an upgrade instead of attempting it.",
-  "- For a user-requested new workspace and agent, call list_hosts, then use run_paseo_tool_on_host to call create_workspace and create_agent on the chosen host. Pass the returned workspaceId to create_agent; do not let create_agent implicitly choose or create another workspace.",
-  "- Give both creations short, descriptive titles. Do not claim success until both workspaceId and agentId are returned: create_workspace must return workspaceId, and create_agent must return agentId plus the same workspaceId. Then report the visible workspace and agent titles.",
-  "- Through that routing tool you can prompt an existing agent session in the workspace that owns the work, or create a workspace or session when none fits. You can list, create and archive workspaces; list, create, cancel and prompt agent sessions; open terminals; and manage schedules and heartbeats.",
-  "- Host credentials and connection endpoints are intentionally unavailable. Never ask the user for them.",
-  "- Route anything that touches code, files, or commands. Answer directly only when the answer is already in this conversation or in the state below, or when you need a clarifying question first.",
-  "- Replies from a session you prompted come back to you as text. Narrate them: summarize what happened in a sentence or two instead of reading them out verbatim.",
-  ...READ_BEFORE_PROMPTING,
-  "- Routed work runs in the background by default and is tracked automatically: the call returns as soon as the work starts, and a note arrives here when it finishes, errors, or needs permission. Say what you started, then keep talking. Never set background to false — it would block this call and leave the user in silence — and never poll in a loop waiting for work to end.",
-];
+/**
+ * Where a new workspace goes.
+ *
+ * The model cannot see any filesystem. Its only directories are the ones in the
+ * snapshot below and whatever a read returns, so asked for work with no obvious
+ * home it used to compose a plausible-looking path out of the workspace's name.
+ * The daemon now rejects a path that does not exist, but a rejection costs the
+ * user a failed turn, so the rule is stated here too.
+ *
+ * The configured default is a single path, which the user sets on the client
+ * while calls can route to several machines. It is worded as a preference to
+ * try rather than a guarantee: a path that is right on the laptop may not exist
+ * on the desktop, and the model needs to report that rather than guess again.
+ */
+function workspaceDirectoryLines(defaultWorkspaceDirectory: string | undefined): string[] {
+  return [
+    "- Creating a workspace adopts a directory that already exists on that machine; it never makes one. Pass an absolute path you have actually seen — never one built from the workspace's name, never a relative one.",
+    defaultWorkspaceDirectory
+      ? `- No obvious workspace? Use ${defaultWorkspaceDirectory} as the directory. If that machine says it does not exist, say so rather than trying another.`
+      : "- No obvious workspace? Ask the user which directory to use rather than picking one.",
+  ];
+}
 
-const DELEGATION_ROUTING_LOCAL = [
-  "- To get anything done, route it to the right place on this machine instead of doing it yourself: prompt an existing agent session in the workspace that owns the work, or create a workspace or session when none fits.",
-  "- Your session has Paseo's tools for this machine, so you can list, create and archive workspaces; list, create, cancel and prompt agent sessions; open terminals; and manage schedules and heartbeats.",
-  "- For a user-requested new workspace and agent, call create_workspace and then create_agent. Pass the returned workspaceId to create_agent and give both creations short, descriptive titles. Do not claim success until both workspaceId and agentId are returned, with create_agent returning the same workspaceId. Then report the visible workspace and agent titles.",
-  "- This client cannot route work to another Paseo host. Do not claim that you can see or control other machines.",
-  "- Route anything that touches code, files, or commands. Answer directly only when the answer is already in this conversation or in the state below, or when you need a clarifying question first.",
-  "- Replies from a session you prompted come back to you as text. Narrate them: summarize what happened in a sentence or two instead of reading them out verbatim.",
-  ...READ_BEFORE_PROMPTING,
-];
+function delegationRoutingCrossHost(defaultWorkspaceDirectory: string | undefined): string[] {
+  return [
+    "- To get anything done, route it to a host with compatibility=ready: call run_paseo_tool_on_host with that host's opaque serverId, which find_workspace or list_hosts gives you. Explain when a host requires an upgrade instead of attempting it.",
+    "- For a user-requested new workspace and agent, call list_hosts, then use run_paseo_tool_on_host to call create_workspace and create_agent on the chosen host. Pass the returned workspaceId to create_agent; do not let create_agent implicitly choose or create another workspace.",
+    ...workspaceDirectoryLines(defaultWorkspaceDirectory),
+    "- Give both creations short, descriptive titles. Do not claim success until both workspaceId and agentId are returned: create_workspace must return workspaceId, and create_agent must return agentId plus the same workspaceId. Then report the visible workspace and agent titles.",
+    "- Through that routing tool you can prompt an existing agent session in the workspace that owns the work, or create a workspace or session when none fits. You can list, create and archive workspaces; list, create, cancel and prompt agent sessions; open terminals; and manage schedules and heartbeats.",
+    "- Host credentials and connection endpoints are intentionally unavailable. Never ask the user for them.",
+    "- Route anything that touches code, files, or commands. Answer directly only when the answer is already in this conversation or in the state below, or when you need a clarifying question first.",
+    "- Replies from a session you prompted come back to you as text. Narrate them: summarize what happened in a sentence or two instead of reading them out verbatim.",
+    ...READ_BEFORE_PROMPTING,
+    "- Routed work runs in the background by default and is tracked automatically: the call returns as soon as the work starts, and a note arrives here when it finishes, errors, or needs permission. Say what you started, then keep talking. Never set background to false — it would block this call and leave the user in silence — and never poll in a loop waiting for work to end.",
+  ];
+}
+
+function delegationRoutingLocal(defaultWorkspaceDirectory: string | undefined): string[] {
+  return [
+    "- To get anything done, route it to the right place on this machine instead of doing it yourself: prompt an existing agent session in the workspace that owns the work, or create a workspace or session when none fits.",
+    "- Your session has Paseo's tools for this machine, so you can list, create and archive workspaces; list, create, cancel and prompt agent sessions; open terminals; and manage schedules and heartbeats.",
+    "- For a user-requested new workspace and agent, call create_workspace and then create_agent. Pass the returned workspaceId to create_agent and give both creations short, descriptive titles. Do not claim success until both workspaceId and agentId are returned, with create_agent returning the same workspaceId. Then report the visible workspace and agent titles.",
+    ...workspaceDirectoryLines(defaultWorkspaceDirectory),
+    "- This client cannot route work to another Paseo host. Do not claim that you can see or control other machines.",
+    "- Route anything that touches code, files, or commands. Answer directly only when the answer is already in this conversation or in the state below, or when you need a clarifying question first.",
+    "- Replies from a session you prompted come back to you as text. Narrate them: summarize what happened in a sentence or two instead of reading them out verbatim.",
+    ...READ_BEFORE_PROMPTING,
+  ];
+}
 
 /** Local resolution guidance: the one-machine analog of the routed recipes. */
 const RECIPES_LOCAL = [
@@ -370,6 +399,7 @@ interface ResolvedPromptComponent {
 function resolveBodyComponents(options: {
   paseoToolsAvailable: boolean;
   crossHostRoutingAvailable: boolean;
+  defaultWorkspaceDirectory: string | undefined;
 }): ResolvedPromptComponent[] {
   const identity: ResolvedPromptComponent = {
     id: "identity",
@@ -401,7 +431,10 @@ function resolveBodyComponents(options: {
       identity,
       { id: "paseo-authority", lines: [...AUTHORITATIVE_LOCAL_PASEO_STATE] },
       visibleCreation,
-      { id: "delegation-routing", lines: [...DELEGATION_ROUTING_LOCAL] },
+      {
+        id: "delegation-routing",
+        lines: delegationRoutingLocal(options.defaultWorkspaceDirectory),
+      },
       { id: "canonical-tools", lines: [...CANONICAL_PASEO_TOOL_NAMES] },
       { id: "delegation-brevity", lines: [...DELEGATION_BREVITY] },
       { id: "recipes", lines: [...RECIPES_LOCAL] },
@@ -411,7 +444,10 @@ function resolveBodyComponents(options: {
     identity,
     { id: "paseo-authority", lines: [...AUTHORITATIVE_PASEO_STATE_WITH_ROUTING] },
     visibleCreation,
-    { id: "delegation-routing", lines: [...DELEGATION_ROUTING_CROSS_HOST] },
+    {
+      id: "delegation-routing",
+      lines: delegationRoutingCrossHost(options.defaultWorkspaceDirectory),
+    },
     { id: "canonical-tools", lines: [...CANONICAL_PASEO_TOOL_NAMES] },
     { id: "delegation-brevity", lines: [...DELEGATION_BREVITY] },
     { id: "cross-host-reach", lines: [...CROSS_HOST_REACH] },
@@ -430,6 +466,28 @@ export interface LiveVoicePromptOptions {
   disabledComponents?: readonly string[] | undefined;
   /** The user's standing instructions for the whole call, verbatim. */
   customInstructions?: string | undefined;
+  /** Where new workspaces go when a request names no workspace of its own. */
+  defaultWorkspaceDirectory?: string | undefined;
+}
+
+/** Long enough for any real path, short enough not to be a smuggled instruction. */
+const MAX_DEFAULT_WORKSPACE_DIRECTORY_LENGTH = 256;
+
+/**
+ * Only an absolute or `~`-rooted path is usable. A relative one has no base on
+ * the machine that would run the creation, so naming it in the prompt would
+ * hand the model exactly the guess this setting exists to prevent — dropping it
+ * falls back to the "ask the user" wording instead.
+ */
+function normalizeDefaultWorkspaceDirectory(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed.length > MAX_DEFAULT_WORKSPACE_DIRECTORY_LENGTH) {
+    return undefined;
+  }
+  if (!trimmed.startsWith("/") && trimmed !== "~" && !trimmed.startsWith("~/")) {
+    return undefined;
+  }
+  return trimmed;
 }
 
 /**
@@ -489,6 +547,9 @@ export function buildLiveVoicePrompt(options: LiveVoicePromptOptions): string {
   const body = resolveBodyComponents({
     paseoToolsAvailable: options.paseoToolsAvailable,
     crossHostRoutingAvailable,
+    defaultWorkspaceDirectory: normalizeDefaultWorkspaceDirectory(
+      options.defaultWorkspaceDirectory,
+    ),
   }).filter((component) => !disabled.has(component.id));
   return [
     ...body.flatMap((component) => component.lines),
@@ -578,6 +639,7 @@ export function buildLiveVoiceStartContext(
     ambientAgentGuidance?: string | undefined;
     disabledPromptComponents?: readonly string[] | undefined;
     customVoiceInstructions?: string | undefined;
+    defaultWorkspaceDirectory?: string | undefined;
   } = {},
 ): LiveVoiceStartContext {
   return {
@@ -593,6 +655,9 @@ export function buildLiveVoiceStartContext(
         : {}),
       ...(options.customVoiceInstructions
         ? { customInstructions: options.customVoiceInstructions }
+        : {}),
+      ...(options.defaultWorkspaceDirectory
+        ? { defaultWorkspaceDirectory: options.defaultWorkspaceDirectory }
         : {}),
     }),
     initialItems: buildLiveVoiceInitialItems(snapshot),

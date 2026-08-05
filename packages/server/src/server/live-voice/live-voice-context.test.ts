@@ -258,6 +258,47 @@ describe("live voice prompt", () => {
     expect(empty).not.toContain("Standing instructions");
   });
 
+  it("forbids inventing a workspace directory on both routing shapes", () => {
+    for (const crossHostRoutingAvailable of [true, false]) {
+      const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true, crossHostRoutingAvailable });
+
+      expect(prompt).toMatch(/adopts a directory that already exists/i);
+      expect(prompt).toMatch(/it never makes one/i);
+      expect(prompt).toMatch(/never a relative one/i);
+      expect(prompt).toMatch(/ask the user which directory to use/i);
+    }
+  });
+
+  it("names the configured default directory instead of asking", () => {
+    const prompt = buildLiveVoicePrompt({
+      paseoToolsAvailable: true,
+      defaultWorkspaceDirectory: "/home/dana/Projects",
+    });
+
+    expect(prompt).toContain("Use /home/dana/Projects as the directory");
+    expect(prompt).not.toMatch(/ask the user which directory to use/i);
+  });
+
+  it("drops a default directory it cannot resolve on the target machine", () => {
+    // A relative path has no base on whichever host runs the creation, so
+    // naming it would hand the model the guess this setting exists to prevent.
+    for (const unusable of ["Projects", "  ", `/${"x".repeat(400)}`]) {
+      const prompt = buildLiveVoicePrompt({
+        paseoToolsAvailable: true,
+        defaultWorkspaceDirectory: unusable,
+      });
+
+      expect(prompt).toMatch(/ask the user which directory to use/i);
+      expect(prompt).not.toContain("as the directory");
+    }
+
+    const tilde = buildLiveVoicePrompt({
+      paseoToolsAvailable: true,
+      defaultWorkspaceDirectory: "~/Projects",
+    });
+    expect(tilde).toContain("Use ~/Projects as the directory");
+  });
+
   it("makes Paseo MCP the early authoritative source for Paseo state", () => {
     const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
 

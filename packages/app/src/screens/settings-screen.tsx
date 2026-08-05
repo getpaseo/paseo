@@ -105,6 +105,7 @@ import {
   LIVE_VOICE_OPTIONAL_PROMPT_COMPONENTS,
   MAX_AMBIENT_AGENT_GUIDANCE_LENGTH,
   MAX_CUSTOM_VOICE_INSTRUCTIONS_LENGTH,
+  MAX_DEFAULT_WORKSPACE_DIRECTORY_LENGTH,
   useLiveVoiceSettingsStore,
   type LiveVoiceOptionalPromptComponent,
 } from "@/stores/live-voice-settings-store";
@@ -576,6 +577,12 @@ function LiveVoiceSettingsCard() {
   const setCustomVoiceInstructions = useLiveVoiceSettingsStore(
     (state) => state.setCustomVoiceInstructions,
   );
+  const defaultWorkspaceDirectory = useLiveVoiceSettingsStore(
+    (state) => state.defaultWorkspaceDirectory,
+  );
+  const setDefaultWorkspaceDirectory = useLiveVoiceSettingsStore(
+    (state) => state.setDefaultWorkspaceDirectory,
+  );
   const backendModelOptions = useLiveVoiceBackendModelOptions();
   const backendModel = useLiveVoiceSettingsStore((state) => state.backendModel);
   const setBackendModel = useLiveVoiceSettingsStore((state) => state.setBackendModel);
@@ -760,6 +767,28 @@ function LiveVoiceSettingsCard() {
             style={styles.liveVoiceGuidanceInput}
             accessibilityLabel={t("liveVoice.settings.customInstructions.label")}
             testID="live-voice-custom-instructions"
+          />
+        </View>
+      </View>
+      <View style={[settingsStyles.row, settingsStyles.rowBorder, styles.liveVoiceGuidanceRow]}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>
+            {t("liveVoice.settings.defaultWorkspaceDirectory.label")}
+          </Text>
+          <Text style={settingsStyles.rowHint}>
+            {t("liveVoice.settings.defaultWorkspaceDirectory.description")}
+          </Text>
+          <TextInput
+            value={defaultWorkspaceDirectory}
+            onChangeText={setDefaultWorkspaceDirectory}
+            placeholder={t("liveVoice.settings.defaultWorkspaceDirectory.placeholder")}
+            // A path, so the keyboard's writing aids only get in the way.
+            autoCapitalize="none"
+            autoCorrect={false}
+            maxLength={MAX_DEFAULT_WORKSPACE_DIRECTORY_LENGTH}
+            style={styles.liveVoicePathInput}
+            accessibilityLabel={t("liveVoice.settings.defaultWorkspaceDirectory.label")}
+            testID="live-voice-default-workspace-directory"
           />
         </View>
       </View>
@@ -2166,6 +2195,19 @@ const styles = StyleSheet.create((theme) => ({
     // The input sits under its own label rather than beside it: this is a
     // sentence the user writes, not a value they pick.
     alignItems: "stretch",
+  },
+  // One line, because it holds a path rather than a sentence.
+  liveVoicePathInput: {
+    marginTop: theme.spacing[2],
+    minHeight: 36,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface2,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
   liveVoiceGuidanceInput: {
     marginTop: theme.spacing[2],

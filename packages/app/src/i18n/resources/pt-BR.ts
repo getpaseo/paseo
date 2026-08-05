@@ -1831,6 +1831,12 @@ export const ptBR: TranslationResources = {
         description: "Repassadas ao agente de voz como estão, em toda chamada.",
         placeholder: "Responda sempre em uma frase, a menos que eu peça mais.",
       },
+      defaultWorkspaceDirectory: {
+        label: "Diretório padrão de espaço de trabalho",
+        description:
+          "Onde novos espaços de trabalho são criados quando uma solicitação não tem um óbvio. Deixe vazio e o agente de voz pergunta.",
+        placeholder: "~/Projects",
+      },
     },
     diagnostics: {
       title: "Voz ao vivo",

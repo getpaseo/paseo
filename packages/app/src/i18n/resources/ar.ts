@@ -1794,6 +1794,12 @@ export const ar: TranslationResources = {
         description: "تُنقل إلى الوكيل الصوتي كما هي في كل مكالمة.",
         placeholder: "أجب دائمًا بجملة واحدة ما لم أطلب المزيد.",
       },
+      defaultWorkspaceDirectory: {
+        label: "دليل مساحة العمل الافتراضي",
+        description:
+          "المكان الذي تُنشأ فيه مساحات العمل الجديدة عندما لا يكون للطلب مساحة واضحة. اتركه فارغًا ليسأل الوكيل الصوتي.",
+        placeholder: "~/Projects",
+      },
     },
     diagnostics: {
       title: "صوت مباشر",

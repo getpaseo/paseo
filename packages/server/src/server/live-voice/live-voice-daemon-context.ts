@@ -68,6 +68,7 @@ export class LiveVoiceDaemonContextProvider implements LiveVoiceContextProvider 
     ambientAgentGuidance?: string | undefined;
     disabledPromptComponents?: readonly string[] | undefined;
     customVoiceInstructions?: string | undefined;
+    defaultWorkspaceDirectory?: string | undefined;
   }): Promise<LiveVoiceStartContext | null> {
     // `listAgents` already omits internal sessions, so the call's own hidden host
     // session never shows up in the snapshot it is given.
@@ -109,6 +110,9 @@ export class LiveVoiceDaemonContextProvider implements LiveVoiceContextProvider 
         : {}),
       ...(options?.customVoiceInstructions
         ? { customVoiceInstructions: options.customVoiceInstructions }
+        : {}),
+      ...(options?.defaultWorkspaceDirectory
+        ? { defaultWorkspaceDirectory: options.defaultWorkspaceDirectory }
         : {}),
     });
     this.logger.debug(

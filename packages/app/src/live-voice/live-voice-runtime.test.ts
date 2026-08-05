@@ -176,6 +176,7 @@ describe("live voice runtime", () => {
         read: () => ({
           disabledPromptComponents: ["recipes", "speech-style"],
           customVoiceInstructions: "Always answer in one sentence.",
+          defaultWorkspaceDirectory: "~/Projects",
           backendModel: "gpt-5.6-sol",
           backendThinkingOptionId: "high",
         }),
@@ -188,6 +189,7 @@ describe("live voice runtime", () => {
       offerSdp: OFFER_SDP,
       disabledPromptComponents: ["recipes", "speech-style"],
       customVoiceInstructions: "Always answer in one sentence.",
+      defaultWorkspaceDirectory: "~/Projects",
       backendModel: "gpt-5.6-sol",
       backendThinkingOptionId: "high",
     });
@@ -199,6 +201,7 @@ describe("live voice runtime", () => {
         read: () => ({
           disabledPromptComponents: undefined,
           customVoiceInstructions: undefined,
+          defaultWorkspaceDirectory: undefined,
           backendModel: undefined,
           backendThinkingOptionId: undefined,
         }),

@@ -1804,6 +1804,12 @@ export const en = {
         description: "Passed to the voice agent as written, for every call.",
         placeholder: "Always answer in one sentence unless I ask for more.",
       },
+      defaultWorkspaceDirectory: {
+        label: "Default workspace directory",
+        description:
+          "Where new workspaces go when a request has no obvious one. Leave empty and the voice agent asks.",
+        placeholder: "~/Projects",
+      },
     },
     diagnostics: {
       title: "Live voice",

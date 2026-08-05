@@ -120,6 +120,8 @@ export interface LiveVoiceStartRequest {
   disabledPromptComponents?: readonly string[] | undefined;
   /** The user's standing instructions for the whole call, verbatim. */
   customVoiceInstructions?: string | undefined;
+  /** Where new workspaces go when a request names no workspace of its own. */
+  defaultWorkspaceDirectory?: string | undefined;
   /** Backend-executor model override; absent uses the daemon's fast default. */
   backendModel?: string | undefined;
   backendThinkingOptionId?: string | undefined;
@@ -132,6 +134,7 @@ function toContextBuildOptions(request: LiveVoiceStartRequest): {
   ambientAgentGuidance?: string | undefined;
   disabledPromptComponents?: readonly string[] | undefined;
   customVoiceInstructions?: string | undefined;
+  defaultWorkspaceDirectory?: string | undefined;
 } {
   return {
     crossHostRoutingAvailable: request.sendRouteRequest !== undefined,
@@ -142,6 +145,9 @@ function toContextBuildOptions(request: LiveVoiceStartRequest): {
       : {}),
     ...(request.customVoiceInstructions
       ? { customVoiceInstructions: request.customVoiceInstructions }
+      : {}),
+    ...(request.defaultWorkspaceDirectory
+      ? { defaultWorkspaceDirectory: request.defaultWorkspaceDirectory }
       : {}),
   };
 }
@@ -218,6 +224,7 @@ export interface LiveVoiceContextProvider {
     ambientAgentGuidance?: string | undefined;
     disabledPromptComponents?: readonly string[] | undefined;
     customVoiceInstructions?: string | undefined;
+    defaultWorkspaceDirectory?: string | undefined;
   }): Promise<LiveVoiceStartContext | null>;
 }
 
@@ -640,6 +647,7 @@ export class LiveVoiceCoordinator {
     ambientAgentGuidance?: string | undefined;
     disabledPromptComponents?: readonly string[] | undefined;
     customVoiceInstructions?: string | undefined;
+    defaultWorkspaceDirectory?: string | undefined;
   }): Promise<LiveVoiceStartContext | null> {
     if (!this.context) {
       return null;

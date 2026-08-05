@@ -1149,6 +1149,17 @@ export const VoiceLiveStartRequestSchema = z.object({
   /** The user's standing instructions for the whole call, passed verbatim. */
   customVoiceInstructions: z.string().optional(),
   /**
+   * Directory to put a new workspace in when the request names no workspace of
+   * its own. The client holds it because it is the user's setting, and the
+   * daemon drops anything that is not an absolute or `~`-rooted path — a
+   * relative one has no base on whichever machine runs the creation.
+   *
+   * COMPAT(liveVoiceDefaultWorkspaceDirectory): added in v0.3.0, remove after
+   * 2027-02-28. An older daemon drops the field and tells the call to ask the
+   * user which directory to use.
+   */
+  defaultWorkspaceDirectory: z.string().optional(),
+  /**
    * Model for the call's backend executor — the text turns that run its
    * actions, not the realtime voice model. Absent means the daemon's default
    * (a fast, cheap model). Codex resolves an unknown id to its own default, so
