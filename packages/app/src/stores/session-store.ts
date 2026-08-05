@@ -282,10 +282,10 @@ export interface DaemonServerInfo {
   version: string | null;
   desktopManaged?: boolean;
   /**
-   * Resolved base root for Paseo-managed worktrees. Null when the daemon predates
+   * Resolved base root for Paseo-managed worktrees. Absent or null when the daemon predates
    * `server_info.worktreesRoot`; see @/utils/paseo-worktree-path.
    */
-  worktreesRoot: string | null;
+  worktreesRoot?: string | null;
   capabilities?: ServerCapabilities;
   features?: ServerInfoStatusPayload["features"];
 }
