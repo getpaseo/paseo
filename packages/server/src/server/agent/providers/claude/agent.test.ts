@@ -2182,6 +2182,84 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  test("assistant usage corrects incomplete Anthropic-compatible stream usage", async () => {
+    const session = await createSessionForTurns(
+      [
+        [
+          createInitMessage(),
+          createMessageStartEvent({
+            input_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          }),
+          createMessageDeltaEvent(799),
+          {
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: {
+              id: "assistant-compatible-provider-1",
+              role: "assistant",
+              content: [{ type: "text", text: "Continuing with a tool call." }],
+              usage: {
+                input_tokens: 1_514,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 178_752,
+                output_tokens: 799,
+              },
+            },
+            uuid: "assistant-compatible-provider-event-1",
+            session_id: "session-1",
+          },
+          createSuccessResult({
+            usage: {
+              input_tokens: 1_514,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 178_752,
+              output_tokens: 799,
+              iterations: [],
+            },
+            modelUsage: {
+              "glm-5.2": { contextWindow: 1_000_000 },
+            },
+          }),
+        ],
+      ],
+      { model: "claude-sonnet-5[1m]" },
+    );
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      expect(
+        events.some(
+          (event) => event.type === "usage_updated" && event.usage.contextWindowUsedTokens === 799,
+        ),
+      ).toBe(false);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          provider: "claude",
+          usage: {
+            contextWindowMaxTokens: 1_000_000,
+            contextWindowUsedTokens: 181_065,
+          },
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn_completed",
+          provider: "claude",
+          usage: expect.objectContaining({
+            contextWindowMaxTokens: 1_000_000,
+            contextWindowUsedTokens: 181_065,
+          }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
   test("per-request stream usage is not cumulative across API calls in a turn", async () => {
     const session = await createSessionForTurns([
       [

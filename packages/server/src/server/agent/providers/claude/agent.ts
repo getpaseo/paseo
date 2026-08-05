@@ -1733,38 +1733,46 @@ function extractContextWindowSize(modelUsage: unknown): number | undefined {
   return maxContextWindow;
 }
 
-function readStreamRequestInputTokens(event: Record<string, unknown>): number | undefined {
-  const messageUsage = toObjectRecord(toObjectRecord(event.message)?.usage);
-  if (!messageUsage) {
+function readRequestInputTokens(usage: unknown): number | undefined {
+  const usageRecord = toObjectRecord(usage);
+  if (!usageRecord) {
     return undefined;
   }
-  const usage = messageUsage;
   const inputTokens =
-    typeof usage.input_tokens === "number" && Number.isFinite(usage.input_tokens)
-      ? usage.input_tokens
+    typeof usageRecord.input_tokens === "number" && Number.isFinite(usageRecord.input_tokens)
+      ? usageRecord.input_tokens
       : undefined;
   const cacheCreationInputTokens =
-    typeof usage.cache_creation_input_tokens === "number" &&
-    Number.isFinite(usage.cache_creation_input_tokens)
-      ? usage.cache_creation_input_tokens
+    typeof usageRecord.cache_creation_input_tokens === "number" &&
+    Number.isFinite(usageRecord.cache_creation_input_tokens)
+      ? usageRecord.cache_creation_input_tokens
       : 0;
   const cacheReadInputTokens =
-    typeof usage.cache_read_input_tokens === "number" &&
-    Number.isFinite(usage.cache_read_input_tokens)
-      ? usage.cache_read_input_tokens
+    typeof usageRecord.cache_read_input_tokens === "number" &&
+    Number.isFinite(usageRecord.cache_read_input_tokens)
+      ? usageRecord.cache_read_input_tokens
       : 0;
   if (typeof inputTokens !== "number" || inputTokens < 0) {
     return undefined;
   }
-  return inputTokens + cacheCreationInputTokens + cacheReadInputTokens;
+  const total = inputTokens + cacheCreationInputTokens + cacheReadInputTokens;
+  return total > 0 ? total : undefined;
 }
 
-function readStreamRequestOutputTokens(event: Record<string, unknown>): number | undefined {
-  const outputTokens = toObjectRecord(event.usage)?.output_tokens;
+function readStreamRequestInputTokens(event: Record<string, unknown>): number | undefined {
+  return readRequestInputTokens(toObjectRecord(event.message)?.usage);
+}
+
+function readRequestOutputTokens(usage: unknown): number | undefined {
+  const outputTokens = toObjectRecord(usage)?.output_tokens;
   if (typeof outputTokens !== "number" || !Number.isFinite(outputTokens) || outputTokens < 0) {
     return undefined;
   }
   return outputTokens;
+}
+
+function readStreamRequestOutputTokens(event: Record<string, unknown>): number | undefined {
+  return readRequestOutputTokens(event.usage);
 }
 
 function readLastUsageIteration(usage: unknown): Record<string, unknown> | undefined {
@@ -1866,11 +1874,11 @@ class ClaudeContextUsageState {
     const eventType = readTrimmedString(streamEvent.type);
     if (eventType === "message_start") {
       const inputTokens = readStreamRequestInputTokens(streamEvent);
+      this.streamRequestInputTokens = inputTokens;
+      this.streamRequestOutputTokens = inputTokens === undefined ? undefined : 0;
       if (typeof inputTokens !== "number") {
         return null;
       }
-      this.streamRequestInputTokens = inputTokens;
-      this.streamRequestOutputTokens = 0;
     } else if (eventType === "message_delta") {
       const outputTokens = readStreamRequestOutputTokens(streamEvent);
       if (typeof outputTokens !== "number") {
@@ -1883,6 +1891,25 @@ class ClaudeContextUsageState {
 
     const usedTokens = this.streamUsedTokens();
     if (usedTokens === undefined) {
+      return null;
+    }
+    return this.createUsageUpdatedEvent(usedTokens);
+  }
+
+  buildAssistantUsageEvent(usage: unknown): AgentStreamEvent | null {
+    // Anthropic-compatible gateways can zero the message_start usage while keeping the completed
+    // assistant frame accurate. Reconcile from that per-request frame before the result aggregate.
+    const inputTokens = readRequestInputTokens(usage);
+    const outputTokens = readRequestOutputTokens(usage);
+    if (inputTokens === undefined || outputTokens === undefined) {
+      return null;
+    }
+
+    const previousUsedTokens = this.streamUsedTokens();
+    this.streamRequestInputTokens = inputTokens;
+    this.streamRequestOutputTokens = outputTokens;
+    const usedTokens = this.streamUsedTokens();
+    if (usedTokens === undefined || usedTokens === previousUsedTokens) {
       return null;
     }
     return this.createUsageUpdatedEvent(usedTokens);
@@ -3782,6 +3809,10 @@ class ClaudeAgentSession implements AgentSession {
         this.appendSidechainResultEvents(message, events);
         break;
       case "assistant": {
+        const usageUpdatedEvent = this.contextUsage.buildAssistantUsageEvent(message.message.usage);
+        if (usageUpdatedEvent) {
+          events.push(usageUpdatedEvent);
+        }
         const timelineItems = this.mapBlocksToTimeline(message.message.content, {
           suppressAssistantText: options?.suppressAssistantText ?? false,
           suppressReasoning: options?.suppressReasoning ?? false,
