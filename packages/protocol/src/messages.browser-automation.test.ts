@@ -174,5 +174,19 @@ describe("browser automation protocol integration", () => {
         providerUsage: { hiddenProviders: ["copilot", "minimax"] },
       }).providerUsage,
     ).toEqual({ hiddenProviders: ["copilot", "minimax"] });
+
+    // Visibility deltas are merged server-side against the authoritative set so concurrent
+    // clients don't clobber each other; the wire schema keeps them permissive.
+    expect(
+      MutableDaemonConfigPatchSchema.parse({
+        providerUsage: { hideProviders: ["copilot"] },
+      }).providerUsage,
+    ).toEqual({ hideProviders: ["copilot"] });
+
+    expect(
+      MutableDaemonConfigPatchSchema.parse({
+        providerUsage: { showProviders: ["copilot"] },
+      }).providerUsage,
+    ).toEqual({ showProviders: ["copilot"] });
   });
 });

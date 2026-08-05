@@ -5,18 +5,19 @@ export function getHiddenProviderIds(config: MutableDaemonConfig | null): string
   return Array.from(new Set(config?.providerUsage?.hiddenProviders ?? []));
 }
 
+// Emit a single-provider visibility delta rather than a full-array snapshot. The server merges
+// this against its authoritative hidden-provider set, so a client never has to reason about a
+// stale local snapshot — concurrent clients toggling different providers can no longer silently
+// undo each other (lost update).
 export function createProviderVisibilityPatch(input: {
-  hiddenProviderIds: readonly string[];
   providerId: string;
   visible: boolean;
 }): MutableDaemonConfigPatch {
-  const hiddenProviders = new Set(input.hiddenProviderIds);
-  if (input.visible) {
-    hiddenProviders.delete(input.providerId);
-  } else {
-    hiddenProviders.add(input.providerId);
-  }
-  return { providerUsage: { hiddenProviders: Array.from(hiddenProviders).sort() } };
+  return {
+    providerUsage: input.visible
+      ? { showProviders: [input.providerId] }
+      : { hideProviders: [input.providerId] },
+  };
 }
 
 export function filterVisibleProviders(

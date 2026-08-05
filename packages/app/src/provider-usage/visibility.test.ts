@@ -32,22 +32,14 @@ describe("provider usage visibility", () => {
     ).toEqual(["claude", "minimax"]);
   });
 
-  it("creates deterministic patches without dropping unknown provider ids", () => {
-    expect(
-      createProviderVisibilityPatch({
-        hiddenProviderIds: ["future-provider"],
-        providerId: "copilot",
-        visible: false,
-      }),
-    ).toEqual({ providerUsage: { hiddenProviders: ["copilot", "future-provider"] } });
+  it("emits single-provider deltas instead of full-array snapshots", () => {
+    expect(createProviderVisibilityPatch({ providerId: "copilot", visible: false })).toEqual({
+      providerUsage: { hideProviders: ["copilot"] },
+    });
 
-    expect(
-      createProviderVisibilityPatch({
-        hiddenProviderIds: ["future-provider", "copilot"],
-        providerId: "copilot",
-        visible: true,
-      }),
-    ).toEqual({ providerUsage: { hiddenProviders: ["future-provider"] } });
+    expect(createProviderVisibilityPatch({ providerId: "copilot", visible: true })).toEqual({
+      providerUsage: { showProviders: ["copilot"] },
+    });
   });
 
   it("deduplicates persisted ids defensively", () => {

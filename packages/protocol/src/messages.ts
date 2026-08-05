@@ -216,6 +216,17 @@ const MutableProviderUsageConfigSchema = z
     hiddenProviders: z.array(z.string().min(1)).default([]),
   })
   .passthrough();
+// Patch form for provider-usage visibility. `hiddenProviders` is the authoritative
+// full-array replace (kept permissive for back-compat). `hideProviders` / `showProviders`
+// are single-pass deltas that the server merges against its current set, so two clients
+// toggling different providers concurrently can't clobber each other (lost-update fix).
+const MutableProviderUsageConfigPatchSchema = z
+  .object({
+    hiddenProviders: z.array(z.string().min(1)).optional(),
+    hideProviders: z.array(z.string().min(1)).optional(),
+    showProviders: z.array(z.string().min(1)).optional(),
+  })
+  .passthrough();
 export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
@@ -263,7 +274,7 @@ export const MutableDaemonConfigPatchSchema = z
     relay: MutableRelayConfigSchema.partial().optional(),
     mcp: z.object({ injectIntoAgents: z.boolean().optional() }).passthrough().optional(),
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
-    providerUsage: MutableProviderUsageConfigSchema.partial().optional(),
+    providerUsage: MutableProviderUsageConfigPatchSchema.optional(),
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
