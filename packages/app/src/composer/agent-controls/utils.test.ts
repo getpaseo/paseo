@@ -19,6 +19,7 @@ describe("feature metadata helpers", () => {
   it("prefers explicit feature tooltip copy", () => {
     expect(
       getFeatureTooltip({
+        id: "plan_mode",
         label: "Plan",
         tooltip: "Toggle plan mode",
       }),
@@ -28,13 +29,37 @@ describe("feature metadata helpers", () => {
   it("falls back to the feature label when no tooltip is provided", () => {
     expect(
       getFeatureTooltip({
+        id: "custom",
         label: "Custom",
       }),
     ).toBe("Custom");
   });
 
+  it("builds a stateful Auto Accept tooltip when the toggle is off", () => {
+    expect(
+      getFeatureTooltip({
+        id: "auto_accept",
+        label: "Auto Accept",
+        tooltip: "Auto accept permission prompts",
+        value: false,
+      }),
+    ).toBe("Auto Accept: Off — click to auto-approve permission prompts");
+  });
+
+  it("builds a stateful Auto Accept tooltip when the toggle is on", () => {
+    expect(
+      getFeatureTooltip({
+        id: "auto_accept",
+        label: "Auto Accept",
+        tooltip: "Auto accept permission prompts",
+        value: true,
+      }),
+    ).toBe("Auto Accept: On — permission prompts are auto-approved");
+  });
+
   it("maps feature highlight colors by feature id", () => {
     expect(getFeatureHighlightColor("fast_mode")).toBe("yellow");
+    expect(getFeatureHighlightColor("auto_accept")).toBe("green");
     expect(getFeatureHighlightColor("plan_mode")).toBe("blue");
     expect(getFeatureHighlightColor("other")).toBe("default");
   });

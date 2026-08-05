@@ -177,6 +177,12 @@ export const fr: TranslationResources = {
       open: "Fonctionnalités de l'agent ouvert",
       on: "Sur",
       off: "Désactivé",
+      autoAccept: {
+        tooltipOn:
+          "Auto Accept : Activé — les demandes de permission sont approuvées automatiquement",
+        tooltipOff:
+          "Auto Accept : Désactivé — cliquez pour approuver automatiquement les demandes de permission",
+      },
     },
     mode: {
       title: "Mode",

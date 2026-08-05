@@ -1,7 +1,11 @@
 import type { AgentFeature, AgentModelDefinition } from "@getpaseo/protocol/agent-types";
 import { i18n } from "@/i18n/i18next";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
-import { FAST_MODE_FEATURE_ID, PLAN_MODE_FEATURE_ID } from "@/agent-controls/policy";
+import {
+  AUTO_ACCEPT_FEATURE_ID,
+  FAST_MODE_FEATURE_ID,
+  PLAN_MODE_FEATURE_ID,
+} from "@/agent-controls/policy";
 
 export type ExplainedAgentControl = "mode" | "model" | "thinking";
 export type FeatureHighlightColor = "blue" | "default" | "green" | "yellow";
@@ -31,7 +35,14 @@ export function normalizeModelId(modelId: string | null | undefined): string | n
   return normalized;
 }
 
-export function getFeatureTooltip(feature: Pick<AgentFeature, "label" | "tooltip">): string {
+export function getFeatureTooltip(
+  feature: Pick<AgentFeature, "id" | "label" | "tooltip"> & { value?: unknown },
+): string {
+  if (feature.id === AUTO_ACCEPT_FEATURE_ID && typeof feature.value === "boolean") {
+    return feature.value
+      ? i18n.t("agentControls.features.autoAccept.tooltipOn")
+      : i18n.t("agentControls.features.autoAccept.tooltipOff");
+  }
   return feature.tooltip ?? feature.label;
 }
 
@@ -39,7 +50,7 @@ export function getFeatureHighlightColor(featureId: string): FeatureHighlightCol
   switch (featureId) {
     case FAST_MODE_FEATURE_ID:
       return "yellow";
-    case "auto_accept":
+    case AUTO_ACCEPT_FEATURE_ID:
       return "green";
     case PLAN_MODE_FEATURE_ID:
       return "blue";
