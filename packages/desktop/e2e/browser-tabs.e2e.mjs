@@ -278,6 +278,36 @@ async function readGuest(page, browserId) {
   }, browserId);
 }
 
+async function readPresentation(page, browserId) {
+  return await page.evaluate((id) => {
+    const surface = document.querySelector(`[data-paseo-browser-surface="${id}"]`);
+    const clip = document.querySelector(`[data-testid="browser-webview-clip-${id}"]`);
+    if (!(surface instanceof HTMLElement) || !(clip instanceof HTMLElement)) return null;
+    const surfaceRect = surface.getBoundingClientRect();
+    const clipRect = clip.getBoundingClientRect();
+    const outsidePoint = {
+      x: Math.max(0, Math.round(clipRect.left - 1)),
+      y: Math.round(clipRect.top + clipRect.height / 2),
+    };
+    const outsideTarget = document.elementFromPoint(outsidePoint.x, outsidePoint.y);
+    return {
+      surface: {
+        left: Math.round(surfaceRect.left),
+        top: Math.round(surfaceRect.top),
+        right: Math.round(surfaceRect.right),
+        bottom: Math.round(surfaceRect.bottom),
+      },
+      clip: {
+        left: Math.round(clipRect.left),
+        top: Math.round(clipRect.top),
+        right: Math.round(clipRect.right),
+        bottom: Math.round(clipRect.bottom),
+      },
+      capturesOutsideInput: surface.contains(outsideTarget),
+    };
+  }, browserId);
+}
+
 async function readViewport(client, browserId) {
   const evaluated = await callBrowserTool(client, "browser_evaluate", {
     browserId,
@@ -340,6 +370,43 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId 
     await readViewport(client, browserId),
     requestedViewport,
   );
+
+  const oversizedViewport = { width: 2560, height: 1440 };
+  await callBrowserTool(client, "browser_resize", { browserId, ...oversizedViewport });
+  recordViewportMismatch(
+    failures,
+    "oversized preset preserves the requested guest viewport",
+    await readViewport(client, browserId),
+    oversizedViewport,
+  );
+  await page.waitForFunction(
+    ({ id, width, height }) => {
+      const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
+      return (
+        webview instanceof HTMLElement &&
+        Math.round(webview.getBoundingClientRect().width) === width &&
+        Math.round(webview.getBoundingClientRect().height) === height
+      );
+    },
+    { id: browserId, ...oversizedViewport },
+    { timeout: timeoutMs },
+  );
+  const presentation = await readPresentation(page, browserId);
+  assert(presentation, "Oversized browser presentation geometry was unavailable");
+  if (
+    presentation.surface.left < presentation.clip.left ||
+    presentation.surface.top < presentation.clip.top ||
+    presentation.surface.right > presentation.clip.right ||
+    presentation.surface.bottom > presentation.clip.bottom
+  ) {
+    failures.push(
+      `oversized browser surface stays inside its pane: ${JSON.stringify(presentation)}`,
+    );
+  }
+  if (presentation.capturesOutsideInput) {
+    failures.push("oversized browser surface captures input outside its pane");
+  }
+  await callBrowserTool(client, "browser_resize", { browserId, ...requestedViewport });
 
   await originalDeck.getByTestId(`workspace-tab-agent_${callerAgentId}`).click();
   await page.waitForTimeout(500);

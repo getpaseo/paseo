@@ -647,6 +647,7 @@ export function BrowserPane({
   isPresentedRef.current = isPresented;
   const webviewRef = useRef<ElectronWebview | null>(null);
   const webviewHostRef = useRef<HTMLDivElement | null>(null);
+  const webviewClipRef = useRef<HTMLElement | null>(null);
   const urlInputRef = useRef<WebTextInput | null>(null);
   const initialUrlRef = useRef(browser?.url ?? "https://example.com");
   const browserIdRef = useRef(browserId);
@@ -761,7 +762,8 @@ export function BrowserPane({
     }
 
     const host = webviewHostRef.current;
-    if (!host) {
+    const clip = webviewClipRef.current;
+    if (!host || !clip) {
       return;
     }
 
@@ -784,7 +786,7 @@ export function BrowserPane({
     releaseResidentBrowserWebview(browserId, webview);
     if (isPresentedRef.current) {
       applyBrowserWebviewViewport(webview, browserViewportRef.current);
-      presentBrowserWebview(browserId, webview, host);
+      presentBrowserWebview(browserId, webview, host, clip);
     } else {
       applyInactiveBrowserWebviewViewport(browserId, webview);
     }
@@ -798,19 +800,12 @@ export function BrowserPane({
     const sizeObserver =
       typeof ResizeObserver === "undefined"
         ? null
-        : new ResizeObserver(([entry]) => {
-            if (!entry) {
-              return;
-            }
+        : new ResizeObserver(() => {
             if (!isPresentedRef.current) {
               return;
             }
-            presentBrowserWebview(browserIdRef.current, webview, host);
-            rememberBrowserWebviewSize({
-              browserId: browserIdRef.current,
-              width: entry.contentRect.width,
-              height: entry.contentRect.height,
-            });
+            presentBrowserWebview(browserIdRef.current, webview, host, clip);
+            rememberResolvedBrowserWebviewSize(browserIdRef.current, webview);
           });
 
     const handleStartLoading = () => {
@@ -909,6 +904,7 @@ export function BrowserPane({
       rememberResolvedBrowserWebviewSize(browserId, webview);
     }
     sizeObserver?.observe(host);
+    sizeObserver?.observe(clip);
     if (initialUnsafeNavigationMessage) {
       updateBrowserRef.current(browserIdRef.current, {
         isLoading: false,
@@ -956,8 +952,9 @@ export function BrowserPane({
     }
     applyBrowserWebviewViewport(webview, browserViewport);
     const host = webviewHostRef.current;
-    if (host) {
-      presentBrowserWebview(browserId, webview, host);
+    const clip = webviewClipRef.current;
+    if (host && clip) {
+      presentBrowserWebview(browserId, webview, host, clip);
     }
     if (browserViewport.mode === "fixed") {
       rememberBrowserWebviewSize({
@@ -1664,6 +1661,10 @@ export function BrowserPane({
     webviewHostRef.current = node;
   }, []);
 
+  const setWebviewClipNode = useCallback((node: unknown) => {
+    webviewClipRef.current = node instanceof HTMLElement ? node : null;
+  }, []);
+
   if (!isElectronRuntime()) {
     return (
       <View style={styles.unavailableState}>
@@ -1776,7 +1777,11 @@ export function BrowserPane({
           </Text>
         </View>
       ) : null}
-      <View style={webviewWrapStyle}>
+      <View
+        ref={setWebviewClipNode}
+        style={webviewWrapStyle}
+        testID={`browser-webview-clip-${browserId}`}
+      >
         {createElement("div", {
           ref: setWebviewHostNode,
           style: webviewHostStyle,

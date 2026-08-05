@@ -86,6 +86,7 @@ class FakeDebugger {
   }
 
   public emitDetach(): void {
+    this.attachedProtocolVersions.length = 0;
     this.detachListener?.();
   }
 
@@ -612,6 +613,31 @@ describe("browser automation IPC adapter", () => {
     ).rejects.toThrow("target closed while handling command");
     expect(contents.loadedUrls).toEqual([]);
     expect(warn).not.toHaveBeenCalled();
+
+    warn.mockRestore();
+  });
+
+  test("runs without dialog capture after a live debugger session detaches", async () => {
+    const contents = new FakeWebContents(32);
+    const tab = adaptWebContents(contents);
+
+    await expect(tab.captureDialogs?.(async () => "captured")).resolves.toEqual({
+      result: "captured",
+      dialogs: [],
+    });
+    contents.debugger.emitDetach();
+    contents.debugger.failedCommandNames.add("Page.enable");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(
+      tab.captureDialogs?.(() => tab.loadURL("https://replacement.example.com")),
+    ).resolves.toEqual({ result: undefined, dialogs: [] });
+    expect(contents.loadedUrls).toEqual(["https://replacement.example.com"]);
+    expect(contents.debugger.attachedProtocolVersions).toEqual(["1.3"]);
+    expect(warn).toHaveBeenCalledWith(
+      "[browser-automation] Dialog capture unavailable; running command without it",
+      { contentsId: 32, error: expect.any(Error) },
+    );
 
     warn.mockRestore();
   });

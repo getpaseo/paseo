@@ -189,7 +189,7 @@ function getDialogMonitor(
 class DialogMonitor {
   private enabled = false;
   private listenerRegistered = false;
-  private targetClosed = false;
+  private detachGeneration = 0;
   private readonly activeCollectors: DialogCollector[] = [];
 
   public constructor(
@@ -202,11 +202,12 @@ class DialogMonitor {
     task: () => Promise<T>,
   ): Promise<{ result: T; dialogs: BrowserAutomationDialogEvent[] }> {
     const collector: DialogCollector = { dialogs: [] };
+    const setupDetachGeneration = this.detachGeneration;
     try {
       await this.enable();
       await this.installPromptShim();
     } catch (error) {
-      if (this.targetClosed || this.contents.isDestroyed()) {
+      if (this.contents.isDestroyed() || this.detachGeneration !== setupDetachGeneration) {
         throw error;
       }
       console.warn("[browser-automation] Dialog capture unavailable; running command without it", {
@@ -250,7 +251,8 @@ class DialogMonitor {
         void this.handleOpening(params ?? {});
       });
       this.contents.debugger.on("detach", () => {
-        this.targetClosed = true;
+        this.enabled = false;
+        this.detachGeneration += 1;
       });
     }
     await this.sendDebugCommand("Page.enable");

@@ -234,6 +234,7 @@ export function presentBrowserWebview(
   browserId: string,
   webview: HTMLElement,
   anchor: HTMLElement,
+  clip: HTMLElement,
 ): void {
   const normalizedBrowserId = trimNonEmpty(browserId);
   if (!normalizedBrowserId) {
@@ -247,18 +248,37 @@ export function presentBrowserWebview(
   if (webview.parentElement !== surface) {
     surface.appendChild(webview);
   }
-  const bounds = anchor.getBoundingClientRect();
+  const anchorBounds = anchor.getBoundingClientRect();
+  const clipBounds = clip.getBoundingClientRect();
+  const left = Math.max(anchorBounds.left, clipBounds.left);
+  const top = Math.max(anchorBounds.top, clipBounds.top);
+  const right = Math.min(
+    anchorBounds.left + anchorBounds.width,
+    clipBounds.left + clipBounds.width,
+  );
+  const bottom = Math.min(
+    anchorBounds.top + anchorBounds.height,
+    clipBounds.top + clipBounds.height,
+  );
+  const surfaceLeft = Math.ceil(left);
+  const surfaceTop = Math.ceil(top);
+  const surfaceRight = Math.floor(right);
+  const surfaceBottom = Math.floor(bottom);
+  const hasVisibleArea = surfaceRight > surfaceLeft && surfaceBottom > surfaceTop;
   surface.setAttribute("aria-hidden", "false");
   surface.style.position = "fixed";
-  surface.style.left = `${Math.round(bounds.left)}px`;
-  surface.style.top = `${Math.round(bounds.top)}px`;
-  surface.style.width = `${Math.max(1, Math.round(bounds.width))}px`;
-  surface.style.height = `${Math.max(1, Math.round(bounds.height))}px`;
+  surface.style.left = `${surfaceLeft}px`;
+  surface.style.top = `${surfaceTop}px`;
+  surface.style.width = `${Math.max(0, surfaceRight - surfaceLeft)}px`;
+  surface.style.height = `${Math.max(0, surfaceBottom - surfaceTop)}px`;
   surface.style.overflow = "hidden";
   surface.style.opacity = "1";
-  surface.style.pointerEvents = "auto";
+  surface.style.pointerEvents = hasVisibleArea ? "auto" : "none";
   surface.style.display = "flex";
   surface.style.visibility = "visible";
+  webview.style.position = "absolute";
+  webview.style.left = `${Math.round(anchorBounds.left - surfaceLeft)}px`;
+  webview.style.top = `${Math.round(anchorBounds.top - surfaceTop)}px`;
 }
 
 export function prepareBrowserWebview(

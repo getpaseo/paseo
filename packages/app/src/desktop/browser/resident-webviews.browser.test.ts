@@ -127,7 +127,11 @@ describe("resident browser webviews", () => {
       url: "https://example.com",
     });
     const anchor = document.createElement("div");
+    const clip = document.createElement("div");
     Object.defineProperty(anchor, "getBoundingClientRect", {
+      value: () => ({ left: 40, top: 60, width: 640, height: 480 }),
+    });
+    Object.defineProperty(clip, "getBoundingClientRect", {
       value: () => ({ left: 40, top: 60, width: 640, height: 480 }),
     });
     if (!webview?.parentElement) {
@@ -135,7 +139,7 @@ describe("resident browser webviews", () => {
     }
     const permanentParent = webview.parentElement;
 
-    presentBrowserWebview("browser-stable-parent", webview, anchor);
+    presentBrowserWebview("browser-stable-parent", webview, anchor, clip);
     expect(webview.parentElement).toBe(permanentParent);
     expect(permanentParent.style.left).toBe("40px");
     expect(permanentParent.style.top).toBe("60px");
@@ -148,8 +152,39 @@ describe("resident browser webviews", () => {
     expect(webview.parentElement).toBe(permanentParent);
     expectParkedSurface(permanentParent);
 
-    presentBrowserWebview("browser-stable-parent", webview, anchor);
+    presentBrowserWebview("browser-stable-parent", webview, anchor, clip);
     expect(webview.parentElement).toBe(permanentParent);
+  });
+
+  it("clips an oversized fixed viewport to its pane without resizing the webview", () => {
+    const webview = ensureTestBrowser({
+      browserId: "browser-oversized",
+      workspaceId: "workspace-oversized",
+      url: "https://example.com",
+    });
+    if (!webview?.parentElement) {
+      throw new Error("Expected resident browser surface");
+    }
+    applyBrowserWebviewViewport(webview, { mode: "fixed", width: 2560, height: 1440 });
+    const anchor = document.createElement("div");
+    const clip = document.createElement("div");
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      value: () => ({ left: -800, top: -300, width: 2560, height: 1440 }),
+    });
+    Object.defineProperty(clip, "getBoundingClientRect", {
+      value: () => ({ left: 100, top: 150, width: 800, height: 600 }),
+    });
+
+    presentBrowserWebview("browser-oversized", webview, anchor, clip);
+
+    expect(webview.parentElement.style.left).toBe("100px");
+    expect(webview.parentElement.style.top).toBe("150px");
+    expect(webview.parentElement.style.width).toBe("800px");
+    expect(webview.parentElement.style.height).toBe("600px");
+    expect(webview.style.left).toBe("-900px");
+    expect(webview.style.top).toBe("-450px");
+    expect(webview.style.width).toBe("2560px");
+    expect(webview.style.height).toBe("1440px");
   });
 
   it("creates a resident webview for an agent-created unfocused tab", () => {
