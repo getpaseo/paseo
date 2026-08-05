@@ -445,11 +445,18 @@ class AudioEngine (context: Context) {
 
     @RequiresApi(Build.VERSION_CODES.Q)
     fun resumeRecordingAndPlayer() {
+        val wasRecordingBeforePause = isRecordingBeforePause
+        // Only take the session back if something was actually live when we backgrounded. The
+        // activity lifecycle listener calls this on every onResume, so requesting
+        // AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE unconditionally re-paused the user's music every
+        // time the app came to the foreground — the exact symptom this change exists to remove.
+        if (!wasRecordingBeforePause && !isPlaying) {
+            return
+        }
         if (!requestAudioFocus()) {
             handleAudioFocusBlocked()
             return
         }
-        val wasRecordingBeforePause = isRecordingBeforePause
         isRecording = toggleRecording(wasRecordingBeforePause)
         if (wasRecordingBeforePause && !isRecording) {
             return
