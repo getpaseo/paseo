@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -113,6 +113,7 @@ export function ContextWindowMeter({
   const { theme } = useUnistyles();
   const { t, i18n } = useTranslation();
   const [isTooltipOpen, setIsTooltipOpen] = useState(false);
+  const tooltipOpenRef = useRef(false);
   const shouldFetchProviderUsage = isTooltipOpen || (showPercentage && provider != null);
   const { view: providerUsageView, refresh: refreshProviderUsage } = useProviderUsage(
     serverId ?? null,
@@ -122,6 +123,8 @@ export function ContextWindowMeter({
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
   const handleTooltipOpenChange = useCallback(
     (nextOpen: boolean) => {
+      if (tooltipOpenRef.current === nextOpen) return;
+      tooltipOpenRef.current = nextOpen;
       setIsTooltipOpen(nextOpen);
       if (nextOpen) {
         void refreshProviderUsage().catch(() => {});
