@@ -7,8 +7,8 @@ import type { Theme } from "@/styles/theme";
 const ThemedSquarePlus = withUnistyles(SquarePlus);
 const ThemedSquareMinus = withUnistyles(SquareMinus);
 
-const successMapping = (theme: Theme) => ({ color: theme.colors.statusMutedSuccess });
-const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusMutedDanger });
+const successMapping = (theme: Theme) => ({ color: theme.colors.statusSuccess });
+const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
 
 const ICON_SIZE = 14;
 

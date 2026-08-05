@@ -939,9 +939,14 @@ export const es: TranslationResources = {
         host: "Host",
         changeRequest: "Pull request",
         checks: "Comprobaciones",
-        scripts: "Scripts",
+        services: "Servicios",
         diff: "Estadísticas de cambios",
         timestamp: "Última actividad",
+      },
+      checks: {
+        iconAndText: "Icono y texto",
+        icon: "Solo icono",
+        none: "Oculto",
       },
       hostFilter: {
         label: "Host",
@@ -1015,7 +1020,8 @@ export const es: TranslationResources = {
     },
     workspace: {
       status: {
-        scriptsAvailable: "Guiones disponibles",
+        serviceRunning: "Servicio {{name}} en ejecución",
+        serviceUnhealthy: "Servicio {{name}} con fallos",
         creating: "Creando...",
       },
       actions: {

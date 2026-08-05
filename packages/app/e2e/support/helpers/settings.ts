@@ -86,6 +86,18 @@ export async function selectHostConnectionType(
   await page.getByRole("button", { name: label }).click();
 }
 
+export async function addDirectHostFromSettings(
+  page: Page,
+  input: { host: string; port: number },
+): Promise<void> {
+  await openAddHostFlow(page);
+  await selectHostConnectionType(page, "direct");
+  await page.getByTestId("direct-host-input").fill(input.host);
+  await page.getByTestId("direct-port-input").fill(String(input.port));
+  await page.getByTestId("direct-host-submit").click();
+  await expect(page.getByTestId("add-host-modal")).toHaveCount(0, { timeout: 30_000 });
+}
+
 export async function toggleHostAdvanced(page: Page): Promise<void> {
   await page.getByTestId("direct-host-advanced-toggle").click();
 }

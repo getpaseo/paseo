@@ -15,11 +15,13 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 // one that moves. Callers own the dot's geometry and color and pass it in as a style — this
 // module owns nothing but the pulse.
 //
-// Opacity only, and shallow: the dot sits in a column of static dots in neighboring rows, so
-// anything that changes its size or drops it near invisible reads as jitter down the list.
-// One full cycle is out-and-back, so the visible period is twice the half period.
-const PULSE_HALF_PERIOD_MS = 900;
-const PULSE_MIN_OPACITY = 0.65;
+// Opacity only: the dot sits in a column of static dots in neighboring rows, so anything that
+// changes its size reads as jitter down the list. The floor stays clear of invisible — a dot
+// that blinks out reads as a glitch rather than as work in progress, and the row loses its
+// status marker on every cycle. One full cycle is out-and-back, so the visible period is
+// twice the half period.
+const PULSE_HALF_PERIOD_MS = 700;
+const PULSE_MIN_OPACITY = 0.45;
 
 // One clock for every pulsing dot in the app. Dots that each start their own animation drift
 // apart as rows mount at different times, and a column of them fading out of step is noise —

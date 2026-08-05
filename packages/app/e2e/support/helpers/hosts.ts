@@ -1,5 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import { identityColor, type IdentityColorName } from "@/styles/identity-colors";
+import { identityForeground, type IdentityColorName } from "@/styles/identity-colors";
 import { openSettings } from "./app";
 import { buildSeededHost } from "./daemon-registry";
 import { clickSettingsBackToWorkspace, openHostSection, selectSettingsHost } from "./settings";
@@ -226,6 +226,10 @@ export async function expectNoHostBadge(page: Page, target: HostBadgeTarget): Pr
 // The host sits on the meta line as plain secondary text, so its identity colour lives on the
 // server icon alone. The label stays muted like every other item on that line — asserting a
 // tinted label or a pill fill would re-assert the design the meta row replaced.
+//
+// The icon takes the *foreground* variant of the identity colour, not the fill one: it is a
+// stroked glyph on a surface, so it has to clear contrast against that surface rather than
+// behind white letters. That variant is per-scheme, and the browser project runs light.
 export async function expectHostBadgeTinted(
   page: Page,
   target: HostBadgeTarget & { color: IdentityColorName },
@@ -233,7 +237,10 @@ export async function expectHostBadgeTinted(
   const badge = hostBadge(page, target);
   await expect(badge).toBeVisible({ timeout: 15_000 });
   await expect(badge).toHaveText(target.hostName);
-  await expect(badge.locator("svg")).toHaveAttribute("stroke", identityColor(target.color));
+  await expect(badge.locator("svg")).toHaveAttribute(
+    "stroke",
+    identityForeground(target.color, "light"),
+  );
 }
 
 export async function expectHostAppearancePreview(
@@ -244,7 +251,10 @@ export async function expectHostAppearancePreview(
   await expect(preview).toBeVisible();
   const badge = preview.getByTestId(`host-badge-${input.serverId}`);
   await expect(badge).toHaveText(input.hostName);
-  await expect(badge.locator("svg")).toHaveAttribute("stroke", identityColor(input.color));
+  await expect(badge.locator("svg")).toHaveAttribute(
+    "stroke",
+    identityForeground(input.color, "light"),
+  );
 }
 
 // The auto-seed fixture rewrites the host registry on every navigation. Setting the

@@ -915,9 +915,14 @@ export const ko: TranslationResources = {
         host: "호스트",
         changeRequest: "풀 리퀘스트",
         checks: "검사",
-        scripts: "스크립트",
+        services: "서비스",
         diff: "Diff 통계",
         timestamp: "마지막 활동",
+      },
+      checks: {
+        iconAndText: "아이콘 및 텍스트",
+        icon: "아이콘만",
+        none: "숨김",
       },
       hostFilter: {
         label: "호스트",
@@ -991,7 +996,8 @@ export const ko: TranslationResources = {
     },
     workspace: {
       status: {
-        scriptsAvailable: "스크립트 사용 가능",
+        serviceRunning: "서비스 {{name}} 실행 중",
+        serviceUnhealthy: "서비스 {{name}} 비정상",
         creating: "생성하는 중...",
       },
       actions: {
