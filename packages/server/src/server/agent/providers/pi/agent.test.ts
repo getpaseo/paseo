@@ -297,6 +297,69 @@ describe("PiRpcAgentSession", () => {
     });
   });
 
+  test("bridges freeform Pi ask_user responses from multi-select without a comment", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({
+      type: "tool_execution_start",
+      toolCallId: "tool-1",
+      toolName: "ask_user",
+      args: {
+        question: "Pick a language",
+        options: ["TypeScript", "Rust"],
+        allowComment: false,
+        allowFreeform: true,
+        allowMultiple: true,
+      },
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "select-1",
+      method: "select",
+      title: "Pick a language",
+      options: ["TypeScript", "Rust", "✏️ Type custom response..."],
+    });
+
+    const permission = await events.nextPermissionRequest();
+    expect(permission.request).toMatchObject({
+      id: "select-1",
+      name: "Pi ask_user",
+      input: {
+        questions: [
+          {
+            options: [{ label: "TypeScript" }, { label: "Rust" }],
+            multiSelect: true,
+            allowOther: true,
+          },
+        ],
+      },
+    });
+
+    await session.respondToPermission("select-1", {
+      behavior: "allow",
+      updatedInput: { answers: { Response: "Zig" } },
+    });
+
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "select-1", response: { value: "✏️ Type custom response..." } },
+    ]);
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "freeform-1",
+      method: "input",
+      title: "Your answer:",
+      placeholder: "Type your response...",
+    });
+
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "select-1", response: { value: "✏️ Type custom response..." } },
+      { id: "freeform-1", response: { value: "Zig" } },
+    ]);
+    expect(session.getPendingPermissions()).toEqual([]);
+  });
+
   test("bridges Pi RPC input and confirm extension UI responses", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
@@ -449,6 +512,107 @@ describe("PiRpcAgentSession", () => {
       { id: "comment-1", response: { value: "Looks good" } },
     ]);
     expect(session.getPendingPermissions()).toEqual([]);
+  });
+
+  test("combines Pi ask_user multi-select, descriptions, and optional comment", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const describedOption = "TypeScript, Rust\nTyped languages";
+
+    fakeSession.emit({
+      type: "tool_execution_start",
+      toolCallId: "tool-1",
+      toolName: "ask_user",
+      args: {
+        question: "Pick languages",
+        options: ["TypeScript, Rust", "Go"],
+        allowComment: true,
+        allowFreeform: true,
+        allowMultiple: true,
+      },
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "select-1",
+      method: "select",
+      title: "Pick languages",
+      options: [describedOption, "Go", "✏️ Type custom response..."],
+    });
+
+    const permission = await events.nextPermissionRequest();
+    expect(permission.request).toMatchObject({
+      id: "select-1",
+      name: "Pi ask_user",
+      input: {
+        questions: [
+          {
+            header: "Response",
+            options: [
+              { label: "TypeScript, Rust", description: "Typed languages" },
+              { label: "Go" },
+            ],
+            multiSelect: true,
+            allowOther: true,
+          },
+          {
+            header: "Comment",
+            multiSelect: false,
+          },
+        ],
+      },
+      metadata: {
+        combinedAskUser: "ask_user_select_optional_comment",
+        multiSelect: true,
+      },
+    });
+
+    await session.respondToPermission("select-1", {
+      behavior: "allow",
+      updatedInput: {
+        answers: { Response: "TypeScript, Rust, Go", Comment: "Both fit" },
+      },
+    });
+
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "select-1", response: { value: "TypeScript, Rust, Go" } },
+    ]);
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "comment-1",
+      method: "input",
+      title: "Optional comment",
+      placeholder: "Optional comment (press Enter to skip)...",
+    });
+
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "select-1", response: { value: "TypeScript, Rust, Go" } },
+      { id: "comment-1", response: { value: "Both fit" } },
+    ]);
+
+    fakeSession.emit({
+      type: "tool_execution_end",
+      toolCallId: "tool-1",
+      toolName: "ask_user",
+      result: { answer: "TypeScript, Rust, Go" },
+      isError: false,
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ordinary-select",
+      method: "select",
+      title: "Pick one",
+      options: [describedOption],
+    });
+
+    expect(session.getPendingPermissions()).toMatchObject([
+      {
+        id: "ordinary-select",
+        input: {
+          questions: [{ options: [{ label: describedOption }], multiSelect: false }],
+        },
+      },
+    ]);
   });
 
   test("cancels Pi RPC extension UI dialogs when question permission is denied", async () => {

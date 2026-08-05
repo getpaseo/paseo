@@ -270,7 +270,7 @@ interface ActiveAskUserDialog {
 }
 
 interface PendingCombinedAskUserResponse {
-  comment: string;
+  comment: string | null;
   freeform: string | null;
 }
 
@@ -279,6 +279,13 @@ interface ExtensionUiMappingOptions {
   label?: string;
   combineOptionalComment?: boolean;
   allowFreeform?: boolean;
+  multiSelect?: boolean;
+  parseOptionDescriptions?: boolean;
+}
+
+interface ExtensionUiQuestionOption {
+  label: string;
+  description?: string;
 }
 
 interface PiSlashCommandInvocation {
@@ -941,6 +948,35 @@ function isPiAskUserFreeformOption(option: string): boolean {
   return option === PI_ASK_USER_FREEFORM_SENTINEL;
 }
 
+function parseAskUserOption(option: string): ExtensionUiQuestionOption {
+  const separatorIndex = option.indexOf("\n");
+  if (separatorIndex === -1) {
+    return { label: option };
+  }
+  const label = option.slice(0, separatorIndex);
+  const description = option.slice(separatorIndex + 1);
+  return description ? { label, description } : { label };
+}
+
+function isSerializedMultiSelectAnswer(answer: string, options: string[]): boolean {
+  const reachableOffsets = new Set([0]);
+  for (const offset of reachableOffsets) {
+    for (const option of options) {
+      if (!answer.startsWith(option, offset)) {
+        continue;
+      }
+      const end = offset + option.length;
+      if (end === answer.length) {
+        return true;
+      }
+      if (answer.startsWith(", ", end)) {
+        reachableOffsets.add(end + 2);
+      }
+    }
+  }
+  return false;
+}
+
 function mapExtensionUiRequestToPermission(
   event: Extract<PiRuntimeEvent, { type: "extension_ui_request" }>,
   options: ExtensionUiMappingOptions = {},
@@ -950,20 +986,25 @@ function mapExtensionUiRequestToPermission(
   switch (event.method) {
     case "select": {
       const selectOptions = readStringArray(event.options);
-      if (options.combineOptionalComment) {
+      const questionOptions = options.parseOptionDescriptions
+        ? selectOptions.map(parseAskUserOption)
+        : selectOptions.map((option) => ({ label: option }));
+      if (options.combineOptionalComment || options.multiSelect === true) {
         return buildCombinedAskUserQuestionPermission(event, {
           provider,
           label,
           question: optionalString(event.title) ?? "Select an option",
-          options: selectOptions,
+          options: questionOptions,
           allowFreeform: options.allowFreeform === true,
+          includeComment: options.combineOptionalComment === true,
+          multiSelect: options.multiSelect === true,
         });
       }
       return buildExtensionUiQuestionPermission(event, {
         provider,
         label,
         question: optionalString(event.title) ?? "Select an option",
-        options: selectOptions,
+        options: questionOptions,
         multiSelect: false,
       });
     }
@@ -996,7 +1037,7 @@ function mapExtensionUiRequestToPermission(
         question: [optionalString(event.title), optionalString(event.message)]
           .filter(Boolean)
           .join("\n\n"),
-        options: ["Yes", "No"],
+        options: [{ label: "Yes" }, { label: "No" }],
         multiSelect: false,
       });
     default:
@@ -1041,7 +1082,7 @@ function buildExtensionUiQuestionPermission(
     provider: AgentProvider;
     label: string;
     question: string;
-    options: string[];
+    options: ExtensionUiQuestionOption[];
     multiSelect: boolean;
     placeholder?: string;
     allowEmpty?: boolean;
@@ -1059,7 +1100,7 @@ function buildExtensionUiQuestionPermission(
         {
           question: input.question,
           header: QUESTION_RESPONSE_HEADER,
-          options: input.options.map((label) => ({ label })),
+          options: input.options,
           multiSelect: input.multiSelect,
           ...(input.placeholder ? { placeholder: input.placeholder } : {}),
           ...(input.allowEmpty ? { allowEmpty: true } : {}),
@@ -1080,11 +1121,13 @@ function buildCombinedAskUserQuestionPermission(
     provider: AgentProvider;
     label: string;
     question: string;
-    options: string[];
+    options: ExtensionUiQuestionOption[];
     allowFreeform: boolean;
+    includeComment: boolean;
+    multiSelect: boolean;
   },
 ): AgentPermissionRequest {
-  const visibleOptions = input.options.filter((option) => !isPiAskUserFreeformOption(option));
+  const visibleOptions = input.options.filter((option) => !isPiAskUserFreeformOption(option.label));
   const allowOther = input.allowFreeform || visibleOptions.length !== input.options.length;
   return {
     id: event.id,
@@ -1097,26 +1140,31 @@ function buildCombinedAskUserQuestionPermission(
         {
           question: input.question,
           header: QUESTION_RESPONSE_HEADER,
-          options: visibleOptions.map((label) => ({ label })),
-          multiSelect: false,
+          options: visibleOptions,
+          multiSelect: input.multiSelect,
           ...(allowOther ? { allowOther: true } : {}),
         },
-        {
-          question: "Optional comment",
-          header: QUESTION_COMMENT_HEADER,
-          options: [],
-          multiSelect: false,
-          placeholder: "Optional comment (press Enter to skip)...",
-          allowEmpty: true,
-        },
+        ...(input.includeComment
+          ? [
+              {
+                question: "Optional comment",
+                header: QUESTION_COMMENT_HEADER,
+                options: [],
+                multiSelect: false,
+                placeholder: "Optional comment (press Enter to skip)...",
+                allowEmpty: true,
+              },
+            ]
+          : []),
       ],
     },
     metadata: {
       extensionUiMethod: event.method,
       answerHeader: QUESTION_RESPONSE_HEADER,
-      commentHeader: QUESTION_COMMENT_HEADER,
+      ...(input.includeComment ? { commentHeader: QUESTION_COMMENT_HEADER } : {}),
       combinedAskUser: COMBINED_ASK_USER_METADATA,
-      selectOptions: visibleOptions,
+      selectOptions: visibleOptions.map((option) => option.label),
+      multiSelect: input.multiSelect,
       ...(allowOther ? { freeformSentinel: PI_ASK_USER_FREEFORM_SENTINEL } : {}),
     },
   };
@@ -1162,14 +1210,24 @@ function buildCombinedAskUserSelectionResponse(
 
   const selectOptions = readStringArray(request.metadata?.selectOptions);
   const freeformSentinel = optionalString(request.metadata?.freeformSentinel);
-  const isFreeform = Boolean(freeformSentinel) && !selectOptions.includes(answer);
-  const comment = permissionAnswer(response.updatedInput, QUESTION_COMMENT_HEADER) ?? "";
+  const multiSelect = request.metadata?.multiSelect === true;
+  const isKnownSelection =
+    selectOptions.includes(answer) ||
+    (multiSelect && isSerializedMultiSelectAnswer(answer, selectOptions));
+  const isFreeform = Boolean(freeformSentinel) && !isKnownSelection;
+  const commentHeader = optionalString(request.metadata?.commentHeader);
+  const comment = commentHeader
+    ? (permissionAnswer(response.updatedInput, commentHeader) ?? "")
+    : null;
   return {
     uiResponse: { value: isFreeform ? freeformSentinel : answer },
-    pendingResponse: {
-      comment,
-      freeform: isFreeform ? answer : null,
-    },
+    pendingResponse:
+      isFreeform || comment !== null
+        ? {
+            comment,
+            freeform: isFreeform ? answer : null,
+          }
+        : null,
   };
 }
 
@@ -1933,14 +1991,14 @@ export class PiRpcAgentSession implements AgentSession {
     }
 
     const shouldCombineOptionalComment =
-      event.method === "select" &&
-      this.activeAskUserDialog?.allowComment === true &&
-      this.activeAskUserDialog.allowMultiple === false;
+      event.method === "select" && this.activeAskUserDialog?.allowComment === true;
     const request = mapExtensionUiRequestToPermission(event, {
       provider: this.provider,
       label: "Pi",
       combineOptionalComment: shouldCombineOptionalComment,
       allowFreeform: this.activeAskUserDialog?.allowFreeform,
+      multiSelect: this.activeAskUserDialog?.allowMultiple,
+      parseOptionDescriptions: this.activeAskUserDialog !== null,
     });
     if (!request) {
       return;
@@ -1965,15 +2023,18 @@ export class PiRpcAgentSession implements AgentSession {
 
     const placeholder = optionalString(event.placeholder);
     if (pending.freeform !== null && !isOptionalInputPlaceholder(placeholder)) {
-      this.pendingCombinedAskUserResponse = {
-        ...pending,
-        freeform: null,
-      };
+      this.pendingCombinedAskUserResponse =
+        pending.comment === null
+          ? null
+          : {
+              ...pending,
+              freeform: null,
+            };
       this.runtimeSession.respondToExtensionUiRequest(event.id, { value: pending.freeform });
       return true;
     }
 
-    if (isOptionalInputPlaceholder(placeholder)) {
+    if (pending.comment !== null && isOptionalInputPlaceholder(placeholder)) {
       this.pendingCombinedAskUserResponse = null;
       this.runtimeSession.respondToExtensionUiRequest(event.id, { value: pending.comment });
       return true;
