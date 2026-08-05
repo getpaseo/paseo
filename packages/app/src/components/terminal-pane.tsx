@@ -7,6 +7,7 @@ import Animated, { runOnJS, useAnimatedReaction } from "react-native-reanimated"
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Keyboard as KeyboardIcon, KeyboardOff as KeyboardOffIcon } from "lucide-react-native";
 import type { TerminalKeyInput } from "@getpaseo/protocol/terminal-key-input";
+import type { TerminalState } from "@getpaseo/protocol/messages";
 import {
   DEFAULT_TERMINAL_INPUT_MODE_STATE,
   type TerminalInputModeState,
@@ -53,6 +54,10 @@ import { useSessionStore } from "@/stores/session-store";
 import { toXtermTheme } from "@/utils/to-xterm-theme";
 import TerminalEmulator, { type TerminalEmulatorHandle } from "./terminal-emulator";
 import { TerminalFloatingCopyAction, TerminalPasteAction } from "./terminal-copy-paste-actions";
+import {
+  createTerminalResizeDebouncer,
+  type TerminalResizeRequest,
+} from "./terminal-resize-debouncer";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import {
@@ -85,6 +90,7 @@ interface TerminalPaneProps {
 }
 
 const TERMINAL_REFIT_DELAYS_MS = [0, 48, 144, 320];
+const TERMINAL_RESIZE_DEBOUNCE_MS = 100;
 
 const MODIFIER_LABELS = {
   ctrl: "Ctrl",
@@ -479,6 +485,66 @@ export function TerminalPane({
     setStreamError(status.error);
   }, []);
 
+  const getPreferredStreamSize = useStableEvent(() => {
+    if (
+      !canRequestFocusClaim({
+        isWorkspaceFocused: terminalActiveRef.current,
+        isPaneFocused,
+        isAppActivelyVisible,
+        isClientReady: client !== null,
+        isConnected,
+        isRendererReady: rendererReadyStreamKey === terminalStreamKey,
+      })
+    ) {
+      return null;
+    }
+    return measuredTerminalSizeRef.current;
+  });
+
+  const handleStreamOutput = useStableEvent(
+    ({ terminalId: outputTerminalId, data }: { terminalId: string; data: Uint8Array }) => {
+      if (!terminalActiveRef.current || terminalIdRef.current !== outputTerminalId) {
+        return;
+      }
+      emulatorRef.current?.writeOutput(data);
+    },
+  );
+
+  const handleStreamRestore = useStableEvent(
+    ({ terminalId: restoreTerminalId, data }: { terminalId: string; data: Uint8Array }) => {
+      workspaceTerminalSession.snapshots.clear({ terminalId: restoreTerminalId });
+      if (!terminalActiveRef.current || terminalIdRef.current !== restoreTerminalId) {
+        return;
+      }
+      emulatorRef.current?.restoreOutput(data);
+    },
+  );
+
+  const handleStreamSnapshot = useStableEvent(
+    ({ terminalId: snapshotTerminalId, state }: { terminalId: string; state: TerminalState }) => {
+      workspaceTerminalSession.snapshots.set({ terminalId: snapshotTerminalId, state });
+      if (!terminalActiveRef.current || terminalIdRef.current !== snapshotTerminalId) {
+        return;
+      }
+      emulatorRef.current?.renderSnapshot(state);
+    },
+  );
+
+  const getStreamRestoreOptions = useStableEvent(() =>
+    resolveTerminalRestoreOptions({
+      supportsTerminalRestoreModes,
+      canClaimSize: canRequestFocusClaim({
+        isWorkspaceFocused: terminalActiveRef.current,
+        isPaneFocused,
+        isAppActivelyVisible,
+        isClientReady: client !== null,
+        isConnected,
+        isRendererReady: rendererReadyStreamKey === terminalStreamKey,
+      }),
+      size: measuredTerminalSizeRef.current,
+    }),
+  );
+
   useEffect(() => {
     streamControllerRef.current?.dispose();
     streamControllerRef.current = null;
@@ -491,55 +557,11 @@ export function TerminalPane({
 
     const controller = new TerminalStreamController({
       client,
-      getPreferredSize: () => {
-        if (
-          !canRequestFocusClaim({
-            isWorkspaceFocused: terminalActiveRef.current,
-            isPaneFocused,
-            isAppActivelyVisible,
-            isClientReady: client !== null,
-            isConnected,
-            isRendererReady: rendererReadyStreamKey === terminalStreamKey,
-          })
-        ) {
-          return null;
-        }
-        return measuredTerminalSizeRef.current;
-      },
-      onOutput: ({ terminalId: outputTerminalId, data }) => {
-        if (!terminalActiveRef.current || terminalIdRef.current !== outputTerminalId) {
-          return;
-        }
-        emulatorRef.current?.writeOutput(data);
-      },
-      onRestore: ({ terminalId: restoreTerminalId, data }) => {
-        workspaceTerminalSession.snapshots.clear({ terminalId: restoreTerminalId });
-        if (!terminalActiveRef.current || terminalIdRef.current !== restoreTerminalId) {
-          return;
-        }
-        emulatorRef.current?.restoreOutput(data);
-      },
-      onSnapshot: ({ terminalId: snapshotTerminalId, state }) => {
-        workspaceTerminalSession.snapshots.set({ terminalId: snapshotTerminalId, state });
-        if (!terminalActiveRef.current || terminalIdRef.current !== snapshotTerminalId) {
-          return;
-        }
-        emulatorRef.current?.renderSnapshot(state);
-      },
-      getRestoreOptions: () => {
-        return resolveTerminalRestoreOptions({
-          supportsTerminalRestoreModes,
-          canClaimSize: canRequestFocusClaim({
-            isWorkspaceFocused: terminalActiveRef.current,
-            isPaneFocused,
-            isAppActivelyVisible,
-            isClientReady: client !== null,
-            isConnected,
-            isRendererReady: rendererReadyStreamKey === terminalStreamKey,
-          }),
-          size: measuredTerminalSizeRef.current,
-        });
-      },
+      getPreferredSize: getPreferredStreamSize,
+      onOutput: handleStreamOutput,
+      onRestore: handleStreamRestore,
+      onSnapshot: handleStreamSnapshot,
+      getRestoreOptions: getStreamRestoreOptions,
       onStatusChange: handleStreamControllerStatus,
     });
 
@@ -553,14 +575,13 @@ export function TerminalPane({
     };
   }, [
     client,
+    getPreferredStreamSize,
+    getStreamRestoreOptions,
     handleStreamControllerStatus,
+    handleStreamOutput,
+    handleStreamRestore,
+    handleStreamSnapshot,
     isConnected,
-    isAppActivelyVisible,
-    isPaneFocused,
-    rendererReadyStreamKey,
-    supportsTerminalRestoreModes,
-    terminalStreamKey,
-    workspaceTerminalSession.snapshots,
   ]);
 
   useEffect(() => {
@@ -759,51 +780,69 @@ export function TerminalPane({
     ],
   );
 
-  const handleTerminalResize = useStableEvent(
-    (input: { rows: number; cols: number; shouldClaim: boolean; forceClaim?: boolean }) => {
-      const { rows, cols } = input;
-      if (rows <= 0 || cols <= 0) {
-        return;
-      }
-      const normalizedRows = Math.floor(rows);
-      const normalizedCols = Math.floor(cols);
-      const nextSize = { rows: normalizedRows, cols: normalizedCols };
-      measuredTerminalSizeRef.current = nextSize;
-      const claim = resolveTerminalResizeClaim({
-        size: nextSize,
-        previousSentSize: lastSentTerminalSizeRef.current,
-        shouldClaim: input.shouldClaim,
-        forceClaim: input.forceClaim ?? false,
-        supportsTerminalSizeOwnership,
-        readiness: {
-          isWorkspaceFocused: isTerminalActive,
-          isPaneFocused,
-          isAppActivelyVisible,
-          isClientReady: client !== null,
-          isConnected,
-          isRendererReady: rendererReadyStreamKey === terminalStreamKey,
-        },
+  const sendTerminalResize = useStableEvent((input: TerminalResizeRequest) => {
+    const nextSize = { rows: input.rows, cols: input.cols };
+    const claim = resolveTerminalResizeClaim({
+      size: nextSize,
+      previousSentSize: lastSentTerminalSizeRef.current,
+      shouldClaim: input.shouldClaim,
+      forceClaim: input.forceClaim ?? false,
+      supportsTerminalSizeOwnership,
+      readiness: {
+        isWorkspaceFocused: isTerminalActive,
+        isPaneFocused,
+        isAppActivelyVisible,
+        isClientReady: client !== null,
+        isConnected,
+        isRendererReady: rendererReadyStreamKey === terminalStreamKey,
+      },
+    });
+    let sent = false;
+    if (client && terminalId && claim.shouldSend) {
+      lastSentTerminalSizeRef.current = nextSize;
+      client.sendTerminalInput(terminalId, {
+        type: "resize",
+        rows: input.rows,
+        cols: input.cols,
+        intent: claim.intent,
       });
-      let sent = false;
-      if (client && terminalId && claim.shouldSend) {
-        lastSentTerminalSizeRef.current = nextSize;
-        client.sendTerminalInput(terminalId, {
-          type: "resize",
-          rows: normalizedRows,
-          cols: normalizedCols,
-          intent: claim.intent,
-        });
-        sent = true;
-      }
-      const requestedKey = paneFocusResizeClaimRef.current.requestedKey;
-      if (requestedKey && claim.intent === "claim") {
-        paneFocusResizeClaimRef.current = settleFocusClaim(paneFocusResizeClaimRef.current, {
-          key: requestedKey,
-          sent,
-        });
-      }
-    },
+      sent = true;
+    }
+    const requestedKey = paneFocusResizeClaimRef.current.requestedKey;
+    if (requestedKey && claim.intent === "claim") {
+      paneFocusResizeClaimRef.current = settleFocusClaim(paneFocusResizeClaimRef.current, {
+        key: requestedKey,
+        sent,
+      });
+    }
+  });
+
+  const terminalResizeDebouncer = useMemo(
+    () =>
+      createTerminalResizeDebouncer({
+        delayMs: TERMINAL_RESIZE_DEBOUNCE_MS,
+        emit: sendTerminalResize,
+      }),
+    [sendTerminalResize],
   );
+
+  useEffect(
+    () => () => terminalResizeDebouncer.cancel(),
+    [terminalResizeDebouncer, terminalStreamKey],
+  );
+
+  const handleTerminalResize = useStableEvent((input: TerminalResizeRequest) => {
+    if (input.rows <= 0 || input.cols <= 0) {
+      return;
+    }
+    const nextResize = {
+      ...input,
+      rows: Math.floor(input.rows),
+      cols: Math.floor(input.cols),
+    };
+    measuredTerminalSizeRef.current = { rows: nextResize.rows, cols: nextResize.cols };
+    terminalResizeDebouncer.schedule(nextResize);
+  });
 
   const handleTerminalKey = useCallback(
     async (input: { key: string; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean }) => {
