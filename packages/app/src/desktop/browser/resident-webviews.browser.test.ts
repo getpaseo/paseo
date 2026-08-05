@@ -384,11 +384,24 @@ describe("resident browser webviews", () => {
     const webview = document.createElement("webview");
     rememberBrowserWebviewSize({ browserId: "browser-inactive", width: 640, height: 480 });
 
-    applyInactiveBrowserWebviewViewport("browser-inactive", webview);
+    applyInactiveBrowserWebviewViewport("browser-inactive", webview, { mode: "responsive" });
 
     expect(webview.style.flex).toBe("0 0 auto");
     expect(webview.style.width).toBe("640px");
     expect(webview.style.height).toBe("480px");
+  });
+
+  it("parks a cold inactive browser at its canonical fixed viewport", () => {
+    const webview = document.createElement("webview");
+
+    applyInactiveBrowserWebviewViewport("browser-restored-fixed", webview, {
+      mode: "fixed",
+      width: 800,
+      height: 600,
+    });
+
+    expect(webview.style.width).toBe("800px");
+    expect(webview.style.height).toBe("600px");
   });
 
   it("returns an existing visible pane webview instead of creating a resident duplicate", () => {

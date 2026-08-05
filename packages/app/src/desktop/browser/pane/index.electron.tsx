@@ -790,14 +790,7 @@ export function BrowserPane({
       applyBrowserWebviewViewport(webview, browserViewportRef.current);
       presentBrowserWebview(browserId, webview, host, clip);
     } else {
-      applyInactiveBrowserWebviewViewport(browserId, webview);
-    }
-    if (isPresentedRef.current && browserViewportRef.current.mode === "fixed") {
-      rememberBrowserWebviewSize({
-        browserId,
-        width: browserViewportRef.current.width,
-        height: browserViewportRef.current.height,
-      });
+      applyInactiveBrowserWebviewViewport(browserId, webview, browserViewportRef.current);
     }
     const sizeObserver =
       typeof ResizeObserver === "undefined"

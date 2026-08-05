@@ -240,7 +240,14 @@ export function applyBrowserWebviewViewport(webview: HTMLElement, viewport: Brow
   applyBrowserWebviewDimensions(webview, viewport);
 }
 
-export function applyInactiveBrowserWebviewViewport(browserId: string, webview: HTMLElement): void {
+export function applyInactiveBrowserWebviewViewport(
+  browserId: string,
+  webview: HTMLElement,
+  viewport: BrowserViewport,
+): void {
+  if (viewport.mode === "fixed") {
+    rememberBrowserWebviewSize({ browserId, width: viewport.width, height: viewport.height });
+  }
   applyResidentWebviewStyle(webview, trimNonEmpty(browserId));
 }
 
