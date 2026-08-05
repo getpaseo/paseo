@@ -1,3 +1,7 @@
+<<<<<<< HEAD
+=======
+import { useCallback, useRef, useState } from "react";
+>>>>>>> ca504c7e6 (fix(app): deduplicate context meter refresh)
 import { Pressable, Text, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
