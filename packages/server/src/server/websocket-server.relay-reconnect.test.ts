@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import path from "node:path";
 import type { Server as HTTPServer } from "http";
 import type pino from "pino";
 import type { AgentManager } from "./agent/agent-manager.js";
@@ -1029,7 +1030,9 @@ describe("relay external socket reconnect behavior", () => {
       clientId: "cid-default-worktrees-root",
     });
 
-    expect(serverInfo.worktreesRoot).toBe("/tmp/paseo-test/worktrees");
+    // Resolved the way the daemon resolves it, so the expectation holds on Windows
+    // too, where `/tmp/paseo-test` resolves onto the current drive.
+    expect(serverInfo.worktreesRoot).toBe(path.join(path.resolve("/tmp/paseo-test"), "worktrees"));
     await server.close();
   });
 
@@ -1043,7 +1046,7 @@ describe("relay external socket reconnect behavior", () => {
       clientId: "cid-custom-worktrees-root",
     });
 
-    expect(serverInfo.worktreesRoot).toBe("/mnt/scratch/paseo-trees");
+    expect(serverInfo.worktreesRoot).toBe(path.resolve("/mnt/scratch/paseo-trees"));
     await server.close();
   });
 
