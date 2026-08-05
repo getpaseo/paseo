@@ -279,6 +279,13 @@ export const PersistedConfigSchema = z
           })
           .strict()
           .optional(),
+        plugins: z
+          .object({
+            /** Marketplace index. Point at a `file://` URL to develop against a local index. */
+            registryUrl: z.url().optional(),
+          })
+          .strict()
+          .optional(),
         auth: DaemonAuthSchema.optional(),
       })
       .strict()

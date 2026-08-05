@@ -22,6 +22,7 @@ import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
 import { hashDaemonPassword } from "./auth.js";
 import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
+import { DEFAULT_PLUGIN_REGISTRY_URL } from "./plugin/service.js";
 
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
@@ -481,6 +482,9 @@ export function loadConfig(
   });
   const serviceProxy = resolveServiceProxyConfig(env, persisted);
   const webUi = resolveWebUiConfig(paseoHome, env, options?.cli, persisted);
+  const plugins = {
+    registryUrl: persisted.daemon?.plugins?.registryUrl ?? DEFAULT_PLUGIN_REGISTRY_URL,
+  };
 
   const { openai, speech } = resolveSpeechConfig({
     paseoHome,
@@ -521,6 +525,7 @@ export function loadConfig(
     relayPublicUseTls: relay.publicUseTls,
     serviceProxy,
     webUi,
+    plugins,
     appBaseUrl,
     auth: resolveAuthConfig(env, persisted),
     openai,

@@ -36,6 +36,14 @@ A discussion also lets other people add their own version of the same problem, a
 
 Due to the volume and my limited bandwidth, I may not participate in all the discussions, if something gains interest it will make it's way to me.
 
+## Plugins
+
+Plugins extend Paseo's UI without a PR to this repo. If what you want is a file preview or a sidebar panel, write a plugin instead of asking for the feature. [docs/plugins.md](docs/plugins.md) is the contract, and `examples/plugins/hello-paseo/` is a working starting point.
+
+Plugins are published to the registry, not to this monorepo. Don't open a PR adding your plugin here.
+
+A PR adding a new contribution point, or widening the host bridge, is a product decision. Open a discussion first — those decisions shape what every plugin can do, and I close unsolicited ones.
+
 ## Pull requests
 
 Anyone can open a pull request, but there are no guarantees of it getting merged, only submit one if you're okay with it being closed.

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hello Paseo — Pet</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: var(--paseo-background, Canvas);
+        --fg: var(--paseo-text, CanvasText);
+        --muted: var(--paseo-textMuted, GrayText);
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          12px/1.4 ui-sans-serif,
+          system-ui,
+          sans-serif;
+        text-align: center;
+      }
+      .pet {
+        width: 64px;
+        height: 52px;
+        margin: 0 auto;
+        position: relative;
+        animation: hop 1.6s ease-in-out infinite;
+      }
+      .body {
+        position: absolute;
+        inset: 12px 4px 0;
+        background: currentColor;
+        border-radius: 26px 26px 18px 18px;
+        opacity: 0.9;
+      }
+      .ear {
+        position: absolute;
+        top: 0;
+        width: 0;
+        height: 0;
+        border-left: 9px solid transparent;
+        border-right: 9px solid transparent;
+        border-bottom: 16px solid currentColor;
+        opacity: 0.9;
+      }
+      .ear.left {
+        left: 6px;
+      }
+      .ear.right {
+        right: 6px;
+      }
+      .eye {
+        position: absolute;
+        top: 26px;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--bg);
+        animation: blink 4s infinite;
+      }
+      .eye.left {
+        left: 18px;
+      }
+      .eye.right {
+        right: 18px;
+      }
+      .tail {
+        position: absolute;
+        right: -10px;
+        bottom: 6px;
+        width: 20px;
+        height: 6px;
+        border-radius: 3px;
+        background: currentColor;
+        transform-origin: left center;
+        animation: wag 0.7s ease-in-out infinite alternate;
+        opacity: 0.9;
+      }
+      p {
+        margin: 12px 0 0;
+        color: var(--muted);
+      }
+      @keyframes hop {
+        0%,
+        70%,
+        100% {
+          transform: translateY(0);
+        }
+        80% {
+          transform: translateY(-6px);
+        }
+      }
+      @keyframes wag {
+        from {
+          transform: rotate(-18deg);
+        }
+        to {
+          transform: rotate(18deg);
+        }
+      }
+      @keyframes blink {
+        0%,
+        92%,
+        100% {
+          transform: scaleY(1);
+        }
+        96% {
+          transform: scaleY(0.1);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .pet,
+        .tail,
+        .eye {
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="pet">
+      <span class="ear left"></span>
+      <span class="ear right"></span>
+      <span class="body"></span>
+      <span class="eye left"></span>
+      <span class="eye right"></span>
+      <span class="tail"></span>
+    </div>
+    <p id="cwd">Waiting for the host…</p>
+    <script>
+      const post = (message) => parent.postMessage({ paseo: 1, ...message }, "*");
+
+      function render(context) {
+        document.getElementById("cwd").textContent = context.cwd ?? "no workspace";
+        post({ type: "resize", height: Math.ceil(document.body.scrollHeight) });
+      }
+
+      window.addEventListener("message", (event) => {
+        const message = event.data;
+        if (!message || message.paseo !== 1) return;
+        if (message.type === "init") {
+          for (const [key, value] of Object.entries(message.theme ?? {})) {
+            if (typeof value === "string") {
+              document.documentElement.style.setProperty(`--paseo-${key}`, value);
+            }
+          }
+          render(message.context);
+        } else if (message.type === "update") {
+          render(message.context);
+        }
+      });
+
+      post({ type: "ready" });
+    </script>
+  </body>
+</html>

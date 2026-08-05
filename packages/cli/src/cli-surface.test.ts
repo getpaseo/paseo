@@ -48,6 +48,15 @@ describe("canonical CLI surface", () => {
     expect(scheduleCreate?.helpInformation()).toContain("--thinking <id>");
   });
 
+  it("exposes the plugin lifecycle commands", () => {
+    const plugin = createCli().commands.find((command) => command.name() === "plugin");
+    const help = plugin?.helpInformation();
+
+    for (const subcommand of ["ls", "browse", "install", "uninstall", "enable", "disable"]) {
+      expect(help).toContain(subcommand);
+    }
+  });
+
   it("offers opening an existing agent in the desktop app", () => {
     const agent = createCli().commands.find((command) => command.name() === "agent");
     const open = agent?.commands.find((command) => command.name() === "open");

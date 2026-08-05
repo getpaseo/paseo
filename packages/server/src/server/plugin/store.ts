@@ -1,0 +1,388 @@
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { join, resolve, sep } from "node:path";
+import type { z } from "zod";
+import {
+  PluginEntrySchema,
+  PluginIdSchema,
+  PluginManifestSchema,
+  PluginStateFileSchema,
+  type InstalledPlugin,
+  type PluginManifest,
+  type PluginSource,
+  type PluginStateFile,
+} from "@getpaseo/protocol/plugin/types";
+import { writeJsonFileAtomic } from "../atomic-file.js";
+import { satisfiesVersionRange } from "./version-range.js";
+
+export const PLUGIN_MANIFEST_FILENAME = "paseo-plugin.json";
+const STATE_FILENAME = "installed.json";
+
+/** The requested plugin has no directory under `$PASEO_HOME/plugins/`. */
+export class PluginNotInstalledError extends Error {
+  constructor(public readonly pluginId: string) {
+    super(`Plugin "${pluginId}" is not installed`);
+    this.name = "PluginNotInstalledError";
+  }
+}
+
+/** The plugin exists but does not ship the requested entry file. */
+export class PluginEntryNotFoundError extends Error {
+  constructor(
+    public readonly pluginId: string,
+    public readonly entry: string,
+  ) {
+    super(`Plugin "${pluginId}" has no entry "${entry}"`);
+    this.name = "PluginEntryNotFoundError";
+  }
+}
+
+/**
+ * A plugin id or entry name that would resolve outside the plugin's own
+ * directory. This is a security boundary: the protocol schemas already reject
+ * separators and traversal segments, and the resolved path is re-checked before
+ * any read.
+ */
+export class PluginPathTraversalError extends Error {
+  constructor(
+    public readonly pluginId: string,
+    public readonly entry: string,
+  ) {
+    super(`Refused plugin path outside the plugin directory: ${pluginId}/${entry}`);
+    this.name = "PluginPathTraversalError";
+  }
+}
+
+interface PluginStateEntry {
+  id: string;
+  enabled: boolean;
+  installedAt: string;
+  source: PluginSource;
+}
+
+export interface PluginStoreOptions {
+  /** `$PASEO_HOME/plugins`. */
+  dir: string;
+  /** Daemon version a manifest's `paseoVersion` range is matched against. */
+  daemonVersion: string;
+  now?: () => Date;
+}
+
+function placeholderManifest(pluginId: string): PluginManifest {
+  return { id: pluginId, name: pluginId, version: "0.0.0", contributes: {} };
+}
+
+function entryFilenames(manifest: PluginManifest): string[] {
+  return [
+    ...(manifest.contributes.filePreviews ?? []).map((contribution) => contribution.entry),
+    ...(manifest.contributes.sidebarPanels ?? []).map((contribution) => contribution.entry),
+  ];
+}
+
+function describeManifestIssues(error: z.ZodError): string {
+  return error.issues
+    .slice(0, 3)
+    .map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`)
+    .join("; ");
+}
+
+/**
+ * Owns `$PASEO_HOME/plugins/`: the plugin directories themselves plus the
+ * daemon-owned `installed.json` holding enabled state and install source.
+ *
+ * A directory that is present but broken is never dropped from the listing — it
+ * comes back with `unavailableReason` set so the user can see why it is not
+ * running.
+ */
+export class PluginStore {
+  private readonly dir: string;
+  private readonly daemonVersion: string;
+  private readonly now: () => Date;
+  private mutations: Promise<unknown> = Promise.resolve();
+
+  constructor(options: PluginStoreOptions) {
+    this.dir = options.dir;
+    this.daemonVersion = options.daemonVersion;
+    this.now = options.now ?? (() => new Date());
+  }
+
+  async list(): Promise<InstalledPlugin[]> {
+    await mkdir(this.dir, { recursive: true });
+    const directories = await this.listPluginDirectories();
+    const state = await this.reconcileState(directories);
+    const plugins = await Promise.all(
+      directories.map(async (pluginId) => this.describe(pluginId, state)),
+    );
+    return plugins
+      .filter((plugin): plugin is InstalledPlugin => plugin !== null)
+      .sort((left, right) => left.manifest.id.localeCompare(right.manifest.id));
+  }
+
+  async get(pluginId: string): Promise<InstalledPlugin | null> {
+    const plugins = await this.list();
+    return plugins.find((plugin) => plugin.manifest.id === pluginId) ?? null;
+  }
+
+  /** Reads a contribution's HTML. Both arguments are re-validated here. */
+  async readEntry(pluginId: string, entry: string): Promise<string> {
+    const filePath = this.resolveEntryPath(pluginId, entry);
+    try {
+      return await readFile(filePath, "utf-8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new PluginEntryNotFoundError(pluginId, entry);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Replaces a plugin directory with verified bytes. The files land in a
+   * scratch directory first and are renamed into place, so an interrupted
+   * install never leaves a half-written plugin behind.
+   */
+  async install(options: {
+    pluginId: string;
+    files: ReadonlyArray<{ name: string; bytes: Uint8Array }>;
+    manifest: PluginManifest;
+    source: PluginSource;
+  }): Promise<void> {
+    const pluginId = PluginIdSchema.parse(options.pluginId);
+    const pluginDir = this.pluginDir(pluginId);
+    const stagingDir = join(this.dir, `.staging-${pluginId}-${randomUUID()}`);
+    await mkdir(stagingDir, { recursive: true });
+    try {
+      await writeFile(
+        join(stagingDir, PLUGIN_MANIFEST_FILENAME),
+        `${JSON.stringify(options.manifest, null, 2)}\n`,
+      );
+      for (const file of options.files) {
+        const name = PluginEntrySchema.parse(file.name);
+        await writeFile(join(stagingDir, name), file.bytes);
+      }
+      await rm(pluginDir, { recursive: true, force: true });
+      await rename(stagingDir, pluginDir);
+    } finally {
+      await rm(stagingDir, { recursive: true, force: true });
+    }
+
+    await this.mutateState((state) => [
+      ...state.filter((entry) => entry.id !== pluginId),
+      {
+        id: pluginId,
+        enabled: true,
+        installedAt: this.now().toISOString(),
+        source: options.source,
+      },
+    ]);
+  }
+
+  async setEnabled(pluginId: string, enabled: boolean): Promise<void> {
+    const id = PluginIdSchema.parse(pluginId);
+    const directories = await this.listPluginDirectories();
+    if (!directories.includes(id)) {
+      throw new PluginNotInstalledError(id);
+    }
+    await this.mutateState((state) => {
+      const existing = state.find((entry) => entry.id === id);
+      if (!existing) {
+        return [
+          ...state,
+          {
+            id,
+            enabled,
+            installedAt: this.now().toISOString(),
+            source: { kind: "local" as const },
+          },
+        ];
+      }
+      return state.map((entry) => (entry.id === id ? { ...entry, enabled } : entry));
+    });
+  }
+
+  async uninstall(pluginId: string): Promise<void> {
+    const id = PluginIdSchema.parse(pluginId);
+    const directories = await this.listPluginDirectories();
+    if (!directories.includes(id)) {
+      throw new PluginNotInstalledError(id);
+    }
+    await rm(this.pluginDir(id), { recursive: true, force: true });
+    await this.mutateState((state) => state.filter((entry) => entry.id !== id));
+  }
+
+  private pluginDir(pluginId: string): string {
+    return join(this.dir, pluginId);
+  }
+
+  private resolveEntryPath(pluginId: string, entry: string): string {
+    const id = PluginIdSchema.safeParse(pluginId);
+    const name = PluginEntrySchema.safeParse(entry);
+    if (!id.success || !name.success) {
+      throw new PluginPathTraversalError(pluginId, entry);
+    }
+    const pluginDir = resolve(this.dir, id.data);
+    const filePath = resolve(pluginDir, name.data);
+    if (!filePath.startsWith(`${pluginDir}${sep}`)) {
+      throw new PluginPathTraversalError(pluginId, entry);
+    }
+    return filePath;
+  }
+
+  private async listPluginDirectories(): Promise<string[]> {
+    await mkdir(this.dir, { recursive: true });
+    const entries = await readdir(this.dir, { withFileTypes: true });
+    const candidates = entries
+      .filter((entry) => entry.isDirectory() && PluginIdSchema.safeParse(entry.name).success)
+      .map((entry) => entry.name)
+      .sort();
+    const withManifest = await Promise.all(
+      candidates.map(async (pluginId) => {
+        try {
+          await readFile(join(this.pluginDir(pluginId), PLUGIN_MANIFEST_FILENAME), "utf-8");
+          return pluginId;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return withManifest.filter((pluginId): pluginId is string => pluginId !== null);
+  }
+
+  private async describe(
+    pluginId: string,
+    state: readonly PluginStateEntry[],
+  ): Promise<InstalledPlugin | null> {
+    const stateEntry = state.find((entry) => entry.id === pluginId);
+    if (!stateEntry) {
+      return null;
+    }
+    const base = {
+      enabled: stateEntry.enabled,
+      installedAt: stateEntry.installedAt,
+      source: stateEntry.source,
+    };
+
+    let raw: string;
+    try {
+      raw = await readFile(join(this.pluginDir(pluginId), PLUGIN_MANIFEST_FILENAME), "utf-8");
+    } catch {
+      // The caller only lists directories that had a manifest a moment ago.
+      return null;
+    }
+
+    const parsed = PluginManifestSchema.safeParse(safeJsonParse(raw));
+    if (!parsed.success) {
+      return {
+        ...base,
+        manifest: placeholderManifest(pluginId),
+        unavailableReason: `Manifest is invalid: ${describeManifestIssues(parsed.error)}`,
+      };
+    }
+
+    // The directory name is the identity; a manifest that disagrees is broken,
+    // but it still has to list under the id the caller can address it by.
+    const manifest = { ...parsed.data, id: pluginId };
+    if (parsed.data.id !== pluginId) {
+      return {
+        ...base,
+        manifest,
+        unavailableReason: `Manifest id "${parsed.data.id}" does not match directory "${pluginId}"`,
+      };
+    }
+
+    const range = manifest.paseoVersion;
+    if (range && !satisfiesVersionRange(this.daemonVersion, range)) {
+      return {
+        ...base,
+        manifest,
+        unavailableReason: `Requires Paseo ${range}, this daemon is ${this.daemonVersion}`,
+      };
+    }
+
+    const missing = await this.findMissingEntry(pluginId, manifest);
+    if (missing) {
+      return { ...base, manifest, unavailableReason: `Missing entry file "${missing}"` };
+    }
+
+    return { ...base, manifest, unavailableReason: null };
+  }
+
+  private async findMissingEntry(
+    pluginId: string,
+    manifest: PluginManifest,
+  ): Promise<string | null> {
+    for (const entry of entryFilenames(manifest)) {
+      try {
+        await readFile(this.resolveEntryPath(pluginId, entry));
+      } catch {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  private statePath(): string {
+    return join(this.dir, STATE_FILENAME);
+  }
+
+  private async readState(): Promise<PluginStateEntry[]> {
+    try {
+      const raw = await readFile(this.statePath(), "utf-8");
+      const parsed = PluginStateFileSchema.safeParse(safeJsonParse(raw));
+      return parsed.success ? [...parsed.data.plugins] : [];
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  private async writeState(plugins: readonly PluginStateEntry[]): Promise<void> {
+    const file: PluginStateFile = PluginStateFileSchema.parse({ version: 1, plugins });
+    await writeJsonFileAtomic(this.statePath(), file);
+  }
+
+  private async mutateState(
+    mutate: (state: readonly PluginStateEntry[]) => PluginStateEntry[],
+  ): Promise<PluginStateEntry[]> {
+    const next = this.mutations
+      .catch(() => undefined)
+      .then(async () => {
+        const current = await this.readState();
+        const updated = mutate(current);
+        await this.writeState(updated);
+        return updated;
+      });
+    this.mutations = next;
+    return next;
+  }
+
+  /**
+   * Adopts directories dropped in by hand and forgets entries whose directory
+   * is gone, so a hand-installed plugin gets a stable `installedAt` instead of
+   * a new one on every list.
+   */
+  private async reconcileState(directories: readonly string[]): Promise<PluginStateEntry[]> {
+    return this.mutateState((state) => {
+      const kept = state.filter((entry) => directories.includes(entry.id));
+      const discovered = directories
+        .filter((pluginId) => !kept.some((entry) => entry.id === pluginId))
+        .map((pluginId) => ({
+          id: pluginId,
+          enabled: true,
+          installedAt: this.now().toISOString(),
+          source: { kind: "local" as const },
+        }));
+      return [...kept, ...discovered];
+    });
+  }
+}
+
+function safeJsonParse(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}

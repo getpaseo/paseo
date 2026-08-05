@@ -93,7 +93,7 @@ Both live behind the `plugins` capability flag on `server_info.features`. An old
 Three paths, all landing in the same directory:
 
 - **Registry.** Settings → Plugins → Browse. The daemon fetches the registry index, and installing downloads each file and verifies its SHA-256 against the index before writing.
-- **CLI.** `paseo plugin install <id>`, plus `ls`, `enable`, `disable`, `uninstall`.
+- **CLI.** `paseo plugin browse` lists the registry, `paseo plugin install <id>` installs from it, plus `ls`, `enable`, `disable`, `uninstall`.
 - **By hand.** Drop a directory into `$PASEO_HOME/plugins/` and restart the daemon, or hit `paseo plugin ls` which rescans. This is how you develop one.
 
 The registry index defaults to `https://plugins.paseo.sh/index.json` and is overridable with `daemon.plugins.registryUrl` in `config.json` so you can self-host or point at a file during development.
@@ -104,7 +104,7 @@ A plugin whose `paseoVersion` does not match, whose manifest stopped parsing, or
 
 Installing a plugin means trusting whoever published it with what the bridge exposes: the content of files you preview with it, and the ability to ask the app to open a path. It cannot exfiltrate any of that, because the sandbox denies network access.
 
-The registry operator is a trust boundary — the index says which bytes are the plugin. SHA-256 verification protects the download, not the publisher's intent. See [SECURITY.md](../SECURITY.md).
+The registry operator is a trust boundary — the index says which bytes are the plugin. SHA-256 verification protects the download, not the publisher's intent. The installed manifest is the one embedded in the index rather than a separately hashed file, so it carries exactly the same trust as the hashes sitting next to it. See [SECURITY.md](../SECURITY.md).
 
 ## Writing one
 

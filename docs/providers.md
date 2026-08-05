@@ -2,6 +2,8 @@
 
 This guide walks through adding a new agent provider end-to-end. There are two integration patterns, and this doc covers both.
 
+To extend the UI rather than add an agent backend, read [plugins.md](plugins.md).
+
 ## Two Integration Patterns
 
 ### ACP (Agent Client Protocol) -- recommended

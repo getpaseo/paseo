@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { PluginEntrySchema, PluginIdSchema, PluginManifestSchema } from "./types.js";
 
@@ -56,5 +57,42 @@ describe("PluginManifestSchema", () => {
   it("parses a manifest with no contributions", () => {
     const empty = { ...manifest, contributes: {} };
     expect(PluginManifestSchema.parse(empty).contributes).toEqual({});
+  });
+});
+
+/**
+ * `examples/` is outside the npm workspaces, so it has no test runner of its
+ * own. The example plugin is documented as a working starting point, so its
+ * manifest is validated here against the schema that has to accept it.
+ */
+describe("examples/plugins/hello-paseo", () => {
+  const exampleManifestUrl = new URL(
+    "../../../../examples/plugins/hello-paseo/paseo-plugin.json",
+    import.meta.url,
+  );
+
+  it("ships a manifest that parses and contributes both kinds", () => {
+    const parsed = PluginManifestSchema.parse(
+      JSON.parse(readFileSync(exampleManifestUrl, "utf8")) as unknown,
+    );
+    expect(parsed.id).toBe("hello-paseo");
+    expect(parsed.contributes.filePreviews?.map((preview) => preview.entry)).toEqual([
+      "preview.html",
+    ]);
+    expect(parsed.contributes.sidebarPanels?.map((panel) => panel.entry)).toEqual(["pet.html"]);
+  });
+
+  it("ships every entry file the manifest names", () => {
+    const parsed = PluginManifestSchema.parse(
+      JSON.parse(readFileSync(exampleManifestUrl, "utf8")) as unknown,
+    );
+    const entries = [
+      ...(parsed.contributes.filePreviews ?? []),
+      ...(parsed.contributes.sidebarPanels ?? []),
+    ].map((contribution) => contribution.entry);
+
+    for (const entry of entries) {
+      expect(() => readFileSync(new URL(entry, exampleManifestUrl), "utf8")).not.toThrow();
+    }
   });
 });

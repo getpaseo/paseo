@@ -143,6 +143,7 @@ import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
+import { PluginService } from "./plugin/service.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
@@ -406,6 +407,9 @@ export interface PaseoDaemonConfig {
   webUi?: {
     enabled: boolean;
     distDir: string | null;
+  };
+  plugins?: {
+    registryUrl: string;
   };
   appBaseUrl?: string;
   auth?: DaemonAuthConfig;
@@ -1209,6 +1213,12 @@ export async function createPaseoDaemon(
     }
   });
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");
+  const pluginService = new PluginService({
+    dir: path.join(config.paseoHome, "plugins"),
+    daemonVersion,
+    logger,
+    ...(config.plugins?.registryUrl ? { registryUrl: config.plugins.registryUrl } : {}),
+  });
   logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
   const persistedRecords = await agentStorage.list();
   logger.info(
@@ -1547,6 +1557,7 @@ export async function createPaseoDaemon(
               serviceProxyPublicBaseUrl,
               browserToolsBroker,
               hubRelationships,
+              pluginService,
             );
             relayRuntime = createRelayRuntime({
               config: {
@@ -1614,6 +1625,7 @@ export async function createPaseoDaemon(
     terminalManager.killAll();
     speechService.stop();
     await scheduleService.stop().catch(() => undefined);
+    pluginService.stop();
     await relayRuntime?.stop().catch(() => undefined);
     if (wsServer) {
       await wsServer.close();

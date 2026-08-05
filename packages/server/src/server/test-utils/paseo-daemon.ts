@@ -44,6 +44,7 @@ interface TestPaseoDaemonOptions {
   pushNotificationSender?: PushNotificationSender;
   serviceProxy?: PaseoDaemonConfig["serviceProxy"];
   webUi?: PaseoDaemonConfig["webUi"];
+  plugins?: PaseoDaemonConfig["plugins"];
   trustedProxies?: PaseoDaemonConfig["trustedProxies"];
 }
 
@@ -186,6 +187,7 @@ async function prepareTestDaemonConfig(
     pushNotificationSender: options.pushNotificationSender,
     serviceProxy: options.serviceProxy,
     webUi: options.webUi,
+    plugins: options.plugins,
     trustedProxies: options.trustedProxies,
     openai: options.openai,
     speech: options.speech,

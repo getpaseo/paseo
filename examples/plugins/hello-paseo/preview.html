@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hello Paseo — Lines</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: var(--paseo-background, Canvas);
+        --fg: var(--paseo-text, CanvasText);
+        --muted: var(--paseo-textMuted, GrayText);
+        --accent: var(--paseo-accent, Highlight);
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          13px/1.5 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+      }
+      header {
+        padding: 8px 12px;
+        color: var(--muted);
+        border-bottom: 1px solid color-mix(in srgb, var(--fg) 15%, transparent);
+      }
+      ol {
+        margin: 0;
+        padding: 8px 0;
+        list-style: none;
+        counter-reset: line;
+      }
+      li {
+        display: flex;
+        gap: 12px;
+        padding: 0 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      li:hover {
+        background: color-mix(in srgb, var(--fg) 7%, transparent);
+      }
+      button.n {
+        flex: 0 0 4ch;
+        text-align: right;
+        border: 0;
+        padding: 0;
+        background: none;
+        font: inherit;
+        color: var(--muted);
+        cursor: pointer;
+      }
+      button.n:hover {
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <header id="path">Waiting for the host…</header>
+    <ol id="lines"></ol>
+    <script>
+      const post = (message) => parent.postMessage({ paseo: 1, ...message }, "*");
+
+      let currentPath = "";
+
+      function render(context) {
+        currentPath = context.path ?? "";
+        document.getElementById("path").textContent =
+          `${currentPath} — ${(context.content ?? "").split("\n").length} lines`;
+
+        const list = document.getElementById("lines");
+        list.textContent = "";
+        (context.content ?? "").split("\n").forEach((text, index) => {
+          const item = document.createElement("li");
+          const number = document.createElement("button");
+          number.className = "n";
+          number.type = "button";
+          number.textContent = String(index + 1);
+          // Proves the other half of the bridge: ask the host to jump to this line.
+          number.addEventListener("click", () =>
+            post({ type: "open-file", path: currentPath, lineStart: index + 1 }),
+          );
+          const body = document.createElement("span");
+          body.textContent = text;
+          item.append(number, body);
+          list.append(item);
+        });
+      }
+
+      function applyTheme(theme) {
+        for (const [key, value] of Object.entries(theme ?? {})) {
+          if (typeof value === "string") {
+            document.documentElement.style.setProperty(`--paseo-${key}`, value);
+          }
+        }
+      }
+
+      window.addEventListener("message", (event) => {
+        const message = event.data;
+        if (!message || message.paseo !== 1) return;
+        if (message.type === "init") {
+          applyTheme(message.theme);
+          render(message.context);
+        } else if (message.type === "update") {
+          render(message.context);
+        }
+      });
+
+      post({ type: "ready" });
+    </script>
+  </body>
+</html>

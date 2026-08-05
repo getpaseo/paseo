@@ -128,6 +128,7 @@ Commander.js CLI with Docker-style commands. Common agent operations are also ex
 - `paseo workspace create/ls/archive`
 - `paseo permit allow/deny/ls`
 - `paseo provider ls/models`
+- `paseo plugin ls/browse/install/uninstall/enable/disable` (see [plugins.md](plugins.md))
 - hidden legacy `paseo worktree create/ls/archive` compatibility alias
 - `paseo speech …`
 
@@ -379,6 +380,7 @@ $PASEO_HOME/
 ├── chat/                                       # Chat rooms
 ├── schedules/                                  # Scheduled-agent definitions and runs
 ├── loops/                                      # Loop runs and logs
+├── plugins/                                    # Installed plugins, one directory per plugin id
 ├── config.json                                 # Daemon config (mutable)
 ├── daemon-keypair.json                         # Daemon identity for relay/E2EE
 ├── push-tokens.json                            # Mobile push tokens

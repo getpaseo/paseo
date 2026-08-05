@@ -1,0 +1,19 @@
+{
+  "id": "hello-paseo",
+  "name": "Hello Paseo",
+  "version": "1.0.0",
+  "description": "Example plugin: a line-numbered text preview and a sidebar pet.",
+  "author": "Paseo",
+  "license": "MIT",
+  "contributes": {
+    "filePreviews": [
+      {
+        "id": "lines",
+        "title": "Lines",
+        "extensions": [".hello", ".txt"],
+        "entry": "preview.html"
+      }
+    ],
+    "sidebarPanels": [{ "id": "pet", "title": "Pet", "icon": "cat", "entry": "pet.html" }]
+  }
+}
