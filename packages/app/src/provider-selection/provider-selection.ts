@@ -9,6 +9,7 @@ import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import { buildFavoriteModelKey, type FavoriteModelRow } from "@/hooks/use-form-preferences";
 import { i18n } from "@/i18n/i18next";
 import { compareMatchScores, scoreTextFields } from "@/utils/score-match";
+import { filterSelectableModels } from "./model-catalog";
 
 export type ProviderSelectionModelRow = FavoriteModelRow & { isDefault?: boolean };
 
@@ -35,12 +36,6 @@ export interface ProviderSelectionState {
 export interface ProviderSelectionReadiness {
   ok: boolean;
   reason?: string;
-}
-
-export function filterSelectableModels(
-  models: AgentModelDefinition[] | null,
-): AgentModelDefinition[] | null {
-  return models?.filter((model) => model.isSelectable !== false) ?? null;
 }
 
 function buildModelRows(

@@ -103,6 +103,12 @@ export function normalizeAgentModelDefinition(model: AgentModelDefinition): Agen
   return { ...model, defaultThinkingOptionId };
 }
 
+export function filterSelectableAgentModels(
+  models: AgentModelDefinition[] | undefined,
+): AgentModelDefinition[] {
+  return models?.filter((model) => model.isSelectable !== false) ?? [];
+}
+
 export interface ProviderSnapshotEntry {
   provider: AgentProvider;
   status: ProviderStatus;

@@ -10,9 +10,9 @@ import { useHosts } from "@/runtime/host-runtime";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import {
   buildSelectableProviderSelectorProviders,
-  filterSelectableModels,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
+import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import { useProvidersSnapshot } from "./use-providers-snapshot";
 import {
   useFormPreferences,

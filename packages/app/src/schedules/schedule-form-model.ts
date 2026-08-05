@@ -9,9 +9,9 @@ import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import {
   buildSelectableProviderSelectorProviders,
-  filterSelectableModels,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
+import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import {
   buildProviderDefinitionMapForStatuses,
   INITIAL_USER_MODIFIED,
