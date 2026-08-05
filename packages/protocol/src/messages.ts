@@ -54,6 +54,21 @@ import {
   LoopStopResponseSchema,
 } from "./loop/rpc-schemas.js";
 import {
+  PluginsListRequestSchema,
+  PluginsGetEntryRequestSchema,
+  PluginsBrowseRequestSchema,
+  PluginsInstallRequestSchema,
+  PluginsUninstallRequestSchema,
+  PluginsSetEnabledRequestSchema,
+  PluginsListResponseSchema,
+  PluginsGetEntryResponseSchema,
+  PluginsBrowseResponseSchema,
+  PluginsInstallResponseSchema,
+  PluginsUninstallResponseSchema,
+  PluginsSetEnabledResponseSchema,
+  PluginsChangedMessageSchema,
+} from "./plugin/rpc-schemas.js";
+import {
   BrowserAutomationExecuteRequestSchema,
   BrowserAutomationExecuteResponseSchema,
 } from "./browser-automation/rpc-schemas.js";
@@ -2637,6 +2652,12 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   LoopInspectRequestSchema,
   LoopLogsRequestSchema,
   LoopStopRequestSchema,
+  PluginsListRequestSchema,
+  PluginsGetEntryRequestSchema,
+  PluginsBrowseRequestSchema,
+  PluginsInstallRequestSchema,
+  PluginsUninstallRequestSchema,
+  PluginsSetEnabledRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -2804,6 +2825,8 @@ export const ServerInfoStatusPayloadSchema = z
     features: z
       .object({
         providersSnapshot: z.boolean().optional(),
+        // COMPAT(plugins): added in v0.2.6, remove gate after 2027-02-05.
+        plugins: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.1.106, remove old
         // checkoutGithubSetAutoMerge fallback after 2026-12-28.
         checkoutForgeSetAutoMerge: z.boolean().optional(),
@@ -5418,6 +5441,13 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   LoopStopResponseSchema,
   DaemonUpdateProgressMessageSchema,
   DaemonUpdateResponseSchema,
+  PluginsListResponseSchema,
+  PluginsGetEntryResponseSchema,
+  PluginsBrowseResponseSchema,
+  PluginsInstallResponseSchema,
+  PluginsUninstallResponseSchema,
+  PluginsSetEnabledResponseSchema,
+  PluginsChangedMessageSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;
@@ -5584,6 +5614,19 @@ export type LoopListResponse = z.infer<typeof LoopListResponseSchema>;
 export type LoopInspectResponse = z.infer<typeof LoopInspectResponseSchema>;
 export type LoopLogsResponse = z.infer<typeof LoopLogsResponseSchema>;
 export type LoopStopResponse = z.infer<typeof LoopStopResponseSchema>;
+export type PluginsListRequest = z.infer<typeof PluginsListRequestSchema>;
+export type PluginsGetEntryRequest = z.infer<typeof PluginsGetEntryRequestSchema>;
+export type PluginsBrowseRequest = z.infer<typeof PluginsBrowseRequestSchema>;
+export type PluginsInstallRequest = z.infer<typeof PluginsInstallRequestSchema>;
+export type PluginsUninstallRequest = z.infer<typeof PluginsUninstallRequestSchema>;
+export type PluginsSetEnabledRequest = z.infer<typeof PluginsSetEnabledRequestSchema>;
+export type PluginsListResponse = z.infer<typeof PluginsListResponseSchema>;
+export type PluginsGetEntryResponse = z.infer<typeof PluginsGetEntryResponseSchema>;
+export type PluginsBrowseResponse = z.infer<typeof PluginsBrowseResponseSchema>;
+export type PluginsInstallResponse = z.infer<typeof PluginsInstallResponseSchema>;
+export type PluginsUninstallResponse = z.infer<typeof PluginsUninstallResponseSchema>;
+export type PluginsSetEnabledResponse = z.infer<typeof PluginsSetEnabledResponseSchema>;
+export type PluginsChangedMessage = z.infer<typeof PluginsChangedMessageSchema>;
 
 // Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
