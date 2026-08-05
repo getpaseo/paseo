@@ -17,6 +17,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { formatTimeAgo } from "@/utils/time";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
+import { useInteractionLockStore } from "@/stores/interaction-lock-store";
 import { Archive, ChevronRight } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
@@ -385,6 +386,9 @@ export function AgentList({
       if (isActionSheetVisible) {
         return;
       }
+      if (useInteractionLockStore.getState().locked) {
+        return;
+      }
 
       const serverId = agent.serverId;
       const agentId = agent.id;
@@ -402,6 +406,9 @@ export function AgentList({
 
   const handleAgentLongPress = useCallback(
     (agent: AggregatedAgent) => {
+      if (useInteractionLockStore.getState().locked) {
+        return;
+      }
       const isRunning = agent.status === "running";
       if (isRunning) {
         setActionAgent(agent);

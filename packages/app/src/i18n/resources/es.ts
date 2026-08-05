@@ -78,6 +78,8 @@ export const es: TranslationResources = {
       addAttachment: "Agregar archivo adjunto",
       interruptAgent: "agente de interrupción",
       queueMessage: "mensaje de cola",
+      steer: "Dirigir",
+      steerHint: "Redirige el turno actual con este mensaje",
       sendAndInterrupt: "Enviar e interrumpir",
       sendMessage: "enviar mensaje",
       queue: "Cola",
@@ -109,6 +111,7 @@ export const es: TranslationResources = {
       dropFilesHere: "Drop files here",
       editQueuedMessage: "Editar mensaje en cola",
       sendQueuedMessageNow: "Enviar mensaje en cola ahora",
+      steerQueuedMessage: "Steer with queued message",
       openImage: "Abrir imagen adjunta",
       removeImage: "Quitar imagen adjunta",
       removeFile: "Remove file attachment",
@@ -1765,10 +1768,13 @@ export const es: TranslationResources = {
             "Cuando el agente se está ejecutando, Enter interrumpe. Command/Ctrl+Enter pone en cola.",
           queue:
             "Cuando el agente se está ejecutando, Enter pone en cola. Command/Ctrl+Enter envía.",
+          steer:
+            "When the agent is running, Enter steers the current turn. Command/Ctrl+Enter queues. Falls back to interrupt if steer is unavailable.",
         },
         options: {
           interrupt: "Interrumpir",
           queue: "Cola",
+          steer: "Steer",
         },
       },
       serviceUrls: {
@@ -2422,5 +2428,16 @@ export const es: TranslationResources = {
         cancel: "Cancelar",
       },
     },
+  },
+  interactionLock: {
+    banner: "Solo lectura · supervisión",
+    unlock: "Desbloquear",
+    lock: "Bloquear pantalla",
+    unlockMenu: "Desbloquear pantalla",
+    lockedA11y: "Bloqueo de interacción activado. Desbloquea para interactuar.",
+    lockedToast: "Desbloquea para controlar este agente",
+    authPrompt: "Unlock Paseo",
+    unlockFailed: "Couldn't unlock. Try again.",
+    navigationBlocked: "Unlock to navigate",
   },
 };

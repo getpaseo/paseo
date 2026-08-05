@@ -328,6 +328,8 @@ export interface SendMessageOptions {
   messageId?: string;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
+  /** Explicit mid-turn redirect (interrupt + send). Requires a running agent. */
+  steer?: boolean;
 }
 
 export interface AgentAttentionRequiredNotification {
@@ -570,6 +572,22 @@ type TaskDeletePayload = Extract<
 type TaskAttachmentDownloadTokenPayload = Extract<
   SessionOutboundMessage,
   { type: "tasks.attachment.download_token.response" }
+>["payload"];
+type UiStateGetPayload = Extract<
+  SessionOutboundMessage,
+  { type: "ui_state.get.response" }
+>["payload"];
+type UiStateUpsertPayload = Extract<
+  SessionOutboundMessage,
+  { type: "ui_state.upsert.response" }
+>["payload"];
+type UiStateClearPayload = Extract<
+  SessionOutboundMessage,
+  { type: "ui_state.clear.response" }
+>["payload"];
+type UiStateListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "ui_state.list.response" }
 >["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
 export type AgentForkContextPayload = AgentForkContextResponseMessage["payload"];
@@ -3195,6 +3213,34 @@ export class DaemonClient {
     });
   }
 
+  async nativeForkAgent(
+    agentId: string,
+    options: {
+      boundaryCursor?: { epoch: string; seq: number };
+      boundaryMessageId?: string;
+      target?: "tab" | "workspace";
+      requestId?: string;
+    } = {},
+  ): Promise<{
+    requestId: string;
+    sourceAgentId: string;
+    accepted: boolean;
+    error: string | null;
+    agentId?: string;
+    workspaceId?: string;
+  }> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "agent.native_fork.request",
+        agentId,
+        ...(options.boundaryCursor ? { boundaryCursor: options.boundaryCursor } : {}),
+        ...(options.boundaryMessageId ? { boundaryMessageId: options.boundaryMessageId } : {}),
+        ...(options.target ? { target: options.target } : {}),
+      },
+    });
+  }
+
   async buildAgentForkContext(
     agentId: string,
     options: AgentForkContextOptions = {},
@@ -3250,6 +3296,7 @@ export class DaemonClient {
       ...(messageId ? { messageId } : {}),
       ...(options?.images ? { images: options.images } : {}),
       ...(options?.attachments ? { attachments: options.attachments } : {}),
+      ...(options?.steer ? { steer: true } : {}),
     });
     const payload = await this.sendRequest({
       requestId,
@@ -4707,6 +4754,84 @@ export class DaemonClient {
         projectId: options.projectId,
         taskId: options.taskId,
         attachmentId: options.attachmentId,
+      },
+    });
+  }
+
+  async getUiState(options: {
+    namespace: "composer" | "review";
+    key: string;
+    requestId?: string;
+  }): Promise<UiStateGetPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "ui_state.get.request",
+        namespace: options.namespace,
+        key: options.key,
+      },
+    });
+  }
+
+  async upsertUiState(options: {
+    namespace: "composer" | "review";
+    key: string;
+    record: {
+      text?: string;
+      attachments?: Array<Record<string, unknown>>;
+      lifecycle?: "active" | "abandoned" | "sent";
+      comments?: Array<{
+        id: string;
+        filePath: string;
+        side: "old" | "new";
+        lineNumber: number;
+        body: string;
+        createdAt: string;
+        updatedAt: string;
+      }>;
+      updatedAt: string;
+    };
+    requestId?: string;
+  }): Promise<UiStateUpsertPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "ui_state.upsert.request",
+        namespace: options.namespace,
+        key: options.key,
+        record: options.record,
+      },
+    });
+  }
+
+  async clearUiState(options: {
+    namespace: "composer" | "review";
+    key: string;
+    updatedAt: string;
+    requestId?: string;
+  }): Promise<UiStateClearPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "ui_state.clear.request",
+        namespace: options.namespace,
+        key: options.key,
+        updatedAt: options.updatedAt,
+      },
+    });
+  }
+
+  async listUiState(options: {
+    namespace: "composer" | "review";
+    keyPrefix?: string;
+    requestId?: string;
+  }): Promise<UiStateListPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "ui_state.list.request",
+        namespace: options.namespace,
+        ...(options.keyPrefix !== undefined ? { keyPrefix: options.keyPrefix } : {}),
       },
     });
   }

@@ -127,10 +127,15 @@ export interface MessageInputProps {
   /** When true and there's sendable content, calls onQueue instead of onSubmit */
   isAgentRunning?: boolean;
   /** Controls what the default send action (Enter, send button, dictation) does
-   *  when the agent is running. "interrupt" sends immediately, "queue" queues. */
-  defaultSendBehavior?: "interrupt" | "queue";
+   *  when the agent is running. "interrupt" force-sends, "queue" queues, "steer"
+   *  redirects the active turn when supported (else falls back to interrupt). */
+  defaultSendBehavior?: "interrupt" | "queue" | "steer";
   /** Callback for queue button when agent is running */
   onQueue?: (payload: MessagePayload) => void;
+  /** Explicit mid-turn redirect (native inject when supported). Used by default/alternate send. */
+  onSteer?: (payload: MessagePayload) => void;
+  /** Provider supports mid-turn steer for the active agent. */
+  canSteer?: boolean;
   /** Optional handler used when submit button is in loading state. */
   onSubmitLoadingPress?: () => void;
   /** Intercept key press events before default handling. Return true to prevent default. */
@@ -780,9 +785,11 @@ function SendButtonTooltip({
 
 interface DictationTranscriptContext {
   value: string;
-  defaultSendBehavior: "interrupt" | "queue";
+  defaultSendBehavior: "interrupt" | "queue" | "steer";
   isAgentRunning: boolean;
+  canSteer: boolean;
   onQueue: ((payload: MessagePayload) => void) | undefined;
+  onSteer: ((payload: MessagePayload) => void) | undefined;
   onSubmit: (payload: MessagePayload) => void;
   onChangeText: (text: string) => void;
   attachments: ComposerAttachment[];
@@ -802,6 +809,12 @@ function applyDictationTranscript(text: string, ctx: DictationTranscriptContext)
 
   if (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning && ctx.onQueue) {
     ctx.onQueue({ text: nextValue, attachments: ctx.attachments, cwd: ctx.cwd });
+    ctx.onChangeText("");
+    return;
+  }
+
+  if (ctx.defaultSendBehavior === "steer" && ctx.isAgentRunning && ctx.canSteer && ctx.onSteer) {
+    ctx.onSteer({ text: nextValue, attachments: ctx.attachments, cwd: ctx.cwd });
     ctx.onChangeText("");
     return;
   }
@@ -1036,7 +1049,7 @@ interface SendButtonStateInput {
   isSubmitDisabled: boolean;
   isSubmitLoading: boolean;
   onSubmitLoadingPress: (() => void) | undefined;
-  defaultSendBehavior: "interrupt" | "queue";
+  defaultSendBehavior: "interrupt" | "queue" | "steer";
   isAgentRunning: boolean;
 }
 
@@ -1085,8 +1098,10 @@ interface ResolvedMessageInputProps {
   voiceServerId: string | undefined;
   voiceAgentId: string | undefined;
   isAgentRunning: boolean;
-  defaultSendBehavior: "interrupt" | "queue";
+  defaultSendBehavior: "interrupt" | "queue" | "steer";
   onQueue: ((payload: MessagePayload) => void) | undefined;
+  onSteer: ((payload: MessagePayload) => void) | undefined;
+  canSteer: boolean;
   onSubmitLoadingPress: (() => void) | undefined;
   onKeyPressCallback: ((event: { key: string; preventDefault: () => void }) => boolean) | undefined;
   onSelectionChangeCallback: ((selection: { start: number; end: number }) => void) | undefined;
@@ -1129,6 +1144,8 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     isAgentRunning: props.isAgentRunning ?? false,
     defaultSendBehavior: props.defaultSendBehavior ?? "interrupt",
     onQueue: props.onQueue,
+    onSteer: props.onSteer,
+    canSteer: props.canSteer ?? false,
     onSubmitLoadingPress: props.onSubmitLoadingPress,
     onKeyPressCallback: props.onKeyPress,
     onSelectionChangeCallback: props.onSelectionChange,
@@ -1146,6 +1163,7 @@ function extractErrorMessage(error: unknown): string | null {
 }
 
 export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
+  // oxlint-disable-next-line complexity -- composer input orchestration surface
   function MessageInput(props, ref) {
     const {
       value,
@@ -1179,6 +1197,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       isAgentRunning,
       defaultSendBehavior,
       onQueue,
+      onSteer,
+      canSteer,
       onSubmitLoadingPress,
       onKeyPressCallback,
       onSelectionChangeCallback,
@@ -1264,7 +1284,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           value: valueRef.current,
           defaultSendBehavior,
           isAgentRunning,
+          canSteer,
           onQueue,
+          onSteer,
           onSubmit,
           onChangeText,
           attachments,
@@ -1272,7 +1294,17 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           autoSend,
         });
       },
-      [onChangeText, onSubmit, onQueue, attachments, cwd, isAgentRunning, defaultSendBehavior],
+      [
+        onChangeText,
+        onSubmit,
+        onQueue,
+        onSteer,
+        attachments,
+        canSteer,
+        cwd,
+        isAgentRunning,
+        defaultSendBehavior,
+      ],
     );
 
     const handleDictationError = useCallback(
@@ -1488,25 +1520,54 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       [attachments, cwd, onQueue, onChangeText, minimizeInputHeight],
     );
 
+    const handleSteerMessage = useCallback(() => {
+      if (!onSteer || !canSteer) return;
+      const trimmed = valueRef.current.trim();
+      if (!trimmed && attachments.length === 0) return;
+      onSteer({ text: valueRef.current, attachments, cwd });
+      onChangeText("");
+      minimizeInputHeight();
+    }, [attachments, canSteer, cwd, minimizeInputHeight, onChangeText, onSteer]);
+
     const handleDefaultSendAction = useCallback(() => {
       runDefaultSendAction({
         defaultSendBehavior,
         isAgentRunning,
+        canSteer,
         onQueue,
         handleSendMessage,
         handleQueueMessage,
+        handleSteerMessage,
       });
-    }, [defaultSendBehavior, isAgentRunning, onQueue, handleQueueMessage, handleSendMessage]);
+    }, [
+      canSteer,
+      defaultSendBehavior,
+      isAgentRunning,
+      onQueue,
+      handleQueueMessage,
+      handleSendMessage,
+      handleSteerMessage,
+    ]);
 
     const handleAlternateSendAction = useCallback(() => {
       runAlternateSendAction({
         defaultSendBehavior,
         isAgentRunning,
+        canSteer,
         onQueue,
         handleSendMessage,
         handleQueueMessage,
+        handleSteerMessage,
       });
-    }, [defaultSendBehavior, isAgentRunning, handleSendMessage, handleQueueMessage, onQueue]);
+    }, [
+      canSteer,
+      defaultSendBehavior,
+      isAgentRunning,
+      handleSendMessage,
+      handleQueueMessage,
+      handleSteerMessage,
+      onQueue,
+    ]);
 
     const getWebTextArea = useCallback(
       (): TextAreaHandle | null => getWebTextAreaImpl(textInputRef.current),

@@ -1,8 +1,18 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Archive, CircleCheck, Copy, MoreVertical, Pencil, Pin, PinOff } from "lucide-react-native";
+import {
+  Archive,
+  CircleCheck,
+  Copy,
+  Lock,
+  LockOpen,
+  MoreVertical,
+  Pencil,
+  Pin,
+  PinOff,
+} from "lucide-react-native";
 import { isNative, isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -13,6 +23,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
+import { useToast } from "@/contexts/toast-context";
+import { lockInteractionScreen, unlockInteractionScreen } from "@/interaction-lock/actions";
+import { useInteractionLocked } from "@/stores/interaction-lock-store";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
@@ -27,6 +40,8 @@ const ThemedPencil = withUnistyles(Pencil);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedPin = withUnistyles(Pin);
 const ThemedPinOff = withUnistyles(PinOff);
+const ThemedLock = withUnistyles(Lock);
+const ThemedLockOpen = withUnistyles(LockOpen);
 
 const copyLeadingIcon = <ThemedCopy size={14} uniProps={foregroundMutedColorMapping} />;
 const renameLeadingIcon = <ThemedPencil size={14} uniProps={foregroundMutedColorMapping} />;
@@ -36,6 +51,8 @@ const markAsReadLeadingIcon = (
 const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />;
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
+const lockLeadingIcon = <ThemedLock size={14} uniProps={foregroundMutedColorMapping} />;
+const unlockLeadingIcon = <ThemedLockOpen size={14} uniProps={foregroundMutedColorMapping} />;
 
 function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
   return (
@@ -78,6 +95,23 @@ export function SidebarWorkspaceMenu({
   openInFileManagerPath,
 }: SidebarWorkspaceMenuProps) {
   const { t } = useTranslation();
+  const toast = useToast();
+  const interactionLocked = useInteractionLocked();
+  const handleToggleInteractionLock = useCallback(() => {
+    if (interactionLocked) {
+      void unlockInteractionScreen({
+        promptMessage: t("interactionLock.authPrompt"),
+        cancelLabel: t("common.actions.cancel"),
+      }).then((result) => {
+        if (result.status === "failed") {
+          toast.error(t("interactionLock.unlockFailed"));
+        }
+        return undefined;
+      });
+      return;
+    }
+    lockInteractionScreen();
+  }, [interactionLocked, t, toast]);
   const archiveTrailing = useMemo(
     () => (archiveShortcutKeys && !isNative ? <Shortcut chord={archiveShortcutKeys} /> : null),
     [archiveShortcutKeys],
@@ -140,6 +174,13 @@ export function SidebarWorkspaceMenu({
             {isPinned ? t("sidebar.workspace.actions.unpin") : t("sidebar.workspace.actions.pin")}
           </DropdownMenuItem>
         ) : null}
+        <DropdownMenuItem
+          testID={`sidebar-workspace-menu-interaction-lock-${workspaceKey}`}
+          leading={interactionLocked ? unlockLeadingIcon : lockLeadingIcon}
+          onSelect={handleToggleInteractionLock}
+        >
+          {interactionLocked ? t("interactionLock.unlockMenu") : t("interactionLock.lock")}
+        </DropdownMenuItem>
         <OpenInFileManagerMenuItem
           path={openInFileManagerPath}
           testID={`sidebar-workspace-menu-open-folder-${workspaceKey}`}

@@ -495,6 +495,34 @@ describe("OMP agent client and session", () => {
     expect(omp.isClosed()).toBe(true);
   });
 
+  test("steers the active turn via runtime steer without aborting", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.requireStartTurn("working on the suite");
+    omp.runtime().beginTurn();
+
+    await omp.steer("focus on failing tests first", {
+      clientMessageId: "msg-steer-omp-1",
+    });
+
+    expect(omp.runtime().steerRequests).toEqual([
+      { message: "focus on failing tests first", imageCount: 0 },
+    ]);
+    expect(omp.wasAborted()).toBe(false);
+    expect(omp.canceledTurnCount()).toBe(0);
+    expect(omp.supportsSteer()).toBe(true);
+  });
+
+  test("rejects steer while no OMP turn is active", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await expect(omp.steer("too early")).rejects.toThrow(
+      "Cannot steer OMP while no turn is active",
+    );
+  });
+
   test("interrupt terminalizes in-flight tool calls and running subagents", async () => {
     const omp = new OmpHarness();
     await omp.start();

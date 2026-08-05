@@ -78,6 +78,8 @@ export const ar: TranslationResources = {
       addAttachment: "إضافة مرفق",
       interruptAgent: "عامل المقاطعة",
       queueMessage: "رسالة قائمة الانتظار",
+      steer: "توجيه",
+      steerHint: "يعيد توجيه الدور الحالي بهذه الرسالة",
       sendAndInterrupt: "إرسال ومقاطعة",
       sendMessage: "أرسل رسالة",
       queue: "طابور",
@@ -109,6 +111,7 @@ export const ar: TranslationResources = {
       dropFilesHere: "Drop files here",
       editQueuedMessage: "تحرير الرسالة في قائمة الانتظار",
       sendQueuedMessageNow: "إرسال رسالة في قائمة الانتظار الآن",
+      steerQueuedMessage: "Steer with queued message",
       openImage: "فتح مرفق الصورة",
       removeImage: "إزالة مرفق الصورة",
       removeFile: "Remove file attachment",
@@ -1719,10 +1722,13 @@ export const ar: TranslationResources = {
           interrupt:
             "عند تشغيل الوكيل، يوقف Enter التشغيل. Command/Ctrl+Enter يضيف إلى قائمة الانتظار.",
           queue: "عند تشغيل الوكيل، يضيف Enter إلى قائمة الانتظار. Command/Ctrl+Enter يرسل.",
+          steer:
+            "When the agent is running, Enter steers the current turn. Command/Ctrl+Enter queues. Falls back to interrupt if steer is unavailable.",
         },
         options: {
           interrupt: "مقاطعة",
           queue: "طابور",
+          steer: "Steer",
         },
       },
       serviceUrls: {
@@ -2369,5 +2375,16 @@ export const ar: TranslationResources = {
         cancel: "يلغي",
       },
     },
+  },
+  interactionLock: {
+    banner: "للقراءة فقط · مراقبة",
+    unlock: "إلغاء القفل",
+    lock: "قفل الشاشة",
+    unlockMenu: "إلغاء قفل الشاشة",
+    lockedA11y: "قفل التفاعل مفعّل. ألغِ القفل للتفاعل.",
+    lockedToast: "ألغِ القفل للتحكم في هذا الوكيل",
+    authPrompt: "Unlock Paseo",
+    unlockFailed: "Couldn't unlock. Try again.",
+    navigationBlocked: "Unlock to navigate",
   },
 };

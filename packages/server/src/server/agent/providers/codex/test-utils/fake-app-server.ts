@@ -133,6 +133,13 @@ export function createFakeCodexAppServer(
     "thread/loaded/list": () => ({ data: [] }),
     "thread/resume": () => ({}),
     "turn/start": () => ({}),
+    "turn/steer": (params) => {
+      const steer = toJsonObject(params);
+      return {
+        turnId: typeof steer.expectedTurnId === "string" ? steer.expectedTurnId : "steered-turn",
+      };
+    },
+    "turn/interrupt": () => ({}),
     "thread/fork": (params) => ({
       thread: {
         id: "forked-thread",

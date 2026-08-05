@@ -78,6 +78,8 @@ export const zhCN: TranslationResources = {
       addAttachment: "添加附件",
       interruptAgent: "中断 Agent",
       queueMessage: "消息排队",
+      steer: "引导",
+      steerHint: "用此消息引导当前回合",
       sendAndInterrupt: "发送并中断",
       sendMessage: "发送消息",
       queue: "排队",
@@ -109,6 +111,7 @@ export const zhCN: TranslationResources = {
       dropFilesHere: "Drop files here",
       editQueuedMessage: "编辑排队消息",
       sendQueuedMessageNow: "立即发送排队消息",
+      steerQueuedMessage: "Steer with queued message",
       openImage: "打开图片附件",
       removeImage: "移除图片附件",
       removeFile: "Remove file attachment",
@@ -1699,10 +1702,13 @@ export const zhCN: TranslationResources = {
         descriptions: {
           interrupt: "Agent 运行时，Enter 会中断。Command/Ctrl+Enter 会排队。",
           queue: "Agent 运行时，Enter 会排队。Command/Ctrl+Enter 会提交。",
+          steer:
+            "When the agent is running, Enter steers the current turn. Command/Ctrl+Enter queues. Falls back to interrupt if steer is unavailable.",
         },
         options: {
           interrupt: "中断",
           queue: "排队",
+          steer: "Steer",
         },
       },
       serviceUrls: {
@@ -2343,5 +2349,16 @@ export const zhCN: TranslationResources = {
         cancel: "取消",
       },
     },
+  },
+  interactionLock: {
+    banner: "只读 · 监视中",
+    unlock: "解锁",
+    lock: "锁定屏幕",
+    unlockMenu: "解锁屏幕",
+    lockedA11y: "交互已锁定。请解锁后再操作。",
+    lockedToast: "请先解锁以控制此代理",
+    authPrompt: "Unlock Paseo",
+    unlockFailed: "Couldn't unlock. Try again.",
+    navigationBlocked: "Unlock to navigate",
   },
 };

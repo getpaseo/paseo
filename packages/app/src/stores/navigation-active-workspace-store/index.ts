@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, usePathname } from "expo-router";
 import { useEffect, useSyncExternalStore } from "react";
+import { isInteractionNavigationAllowed } from "@/interaction-lock/actions";
 import {
   createLastWorkspaceSelectionStore,
   LAST_WORKSPACE_SELECTION_STORAGE_KEY,
@@ -61,10 +62,16 @@ export function getIsLastWorkspaceSelectionHydrated(): boolean {
 }
 
 export function navigateToWorkspace(input: NavigateToWorkspaceInput): string {
+  if (!isInteractionNavigationAllowed()) {
+    return "";
+  }
   return navigateToWorkspacePure(input, navigateDeps());
 }
 
 export function navigateToLastWorkspace(): boolean {
+  if (!isInteractionNavigationAllowed()) {
+    return false;
+  }
   return navigateToLastWorkspacePure({
     ...navigateDeps(),
     getLastWorkspaceSelection: () => lastWorkspaceSelectionStore.getSelection(),

@@ -89,6 +89,7 @@ import {
 } from "@getpaseo/protocol/browser-automation/capabilities";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { TaskStore } from "./tasks/task-store.js";
+import { UiStateStore } from "./ui-state/store.js";
 import { buildCodeServerUrlOpeners } from "./code-server-detection.js";
 
 const VSCODE_PROXY_PORT_TOKEN = "{{port}}";
@@ -568,6 +569,7 @@ export class VoiceAssistantWebSocketServer {
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
   private readonly providerUsageService: ProviderUsageService;
   private readonly taskStore: TaskStore;
+  private readonly uiStateStore: UiStateStore;
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private readonly browserToolsBroker: BrowserToolsBroker | null;
   private readonly hubRelationships: HubRelationshipManagement | null;
@@ -619,6 +621,7 @@ export class VoiceAssistantWebSocketServer {
     browserToolsBroker?: BrowserToolsBroker | null,
     taskStore?: TaskStore,
     hubRelationships?: HubRelationshipManagement | null,
+    uiStateStore?: UiStateStore,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -643,6 +646,7 @@ export class VoiceAssistantWebSocketServer {
     this.loopService = requiredServices.loopService;
     this.scheduleService = requiredServices.scheduleService;
     this.taskStore = taskStore ?? new TaskStore(paseoHome);
+    this.uiStateStore = uiStateStore ?? new UiStateStore(paseoHome);
     this.checkoutDiffManager = requiredServices.checkoutDiffManager;
     this.github = github ?? createGitHubService();
     this.workspaceGitService = workspaceGitService ?? createFallbackWorkspaceGitService();
@@ -1346,6 +1350,15 @@ export class VoiceAssistantWebSocketServer {
       loopService: this.loopService,
       scheduleService: this.scheduleService,
       taskStore: this.taskStore,
+      uiStateStore: this.uiStateStore,
+      broadcastUiState: (message, exceptClientId) => {
+        for (const session of this.listTrustedSessions()) {
+          if (session.clientId === exceptClientId) {
+            continue;
+          }
+          session.emitOutbound(message);
+        }
+      },
       checkoutDiffManager: this.checkoutDiffManager,
       github: this.github,
       workspaceGitService: this.workspaceGitService,
@@ -1593,6 +1606,10 @@ export class VoiceAssistantWebSocketServer {
         taskBacklog: true,
         // COMPAT(taskBacklogListAll): added in v0.1.104-beta.5, drop gate once daemon floor >= v0.1.104-beta.5.
         taskBacklogListAll: true,
+        // COMPAT(uiState): added in v0.2.916, drop gate after 2027-02-01.
+        uiState: true,
+        // COMPAT(agentNativeFork): added in v0.2.916, drop gate after 2027-02-01.
+        agentNativeFork: true,
         // COMPAT(tcpTunnel): added in v0.1.105, remove gate after 2027-01-07 once daemon floor >= v0.1.105.
         tcpTunnel: true,
         // COMPAT(agentForkContextCursor): added in v0.1.108, remove gate after 2027-01-14.

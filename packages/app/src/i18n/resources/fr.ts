@@ -80,6 +80,8 @@ export const fr: TranslationResources = {
       addAttachment: "Ajouter une pièce jointe",
       interruptAgent: "Agent d'interruption",
       queueMessage: "Message de file d'attente",
+      steer: "Orienter",
+      steerHint: "Réoriente le tour en cours avec ce message",
       sendAndInterrupt: "Envoyer et interrompre",
       sendMessage: "Envoyer un message",
       queue: "File d'attente",
@@ -111,6 +113,7 @@ export const fr: TranslationResources = {
       dropFilesHere: "Drop files here",
       editQueuedMessage: "Modifier le message en file d'attente",
       sendQueuedMessageNow: "Envoyer le message en file d'attente maintenant",
+      steerQueuedMessage: "Steer with queued message",
       openImage: "Ouvrir la pièce jointe de l'image",
       removeImage: "Supprimer l'image jointe",
       removeFile: "Remove file attachment",
@@ -1768,10 +1771,13 @@ export const fr: TranslationResources = {
             "Lorsque l'agent est en cours d'exécution, Entrée interrompt. Commande/Ctrl+Entrée met en file d'attente.",
           queue:
             "Lorsque l'agent est en cours d'exécution, Entrée met en file d'attente. Commande/Ctrl+Entrée envoie.",
+          steer:
+            "When the agent is running, Enter steers the current turn. Command/Ctrl+Enter queues. Falls back to interrupt if steer is unavailable.",
         },
         options: {
           interrupt: "Interrompre",
           queue: "File d'attente",
+          steer: "Steer",
         },
       },
       serviceUrls: {
@@ -2428,5 +2434,16 @@ export const fr: TranslationResources = {
         cancel: "Annuler",
       },
     },
+  },
+  interactionLock: {
+    banner: "Lecture seule · surveillance",
+    unlock: "Déverrouiller",
+    lock: "Verrouiller l'écran",
+    unlockMenu: "Déverrouiller l'écran",
+    lockedA11y: "Verrouillage d'interaction activé. Déverrouillez pour interagir.",
+    lockedToast: "Déverrouillez pour contrôler cet agent",
+    authPrompt: "Unlock Paseo",
+    unlockFailed: "Couldn't unlock. Try again.",
+    navigationBlocked: "Unlock to navigate",
   },
 };

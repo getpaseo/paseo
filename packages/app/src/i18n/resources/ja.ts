@@ -78,6 +78,8 @@ export const ja: TranslationResources = {
       addAttachment: "添付ファイルを追加",
       interruptAgent: "エージェントを中断",
       queueMessage: "メッセージをキューに追加",
+      steer: "ステア",
+      steerHint: "このメッセージで現在のターンをリダイレクトします",
       sendAndInterrupt: "送信して中断",
       sendMessage: "メッセージを送信",
       queue: "キュー",
@@ -109,6 +111,7 @@ export const ja: TranslationResources = {
       dropFilesHere: "ここにファイルをドロップ",
       editQueuedMessage: "キューに入れたメッセージを編集",
       sendQueuedMessageNow: "キューに入れたメッセージを今すぐ送信",
+      steerQueuedMessage: "Steer with queued message",
       openImage: "画像添付ファイルを開く",
       removeImage: "画像添付ファイルを削除",
       removeFile: "ファイル添付ファイルを削除",
@@ -1735,10 +1738,13 @@ export const ja: TranslationResources = {
         descriptions: {
           interrupt: "エージェント実行中、Enterで中断します。Command/Ctrl+Enterでキューに追加。",
           queue: "エージェント実行中、Enterでキューに追加します。Command/Ctrl+Enterで送信。",
+          steer:
+            "When the agent is running, Enter steers the current turn. Command/Ctrl+Enter queues. Falls back to interrupt if steer is unavailable.",
         },
         options: {
           interrupt: "中断",
           queue: "キュー",
+          steer: "Steer",
         },
       },
       serviceUrls: {
@@ -2393,5 +2399,16 @@ export const ja: TranslationResources = {
         cancel: "キャンセル",
       },
     },
+  },
+  interactionLock: {
+    banner: "読み取り専用 · 監視中",
+    unlock: "ロック解除",
+    lock: "画面をロック",
+    unlockMenu: "画面ロックを解除",
+    lockedA11y: "操作ロック中です。操作するには解除してください。",
+    lockedToast: "このエージェントを操作するにはロックを解除してください",
+    authPrompt: "Unlock Paseo",
+    unlockFailed: "Couldn't unlock. Try again.",
+    navigationBlocked: "Unlock to navigate",
   },
 } as const;

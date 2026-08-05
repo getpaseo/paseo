@@ -6,8 +6,11 @@ import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
 import { acceptAgentDirectoryUpdate } from "@/utils/agent-directory-update-policy";
+import { hostSupportsFeature } from "@/runtime/host-features";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
+import { clearComposerOnHost } from "@/ui-state/composer-host-sync";
 import { getInitDeferred, getInitKey, rejectInitDeferred } from "@/utils/agent-initialization";
 
 type AgentDirectoryFetchEntry = FetchAgentsEntry;
@@ -120,9 +123,18 @@ export function removeAgentDirectoryReplica(serverId: string, agentId: string): 
     agentLastActivity.delete(agentId);
     return { ...state, agentLastActivity };
   });
-  useDraftStore.getState().clearDraftInput({
-    draftKey: buildDraftStoreKey({ serverId, agentId }),
-  });
+  {
+    const draftKey = buildDraftStoreKey({ serverId, agentId });
+    useDraftStore.getState().clearDraftInput({ draftKey });
+    // Best-effort host clear so removed agents do not leave zombie composer drafts on other devices.
+    const serverInfo = useSessionStore.getState().sessions[serverId]?.serverInfo;
+    if (hostSupportsFeature(serverInfo, "uiState")) {
+      const client = getHostRuntimeStore().getClient(serverId);
+      if (client) {
+        void clearComposerOnHost({ client, clientDraftKey: draftKey });
+      }
+    }
+  }
   const initKey = getInitKey(serverId, agentId);
   if (getInitDeferred(initKey)) {
     rejectInitDeferred(initKey, new Error("Agent was removed during initialization"));

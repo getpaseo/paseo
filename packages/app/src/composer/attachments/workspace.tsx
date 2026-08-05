@@ -19,6 +19,10 @@ import {
   removeWorkspaceAttachmentsMatching,
 } from "./workspace-cleanup";
 import { useClearReviewDraft } from "@/review/store";
+import { hostSupportsFeature } from "@/runtime/host-features";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
+import { clearReviewOnHost } from "@/ui-state/review-host-sync";
 
 interface WorkspaceAttachmentBindingInput {
   normalAttachments: UserComposerAttachment[];
@@ -154,6 +158,22 @@ function useWorkspaceAttachmentBinding({
       for (const attachment of attachments) {
         if (attachment.kind === "review") {
           clearReviewDraft({ key: attachment.reviewDraftKey });
+          const serverMatch = /(?:^|:)server=([^:]+)(?::|$)/.exec(attachment.reviewDraftKey);
+          const serverId = serverMatch?.[1];
+          if (!serverId) {
+            continue;
+          }
+          const serverInfo = useSessionStore.getState().sessions[serverId]?.serverInfo;
+          if (!hostSupportsFeature(serverInfo, "uiState")) {
+            continue;
+          }
+          const client = getHostRuntimeStore().getClient(serverId);
+          if (client) {
+            void clearReviewOnHost({
+              client,
+              clientReviewKey: attachment.reviewDraftKey,
+            });
+          }
         }
       }
       removeSentContextAttachments(attachments);

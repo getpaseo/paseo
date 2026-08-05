@@ -7,4 +7,6 @@ export interface MessagePayload {
   attachments: ComposerAttachment[];
   cwd: string;
   forceSend?: boolean;
+  /** Explicit mid-turn redirect (interrupt + send). Distinct from queue. */
+  steer?: boolean;
 }

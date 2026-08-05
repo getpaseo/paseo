@@ -131,6 +131,7 @@ import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import { TaskStore } from "./tasks/task-store.js";
+import { UiStateStore } from "./ui-state/store.js";
 import {
   createPaseoToolCatalog,
   type PaseoToolHostDependencies,
@@ -1235,6 +1236,7 @@ export async function createPaseoDaemon(
   logger.info({ elapsed: elapsed() }, "Preparing voice and MCP runtime");
 
   const taskStore = new TaskStore(config.paseoHome);
+  const uiStateStore = new UiStateStore(config.paseoHome);
 
   const createAgentToolHostDependencies = (
     runtime: PaseoToolRuntimeContext,
@@ -1561,6 +1563,7 @@ export async function createPaseoDaemon(
               browserToolsBroker,
               taskStore,
               hubRelationships,
+              uiStateStore,
             );
             await hubRelationships.start();
 

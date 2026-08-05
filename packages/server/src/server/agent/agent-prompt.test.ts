@@ -89,6 +89,7 @@ function createFinishNotificationScenario(
   });
   Reflect.set(agentManager, "tryRunOutOfBand", () => false);
   Reflect.set(agentManager, "hasInFlightRun", () => Boolean(options?.parentPromptError));
+  Reflect.set(agentManager, "steerAgent", async () => false);
   Reflect.set(agentManager, "streamAgent", (_agentId: string, prompt: string) => {
     parentPrompted = true;
     resolveParentPrompt?.(prompt);
@@ -169,6 +170,7 @@ test("sendPromptToAgent forwards the client message id as run options", async ()
   );
   Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
   Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "steerAgent", vi.fn().mockResolvedValue(false));
   Reflect.set(agentManager, "streamAgent", streamAgentSpy);
 
   const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
@@ -191,6 +193,94 @@ test("sendPromptToAgent forwards the client message id as run options", async ()
   expect(streamAgentSpy).toHaveBeenCalledWith("agent-1", "hello", {
     outputSchema: { type: "object" },
     clientMessageId: "msg-client-1",
+  });
+});
+
+test("sendPromptToAgent prefers native steer without replacing the running turn", async () => {
+  const agent: ManagedAgent = Object.create(null);
+  Reflect.set(agent, "id", "agent-1");
+  Reflect.set(agent, "provider", "codex");
+
+  const steerAgentSpy = vi.fn().mockResolvedValue(true);
+  const replaceAgentRunSpy = vi.fn(() => (async function* noop() {})());
+  const streamAgentSpy = vi.fn(() => (async function* noop() {})());
+  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  Reflect.set(
+    agentManager,
+    "getAgent",
+    vi.fn(() => agent),
+  );
+  Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(true));
+  Reflect.set(agentManager, "steerAgent", steerAgentSpy);
+  Reflect.set(agentManager, "replaceAgentRun", replaceAgentRunSpy);
+  Reflect.set(agentManager, "streamAgent", streamAgentSpy);
+
+  const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
+  Reflect.set(
+    agentStorage,
+    "get",
+    vi.fn(async () => null),
+  );
+
+  const result = await sendPromptToAgent({
+    agentManager,
+    agentStorage,
+    agentId: "agent-1",
+    prompt: "focus on tests",
+    messageId: "msg-steer-1",
+    steer: true,
+    logger: createTestLogger(),
+  });
+
+  expect(result).toEqual({ outOfBand: true });
+  expect(steerAgentSpy).toHaveBeenCalledWith("agent-1", "focus on tests", {
+    clientMessageId: "msg-steer-1",
+  });
+  expect(replaceAgentRunSpy).not.toHaveBeenCalled();
+  expect(streamAgentSpy).not.toHaveBeenCalled();
+});
+
+test("sendPromptToAgent falls back to replace when steer is requested without native inject", async () => {
+  const agent: ManagedAgent = Object.create(null);
+  Reflect.set(agent, "id", "agent-1");
+  Reflect.set(agent, "provider", "claude");
+
+  const steerAgentSpy = vi.fn().mockResolvedValue(false);
+  const replaceAgentRunSpy = vi.fn(() => (async function* noop() {})());
+  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  Reflect.set(
+    agentManager,
+    "getAgent",
+    vi.fn(() => agent),
+  );
+  Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(true));
+  Reflect.set(agentManager, "steerAgent", steerAgentSpy);
+  Reflect.set(agentManager, "replaceAgentRun", replaceAgentRunSpy);
+  Reflect.set(agentManager, "streamAgent", vi.fn());
+
+  const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
+  Reflect.set(
+    agentStorage,
+    "get",
+    vi.fn(async () => null),
+  );
+
+  const result = await sendPromptToAgent({
+    agentManager,
+    agentStorage,
+    agentId: "agent-1",
+    prompt: "change course",
+    messageId: "msg-steer-2",
+    steer: true,
+    logger: createTestLogger(),
+  });
+
+  expect(result).toEqual({ outOfBand: false });
+  expect(steerAgentSpy).toHaveBeenCalled();
+  expect(replaceAgentRunSpy).toHaveBeenCalledWith("agent-1", "change course", {
+    clientMessageId: "msg-steer-2",
   });
 });
 
@@ -292,6 +382,7 @@ it("does not notify archived callers", async () => {
     }),
   );
   Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "steerAgent", vi.fn().mockResolvedValue(false));
   Reflect.set(agentManager, "streamAgent", streamAgentSpy);
   Reflect.set(agentManager, "replaceAgentRun", replaceAgentRunSpy);
 

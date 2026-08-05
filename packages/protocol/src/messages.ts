@@ -57,6 +57,17 @@ import {
   TaskUploadedFileAttachmentSchema,
 } from "./tasks/rpc-schemas.js";
 import {
+  UiStateClearRequestMessageSchema,
+  UiStateClearResponseMessageSchema,
+  UiStateGetRequestMessageSchema,
+  UiStateGetResponseMessageSchema,
+  UiStateListRequestMessageSchema,
+  UiStateListResponseMessageSchema,
+  UiStateUpdatedMessageSchema,
+  UiStateUpsertRequestMessageSchema,
+  UiStateUpsertResponseMessageSchema,
+} from "./ui-state/schemas.js";
+import {
   LoopRunRequestSchema,
   LoopListRequestSchema,
   LoopInspectRequestSchema,
@@ -345,6 +356,10 @@ const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z
     supportsRewindFiles: z.boolean().optional().default(false),
     // COMPAT(rewind): added in v0.1.X, drop when floor >= v0.1.X.
     supportsRewindBoth: z.boolean().optional().default(false),
+    // COMPAT(supportsNativeFork): added in v0.2.916, drop when floor >= v0.2.916.
+    supportsNativeFork: z.boolean().optional().default(false),
+    // COMPAT(supportsSteer): added in v0.2.916, drop when floor >= v0.2.916.
+    supportsSteer: z.boolean().optional().default(false),
   })
   .catchall(z.boolean());
 
@@ -1171,6 +1186,10 @@ export const SendAgentMessageRequestSchema = z.object({
   messageId: z.string().optional(), // Client-provided ID for deduplication
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
+  // COMPAT(promptSteer): added in v0.2.916 — explicit mid-turn redirect (interrupt + send).
+  // When true, the agent must already be running; when false/omitted, existing replaceRunning
+  // send semantics are unchanged.
+  steer: z.boolean().optional().default(false),
 });
 
 export const WaitForFinishRequestSchema = z.object({
@@ -1519,6 +1538,15 @@ export const AgentForkContextRequestMessageSchema = z.object({
   boundaryCursor: AgentTimelineCursorSchema.optional(),
   boundaryMessageId: z.string().optional(),
   requestId: z.string(),
+});
+
+export const AgentNativeForkRequestMessageSchema = z.object({
+  type: z.literal("agent.native_fork.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  boundaryCursor: AgentTimelineCursorSchema.optional(),
+  boundaryMessageId: z.string().optional(),
+  target: z.enum(["tab", "workspace"]).default("tab"),
 });
 
 export const SetAgentModeRequestMessageSchema = z.object({
@@ -2621,6 +2649,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProviderHeartbeatsDeleteRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
+  AgentNativeForkRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
   SetAgentModelRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
@@ -2719,6 +2748,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   TaskUpdateRequestSchema,
   TaskDeleteRequestSchema,
   TaskAttachmentDownloadTokenRequestSchema,
+  UiStateGetRequestMessageSchema,
+  UiStateUpsertRequestMessageSchema,
+  UiStateClearRequestMessageSchema,
+  UiStateListRequestMessageSchema,
   LoopRunRequestSchema,
   LoopListRequestSchema,
   LoopInspectRequestSchema,
@@ -2952,6 +2985,10 @@ export const ServerInfoStatusPayloadSchema = z
         taskBacklog: z.boolean().optional(),
         // COMPAT(taskBacklogListAll): added in v0.1.104-beta.5, drop gate once daemon floor >= v0.1.104-beta.5.
         taskBacklogListAll: z.boolean().optional(),
+        // COMPAT(uiState): added in v0.2.916, drop gate after 2027-02-01.
+        uiState: z.boolean().optional(),
+        // COMPAT(agentNativeFork): added in v0.2.916, drop gate after 2027-02-01.
+        agentNativeFork: z.boolean().optional(),
         // COMPAT(tcpTunnel): added in v0.1.105, remove gate after 2027-01-07 once daemon floor >= v0.1.105.
         tcpTunnel: z.boolean().optional(),
         // COMPAT(agentForkContextCursor): added in v0.1.108, remove gate after 2027-01-14.
@@ -3962,6 +3999,18 @@ export const AgentForkContextResponseMessageSchema = z.object({
     boundaryMessageId: z.string().nullable(),
     boundaryCursor: AgentTimelineCursorSchema.nullable().optional(),
     error: z.string().nullable(),
+  }),
+});
+
+export const AgentNativeForkResponseMessageSchema = z.object({
+  type: z.literal("agent.native_fork.response"),
+  payload: z.object({
+    requestId: z.string(),
+    sourceAgentId: z.string(),
+    accepted: z.boolean(),
+    error: z.string().nullable(),
+    agentId: z.string().optional(),
+    workspaceId: z.string().optional(),
   }),
 });
 
@@ -5578,6 +5627,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentTimelineSubscriptionResponseMessageSchema,
   AgentAttentionRequiredMessageSchema,
   AgentForkContextResponseMessageSchema,
+  AgentNativeForkResponseMessageSchema,
   CancelAgentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
   WorkspaceCreateResponseSchema,
@@ -5697,6 +5747,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   TaskUpdateResponseSchema,
   TaskDeleteResponseSchema,
   TaskAttachmentDownloadTokenResponseSchema,
+  UiStateGetResponseMessageSchema,
+  UiStateUpsertResponseMessageSchema,
+  UiStateClearResponseMessageSchema,
+  UiStateListResponseMessageSchema,
+  UiStateUpdatedMessageSchema,
   LoopRunResponseSchema,
   LoopListResponseSchema,
   LoopInspectResponseSchema,
@@ -5783,6 +5838,7 @@ export type FetchAgentTimelineResponseMessage = z.infer<
   typeof FetchAgentTimelineResponseMessageSchema
 >;
 export type AgentForkContextResponseMessage = z.infer<typeof AgentForkContextResponseMessageSchema>;
+export type AgentNativeForkResponseMessage = z.infer<typeof AgentNativeForkResponseMessageSchema>;
 export type CancelAgentResponseMessage = z.infer<typeof CancelAgentResponseMessageSchema>;
 export type SendAgentMessageResponseMessage = z.infer<typeof SendAgentMessageResponseMessageSchema>;
 export type SetVoiceModeResponseMessage = z.infer<typeof SetVoiceModeResponseMessageSchema>;
@@ -5876,6 +5932,20 @@ export type TaskDeleteResponse = z.infer<typeof TaskDeleteResponseSchema>;
 export type TaskAttachmentDownloadTokenResponse = z.infer<
   typeof TaskAttachmentDownloadTokenResponseSchema
 >;
+export type {
+  UiStateClearRequestMessage,
+  UiStateClearResponseMessage,
+  UiStateGetRequestMessage,
+  UiStateGetResponseMessage,
+  UiStateListRequestMessage,
+  UiStateListResponseMessage,
+  UiStateNamespace,
+  UiStateRecord,
+  UiStateReviewComment,
+  UiStateUpdatedMessage,
+  UiStateUpsertRequestMessage,
+  UiStateUpsertResponseMessage,
+} from "./ui-state/schemas.js";
 export type LoopRunResponse = z.infer<typeof LoopRunResponseSchema>;
 export type LoopListResponse = z.infer<typeof LoopListResponseSchema>;
 export type LoopInspectResponse = z.infer<typeof LoopInspectResponseSchema>;
@@ -5896,6 +5966,7 @@ export type FetchWorkspacesRequestMessage = z.infer<typeof FetchWorkspacesReques
 export type ProjectListRequestMessage = z.infer<typeof ProjectListRequestMessageSchema>;
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
 export type AgentForkContextRequestMessage = z.infer<typeof AgentForkContextRequestMessageSchema>;
+export type AgentNativeForkRequestMessage = z.infer<typeof AgentNativeForkRequestMessageSchema>;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;
 export type WaitForFinishRequest = z.infer<typeof WaitForFinishRequestSchema>;
 export type DictationStreamStartMessage = z.infer<typeof DictationStreamStartMessageSchema>;

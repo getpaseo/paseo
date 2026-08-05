@@ -85,6 +85,8 @@ import {
   ProviderHeartbeatStore,
   type ProviderHeartbeatDescriptor,
 } from "./provider-heartbeats/store.js";
+import { forkClaudeSessionAtMessage } from "./providers/claude/native-fork.js";
+import { realClaudeRewindSdk } from "./providers/claude/rewind.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -98,6 +100,8 @@ const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: false,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsNativeFork: false,
+  supportsSteer: false,
 };
 
 type TimeoutResult = "completed" | "timed_out";
@@ -2048,6 +2052,40 @@ export class AgentManager {
   }
 
   /**
+   * Inject a prompt into the active turn without canceling it.
+   * Returns true when the provider accepted a native steer. Returns false when
+   * the session has no `steer` implementation (caller should fall back to
+   * interrupt+replace). Throws when steer is attempted without an active turn
+   * or the provider rejects the inject.
+   */
+  async steerAgent(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<boolean> {
+    const agent = this.requireSessionAgent(agentId);
+    const steer = agent.session.steer?.bind(agent.session);
+    if (!steer) {
+      return false;
+    }
+    if (!this.hasInFlightRun(agentId) && agent.lifecycle !== "running") {
+      throw new Error("Steer is only available while the agent is running");
+    }
+    this.logger.trace(
+      {
+        agentId,
+        provider: agent.provider,
+        sessionId: agent.persistence?.sessionId ?? undefined,
+        turnId: agent.activeForegroundTurnId ?? undefined,
+      },
+      "agent.manager.steer",
+    );
+    await steer(prompt, options);
+    this.touchUpdatedAt(agent);
+    return true;
+  }
+
+  /**
    * Try to run a prompt out-of-band — i.e. without allocating a foreground turn
    * and without canceling any active turn. Returns true when the session
    * accepted the prompt as a side-effect command (e.g. /goal pause). Events
@@ -2583,6 +2621,98 @@ export class AgentManager {
     } finally {
       this.runs.settleForegroundRun(agentId, lock.token);
     }
+  }
+
+  /**
+   * Create a new agent whose provider session is a Claude SDK fork of the source
+   * agent's session at the given boundary. Does not mutate the source agent.
+   * v1 supports tab target only (same workspace).
+   */
+  async nativeForkAgent(input: {
+    sourceAgentId: string;
+    boundaryMessageId?: string;
+    boundaryCursor?: { epoch: string; seq: number };
+    target?: "tab" | "workspace";
+  }): Promise<{ agentId: string; workspaceId: string }> {
+    const source = this.requireSessionAgent(input.sourceAgentId);
+    if (source.provider !== "claude") {
+      throw new Error("Native fork is only supported for Claude agents");
+    }
+    if (source.capabilities.supportsNativeFork !== true) {
+      throw new Error("Provider does not support native fork");
+    }
+    if (input.target === "workspace") {
+      throw new Error("Native fork to a new workspace is not supported yet; use tab target");
+    }
+
+    const sourceSessionId =
+      source.persistence?.sessionId?.trim() || source.runtimeInfo?.sessionId?.trim() || "";
+    if (!sourceSessionId) {
+      throw new Error("Source Claude agent has no provider session id to fork");
+    }
+
+    const timeline = this.fetchTimeline(input.sourceAgentId, {
+      direction: "tail",
+      limit: 0,
+    });
+    const boundaryMessageId = resolveNativeForkBoundaryMessageId({
+      rows: timeline.rows,
+      timelineEpoch: timeline.epoch,
+      boundaryMessageId: input.boundaryMessageId,
+      boundaryCursor: input.boundaryCursor,
+    });
+
+    const { forkedSessionId } = await forkClaudeSessionAtMessage({
+      sdk: realClaudeRewindSdk,
+      sessionId: sourceSessionId,
+      upToMessageId: boundaryMessageId,
+    });
+
+    // Source must remain on its original session id.
+    if (source.persistence?.sessionId === forkedSessionId) {
+      throw new Error("Native fork produced the same session id as the source agent");
+    }
+
+    const workspaceId = source.workspaceId?.trim();
+    if (!workspaceId) {
+      throw new Error("Source agent has no workspace; cannot native-fork into a tab");
+    }
+
+    const forked = await this.resumeAgentFromPersistence(
+      {
+        provider: "claude",
+        sessionId: forkedSessionId,
+        metadata: {
+          ...source.config,
+          provider: "claude",
+          cwd: source.cwd,
+        },
+      },
+      {
+        ...source.config,
+        provider: "claude",
+        cwd: source.cwd,
+      },
+      undefined,
+      {
+        workspaceId,
+        labels: {
+          ...source.labels,
+          nativeForkOf: source.id,
+        },
+      },
+    );
+
+    try {
+      await this.hydrateTimelineFromProvider(forked.id, { force: true, broadcast: true });
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId: forked.id, sourceAgentId: source.id },
+        "agent.native_fork.hydrate_failed",
+      );
+    }
+
+    return { agentId: forked.id, workspaceId };
   }
 
   async deleteCommittedTimeline(agentId: string): Promise<void> {
@@ -4548,4 +4678,28 @@ export function commandMayHaveChangedExternalState(command: string): boolean {
     // ahead/behind counts can drift stale until the next refresh.
     /\bgit\s+fetch\b/.test(normalized)
   );
+}
+
+function resolveNativeForkBoundaryMessageId(input: {
+  rows: readonly AgentTimelineRow[];
+  timelineEpoch: string;
+  boundaryMessageId?: string;
+  boundaryCursor?: { epoch: string; seq: number };
+}): string {
+  const explicit = input.boundaryMessageId?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  const cursor = input.boundaryCursor;
+  if (!cursor) {
+    throw new Error("Native fork requires a boundary message id or timeline cursor");
+  }
+  if (cursor.epoch !== input.timelineEpoch) {
+    throw new Error("Selected timeline position is no longer available.");
+  }
+  const row = input.rows.find((entry) => entry.seq === cursor.seq);
+  if (!row || row.item.type !== "assistant_message" || !row.item.messageId?.trim()) {
+    throw new Error("Selected timeline position is no longer available.");
+  }
+  return row.item.messageId.trim();
 }

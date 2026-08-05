@@ -20,6 +20,14 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useWorkspaceFocusRestoration } from "@/workspace/focus";
+import { useHostFeature } from "@/runtime/host-features";
+import { getHostRuntimeStore, useHostRuntimeConnectionStatus } from "@/runtime/host-runtime";
+import { clientReviewKeyToWireKey } from "@/ui-state/keys";
+import {
+  handleUiStateUpdatedForReview,
+  hydrateReviewFromHost,
+  upsertReviewOnHost,
+} from "@/ui-state/review-host-sync";
 import { useReviewDraftComments, useReviewDraftStore, type ReviewDraftComment } from "./store";
 import { buildReviewableDiffTargetKey, type ReviewableDiffTarget } from "@/utils/diff-layout";
 
@@ -125,10 +133,67 @@ export function useInlineReviewController(input: { reviewDraftKey: string }): In
   const addComment = useReviewDraftStore((state) => state.addComment);
   const updateComment = useReviewDraftStore((state) => state.updateComment);
   const deleteComment = useReviewDraftStore((state) => state.deleteComment);
+  const hostServerId = useMemo(() => {
+    const match = /(?:^|:)server=([^:]+)(?::|$)/.exec(input.reviewDraftKey);
+    return match?.[1] ?? null;
+  }, [input.reviewDraftKey]);
+  const supportsUiState = useHostFeature(hostServerId, "uiState");
+  const connectionStatus = useHostRuntimeConnectionStatus(hostServerId ?? "");
+  const isHostOnline = connectionStatus === "online";
+  const wireKey = useMemo(
+    () => clientReviewKeyToWireKey(input.reviewDraftKey),
+    [input.reviewDraftKey],
+  );
+
+  const syncReviewToHost = useCallback(() => {
+    if (!supportsUiState || !hostServerId) {
+      return;
+    }
+    const client = getHostRuntimeStore().getClient(hostServerId);
+    if (!client) {
+      return;
+    }
+    const comments = useReviewDraftStore.getState().drafts[input.reviewDraftKey] ?? [];
+    void upsertReviewOnHost({
+      client,
+      clientReviewKey: input.reviewDraftKey,
+      comments,
+    });
+  }, [hostServerId, input.reviewDraftKey, supportsUiState]);
 
   useEffect(() => {
     setEditor(null);
   }, [input.reviewDraftKey]);
+
+  useEffect(() => {
+    if (!supportsUiState || !isHostOnline || !hostServerId || !wireKey) {
+      return;
+    }
+    const client = getHostRuntimeStore().getClient(hostServerId);
+    if (!client) {
+      return;
+    }
+    let cancelled = false;
+    void hydrateReviewFromHost({
+      client,
+      clientReviewKey: input.reviewDraftKey,
+    }).catch((error) => {
+      if (!cancelled) {
+        console.warn("[ui-state] review hydrate failed", error);
+      }
+    });
+    const unsubscribe = client.on("ui_state.updated", (message) => {
+      handleUiStateUpdatedForReview({
+        message,
+        clientReviewKey: input.reviewDraftKey,
+        wireKey,
+      });
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [hostServerId, input.reviewDraftKey, isHostOnline, supportsUiState, wireKey]);
 
   const handleStartComment = useCallback((target: ReviewableDiffTarget) => {
     setEditor({ target, commentId: null, body: "" });
@@ -170,16 +235,18 @@ export function useInlineReviewController(input: { reviewDraftKey: string }): In
         });
       }
       setEditor(null);
+      syncReviewToHost();
     },
-    [addComment, editor, input.reviewDraftKey, updateComment],
+    [addComment, editor, input.reviewDraftKey, syncReviewToHost, updateComment],
   );
 
   const handleDeleteComment = useCallback(
     (id: string) => {
       deleteComment({ key: input.reviewDraftKey, id });
       setEditor((current) => (current?.commentId === id ? null : current));
+      syncReviewToHost();
     },
-    [deleteComment, input.reviewDraftKey],
+    [deleteComment, input.reviewDraftKey, syncReviewToHost],
   );
 
   return useMemo<InlineReviewActions>(

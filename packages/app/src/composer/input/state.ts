@@ -2,7 +2,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { MessagePayload } from "@/composer/types";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 
-export type SendBehavior = "interrupt" | "queue";
+export type SendBehavior = "interrupt" | "queue" | "steer";
 
 interface ComposerSurfaceState {
   opacity: 0 | 1;
@@ -41,9 +41,12 @@ interface StopRealtimeVoiceContext {
 interface SendActionContext {
   defaultSendBehavior: SendBehavior;
   isAgentRunning: boolean;
+  /** Provider supports mid-turn steer for the active agent. */
+  canSteer: boolean;
   onQueue: ((payload: MessagePayload) => void) | undefined;
   handleSendMessage: () => void;
   handleQueueMessage: () => void;
+  handleSteerMessage: () => void;
 }
 
 interface MessageInputKeyboardActions {
@@ -76,11 +79,29 @@ export function runDefaultSendAction(ctx: SendActionContext): void {
     ctx.handleQueueMessage();
     return;
   }
+  if (ctx.defaultSendBehavior === "steer" && ctx.isAgentRunning && ctx.canSteer) {
+    ctx.handleSteerMessage();
+    return;
+  }
+  // "interrupt", or "steer" when the provider cannot steer → force-send.
   ctx.handleSendMessage();
 }
 
 export function runAlternateSendAction(ctx: SendActionContext): void {
   if (ctx.defaultSendBehavior === "queue") {
+    // Promote: prefer steer when available, otherwise interrupt/send.
+    if (ctx.isAgentRunning && ctx.canSteer) {
+      ctx.handleSteerMessage();
+      return;
+    }
+    ctx.handleSendMessage();
+    return;
+  }
+  if (ctx.defaultSendBehavior === "steer") {
+    if (ctx.isAgentRunning && ctx.onQueue) {
+      ctx.handleQueueMessage();
+      return;
+    }
     ctx.handleSendMessage();
     return;
   }

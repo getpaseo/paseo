@@ -155,6 +155,12 @@ import { ProviderCatalogSession } from "./session/provider/provider-catalog-sess
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
 import { TaskSession } from "./tasks/task-session.js";
 import { TaskStore } from "./tasks/task-store.js";
+import { UiStateSession } from "./ui-state/session.js";
+import { UiStateStore } from "./ui-state/store.js";
+
+function resolveUiStateStore(store: UiStateStore | undefined, paseoHome: string): UiStateStore {
+  return store ?? new UiStateStore(paseoHome);
+}
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
 import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
@@ -474,6 +480,10 @@ export interface SessionOptions {
   chatService: FileBackedChatService;
   scheduleService: ScheduleService;
   taskStore: TaskStore;
+  /** Defaults to a store under `paseoHome` when omitted (tests / older constructors). */
+  uiStateStore?: UiStateStore;
+  /** Broadcast a message to all other trusted sessions (not this one). */
+  broadcastUiState?: (message: SessionOutboundMessage, exceptClientId: string) => void;
   loopService: LoopService;
   checkoutDiffManager: CheckoutDiffManager;
   github?: ForgeService;
@@ -612,7 +622,7 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
  * Session has no knowledge of WebSockets - it only emits and receives messages.
  */
 export class Session {
-  private readonly clientId: string;
+  readonly clientId: string;
   private scopes: readonly string[];
   private appVersion: string | null;
   private clientCapabilities: ReadonlySet<ClientCapability>;
@@ -686,6 +696,7 @@ export class Session {
   private readonly checkoutSession: CheckoutSession;
   private readonly chatScheduleLoopSession: ChatScheduleLoopSession;
   private readonly taskSession: TaskSession;
+  private readonly uiStateSession: UiStateSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly tcpTunnelForwarder: TcpTunnelForwarder;
@@ -723,6 +734,8 @@ export class Session {
       chatService,
       scheduleService,
       taskStore,
+      uiStateStore,
+      broadcastUiState,
       loopService,
       checkoutDiffManager,
       github,
@@ -882,6 +895,15 @@ export class Session {
       store: taskStore,
       projectRegistry: this.projectRegistry,
       downloadTokenStore,
+    });
+    this.uiStateSession = new UiStateSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+        broadcast: (msg) => {
+          broadcastUiState?.(msg, this.clientId);
+        },
+      },
+      store: resolveUiStateStore(uiStateStore, paseoHome),
     });
     this.providerCatalogSession = new ProviderCatalogSession({
       host: {
@@ -1946,6 +1968,7 @@ export class Session {
       this.dispatchCheckoutMessage(msg) ??
       this.dispatchWorkspaceRecoveryMessage(msg) ??
       this.dispatchTaskMessage(msg) ??
+      this.dispatchUiStateMessage(msg) ??
       this.dispatchWorkspaceAndProjectMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
       this.dispatchProviderMessage(msg) ??
@@ -2067,6 +2090,8 @@ export class Session {
       }
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
+      case "agent.native_fork.request":
+        return this.handleAgentNativeForkRequest(msg);
       default:
         return undefined;
     }
@@ -2325,6 +2350,21 @@ export class Session {
         return this.taskSession.handleDelete(msg);
       case "tasks.attachment.download_token.request":
         return this.taskSession.handleAttachmentDownloadToken(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchUiStateMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "ui_state.get.request":
+        return this.uiStateSession.handleGet(msg);
+      case "ui_state.upsert.request":
+        return this.uiStateSession.handleUpsert(msg);
+      case "ui_state.clear.request":
+        return this.uiStateSession.handleClear(msg);
+      case "ui_state.list.request":
+        return this.uiStateSession.handleList(msg);
       default:
         return undefined;
     }
@@ -6783,6 +6823,49 @@ export class Session {
     }
   }
 
+  private async handleAgentNativeForkRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.native_fork.request" }>,
+  ): Promise<void> {
+    try {
+      await ensureAgentLoaded(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      const result = await this.agentManager.nativeForkAgent({
+        sourceAgentId: msg.agentId,
+        boundaryMessageId: msg.boundaryMessageId,
+        boundaryCursor: msg.boundaryCursor,
+        target: msg.target,
+      });
+      this.emit({
+        type: "agent.native_fork.response",
+        payload: {
+          requestId: msg.requestId,
+          sourceAgentId: msg.agentId,
+          accepted: true,
+          error: null,
+          agentId: result.agentId,
+          workspaceId: result.workspaceId,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, agentId: msg.agentId },
+        "Failed to handle agent.native_fork.request",
+      );
+      this.emit({
+        type: "agent.native_fork.response",
+        payload: {
+          requestId: msg.requestId,
+          sourceAgentId: msg.agentId,
+          accepted: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
   private async handleSendAgentMessageRequest(
     msg: Extract<SessionInboundMessage, { type: "send_agent_message_request" }>,
   ): Promise<void> {
@@ -6808,10 +6891,50 @@ export class Session {
         {
           agentId,
           messageId: msg.messageId,
+          steer: msg.steer === true,
           textPrefix: msg.text.slice(0, 80),
         },
         "agent.session.send_agent_message",
       );
+      if (msg.steer === true) {
+        const snapshot = this.agentManager.getAgent(agentId);
+        if (!snapshot) {
+          this.emit({
+            type: "send_agent_message_response",
+            payload: {
+              requestId: msg.requestId,
+              agentId,
+              accepted: false,
+              error: "Agent not found",
+            },
+          });
+          return;
+        }
+        if (snapshot.capabilities.supportsSteer !== true) {
+          this.emit({
+            type: "send_agent_message_response",
+            payload: {
+              requestId: msg.requestId,
+              agentId,
+              accepted: false,
+              error: "Provider does not support steer",
+            },
+          });
+          return;
+        }
+        if (!this.agentManager.hasInFlightRun(agentId) && snapshot.lifecycle !== "running") {
+          this.emit({
+            type: "send_agent_message_response",
+            payload: {
+              requestId: msg.requestId,
+              agentId,
+              accepted: false,
+              error: "Steer is only available while the agent is running",
+            },
+          });
+          return;
+        }
+      }
       let dispatchResult: { outOfBand: boolean };
       try {
         dispatchResult = await sendPromptToAgent({
@@ -6820,6 +6943,7 @@ export class Session {
           agentId,
           prompt,
           messageId: msg.messageId,
+          steer: msg.steer === true,
           logger: this.sessionLogger,
         });
       } catch (error) {
@@ -7012,6 +7136,11 @@ export class Session {
   /**
    * Emit a message to the client
    */
+  /** Public emit for server-side fan-out (e.g. ui_state.updated). */
+  emitOutbound(msg: SessionOutboundMessage): void {
+    this.emit(msg);
+  }
+
   private emit(msg: SessionOutboundMessage): void {
     if (msg.type !== "rpc_error" && !isSessionRpcAllowed(this.scopes, msg.type)) {
       return;

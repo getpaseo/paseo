@@ -78,6 +78,8 @@ export const ru: TranslationResources = {
       addAttachment: "Добавить вложение",
       interruptAgent: "Агент прерываний",
       queueMessage: "Сообщение в очереди",
+      steer: "Направить",
+      steerHint: "Перенаправляет текущий ход этим сообщением",
       sendAndInterrupt: "Отправить и прервать",
       sendMessage: "Отправить сообщение",
       queue: "Очередь",
@@ -109,6 +111,7 @@ export const ru: TranslationResources = {
       dropFilesHere: "Drop files here",
       editQueuedMessage: "Изменить сообщение в очереди",
       sendQueuedMessageNow: "Отправить сообщение в очереди сейчас",
+      steerQueuedMessage: "Steer with queued message",
       openImage: "Открыть прикрепленное изображение",
       removeImage: "Удалить прикрепленное изображение",
       removeFile: "Remove file attachment",
@@ -1753,10 +1756,13 @@ export const ru: TranslationResources = {
         descriptions: {
           interrupt: "Когда агент работает, Enter прерывает. Command/Ctrl+Enter ставит в очередь.",
           queue: "Когда агент работает, Enter ставит в очередь. Command/Ctrl+Enter отправляет.",
+          steer:
+            "When the agent is running, Enter steers the current turn. Command/Ctrl+Enter queues. Falls back to interrupt if steer is unavailable.",
         },
         options: {
           interrupt: "Прерывать",
           queue: "Очередь",
+          steer: "Steer",
         },
       },
       serviceUrls: {
@@ -2413,5 +2419,16 @@ export const ru: TranslationResources = {
         cancel: "Отмена",
       },
     },
+  },
+  interactionLock: {
+    banner: "Только чтение · наблюдение",
+    unlock: "Разблокировать",
+    lock: "Заблокировать экран",
+    unlockMenu: "Разблокировать экран",
+    lockedA11y: "Блокировка взаимодействия включена. Разблокируйте, чтобы взаимодействовать.",
+    lockedToast: "Разблокируйте, чтобы управлять этим агентом",
+    authPrompt: "Unlock Paseo",
+    unlockFailed: "Couldn't unlock. Try again.",
+    navigationBlocked: "Unlock to navigate",
   },
 };

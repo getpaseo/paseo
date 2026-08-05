@@ -76,6 +76,8 @@ export const en = {
       addAttachment: "Add attachment",
       interruptAgent: "Interrupt agent",
       queueMessage: "Queue message",
+      steer: "Steer",
+      steerHint: "Redirect the current turn with this message",
       sendAndInterrupt: "Send and interrupt",
       sendMessage: "Send message",
       queue: "Queue",
@@ -107,6 +109,7 @@ export const en = {
       dropFilesHere: "Drop files here",
       editQueuedMessage: "Edit queued message",
       sendQueuedMessageNow: "Send queued message now",
+      steerQueuedMessage: "Steer with queued message",
       openImage: "Open image attachment",
       removeImage: "Remove image attachment",
       removeFile: "Remove file attachment",
@@ -1727,12 +1730,17 @@ export const en = {
       defaultSend: {
         label: "Default send",
         descriptions: {
-          interrupt: "When the agent is running, Enter interrupts. Command/Ctrl+Enter queues.",
-          queue: "When the agent is running, Enter queues. Command/Ctrl+Enter submits.",
+          interrupt:
+            "When the agent is running, Enter force-sends (stops the current turn). Command/Ctrl+Enter queues.",
+          queue:
+            "When the agent is running, Enter queues. Command/Ctrl+Enter steers when supported, otherwise force-sends.",
+          steer:
+            "When the agent is running, Enter steers the active turn. Command/Ctrl+Enter queues. Falls back to force-send if steer is unavailable.",
         },
         options: {
           interrupt: "Interrupt",
           queue: "Queue",
+          steer: "Steer",
         },
       },
       serviceUrls: {
@@ -2382,6 +2390,17 @@ export const en = {
         cancel: "Cancel",
       },
     },
+  },
+  interactionLock: {
+    banner: "Read-only · monitoring",
+    unlock: "Unlock",
+    lock: "Lock screen",
+    unlockMenu: "Unlock screen",
+    lockedA11y: "Interaction lock on. Unlock to interact.",
+    lockedToast: "Unlock to control this agent",
+    authPrompt: "Unlock Paseo",
+    unlockFailed: "Couldn't unlock. Try again.",
+    navigationBlocked: "Unlock to navigate",
   },
 } as const;
 

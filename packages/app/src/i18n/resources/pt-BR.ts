@@ -78,6 +78,8 @@ export const ptBR: TranslationResources = {
       addAttachment: "Adicionar anexo",
       interruptAgent: "Interromper agente",
       queueMessage: "Enfileirar mensagem",
+      steer: "Direcionar",
+      steerHint: "Redireciona o turno atual com esta mensagem",
       sendAndInterrupt: "Enviar e interromper",
       sendMessage: "Enviar mensagem",
       queue: "Fila",
@@ -109,6 +111,7 @@ export const ptBR: TranslationResources = {
       dropFilesHere: "Solte arquivos aqui",
       editQueuedMessage: "Editar mensagem na fila",
       sendQueuedMessageNow: "Enviar mensagem da fila agora",
+      steerQueuedMessage: "Steer with queued message",
       openImage: "Abrir anexo de imagem",
       removeImage: "Remover anexo de imagem",
       removeFile: "Remover anexo de arquivo",
@@ -1749,10 +1752,13 @@ export const ptBR: TranslationResources = {
           interrupt:
             "Quando o agente está em execução, Enter interrompe. Command/Ctrl+Enter enfileira.",
           queue: "Quando o agente está em execução, Enter enfileira. Command/Ctrl+Enter envia.",
+          steer:
+            "When the agent is running, Enter steers the current turn. Command/Ctrl+Enter queues. Falls back to interrupt if steer is unavailable.",
         },
         options: {
           interrupt: "Interromper",
           queue: "Fila",
+          steer: "Steer",
         },
       },
       serviceUrls: {
@@ -2406,5 +2412,16 @@ export const ptBR: TranslationResources = {
         cancel: "Cancelar",
       },
     },
+  },
+  interactionLock: {
+    banner: "Somente leitura · monitoramento",
+    unlock: "Desbloquear",
+    lock: "Bloquear tela",
+    unlockMenu: "Desbloquear tela",
+    lockedA11y: "Bloqueio de interação ativo. Desbloqueie para interagir.",
+    lockedToast: "Desbloqueie para controlar este agente",
+    authPrompt: "Unlock Paseo",
+    unlockFailed: "Couldn't unlock. Try again.",
+    navigationBlocked: "Unlock to navigate",
   },
 };
