@@ -6,13 +6,19 @@ import { Pressable, Text } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Tooltip, TooltipTrigger } from "./tooltip";
 
+const platform = vi.hoisted(() => ({ isWeb: true, isNative: false, isCompact: false }));
+
 vi.mock("@/constants/platform", () => ({
-  isWeb: true,
-  isNative: false,
+  get isWeb() {
+    return platform.isWeb;
+  },
+  get isNative() {
+    return platform.isNative;
+  },
 }));
 
 vi.mock("@/constants/layout", () => ({
-  useIsCompactFormFactor: () => false,
+  useIsCompactFormFactor: () => platform.isCompact,
 }));
 
 vi.mock("@gorhom/portal", () => ({
@@ -41,6 +47,10 @@ let root: Root | null = null;
 let container: HTMLElement | null = null;
 
 beforeEach(() => {
+  platform.isWeb = true;
+  platform.isNative = false;
+  platform.isCompact = false;
+
   const dom = new JSDOM("<!doctype html><html><body></body></html>");
   vi.stubGlobal("React", React);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -112,5 +122,76 @@ describe("TooltipTrigger", () => {
     pressTrigger();
 
     expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  function renderToggleTrigger(onOpenChange: (open: boolean) => void): void {
+    act(() => {
+      root?.render(
+        <Tooltip enabledOnMobile onOpenChange={onOpenChange}>
+          <TooltipTrigger asChild>
+            <Pressable testID="trigger">
+              <Text>Send</Text>
+            </Pressable>
+          </TooltipTrigger>
+        </Tooltip>,
+      );
+    });
+  }
+
+  it("toggles open on press in a compact (touch) context", () => {
+    platform.isCompact = true;
+    const onOpenChange = vi.fn();
+
+    renderToggleTrigger(onOpenChange);
+
+    pressTrigger();
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+
+    pressTrigger();
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("opens on press on native, where hover never fires", () => {
+    platform.isWeb = false;
+    platform.isNative = true;
+    const onOpenChange = vi.fn();
+
+    renderToggleTrigger(onOpenChange);
+
+    pressTrigger();
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+
+    pressTrigger();
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("toggles as a controlled tooltip (the context meter's shape)", () => {
+    platform.isCompact = true;
+    const renders: boolean[] = [];
+
+    function Controlled(): React.ReactElement {
+      const [open, setOpen] = React.useState(false);
+      renders.push(open);
+      return (
+        <Tooltip open={open} enabledOnMobile onOpenChange={setOpen}>
+          <TooltipTrigger asChild>
+            <Pressable testID="trigger">
+              <Text>Send</Text>
+            </Pressable>
+          </TooltipTrigger>
+        </Tooltip>
+      );
+    }
+
+    act(() => {
+      root?.render(<Controlled />);
+    });
+
+    pressTrigger();
+    pressTrigger();
+
+    // Routed the toggle through the parent's controlled state: opened, then closed.
+    expect(renders).toContain(true);
+    expect(renders[renders.length - 1]).toBe(false);
   });
 });
