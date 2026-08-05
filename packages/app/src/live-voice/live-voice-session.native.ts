@@ -1,7 +1,7 @@
 /**
  * Native Live Voice transport for iOS and Android.
  *
- * The Codex handshake is identical to the browser transport. React Native
+ * The provider handshake is identical to the browser transport. React Native
  * supplies the peer connection and media tracks through react-native-webrtc;
  * remote audio is rendered by the native WebRTC audio device.
  *

@@ -51,7 +51,7 @@ function toggleDisabledComponent(
 export const MAX_DEFAULT_WORKSPACE_DIRECTORY_LENGTH = 256;
 
 interface LiveVoiceSettingsState {
-  /** The Codex realtime voice to use for new calls; null leaves selection to the provider. */
+  /** The realtime voice to use for new calls; null leaves selection to the provider. */
   voice: string | null;
   /**
    * Report agent sessions the call did not start — anything finishing, failing,

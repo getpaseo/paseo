@@ -19,7 +19,7 @@ function snapshot(overrides: Partial<LiveVoiceContextSnapshot> = {}): LiveVoiceC
     agents: [
       {
         id: AGENT_ID,
-        provider: "codex",
+        provider: "claude",
         cwd: "/work/paseo",
         workspaceId: "ws-1",
         title: "Live voice work",
@@ -56,7 +56,7 @@ describe("live voice prompt", () => {
     // Its own session is not a project session, and must not be used as one.
     expect(prompt).toMatch(/never do coding work yourself/i);
     expect(prompt).not.toMatch(/attached/i);
-    // Spoken-output discipline, since this prompt replaces codex's entire prompt.
+    // Spoken-output discipline, since this prompt replaces the provider's entire prompt.
     expect(prompt).toMatch(/no markdown/i);
   });
 
@@ -317,7 +317,7 @@ describe("live voice prompt", () => {
 
     expect(prompt).toMatch(/collaboration or subagent tree is not Paseo's agent list/i);
     expect(prompt).toMatch(
-      /Never infer Paseo state from OS processes, desktop screenshots, or local Codex session logs/i,
+      /Never infer Paseo state from OS processes, desktop screenshots, or your runtime's local session logs/i,
     );
     expect(prompt).toMatch(/only if Paseo MCP is unavailable or a Paseo MCP call fails/i);
     expect(prompt).toMatch(/explicitly tell the user what fallback you used and why/i);
@@ -431,7 +431,7 @@ describe("live voice initial items", () => {
   it("stays inside the provider's item and token limits with a large daemon", () => {
     const agents = Array.from({ length: 200 }, (_, index) => ({
       id: `agent-${index}`,
-      provider: "codex",
+      provider: "claude",
       cwd: `/work/very/long/path/that/eats/budget/number-${index}`,
       workspaceId: `ws-${index}`,
       title: `A fairly long agent session title number ${index}`,
@@ -465,7 +465,7 @@ describe("daemon context provider", () => {
         listAgents: () => [
           {
             id: AGENT_ID,
-            provider: "codex",
+            provider: "claude",
             cwd: "/work/paseo",
             workspaceId: "ws-1",
             lifecycle: "idle",
@@ -473,7 +473,7 @@ describe("daemon context provider", () => {
           },
           {
             id: "agent-gone",
-            provider: "codex",
+            provider: "claude",
             cwd: "/work/old",
             workspaceId: "ws-old",
             lifecycle: "closed",

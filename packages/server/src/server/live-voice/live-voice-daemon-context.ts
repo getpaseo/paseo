@@ -7,7 +7,10 @@ import {
   type LiveVoiceContextWorkspace,
   type LiveVoiceStartContext,
 } from "./live-voice-context.js";
-import type { LiveVoiceContextProvider } from "./live-voice-coordinator.js";
+import type {
+  LiveVoiceContextBuildOptions,
+  LiveVoiceContextProvider,
+} from "./live-voice-coordinator.js";
 
 /** Narrow views of the agent manager and workspace registry, for testability. */
 export interface LiveVoiceContextAgentSource {
@@ -62,14 +65,7 @@ export class LiveVoiceDaemonContextProvider implements LiveVoiceContextProvider 
     this.logger = options.logger.child({ module: "live-voice-context" });
   }
 
-  async build(options?: {
-    crossHostRoutingAvailable: boolean;
-    ambientAgentReports?: boolean;
-    ambientAgentGuidance?: string | undefined;
-    disabledPromptComponents?: readonly string[] | undefined;
-    customVoiceInstructions?: string | undefined;
-    defaultWorkspaceDirectory?: string | undefined;
-  }): Promise<LiveVoiceStartContext | null> {
+  async build(options?: LiveVoiceContextBuildOptions): Promise<LiveVoiceStartContext | null> {
     // `listAgents` already omits internal sessions, so the call's own hidden host
     // session never shows up in the snapshot it is given.
     const agents: LiveVoiceContextAgent[] = this.agents
@@ -101,6 +97,7 @@ export class LiveVoiceDaemonContextProvider implements LiveVoiceContextProvider 
     };
     const context = buildLiveVoiceStartContext(snapshot, {
       crossHostRoutingAvailable: options?.crossHostRoutingAvailable ?? true,
+      ...(options?.limits ? { limits: options.limits } : {}),
       ...(options?.ambientAgentReports ? { ambientAgentReports: true } : {}),
       ...(options?.ambientAgentGuidance
         ? { ambientAgentGuidance: options.ambientAgentGuidance }

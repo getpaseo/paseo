@@ -35,14 +35,14 @@ describe("live voice messages", () => {
       VoiceLiveStartRequestSchema.parse({
         type: "voice.live.start.request",
         requestId: "request-1",
-        offerSdp: "v=0\r\n",
+        negotiation: { kind: "webrtc_sdp", offerSdp: "v=0\r\n" },
       }).voice,
     ).toBeUndefined();
     expect(
       VoiceLiveStartRequestSchema.parse({
         type: "voice.live.start.request",
         requestId: "request-1",
-        offerSdp: "v=0\r\n",
+        negotiation: { kind: "webrtc_sdp", offerSdp: "v=0\r\n" },
         voice: "cedar",
       }).voice,
     ).toBe("cedar");
@@ -52,7 +52,7 @@ describe("live voice messages", () => {
     const parsed = VoiceLiveStartRequestSchema.parse({
       type: "voice.live.start.request",
       requestId: "request-1",
-      offerSdp: "v=0\r\n",
+      negotiation: { kind: "webrtc_sdp", offerSdp: "v=0\r\n" },
       disabledPromptComponents: ["recipes", "speech-style"],
       customVoiceInstructions: "Always answer in one sentence.",
     });
@@ -65,7 +65,7 @@ describe("live voice messages", () => {
     const parsed = VoiceLiveStartRequestSchema.parse({
       type: "voice.live.start.request",
       requestId: "request-1",
-      offerSdp: "v=0\r\n",
+      negotiation: { kind: "webrtc_sdp", offerSdp: "v=0\r\n" },
       backendModel: "gpt-5.6-sol",
       backendThinkingOptionId: "high",
     });
@@ -82,9 +82,9 @@ describe("live voice messages", () => {
           requestId: "request-1",
           accepted: true,
           liveSessionId: "live-1",
-          answerSdp: "v=0\r\n",
+          negotiation: { kind: "webrtc_sdp", answerSdp: "v=0\r\n" },
         },
-      }).payload.answerSdp,
+      }).payload.negotiation?.answerSdp,
     ).toBe("v=0\r\n");
     expect(
       VoiceLiveStartResponseSchema.parse({
@@ -163,8 +163,8 @@ describe("live voice messages", () => {
       }),
     ).toMatchObject({ role: "assistant", text: "hello" });
     expect(
-      parseEvent({ kind: "error", code: "codex_error", message: "boom", fatal: true }),
-    ).toMatchObject({ code: "codex_error", fatal: true });
+      parseEvent({ kind: "error", code: "provider_realtime_error", message: "boom", fatal: true }),
+    ).toMatchObject({ code: "provider_realtime_error", fatal: true });
     expect(parseEvent({ kind: "closed", cause: "requested" })).toEqual({
       kind: "closed",
       cause: "requested",

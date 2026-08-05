@@ -39,7 +39,10 @@ function createHarness(): Harness {
 
   const stopLiveVoice = vi.fn(async () => undefined);
   const client: LiveVoiceDaemonClient = {
-    startLiveVoice: async () => ({ liveSessionId: LIVE_SESSION_ID, answerSdp: "answer" }),
+    startLiveVoice: async () => ({
+      liveSessionId: LIVE_SESSION_ID,
+      negotiation: { kind: "webrtc_sdp" as const, answerSdp: "answer" },
+    }),
     stopLiveVoice,
     subscribeUpdates: (handler) => {
       subscribers.add(handler);

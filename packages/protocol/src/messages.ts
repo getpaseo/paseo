@@ -1111,13 +1111,24 @@ export const SetVoiceModeMessageSchema = z.object({
 // Live Voice: a realtime speech-to-speech call with the daemon itself. The call
 // is daemon-global, not attached to an agent session: the daemon hosts it on a
 // hidden session of its own, so no agentId appears anywhere in this protocol.
-// Audio rides a direct WebRTC media track; the daemon only relays SDP and
-// control. `voice.live.start.response` carries the answer SDP, so the client
+// Audio rides a transport the client establishes directly with the realtime
+// provider; the daemon only relays negotiation payloads and control.
+// `voice.live.start.response` carries the answer negotiation, so the client
 // never has to correlate a separate push for the handshake.
+
+// How the client proposes to reach the provider's media plane. `kind` becomes a
+// discriminated union when a backend with a different bootstrap (for example a
+// token handed to the client) exists; today the only kind is a fully gathered
+// WebRTC offer the daemon relays to the provider.
+export const VoiceLiveStartNegotiationSchema = z.object({
+  kind: z.literal("webrtc_sdp"),
+  offerSdp: z.string(),
+});
+
 export const VoiceLiveStartRequestSchema = z.object({
   type: z.literal("voice.live.start.request"),
   requestId: z.string(),
-  offerSdp: z.string(),
+  negotiation: VoiceLiveStartNegotiationSchema,
   voice: z.string().optional(),
   /**
    * The client will report agents this call did not start, so the model should
@@ -1162,8 +1173,9 @@ export const VoiceLiveStartRequestSchema = z.object({
   /**
    * Model for the call's backend executor — the text turns that run its
    * actions, not the realtime voice model. Absent means the daemon's default
-   * (a fast, cheap model). Codex resolves an unknown id to its own default, so
-   * a stale selection degrades to a working call rather than a failed one.
+   * (a fast, cheap model). The host provider resolves an unknown id to its own
+   * default, so a stale selection degrades to a working call rather than a
+   * failed one.
    *
    * COMPAT(liveVoiceBackendModel): added in v0.3.0, remove after 2027-02-28.
    * An older daemon drops both fields and uses its built-in default.
@@ -2180,7 +2192,15 @@ export const SetVoiceModeResponseMessageSchema = z.object({
   }),
 });
 
-// liveSessionId and answerSdp are present iff accepted; errorCode/errorMessage
+// The provider's half of the handshake, mirroring the request's negotiation
+// kind. Like the request side, `kind` grows into a discriminated union with the
+// first backend whose bootstrap is not an SDP answer.
+export const VoiceLiveAnswerNegotiationSchema = z.object({
+  kind: z.literal("webrtc_sdp"),
+  answerSdp: z.string(),
+});
+
+// liveSessionId and negotiation are present iff accepted; errorCode/errorMessage
 // are present iff rejected. errorCode stays z.string() (not z.enum) so a newer
 // daemon can introduce codes without breaking older clients.
 export const VoiceLiveStartResponseSchema = z.object({
@@ -2189,7 +2209,7 @@ export const VoiceLiveStartResponseSchema = z.object({
     requestId: z.string(),
     accepted: z.boolean(),
     liveSessionId: z.string().optional(),
-    answerSdp: z.string().optional(),
+    negotiation: VoiceLiveAnswerNegotiationSchema.optional(),
     errorCode: z.string().optional(),
     errorMessage: z.string().optional(),
   }),
@@ -3747,6 +3767,11 @@ export const ServerInfoStatusPayloadSchema = z
         // 2027-02-28. This daemon can watch every agent on it for a Live Voice
         // client, not only work a routed tool call started.
         liveVoiceAmbientAgentReports: z.boolean().optional(),
+        // COMPAT(liveVoiceHostProvider): added in v0.3.0, remove after
+        // 2027-02-28. Which agent provider hosts this daemon's Live Voice
+        // calls; clients read backend-model catalogs for it instead of
+        // assuming one. Absent means an older daemon (assume its built-in).
+        liveVoiceHostProvider: z.string().optional(),
       })
       .optional(),
   })

@@ -169,7 +169,7 @@ describe("Live Voice call surfaces", () => {
 
   it.each([
     { phase: "idle" as const, closedCause: null },
-    { phase: "idle" as const, closedCause: "codex_closed" },
+    { phase: "idle" as const, closedCause: "provider_closed" },
     { phase: "error" as const, closedCause: null },
   ])(
     "hides both large surfaces for terminal state $phase/$closedCause",

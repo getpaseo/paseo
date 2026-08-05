@@ -273,7 +273,7 @@ describe("Live Voice cross-host routing protocol", () => {
         SessionInboundMessageSchema.parse({
           type: "voice.live.start.request",
           requestId: "start-1",
-          offerSdp: "v=0",
+          negotiation: { kind: "webrtc_sdp", offerSdp: "v=0" },
         }),
       ).toMatchObject({ requestId: "start-1" });
 
@@ -281,7 +281,7 @@ describe("Live Voice cross-host routing protocol", () => {
         SessionInboundMessageSchema.parse({
           type: "voice.live.start.request",
           requestId: "start-1",
-          offerSdp: "v=0",
+          negotiation: { kind: "webrtc_sdp", offerSdp: "v=0" },
           ambientAgentReports: true,
           ambientAgentGuidance: "Only interrupt for permissions.",
         }),

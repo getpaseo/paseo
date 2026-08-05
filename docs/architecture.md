@@ -137,11 +137,15 @@ independent records; a project with no workspaces does not need a workspace plac
 #### Live Voice ownership and cross-host routing
 
 Live Voice is one daemon-global call per owning client socket. The daemon creates
-a hidden Codex host session for the realtime conversation; it is not attached to
-a project or ordinary visible agent. SDP and control messages travel over the
-existing authenticated Paseo WebSocket, while microphone and remote speech media
-travel directly between the app's WebRTC peer and OpenAI. The app never receives
-or stores an OpenAI API key for this path: Codex uses its existing
+a hidden host session for the realtime conversation; it is not attached to a
+project or ordinary visible agent. Which agent provider hosts it comes from a
+host profile (`agent/providers/live-voice-host-profiles.ts`) — the coordinator
+and everything under `server/live-voice/` are provider-neutral, and the daemon
+advertises the choice as `features.liveVoiceHostProvider`. Today the only
+profile is Codex. Negotiation and control messages travel over the existing
+authenticated Paseo WebSocket, while microphone and remote speech media travel
+directly between the app's WebRTC peer and the realtime provider. The app never
+receives or stores a provider API key for this path: Codex uses its existing
 ChatGPT-subscription authentication to establish the realtime session.
 
 Live Voice requires **Enable Paseo tools** on its host. The app excludes hosts

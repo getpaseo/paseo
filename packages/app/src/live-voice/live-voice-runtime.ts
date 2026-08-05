@@ -76,7 +76,7 @@ export interface LiveVoiceSnapshot {
  */
 export interface LiveVoiceDaemonClient {
   startLiveVoice(input: {
-    offerSdp: string;
+    negotiation: { kind: "webrtc_sdp"; offerSdp: string };
     voice?: string;
     ambientAgentReports?: boolean;
     ambientAgentGuidance?: string;
@@ -85,7 +85,10 @@ export interface LiveVoiceDaemonClient {
     defaultWorkspaceDirectory?: string;
     backendModel?: string;
     backendThinkingOptionId?: string;
-  }): Promise<{ liveSessionId: string; answerSdp: string }>;
+  }): Promise<{
+    liveSessionId: string;
+    negotiation: { kind: "webrtc_sdp"; answerSdp: string };
+  }>;
   stopLiveVoice(input: { liveSessionId: string }): Promise<void>;
   listLiveVoiceVoices?(): Promise<string[]>;
   subscribeUpdates(handler: (message: VoiceLiveUpdateMessage) => void): () => void;
@@ -517,9 +520,9 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       }
 
       const sessionOptions: StartLiveVoiceSessionOptions = {
-        negotiate: (offerSdp) =>
-          client.startLiveVoice({
-            offerSdp,
+        negotiate: async (offerSdp) => {
+          const started = await client.startLiveVoice({
+            negotiation: { kind: "webrtc_sdp", offerSdp },
             ...(voice ? { voice } : {}),
             ...ambientStartFields,
             ...(callSettings?.disabledPromptComponents?.length
@@ -535,7 +538,12 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
             ...(callSettings?.backendThinkingOptionId
               ? { backendThinkingOptionId: callSettings.backendThinkingOptionId }
               : {}),
-          }),
+          });
+          return {
+            liveSessionId: started.liveSessionId,
+            answerSdp: started.negotiation.answerSdp,
+          };
+        },
         onAudioBlocked: () => {
           if (generation !== startGeneration) return;
           patch({ isAudioBlocked: true });

@@ -1,6 +1,7 @@
 /**
- * Used only when the host cannot read its catalog from Codex app-server.
- * Keep this aligned with the oldest Codex version that can advertise Live Voice.
+ * Used only when the host cannot read a live catalog from its realtime
+ * provider. Keep this aligned with the oldest host-provider version that can
+ * advertise Live Voice.
  */
 export const FALLBACK_LIVE_VOICE_OPTIONS = [
   "juniper",

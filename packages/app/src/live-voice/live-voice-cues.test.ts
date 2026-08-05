@@ -33,7 +33,10 @@ function createHarness(overrides: { isSessionSupported?: boolean } = {}): Harnes
   let seq = 0;
 
   const client: LiveVoiceDaemonClient = {
-    startLiveVoice: async () => ({ liveSessionId: LIVE_SESSION_ID, answerSdp: "answer" }),
+    startLiveVoice: async () => ({
+      liveSessionId: LIVE_SESSION_ID,
+      negotiation: { kind: "webrtc_sdp" as const, answerSdp: "answer" },
+    }),
     stopLiveVoice: async () => undefined,
     subscribeUpdates: (handler) => {
       subscribers.add(handler);

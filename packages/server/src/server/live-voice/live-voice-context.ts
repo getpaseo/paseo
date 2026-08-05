@@ -13,20 +13,16 @@
  * It also needs the exact names of the tools it will reach for. Discovering them
  * costs a model turn each, and the user hears silence for every one.
  *
- * Two levers, both set on `thread/realtime/start`:
+ * Two levers, both set at realtime start (see `AgentRealtimeVoiceStartParams`):
  *   - `prompt` replaces the voice model's entire system prompt.
- *   - `initialItems` seeds the conversation with a state snapshot (v3 only).
- * We also pass `includeStartupContext: false` so codex's own synthesized
+ *   - `initialItems` seeds the conversation with a state snapshot.
+ * We also pass `includeStartupContext: false` so the provider's own synthesized
  * context doesn't compete with this one.
- *
- * Caveat: a user's `experimental_realtime_ws_backend_prompt` in their codex
- * config takes precedence over `prompt`. That ordering lives in codex, so a user
- * who sets it opts out of the Paseo prompt.
  */
 
 import { LIVE_VOICE_ALL_HOSTS_READ_TOOLS } from "./live-voice-fanout-tools.js";
 
-/** A `thread/realtime/start` initial item. Roles are codex's allowed set. */
+/** A realtime-start initial item. Roles are the provider's allowed set. */
 export interface LiveVoiceInitialItem {
   role: "user" | "developer" | "assistant";
   text: string;
@@ -65,13 +61,24 @@ export interface LiveVoiceContextSnapshot {
 }
 
 /**
- * codex enforces 128 items and 8,192 estimated tokens per item and in total.
- * Stay well under: this snapshot competes with the user's actual conversation
- * for the model's attention, and a rejected `start` costs the whole call.
+ * How the host provider counts snapshot context. Providers enforce their own
+ * item and token limits at realtime start, and a rejected start costs the whole
+ * call, so the budget must stay well under them — and be measured with the same
+ * estimator the provider checks against. Each host profile supplies its
+ * provider's numbers; the defaults are conservative enough for any of them.
  */
-const CONTEXT_TOKEN_BUDGET = 3_000;
-/** codex's own estimator, so our accounting matches the limit we're checked against. */
-const BYTES_PER_TOKEN = 4;
+export interface LiveVoiceContextLimits {
+  /** Snapshot budget, in the provider's own token estimate. */
+  contextTokenBudget: number;
+  /** The provider's estimator, so our accounting matches the limit checked against. */
+  bytesPerToken: number;
+}
+
+export const DEFAULT_LIVE_VOICE_CONTEXT_LIMITS: LiveVoiceContextLimits = {
+  contextTokenBudget: 3_000,
+  bytesPerToken: 4,
+};
+
 const MAX_LISTED = 20;
 
 const PASEO_VISIBLE_CREATION_RULES = [
@@ -81,7 +88,7 @@ const PASEO_VISIBLE_CREATION_RULES = [
 ];
 
 const AUTHORITATIVE_PASEO_STATE_RULES = [
-  "- Treat Paseo MCP results as authoritative. Your own working session's collaboration or subagent tree is not Paseo's agent list. Never infer Paseo state from OS processes, desktop screenshots, or local Codex session logs.",
+  "- Treat Paseo MCP results as authoritative. Your own working session's collaboration or subagent tree is not Paseo's agent list. Never infer Paseo state from OS processes, desktop screenshots, or your runtime's local session logs.",
   "- Use those fallback sources only if Paseo MCP is unavailable or a Paseo MCP call fails, and explicitly tell the user what fallback you used and why.",
 ];
 
@@ -562,8 +569,8 @@ export function buildLiveVoicePrompt(options: LiveVoicePromptOptions): string {
   ].join("\n");
 }
 
-function estimateTokens(text: string): number {
-  return Math.ceil(Buffer.byteLength(text, "utf8") / BYTES_PER_TOKEN);
+function estimateTokens(text: string, bytesPerToken: number): number {
+  return Math.ceil(Buffer.byteLength(text, "utf8") / bytesPerToken);
 }
 
 function describeAgent(agent: LiveVoiceContextAgent): string {
@@ -616,13 +623,14 @@ function buildSections(snapshot: LiveVoiceContextSnapshot): string[] {
  */
 export function buildLiveVoiceInitialItems(
   snapshot: LiveVoiceContextSnapshot,
+  limits: LiveVoiceContextLimits = DEFAULT_LIVE_VOICE_CONTEXT_LIMITS,
 ): LiveVoiceInitialItem[] {
   const items: LiveVoiceInitialItem[] = [];
   let spent = 0;
 
   for (const section of buildSections(snapshot)) {
-    const cost = estimateTokens(section);
-    if (spent + cost > CONTEXT_TOKEN_BUDGET) {
+    const cost = estimateTokens(section, limits.bytesPerToken);
+    if (spent + cost > limits.contextTokenBudget) {
       continue;
     }
     spent += cost;
@@ -636,6 +644,7 @@ export function buildLiveVoiceStartContext(
   snapshot: LiveVoiceContextSnapshot,
   options: {
     crossHostRoutingAvailable?: boolean;
+    limits?: LiveVoiceContextLimits | undefined;
     ambientAgentReports?: boolean;
     ambientAgentGuidance?: string | undefined;
     disabledPromptComponents?: readonly string[] | undefined;
@@ -661,6 +670,6 @@ export function buildLiveVoiceStartContext(
         ? { defaultWorkspaceDirectory: options.defaultWorkspaceDirectory }
         : {}),
     }),
-    initialItems: buildLiveVoiceInitialItems(snapshot),
+    initialItems: buildLiveVoiceInitialItems(snapshot, options.limits),
   };
 }

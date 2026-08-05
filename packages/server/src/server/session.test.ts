@@ -775,7 +775,7 @@ describe("Live Voice routing session boundary", () => {
     ]);
   });
 
-  test("drops a selected voice that the installed Codex catalog rejects", async () => {
+  test("drops a selected voice that the host provider's catalog rejects", async () => {
     const source = {};
     const start = vi.fn().mockResolvedValue({
       accepted: true,
@@ -793,7 +793,7 @@ describe("Live Voice routing session boundary", () => {
       {
         type: "voice.live.start.request",
         requestId: "start-request-1",
-        offerSdp: "offer-sdp",
+        negotiation: { kind: "webrtc_sdp", offerSdp: "offer-sdp" },
         voice: "shimmer",
       },
       source,
@@ -820,7 +820,7 @@ describe("Live Voice routing session boundary", () => {
       {
         type: "voice.live.start.request",
         requestId: "start-request-1",
-        offerSdp: "offer-sdp",
+        negotiation: { kind: "webrtc_sdp", offerSdp: "offer-sdp" },
       },
       source,
     );
@@ -836,7 +836,7 @@ describe("Live Voice routing session boundary", () => {
             requestId: "start-request-1",
             accepted: true,
             liveSessionId: "live-session-1",
-            answerSdp: "answer-sdp",
+            negotiation: { kind: "webrtc_sdp", answerSdp: "answer-sdp" },
           },
         },
       },
@@ -873,7 +873,7 @@ describe("Live Voice routing session boundary", () => {
       {
         type: "voice.live.start.request",
         requestId: "start-request-1",
-        offerSdp: "offer-sdp",
+        negotiation: { kind: "webrtc_sdp", offerSdp: "offer-sdp" },
       },
       source,
     );

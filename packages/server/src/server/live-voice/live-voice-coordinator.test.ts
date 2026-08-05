@@ -10,11 +10,20 @@ import {
   type LiveVoiceUpdate,
 } from "./live-voice-coordinator.js";
 import { buildLiveVoicePrompt } from "./live-voice-context.js";
+import type { LiveVoiceHostProfile } from "./live-voice-host-profile.js";
 import { LiveVoiceRouteBroker } from "./live-voice-route-broker.js";
 
 const OFFER_SDP = "v=0\r\no=- offer\r\n";
 const ANSWER_SDP = "v=0\r\no=- answer\r\n";
 const HOST_CWD = "/home/test-user";
+
+/** Deliberately not a real provider: the coordinator must not care whose it is. */
+const TEST_HOST_PROFILE: LiveVoiceHostProfile = {
+  provider: "test-realtime-provider",
+  model: "test-fast-model",
+  thinkingOptionId: "medium",
+  contextLimits: { contextTokenBudget: 3_000, bytesPerToken: 4 },
+};
 
 interface FakeStartParams {
   sdp: string;
@@ -43,8 +52,8 @@ interface FakeProviderSession {
 }
 
 /**
- * Mirrors the codex seam: `realtimeStart` resolves with nothing and the answer
- * SDP arrives out of band, so tests can drive either ordering.
+ * Mirrors the realtime seam: `realtimeStart` resolves with nothing and the
+ * answer SDP arrives out of band, so tests can drive either ordering.
  */
 function createFakeProviderSession(options?: {
   onStart?: (emit: (event: AgentRealtimeVoiceEvent) => void) => void;
@@ -178,6 +187,7 @@ function createHarness(options?: {
       },
     },
     logger: createTestLogger(),
+    hostProfile: TEST_HOST_PROFILE,
     routeBroker,
     createHostAgentId: () => `host-${hosts.length + 1}`,
     ...(options?.hostCwd === null ? {} : { hostCwd: options?.hostCwd ?? HOST_CWD }),
@@ -225,16 +235,14 @@ describe("LiveVoiceCoordinator", () => {
       liveSessionId: expect.any(String),
       answerSdp: ANSWER_SDP,
     });
-    // Hidden, provider-specific, and deliberately not in a project directory.
-    // The backend executor is pinned to a fast, cheap model at moderate
-    // thinking: it dispatches Paseo tools while the user waits on a live call,
-    // and codex resolves an unknown model id to its default, so an older codex
-    // still hosts calls.
+    // Hidden, host-profile-configured, and deliberately not in a project
+    // directory. The backend executor is pinned to the profile's fast, cheap
+    // model: it dispatches Paseo tools while the user waits on a live call.
     expect(harness.createConfigs).toEqual([
       {
-        provider: "codex",
-        model: "gpt-5.6-luna",
-        thinkingOptionId: "medium",
+        provider: TEST_HOST_PROFILE.provider,
+        model: TEST_HOST_PROFILE.model,
+        thinkingOptionId: TEST_HOST_PROFILE.thinkingOptionId,
         cwd: HOST_CWD,
         title: "Live Voice host",
         internal: true,
@@ -327,13 +335,13 @@ describe("LiveVoiceCoordinator", () => {
 
   it("reports unsupported when the daemon has no provider that can host a call", async () => {
     const harness = createHarness({
-      availability: { available: false, error: "codex CLI not installed" },
+      availability: { available: false, error: "provider CLI not installed" },
     });
 
     expect(await startCall(harness)).toMatchObject({
       accepted: false,
       errorCode: "unsupported",
-      errorMessage: expect.stringContaining("codex CLI not installed"),
+      errorMessage: expect.stringContaining("provider CLI not installed"),
     });
     // Nothing was spawned, so nothing needs tearing down.
     expect(harness.createConfigs).toEqual([]);
@@ -422,7 +430,7 @@ describe("LiveVoiceCoordinator", () => {
     });
     expect(harness.coordinator.hasActiveCall(result.liveSessionId)).toBe(false);
     // onAgentClosing fires before the provider session is disposed, so the
-    // coordinator still tells codex to end the upstream realtime session.
+    // coordinator still tells the provider to end the upstream realtime session.
     expect(harness.provider().stopCalls).toHaveLength(1);
     // And the host teardown that re-enters through onAgentClosing must not loop.
     expect(harness.closedHostIds).toEqual(["host-1"]);
@@ -439,24 +447,24 @@ describe("LiveVoiceCoordinator", () => {
     expect(harness.updates.map((update) => update.event.kind)).toEqual(["started"]);
   });
 
-  it("closes with cause codex_exit when the provider transport dies mid-call", async () => {
+  it("closes with cause provider_exit when the provider transport dies mid-call", async () => {
     const harness = createHarness();
     await startCall(harness);
 
-    harness.provider().emit({ kind: "transport_closed", reason: "Codex app-server exited" });
+    harness.provider().emit({ kind: "transport_closed", reason: "provider transport exited" });
 
     expect(harness.updates.at(-1)?.event).toMatchObject({
       kind: "closed",
-      cause: "codex_exit",
-      detail: "Codex app-server exited",
+      cause: "provider_exit",
+      detail: "provider transport exited",
     });
-    // The transport is gone; never ask it to stop (that would respawn codex).
+    // The transport is gone; never ask it to stop (that would respawn the provider).
     expect(harness.provider().stopCalls).toHaveLength(0);
     // The host session still has to go.
     expect(harness.closedHostIds).toEqual(["host-1"]);
   });
 
-  it("closes with cause codex_closed when codex ends the realtime session", async () => {
+  it("closes with cause provider_closed when the provider ends the realtime session", async () => {
     const harness = createHarness();
     await startCall(harness);
 
@@ -464,14 +472,14 @@ describe("LiveVoiceCoordinator", () => {
 
     expect(harness.updates.at(-1)?.event).toMatchObject({
       kind: "closed",
-      cause: "codex_closed",
+      cause: "provider_closed",
       detail: "client_closed",
     });
     expect(harness.provider().stopCalls).toHaveLength(0);
     expect(harness.closedHostIds).toEqual(["host-1"]);
   });
 
-  it("emits a fatal error then closes on a codex realtime error", async () => {
+  it("emits a fatal error then closes on a provider realtime error", async () => {
     const harness = createHarness();
     await startCall(harness);
 
@@ -526,7 +534,7 @@ describe("LiveVoiceCoordinator", () => {
         createFakeProviderSession({
           onStart: (emit) => {
             emit({ kind: "sdp", sdp: ANSWER_SDP });
-            emit({ kind: "transport_closed", reason: "Codex app-server exited" });
+            emit({ kind: "transport_closed", reason: "provider transport exited" });
           },
         }),
     });
@@ -662,6 +670,7 @@ describe("LiveVoiceCoordinator", () => {
     expect(buildOptions).toEqual([
       {
         crossHostRoutingAvailable: true,
+        limits: TEST_HOST_PROFILE.contextLimits,
         disabledPromptComponents: ["recipes", "speech-style"],
         customVoiceInstructions: "Always answer in one sentence.",
       },
@@ -744,7 +753,7 @@ describe("LiveVoiceCoordinator", () => {
       makeProvider: () =>
         createFakeProviderSession({
           onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
-          appendTextError: new Error("codex says no"),
+          appendTextError: new Error("provider says no"),
         }),
     });
     const result = await startCall(harness);

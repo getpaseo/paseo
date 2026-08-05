@@ -55,7 +55,10 @@ function createHarness(
 
   const startLiveVoice: StartLiveVoiceMock =
     overrides.startLiveVoice ??
-    vi.fn(async () => ({ liveSessionId: LIVE_SESSION_ID, answerSdp: ANSWER_SDP }));
+    vi.fn(async () => ({
+      liveSessionId: LIVE_SESSION_ID,
+      negotiation: { kind: "webrtc_sdp" as const, answerSdp: ANSWER_SDP },
+    }));
   const stopLiveVoice: HarnessClient["stopLiveVoice"] = vi.fn(async () => undefined);
   const client: HarnessClient = {
     startLiveVoice,
@@ -152,7 +155,7 @@ describe("live voice runtime", () => {
     expect(snapshot.liveSessionId).toBe(LIVE_SESSION_ID);
     expect(snapshot.error).toBeNull();
     expect(harness.client.startLiveVoice).toHaveBeenCalledWith({
-      offerSdp: OFFER_SDP,
+      negotiation: { kind: "webrtc_sdp", offerSdp: OFFER_SDP },
     });
     expect(harness.lease.current()).toBe("liveVoice");
     expect(harness.runtime.isActiveForServer(SERVER_ID)).toBe(true);
@@ -165,7 +168,7 @@ describe("live voice runtime", () => {
     await harness.runtime.start(SERVER_ID);
 
     expect(harness.client.startLiveVoice).toHaveBeenCalledWith({
-      offerSdp: OFFER_SDP,
+      negotiation: { kind: "webrtc_sdp", offerSdp: OFFER_SDP },
       voice: "juniper",
     });
   });
@@ -186,7 +189,7 @@ describe("live voice runtime", () => {
     await harness.runtime.start(SERVER_ID);
 
     expect(harness.client.startLiveVoice).toHaveBeenCalledWith({
-      offerSdp: OFFER_SDP,
+      negotiation: { kind: "webrtc_sdp", offerSdp: OFFER_SDP },
       disabledPromptComponents: ["recipes", "speech-style"],
       customVoiceInstructions: "Always answer in one sentence.",
       defaultWorkspaceDirectory: "~/Projects",
@@ -210,7 +213,9 @@ describe("live voice runtime", () => {
 
     await harness.runtime.start(SERVER_ID);
 
-    expect(harness.client.startLiveVoice).toHaveBeenCalledWith({ offerSdp: OFFER_SDP });
+    expect(harness.client.startLiveVoice).toHaveBeenCalledWith({
+      negotiation: { kind: "webrtc_sdp", offerSdp: OFFER_SDP },
+    });
   });
 
   it("omits a persisted voice that the target host does not support", async () => {
@@ -219,7 +224,7 @@ describe("live voice runtime", () => {
     await harness.runtime.start(SERVER_ID);
 
     expect(harness.client.startLiveVoice).toHaveBeenCalledWith({
-      offerSdp: OFFER_SDP,
+      negotiation: { kind: "webrtc_sdp", offerSdp: OFFER_SDP },
     });
   });
 
@@ -370,12 +375,12 @@ describe("live voice runtime", () => {
     await harness.runtime.start(SERVER_ID);
     harness.push({ kind: "transcript", role: "user", transcriptId: "t1", text: "hello" });
 
-    harness.push({ kind: "closed", cause: "codex_exit", detail: "child died" });
+    harness.push({ kind: "closed", cause: "provider_exit", detail: "child died" });
 
     const snapshot = harness.runtime.getSnapshot();
     expect(snapshot.phase).toBe("idle");
     expect(snapshot.liveSessionId).toBeNull();
-    expect(snapshot.closedCause).toBe("codex_exit");
+    expect(snapshot.closedCause).toBe("provider_exit");
     // Transcripts survive the close so the user can still read the call.
     expect(snapshot.transcripts).toHaveLength(1);
     expect(harness.session.close).toHaveBeenCalledTimes(1);
@@ -387,7 +392,7 @@ describe("live voice runtime", () => {
   it("clears a terminal ended state on dismiss()", async () => {
     await harness.runtime.start(SERVER_ID);
     harness.push({ kind: "transcript", role: "user", transcriptId: "t1", text: "hello" });
-    harness.push({ kind: "closed", cause: "codex_exit" });
+    harness.push({ kind: "closed", cause: "provider_exit" });
 
     harness.runtime.dismiss();
 
@@ -559,12 +564,17 @@ describe("live voice runtime", () => {
   });
 
   it("does not revive a call when a start resolves after its connection was lost", async () => {
-    let resolveNegotiation: (value: { liveSessionId: string; answerSdp: string }) => void = () =>
-      undefined;
+    let resolveNegotiation: (value: {
+      liveSessionId: string;
+      negotiation: { kind: "webrtc_sdp"; answerSdp: string };
+    }) => void = () => undefined;
     harness = createHarness({
       startLiveVoice: vi.fn(
         () =>
-          new Promise<{ liveSessionId: string; answerSdp: string }>((resolve) => {
+          new Promise<{
+            liveSessionId: string;
+            negotiation: { kind: "webrtc_sdp"; answerSdp: string };
+          }>((resolve) => {
             resolveNegotiation = resolve;
           }),
       ),
@@ -574,7 +584,10 @@ describe("live voice runtime", () => {
     await vi.waitFor(() => expect(harness.startSession).toHaveBeenCalled());
     harness.runtime.handleConnectionLost(SERVER_ID);
 
-    resolveNegotiation({ liveSessionId: LIVE_SESSION_ID, answerSdp: ANSWER_SDP });
+    resolveNegotiation({
+      liveSessionId: LIVE_SESSION_ID,
+      negotiation: { kind: "webrtc_sdp", answerSdp: ANSWER_SDP },
+    });
     await startPromise.catch(() => undefined);
 
     expect(harness.runtime.getSnapshot().phase).toBe("idle");
@@ -583,13 +596,18 @@ describe("live voice runtime", () => {
   });
 
   it("holds the mic lease through a stop() that lands mid-negotiation", async () => {
-    let resolveNegotiation: (value: { liveSessionId: string; answerSdp: string }) => void = () =>
-      undefined;
+    let resolveNegotiation: (value: {
+      liveSessionId: string;
+      negotiation: { kind: "webrtc_sdp"; answerSdp: string };
+    }) => void = () => undefined;
     harness = createHarness({
       pinConnection: "active",
       startLiveVoice: vi.fn(
         () =>
-          new Promise<{ liveSessionId: string; answerSdp: string }>((resolve) => {
+          new Promise<{
+            liveSessionId: string;
+            negotiation: { kind: "webrtc_sdp"; answerSdp: string };
+          }>((resolve) => {
             resolveNegotiation = resolve;
           }),
       ),
@@ -605,7 +623,10 @@ describe("live voice runtime", () => {
     expect(harness.lease.acquire("dictation")).toBeNull();
     expect(harness.pinRelease).not.toHaveBeenCalled();
 
-    resolveNegotiation({ liveSessionId: LIVE_SESSION_ID, answerSdp: ANSWER_SDP });
+    resolveNegotiation({
+      liveSessionId: LIVE_SESSION_ID,
+      negotiation: { kind: "webrtc_sdp", answerSdp: ANSWER_SDP },
+    });
     await startPromise;
 
     expect(harness.session.close).toHaveBeenCalledTimes(1);
@@ -621,16 +642,19 @@ describe("live voice runtime", () => {
         // Fire the terminal push while the start request is still in flight, so
         // the runtime has no liveSessionId to match against yet.
         pushEarly?.();
-        return { liveSessionId: LIVE_SESSION_ID, answerSdp: ANSWER_SDP };
+        return {
+          liveSessionId: LIVE_SESSION_ID,
+          negotiation: { kind: "webrtc_sdp" as const, answerSdp: ANSWER_SDP },
+        };
       }),
     });
-    pushEarly = () => harness.push({ kind: "closed", cause: "codex_closed" });
+    pushEarly = () => harness.push({ kind: "closed", cause: "provider_closed" });
 
     await harness.runtime.start(SERVER_ID);
 
     const snapshot = harness.runtime.getSnapshot();
     expect(snapshot.phase).toBe("idle");
-    expect(snapshot.closedCause).toBe("codex_closed");
+    expect(snapshot.closedCause).toBe("provider_closed");
     expect(snapshot.liveSessionId).toBeNull();
     expect(harness.lease.current()).toBeNull();
   });

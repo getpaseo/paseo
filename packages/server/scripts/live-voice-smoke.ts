@@ -202,16 +202,20 @@ async function main(): Promise<void> {
     done(`${offerSdp.length} chars`);
 
     done = step("voice.live.start via daemon");
-    const accepted = await withTimeout("startLiveVoice", client.startLiveVoice({ offerSdp }));
-    done(`liveSessionId ${accepted.liveSessionId}, answer ${accepted.answerSdp.length} chars`);
+    const accepted = await withTimeout(
+      "startLiveVoice",
+      client.startLiveVoice({ negotiation: { kind: "webrtc_sdp", offerSdp } }),
+    );
+    const answerSdp = accepted.negotiation.answerSdp;
+    done(`liveSessionId ${accepted.liveSessionId}, answer ${answerSdp.length} chars`);
 
     done = step("applying answer + waiting for connected + session.started");
     const connectionResult = await withTimeout(
       "webrtc connected",
-      page.evaluate(async (answerSdp: string) => {
+      page.evaluate(async (remoteAnswerSdp: string) => {
         const w = window as unknown as Record<string, unknown>;
         const pc = w.__pc as RTCPeerConnection;
-        await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+        await pc.setRemoteDescription({ type: "answer", sdp: remoteAnswerSdp });
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(
             () => reject(new Error(`stuck in ${pc.connectionState}`)),
@@ -239,7 +243,7 @@ async function main(): Promise<void> {
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
         return { state: pc.connectionState, sessionStarted: null };
-      }, accepted.answerSdp),
+      }, answerSdp),
     );
     if (connectionResult.sessionStarted === null) {
       throw new Error("session.started never arrived on oai-events");

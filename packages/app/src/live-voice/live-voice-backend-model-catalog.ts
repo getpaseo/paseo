@@ -24,9 +24,9 @@ interface CatalogModel {
 /**
  * Like the voice catalog: the setting is global but hosts can differ, so only
  * models every eligible host reports are offered. A model missing from the
- * intersection would still work — codex resolves unknown ids to its default —
- * but offering it would silently mean "default" on some machines, which is a
- * worse surprise than a shorter list.
+ * intersection would still work — the host provider resolves unknown ids to
+ * its default — but offering it would silently mean "default" on some
+ * machines, which is a worse surprise than a shorter list.
  */
 export function resolveLiveVoiceBackendModelOptions(
   catalogs: readonly (readonly CatalogModel[])[],
@@ -65,11 +65,16 @@ export function useLiveVoiceBackendModelOptions(): LiveVoiceBackendModelOption[]
     queryFn: async () => {
       const catalogs = await Promise.allSettled(
         hostIds.map(async (serverId) => {
-          const client = useSessionStore.getState().sessions[serverId]?.client;
+          const session = useSessionStore.getState().sessions[serverId];
+          const client = session?.client;
           if (!client) {
             throw new Error(`Live Voice host '${serverId}' disconnected`);
           }
-          const payload = await client.listProviderModels("codex");
+          // COMPAT(liveVoiceHostProvider): added in v0.3.0, remove fallback
+          // after 2027-02-28. Older daemons don't advertise which provider
+          // hosts their calls.
+          const hostProvider = session.serverInfo?.features?.liveVoiceHostProvider ?? "codex";
+          const payload = await client.listProviderModels(hostProvider);
           return payload.models ?? [];
         }),
       );

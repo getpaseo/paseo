@@ -9,52 +9,25 @@ import {
   type AgentRealtimeVoiceSession,
 } from "../agent/agent-realtime-voice.js";
 import type { LiveVoiceStartContext } from "./live-voice-context.js";
+import type { LiveVoiceHostProfile } from "./live-voice-host-profile.js";
 import {
   LiveVoiceRouteBroker,
   type LiveVoiceRouteObservation,
   type LiveVoiceRouteRegistration,
 } from "./live-voice-route-broker.js";
 
-/** How long to wait for codex's async answer-SDP notification before giving up. */
+/** How long to wait for the provider's async answer-SDP notification before giving up. */
 const START_SDP_TIMEOUT_MS = 30_000;
-
-/**
- * Provider the hidden host session runs on. Codex is the only provider that
- * implements the realtime seam today; the capability check below stays
- * provider-agnostic so this constant is the only thing to change if another
- * provider gains it.
- */
-const HOST_PROVIDER: AgentProvider = "codex";
 
 /** Shows up only in daemon logs and internal listings — the host session is hidden. */
 const HOST_TITLE = "Live Voice host";
 
 /**
- * Model for the host thread. A dispatcher, not a coder — it routes work through
- * Paseo's tools while the user waits — so a fast, cheap model is the right
- * default. Codex resolves an unknown model id to its own default, so an older
- * codex still hosts calls.
- *
- * Do not expect much latency from this. Measured against codex's own rollouts
- * (see docs/architecture.md), a median action costs ~13s, of which ~9.5s is the
- * realtime model deciding plus codex's handoff, ~2.4s is the turn that actually
- * emits the tool call, and ~20ms is Paseo. That emitting turn runs on a codex
- * *subagent* thread pinned by codex to its own model and effort, not to
- * anything set here. The lever that moves the number is making fewer calls.
- *
- * Known gap: codex reports this thread at effort `high` even when
- * `HOST_THINKING_OPTION_ID` says otherwise, so the thinking half of this pin is
- * not reaching the provider. Worth chasing only if host-thread turns turn out
- * to sit inside that 9.5s window.
- */
-const HOST_MODEL = "gpt-5.6-luna";
-const HOST_THINKING_OPTION_ID = "medium";
-
-/**
- * Codex routes realtime delegations into separate turns on the host thread, so
- * the backend executor gets the shared Live Voice prompt plus this block. It
- * restates the rules that matter most when the executor acts on its own: the
- * user is waiting on a live call, and everything must stay Paseo-visible.
+ * A provider may route realtime delegations into separate turns on the host
+ * thread, so the backend executor gets the shared Live Voice prompt plus this
+ * block. It restates the rules that matter most when the executor acts on its
+ * own: the user is waiting on a live call, and everything must stay
+ * Paseo-visible.
  */
 const BACKEND_EXECUTOR_INSTRUCTIONS = [
   "Delegations arrive here from a live voice call while the user waits, so:",
@@ -74,21 +47,21 @@ export type LiveVoiceCloseCause =
   | "requested"
   | "owner_disconnected"
   | "error"
-  | "codex_closed"
-  | "codex_exit"
+  | "provider_closed"
+  | "provider_exit"
   | "host_session_closed"
   | "start_failed";
 
 /**
- * Causes where the provider session is still usable, so we tell codex to tear
+ * Causes where the provider session is still usable, so we tell it to tear
  * down its realtime session. `host_session_closed` qualifies: `onAgentClosing`
  * fires before the provider session is disposed, so the stop still has a live
  * transport and keeps the upstream realtime session from outliving a stalled
- * teardown. The remaining causes mean codex already ended the session
- * (`codex_closed`) or the process is gone (`codex_exit`) — calling
- * `realtimeStop()` there would respawn the app-server.
+ * teardown. The remaining causes mean the provider already ended the session
+ * (`provider_closed`) or its transport is gone (`provider_exit`) — calling
+ * `realtimeStop()` there would respawn the provider process.
  */
-const CAUSES_REQUIRING_CODEX_STOP: ReadonlySet<LiveVoiceCloseCause> = new Set([
+const CAUSES_REQUIRING_PROVIDER_STOP: ReadonlySet<LiveVoiceCloseCause> = new Set([
   "requested",
   "owner_disconnected",
   "error",
@@ -138,17 +111,26 @@ export interface LiveVoiceStartRequest {
   backendThinkingOptionId?: string | undefined;
 }
 
-/** Only the fields the context builder reads, with absent ones dropped. */
-function toContextBuildOptions(request: LiveVoiceStartRequest): {
+/** What the coordinator hands the context builder for one call. */
+export interface LiveVoiceContextBuildOptions {
   crossHostRoutingAvailable: boolean;
+  /** The host profile's accounting, so the snapshot budget matches the provider. */
+  limits?: LiveVoiceHostProfile["contextLimits"];
   ambientAgentReports?: boolean;
   ambientAgentGuidance?: string | undefined;
   disabledPromptComponents?: readonly string[] | undefined;
   customVoiceInstructions?: string | undefined;
   defaultWorkspaceDirectory?: string | undefined;
-} {
+}
+
+/** Only the fields the context builder reads, with absent ones dropped. */
+function toContextBuildOptions(
+  request: LiveVoiceStartRequest,
+  limits: LiveVoiceHostProfile["contextLimits"],
+): LiveVoiceContextBuildOptions {
   return {
     crossHostRoutingAvailable: request.sendRouteRequest !== undefined,
+    limits,
     ...(request.ambientAgentReports ? { ambientAgentReports: true } : {}),
     ...(request.ambientAgentGuidance ? { ambientAgentGuidance: request.ambientAgentGuidance } : {}),
     ...(request.disabledPromptComponents?.length
@@ -204,8 +186,8 @@ interface LiveVoiceCall {
   unsubscribeRealtime: (() => void) | null;
   startTimer: NodeJS.Timeout | null;
   /**
-   * Codex answers `thread/realtime/start` with an empty result and delivers the
-   * answer SDP as a separate notification, which can land before or after that
+   * A provider may answer `realtimeStart` with an empty result and deliver the
+   * answer SDP as a separate event, which can land before or after that
    * result. Buffer whichever arrives first.
    */
   bufferedAnswerSdp: string | null;
@@ -229,19 +211,14 @@ interface LiveVoiceCall {
  * context, which yields a working but Paseo-unaware call.
  */
 export interface LiveVoiceContextProvider {
-  build(options?: {
-    crossHostRoutingAvailable: boolean;
-    ambientAgentReports?: boolean;
-    ambientAgentGuidance?: string | undefined;
-    disabledPromptComponents?: readonly string[] | undefined;
-    customVoiceInstructions?: string | undefined;
-    defaultWorkspaceDirectory?: string | undefined;
-  }): Promise<LiveVoiceStartContext | null>;
+  build(options?: LiveVoiceContextBuildOptions): Promise<LiveVoiceStartContext | null>;
 }
 
 export interface LiveVoiceCoordinatorOptions {
   agents: LiveVoiceAgentSource;
   logger: Logger;
+  /** The provider adapter that hosts calls on this daemon. */
+  hostProfile: LiveVoiceHostProfile;
   startSdpTimeoutMs?: number;
   context?: LiveVoiceContextProvider;
   routeBroker: LiveVoiceRouteBroker;
@@ -269,14 +246,15 @@ function resolveStartErrorCode(error: unknown): LiveVoiceStartErrorCode {
 /**
  * Daemon-global owner of Live Voice calls. A call is not attached to an agent:
  * each one spawns its own hidden host session to run the realtime conversation
- * on, so concurrent calls from different clients never share a codex thread
- * (codex silently replaces an existing realtime session when a second
- * `thread/realtime/start` lands on the same thread). One call per client session.
+ * on, so concurrent calls from different clients never share a provider thread
+ * (a provider may silently replace an existing realtime session when a second
+ * `realtimeStart` lands on the same thread). One call per client session.
  */
 export class LiveVoiceCoordinator {
   private readonly calls = new Map<string, LiveVoiceCall>();
   private readonly agents: LiveVoiceAgentSource;
   private readonly logger: Logger;
+  private readonly hostProfile: LiveVoiceHostProfile;
   private readonly startSdpTimeoutMs: number;
   private readonly context: LiveVoiceContextProvider | null;
   private readonly routeBroker: LiveVoiceRouteBroker;
@@ -287,6 +265,7 @@ export class LiveVoiceCoordinator {
   constructor(options: LiveVoiceCoordinatorOptions) {
     this.agents = options.agents;
     this.logger = options.logger.child({ module: "live-voice" });
+    this.hostProfile = options.hostProfile;
     this.startSdpTimeoutMs = options.startSdpTimeoutMs ?? START_SDP_TIMEOUT_MS;
     this.context = options.context ?? null;
     this.routeBroker = options.routeBroker;
@@ -484,32 +463,35 @@ export class LiveVoiceCoordinator {
         "Enable Paseo tools in this host's settings to use Live Voice.",
       );
     }
-    const availability = await this.agents.getProviderAvailability(HOST_PROVIDER);
+    const hostProvider = this.hostProfile.provider;
+    const availability = await this.agents.getProviderAvailability(hostProvider);
     if (!availability.available) {
       throw new LiveVoiceUnsupportedError(
-        `This daemon cannot host live voice: ${availability.error ?? `provider '${HOST_PROVIDER}' is unavailable`}`,
+        `This daemon cannot host live voice: ${availability.error ?? `provider '${hostProvider}' is unavailable`}`,
       );
     }
     if (call.state !== "starting" || this.calls.get(call.liveSessionId) !== call) {
       throw new Error("Live voice call closed while checking host availability");
     }
 
-    const context = this.context ? await this.buildContext(toContextBuildOptions(request)) : null;
+    const context = this.context
+      ? await this.buildContext(toContextBuildOptions(request, this.hostProfile.contextLimits))
+      : null;
     if (call.state !== "starting" || this.calls.get(call.liveSessionId) !== call) {
       throw new Error("Live voice call closed while building context");
     }
 
     const config: AgentSessionConfig = {
-      provider: HOST_PROVIDER,
-      model: request.backendModel ?? HOST_MODEL,
-      thinkingOptionId: request.backendThinkingOptionId ?? HOST_THINKING_OPTION_ID,
+      provider: hostProvider,
+      model: request.backendModel ?? this.hostProfile.model,
+      thinkingOptionId: request.backendThinkingOptionId ?? this.hostProfile.thinkingOptionId,
       cwd: this.hostCwd,
       title: HOST_TITLE,
       internal: true,
-      // `thread/realtime/start.prompt` configures only the conversational
-      // intermediary. Codex routes a realtime delegation into a separate turn
-      // on this host thread, so give that backend executor the same Live Voice
-      // rules through the thread's developer instructions as well.
+      // `realtimeStart`'s prompt configures only the conversational
+      // intermediary. A provider may route a realtime delegation into a
+      // separate turn on this host thread, so give that backend executor the
+      // same Live Voice rules through the thread's developer instructions too.
       ...(context
         ? {
             systemPrompt: `${context.prompt}\n\n${BACKEND_EXECUTOR_INSTRUCTIONS}`,
@@ -553,8 +535,8 @@ export class LiveVoiceCoordinator {
     }
     // Info, not debug: daemons run at info, and this is the only record of what
     // the call was actually configured with. Without it, a question as basic as
-    // "did the model override apply?" can only be answered by reading codex's
-    // own rollout files.
+    // "did the model override apply?" can only be answered by reading the
+    // provider's own session files.
     this.logger.info(
       {
         hostAgentId: agent.id,
@@ -574,7 +556,8 @@ export class LiveVoiceCoordinator {
    * `tool_start` is the first externally visible moment of a model action: its
    * arguments are complete. So `msSinceUserSpoke` brackets everything opaque —
    * turn detection, thinking, argument generation, and any backend-executor
-   * turn codex ran in between — and `argChars` is the generation-cost proxy. If
+   * turn the provider ran in between — and `argChars` is the generation-cost
+   * proxy. If
    * a near-empty call and a 2,000-char call show the same gap, the time is
    * thinking, not typing; if the gap scales with argChars, it is typing.
    * Everything from `tool_start` to `tool_end` is Paseo's own routing and
@@ -665,14 +648,9 @@ export class LiveVoiceCoordinator {
    * A context failure must not cost the user their call: fall back to the
    * provider's default context rather than aborting the start.
    */
-  private async buildContext(options: {
-    crossHostRoutingAvailable: boolean;
-    ambientAgentReports?: boolean;
-    ambientAgentGuidance?: string | undefined;
-    disabledPromptComponents?: readonly string[] | undefined;
-    customVoiceInstructions?: string | undefined;
-    defaultWorkspaceDirectory?: string | undefined;
-  }): Promise<LiveVoiceStartContext | null> {
+  private async buildContext(
+    options: LiveVoiceContextBuildOptions,
+  ): Promise<LiveVoiceStartContext | null> {
     if (!this.context) {
       return null;
     }
@@ -725,7 +703,7 @@ export class LiveVoiceCoordinator {
             realtimeSessionId: event.realtimeSessionId,
             version: event.version,
           },
-          "live_voice.codex.started",
+          "live_voice.provider.realtime_started",
         );
         return;
       case "transcript":
@@ -753,17 +731,17 @@ export class LiveVoiceCoordinator {
       case "error":
         this.publish(call, {
           kind: "error",
-          code: "codex_realtime_error",
+          code: "provider_realtime_error",
           message: event.message,
           fatal: true,
         });
         this.close(call, "error", event.message);
         return;
       case "closed":
-        this.close(call, "codex_closed", event.reason ?? undefined);
+        this.close(call, "provider_closed", event.reason ?? undefined);
         return;
       case "transport_closed":
-        this.close(call, "codex_exit", event.reason);
+        this.close(call, "provider_exit", event.reason);
         return;
     }
   }
@@ -821,11 +799,11 @@ export class LiveVoiceCoordinator {
       this.calls.delete(call.liveSessionId);
     }
 
-    if (call.provider && CAUSES_REQUIRING_CODEX_STOP.has(cause)) {
+    if (call.provider && CAUSES_REQUIRING_PROVIDER_STOP.has(cause)) {
       void call.provider.realtimeStop().catch((error) => {
         this.logger.debug(
           { err: error, liveSessionId: call.liveSessionId, cause },
-          "live_voice.codex.stop_failed",
+          "live_voice.provider.stop_failed",
         );
       });
     }

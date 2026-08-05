@@ -518,7 +518,7 @@ type SetVoiceModePayload = Extract<
 /** Resolved handshake for an accepted Live Voice call. */
 export interface AcceptedLiveVoiceStart {
   liveSessionId: string;
-  answerSdp: string;
+  negotiation: { kind: "webrtc_sdp"; answerSdp: string };
 }
 type DictationFinishAcceptedPayload = Extract<
   SessionOutboundMessage,
@@ -3512,14 +3512,15 @@ export class DaemonClient {
    * The call is daemon-global: the daemon hosts it on a hidden session of its
    * own, so there is no agent to attach to. One call per client connection.
    *
-   * The daemon relays the SDP offer to the provider and waits for the answer
-   * before replying, so this request is much slower than a normal RPC — hence
-   * the dedicated timeout. Rejections arrive inside an accepted response
-   * (`accepted: false`) rather than as an RPC error; they are rethrown as a
-   * {@link LiveVoiceStartRejectedError} so callers can switch on `errorCode`.
+   * The daemon relays the negotiation payload to the provider and waits for
+   * its answer before replying, so this request is much slower than a normal
+   * RPC — hence the dedicated timeout. Rejections arrive inside an accepted
+   * response (`accepted: false`) rather than as an RPC error; they are rethrown
+   * as a {@link LiveVoiceStartRejectedError} so callers can switch on
+   * `errorCode`.
    */
   async startLiveVoice(input: {
-    offerSdp: string;
+    negotiation: { kind: "webrtc_sdp"; offerSdp: string };
     voice?: string;
     requestId?: string;
     /** This client will report agents the call did not start. */
@@ -3540,7 +3541,7 @@ export class DaemonClient {
       ...(input.requestId ? { requestId: input.requestId } : {}),
       message: {
         type: "voice.live.start.request",
-        offerSdp: input.offerSdp,
+        negotiation: input.negotiation,
         ...(input.voice ? { voice: input.voice } : {}),
         ...(input.ambientAgentReports ? { ambientAgentReports: true } : {}),
         ...(input.ambientAgentGuidance ? { ambientAgentGuidance: input.ambientAgentGuidance } : {}),
@@ -3561,7 +3562,7 @@ export class DaemonClient {
       // The daemon awaits the provider's answer SDP before responding.
       timeout: LIVE_VOICE_START_TIMEOUT_MS,
     });
-    if (!payload.accepted || !payload.liveSessionId || !payload.answerSdp) {
+    if (!payload.accepted || !payload.liveSessionId || !payload.negotiation) {
       throw new LiveVoiceStartRejectedError({
         ...(payload.errorCode ? { errorCode: payload.errorCode } : {}),
         ...(payload.errorMessage ? { errorMessage: payload.errorMessage } : {}),
@@ -3569,11 +3570,11 @@ export class DaemonClient {
     }
     return {
       liveSessionId: payload.liveSessionId,
-      answerSdp: payload.answerSdp,
+      negotiation: payload.negotiation,
     };
   }
 
-  /** Read the Live Voice choices from the Codex version installed on this host. */
+  /** Read the Live Voice choices from this host's realtime provider. */
   async listLiveVoiceVoices(input: { requestId?: string } = {}): Promise<string[]> {
     const payload = await this.sendNamespacedCorrelatedSessionRequest<"voice.live.voices.response">(
       {

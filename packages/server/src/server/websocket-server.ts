@@ -39,6 +39,7 @@ import {
 } from "./session.js";
 import { LiveVoiceCoordinator } from "./live-voice/live-voice-coordinator.js";
 import { LiveVoiceDaemonContextProvider } from "./live-voice/live-voice-daemon-context.js";
+import { resolveLiveVoiceHostProfile } from "./agent/providers/live-voice-host-profiles.js";
 import type { HubRelationshipManagement } from "./hub/relationship-controller.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import type { HubExecutionAgents } from "./hub/daemon-executions.js";
@@ -774,6 +775,7 @@ export class VoiceAssistantWebSocketServer {
     this.liveVoiceCoordinator = new LiveVoiceCoordinator({
       agents: this.agentManager,
       logger: this.logger,
+      hostProfile: resolveLiveVoiceHostProfile(),
       routeBroker: this.liveVoiceRouteBroker,
       // Teaches the voice model what Paseo is and what is currently running. The
       // host session carries Paseo's MCP tools, so this is what turns "can talk"
@@ -1823,6 +1825,8 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(liveVoiceAmbientAgentReports): added in v0.2.6, remove after 2027-02-28.
         // Same notifier, so it rides on the same availability.
         liveVoiceAmbientAgentReports: this.liveVoiceToolExecutionAvailable,
+        // COMPAT(liveVoiceHostProvider): added in v0.3.0, remove after 2027-02-28.
+        liveVoiceHostProvider: resolveLiveVoiceHostProfile().provider,
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
         workspaceScriptManagement: true,
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.

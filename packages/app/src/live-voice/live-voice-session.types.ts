@@ -20,7 +20,7 @@ export class LiveVoiceSessionError extends Error {
   }
 }
 
-/** What the daemon returns after relaying the local offer to Codex/OpenAI. */
+/** What the daemon returns after relaying the local offer to its realtime provider. */
 export interface LiveVoiceNegotiationResult {
   liveSessionId: string;
   answerSdp: string;
