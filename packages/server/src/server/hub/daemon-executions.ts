@@ -6,6 +6,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 
 import type { AgentManager, AgentManagerEvent, ManagedAgent } from "../agent/agent-manager.js";
+import type { McpServerConfig } from "../agent/agent-sdk-types.js";
 import type { AgentStorage, StoredAgentRecord } from "../agent/agent-storage.js";
 import type { BoundCreateAgentCommand } from "../agent/create-agent/create.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../worktree-session.js";
@@ -25,6 +26,7 @@ export interface HubExecutionAgentCreateInput {
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
   env?: Record<string, string>;
+  mcpServers?: Record<string, McpServerConfig>;
   worktree?: CreateAgentWorktreeTarget;
 }
 
@@ -175,6 +177,7 @@ export class DaemonExecutions implements HubExecutionAgents {
       return this.resolveRecord(existing);
     }
     this.requireAuthority(authorityGeneration);
+    requireHubMcpNamespace(input.mcpServers);
 
     let createdWorktree: CreatePaseoWorktreeWorkflowResult | null = null;
     let createdAgentId: string | null = null;
@@ -192,6 +195,7 @@ export class DaemonExecutions implements HubExecutionAgents {
         thinking: input.thinkingOptionId,
         features: input.featureValues,
         env: input.env,
+        ...(input.mcpServers ? { config: { mcpServers: input.mcpServers } } : {}),
         worktree: toCreateAgentWorktree(input.worktree),
         background: true,
         notifyOnFinish: false,
@@ -345,6 +349,12 @@ export class DaemonExecutions implements HubExecutionAgents {
       throw new Error(`Agent ${record.id} is not owned by daemon ${this.daemonId}`);
     }
     return owner;
+  }
+}
+
+function requireHubMcpNamespace(mcpServers: Record<string, McpServerConfig> | undefined): void {
+  if (mcpServers && Object.hasOwn(mcpServers, "paseo")) {
+    throw new Error('Hub execution MCP server name "paseo" is reserved by the daemon');
   }
 }
 

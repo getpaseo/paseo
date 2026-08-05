@@ -3120,6 +3120,8 @@ class ClaudeAgentSession implements AgentSession {
       ...(effort ? { effort } : {}),
       ...extraClaudeOptions,
       ...settingsOptions,
+      // Provider subagent panes render the child's nested transcript.
+      forwardSubagentText: true,
       // Merged rather than assigned above: extraClaudeOptions is spread after the base, so any
       // user-configured hooks would otherwise replace these wholesale and silently stop effort
       // from being observed.

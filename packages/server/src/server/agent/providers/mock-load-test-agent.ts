@@ -614,6 +614,7 @@ export class MockLoadTestAgentSession implements AgentSession {
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private modeId: string | null;
   private modelId: string | null;
+  private readonly assistantResponse: string | null;
   private readonly rewindError: string | null;
   private remainingPromptRejections: number;
 
@@ -622,6 +623,10 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.logger = options.logger;
     this.modeId = options.config.modeId ?? MOCK_LOAD_TEST_MODE_ID;
     this.modelId = options.config.model ?? MOCK_LOAD_TEST_DEFAULT_MODEL_ID;
+    this.assistantResponse =
+      typeof options.config.featureValues?.mockAssistantResponse === "string"
+        ? options.config.featureValues.mockAssistantResponse
+        : null;
     this.rewindError =
       typeof options.config.featureValues?.mockRewindError === "string"
         ? options.config.featureValues.mockRewindError
@@ -687,6 +692,8 @@ export class MockLoadTestAgentSession implements AgentSession {
     const scheduleTurn = () => {
       if (shouldEmitTurnFailure(prompt)) {
         this.scheduleFailedTurn(turn);
+      } else if (this.assistantResponse !== null) {
+        this.scheduleSettledAssistantTurn(turn, this.assistantResponse);
       } else if (structuredBranchName) {
         this.scheduleSettledAssistantTurn(turn, JSON.stringify(structuredBranchName));
       } else if (settledAssistantImageMarkdown) {

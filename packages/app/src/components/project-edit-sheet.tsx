@@ -162,8 +162,7 @@ export function ProjectEditSheet({
                 iconDataUri={state.previewDataUri}
                 initial={projectInitial(snapshot.projectName)}
                 projectViewKey={projectViewKey}
-                imageStyle={styles.preview}
-                fallbackStyle={styles.previewFallback}
+                size={40}
                 textStyle={styles.previewText}
               />
               <Button
@@ -272,18 +271,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     flexWrap: "wrap",
     gap: theme.spacing[2],
-  },
-  preview: {
-    width: 40,
-    height: 40,
-    borderRadius: theme.borderRadius.md,
-  },
-  previewFallback: {
-    width: 40,
-    height: 40,
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
   },
   previewText: {
     fontSize: theme.fontSize.base,

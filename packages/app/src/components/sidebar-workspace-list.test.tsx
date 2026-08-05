@@ -43,6 +43,7 @@ import { seedSessionWorkspaces } from "@/test/seed-session";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import { defaultHostAppearance } from "@/hosts/appearance";
 
 vi.mock("@react-native-async-storage/async-storage", () => ({
   default: {
@@ -146,6 +147,7 @@ function makeHost(): HostProfile {
   return {
     serverId: SERVER_ID,
     label: "Render Count Host",
+    appearance: defaultHostAppearance(),
     lifecycle: {},
     connections: [],
     preferredConnectionId: null,

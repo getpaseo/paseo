@@ -34,6 +34,11 @@ export interface AttachmentPersister {
     mimeType: string;
     fileName: string | null;
   }) => Promise<AttachmentMetadata>;
+  persistFromDataUrl: (input: {
+    dataUrl: string;
+    mimeType: string;
+    fileName: string | null;
+  }) => Promise<AttachmentMetadata>;
   deleteAttachments: (metadata: AttachmentMetadata[]) => Promise<void> | void;
 }
 
@@ -80,7 +85,10 @@ export interface QueueWriter {
 
 export async function pickAndPersistImages(input: {
   pickImages: () => Promise<PickedImageAttachmentInput[] | null>;
-  persister: Pick<AttachmentPersister, "persistFromBlob" | "persistFromFileUri">;
+  persister: Pick<
+    AttachmentPersister,
+    "persistFromBlob" | "persistFromFileUri" | "persistFromDataUrl"
+  >;
 }): Promise<AttachmentMetadata[]> {
   const result = await input.pickImages();
   if (!result?.length) return [];
@@ -91,6 +99,13 @@ export async function pickAndPersistImages(input: {
       if (picked.source.kind === "blob") {
         return await input.persister.persistFromBlob({
           blob: picked.source.blob,
+          mimeType,
+          fileName,
+        });
+      }
+      if (picked.source.kind === "data_url") {
+        return await input.persister.persistFromDataUrl({
+          dataUrl: picked.source.dataUrl,
           mimeType,
           fileName,
         });

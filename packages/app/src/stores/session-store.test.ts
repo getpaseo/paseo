@@ -97,6 +97,7 @@ describe("agent timeline state", () => {
       head: [],
       range: { epoch: "epoch-1", startSeq: 51, endSeq: 100 },
       older: "available",
+      newer: false,
       synchronized: true,
       acknowledgedClientMessageIds: [],
     });
@@ -108,6 +109,7 @@ describe("agent timeline state", () => {
       items,
       range: { epoch: "epoch-1", startSeq: 51, endSeq: 100 },
       older: "available",
+      newer: "none",
     });
   });
 
@@ -118,13 +120,14 @@ describe("agent timeline state", () => {
       head: [],
       range: null,
       older: "none",
+      newer: false,
       synchronized: true,
       acknowledgedClientMessageIds: [],
     });
 
     expect(
       selectAgentTimelineState(useSessionStore.getState().sessions["test-server"], "agent-1"),
-    ).toEqual({ status: "synced", items: [], range: null, older: "none" });
+    ).toEqual({ status: "synced", items: [], range: null, older: "none", newer: "none" });
   });
 
   it("preserves older availability when an applied response leaves it unchanged", () => {
@@ -135,6 +138,7 @@ describe("agent timeline state", () => {
       head: [],
       range: { epoch: "epoch-1", startSeq: 200, endSeq: 240 },
       older: "available",
+      newer: false,
       synchronized: true,
       acknowledgedClientMessageIds: [],
     });
@@ -144,6 +148,7 @@ describe("agent timeline state", () => {
       head: [],
       range: { epoch: "epoch-1", startSeq: 200, endSeq: 240 },
       older: "unchanged",
+      newer: false,
       synchronized: false,
       acknowledgedClientMessageIds: [],
     });
@@ -155,6 +160,7 @@ describe("agent timeline state", () => {
       items: [],
       range: { epoch: "epoch-1", startSeq: 200, endSeq: 240 },
       older: "available",
+      newer: "none",
     });
   });
 

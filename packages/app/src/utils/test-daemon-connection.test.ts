@@ -134,6 +134,27 @@ describe("test-daemon-connection connectToDaemon", () => {
     expect(probe.createdConfigs()[0]?.password).toBe("shared-secret");
   });
 
+  it("passes performance tracing into the connected client", async () => {
+    const { connectToDaemon } = await import("./test-daemon-connection");
+    const trace = {
+      isEnabled: () => true,
+      beginSection: vi.fn(),
+      endSection: vi.fn(),
+    };
+    const result = await connectToDaemon(
+      {
+        id: "direct:lan:6767",
+        type: "directTcp",
+        endpoint: "lan:6767",
+      },
+      { trace },
+      probe.deps,
+    );
+    await result.client.close();
+
+    expect(probe.createdConfigs()[0]?.trace).toBe(trace);
+  });
+
   it("uses relay TLS from the stored connection", async () => {
     const { connectToDaemon } = await import("./test-daemon-connection");
     const tlsResult = await connectToDaemon(

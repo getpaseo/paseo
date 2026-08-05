@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Animated, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { projectIconRadius } from "@/components/project-icon-view";
+
+const PROJECT_ICON_SIZE = 16;
 
 const SECTION_OPACITIES: readonly number[] = [1, 0.7, 0.4];
 const SECTION_KEYS = SECTION_OPACITIES.map((_, i) => `skeleton-section-${i}`);
@@ -116,9 +119,10 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   projectIcon: {
-    width: 16,
-    height: 16,
-    borderRadius: theme.borderRadius.sm,
+    width: PROJECT_ICON_SIZE,
+    height: PROJECT_ICON_SIZE,
+    // Matches the real icon it stands in for, so the skeleton doesn't change shape on load.
+    borderRadius: projectIconRadius(PROJECT_ICON_SIZE),
     backgroundColor: theme.colors.surface2,
   },
   sectionTitle: {

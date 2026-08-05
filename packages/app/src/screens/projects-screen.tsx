@@ -166,8 +166,7 @@ function ProjectRowIcon({
       iconDataUri={iconDataUri}
       initial={initial}
       projectViewKey={projectViewKey}
-      imageStyle={styles.iconImage}
-      fallbackStyle={styles.iconFallback}
+      size={16}
       textStyle={styles.iconFallbackText}
     />
   );
@@ -215,18 +214,6 @@ const styles = StyleSheet.create((theme) => ({
   leading: {
     width: 16,
     height: 16,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  iconImage: {
-    width: 16,
-    height: 16,
-    borderRadius: theme.borderRadius.sm,
-  },
-  iconFallback: {
-    width: 16,
-    height: 16,
-    borderRadius: theme.borderRadius.sm,
     alignItems: "center",
     justifyContent: "center",
   },

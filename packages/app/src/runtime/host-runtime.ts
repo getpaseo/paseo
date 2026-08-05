@@ -14,6 +14,7 @@ import {
   type HostConnection,
   type HostProfile,
 } from "@/types/host-connection";
+import { defaultHostAppearance, type HostBadgeDisplay, type HostColor } from "@/hosts/appearance";
 import {
   buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl,
@@ -47,7 +48,7 @@ import {
   invalidateServerDataQueriesAfterReconnect,
   mountServerDataPushRouter,
 } from "@/data/push-router";
-import { mountBrowserAutomationDaemonClientHandler } from "@/browser-automation/handler";
+import { mountBrowserAutomationDaemonClientHandler } from "@/desktop/browser/automation/handler";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
@@ -55,6 +56,7 @@ import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/su
 import { encodeImages } from "@/utils/encode-images";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
 import { ReplicaCache } from "@/runtime/replica-cache";
+import { nativePerformanceTrace } from "@/performance/native-trace";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
 export type HostRegistryStatus = "loading" | "ready";
@@ -482,6 +484,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         appVersion: resolveAppVersion() ?? undefined,
         runtimeGeneration,
         capabilities: appCapabilities,
+        trace: nativePerformanceTrace,
       };
       if (connection.type === "directSocket" || connection.type === "directPipe") {
         return new DaemonClient({
@@ -520,6 +523,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         ...(host.serverId ? { serverId: host.serverId } : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         capabilities: appCapabilities,
+        trace: nativePerformanceTrace,
       }),
     getClientId: () => getOrCreateClientId(),
     mountClientHandlers: ({ client, host }) => {
@@ -1340,13 +1344,13 @@ interface AgentDirectoryRefreshInput {
 export class HostRuntimeStore {
   private controllers = new Map<string, HostRuntimeController>();
   private serverListeners = new Map<string, Set<() => void>>();
-  private agentStoppedRunningListeners = new Map<string, Set<(agentId: string) => void>>();
   private globalListeners = new Set<() => void>();
   private hostListListeners = new Set<() => void>();
   private version = 0;
   private hostListVersion = 0;
   private hostRegistryLoaded = false;
   private hosts: HostProfile[] = [];
+  private hostAppearanceMutationTail: Promise<void> = Promise.resolve();
   private hostRegistryStatus: HostRegistryStatus = "loading";
   private deps: HostRuntimeControllerDeps;
   private lastConnectionStatusByServer = new Map<string, HostRuntimeConnectionStatus>();
@@ -1461,7 +1465,9 @@ export class HostRuntimeStore {
       this.hostRegistryStatus = "ready";
       this.emitHostList();
       if (shouldPersistHosts) {
-        void this.persistHosts();
+        void this.persistHosts().catch((error) =>
+          console.error("[HostRuntime] Failed to persist host registry", error),
+        );
       }
     }
   }
@@ -1585,12 +1591,11 @@ export class HostRuntimeStore {
     rekeyMap(this.controllers, oldServerId, newServerId);
     rekeyMap(this.lastConnectionStatusByServer, oldServerId, newServerId);
     rekeyMap(this.directoryBootstrapInFlight, oldServerId, newServerId);
-    rekeyMap(this.agentStoppedRunningListeners, oldServerId, newServerId);
     this.replicaCache.reconcileServerId(oldServerId, newServerId);
     this.directorySyncByServer.get(oldServerId)?.dispose();
     this.directorySyncByServer.delete(oldServerId);
     const directory = new DirectorySync(newServerId, {
-      onAgentStoppedRunning: (agentId) => this.onAgentStoppedRunning(newServerId, agentId),
+      onAgentStoppedRunning: (agentId) => this.drainQueuedAgentMessage(newServerId, agentId),
       markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
       markAgentReady: () => controller.markAgentDirectorySyncReady(),
       markAgentError: (error) => controller.markAgentDirectorySyncError(error),
@@ -1626,7 +1631,9 @@ export class HostRuntimeStore {
     );
     this.emitHostList();
     this.emit(newServerId);
-    void this.persistHosts();
+    void this.persistHosts().catch((error) =>
+      console.error("[HostRuntime] Failed to persist host registry", error),
+    );
   }
 
   async upsertDirectConnection(input: {
@@ -1664,6 +1671,7 @@ export class HostRuntimeStore {
     const probeHost: HostProfile = {
       serverId: "",
       label: input.label ?? input.connection.id,
+      appearance: defaultHostAppearance(),
       lifecycle: {},
       connections: [input.connection],
       preferredConnectionId: input.connection.id,
@@ -1782,12 +1790,57 @@ export class HostRuntimeStore {
     });
   }
 
-  async renameHost(serverId: string, label: string): Promise<void> {
-    const next = this.hosts.map((h) =>
-      h.serverId === serverId ? { ...h, label, updatedAt: new Date().toISOString() } : h,
+  private async updateHost(
+    serverId: string,
+    apply: (host: HostProfile) => HostProfile,
+  ): Promise<void> {
+    const updatedAt = new Date().toISOString();
+    const next = this.hosts.map((host) =>
+      host.serverId === serverId ? { ...apply(host), updatedAt } : host,
     );
     this.setHostsAndSync(next);
     await this.persistHosts();
+  }
+
+  async renameHost(serverId: string, label: string): Promise<void> {
+    await this.updateHost(serverId, (host) => ({ ...host, label }));
+  }
+
+  async setHostColor(serverId: string, color: HostColor): Promise<void> {
+    await this.updateHostAppearance(serverId, (host) => ({
+      ...host,
+      appearance: { ...host.appearance, color },
+    }));
+  }
+
+  async setHostBadgeDisplay(serverId: string, badgeDisplay: HostBadgeDisplay): Promise<void> {
+    await this.updateHostAppearance(serverId, (host) => ({
+      ...host,
+      appearance: { ...host.appearance, badgeDisplay },
+    }));
+  }
+
+  private updateHostAppearance(
+    serverId: string,
+    apply: (host: HostProfile) => HostProfile,
+  ): Promise<void> {
+    const update = this.hostAppearanceMutationTail.then(() =>
+      this.applyHostAppearance(serverId, apply),
+    );
+    this.hostAppearanceMutationTail = update.catch(() => undefined);
+    return update;
+  }
+
+  private async applyHostAppearance(
+    serverId: string,
+    apply: (host: HostProfile) => HostProfile,
+  ): Promise<void> {
+    const updatedAt = new Date().toISOString();
+    const next = this.hosts.map((host) =>
+      host.serverId === serverId ? { ...apply(host), updatedAt } : host,
+    );
+    await this.persistHosts(next);
+    this.setHostsAndSync(next);
   }
 
   async removeHost(serverId: string): Promise<void> {
@@ -1848,7 +1901,9 @@ export class HostRuntimeStore {
           ])
         : undefined,
     });
-    void this.persistHosts();
+    void this.persistHosts().catch((error) =>
+      console.error("[HostRuntime] Failed to persist host registry", error),
+    );
     return next.find((daemon) => daemon.serverId === input.serverId) as HostProfile;
   }
 
@@ -1866,12 +1921,8 @@ export class HostRuntimeStore {
     this.emitHostList();
   }
 
-  private async persistHosts(): Promise<void> {
-    try {
-      await this.storage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(this.hosts));
-    } catch (error) {
-      console.error("[HostRuntime] Failed to persist host registry", error);
-    }
+  private async persistHosts(hosts = this.hosts): Promise<void> {
+    await this.storage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(hosts));
   }
 
   private emitHostList(): void {
@@ -1927,7 +1978,7 @@ export class HostRuntimeStore {
       this.directorySyncByServer.set(
         host.serverId,
         new DirectorySync(host.serverId, {
-          onAgentStoppedRunning: (agentId) => this.onAgentStoppedRunning(host.serverId, agentId),
+          onAgentStoppedRunning: (agentId) => this.drainQueuedAgentMessage(host.serverId, agentId),
           markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
           markAgentReady: () => controller.markAgentDirectorySyncReady(),
           markAgentError: (error) => controller.markAgentDirectorySyncError(error),
@@ -2126,18 +2177,6 @@ export class HostRuntimeStore {
     };
   }
 
-  subscribeAgentStoppedRunning(serverId: string, listener: (agentId: string) => void): () => void {
-    const listeners = this.agentStoppedRunningListeners.get(serverId) ?? new Set();
-    listeners.add(listener);
-    this.agentStoppedRunningListeners.set(serverId, listeners);
-    return () => {
-      const current = this.agentStoppedRunningListeners.get(serverId);
-      if (!current) return;
-      current.delete(listener);
-      if (current.size === 0) this.agentStoppedRunningListeners.delete(serverId);
-    };
-  }
-
   subscribeAll(listener: () => void): () => void {
     this.globalListeners.add(listener);
     return () => {
@@ -2244,13 +2283,6 @@ export class HostRuntimeStore {
     }
     for (const listener of this.globalListeners) {
       listener();
-    }
-  }
-
-  private onAgentStoppedRunning(serverId: string, agentId: string): void {
-    this.drainQueuedAgentMessage(serverId, agentId);
-    for (const listener of this.agentStoppedRunningListeners.get(serverId) ?? []) {
-      listener(agentId);
     }
   }
 }
@@ -2421,6 +2453,8 @@ export interface HostMutations {
     label?: string,
   ) => Promise<HostProfile>;
   renameHost: (serverId: string, label: string) => Promise<void>;
+  setHostColor: (serverId: string, color: HostColor) => Promise<void>;
+  setHostBadgeDisplay: (serverId: string, badgeDisplay: HostBadgeDisplay) => Promise<void>;
   removeHost: (serverId: string) => Promise<void>;
   removeConnection: (serverId: string, connectionId: string) => Promise<void>;
 }
@@ -2435,6 +2469,9 @@ export function useHostMutations(): HostMutations {
       upsertConnectionFromOffer: (offer, label) => store.upsertConnectionFromOffer(offer, label),
       upsertConnectionFromOfferUrl: (url, label) => store.upsertConnectionFromOfferUrl(url, label),
       renameHost: (serverId, label) => store.renameHost(serverId, label),
+      setHostColor: (serverId, color) => store.setHostColor(serverId, color),
+      setHostBadgeDisplay: (serverId, badgeDisplay) =>
+        store.setHostBadgeDisplay(serverId, badgeDisplay),
       removeHost: (serverId) => store.removeHost(serverId),
       removeConnection: (serverId, connectionId) => store.removeConnection(serverId, connectionId),
     }),

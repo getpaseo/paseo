@@ -138,6 +138,15 @@ describe("CursorACPAgentClient model discovery", () => {
       }),
     ).resolves.toEqual([
       {
+        type: "toggle",
+        id: "auto_accept",
+        label: "Auto Accept",
+        description: "Automatically approves ACP permission prompts.",
+        tooltip: "Auto accept permission prompts",
+        icon: "shield-check",
+        value: false,
+      },
+      {
         type: "select",
         id: CURSOR_FAST_FEATURE_OPTION.id,
         label: "Fast",

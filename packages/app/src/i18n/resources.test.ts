@@ -159,6 +159,10 @@ describe("translation resources", () => {
     expect(zhCN.settings.providers.models.many).toBe("{{count}} 个 Model");
   });
 
+  it("labels the immediate add-to-chat action without an ellipsis", () => {
+    expect(en.workspace.fileActions.addToChat).toBe("Add to chat");
+  });
+
   it("keeps local connection fallback errors translated", () => {
     expect(findUntranslatedConnectionErrors()).toEqual([]);
   });
@@ -222,6 +226,9 @@ describe("translation resources", () => {
 
   it("includes Settings expansion keys for the Batch 3A migration", () => {
     expect(en.settings.diagnostics.title).toBe("Diagnostics");
+    expect(en.settings.diagnostics.legacyTerminalRenderer.label).toBe(
+      "Use legacy terminal renderer",
+    );
     expect(en.settings.about.title).toBe("About");
     expect(en.settings.about.releaseChannel.label).toBe("Release channel");
     expect(en.settings.appearance.theme.title).toBe("Theme");

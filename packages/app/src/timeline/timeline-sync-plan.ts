@@ -60,6 +60,17 @@ export function planTimelineOlderFetch(cursor: TimelineSyncCursor) {
   } as const;
 }
 
+export function planTimelinePromptJump(target: TimelineSyncCursor) {
+  const newerRows = Math.floor(TIMELINE_FETCH_PAGE_SIZE / 2);
+  return {
+    direction: "before",
+    cursor: { epoch: target.epoch, seq: target.seq + newerRows + 1 },
+    limit: TIMELINE_FETCH_PAGE_SIZE,
+    projection: "projected",
+    mergeWindow: true,
+  } as const;
+}
+
 export function isTimelineCatchUpComplete(input: {
   direction: "tail" | "before" | "after";
   hasNewer: boolean;

@@ -3,7 +3,7 @@ import { usePathname, useRouter } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
-import { getResidentBrowserWebview } from "@/components/browser-webview-resident";
+import { getResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import {
@@ -18,7 +18,7 @@ import {
   buildBrowserKeyboardPolicy,
   parseBrowserShortcutInput,
   shouldPublishBrowserShortcutPolicy,
-} from "@/keyboard/browser-shortcuts";
+} from "@/desktop/browser/shortcuts";
 import type { KeyboardFocusScope, KeyboardShortcutPayload } from "@/keyboard/actions";
 import {
   routeKeyboardShortcut,
@@ -29,6 +29,7 @@ import { getShortcutOs } from "@/utils/shortcut-platform";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { isNative } from "@/constants/platform";
+import { keyboardShortcutsAvailable } from "@/keyboard/availability";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import {
@@ -59,6 +60,7 @@ export function useKeyboardShortcuts({
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
   const { overrides } = useKeyboardShortcutOverrides();
   const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
+  const shortcutsAvailable = keyboardShortcutsAvailable({ isNative, isCompact: isMobile });
   const isDesktopApp = getIsElectronRuntime();
   const isMac = getShortcutOs() === "mac";
   const chordStateRef = useRef<ChordState>({
@@ -73,7 +75,7 @@ export function useKeyboardShortcuts({
   const publishBrowserShortcutPolicy = useCallback(
     (chordState?: ChordState) => {
       const policy =
-        enabled && !isMobile
+        enabled && shortcutsAvailable
           ? buildBrowserKeyboardPolicy({
               bindings,
               chordState,
@@ -83,7 +85,7 @@ export function useKeyboardShortcuts({
           : { menuPrefixes: [], prefixes: [] };
       void getDesktopHost()?.browser?.setShortcutPolicy?.(policy);
     },
-    [bindings, enabled, isDesktopApp, isMac, isMobile],
+    [bindings, enabled, isDesktopApp, isMac, shortcutsAvailable],
   );
 
   useEffect(() => {
@@ -102,8 +104,7 @@ export function useKeyboardShortcuts({
 
   useEffect(() => {
     if (!enabled) return;
-    if (isNative) return;
-    if (isMobile) return;
+    if (!shortcutsAvailable) return;
 
     // Only the modifier that actually performs the workspace-index jump on this
     // runtime should reveal the sidebar number badges (Alt on web, Cmd on
@@ -390,6 +391,7 @@ export function useKeyboardShortcuts({
     publishBrowserShortcutPolicy,
     resetModifiers,
     router,
+    shortcutsAvailable,
     toggleAgentList,
     toggleBothSidebars,
   ]);

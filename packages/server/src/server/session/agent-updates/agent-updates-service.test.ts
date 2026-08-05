@@ -99,10 +99,14 @@ function buildHarness() {
   const projectByWorkspaceId = new Map<string, ProjectPlacementPayload | null>();
   let providerVisible: (provider: string) => boolean = () => true;
   let buildAgentPayloadError: Error | null = null;
+  let enrichProjectedPayload = false;
 
   const service = createAgentUpdatesService({
     emit: (message) => emitted.push(message),
     enrichAgentPayload: async (payload) => {
+      if (enrichProjectedPayload) {
+        return payload;
+      }
       const queuedPayload = queuedPayloadBuilds.shift();
       if (queuedPayload) {
         return queuedPayload;
@@ -151,6 +155,9 @@ function buildHarness() {
     },
     setProviderVisible(fn: (provider: string) => boolean) {
       providerVisible = fn;
+    },
+    useProjectedPayload() {
+      enrichProjectedPayload = true;
     },
     failBuildAgentPayload(error: Error) {
       buildAgentPayloadError = error;
@@ -327,6 +334,56 @@ describe("forwardLiveAgent", () => {
       { kind: "upsert", agent: expect.objectContaining({ id: "a" }), project: makeProject() },
     ]);
     expect(h.workspaceUpdates).toEqual(["ws-1"]);
+  });
+
+  test("never projects MCP credentials into ordinary client updates", async () => {
+    const h = buildHarness();
+    h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
+    h.service.flushBootstrapped("sub");
+    h.register(makeAgentPayload({ id: "a", workspaceId: "ws-1" }));
+    h.useProjectedPayload();
+    const agent = h.managed("a");
+    agent.config.mcpServers = {
+      hub: {
+        type: "http",
+        url: "https://hub.test/mcp/executions/execution-1",
+        headers: { Authorization: "Bearer execution-secret" },
+      },
+    };
+    agent.persistence = {
+      provider: "codex",
+      sessionId: "session-a",
+      metadata: {
+        conversationId: "conversation-a",
+        mcpServers: agent.config.mcpServers,
+      },
+    };
+    expect(agent.config).toMatchObject({
+      provider: "codex",
+      mcpServers: {
+        hub: {
+          type: "http",
+          url: "https://hub.test/mcp/executions/execution-1",
+          headers: { Authorization: "Bearer execution-secret" },
+        },
+      },
+    });
+
+    await h.service.forwardLiveAgent(agent);
+
+    const update = h.agentUpdates()[0];
+    expect(update).toEqual({
+      kind: "upsert",
+      agent: expect.objectContaining({ id: "a" }),
+      project: makeProject(),
+    });
+    if (update?.kind !== "upsert") {
+      throw new Error("Expected an agent upsert");
+    }
+    expect(update.agent).not.toHaveProperty("config");
+    expect(update.agent).not.toHaveProperty("mcpServers");
+    expect(update.agent.persistence?.metadata).toEqual({ conversationId: "conversation-a" });
+    expect(JSON.stringify(update.agent)).not.toContain("execution-secret");
   });
 
   test("emits a remove when the agent's workspace resolves to no project", async () => {

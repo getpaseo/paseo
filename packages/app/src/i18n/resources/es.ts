@@ -112,6 +112,7 @@ export const es: TranslationResources = {
     },
     attachments: {
       addImage: "Agregar imagen",
+      pasteImage: "Pegar imagen",
       addFile: "Upload file",
       addIssueOrPr: "Agregar problema oPR",
       addIssueOrPr_mr: "Agregar problema o MR",
@@ -137,6 +138,8 @@ export const es: TranslationResources = {
       initialPromptRequired: "Se requiere aviso inicial",
       alreadyLoading: "Ya cargando",
       uploadFailed: "Failed to upload file",
+      noClipboardImage: "No hay ninguna imagen en el portapapeles",
+      pasteImageFailed: "No se pudo pegar la imagen",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
@@ -187,6 +190,7 @@ export const es: TranslationResources = {
   agentStream: {
     empty: "Comience a chatear con este agente...",
     scrollToBottom: "Desplazarse hacia abajo",
+    historyLoadFailed: "No se pudo cargar el historial del agente",
     permission: {
       plan: "Plan",
       required: "Permiso requerido",
@@ -384,7 +388,7 @@ export const es: TranslationResources = {
       openFile: "Abrir archivo",
       copyPath: "Copiar ruta",
       download: "Descargar",
-      addToChat: "Añadir al chat…",
+      addToChat: "Añadir al chat",
       moreActions: "Más acciones",
     },
     fileExplorer: {
@@ -481,6 +485,7 @@ export const es: TranslationResources = {
     },
     terminal: {
       hostDisconnected: "Hostno está conectado",
+      updateHost: "Actualiza el host para usar el renderizador de terminal nativo.",
       unableToSubscribe: "No se puede suscribir al terminal",
     },
     tabs: {
@@ -861,6 +866,14 @@ export const es: TranslationResources = {
           viewPullRequest: "Ver",
           openOn: "Abrir en {{brand}}",
         },
+        checksSummary: {
+          passedLabel: "pasó",
+          failedLabel: "falló",
+          runningLabel: "en curso",
+          passedAccessible: "Comprobaciones superadas",
+          failedAccessible: "Comprobaciones fallidas",
+          runningAccessible: "Comprobaciones en curso",
+        },
         sections: {
           checks: "cheques",
           pipeline: "Pipeline",
@@ -908,6 +921,33 @@ export const es: TranslationResources = {
     },
   },
   sidebar: {
+    display: {
+      trigger: "Preferencias de visualización",
+      heading: "Visualización",
+      grouping: {
+        label: "Agrupación",
+        project: "Proyecto",
+        status: "Estado",
+      },
+      titleSource: {
+        label: "Título",
+        title: "Título",
+        branch: "Nombre de rama",
+      },
+      show: {
+        label: "Mostrar",
+        host: "Host",
+        changeRequest: "Pull request",
+        checks: "Comprobaciones",
+        scripts: "Scripts",
+        diff: "Estadísticas de cambios",
+        timestamp: "Última actividad",
+      },
+      hostFilter: {
+        label: "Host",
+        all: "Todos los hosts",
+      },
+    },
     pinned: {
       title: "Anclados",
     },
@@ -1759,6 +1799,11 @@ export const es: TranslationResources = {
     },
     diagnostics: {
       title: "Diagnóstico",
+      legacyTerminalRenderer: {
+        label: "Usar el renderizador de terminal anterior",
+        description: "Usa el terminal WebView anterior al volver a abrir un terminal",
+        accessibilityLabel: "Usar el renderizador de terminal anterior",
+      },
       testAudio: "audio de prueba",
       playTest: "Prueba de juego",
       playing: "Jugando...",
@@ -1824,6 +1869,10 @@ export const es: TranslationResources = {
       },
       detailLevel: {
         title: "Nivel de detalle",
+      },
+      chatOutline: {
+        title: "Esquema del chat",
+        description: "Muestra un esquema para saltar entre instrucciones",
       },
       fonts: {
         title: "Fuentes",
@@ -1980,6 +2029,41 @@ export const es: TranslationResources = {
       },
     },
     host: {
+      appearance: {
+        title: "Apariencia",
+        name: {
+          label: "Nombre",
+        },
+        color: {
+          label: "Color",
+          accessibilityLabel: "Color, {{value}}",
+          options: {
+            none: "Predeterminado",
+            violet: "Violeta",
+            sky: "Cielo",
+            emerald: "Esmeralda",
+            orange: "Naranja",
+            pink: "Rosa",
+            indigo: "Índigo",
+            teal: "Verde azulado",
+            red: "Rojo",
+            amber: "Ámbar",
+            blue: "Azul",
+          },
+        },
+        badge: {
+          label: "Insignia de la barra lateral",
+          accessibilityLabel: "Insignia de la barra lateral, {{value}}",
+          options: {
+            name: "Nombre",
+            icon: "Solo icono",
+            hidden: "Oculta",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "Hostno encontrado",
       badges: {
         relay: "Relé",

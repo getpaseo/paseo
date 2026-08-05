@@ -39,7 +39,12 @@ class FakeTerminalStreamClient implements TerminalStreamControllerClient {
   private readonly listeners = new Set<(event: TerminalStreamEvent) => void>();
   public subscribeCalls: Array<{ terminalId: string; options?: unknown }> = [];
   public unsubscribeCalls: string[] = [];
-  public resizeCalls: Array<{ terminalId: string; rows: number; cols: number }> = [];
+  public resizeCalls: Array<{
+    terminalId: string;
+    rows: number;
+    cols: number;
+    intent?: "claim" | "update";
+  }> = [];
   public nextSubscribeResults: Array<{ terminalId: string; error?: string | null }> = [];
 
   async subscribeTerminal(terminalId: string, options?: unknown) {
@@ -57,9 +62,14 @@ class FakeTerminalStreamClient implements TerminalStreamControllerClient {
 
   sendTerminalInput(
     terminalId: string,
-    message: { type: "resize"; rows: number; cols: number },
+    message: { type: "resize"; rows: number; cols: number; intent?: "claim" | "update" },
   ): void {
-    this.resizeCalls.push({ terminalId, rows: message.rows, cols: message.cols });
+    this.resizeCalls.push({
+      terminalId,
+      rows: message.rows,
+      cols: message.cols,
+      ...(message.intent ? { intent: message.intent } : {}),
+    });
   }
 
   onTerminalStreamEvent(handler: (event: TerminalStreamEvent) => void): () => void {
@@ -137,7 +147,9 @@ describe("terminal-stream-controller", () => {
     });
 
     expect(harness.client.subscribeCalls).toEqual([{ terminalId: "term-1" }]);
-    expect(harness.client.resizeCalls).toEqual([{ terminalId: "term-1", rows: 24, cols: 80 }]);
+    expect(harness.client.resizeCalls).toEqual([
+      { terminalId: "term-1", rows: 24, cols: 80, intent: "claim" },
+    ]);
     expect(harness.snapshots).toEqual([{ terminalId: "term-1", text: "hello" }]);
     expect(harness.outputs[0]?.data).toBe(outputData);
     expect(harness.outputs).toEqual([{ terminalId: "term-1", data: terminalOutput(" world") }]);
@@ -227,6 +239,7 @@ describe("terminal-stream-controller", () => {
         },
       },
     ]);
+    expect(client.resizeCalls).toEqual([]);
     expect(harness.restores[0]?.data).toBe(restoreData);
     expect(harness.restores).toEqual([{ terminalId: "term-1", data: terminalOutput("restored") }]);
     expect(harness.outputs).toEqual([]);

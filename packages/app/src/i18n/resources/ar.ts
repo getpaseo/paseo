@@ -112,6 +112,7 @@ export const ar: TranslationResources = {
     },
     attachments: {
       addImage: "أضف صورة",
+      pasteImage: "لصق صورة",
       addFile: "Upload file",
       addIssueOrPr: "أضف مشكلة أو PR",
       addIssueOrPr_mr: "أضف مشكلة أو MR",
@@ -137,6 +138,8 @@ export const ar: TranslationResources = {
       initialPromptRequired: "مطلوب موجه الأولي",
       alreadyLoading: "جارٍ التحميل بالفعل",
       uploadFailed: "Failed to upload file",
+      noClipboardImage: "لا توجد صورة في الحافظة",
+      pasteImageFailed: "تعذر لصق الصورة",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
@@ -187,6 +190,7 @@ export const ar: TranslationResources = {
   agentStream: {
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
+    historyLoadFailed: "تعذر تحميل سجل الوكيل",
     permission: {
       plan: "يخطط",
       required: "الإذن مطلوب",
@@ -380,7 +384,7 @@ export const ar: TranslationResources = {
       openFile: "افتح الملف",
       copyPath: "نسخ المسار",
       download: "تحميل",
-      addToChat: "إضافة إلى الدردشة…",
+      addToChat: "إضافة إلى الدردشة",
       moreActions: "المزيد من الإجراءات",
     },
     fileExplorer: {
@@ -477,6 +481,7 @@ export const ar: TranslationResources = {
     },
     terminal: {
       hostDisconnected: "Host غير متصل",
+      updateHost: "حدّث المضيف لاستخدام عارض الطرفية الأصلي.",
       unableToSubscribe: "غير قادر على الاشتراك في المحطة",
     },
     tabs: {
@@ -830,6 +835,14 @@ export const ar: TranslationResources = {
           viewPullRequest: "عرض",
           openOn: "فتح على {{brand}}",
         },
+        checksSummary: {
+          passedLabel: "نجح",
+          failedLabel: "فشل",
+          runningLabel: "قيد التشغيل",
+          passedAccessible: "نجحت الفحوصات",
+          failedAccessible: "فشلت الفحوصات",
+          runningAccessible: "الفحوصات قيد التشغيل",
+        },
         sections: {
           checks: "الشيكات",
           pipeline: "خط المعالجة",
@@ -877,6 +890,33 @@ export const ar: TranslationResources = {
     },
   },
   sidebar: {
+    display: {
+      trigger: "تفضيلات العرض",
+      heading: "العرض",
+      grouping: {
+        label: "التجميع",
+        project: "المشروع",
+        status: "الحالة",
+      },
+      titleSource: {
+        label: "العنوان",
+        title: "العنوان",
+        branch: "اسم الفرع",
+      },
+      show: {
+        label: "إظهار",
+        host: "المضيف",
+        changeRequest: "طلب السحب",
+        checks: "الفحوصات",
+        scripts: "البرامج النصية",
+        diff: "إحصائيات الفروق",
+        timestamp: "آخر نشاط",
+      },
+      hostFilter: {
+        label: "المضيف",
+        all: "كل المضيفين",
+      },
+    },
     pinned: {
       title: "المثبتة",
     },
@@ -1712,6 +1752,11 @@ export const ar: TranslationResources = {
     },
     diagnostics: {
       title: "التشخيص",
+      legacyTerminalRenderer: {
+        label: "استخدام عارض الطرفية السابق",
+        description: "استخدام طرفية WebView السابقة بعد إعادة فتح الطرفية",
+        accessibilityLabel: "استخدام عارض الطرفية السابق",
+      },
       testAudio: "اختبار الصوت",
       playTest: "لعب الاختبار",
       playing: "جارٍ اللعب...",
@@ -1777,6 +1822,10 @@ export const ar: TranslationResources = {
       },
       detailLevel: {
         title: "مستوى التفاصيل",
+      },
+      chatOutline: {
+        title: "مخطط المحادثة",
+        description: "عرض مخطط للتنقل بين المطالبات",
       },
       fonts: {
         title: "الخطوط",
@@ -1930,6 +1979,41 @@ export const ar: TranslationResources = {
       },
     },
     host: {
+      appearance: {
+        title: "المظهر",
+        name: {
+          label: "الاسم",
+        },
+        color: {
+          label: "اللون",
+          accessibilityLabel: "اللون، {{value}}",
+          options: {
+            none: "افتراضي",
+            violet: "بنفسجي",
+            sky: "سماوي",
+            emerald: "زمردي",
+            orange: "برتقالي",
+            pink: "وردي",
+            indigo: "نيلي",
+            teal: "أزرق مخضر",
+            red: "أحمر",
+            amber: "كهرماني",
+            blue: "أزرق",
+          },
+        },
+        badge: {
+          label: "شارة الشريط الجانبي",
+          accessibilityLabel: "شارة الشريط الجانبي، {{value}}",
+          options: {
+            name: "الاسم",
+            icon: "أيقونة فقط",
+            hidden: "مخفي",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "لم يتم العثور على Host",
       badges: {
         relay: "تتابع",
