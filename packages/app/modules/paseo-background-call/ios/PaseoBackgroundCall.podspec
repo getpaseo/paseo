@@ -12,6 +12,9 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
+  # For RTCAudioSessionConfiguration; the version is pinned by
+  # react-native-webrtc's own dependency on the same pod.
+  s.dependency 'JitsiWebRTC'
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
