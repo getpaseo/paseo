@@ -1807,6 +1807,37 @@ export const fr: TranslationResources = {
         description: "Transmis tel quel à l’agent vocal. Laissez vide pour qu’il décide.",
         placeholder: "Ne m’interrompez que pour les demandes de permission et les échecs.",
       },
+      promptComponents: {
+        "canonical-tools": {
+          label: "Aide-mémoire des outils",
+          description:
+            "Donne à l’assistant les noms exacts des outils pour éviter des tours de découverte.",
+        },
+        "delegation-brevity": {
+          label: "Délégations brèves",
+          description:
+            "Garde les prompts aux sessions d’agent courts — pas de code ni de listes d’étapes dictés.",
+        },
+        "cross-host-reach": {
+          label: "Vision multi-machines",
+          description:
+            "Apprend à l’assistant quelles lectures couvrent toutes les machines en un seul appel.",
+        },
+        recipes: {
+          label: "Recettes",
+          description:
+            "Les chemins les plus courts connus pour les demandes courantes, comme archiver par nom.",
+        },
+        "speech-style": {
+          label: "Style de parole",
+          description: "Phrases parlées, agir avant de raconter et vocabulaire Paseo.",
+        },
+      },
+      customInstructions: {
+        label: "Instructions permanentes",
+        description: "Transmises telles quelles à l’agent vocal, à chaque appel.",
+        placeholder: "Réponds toujours en une phrase sauf si j’en demande plus.",
+      },
     },
     diagnostics: {
       title: "Voix en direct",

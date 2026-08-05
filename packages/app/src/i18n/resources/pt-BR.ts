@@ -1789,6 +1789,37 @@ export const ptBR: TranslationResources = {
         description: "Repassado ao agente de voz como está. Deixe vazio para ele decidir.",
         placeholder: "Só me interrompa para pedidos de permissão e falhas.",
       },
+      promptComponents: {
+        "canonical-tools": {
+          label: "Cola de ferramentas",
+          description:
+            "Dá ao assistente os nomes exatos das ferramentas para pular turnos de descoberta.",
+        },
+        "delegation-brevity": {
+          label: "Delegações breves",
+          description:
+            "Mantém curtos os prompts às sessões de agente — sem ditar código nem listas de passos.",
+        },
+        "cross-host-reach": {
+          label: "Visão entre máquinas",
+          description:
+            "Ensina ao assistente quais leituras cobrem todas as máquinas em uma só chamada.",
+        },
+        recipes: {
+          label: "Receitas",
+          description:
+            "Os caminhos mais curtos conhecidos para pedidos comuns, como arquivar pelo nome.",
+        },
+        "speech-style": {
+          label: "Estilo de fala",
+          description: "Frases faladas, agir antes de narrar e vocabulário do Paseo.",
+        },
+      },
+      customInstructions: {
+        label: "Instruções permanentes",
+        description: "Repassadas ao agente de voz como estão, em toda chamada.",
+        placeholder: "Responda sempre em uma frase, a menos que eu peça mais.",
+      },
     },
     diagnostics: {
       title: "Voz ao vivo",

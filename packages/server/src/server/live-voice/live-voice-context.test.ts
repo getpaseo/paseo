@@ -7,6 +7,7 @@ import {
   buildLiveVoiceStartContext,
   type LiveVoiceContextSnapshot,
 } from "./live-voice-context.js";
+import { LIVE_VOICE_PROMPT_COMPONENTS } from "./live-voice-context.js";
 import { LIVE_VOICE_ALL_HOSTS_READ_TOOLS } from "./live-voice-fanout-tools.js";
 import { LiveVoiceDaemonContextProvider } from "./live-voice-daemon-context.js";
 import { buildVoiceModeSystemPrompt } from "../voice-config.js";
@@ -173,6 +174,88 @@ describe("live voice prompt", () => {
     expect(prompt).not.toContain("find_workspace");
     expect(prompt).not.toContain("run_paseo_tool_on_all_hosts");
     expect(prompt).toMatch(/ask before archiving/i);
+  });
+
+  it("acts first and narrates after, never announcing before calling", () => {
+    const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
+
+    expect(prompt).toMatch(/Act first, then narrate/i);
+    expect(prompt).toMatch(/Never spend a sentence announcing/i);
+    // The old shape: speak before acting, which serialized a spoken sentence
+    // in front of every tool call.
+    expect(prompt).not.toMatch(/Before starting something slow/i);
+  });
+
+  it("keeps delegation prompts spoken-length", () => {
+    const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
+
+    expect(prompt).toMatch(/Delegation prompts are spoken-length/i);
+    expect(prompt).toMatch(/Never write code, diffs, file contents, or step-by-step plans/i);
+  });
+
+  it("removes exactly the component the user turned off", () => {
+    const full = buildLiveVoicePrompt({ paseoToolsAvailable: true });
+    const withoutRecipes = buildLiveVoicePrompt({
+      paseoToolsAvailable: true,
+      disabledComponents: ["recipes"],
+    });
+
+    expect(full).toContain("Recipes for the usual requests");
+    expect(withoutRecipes).not.toContain("Recipes for the usual requests");
+    // Its neighbours survive untouched.
+    expect(withoutRecipes).toContain("archive_workspace{workspaceId}");
+    expect(withoutRecipes).toContain("run_paseo_tool_on_all_hosts");
+    expect(withoutRecipes).toMatch(/How to speak:/);
+  });
+
+  it("ignores disable requests for locked components and for ids it does not know", () => {
+    const full = buildLiveVoicePrompt({ paseoToolsAvailable: true });
+    const prompt = buildLiveVoicePrompt({
+      paseoToolsAvailable: true,
+      disabledComponents: ["delegation-routing", "paseo-authority", "identity", "not-a-component"],
+    });
+
+    // The daemon, not the client, decides what a call cannot run without.
+    expect(prompt).toBe(full);
+  });
+
+  it("changes the prompt for every unlocked component and for no locked one", () => {
+    const full = buildLiveVoicePrompt({ paseoToolsAvailable: true });
+
+    for (const component of LIVE_VOICE_PROMPT_COMPONENTS) {
+      const prompt = buildLiveVoicePrompt({
+        paseoToolsAvailable: true,
+        disabledComponents: [component.id],
+      });
+      if (component.locked) {
+        expect(prompt, `${component.id} is locked but its disable changed the prompt`).toBe(full);
+      } else {
+        // An unlocked component that changes nothing is a dead toggle on the
+        // configuration page.
+        expect(prompt, `${component.id} is a dead toggle`).not.toBe(full);
+      }
+    }
+  });
+
+  it("quotes the user's standing instructions and bounds them", () => {
+    const prompt = buildLiveVoicePrompt({
+      paseoToolsAvailable: true,
+      customInstructions: "Always answer in one sentence.",
+    });
+
+    expect(prompt).toContain("Standing instructions from the user:");
+    expect(prompt).toContain('"Always answer in one sentence."');
+    expect(prompt).toMatch(/follow them over your defaults/i);
+
+    const bounded = buildLiveVoicePrompt({
+      paseoToolsAvailable: true,
+      customInstructions: "x".repeat(5_000),
+    });
+    expect(bounded).toContain(`${"x".repeat(1_000)}…`);
+    expect(bounded).not.toContain("x".repeat(1_001));
+
+    const empty = buildLiveVoicePrompt({ paseoToolsAvailable: true, customInstructions: "   " });
+    expect(empty).not.toContain("Standing instructions");
   });
 
   it("makes Paseo MCP the early authoritative source for Paseo state", () => {

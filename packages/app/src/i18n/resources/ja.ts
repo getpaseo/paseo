@@ -1774,6 +1774,34 @@ export const ja: TranslationResources = {
         description: "音声エージェントにそのまま伝えます。空欄にすると判断を任せます。",
         placeholder: "許可の確認と失敗のときだけ知らせて。",
       },
+      promptComponents: {
+        "canonical-tools": {
+          label: "ツール早見表",
+          description: "正確なツール名を渡し、探索のやり取りを省きます。",
+        },
+        "delegation-brevity": {
+          label: "簡潔な委任プロンプト",
+          description:
+            "エージェントセッションへのプロンプトを短く保ちます。コードや手順の口述はしません。",
+        },
+        "cross-host-reach": {
+          label: "マシン横断の把握",
+          description: "どの読み取りが一回の呼び出しで全マシンをカバーするかを教えます。",
+        },
+        recipes: {
+          label: "レシピ",
+          description: "名前でのアーカイブなど、よくある依頼の最短経路です。",
+        },
+        "speech-style": {
+          label: "話し方",
+          description: "話し言葉の文、先に実行してから報告、Paseo の用語を使います。",
+        },
+      },
+      customInstructions: {
+        label: "常設の指示",
+        description: "毎回の通話で音声エージェントにそのまま伝えます。",
+        placeholder: "求めない限り、常に一文で答えて。",
+      },
     },
     diagnostics: {
       title: "ライブ音声",

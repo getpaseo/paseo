@@ -223,6 +223,44 @@ that the user waits through every call in silence, and which reads answer the
 whole question at once. The reasoning behind the allowlist stays out of it: the
 model needs to know which reads fan out, not why the line was drawn there.
 
+The prompt is assembled from named components
+(`live-voice-context.ts`), each locked or optional. Locked components are the
+ones a call is broken or unsafe without: identity, Paseo-as-authority,
+Paseo-visible creation, and core routing. Optional ones — the tool cheat sheet,
+cross-machine awareness, recipes, brief-delegation, speaking style — can be
+turned off per user from the Live Voice settings, which also take free-text
+standing instructions passed to the model verbatim. The client sends component
+ids and instructions on `voice.live.start`; the daemon owns the registry and
+ignores unknown and locked ids, so a client can never talk a call out of its
+safety rules. A test walks every component and fails on a locked one whose
+disable changes the prompt or an optional one whose disable changes nothing — a
+dead toggle on the settings page.
+
+The prompt also orders narration after action: the model starts the tool call,
+then says what it started. The reverse — announce, then act — serialized a
+spoken sentence in front of every tool call's argument generation. And it keeps
+delegation prompts spoken-length: the model is told never to dictate code,
+diffs, or step lists into a prompt, because it composes arguments serially
+while the user hears silence, and the session it delegates to is the stronger
+coder.
+
+The hidden host session is pinned to a fast, cheap model at moderate thinking
+(`gpt-5.6-luna`, medium). Codex routes realtime delegations into text turns on
+the host thread, so that model is the backend executor for every action the
+call takes — a dispatcher, not a coder, where turn latency is what the user
+feels. Codex resolves an unknown model id to its default, so an older codex
+still hosts calls.
+
+Every routed tool call logs `live_voice.timing.tool_start` / `tool_end` lines
+to `daemon.log` (see `observeRoutedOperation` in `live-voice-coordinator.ts`).
+`tool_start` carries `msSinceUserSpoke` — the bracket around everything opaque
+on the model side: turn detection, thinking, argument generation, and any
+backend-executor turn — plus `argChars`, the generation-cost proxy. If a
+near-empty call shows the same gap as a 2,000-character one, the time is
+thinking, not typing. Everything between `tool_start` and `tool_end` is Paseo's
+own routing and execution. Transcript arrivals log at debug with sizes only;
+transcript text never enters the log.
+
 Resolution is classified, never decided: `find_workspace` returns
 `unique_exact`, `ambiguous_exact`, `unique_partial`, `ambiguous_partial`, or
 `none`, and the prompt permits action only on `unique_exact`. Two machines

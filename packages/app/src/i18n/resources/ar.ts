@@ -1756,6 +1756,33 @@ export const ar: TranslationResources = {
         description: "يُنقل إلى الوكيل الصوتي كما هو. اتركه فارغًا ليقرر بنفسه.",
         placeholder: "قاطعني فقط لطلبات الإذن والإخفاقات.",
       },
+      promptComponents: {
+        "canonical-tools": {
+          label: "دليل الأدوات السريع",
+          description: "يمنح المساعد أسماء الأدوات الدقيقة ليتجاوز جولات الاستكشاف.",
+        },
+        "delegation-brevity": {
+          label: "تفويضات موجزة",
+          description: "تبقي المطالبات لجلسات الوكلاء قصيرة — بلا إملاء شيفرة أو قوائم خطوات.",
+        },
+        "cross-host-reach": {
+          label: "الوعي عبر الأجهزة",
+          description: "يعلّم المساعد أي القراءات تغطي كل الأجهزة في استدعاء واحد.",
+        },
+        recipes: {
+          label: "وصفات",
+          description: "أقصر المسارات المعروفة للطلبات الشائعة، مثل الأرشفة بالاسم.",
+        },
+        "speech-style": {
+          label: "أسلوب الكلام",
+          description: "جمل منطوقة، التنفيذ قبل السرد، ومفردات Paseo.",
+        },
+      },
+      customInstructions: {
+        label: "تعليمات دائمة",
+        description: "تُنقل إلى الوكيل الصوتي كما هي في كل مكالمة.",
+        placeholder: "أجب دائمًا بجملة واحدة ما لم أطلب المزيد.",
+      },
     },
     diagnostics: {
       title: "صوت مباشر",

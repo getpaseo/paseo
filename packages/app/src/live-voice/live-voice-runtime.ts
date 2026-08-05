@@ -80,6 +80,8 @@ export interface LiveVoiceDaemonClient {
     voice?: string;
     ambientAgentReports?: boolean;
     ambientAgentGuidance?: string;
+    disabledPromptComponents?: string[];
+    customVoiceInstructions?: string;
   }): Promise<{ liveSessionId: string; answerSdp: string }>;
   stopLiveVoice(input: { liveSessionId: string }): Promise<void>;
   listLiveVoiceVoices?(): Promise<string[]>;
@@ -114,6 +116,13 @@ export interface LiveVoiceRuntimeDeps {
   /** The selected provider voice, read once when a new call starts. */
   voice?: {
     read(): string | undefined;
+  };
+  /** The user's prompt configuration, read once when a new call starts. */
+  promptSettings?: {
+    read(): {
+      disabledPromptComponents: string[] | undefined;
+      customVoiceInstructions: string | undefined;
+    };
   };
 }
 
@@ -232,12 +241,14 @@ export function createDefaultLiveVoiceRuntimeDeps(
   pinConnection?: (serverId: string) => LiveVoiceConnectionPin | null,
   ambientAgentReports?: LiveVoiceRuntimeDeps["ambientAgentReports"],
   voice?: LiveVoiceRuntimeDeps["voice"],
+  promptSettings?: LiveVoiceRuntimeDeps["promptSettings"],
 ): LiveVoiceRuntimeDeps {
   return {
     getClient,
     ...(pinConnection ? { pinConnection } : {}),
     ...(ambientAgentReports ? { ambientAgentReports } : {}),
     ...(voice ? { voice } : {}),
+    ...(promptSettings ? { promptSettings } : {}),
     startSession: startLiveVoiceSession,
     isSessionSupported: isLiveVoiceSessionSupported,
     lease: audioSessionLease,
@@ -493,6 +504,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       // Read once, before negotiating: the prompt the model gets is fixed at
       // start, so a switch flipped mid-call must not leave the two disagreeing.
       const ambientStartFields = toAmbientStartFields(deps.ambientAgentReports?.read());
+      const promptSettings = deps.promptSettings?.read();
       const voice = await resolveSelectedLiveVoice(deps.voice?.read(), client);
       if (generation !== startGeneration) {
         return;
@@ -504,6 +516,12 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
             offerSdp,
             ...(voice ? { voice } : {}),
             ...ambientStartFields,
+            ...(promptSettings?.disabledPromptComponents?.length
+              ? { disabledPromptComponents: promptSettings.disabledPromptComponents }
+              : {}),
+            ...(promptSettings?.customVoiceInstructions
+              ? { customVoiceInstructions: promptSettings.customVoiceInstructions }
+              : {}),
           }),
         onAudioBlocked: () => {
           if (generation !== startGeneration) return;

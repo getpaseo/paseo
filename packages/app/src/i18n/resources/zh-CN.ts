@@ -1735,6 +1735,33 @@ export const zhCN: TranslationResources = {
         description: "原样转达给语音智能体。留空则由它自行判断。",
         placeholder: "只有需要授权和出错时才打断我。",
       },
+      promptComponents: {
+        "canonical-tools": {
+          label: "工具速查表",
+          description: "把准确的工具名交给助手，省去逐轮探索。",
+        },
+        "delegation-brevity": {
+          label: "简短的委派提示",
+          description: "给智能体会话的提示保持简短——不口述代码或步骤清单。",
+        },
+        "cross-host-reach": {
+          label: "跨机器感知",
+          description: "告诉助手哪些读取操作一次调用即可覆盖所有机器。",
+        },
+        recipes: {
+          label: "常用捷径",
+          description: "常见请求的最短已知路径，例如按名称归档。",
+        },
+        "speech-style": {
+          label: "说话风格",
+          description: "口语化的句子、先执行后陈述，并使用 Paseo 术语。",
+        },
+      },
+      customInstructions: {
+        label: "常设指令",
+        description: "每次通话都原样转达给语音智能体。",
+        placeholder: "除非我要求更多，否则始终用一句话回答。",
+      },
     },
     diagnostics: {
       title: "实时语音",

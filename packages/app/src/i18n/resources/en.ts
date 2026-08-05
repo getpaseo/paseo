@@ -1766,6 +1766,33 @@ export const en = {
         description: "Passed to the voice agent as written. Leave empty to let it decide.",
         placeholder: "Only interrupt me for permission requests and failures.",
       },
+      promptComponents: {
+        "canonical-tools": {
+          label: "Tool cheat sheet",
+          description: "Give the assistant exact tool names so it skips discovery turns.",
+        },
+        "delegation-brevity": {
+          label: "Brief delegation prompts",
+          description: "Keep prompts to agent sessions short — no dictated code or step lists.",
+        },
+        "cross-host-reach": {
+          label: "Cross-machine awareness",
+          description: "Teach the assistant which reads cover every machine in one call.",
+        },
+        recipes: {
+          label: "Recipes",
+          description: "Shortest known paths for common requests, like archiving by name.",
+        },
+        "speech-style": {
+          label: "Speaking style",
+          description: "Spoken-sentence output, act-first narration, and Paseo vocabulary.",
+        },
+      },
+      customInstructions: {
+        label: "Standing instructions",
+        description: "Passed to the voice agent as written, for every call.",
+        placeholder: "Always answer in one sentence unless I ask for more.",
+      },
     },
     diagnostics: {
       title: "Live voice",

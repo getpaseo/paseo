@@ -48,6 +48,19 @@ describe("live voice messages", () => {
     ).toBe("cedar");
   });
 
+  test("parses a start request carrying the user's prompt configuration", () => {
+    const parsed = VoiceLiveStartRequestSchema.parse({
+      type: "voice.live.start.request",
+      requestId: "request-1",
+      offerSdp: "v=0\r\n",
+      disabledPromptComponents: ["recipes", "speech-style"],
+      customVoiceInstructions: "Always answer in one sentence.",
+    });
+
+    expect(parsed.disabledPromptComponents).toEqual(["recipes", "speech-style"]);
+    expect(parsed.customVoiceInstructions).toBe("Always answer in one sentence.");
+  });
+
   test("parses accepted and rejected start responses", () => {
     expect(
       VoiceLiveStartResponseSchema.parse({

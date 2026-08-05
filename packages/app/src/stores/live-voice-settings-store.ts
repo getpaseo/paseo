@@ -10,6 +10,40 @@ import { createJSONStorage, persist } from "zustand/middleware";
  */
 export const MAX_AMBIENT_AGENT_GUIDANCE_LENGTH = 600;
 
+/** Matches the daemon's bound; anything longer is truncated there anyway. */
+export const MAX_CUSTOM_VOICE_INSTRUCTIONS_LENGTH = 1000;
+
+/**
+ * The optional prompt components the daemon lets a call turn off. The daemon
+ * owns the registry and ignores unknown and locked ids, so this list only has
+ * to name what the settings page offers — drift shows up as a dead toggle, not
+ * a broken call.
+ */
+export const LIVE_VOICE_OPTIONAL_PROMPT_COMPONENTS = [
+  "canonical-tools",
+  "delegation-brevity",
+  "cross-host-reach",
+  "recipes",
+  "speech-style",
+] as const;
+
+export type LiveVoiceOptionalPromptComponent =
+  (typeof LIVE_VOICE_OPTIONAL_PROMPT_COMPONENTS)[number];
+
+function toggleDisabledComponent(
+  disabled: string[],
+  id: LiveVoiceOptionalPromptComponent,
+  enabled: boolean,
+): string[] {
+  if (enabled) {
+    return disabled.filter((existing) => existing !== id);
+  }
+  if (disabled.includes(id)) {
+    return disabled;
+  }
+  return [...disabled, id];
+}
+
 interface LiveVoiceSettingsState {
   /** The Codex realtime voice to use for new calls; null leaves selection to the provider. */
   voice: string | null;
@@ -20,9 +54,15 @@ interface LiveVoiceSettingsState {
   ambientAgentReports: boolean;
   /** Free text handed to the model verbatim; empty means no standing instruction. */
   ambientAgentGuidance: string;
+  /** Prompt component ids the user turned off. Empty means the full prompt. */
+  disabledPromptComponents: string[];
+  /** Standing instructions for the whole call, handed to the model verbatim. */
+  customVoiceInstructions: string;
   setVoice: (voice: string | null) => void;
   setAmbientAgentReports: (enabled: boolean) => void;
   setAmbientAgentGuidance: (guidance: string) => void;
+  setPromptComponentEnabled: (id: LiveVoiceOptionalPromptComponent, enabled: boolean) => void;
+  setCustomVoiceInstructions: (instructions: string) => void;
 }
 
 export const useLiveVoiceSettingsStore = create<LiveVoiceSettingsState>()(
@@ -33,10 +73,24 @@ export const useLiveVoiceSettingsStore = create<LiveVoiceSettingsState>()(
       // channel their whole machine can interrupt, which should be chosen.
       ambientAgentReports: false,
       ambientAgentGuidance: "",
+      disabledPromptComponents: [],
+      customVoiceInstructions: "",
       setVoice: (voice) => set({ voice }),
       setAmbientAgentReports: (enabled) => set({ ambientAgentReports: enabled }),
       setAmbientAgentGuidance: (guidance) =>
         set({ ambientAgentGuidance: guidance.slice(0, MAX_AMBIENT_AGENT_GUIDANCE_LENGTH) }),
+      setPromptComponentEnabled: (id, enabled) =>
+        set((state) => ({
+          disabledPromptComponents: toggleDisabledComponent(
+            state.disabledPromptComponents,
+            id,
+            enabled,
+          ),
+        })),
+      setCustomVoiceInstructions: (instructions) =>
+        set({
+          customVoiceInstructions: instructions.slice(0, MAX_CUSTOM_VOICE_INSTRUCTIONS_LENGTH),
+        }),
     }),
     {
       name: "paseo-live-voice-settings",
@@ -63,5 +117,20 @@ export function getLiveVoiceAmbientSettings(): {
   return {
     enabled: state.ambientAgentReports,
     ...(guidance ? { guidance } : { guidance: undefined }),
+  };
+}
+
+/** Read outside React, like the ambient settings: calls start from event handlers. */
+export function getLiveVoicePromptSettings(): {
+  disabledPromptComponents: string[] | undefined;
+  customVoiceInstructions: string | undefined;
+} {
+  const state = useLiveVoiceSettingsStore.getState();
+  const instructions = state.customVoiceInstructions.trim();
+  return {
+    disabledPromptComponents: state.disabledPromptComponents.length
+      ? [...state.disabledPromptComponents]
+      : undefined,
+    customVoiceInstructions: instructions || undefined,
   };
 }

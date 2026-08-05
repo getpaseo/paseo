@@ -3526,6 +3526,10 @@ export class DaemonClient {
     ambientAgentReports?: boolean;
     /** The user's standing instruction for those reports. */
     ambientAgentGuidance?: string;
+    /** Prompt component ids the user turned off. The daemon ignores unknown and locked ids. */
+    disabledPromptComponents?: string[];
+    /** The user's standing instructions for the whole call, verbatim. */
+    customVoiceInstructions?: string;
   }): Promise<AcceptedLiveVoiceStart> {
     const payload = await this.sendNamespacedCorrelatedSessionRequest<"voice.live.start.response">({
       ...(input.requestId ? { requestId: input.requestId } : {}),
@@ -3535,6 +3539,12 @@ export class DaemonClient {
         ...(input.voice ? { voice: input.voice } : {}),
         ...(input.ambientAgentReports ? { ambientAgentReports: true } : {}),
         ...(input.ambientAgentGuidance ? { ambientAgentGuidance: input.ambientAgentGuidance } : {}),
+        ...(input.disabledPromptComponents?.length
+          ? { disabledPromptComponents: input.disabledPromptComponents }
+          : {}),
+        ...(input.customVoiceInstructions
+          ? { customVoiceInstructions: input.customVoiceInstructions }
+          : {}),
       },
       // The daemon awaits the provider's answer SDP before responding.
       timeout: LIVE_VOICE_START_TIMEOUT_MS,

@@ -226,8 +226,19 @@ describe("LiveVoiceCoordinator", () => {
       answerSdp: ANSWER_SDP,
     });
     // Hidden, provider-specific, and deliberately not in a project directory.
+    // The backend executor is pinned to a fast, cheap model at moderate
+    // thinking: it dispatches Paseo tools while the user waits on a live call,
+    // and codex resolves an unknown model id to its default, so an older codex
+    // still hosts calls.
     expect(harness.createConfigs).toEqual([
-      { provider: "codex", cwd: HOST_CWD, title: "Live Voice host", internal: true },
+      {
+        provider: "codex",
+        model: "gpt-5.6-luna",
+        thinkingOptionId: "medium",
+        cwd: HOST_CWD,
+        title: "Live Voice host",
+        internal: true,
+      },
     ]);
     expect(harness.hosts).toHaveLength(1);
     expect(harness.routingRegisteredDuringCreate).toEqual([true]);
@@ -607,6 +618,35 @@ describe("LiveVoiceCoordinator", () => {
     expect(harness.provider().startCalls[0]?.prompt).not.toContain(
       "Delegations arrive here from a live voice call",
     );
+  });
+
+  it("hands the user's prompt configuration to the context builder", async () => {
+    const buildOptions: unknown[] = [];
+    const context: LiveVoiceContextProvider = {
+      build: async (options) => {
+        buildOptions.push(options);
+        return { prompt: "configured prompt", initialItems: [] };
+      },
+    };
+    const harness = createHarness({ context });
+
+    const result = await harness.coordinator.start({
+      offerSdp: OFFER_SDP,
+      owner: harness.owner,
+      emit: (update) => harness.updates.push(update),
+      sendRouteRequest: (request) => harness.routeRequests.push(request),
+      disabledPromptComponents: ["recipes", "speech-style"],
+      customVoiceInstructions: "Always answer in one sentence.",
+    });
+
+    expect(result).toMatchObject({ accepted: true });
+    expect(buildOptions).toEqual([
+      {
+        crossHostRoutingAvailable: true,
+        disabledPromptComponents: ["recipes", "speech-style"],
+        customVoiceInstructions: "Always answer in one sentence.",
+      },
+    ]);
   });
 
   it("still places the call when building the Paseo context fails", async () => {

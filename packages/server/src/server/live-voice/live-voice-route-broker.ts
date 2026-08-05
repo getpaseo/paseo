@@ -35,11 +35,28 @@ export class LiveVoiceRoutedRequestError extends Error {
   }
 }
 
+/**
+ * One routed operation's lifecycle, reported to whoever registered the route.
+ * `start` fires when the model's tool call has fully materialized — its
+ * arguments are complete — which is the only external timestamp that brackets
+ * the opaque model-side time (turn detection, thinking, argument generation).
+ */
+export interface LiveVoiceRouteObservation {
+  phase: "start" | "end";
+  requestId: string;
+  operation: VoiceLiveRouteOperation;
+  /** Set on `end`. */
+  durationMs?: number;
+  ok?: boolean;
+}
+
 export interface LiveVoiceRouteRegistration {
   hostAgentId: string;
   liveSessionId: string;
   sourceKey: object;
   send: (request: VoiceLiveRouteRequest) => void | Promise<void>;
+  /** Timing diagnostics only. Errors here are swallowed; routing never depends on it. */
+  observer?: (observation: LiveVoiceRouteObservation) => void;
 }
 
 export interface LiveVoiceRouteBrokerOptions {
@@ -117,6 +134,8 @@ export class LiveVoiceRouteBroker {
         `Invalid Live Voice route request: ${parsedRequest.error.issues[0]?.message ?? "unknown validation error"}`,
       );
     }
+    this.observe(route, { phase: "start", requestId, operation });
+    const startedAt = Date.now();
 
     const resultPromise = new Promise<LiveVoiceRouteResult>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -138,6 +157,29 @@ export class LiveVoiceRouteBroker {
       });
     });
 
+    // Observation rides a side chain so a throwing observer can never disturb
+    // the result the caller awaits.
+    void resultPromise
+      .then(
+        () =>
+          this.observe(route, {
+            phase: "end",
+            requestId,
+            operation,
+            durationMs: Date.now() - startedAt,
+            ok: true,
+          }),
+        () =>
+          this.observe(route, {
+            phase: "end",
+            requestId,
+            operation,
+            durationMs: Date.now() - startedAt,
+            ok: false,
+          }),
+      )
+      .catch(() => undefined);
+
     try {
       await route.send(parsedRequest.data);
     } catch (error) {
@@ -151,6 +193,14 @@ export class LiveVoiceRouteBroker {
       );
     }
     return await resultPromise;
+  }
+
+  private observe(route: RegisteredLiveVoiceRoute, observation: LiveVoiceRouteObservation): void {
+    try {
+      route.observer?.(observation);
+    } catch {
+      // Diagnostics must never break routing.
+    }
   }
 
   /**

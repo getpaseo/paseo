@@ -100,8 +100,11 @@ import type { LiveVoiceHostAvailability } from "@/live-voice/live-voice-availabi
 import { resolveLiveVoiceUnavailableMessage } from "@/live-voice/live-voice-unavailable-message";
 import { useLiveVoiceVoiceOptions } from "@/live-voice/live-voice-voice-catalog";
 import {
+  LIVE_VOICE_OPTIONAL_PROMPT_COMPONENTS,
   MAX_AMBIENT_AGENT_GUIDANCE_LENGTH,
+  MAX_CUSTOM_VOICE_INSTRUCTIONS_LENGTH,
   useLiveVoiceSettingsStore,
+  type LiveVoiceOptionalPromptComponent,
 } from "@/stores/live-voice-settings-store";
 import { settingsStyles } from "@/styles/settings";
 import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pcm";
@@ -551,6 +554,18 @@ function LiveVoiceSettingsCard() {
   const setAmbientAgentGuidance = useLiveVoiceSettingsStore(
     (state) => state.setAmbientAgentGuidance,
   );
+  const disabledPromptComponents = useLiveVoiceSettingsStore(
+    (state) => state.disabledPromptComponents,
+  );
+  const setPromptComponentEnabled = useLiveVoiceSettingsStore(
+    (state) => state.setPromptComponentEnabled,
+  );
+  const customVoiceInstructions = useLiveVoiceSettingsStore(
+    (state) => state.customVoiceInstructions,
+  );
+  const setCustomVoiceInstructions = useLiveVoiceSettingsStore(
+    (state) => state.setCustomVoiceInstructions,
+  );
 
   return (
     <View style={settingsStyles.card}>
@@ -617,6 +632,71 @@ function LiveVoiceSettingsCard() {
           </View>
         </View>
       ) : null}
+      {LIVE_VOICE_OPTIONAL_PROMPT_COMPONENTS.map((componentId) => (
+        <LiveVoicePromptComponentRow
+          key={componentId}
+          componentId={componentId}
+          enabled={!disabledPromptComponents.includes(componentId)}
+          onSetEnabled={setPromptComponentEnabled}
+        />
+      ))}
+      <View style={[settingsStyles.row, settingsStyles.rowBorder, styles.liveVoiceGuidanceRow]}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>
+            {t("liveVoice.settings.customInstructions.label")}
+          </Text>
+          <Text style={settingsStyles.rowHint}>
+            {t("liveVoice.settings.customInstructions.description")}
+          </Text>
+          <TextInput
+            value={customVoiceInstructions}
+            onChangeText={setCustomVoiceInstructions}
+            placeholder={t("liveVoice.settings.customInstructions.placeholder")}
+            multiline
+            maxLength={MAX_CUSTOM_VOICE_INSTRUCTIONS_LENGTH}
+            style={styles.liveVoiceGuidanceInput}
+            accessibilityLabel={t("liveVoice.settings.customInstructions.label")}
+            testID="live-voice-custom-instructions"
+          />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function LiveVoicePromptComponentRow({
+  componentId,
+  enabled,
+  onSetEnabled,
+}: {
+  componentId: LiveVoiceOptionalPromptComponent;
+  enabled: boolean;
+  onSetEnabled: (id: LiveVoiceOptionalPromptComponent, enabled: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const handleToggle = useCallback(
+    (next: boolean) => {
+      onSetEnabled(componentId, next);
+    },
+    [onSetEnabled, componentId],
+  );
+
+  return (
+    <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>
+          {t(`liveVoice.settings.promptComponents.${componentId}.label`)}
+        </Text>
+        <Text style={settingsStyles.rowHint}>
+          {t(`liveVoice.settings.promptComponents.${componentId}.description`)}
+        </Text>
+      </View>
+      <Switch
+        value={enabled}
+        onValueChange={handleToggle}
+        accessibilityLabel={t(`liveVoice.settings.promptComponents.${componentId}.label`)}
+        testID={`live-voice-prompt-component-${componentId}`}
+      />
     </View>
   );
 }

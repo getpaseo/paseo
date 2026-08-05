@@ -66,6 +66,8 @@ export class LiveVoiceDaemonContextProvider implements LiveVoiceContextProvider 
     crossHostRoutingAvailable: boolean;
     ambientAgentReports?: boolean;
     ambientAgentGuidance?: string | undefined;
+    disabledPromptComponents?: readonly string[] | undefined;
+    customVoiceInstructions?: string | undefined;
   }): Promise<LiveVoiceStartContext | null> {
     // `listAgents` already omits internal sessions, so the call's own hidden host
     // session never shows up in the snapshot it is given.
@@ -101,6 +103,12 @@ export class LiveVoiceDaemonContextProvider implements LiveVoiceContextProvider 
       ...(options?.ambientAgentReports ? { ambientAgentReports: true } : {}),
       ...(options?.ambientAgentGuidance
         ? { ambientAgentGuidance: options.ambientAgentGuidance }
+        : {}),
+      ...(options?.disabledPromptComponents?.length
+        ? { disabledPromptComponents: options.disabledPromptComponents }
+        : {}),
+      ...(options?.customVoiceInstructions
+        ? { customVoiceInstructions: options.customVoiceInstructions }
         : {}),
     });
     this.logger.debug(

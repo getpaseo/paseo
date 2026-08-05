@@ -1136,6 +1136,18 @@ export const VoiceLiveStartRequestSchema = z.object({
    * the user's and the cases they care about are not enumerable.
    */
   ambientAgentGuidance: z.string().optional(),
+  /**
+   * Optional prompt component ids the user turned off on the configuration
+   * page. The daemon owns the component registry and ignores unknown and
+   * locked ids, so a newer client naming a component this daemon lacks is
+   * harmless.
+   *
+   * COMPAT(liveVoicePromptComponents): added in v0.3.0, remove after
+   * 2027-02-28. An older daemon drops both fields and builds its full prompt.
+   */
+  disabledPromptComponents: z.array(z.string()).optional(),
+  /** The user's standing instructions for the whole call, passed verbatim. */
+  customVoiceInstructions: z.string().optional(),
 });
 
 // Stopping is idempotent: a stop for an already-closed or superseded

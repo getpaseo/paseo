@@ -178,6 +178,80 @@ describe("LiveVoiceRouteBroker", () => {
     });
   });
 
+  it("reports each routed operation to the observer without letting it interfere", async () => {
+    const sourceKey = {};
+    const observations: Array<{ phase: string; requestId: string; ok?: boolean }> = [];
+    const broker = new LiveVoiceRouteBroker({
+      defaultTimeoutMs: 100,
+      createRequestId: () => "route-request-1",
+    });
+    broker.register({
+      hostAgentId: HOST_AGENT_ID,
+      liveSessionId: LIVE_SESSION_ID,
+      sourceKey,
+      send: () => undefined,
+      observer: (observation) => {
+        observations.push({
+          phase: observation.phase,
+          requestId: observation.requestId,
+          ...(observation.ok === undefined ? {} : { ok: observation.ok }),
+        });
+        // A throwing observer must never disturb routing.
+        throw new Error("diagnostics blew up");
+      },
+    });
+
+    const resultPromise = broker.execute(HOST_AGENT_ID, { kind: "list_hosts" });
+    expect(observations).toEqual([{ phase: "start", requestId: "route-request-1" }]);
+
+    broker.receiveResponse(hostsResponse("route-request-1"), sourceKey);
+    await expect(resultPromise).resolves.toMatchObject({ kind: "list_hosts" });
+    // The end observation rides a promise chain; give it a microtask.
+    await Promise.resolve();
+    expect(observations).toEqual([
+      { phase: "start", requestId: "route-request-1" },
+      { phase: "end", requestId: "route-request-1", ok: true },
+    ]);
+  });
+
+  it("reports a failed routed operation as not ok", async () => {
+    const sourceKey = {};
+    const observations: Array<{ phase: string; ok?: boolean }> = [];
+    const broker = new LiveVoiceRouteBroker({
+      defaultTimeoutMs: 100,
+      createRequestId: () => "route-request-1",
+    });
+    broker.register({
+      hostAgentId: HOST_AGENT_ID,
+      liveSessionId: LIVE_SESSION_ID,
+      sourceKey,
+      send: () => undefined,
+      observer: (observation) =>
+        observations.push({
+          phase: observation.phase,
+          ...(observation.ok === undefined ? {} : { ok: observation.ok }),
+        }),
+    });
+
+    const resultPromise = broker.execute(HOST_AGENT_ID, { kind: "list_hosts" });
+    broker.receiveResponse(
+      {
+        type: "voice.live.route.response",
+        payload: {
+          requestId: "route-request-1",
+          liveSessionId: LIVE_SESSION_ID,
+          ok: false,
+          error: { code: "host_offline", message: "offline" },
+        },
+      },
+      sourceKey,
+    );
+
+    await expect(resultPromise).rejects.toThrow("offline");
+    await Promise.resolve();
+    expect(observations).toEqual([{ phase: "start" }, { phase: "end", ok: false }]);
+  });
+
   it("times out without accepting a later response", async () => {
     vi.useFakeTimers();
     const { broker, sourceKey } = createHarness({ timeoutMs: 10 });

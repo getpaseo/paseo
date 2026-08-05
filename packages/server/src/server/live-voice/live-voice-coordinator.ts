@@ -11,6 +11,7 @@ import {
 import type { LiveVoiceStartContext } from "./live-voice-context.js";
 import {
   LiveVoiceRouteBroker,
+  type LiveVoiceRouteObservation,
   type LiveVoiceRouteRegistration,
 } from "./live-voice-route-broker.js";
 
@@ -27,6 +28,16 @@ const HOST_PROVIDER: AgentProvider = "codex";
 
 /** Shows up only in daemon logs and internal listings — the host session is hidden. */
 const HOST_TITLE = "Live Voice host";
+
+/**
+ * The backend executor is a dispatcher, not a coder: it routes work through
+ * Paseo's tools while the user waits on a live call, so a fast, cheap model at
+ * moderate thinking beats a frontier model at high. Codex resolves an unknown
+ * model id to its default, so an older codex without this model still hosts
+ * calls — on its default backend, not on nothing.
+ */
+const HOST_MODEL = "gpt-5.6-luna";
+const HOST_THINKING_OPTION_ID = "medium";
 
 /**
  * Codex routes realtime delegations into separate turns on the host thread, so
@@ -105,6 +116,10 @@ export interface LiveVoiceStartRequest {
   ambientAgentReports?: boolean;
   /** The user's standing instruction for those reports. */
   ambientAgentGuidance?: string | undefined;
+  /** Prompt component ids the user turned off. The context builder validates them. */
+  disabledPromptComponents?: readonly string[] | undefined;
+  /** The user's standing instructions for the whole call, verbatim. */
+  customVoiceInstructions?: string | undefined;
 }
 
 export type LiveVoiceStartResult =
@@ -155,6 +170,16 @@ interface LiveVoiceCall {
   bufferedAnswerSdp: string | null;
   sdpWaiter: { resolve: (sdp: string) => void; reject: (error: Error) => void } | null;
   unregisterRoute: (() => void) | null;
+  /**
+   * Timing diagnostics. Transcript arrival is the closest external proxy for
+   * when a party finished speaking; the gap from here to the next routed tool
+   * call brackets everything opaque — turn detection, model thinking, and
+   * argument generation. Best-effort: transcripts can arrive late or not at
+   * all, so a missing timestamp just omits the derived field from the log.
+   */
+  lastUserTranscriptAt: number | null;
+  lastAssistantTranscriptAt: number | null;
+  lastRoutedToolEndAt: number | null;
 }
 
 /**
@@ -167,6 +192,8 @@ export interface LiveVoiceContextProvider {
     crossHostRoutingAvailable: boolean;
     ambientAgentReports?: boolean;
     ambientAgentGuidance?: string | undefined;
+    disabledPromptComponents?: readonly string[] | undefined;
+    customVoiceInstructions?: string | undefined;
   }): Promise<LiveVoiceStartContext | null>;
 }
 
@@ -253,6 +280,9 @@ export class LiveVoiceCoordinator {
       bufferedAnswerSdp: null,
       sdpWaiter: null,
       unregisterRoute: null,
+      lastUserTranscriptAt: null,
+      lastAssistantTranscriptAt: null,
+      lastRoutedToolEndAt: null,
     };
     this.calls.set(call.liveSessionId, call);
 
@@ -429,6 +459,12 @@ export class LiveVoiceCoordinator {
           ...(request.ambientAgentGuidance
             ? { ambientAgentGuidance: request.ambientAgentGuidance }
             : {}),
+          ...(request.disabledPromptComponents?.length
+            ? { disabledPromptComponents: request.disabledPromptComponents }
+            : {}),
+          ...(request.customVoiceInstructions
+            ? { customVoiceInstructions: request.customVoiceInstructions }
+            : {}),
         })
       : null;
     if (call.state !== "starting" || this.calls.get(call.liveSessionId) !== call) {
@@ -437,6 +473,8 @@ export class LiveVoiceCoordinator {
 
     const config: AgentSessionConfig = {
       provider: HOST_PROVIDER,
+      model: HOST_MODEL,
+      thinkingOptionId: HOST_THINKING_OPTION_ID,
       cwd: this.hostCwd,
       title: HOST_TITLE,
       internal: true,
@@ -461,6 +499,7 @@ export class LiveVoiceCoordinator {
         liveSessionId: call.liveSessionId,
         sourceKey: call.owner.sessionKey,
         send: request.sendRouteRequest,
+        observer: (observation) => this.observeRoutedOperation(call, observation),
       });
     }
     const agent = await this.agents.createAgent(config, hostAgentId, {
@@ -486,6 +525,64 @@ export class LiveVoiceCoordinator {
     }
     this.logger.debug({ hostAgentId: agent.id, cwd: this.hostCwd }, "live_voice.host.started");
     return { agentId: agent.id, provider, context };
+  }
+
+  /**
+   * One log line per routed tool call, at start and at end, in `daemon.log`.
+   *
+   * `tool_start` is the first externally visible moment of a model action: its
+   * arguments are complete. So `msSinceUserSpoke` brackets everything opaque —
+   * turn detection, thinking, argument generation, and any backend-executor
+   * turn codex ran in between — and `argChars` is the generation-cost proxy. If
+   * a near-empty call and a 2,000-char call show the same gap, the time is
+   * thinking, not typing; if the gap scales with argChars, it is typing.
+   * Everything from `tool_start` to `tool_end` is Paseo's own routing and
+   * execution. Every call is an experiment; nothing here samples or aggregates.
+   */
+  private observeRoutedOperation(
+    call: LiveVoiceCall,
+    observation: LiveVoiceRouteObservation,
+  ): void {
+    const operation = observation.operation;
+    const toolName = operation.kind === "execute_tool" ? operation.toolName : operation.kind;
+    const targetServerId = operation.kind === "execute_tool" ? operation.targetServerId : undefined;
+    const now = Date.now();
+    if (observation.phase === "start") {
+      const argChars =
+        operation.kind === "execute_tool" ? JSON.stringify(operation.arguments).length : 0;
+      this.logger.info(
+        {
+          liveSessionId: call.liveSessionId,
+          requestId: observation.requestId,
+          toolName,
+          ...(targetServerId ? { targetServerId } : {}),
+          argChars,
+          ...(call.lastUserTranscriptAt !== null
+            ? { msSinceUserSpoke: now - call.lastUserTranscriptAt }
+            : {}),
+          ...(call.lastAssistantTranscriptAt !== null
+            ? { msSinceAssistantSpoke: now - call.lastAssistantTranscriptAt }
+            : {}),
+          ...(call.lastRoutedToolEndAt !== null
+            ? { msSincePreviousToolEnd: now - call.lastRoutedToolEndAt }
+            : {}),
+        },
+        "live_voice.timing.tool_start",
+      );
+      return;
+    }
+    call.lastRoutedToolEndAt = now;
+    this.logger.info(
+      {
+        liveSessionId: call.liveSessionId,
+        requestId: observation.requestId,
+        toolName,
+        ...(targetServerId ? { targetServerId } : {}),
+        durationMs: observation.durationMs,
+        ok: observation.ok,
+      },
+      "live_voice.timing.tool_end",
+    );
   }
 
   /** Fire-and-forget: a failed host teardown must not fail the call teardown. */
@@ -531,6 +628,8 @@ export class LiveVoiceCoordinator {
     crossHostRoutingAvailable: boolean;
     ambientAgentReports?: boolean;
     ambientAgentGuidance?: string | undefined;
+    disabledPromptComponents?: readonly string[] | undefined;
+    customVoiceInstructions?: string | undefined;
   }): Promise<LiveVoiceStartContext | null> {
     if (!this.context) {
       return null;
@@ -588,6 +687,20 @@ export class LiveVoiceCoordinator {
         );
         return;
       case "transcript":
+        if (event.role === "user") {
+          call.lastUserTranscriptAt = Date.now();
+        } else {
+          call.lastAssistantTranscriptAt = Date.now();
+        }
+        // Sizes only — transcript text is user content and stays out of logs.
+        this.logger.debug(
+          {
+            liveSessionId: call.liveSessionId,
+            role: event.role,
+            chars: event.text.length,
+          },
+          "live_voice.timing.transcript",
+        );
         this.publish(call, {
           kind: "transcript",
           role: event.role,

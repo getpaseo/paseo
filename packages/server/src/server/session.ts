@@ -2461,6 +2461,12 @@ export class Session {
       // it is the party that watches every host and holds the user's setting.
       ...(msg.ambientAgentReports ? { ambientAgentReports: true } : {}),
       ...(msg.ambientAgentGuidance ? { ambientAgentGuidance: msg.ambientAgentGuidance } : {}),
+      ...(msg.disabledPromptComponents?.length
+        ? { disabledPromptComponents: msg.disabledPromptComponents }
+        : {}),
+      ...(msg.customVoiceInstructions
+        ? { customVoiceInstructions: msg.customVoiceInstructions }
+        : {}),
     });
     if (result.accepted) {
       respond({

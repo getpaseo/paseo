@@ -1803,6 +1803,37 @@ export const es: TranslationResources = {
         description: "Se transmite al agente de voz tal cual. Déjalo vacío para que decida.",
         placeholder: "Interrúmpeme solo por solicitudes de permiso y fallos.",
       },
+      promptComponents: {
+        "canonical-tools": {
+          label: "Chuleta de herramientas",
+          description:
+            "Da al asistente los nombres exactos de las herramientas para ahorrar turnos de búsqueda.",
+        },
+        "delegation-brevity": {
+          label: "Delegaciones breves",
+          description:
+            "Mantén cortos los prompts a las sesiones de agente: sin dictar código ni listas de pasos.",
+        },
+        "cross-host-reach": {
+          label: "Visión entre máquinas",
+          description:
+            "Enseña al asistente qué lecturas cubren todas las máquinas en una sola llamada.",
+        },
+        recipes: {
+          label: "Recetas",
+          description:
+            "Los caminos más cortos conocidos para peticiones comunes, como archivar por nombre.",
+        },
+        "speech-style": {
+          label: "Estilo al hablar",
+          description: "Frases habladas, actuar antes de narrar y vocabulario de Paseo.",
+        },
+      },
+      customInstructions: {
+        label: "Instrucciones permanentes",
+        description: "Se transmiten al agente de voz tal cual, en cada llamada.",
+        placeholder: "Responde siempre en una frase salvo que pida más.",
+      },
     },
     diagnostics: {
       title: "Voz en directo",

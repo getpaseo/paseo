@@ -25,7 +25,11 @@ import {
   enableAmbientLiveVoiceWatches,
   type LiveVoiceAmbientWatchDeps,
 } from "@/live-voice/live-voice-ambient-watch";
-import { getLiveVoiceAmbientSettings, getLiveVoiceVoice } from "@/stores/live-voice-settings-store";
+import {
+  getLiveVoiceAmbientSettings,
+  getLiveVoicePromptSettings,
+  getLiveVoiceVoice,
+} from "@/stores/live-voice-settings-store";
 import { handleClientObservedLiveVoiceAgentStopped } from "@/live-voice/live-voice-cross-host-router";
 
 /**
@@ -160,6 +164,7 @@ export function LiveVoiceProvider({ children }: LiveVoiceProviderProps) {
             disableAmbientLiveVoiceWatches({ liveSessionId, deps: ambientWatchDeps }),
         },
         { read: getLiveVoiceVoice },
+        { read: getLiveVoicePromptSettings },
       ),
     );
   }

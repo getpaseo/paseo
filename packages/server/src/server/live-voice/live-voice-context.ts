@@ -191,9 +191,21 @@ const ROUTED_RECIPES = [
   '- The user asks about their machines as a whole ("what\'s running?", "is anything waiting on me?"): one run_paseo_tool_on_all_hosts call with list_agents or list_pending_permissions — do not ask which machine they meant.',
 ];
 
-const DELEGATION_WITH_PASEO_TOOLS = [
+/**
+ * Delegation prompts and code generation, spoken out loud.
+ *
+ * The voice model composes tool-call arguments serially while the user hears
+ * nothing, so a long delegation prompt is seconds of dead air — and the session
+ * it delegates to is a stronger coder than it is anyway. This is a separate
+ * component so a user who wants detailed delegation can turn it off.
+ */
+const DELEGATION_BREVITY = [
+  "- Delegation prompts are spoken-length. Say what outcome is wanted and any constraint in a sentence or two, and trust the session to work out how — it has the code in front of it and you do not.",
+  "- Never write code, diffs, file contents, or step-by-step plans into a prompt. Every sentence you compose is silence the user sits through, and the session is the better coder anyway.",
+];
+
+const DELEGATION_ROUTING_CROSS_HOST = [
   "- To get anything done, route it to a host with compatibility=ready: call run_paseo_tool_on_host with that host's opaque serverId, which find_workspace or list_hosts gives you. Explain when a host requires an upgrade instead of attempting it.",
-  ...CANONICAL_PASEO_TOOL_NAMES,
   "- For a user-requested new workspace and agent, call list_hosts, then use run_paseo_tool_on_host to call create_workspace and create_agent on the chosen host. Pass the returned workspaceId to create_agent; do not let create_agent implicitly choose or create another workspace.",
   "- Give both creations short, descriptive titles. Do not claim success until both workspaceId and agentId are returned: create_workspace must return workspaceId, and create_agent must return agentId plus the same workspaceId. Then report the visible workspace and agent titles.",
   "- Through that routing tool you can prompt an existing agent session in the workspace that owns the work, or create a workspace or session when none fits. You can list, create and archive workspaces; list, create, cancel and prompt agent sessions; open terminals; and manage schedules and heartbeats.",
@@ -202,15 +214,11 @@ const DELEGATION_WITH_PASEO_TOOLS = [
   "- Replies from a session you prompted come back to you as text. Narrate them: summarize what happened in a sentence or two instead of reading them out verbatim.",
   ...READ_BEFORE_PROMPTING,
   "- Routed work runs in the background by default and is tracked automatically: the call returns as soon as the work starts, and a note arrives here when it finishes, errors, or needs permission. Say what you started, then keep talking. Never set background to false — it would block this call and leave the user in silence — and never poll in a loop waiting for work to end.",
-  ...CROSS_HOST_REACH,
-  ...ROUTED_RECIPES,
 ];
 
-const DELEGATION_WITH_LOCAL_PASEO_TOOLS = [
+const DELEGATION_ROUTING_LOCAL = [
   "- To get anything done, route it to the right place on this machine instead of doing it yourself: prompt an existing agent session in the workspace that owns the work, or create a workspace or session when none fits.",
   "- Your session has Paseo's tools for this machine, so you can list, create and archive workspaces; list, create, cancel and prompt agent sessions; open terminals; and manage schedules and heartbeats.",
-  ...CANONICAL_PASEO_TOOL_NAMES,
-  "- When the user names a workspace, match it against list_workspaces yourself. Act on an exact title or directory match; if more than one matches, or none does exactly, say what you found and ask before archiving or anything else destructive.",
   "- For a user-requested new workspace and agent, call create_workspace and then create_agent. Pass the returned workspaceId to create_agent and give both creations short, descriptive titles. Do not claim success until both workspaceId and agentId are returned, with create_agent returning the same workspaceId. Then report the visible workspace and agent titles.",
   "- This client cannot route work to another Paseo host. Do not claim that you can see or control other machines.",
   "- Route anything that touches code, files, or commands. Answer directly only when the answer is already in this conversation or in the state below, or when you need a clarifying question first.",
@@ -218,21 +226,197 @@ const DELEGATION_WITH_LOCAL_PASEO_TOOLS = [
   ...READ_BEFORE_PROMPTING,
 ];
 
+/** Local resolution guidance: the one-machine analog of the routed recipes. */
+const RECIPES_LOCAL = [
+  "- When the user names a workspace, match it against list_workspaces yourself. Act on an exact title or directory match; if more than one matches, or none does exactly, say what you found and ask before archiving or anything else destructive.",
+];
+
 const DELEGATION_WITHOUT_PASEO_TOOLS = [
   "- Paseo's own tools are not available to you on this daemon, so you cannot act on Paseo: you cannot prompt, create, cancel, or change anything.",
   "- What you can do is describe what is running from the state below and answer questions about it. If the user asks for work to be done, say plainly that you cannot start it from here — never promise work you have no way to carry out.",
 ];
 
-function resolveDelegationInstructions(
-  paseoToolsAvailable: boolean,
-  crossHostRoutingAvailable: boolean,
-): string[] {
-  if (!paseoToolsAvailable) {
-    return DELEGATION_WITHOUT_PASEO_TOOLS;
+/**
+ * "Act first, then narrate" replaced an earlier instruction to announce slow
+ * work before starting it. Announcing costs a spoken sentence *before* the tool
+ * call's arguments even begin generating — seconds added to every action — and
+ * routed work is background-tracked, so calling first loses nothing.
+ */
+const SPEECH_STYLE_LINES = [
+  "",
+  "How to speak:",
+  "- Short, plain, spoken sentences. No markdown, no bullet lists, no code blocks, and never spell out long file paths.",
+  "- Be quick and responsive. Answer from what you already have or can read fast; only take a slow path when nothing faster can answer.",
+  "- Act first, then narrate. Start the tool call, then say what you started while it runs — routed work reports back on its own, so nothing is lost by acting before speaking. Never spend a sentence announcing what you are about to do.",
+  "- If a transcription sounds garbled or ambiguous, ask instead of guessing.",
+  "- Use Paseo's vocabulary: workspace, agent session, provider, terminal, schedule, heartbeat.",
+];
+
+export type LiveVoicePromptComponentId =
+  | "identity"
+  | "paseo-authority"
+  | "visible-creation"
+  | "delegation-routing"
+  | "canonical-tools"
+  | "delegation-brevity"
+  | "cross-host-reach"
+  | "recipes"
+  | "speech-style";
+
+export interface LiveVoicePromptComponentInfo {
+  id: LiveVoicePromptComponentId;
+  /** Config-page label. English on purpose, like tool descriptions. */
+  title: string;
+  description: string;
+  /**
+   * Safety and core-operation components. A disable request naming a locked
+   * component is ignored — the daemon, not the client, is the authority on
+   * what a call cannot run without.
+   */
+  locked: boolean;
+}
+
+/**
+ * The prompt as the configuration page sees it: every component, its purpose,
+ * and whether the user may turn it off. Order here is presentation order; the
+ * assembled prompt orders components itself.
+ */
+export const LIVE_VOICE_PROMPT_COMPONENTS: readonly LiveVoicePromptComponentInfo[] = [
+  {
+    id: "identity",
+    title: "Role",
+    description: "Who the assistant is: the user's spoken intermediary to their agent sessions.",
+    locked: true,
+  },
+  {
+    id: "paseo-authority",
+    title: "Paseo is authoritative",
+    description: "Questions about Paseo state are answered from Paseo MCP, never inferred.",
+    locked: true,
+  },
+  {
+    id: "visible-creation",
+    title: "Paseo-visible work only",
+    description:
+      "The assistant never does coding work itself and only creates workspaces and sessions Paseo can see.",
+    locked: true,
+  },
+  {
+    id: "delegation-routing",
+    title: "Routing",
+    description: "How work is routed to hosts and sessions, and how outcomes report back.",
+    locked: true,
+  },
+  {
+    id: "canonical-tools",
+    title: "Tool cheat sheet",
+    description:
+      "Exact names and arguments of the common Paseo tools, so the assistant skips discovery turns.",
+    locked: false,
+  },
+  {
+    id: "delegation-brevity",
+    title: "Brief delegation prompts",
+    description:
+      "Prompts to sessions stay a sentence or two, with no code or step lists dictated out loud.",
+    locked: false,
+  },
+  {
+    id: "cross-host-reach",
+    title: "Cross-machine awareness",
+    description:
+      "What reaching each machine costs, and which reads cover every machine in one call.",
+    locked: false,
+  },
+  {
+    id: "recipes",
+    title: "Recipes",
+    description: "Shortest known paths for the usual requests, like archiving a named workspace.",
+    locked: false,
+  },
+  {
+    id: "speech-style",
+    title: "Speaking style",
+    description: "Spoken-sentence output, act-first narration, and Paseo vocabulary.",
+    locked: false,
+  },
+];
+
+const PROMPT_COMPONENTS_BY_ID = new Map(
+  LIVE_VOICE_PROMPT_COMPONENTS.map((component) => [component.id, component]),
+);
+
+/** Known, unlocked ids only. Unknown ids are a newer client's problem, not ours. */
+function resolveDisabledComponents(requested: readonly string[] | undefined): Set<string> {
+  const disabled = new Set<string>();
+  for (const id of requested ?? []) {
+    const component = PROMPT_COMPONENTS_BY_ID.get(id as LiveVoicePromptComponentId);
+    if (component && !component.locked) {
+      disabled.add(component.id);
+    }
   }
-  return crossHostRoutingAvailable
-    ? DELEGATION_WITH_PASEO_TOOLS
-    : DELEGATION_WITH_LOCAL_PASEO_TOOLS;
+  return disabled;
+}
+
+interface ResolvedPromptComponent {
+  id: LiveVoicePromptComponentId;
+  lines: string[];
+}
+
+/**
+ * Everything before the ambient/custom/speech sections, in speaking order. Kept
+ * as data so disabling a component removes a contiguous block and nothing else.
+ */
+function resolveBodyComponents(options: {
+  paseoToolsAvailable: boolean;
+  crossHostRoutingAvailable: boolean;
+}): ResolvedPromptComponent[] {
+  const identity: ResolvedPromptComponent = {
+    id: "identity",
+    lines: [
+      "You are the voice of Paseo on this machine.",
+      "",
+      "Paseo runs and monitors AI coding agent sessions on the user's own machine. The user is talking to you out loud, hands-free, often away from their keyboard.",
+      "",
+      "How you work:",
+      "- You are the user's chief of staff, not one of their agent sessions. Your job is to be an intermediary to their full text-based agent sessions: route work to them, read what they produce, and report back in plain speech.",
+    ],
+  };
+  const visibleCreation: ResolvedPromptComponent = {
+    id: "visible-creation",
+    lines: [
+      "- You have a working session of your own, in a plain directory with none of their projects in it, so never do coding work yourself — the sessions you route to are the ones that run with their code.",
+      ...PASEO_VISIBLE_CREATION_RULES,
+    ],
+  };
+  if (!options.paseoToolsAvailable) {
+    return [
+      identity,
+      visibleCreation,
+      { id: "delegation-routing", lines: [...DELEGATION_WITHOUT_PASEO_TOOLS] },
+    ];
+  }
+  if (!options.crossHostRoutingAvailable) {
+    return [
+      identity,
+      { id: "paseo-authority", lines: [...AUTHORITATIVE_LOCAL_PASEO_STATE] },
+      visibleCreation,
+      { id: "delegation-routing", lines: [...DELEGATION_ROUTING_LOCAL] },
+      { id: "canonical-tools", lines: [...CANONICAL_PASEO_TOOL_NAMES] },
+      { id: "delegation-brevity", lines: [...DELEGATION_BREVITY] },
+      { id: "recipes", lines: [...RECIPES_LOCAL] },
+    ];
+  }
+  return [
+    identity,
+    { id: "paseo-authority", lines: [...AUTHORITATIVE_PASEO_STATE_WITH_ROUTING] },
+    visibleCreation,
+    { id: "delegation-routing", lines: [...DELEGATION_ROUTING_CROSS_HOST] },
+    { id: "canonical-tools", lines: [...CANONICAL_PASEO_TOOL_NAMES] },
+    { id: "delegation-brevity", lines: [...DELEGATION_BREVITY] },
+    { id: "cross-host-reach", lines: [...CROSS_HOST_REACH] },
+    { id: "recipes", lines: [...ROUTED_RECIPES] },
+  ];
 }
 
 export interface LiveVoicePromptOptions {
@@ -242,6 +426,10 @@ export interface LiveVoicePromptOptions {
   ambientAgentReports?: boolean;
   /** The user's own standing instruction for those reports, verbatim. */
   ambientAgentGuidance?: string | undefined;
+  /** Optional component ids the user turned off. Locked and unknown ids are ignored. */
+  disabledComponents?: readonly string[] | undefined;
+  /** The user's standing instructions for the whole call, verbatim. */
+  customInstructions?: string | undefined;
 }
 
 /**
@@ -272,35 +460,43 @@ function buildAmbientAgentReportInstructions(guidance: string | undefined): stri
   return lines;
 }
 
+/**
+ * Standing instructions cover the whole call, unlike ambient guidance which
+ * shapes only unsolicited reports. Same treatment though: the user's own words,
+ * quoted rather than compiled, bounded only by the context budget.
+ */
+export const MAX_CUSTOM_VOICE_INSTRUCTIONS_LENGTH = 1_000;
+
+function buildCustomInstructionLines(customInstructions: string | undefined): string[] {
+  const trimmed = customInstructions?.trim();
+  if (!trimmed) {
+    return [];
+  }
+  const bounded =
+    trimmed.length <= MAX_CUSTOM_VOICE_INSTRUCTIONS_LENGTH
+      ? trimmed
+      : `${trimmed.slice(0, MAX_CUSTOM_VOICE_INSTRUCTIONS_LENGTH)}…`;
+  return [
+    "",
+    "Standing instructions from the user:",
+    `- "${bounded}". These are the user's own preferences for how you work; follow them over your defaults when they conflict.`,
+  ];
+}
+
 export function buildLiveVoicePrompt(options: LiveVoicePromptOptions): string {
   const crossHostRoutingAvailable = options.crossHostRoutingAvailable ?? true;
-  let authoritativeStateInstructions: string[] = [];
-  if (options.paseoToolsAvailable) {
-    authoritativeStateInstructions = crossHostRoutingAvailable
-      ? AUTHORITATIVE_PASEO_STATE_WITH_ROUTING
-      : AUTHORITATIVE_LOCAL_PASEO_STATE;
-  }
+  const disabled = resolveDisabledComponents(options.disabledComponents);
+  const body = resolveBodyComponents({
+    paseoToolsAvailable: options.paseoToolsAvailable,
+    crossHostRoutingAvailable,
+  }).filter((component) => !disabled.has(component.id));
   return [
-    "You are the voice of Paseo on this machine.",
-    "",
-    "Paseo runs and monitors AI coding agent sessions on the user's own machine. The user is talking to you out loud, hands-free, often away from their keyboard.",
-    "",
-    "How you work:",
-    "- You are the user's chief of staff, not one of their agent sessions. Your job is to be an intermediary to their full text-based agent sessions: route work to them, read what they produce, and report back in plain speech.",
-    ...authoritativeStateInstructions,
-    "- You have a working session of your own, in a plain directory with none of their projects in it, so never do coding work yourself — the sessions you route to are the ones that run with their code.",
-    ...PASEO_VISIBLE_CREATION_RULES,
-    ...resolveDelegationInstructions(options.paseoToolsAvailable, crossHostRoutingAvailable),
+    ...body.flatMap((component) => component.lines),
     ...(options.ambientAgentReports
       ? buildAmbientAgentReportInstructions(options.ambientAgentGuidance)
       : []),
-    "",
-    "How to speak:",
-    "- Short, plain, spoken sentences. No markdown, no bullet lists, no code blocks, and never spell out long file paths.",
-    "- Be quick and responsive. Answer from what you already have or can read fast; only take a slow path when nothing faster can answer.",
-    "- Before starting something slow, say briefly what you are about to do so the user is not left in silence, and keep talking to them rather than going quiet while it runs.",
-    "- If a transcription sounds garbled or ambiguous, ask instead of guessing.",
-    "- Use Paseo's vocabulary: workspace, agent session, provider, terminal, schedule, heartbeat.",
+    ...buildCustomInstructionLines(options.customInstructions),
+    ...(disabled.has("speech-style") ? [] : SPEECH_STYLE_LINES),
   ].join("\n");
 }
 
@@ -380,6 +576,8 @@ export function buildLiveVoiceStartContext(
     crossHostRoutingAvailable?: boolean;
     ambientAgentReports?: boolean;
     ambientAgentGuidance?: string | undefined;
+    disabledPromptComponents?: readonly string[] | undefined;
+    customVoiceInstructions?: string | undefined;
   } = {},
 ): LiveVoiceStartContext {
   return {
@@ -389,6 +587,12 @@ export function buildLiveVoiceStartContext(
       ...(options.ambientAgentReports ? { ambientAgentReports: true } : {}),
       ...(options.ambientAgentGuidance
         ? { ambientAgentGuidance: options.ambientAgentGuidance }
+        : {}),
+      ...(options.disabledPromptComponents
+        ? { disabledComponents: options.disabledPromptComponents }
+        : {}),
+      ...(options.customVoiceInstructions
+        ? { customInstructions: options.customVoiceInstructions }
         : {}),
     }),
     initialItems: buildLiveVoiceInitialItems(snapshot),
