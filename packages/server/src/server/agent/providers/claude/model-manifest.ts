@@ -364,6 +364,7 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
 }
 
 /** Canonicalize retired first-party IDs before passing stored configs back to Claude Code. */
+// COMPAT(claudeFable5OneMillionId): added in v0.3.0, remove after 2027-02-06 once pre-v0.3.0 persisted Claude configs are outside support.
 export function normalizeClaudeConfiguredModelId(modelId: string): string {
   const trimmed = modelId.trim();
   return /^claude-fable-5(?:-\d{8})?\[1m\]$/i.test(trimmed) ? "claude-fable-5" : trimmed;
