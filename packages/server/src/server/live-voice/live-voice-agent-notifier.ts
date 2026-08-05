@@ -6,6 +6,7 @@ import { watchAgentFinish, type AgentFinishReason } from "../agent/agent-prompt.
 import type { AgentManager } from "../agent/agent-manager.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import { redactModelFacingText } from "../agent/model-facing-redaction.js";
+import type { ProjectRegistry, WorkspaceRegistry } from "../workspace-registry.js";
 
 /**
  * The wire reasons. `needs permission` is spelled with an underscore on the wire
@@ -29,6 +30,13 @@ const MAX_SUMMARY_LENGTH = 1_200;
 export interface LiveVoiceAgentNotifierOptions {
   agentManager: Pick<AgentManager, "subscribe" | "getAgent" | "getLastAssistantMessage">;
   agentStorage: Pick<AgentStorage, "get">;
+  /**
+   * Resolves where a finished agent's work lives. Read lazily because the
+   * registries are wired after the notifier, and left optional so a caller with
+   * neither reports the agent unplaced rather than not at all.
+   */
+  workspaceRegistry?: () => Pick<WorkspaceRegistry, "get"> | null;
+  projectRegistry?: () => Pick<ProjectRegistry, "get"> | null;
   logger: Logger;
 }
 
@@ -60,6 +68,8 @@ export interface WatchLiveVoiceAgentParams {
 export class LiveVoiceAgentNotifier {
   private readonly agentManager: LiveVoiceAgentNotifierOptions["agentManager"];
   private readonly agentStorage: LiveVoiceAgentNotifierOptions["agentStorage"];
+  private readonly workspaceRegistry: LiveVoiceAgentNotifierOptions["workspaceRegistry"];
+  private readonly projectRegistry: LiveVoiceAgentNotifierOptions["projectRegistry"];
   private readonly logger: Logger;
   private readonly cancelsBySource = new Map<object, Set<() => void>>();
   private readonly ambientBySource = new Map<object, () => void>();
@@ -67,6 +77,8 @@ export class LiveVoiceAgentNotifier {
   constructor(options: LiveVoiceAgentNotifierOptions) {
     this.agentManager = options.agentManager;
     this.agentStorage = options.agentStorage;
+    this.workspaceRegistry = options.workspaceRegistry;
+    this.projectRegistry = options.projectRegistry;
     this.logger = options.logger.child({ module: "live-voice-agent-notifier" });
   }
 
@@ -244,6 +256,7 @@ export class LiveVoiceAgentNotifier {
         ? "authentication_required"
         : WIRE_REASONS[reason];
     const lastAssistantMessage = await this.agentManager.getLastAssistantMessage(params.agentId);
+    const placement = await this.resolvePlacement(record?.workspaceId);
     params.emit({
       type: "voice.live.agent.update",
       payload: {
@@ -255,6 +268,8 @@ export class LiveVoiceAgentNotifier {
           scope: "agent_turn",
           ...(turnId ? { turnId } : {}),
           ...(options.unsolicited ? { unsolicited: true } : {}),
+          ...(placement.workspaceName ? { workspaceName: placement.workspaceName } : {}),
+          ...(placement.projectName ? { projectName: placement.projectName } : {}),
           summary: redactAndTruncateSummary(lastAssistantMessage),
         },
       },
@@ -263,6 +278,40 @@ export class LiveVoiceAgentNotifier {
       { agentId: params.agentId, requestId: params.requestId, reason },
       "live_voice.agent_notify.reported",
     );
+  }
+
+  /**
+   * Where the work lives, in the names the user sees: the workspace's title if
+   * they set one and the derived display name otherwise, and the same for its
+   * project. Both are best-effort — an unplaceable agent is still worth
+   * reporting.
+   */
+  private async resolvePlacement(
+    workspaceId: string | undefined,
+  ): Promise<{ workspaceName: string | null; projectName: string | null }> {
+    const unplaced = { workspaceName: null, projectName: null };
+    const registry = workspaceId ? this.workspaceRegistry?.() : null;
+    if (!registry || !workspaceId) {
+      return unplaced;
+    }
+    try {
+      const workspace = await registry.get(workspaceId);
+      if (!workspace) {
+        return unplaced;
+      }
+      const projects = this.projectRegistry?.();
+      const project = projects ? await projects.get(workspace.projectId) : null;
+      return {
+        workspaceName: workspace.title?.trim() || workspace.displayName?.trim() || null,
+        projectName: project?.customName?.trim() || project?.displayName?.trim() || null,
+      };
+    } catch (error) {
+      this.logger.warn(
+        { err: error, workspaceId },
+        "live_voice.agent_notify.placement_lookup_failed",
+      );
+      return unplaced;
+    }
   }
 }
 

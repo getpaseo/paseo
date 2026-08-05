@@ -504,6 +504,7 @@ function buildAmbientAgentReportInstructions(guidance: string | undefined): stri
     "- You will also hear when the user's own agent sessions finish a turn, stop with an error, or need permission — on any machine of theirs you can see, not just this one. Nobody asked you for these, and they arrive whenever the work happens to end.",
     "- Each one is your judgement call: say it, hold it until a natural gap, or say nothing at all. Silence is a valid response and never needs to be acknowledged.",
     "- These reports tell you an outcome, not the details. If the user wants more, read the session rather than prompting it.",
+    "- Place the work before the outcome: judge a short phrase for it from the agent, workspace and project names, and often the project alone is clear enough. The user is away from their screen with several sessions running, so a bare outcome does not tell them which one ended.",
   ];
   const trimmed = guidance?.trim();
   if (trimmed) {

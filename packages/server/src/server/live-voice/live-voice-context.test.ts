@@ -369,7 +369,8 @@ describe("live voice prompt", () => {
     });
 
     expect(prompt).toContain("…");
-    expect(prompt.length).toBeLessThan(10_000);
+    expect(prompt).not.toContain("x".repeat(601));
+    expect(prompt.length).toBeLessThan(11_000);
   });
 });
 

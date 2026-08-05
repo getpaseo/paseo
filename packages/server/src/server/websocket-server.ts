@@ -687,6 +687,8 @@ export class VoiceAssistantWebSocketServer {
     this.liveVoiceAgentNotifier = new LiveVoiceAgentNotifier({
       agentManager,
       agentStorage,
+      workspaceRegistry: () => this.workspaceRegistry,
+      projectRegistry: () => this.projectRegistry,
       logger: this.logger,
     });
     this.hubRelationships = hubRelationships ?? null;

@@ -168,9 +168,18 @@ export const liveVoiceCrossHostRouterDeps: LiveVoiceCrossHostRouterDeps = {
   getAgentSummary: (serverId, agentId) => {
     const session = useSessionStore.getState().sessions[serverId];
     const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
-    return agent
-      ? { title: agent.title, status: agent.status, lastError: agent.lastError ?? null }
-      : null;
+    if (!agent) {
+      return null;
+    }
+    const workspace = agent.workspaceId ? session?.workspaces.get(agent.workspaceId) : undefined;
+    return {
+      title: agent.title,
+      status: agent.status,
+      lastError: agent.lastError ?? null,
+      workspaceName: workspace?.title?.trim() || workspace?.name?.trim() || null,
+      projectName:
+        workspace?.projectCustomName?.trim() || workspace?.projectDisplayName?.trim() || null,
+    };
   },
   readAgentCompletionSummary: async (serverId, agentId) => {
     const pin = getHostRuntimeStore().pinActiveConnection(serverId);

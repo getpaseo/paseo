@@ -113,6 +113,19 @@ export const VoiceLiveAgentNotificationSchema = z.object({
   /** Filled in by the client, which is the only party that knows host labels. */
   hostLabel: z.string().min(1).optional(),
   /**
+   * The workspace the session belongs to, named as the user sees it. A session
+   * title alone ("Fix the flaky test") does not say which of the user's projects
+   * it belongs to, and a call watching several machines reports on many at once.
+   * Absent when the session has no workspace or the daemon is too old to send it.
+   */
+  workspaceName: z.string().min(1).optional(),
+  /**
+   * The project the workspace belongs to. Often the clearest way to place work
+   * out loud — "the Paseo work finished" lands where a branch-shaped workspace
+   * name does not. Same absence rules as `workspaceName`.
+   */
+  projectName: z.string().min(1).optional(),
+  /**
    * The call did not start this work — it came from the ambient watch over
    * everything on the host. The user did not ask for it mid-conversation, so the
    * model is told it may stay silent rather than told to speak.

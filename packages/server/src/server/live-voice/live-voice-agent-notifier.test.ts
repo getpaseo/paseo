@@ -143,6 +143,61 @@ describe("LiveVoiceAgentNotifier", () => {
     expect(JSON.stringify(updates[0])).not.toContain("liveSession");
   });
 
+  it("names the workspace and project the agent's work lives in", async () => {
+    const agents = createFakeAgents();
+    const notifier = new LiveVoiceAgentNotifier({
+      agentManager: agents.agentManager,
+      agentStorage: {
+        get: async () => ({ title: "Rebase main", workspaceId: "ws-1" }) as never,
+      } as unknown as Pick<AgentStorage, "get">,
+      workspaceRegistry: () => ({
+        get: async () =>
+          ({
+            title: "Refresh Paseo assembly",
+            displayName: "refresh-paseo-assembly",
+            projectId: "project-1",
+          }) as never,
+      }),
+      projectRegistry: () => ({
+        get: async () => ({ displayName: "paseo", customName: "Paseo" }) as never,
+      }),
+      logger: createTestLogger(),
+    });
+    const updates: VoiceLiveAgentUpdate[] = [];
+    watch(notifier, {}, updates);
+
+    agents.transition("idle");
+    await vi.waitFor(() => {
+      expect(updates).toHaveLength(1);
+    });
+    expect(updates[0]?.payload.notification.workspaceName).toBe("Refresh Paseo assembly");
+    expect(updates[0]?.payload.notification.projectName).toBe("Paseo");
+  });
+
+  it("still reports when the placement cannot be looked up", async () => {
+    const agents = createFakeAgents();
+    const notifier = new LiveVoiceAgentNotifier({
+      agentManager: agents.agentManager,
+      agentStorage: {
+        get: async () => ({ title: "Rebase main", workspaceId: "ws-1" }) as never,
+      } as unknown as Pick<AgentStorage, "get">,
+      workspaceRegistry: () => ({
+        get: async () => {
+          throw new Error("registry unavailable");
+        },
+      }),
+      logger: createTestLogger(),
+    });
+    const updates: VoiceLiveAgentUpdate[] = [];
+    watch(notifier, {}, updates);
+
+    agents.transition("idle");
+    await vi.waitFor(() => {
+      expect(updates).toHaveLength(1);
+    });
+    expect(updates[0]?.payload.notification.workspaceName).toBeUndefined();
+  });
+
   it("reports an errored agent under its own reason", async () => {
     const agents = createFakeAgents();
     const notifier = createNotifier(agents);

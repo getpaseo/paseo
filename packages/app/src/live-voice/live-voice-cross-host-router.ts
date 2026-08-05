@@ -73,7 +73,13 @@ export interface LiveVoiceCrossHostRouterDeps {
   getAgentSummary(
     serverId: string,
     agentId: string,
-  ): { title: string | null; status?: string; lastError?: string | null } | null;
+  ): {
+    title: string | null;
+    status?: string;
+    lastError?: string | null;
+    workspaceName?: string | null;
+    projectName?: string | null;
+  } | null;
   readAgentCompletionSummary(serverId: string, agentId: string): Promise<string | null>;
   pinActiveConnection(serverId: string): PinnedHostConnection | null;
   isAuthorizedSourceCall(sourceServerId: string, liveSessionId: string): boolean;
@@ -205,11 +211,15 @@ export async function handleClientObservedLiveVoiceAgentStopped(input: {
   const rawSummary = await deps
     .readAgentCompletionSummary(targetServerId, agentId)
     .catch(() => null);
+  const observedWorkspaceName = sanitizeObservedText(agent?.workspaceName ?? "", 200);
+  const observedProjectName = sanitizeObservedText(agent?.projectName ?? "", 200);
   const observed: VoiceLiveAgentNotification = {
     agentId,
     title: sanitizeObservedText(agent?.title ?? agentId, 200) || agentId,
     reason: agent?.status === "error" ? "errored" : "turn_completed",
     scope: "agent_turn",
+    ...(observedWorkspaceName ? { workspaceName: observedWorkspaceName } : {}),
+    ...(observedProjectName ? { projectName: observedProjectName } : {}),
     summary:
       sanitizeObservedText(
         rawSummary ?? (agent?.status === "error" ? (agent.lastError ?? "") : ""),
@@ -311,15 +321,17 @@ function toObservedAgentNotification(
   ) {
     return null;
   }
-  const title = sanitizeObservedText(
-    deps.getAgentSummary(targetServerId, event.agentId)?.title ?? event.agentId,
-    200,
-  );
+  const agent = deps.getAgentSummary(targetServerId, event.agentId);
+  const title = sanitizeObservedText(agent?.title ?? event.agentId, 200);
+  const workspaceName = sanitizeObservedText(agent?.workspaceName ?? "", 200);
+  const projectName = sanitizeObservedText(agent?.projectName ?? "", 200);
   return {
     agentId: event.agentId,
     title: title || event.agentId,
     reason: toObservedReason(reason),
     scope: "agent_turn",
+    ...(workspaceName ? { workspaceName } : {}),
+    ...(projectName ? { projectName } : {}),
     summary: sanitizeObservedText(event.notification?.body ?? "", 1_200) || null,
   };
 }
