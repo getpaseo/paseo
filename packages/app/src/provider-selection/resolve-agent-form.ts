@@ -494,8 +494,16 @@ function pickNextThinkingOptionForProvider(input: {
   providerModels: AgentModelDefinition[] | null;
   providerPrefs: ProviderPrefs | undefined;
   modelId: string;
+  currentThinkingOptionId: string;
 }): string {
-  const { providerModels, providerPrefs, modelId } = input;
+  const { providerModels, providerPrefs, modelId, currentThinkingOptionId } = input;
+  const effectiveModel = resolveEffectiveModel(providerModels, modelId);
+  const currentThinkingOption = currentThinkingOptionId.trim();
+  const canPreserveCurrentThinking = effectiveModel?.thinkingOptions?.some(
+    (option) => option.id === currentThinkingOption,
+  );
+  if (canPreserveCurrentThinking) return currentThinkingOption;
+
   const preferredThinking = modelId
     ? (providerPrefs?.thinkingByModel?.[modelId]?.trim() ?? "")
     : "";
@@ -564,6 +572,7 @@ export function resolveAgentForm(
         providerModels: action.providerModels,
         providerPrefs: action.providerPrefs,
         modelId: nextModelId,
+        currentThinkingOptionId: state.form.thinkingOptionId,
       });
       return {
         ...state,
@@ -581,10 +590,11 @@ export function resolveAgentForm(
     case "SET_PROVIDER_AND_MODEL_FROM_USER": {
       const normalizedModelId = normalizeSelectedModelId(action.modelId);
       const nextModelId = normalizedModelId || resolveDefaultModelId(action.providerModels);
-      const nextThinkingOptionId = resolveThinkingOptionId({
-        availableModels: action.providerModels,
+      const nextThinkingOptionId = pickNextThinkingOptionForProvider({
+        providerModels: action.providerModels,
+        providerPrefs: action.providerPrefs,
         modelId: nextModelId,
-        requestedThinkingOptionId: "",
+        currentThinkingOptionId: state.form.thinkingOptionId,
       });
       const nextModeId = pickNextModeForProviderAndModel({
         currentProvider: state.form.provider,
@@ -619,9 +629,7 @@ export function resolveAgentForm(
       const nextThinkingOptionId = resolveThinkingOptionId({
         availableModels: action.availableModels,
         modelId: nextModelId,
-        requestedThinkingOptionId: state.userModified.thinkingOptionId
-          ? state.form.thinkingOptionId
-          : "",
+        requestedThinkingOptionId: state.form.thinkingOptionId,
       });
       return {
         ...state,
