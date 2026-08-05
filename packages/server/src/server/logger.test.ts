@@ -51,7 +51,7 @@ async function runLoggerFixture(source: string): Promise<{ stdout: string; stder
 }
 
 describe("resolveLogConfig", () => {
-  const paseoHome = "/tmp/paseo-logger-tests";
+  const paseoHome = path.join(tmpdir(), "paseo-logger-tests");
 
   it("defaults to stdout JSON without file logging", () => {
     const result = resolveLogConfig(undefined, { paseoHome });
