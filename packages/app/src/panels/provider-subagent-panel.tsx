@@ -141,6 +141,7 @@ function ProviderSubagentPanel() {
   const firstTimelineSeq = timeline?.rows.size ? Math.min(...timeline.rows.keys()) : null;
   const progressKey =
     timeline?.epoch && firstTimelineSeq !== null ? `${timeline.epoch}:${firstTimelineSeq}` : null;
+  const subtitle = descriptor?.subtitle?.trim();
 
   const streamContext = useMemo<AgentScreenAgent>(
     () => ({
@@ -183,6 +184,17 @@ function ProviderSubagentPanel() {
 
   return (
     <View style={styles.container} testID="provider-subagent-panel">
+      {subtitle ? (
+        <View style={styles.subtitleHeader}>
+          <Text
+            style={styles.subtitleText}
+            numberOfLines={1}
+            testID="provider-subagent-pane-subtitle"
+          >
+            {subtitle}
+          </Text>
+        </View>
+      ) : null}
       <AgentStreamView
         agentId={streamId}
         serverId={serverId}
@@ -201,7 +213,17 @@ function ProviderSubagentPanel() {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: { flex: 1 },
+  container: { flex: 1, minHeight: 0 },
+  subtitleHeader: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  subtitleText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
   unsupported: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   unsupportedText: { color: theme.colors.foregroundMuted, textAlign: "center" },
 }));
