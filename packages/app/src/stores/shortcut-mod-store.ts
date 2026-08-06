@@ -16,9 +16,12 @@ interface ShortcutModState {
   setPreference: (preference: ShortcutModPreference) => void;
 }
 
+let preferenceSetThisSession = false;
+
 export const useShortcutModStore = create<ShortcutModState>((set) => ({
   preference: "auto",
   setPreference: (preference) => {
+    preferenceSetThisSession = true;
     set({ preference });
     void AsyncStorage.setItem(STORAGE_KEY, preference);
   },
@@ -26,6 +29,10 @@ export const useShortcutModStore = create<ShortcutModState>((set) => ({
 
 async function hydratePreference() {
   const value = await AsyncStorage.getItem(STORAGE_KEY);
+  // A selection made before this read resolves wins over the persisted value.
+  if (preferenceSetThisSession) {
+    return;
+  }
   if (value === "cmd" || value === "ctrl") {
     useShortcutModStore.setState({ preference: value });
   }
