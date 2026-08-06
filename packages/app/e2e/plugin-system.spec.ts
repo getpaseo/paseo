@@ -10,8 +10,11 @@ import {
   captureQaScreenshot,
   installExamplePlugin,
   installPluginWithMissingEntry,
+  openAppearanceSettings,
   openPluginsSettings,
   pluginToggle,
+  readPluginThemeVar,
+  selectAppTheme,
   setPluginEnabled,
   uninstallTestPlugins,
 } from "./helpers/plugins";
@@ -183,6 +186,53 @@ test.describe("Plugin system", () => {
 
       await captureQaScreenshot(page, "sidebar-panel");
     } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("a user-selected theme change reaches the plugin, not just the OS colour scheme", async ({
+    page,
+  }) => {
+    const session = await seedWorkspaceWithPluginFiles("plugin-theme-");
+    try {
+      // The OS colour scheme is pinned dark for the whole test. Both themes
+      // picked below are dark ones, so a sandbox that derives its tokens from
+      // the colour scheme instead of the selected theme sees no change at all
+      // — which is the regression this covers (53cac5843).
+      await page.emulateMedia({ colorScheme: "dark" });
+
+      await gotoAppShell(page);
+      await openSettings(page);
+      await openAppearanceSettings(page);
+      await selectAppTheme(page, "Dark");
+
+      await openAgentRoute(page, session);
+      await openWorkspaceFile(page, HELLO_FILE);
+      const frame = pluginFrame(page, "plugin-file-preview");
+      await expect(frame.locator("#path")).toHaveText(`${HELLO_FILE} — 3 lines`, {
+        timeout: 30_000,
+      });
+      const darkBackground = await readPluginThemeVar(page, "plugin-file-preview", "background");
+      expect(darkBackground).not.toBe("");
+
+      await openSettings(page);
+      await openAppearanceSettings(page);
+      await selectAppTheme(page, "Zinc");
+
+      await openAgentRoute(page, session);
+      await openWorkspaceFile(page, HELLO_FILE);
+      await expect(frame.locator("#path")).toHaveText(`${HELLO_FILE} — 3 lines`, {
+        timeout: 30_000,
+      });
+      await expect
+        .poll(() => readPluginThemeVar(page, "plugin-file-preview", "background"), {
+          timeout: 15_000,
+        })
+        .not.toBe(darkBackground);
+
+      await captureQaScreenshot(page, "file-preview-zinc-theme");
+    } finally {
+      await page.emulateMedia({ colorScheme: null });
       await session.cleanup();
     }
   });

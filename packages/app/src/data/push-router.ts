@@ -307,8 +307,9 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     });
   });
   // Invalidate rather than seed from the payload: the plugin list key is a
-  // prefix of the entry-HTML and registry keys, so one invalidation also drops
-  // entry HTML that an install or uninstall just made stale.
+  // prefix of the entry-HTML keys, so one invalidation also drops entry HTML
+  // that an install or uninstall just made stale. The registry index is keyed
+  // separately on purpose (see plugins/query-keys.ts) and is not dropped here.
   const unsubscribePluginsChanged = input.client.on("plugins.changed", () => {
     void input.queryClient.invalidateQueries({ queryKey: pluginsQueryKey(input.serverId) });
   });

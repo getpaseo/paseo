@@ -168,19 +168,29 @@ export class PluginStore {
           .filter((entry) => entry.isDirectory() && entry.name.startsWith(".staging-"))
           .map(async (entry) => rm(join(this.dir, entry.name), { recursive: true, force: true })),
       );
-      await Promise.all(
-        entries
-          .filter((entry) => entry.isDirectory() && entry.name.startsWith(".trash-"))
-          .map(async (entry) => {
-            const pluginId = trashedPluginId(entry.name);
-            const source = join(this.dir, entry.name);
-            if (pluginId && !names.has(pluginId)) {
-              await rename(source, join(this.dir, pluginId));
-              return;
-            }
-            await rm(source, { recursive: true, force: true });
-          }),
-      );
+      // Sequential, and `names` grows as we go: two interrupted swaps can leave
+      // two `.trash-<id>-*` for the same id, and in parallel both would see the
+      // slot free and race to rename into it. The loser's ENOTEMPTY would reject
+      // `initialize()`, whose promise is cached — every later list/read/install
+      // would fail until the daemon restarted.
+      for (const entry of entries) {
+        if (!entry.isDirectory() || !entry.name.startsWith(".trash-")) {
+          continue;
+        }
+        const pluginId = trashedPluginId(entry.name);
+        const source = join(this.dir, entry.name);
+        if (pluginId && !names.has(pluginId)) {
+          try {
+            await rename(source, join(this.dir, pluginId));
+            names.add(pluginId);
+          } catch {
+            // Leave it: it may be the only copy. It stays invisible to `list()`
+            // and gets another attempt next boot.
+          }
+          continue;
+        }
+        await rm(source, { recursive: true, force: true });
+      }
     })();
     await this.ready;
   }

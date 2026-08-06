@@ -100,10 +100,24 @@ export const PLUGIN_NEUTERED_GLOBALS = [
   "RTCDataChannel",
 ] as const;
 
-export const PLUGIN_NEUTER_SCRIPT = `(function(){${JSON.stringify(PLUGIN_NEUTERED_GLOBALS).replace(
-  /"/g,
-  "'",
-)}.forEach(function(name){try{delete window[name];}catch(e){}try{Object.defineProperty(window,name,{value:undefined,writable:false,configurable:false});}catch(e){}});})();`;
+/**
+ * Deleting the constructors only covers the realm the script runs in. A plugin
+ * that appends a `srcdoc` iframe gets a brand new realm with `RTCPeerConnection`
+ * intact, and we cannot inject into it: `about:srcdoc` is exempt from
+ * `frame-src`, and without `allow-same-origin` the child is cross-origin so its
+ * `contentWindow` is unreachable. So the plugin does not get to have child
+ * browsing contexts at all — this rips out any frame-ish element as it is
+ * inserted, before the child document begins parsing.
+ *
+ * `object`/`embed` are already denied by `object-src 'none'`; they are here so
+ * the list is the set of elements that can become a browsing context, not a
+ * subset that happens to be reachable today.
+ */
+const KILL_CHILD_REALMS = `var s='iframe,frame,object,embed';var k=function(n){if(!n||n.nodeType!==1)return;if(n.matches&&n.matches(s)){n.remove();return;}if(n.querySelectorAll){var f=n.querySelectorAll(s);for(var i=0;i<f.length;i++)f[i].remove();}};new MutationObserver(function(rs){for(var i=0;i<rs.length;i++){var a=rs[i].addedNodes;for(var j=0;j<a.length;j++)k(a[j]);}}).observe(document.documentElement,{childList:true,subtree:true});`;
+
+export const PLUGIN_NEUTER_SCRIPT = `(function(){${JSON.stringify(
+  PLUGIN_NEUTERED_GLOBALS,
+)}.forEach(function(name){try{delete window[name];}catch(e){}try{Object.defineProperty(window,name,{value:undefined,writable:false,configurable:false});}catch(e){}});${KILL_CHILD_REALMS}})();`;
 
 /**
  * Wrap the plugin's HTML in our own document shell. A CSP meta only governs what

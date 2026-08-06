@@ -10,8 +10,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { InstalledPlugin } from "@getpaseo/protocol/plugin/types";
 import Animated, { useAnimatedStyle, useSharedValue, runOnJS } from "react-native-reanimated";
 import { Gesture } from "react-native-gesture-handler";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { Puzzle, X } from "lucide-react-native";
+import type { Theme } from "@/styles/theme";
 import { useTranslation } from "react-i18next";
 import {
   formatPrTabLabel,
@@ -489,6 +490,11 @@ function resolvePluginSidebarTabs(
     );
 }
 
+const ThemedPuzzle = withUnistyles(Puzzle);
+// Hoisted so the mapper identity is stable across renders.
+const activePuzzleColor = (theme: Theme) => ({ color: theme.colors.foreground });
+const mutedPuzzleColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
 function PluginTabButtons({
   pluginTabs,
   resolvedTab,
@@ -498,7 +504,6 @@ function PluginTabButtons({
   resolvedTab: ExplorerTab;
   onTabPress: (tab: ExplorerTab) => void;
 }) {
-  const { theme } = useUnistyles();
   return (
     <>
       {pluginTabs.map((panel) => (
@@ -514,11 +519,9 @@ function PluginTabButtons({
           {/* ponytail: one generic icon for every plugin. Honouring the
               manifest's Lucide icon name means bundling all of lucide;
               add a curated name→component map if plugins ask for it. */}
-          <Puzzle
+          <ThemedPuzzle
             size={13}
-            color={
-              resolvedTab === panel.tab ? theme.colors.foreground : theme.colors.foregroundMuted
-            }
+            uniProps={resolvedTab === panel.tab ? activePuzzleColor : mutedPuzzleColor}
           />
         </ExplorerTabButton>
       ))}

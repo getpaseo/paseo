@@ -67,8 +67,8 @@ export class PluginService {
     return index.plugins;
   }
 
-  async install(pluginId: string, options?: { refresh?: boolean }): Promise<InstalledPlugin> {
-    const download = await this.registry.download(pluginId, options);
+  async install(pluginId: string): Promise<InstalledPlugin> {
+    const download = await this.registry.download(pluginId);
     const source: PluginSource = { kind: "registry", registryUrl: this.registry.registryUrl };
     await this.store.install({
       pluginId,

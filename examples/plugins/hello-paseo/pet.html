@@ -139,14 +139,15 @@
       window.addEventListener("message", (event) => {
         const message = event.data;
         if (!message || message.paseo !== 1) return;
-        if (message.type === "init") {
+        // Re-read both fields on every message: `update` carries the theme too,
+        // and it is the only way a plugin that is already open learns the user
+        // switched themes.
+        if (message.type === "init" || message.type === "update") {
           for (const [key, value] of Object.entries(message.theme ?? {})) {
             if (typeof value === "string") {
               document.documentElement.style.setProperty(`--paseo-${key}`, value);
             }
           }
-          render(message.context);
-        } else if (message.type === "update") {
           render(message.context);
         }
       });

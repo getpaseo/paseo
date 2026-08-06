@@ -79,6 +79,48 @@ export async function openPluginsSettings(page: Page): Promise<void> {
   await expect(page.getByTestId("settings-plugins")).toBeVisible();
 }
 
+export async function openAppearanceSettings(page: Page): Promise<void> {
+  const sidebar = page.getByTestId("settings-sidebar");
+  await expect(sidebar).toBeVisible();
+  await sidebar.getByRole("button", { name: "Appearance", exact: true }).click();
+  await expectAppRoute(page, buildSettingsSectionRoute("appearance"));
+}
+
+/**
+ * Picks an app theme by its visible label. The theme menu items carry no
+ * testIDs; the trigger's accessible name is `Theme: <label>`, which is also the
+ * settled-state assertion.
+ */
+export async function selectAppTheme(page: Page, label: string): Promise<void> {
+  // The trigger is a Pressable, which react-native-web renders without a
+  // button role — match its accessibility label instead.
+  await page.locator('[aria-label^="Theme: "]').click();
+  await page.getByText(label, { exact: true }).last().click();
+  await expect(page.locator(`[aria-label="Theme: ${label}"]`)).toBeVisible();
+}
+
+/**
+ * Reads a `--paseo-*` custom property off the plugin document's root element,
+ * from inside the sandboxed frame. This is the plugin's own view of the theme:
+ * `examples/plugins/hello-paseo/preview.html` sets these from `message.theme`.
+ */
+export async function readPluginThemeVar(
+  page: Page,
+  testId: string,
+  name: string,
+): Promise<string> {
+  const value = await page
+    .getByTestId(testId)
+    .frameLocator("iframe")
+    .locator("body")
+    .evaluate(
+      (body, property) =>
+        getComputedStyle(body.ownerDocument.documentElement).getPropertyValue(property).trim(),
+      `--paseo-${name}`,
+    );
+  return value;
+}
+
 export function pluginToggle(page: Page, pluginId: string) {
   return page.getByTestId(`plugin-toggle-${pluginId}`);
 }

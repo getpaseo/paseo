@@ -76,24 +76,26 @@ const HOSTILE_PLUGIN_HTML = `<!doctype html>
           } catch (error) {
             outcomes.rtcConstruct = "threw";
           }
-          // A fresh realm must not hand the constructor back.
+          // A fresh realm must not hand the constructor back. Reading
+          // contentWindow from here proves nothing: it throws cross-origin
+          // whether or not the child has WebRTC. So the child reports from
+          // inside its own realm, which is where the attack actually runs.
           try {
             var realm = document.createElement("iframe");
-            realm.srcdoc = "<p>realm</p>";
+            realm.srcdoc =
+              "<script>parent.parent.postMessage({exfil:1,type:'child'," +
+              "rtc:typeof RTCPeerConnection},'*');<\\/script>";
             document.body.appendChild(realm);
-            outcomes.rtcViaFrame =
-              realm.contentWindow && realm.contentWindow.RTCPeerConnection
-                ? "recovered"
-                : "denied";
-          } catch (error) {
-            outcomes.rtcViaFrame = "denied";
-          }
+          } catch (error) {}
 
           fetch(target + "/fetch").then(
             function () { outcomes.fetch = "sent"; },
             function () { outcomes.fetch = "blocked"; }
           ).then(function () {
             setTimeout(function () {
+              // Read after a turn: the removal is a MutationObserver callback,
+              // so it has not run yet at appendChild time.
+              outcomes.rtcViaFrame = document.querySelector("iframe") ? "attached" : "removed";
               outcomes.violations = violations;
               window.parent.postMessage({ exfil: 1, type: "report", outcomes: outcomes }, "*");
             }, 250);
@@ -194,6 +196,16 @@ describe("a hostile plugin", () => {
 
     let loads = 0;
     let report: Outcomes | null = null;
+    // Anything the child manages to say, from its own realm. Note the source
+    // check below deliberately excludes it, so it needs its own listener.
+    const childReports: unknown[] = [];
+    const onChildReport = (event: MessageEvent) => {
+      if (event.data?.exfil === 1 && event.data.type === "child") {
+        childReports.push(event.data);
+      }
+    };
+    window.addEventListener("message", onChildReport);
+    cleanups.push(() => window.removeEventListener("message", onChildReport));
     const iframe = createPluginIframe(HOSTILE_PLUGIN_HTML);
     iframe.addEventListener("load", () => {
       loads += 1;
@@ -238,7 +250,12 @@ describe("a hostile plugin", () => {
     // constructors outright and a fresh realm must not return them.
     expect(outcomes.rtc).toBe("absent");
     expect(outcomes.rtcConstruct).toBe("threw");
-    expect(outcomes.rtcViaFrame).toBe("denied");
+
+    // The deletion only covers the realm it ran in, so the plugin must not get
+    // a second realm. The child never becomes a browsing context: it is removed
+    // as it is inserted, so its script never parses and it never reports.
+    expect(outcomes.rtcViaFrame).toBe("removed");
+    expect(childReports).toEqual([]);
 
     // Now the vector the guest's own policy cannot stop.
     iframe.contentWindow?.postMessage({ exfil: 1, type: "navigate", base, secret }, "*");

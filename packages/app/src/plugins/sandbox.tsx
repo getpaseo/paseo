@@ -27,11 +27,16 @@ import { PLUGIN_READY_TIMEOUT_MS, PluginReadyTimeout } from "./sandbox-error";
  *
  * Host messages (`init`/`update`) are skipped so the relay cannot echo them.
  *
- * This is injected into subframes as well, which is why it leads with
- * `PLUGIN_NEUTER_SCRIPT` and then returns early anywhere but the top: native has
- * no iframe `sandbox` attribute, so a nested frame is same-origin and would
- * otherwise hand the plugin back an untouched `RTCPeerConnection`. Only the top
- * document relays messages.
+ * It leads with `PLUGIN_NEUTER_SCRIPT` and then returns early anywhere but the
+ * top, because `injectedJavaScriptBeforeContentLoadedForMainFrameOnly={false}`
+ * asks for subframe injection too: native has no iframe `sandbox` attribute, so
+ * a nested frame is same-origin and would otherwise hand the plugin back an
+ * untouched `RTCPeerConnection`. Only the top document relays messages.
+ *
+ * That subframe injection is **iOS-only**. `WebViewTypes.d.ts` marks the prop
+ * `@platform ios` and says main-frame-only is "mandatory for Android", so on
+ * Android the WebView ignores it and a nested frame keeps its own untouched
+ * realm. Do not treat this as a control that holds on Android.
  */
 const GUEST_MESSAGE_FORWARDER = `
 ${PLUGIN_NEUTER_SCRIPT}
