@@ -260,6 +260,27 @@ describe("schedule form model", () => {
     expect(form.getState().selectedThinkingOptionId).toBe("low");
   });
 
+  it("preserves thinking selected with a model across provider snapshot updates", () => {
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-b",
+        serverName: "Host B",
+        cwd: "/repo/b",
+        model: "model-b",
+        thinkingOptionId: "low",
+      }),
+      defaults: { serverId: null, projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+    form.applyProviderSnapshot("host-b", providerSnapshot(HOST_B_MODELS));
+
+    form.setModel("mock", "model-b");
+    expect(form.getState().selectedThinkingOptionId).toBe("high");
+
+    form.applyProviderSnapshot("host-b", providerSnapshot(HOST_B_MODELS));
+    expect(form.getState().selectedThinkingOptionId).toBe("high");
+  });
+
   it("opens create pristine after an edit instance closes", () => {
     const edit = open({
       mode: "edit",

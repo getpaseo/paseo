@@ -1004,7 +1004,13 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
         modelId: selectedModel,
         requestedThinkingOptionId: "",
       });
-      userModified = { ...userModified, provider: true, model: true };
+      userModified = {
+        ...userModified,
+        provider: true,
+        model: true,
+        modeId: true,
+        thinkingOptionId: true,
+      };
       publish({
         ...state,
         selectedProvider: provider,
