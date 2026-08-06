@@ -922,16 +922,17 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       }
       providerEntries = providerSnapshot.entries;
       const isPendingResolution = state.providerSnapshotRequest?.serverId === serverId;
-      const resolved = isPendingResolution
-        ? resolveSnapshotSelection({
-            state,
-            snapshot,
-            initialValues,
-            preferences: preferencesForSnapshotResolution(snapshot, preferences),
-            providerEntries,
-            userModified,
-          })
-        : state;
+      const resolved =
+        state.targetKind === "new-agent"
+          ? resolveSnapshotSelection({
+              state,
+              snapshot,
+              initialValues,
+              preferences: preferencesForSnapshotResolution(snapshot, preferences),
+              providerEntries,
+              userModified,
+            })
+          : state;
       const providerResolutionByServerId: Record<string, ProviderResolutionStatus> = {
         ...state.providerResolutionByServerId,
       };
