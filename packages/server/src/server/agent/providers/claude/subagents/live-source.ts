@@ -79,6 +79,7 @@ interface TaskNotificationMessage {
   task_id: string;
   tool_use_id?: string;
   status?: string;
+  output_file?: string;
   usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number };
 }
 
@@ -142,6 +143,8 @@ export interface ClaudeTaskProtocolSourceInput {
    * same place is what keeps one subagent titled identically live and on reopen.
    */
   getToolInput?: (toolUseId: string) => AgentMetadata | null | undefined;
+  /** Reads the safe, provider-owned result from a completed workflow's task output file. */
+  readWorkflowResult?: (outputFile: string) => string | undefined;
 }
 
 export class ClaudeTaskProtocolSource {
@@ -153,6 +156,10 @@ export class ClaudeTaskProtocolSource {
    * nothing to say about it.
    */
   private readonly declaredIds = new Set<string>();
+  /** Task ids declared specifically as workflows; only these may read workflow output files. */
+  private readonly workflowTaskIds = new Set<string>();
+  /** Last result emitted per workflow task, so duplicate terminal notifications stay idempotent. */
+  private readonly lastWorkflowResultByTaskId = new Map<string, string>();
   /** Workflow invocations already own a real Workflow card in the parent timeline. */
   private readonly idsWithExistingParentToolCard = new Set<string>();
   /**
@@ -168,9 +175,11 @@ export class ClaudeTaskProtocolSource {
   private sawTaskStarted = false;
   private sawAnyTask = false;
   private readonly getToolInput: (toolUseId: string) => AgentMetadata | null | undefined;
+  private readonly readWorkflowResult: (outputFile: string) => string | undefined;
 
   constructor(input: ClaudeTaskProtocolSourceInput = {}) {
     this.getToolInput = input.getToolInput ?? (() => null);
+    this.readWorkflowResult = input.readWorkflowResult ?? (() => undefined);
   }
 
   /**
@@ -240,6 +249,8 @@ export class ClaudeTaskProtocolSource {
   reset(): void {
     this.subagentIdByTaskId.clear();
     this.declaredIds.clear();
+    this.workflowTaskIds.clear();
+    this.lastWorkflowResultByTaskId.clear();
     this.idsWithExistingParentToolCard.clear();
     this.backgroundedIds.clear();
     this.lastStatusById.clear();
@@ -299,7 +310,10 @@ export class ClaudeTaskProtocolSource {
     // An explicit `name` on the Task call wins over the agent type, matching how replay titles the
     // same subagent. Without it a fan-out of five Explores reads as five identical rows.
     const isWorkflow = message.task_type === CLAUDE_WORKFLOW_TASK_TYPE;
-    if (isWorkflow) this.idsWithExistingParentToolCard.add(id);
+    if (isWorkflow) {
+      this.idsWithExistingParentToolCard.add(id);
+      this.workflowTaskIds.add(message.task_id);
+    }
     const title = isWorkflow
       ? "Workflow"
       : (readString(this.getToolInput(id)?.name) ?? readString(message.subagent_type));
@@ -340,9 +354,21 @@ export class ClaudeTaskProtocolSource {
   }
 
   private observeTaskNotification(message: TaskNotificationMessage): SubagentObservation[] {
-    const observations = this.observeUsage(message.task_id, message.usage);
+    const observations = this.observeWorkflowResult(message);
+    observations.push(...this.observeUsage(message.task_id, message.usage));
     observations.push(...this.observeStatus(message.task_id, message.status));
     return observations;
+  }
+
+  private observeWorkflowResult(message: TaskNotificationMessage): SubagentObservation[] {
+    if (!this.workflowTaskIds.has(message.task_id)) return [];
+    const id = this.subagentIdByTaskId.get(message.task_id);
+    const outputFile = readString(message.output_file);
+    if (!id || !outputFile) return [];
+    const text = this.readWorkflowResult(outputFile);
+    if (!text || this.lastWorkflowResultByTaskId.get(message.task_id) === text) return [];
+    this.lastWorkflowResultByTaskId.set(message.task_id, text);
+    return [{ kind: "timeline", id, item: { type: "assistant_message", text } }];
   }
 
   /**

@@ -71,4 +71,5 @@ export async function openWorkflowTimeline(page: Page): Promise<void> {
   await expect(panel.getByText("Start chatting with this agent...", { exact: true })).toHaveCount(
     0,
   );
+  await expect(panel.getByText(WORKFLOW_ROW_MARKER, { exact: true })).toBeVisible();
 }

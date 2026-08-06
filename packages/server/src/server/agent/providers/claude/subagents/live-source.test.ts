@@ -1,5 +1,5 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ClaudeTaskProtocolSource } from "./live-source.js";
 
@@ -161,6 +161,55 @@ describe("ClaudeTaskProtocolSource", () => {
           text: "Runs one deterministic child and returns its structured result",
         },
       },
+    ]);
+  });
+
+  it("adds a completed workflow result to its generic timeline", () => {
+    const readWorkflowResult = vi.fn(() => "What Paseo is\nA local-first environment.");
+    const source = new ClaudeTaskProtocolSource({ readWorkflowResult });
+    source.observe(
+      taskStarted({ task_type: "local_workflow", subagent_type: undefined, prompt: "SECRET" }),
+    );
+
+    expect(source.observe(taskNotification("completed"))).toEqual([
+      {
+        kind: "timeline",
+        id: "toolu_01DgLoPMW9",
+        item: {
+          type: "assistant_message",
+          text: "What Paseo is\nA local-first environment.",
+        },
+      },
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "completed" },
+    ]);
+    expect(readWorkflowResult).toHaveBeenCalledWith("/tmp/x.output");
+  });
+
+  it("does not append the same workflow result twice", () => {
+    const source = new ClaudeTaskProtocolSource({ readWorkflowResult: () => "Final report" });
+    source.observe(taskStarted({ task_type: "local_workflow", subagent_type: undefined }));
+    source.observe(taskNotification("completed"));
+
+    expect(source.observe(taskNotification("completed"))).toEqual([]);
+  });
+
+  it("never reads a workflow output for a regular subagent", () => {
+    const readWorkflowResult = vi.fn(() => "should not appear");
+    const source = new ClaudeTaskProtocolSource({ readWorkflowResult });
+    source.observe(taskStarted());
+
+    expect(source.observe(taskNotification("completed"))).toEqual([
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "completed" },
+    ]);
+    expect(readWorkflowResult).not.toHaveBeenCalled();
+  });
+
+  it("still terminalizes a workflow when its output cannot be read", () => {
+    const source = new ClaudeTaskProtocolSource({ readWorkflowResult: () => undefined });
+    source.observe(taskStarted({ task_type: "local_workflow", subagent_type: undefined }));
+
+    expect(source.observe(taskNotification("failed"))).toEqual([
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "failed" },
     ]);
   });
 

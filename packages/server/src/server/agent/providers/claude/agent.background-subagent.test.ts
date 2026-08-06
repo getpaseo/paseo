@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
@@ -17,6 +20,23 @@ import { streamSession } from "../test-utils/session-stream-adapter.js";
  */
 
 const queryFactory = vi.fn();
+const testTempDirs: string[] = [];
+
+function writeWorkflowOutput(): string {
+  const directory = mkdtempSync(path.join(tmpdir(), "paseo-workflow-output-"));
+  testTempDirs.push(directory);
+  const outputPath = path.join(directory, "workflow.output");
+  writeFileSync(
+    outputPath,
+    JSON.stringify({
+      result: { report: "What Paseo is\nA local-first coding-agent environment." },
+      script: "SECRET WORKFLOW SOURCE",
+      workflowProgress: [{ promptPreview: "SECRET CHILD PROMPT" }],
+    }),
+    "utf8",
+  );
+  return outputPath;
+}
 
 function buildQueryMock(events: unknown[]) {
   let index = 0;
@@ -88,6 +108,9 @@ async function collectUntilTerminal(
 describe("background Claude subagents", () => {
   afterEach(() => {
     queryFactory.mockReset();
+    for (const directory of testTempDirs.splice(0)) {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   async function runStream(): Promise<AgentStreamEvent[]> {
@@ -130,6 +153,7 @@ describe("background Claude subagents", () => {
   });
 
   test("exposes a workflow through the same provider-subagent stream as its child frames", async () => {
+    const workflowOutputPath = writeWorkflowOutput();
     queryFactory.mockImplementation(() =>
       buildQueryMock([
         { type: "system", subtype: "init", session_id: "bg-session", permissionMode: "default" },
@@ -188,7 +212,7 @@ describe("background Claude subagents", () => {
           tool_use_id: "toolu_workflow",
           status: "completed",
           summary: "Workflow completed",
-          output_file: "/tmp/workflow.output",
+          output_file: workflowOutputPath,
         },
         { type: "result", subtype: "success", usage: {}, total_cost_usd: 0 },
       ]),
@@ -220,9 +244,29 @@ describe("background Claude subagents", () => {
         }),
       }),
     );
-    expect(providerEvents.at(-1)).toMatchObject({
-      event: { type: "upsert", id: "toolu_workflow", status: "completed" },
-    });
+    expect(providerEvents).toContainEqual(
+      expect.objectContaining({
+        event: {
+          type: "timeline",
+          id: "toolu_workflow",
+          item: {
+            type: "assistant_message",
+            text: "What Paseo is\nA local-first coding-agent environment.",
+          },
+        },
+      }),
+    );
+    expect(JSON.stringify(providerEvents)).not.toContain("SECRET WORKFLOW SOURCE");
+    expect(JSON.stringify(providerEvents)).not.toContain("SECRET CHILD PROMPT");
+    expect(providerEvents).toContainEqual(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "toolu_workflow",
+          status: "completed",
+        }),
+      }),
+    );
 
     const parentCardUpdates = events
       .filter((event) => event.type === "timeline")

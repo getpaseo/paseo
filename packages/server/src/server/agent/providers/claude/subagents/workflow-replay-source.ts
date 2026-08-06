@@ -6,6 +6,7 @@ import type { ProviderSubagentStatus } from "../../../provider-subagents/store.j
 import type { SubagentObservation } from "./observation.js";
 import { buildClaudeSubagentSubtitle } from "./presentation.js";
 import type { ClaudeReplayEntry } from "./replay-source.js";
+import { formatClaudeWorkflowResult } from "./workflow-output.js";
 
 const ClaudeWorkflowRunSchema = z.object({
   runId: z.string(),
@@ -16,6 +17,7 @@ const ClaudeWorkflowRunSchema = z.object({
   startTime: z.number().optional().catch(undefined),
   defaultModel: z.string().optional().catch(undefined),
   totalTokens: z.number().optional().catch(undefined),
+  result: z.unknown().optional(),
 });
 
 export type ClaudeWorkflowRun = z.infer<typeof ClaudeWorkflowRunSchema>;
@@ -76,22 +78,15 @@ export function observeReplayWorkflows(input: {
       });
     }
 
-    const entries = [...(input.entriesByRunId?.get(workflow.runId) ?? [])].sort(
-      compareReplayTimestamps,
+    observations.push(
+      ...observeWorkflowTimeline({
+        id,
+        result: workflow.result,
+        entries: input.entriesByRunId?.get(workflow.runId) ?? [],
+        convertEntry: input.convertEntry,
+        finishedAt,
+      }),
     );
-    if (input.convertEntry) {
-      for (const entry of entries) {
-        const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
-        for (const item of input.convertEntry(entry)) {
-          observations.push({
-            kind: "timeline",
-            id,
-            item,
-            ...(timestamp ? { timestamp } : {}),
-          });
-        }
-      }
-    }
 
     const subtitle = buildClaudeSubagentSubtitle({
       title: "Workflow",
@@ -116,6 +111,42 @@ export function observeReplayWorkflows(input: {
     });
   }
 
+  return observations;
+}
+
+function observeWorkflowTimeline(input: {
+  id: string;
+  result: unknown;
+  entries: readonly ClaudeReplayEntry[];
+  convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[];
+  finishedAt?: string;
+}): SubagentObservation[] {
+  const observations: SubagentObservation[] = [];
+  const replayedAssistantText = new Set<string>();
+  const entries = [...input.entries].sort(compareReplayTimestamps);
+
+  for (const entry of entries) {
+    const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
+    const items = input.convertEntry?.(entry) ?? [];
+    for (const item of items) {
+      if (item.type === "assistant_message") replayedAssistantText.add(item.text.trim());
+      observations.push({
+        kind: "timeline",
+        id: input.id,
+        item,
+        ...(timestamp ? { timestamp } : {}),
+      });
+    }
+  }
+
+  const resultText = formatClaudeWorkflowResult(input.result);
+  if (!resultText || replayedAssistantText.has(resultText.trim())) return observations;
+  observations.push({
+    kind: "timeline",
+    id: input.id,
+    item: { type: "assistant_message", text: resultText },
+    ...(input.finishedAt ? { timestamp: input.finishedAt } : {}),
+  });
   return observations;
 }
 

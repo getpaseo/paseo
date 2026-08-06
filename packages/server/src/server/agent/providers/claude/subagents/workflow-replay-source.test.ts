@@ -114,6 +114,58 @@ describe("Claude workflow replay", () => {
     });
   });
 
+  it("replays the workflow result without exposing its script or child prompt", () => {
+    const workflow = parseClaudeWorkflowRun(
+      JSON.stringify({
+        runId: RUN_ID,
+        summary: "Inspect Paseo",
+        status: "completed",
+        result: { report: "What Paseo is\nA local-first coding-agent environment." },
+        script: "SECRET WORKFLOW SOURCE",
+        workflowProgress: [{ promptPreview: "SECRET CHILD PROMPT" }],
+      }),
+    );
+    expect(workflow).not.toBeNull();
+    if (!workflow) throw new Error("expected workflow");
+
+    const observations = observeReplayWorkflows({
+      workflows: [workflow],
+      parentEntries: parentEntries(),
+    });
+
+    expect(observations).toContainEqual({
+      kind: "timeline",
+      id: TOOL_CALL_ID,
+      item: {
+        type: "assistant_message",
+        text: "What Paseo is\nA local-first coding-agent environment.",
+      },
+    });
+    expect(JSON.stringify(observations)).not.toContain("SECRET WORKFLOW SOURCE");
+    expect(JSON.stringify(observations)).not.toContain("SECRET CHILD PROMPT");
+  });
+
+  it("does not duplicate a result already present in the child transcript", () => {
+    const report = "What Paseo is\nA local-first coding-agent environment.";
+    const observations = observeReplayWorkflows({
+      workflows: [
+        { runId: RUN_ID, summary: "Inspect Paseo", status: "completed", result: { report } },
+      ],
+      parentEntries: parentEntries(),
+      entriesByRunId: new Map([[RUN_ID, [{} as never]]]),
+      convertEntry: () => [{ type: "assistant_message", text: report }],
+    });
+
+    expect(
+      observations.filter(
+        (observation) =>
+          observation.kind === "timeline" &&
+          observation.item.type === "assistant_message" &&
+          observation.item.text === report,
+      ),
+    ).toHaveLength(1);
+  });
+
   it("fails a nonterminal persisted run because its former runtime cannot update it", () => {
     const observations = observeReplayWorkflows({
       workflows: [{ runId: RUN_ID, summary: "Interrupted workflow", status: "running" }],
