@@ -2254,10 +2254,10 @@ export const en = {
     shortcuts: {
       dialogTitle: "Shortcuts",
       searchPlaceholder: "Search shortcuts",
-       unavailableOnMobile: "Shortcut customization is only available on desktop",
-       capturePrompt: "Press shortcut...",
-       unassigned: "Not set",
-       modKey: {
+      unavailableOnMobile: "Shortcut customization is only available on desktop",
+      capturePrompt: "Press shortcut...",
+      unassigned: "Not set",
+      modKey: {
         title: "Modifier key",
         hint: "Key used as the shortcut modifier",
         auto: "Auto",

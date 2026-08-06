@@ -2173,7 +2173,6 @@ export const ko: TranslationResources = {
       },
       dialogTitle: "단축키",
       searchPlaceholder: "검색 단축키",
-      unavailableOnMobile: "단축키 사용자 지정은 데스크톱에서만 가능합니다",
       capturePrompt: "단축키를 누르세요...",
       unassigned: "설정되지 않음",
       actions: {
