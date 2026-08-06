@@ -155,7 +155,9 @@ Host to plugin:
 
 `update` carries the theme so a light/dark switch reaches a plugin that is already open. Re-read both fields on every `update` rather than only on `init`.
 
-Listen on `window` and check `message.paseo === 1`. Do not check `event.origin` or `event.source`: the sender differs by platform (the app frame on web, the host document on native) and the origin is `"null"` in a sandboxed frame anyway.
+Listen on `window` and check both `message.paseo === 1` and `event.source === window.parent`. Do not check `event.origin`: it is `"null"` in a sandboxed frame and tells you nothing.
+
+The source check is not optional. Two plugins are open at once as soon as a user has a preview and a sidebar panel, and on web they are sibling frames in one document — `frames`, `length`, indexed access and `postMessage` are all readable across origins, so a sibling can post `{ paseo: 1, type: "update", ... }` straight into your frame. That message never passes through the host, so nothing the host does can filter it; `event.source` is the only thing that separates it from a real one. `window.parent` is the host on every platform (the app document on web, the relay document on native) and a sibling is never your parent.
 
 Plugin to host:
 

@@ -138,6 +138,11 @@
 
       window.addEventListener("message", (event) => {
         const message = event.data;
+        // `event.source`, not `event.origin` — the origin is "null" in a
+        // sandboxed frame. A second plugin open at the same time is a sibling
+        // frame that can post straight into this one without the host ever
+        // seeing it, and the parent check is what separates the two.
+        if (event.source !== window.parent) return;
         if (!message || message.paseo !== 1) return;
         // Re-read both fields on every message: `update` carries the theme too,
         // and it is the only way a plugin that is already open learns the user

@@ -2,6 +2,9 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 // The policy under test, read from the document the app actually ships, so
 // deleting it there fails this test instead of leaving it passing on a copy.
 import appIndexHtml from "../../public/index.html?raw";
+// Same reason: the bridge contract a plugin author reads is part of the control,
+// because one half of it is theirs to enforce.
+import pluginsDoc from "../../../../docs/plugins.md?raw";
 import { createPluginIframe } from "./frame.web";
 
 /**
@@ -1019,6 +1022,115 @@ const WEBVIEW_ATTACK_HTML = `<!doctype html>
   </body>
 </html>`;
 
+/**
+ * Two plugins are open at once the moment a user has both a preview and a
+ * sidebar panel, and they are sibling frames in one document. `frames`,
+ * `length`, indexed access and `postMessage` are all on the cross-origin
+ * property allowlist, so `parent[i].postMessage(...)` reaches every other plugin
+ * on the page. The host cannot intercept that — the message never passes through
+ * it — so the only thing that separates a host message from a sibling's forgery
+ * is `event.source`.
+ *
+ * The victim here is a plugin written the way docs/plugins.md tells you to write
+ * one. It records what it accepted and what it turned away.
+ */
+const SIBLING_VICTIM_HTML = `<!doctype html>
+<html>
+  <body>
+    <script>
+      var accepted = [];
+      var rejected = [];
+      window.addEventListener("message", function (event) {
+        var data = event.data;
+        if (!data || data.paseo !== 1) return;
+        var note = data.type + ":" + (data.context && data.context.content);
+        // The whole finding, in one comparison. On web the host is the app
+        // document and on native it is the relay document, and both of them are
+        // this frame's parent; a sibling plugin is never its parent.
+        if (event.source === window.parent) accepted.push(note);
+        else rejected.push(note);
+        window.parent.postMessage(
+          { exfil: 1, type: "victim", accepted: accepted, rejected: rejected },
+          "*",
+        );
+      });
+      window.parent.postMessage({ exfil: 1, type: "victim-ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
+const SIBLING_ATTACKER_HTML = `<!doctype html>
+<html>
+  <body>
+    <script>
+      window.addEventListener("message", function (event) {
+        if (!event.data || event.data.exfil !== 1 || event.data.type !== "attack") return;
+        var out = { reached: 0, nav: "navigated" };
+        try {
+          for (var i = 0; i < window.parent.length; i++) {
+            try {
+              window.parent[i].postMessage(
+                {
+                  paseo: 1,
+                  type: "update",
+                  context: { kind: "file-preview", path: "budget.csv", content: "FORGED" },
+                  theme: {}
+                },
+                "*"
+              );
+              out.reached++;
+            } catch (error) {}
+          }
+        } catch (error) {}
+        // Navigating a sibling would be worse than lying to it: no
+        // \`allow-same-origin\`, so the sandbox refuses.
+        try { window.parent[0].location = "https://sibling.leak.example.test/"; }
+        catch (error) { out.nav = "denied"; }
+        window.parent.postMessage({ exfil: 1, type: "attacker", out: out }, "*");
+      });
+      window.parent.postMessage({ exfil: 1, type: "attacker-ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
+/**
+ * `document.open()` is reachable on purpose — see the note above the `write`
+ * denials in `bridge.ts`. It wipes the tree, and with it the CSP `<meta>` that
+ * put the policy there in the first place, so "the parser is starved" is only
+ * half of what has to survive it: the policy container does too, or one call
+ * hands the plugin back `fetch` and `img`.
+ */
+const DOCUMENT_OPEN_ATTACK_HTML = `<!doctype html>
+<html>
+  <body>
+    <script>
+      window.addEventListener("message", function (event) {
+        if (!event.data || event.data.exfil !== 1 || event.data.type !== "attack") return;
+        var out = {};
+        try { document.open(); out.open = "ok"; } catch (error) { out.open = "threw"; }
+        out.metas = document.querySelectorAll("meta").length;
+        try { document.write("x"); out.write = "ran"; } catch (error) { out.write = "threw"; }
+        try { document.writeln("x"); out.writeln = "ran"; } catch (error) { out.writeln = "threw"; }
+        out.rtc = typeof RTCPeerConnection;
+        var img = new Image();
+        img.onload = function () { finish("loaded"); };
+        img.onerror = function () { finish("blocked"); };
+        img.src = event.data.imageUrl;
+        function finish(result) {
+          out.img = result;
+          fetch(event.data.base + "/after").then(
+            function () { out.fetch = "sent"; },
+            function () { out.fetch = "blocked"; }
+          ).then(function () {
+            window.parent.postMessage({ exfil: 1, type: "wiped", out: out }, "*");
+          });
+        }
+      });
+      window.parent.postMessage({ exfil: 1, type: "ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
 interface Outcomes {
   windowOpen: string;
   fetch: string;
@@ -1661,5 +1773,113 @@ describe("a hostile plugin", () => {
     // Nested one included: the sanitiser has to walk the subtree, not just the
     // markup's top level.
     expect(await waitFor(() => rels, "the resource-hint attack to finish")).toEqual([]);
+  });
+
+  it("does not shed its policy by wiping the document with document.open()", async () => {
+    const base = `${location.origin}/${EXFIL_MARKER}`;
+    const imageUrl = `${location.origin}/pwa-icon-192.png?${EXFIL_MARKER}=wipe`;
+    // Same control as the first test: this URL loads from the host, so a plugin
+    // that cannot load it was refused rather than pointed at a dead file.
+    expect(await loadImage(imageUrl)).toBe(true);
+
+    let wiped: Record<string, unknown> | null = null;
+    const iframe = createPluginIframe(DOCUMENT_OPEN_ATTACK_HTML);
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { exfil?: number; type?: string; out?: Record<string, unknown> };
+      if (data?.exfil !== 1 || event.source !== iframe.contentWindow) return;
+      if (data.type === "ready") {
+        iframe.contentWindow?.postMessage({ exfil: 1, type: "attack", base, imageUrl }, "*");
+      }
+      if (data.type === "wiped") wiped = data.out ?? null;
+    };
+    window.addEventListener("message", onMessage);
+    document.body.appendChild(iframe);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      iframe.remove();
+    });
+
+    const out = await waitFor<Record<string, unknown>>(() => wiped, "the document.open attack");
+    // The wipe really happened — otherwise the rest of this proves nothing.
+    expect(out.open).toBe("ok");
+    expect(out.metas).toBe(0);
+    // Starved: the only two ways to feed a script-created parser still throw.
+    expect(out.write).toBe("threw");
+    expect(out.writeln).toBe("threw");
+    // Same realm, so the deletions stand.
+    expect(out.rtc).toBe("undefined");
+    // And the policy outlived the element that delivered it.
+    expect(out.img).toBe("blocked");
+    expect(out.fetch).toBe("blocked");
+  });
+
+  it("cannot impersonate the host to another plugin's frame", async () => {
+    let attacker: { reached: number; nav: string } | null = null;
+    let victim: { accepted: string[]; rejected: string[] } | null = null;
+    let ready = 0;
+
+    const victimFrame = createPluginIframe(SIBLING_VICTIM_HTML);
+    const attackerFrame = createPluginIframe(SIBLING_ATTACKER_HTML);
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as {
+        exfil?: number;
+        type?: string;
+        out?: { reached: number; nav: string };
+        accepted?: string[];
+        rejected?: string[];
+      };
+      if (data?.exfil !== 1) return;
+      if (data.type === "victim-ready" || data.type === "attacker-ready") {
+        ready += 1;
+        if (ready === 2) {
+          // The genuine host message first, so "accepted" is not empty by
+          // accident: a victim that accepts nothing at all proves nothing.
+          victimFrame.contentWindow?.postMessage(
+            {
+              paseo: 1,
+              type: "update",
+              context: { kind: "file-preview", path: "budget.csv", content: "REAL" },
+              theme: {},
+            },
+            "*",
+          );
+          attackerFrame.contentWindow?.postMessage({ exfil: 1, type: "attack" }, "*");
+        }
+      }
+      if (data.type === "victim") {
+        victim = { accepted: data.accepted ?? [], rejected: data.rejected ?? [] };
+      }
+      if (data.type === "attacker") attacker = data.out ?? null;
+    };
+    window.addEventListener("message", onMessage);
+    document.body.appendChild(victimFrame);
+    document.body.appendChild(attackerFrame);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      victimFrame.remove();
+      attackerFrame.remove();
+    });
+
+    const reach = await waitFor<{ reached: number; nav: string }>(
+      () => attacker,
+      "the sibling attack to finish",
+    );
+    // Measured, not assumed: the forged message really does arrive. Nothing in
+    // the host is on that path, so a plugin that trusts `paseo === 1` alone is
+    // taking instructions from whatever else is open.
+    expect(reach.reached).toBeGreaterThan(0);
+    expect(reach.nav).toBe("denied");
+
+    const seen = await waitFor<{ accepted: string[]; rejected: string[] }>(
+      () => victim,
+      "the victim's report",
+    );
+    expect(seen.accepted).toEqual(["update:REAL"]);
+    expect(seen.rejected).toEqual(["update:FORGED"]);
+
+    // And the contract has to say so, because the check is the plugin author's
+    // to make and nothing in the host can make it for them.
+    expect(pluginsDoc).toContain("event.source === window.parent");
+    expect(pluginsDoc).not.toContain("Do not check `event.origin` or `event.source`");
   });
 });

@@ -243,6 +243,23 @@ describe("wrapPluginHtml", () => {
     }
   });
 
+  // The head script is `KILL_CHILD_REALMS`, inlined into a script element the
+  // same way the body one is — and until now only the body half was asserted.
+  // The plugin's bytes are escaped on the way in, so the risk there is an
+  // attacker's; here it is ours, one `<!--` typed into a comment in `bridge.ts`.
+  // The tokenizer does not care which: the document becomes one unterminated
+  // script, a SyntaxError, and a blank plugin with nothing reported anywhere.
+  // Counting `</script>` does not see it, and `startsWith(SHELL_PREFIX)` cannot,
+  // because that prefix is built from the same constant.
+  it("keeps its own head script out of the script-data escape states", () => {
+    const shell = wrapPluginHtml("<p>x</p>");
+    const head = shell.slice(shell.indexOf("<head>"), shell.indexOf("</head>"));
+    const open = head.indexOf("<script>") + "<script>".length;
+    expect(head.slice(open, head.indexOf("</script>", open))).not.toMatch(
+      /<\/script|<!--|<script/i,
+    );
+  });
+
   it("emits exactly the two script elements it wrote itself", () => {
     const wrapped = wrapPluginHtml("<script>fetch('https://evil.tld')</script><p>x</p>");
     expect(wrapped.match(/<\/script>/g)).toHaveLength(2);
