@@ -17,6 +17,7 @@ import type { ScheduleService } from "./schedule/service.js";
 import { createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import { createTestLogger } from "../test-utils/test-logger.js";
+import { ProviderUsageService } from "../services/quota-fetcher/service.js";
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 
@@ -59,6 +60,7 @@ function createWebSocketServer(params: {
   agentStorage: AgentStorage;
   configStore: DaemonConfigStore;
   renameProviderOnLiveAgents: ReturnType<typeof vi.fn>;
+  providerUsageService?: ProviderUsageService;
 }): VoiceAssistantWebSocketServer {
   const agentManager = {
     setAgentAttentionCallback() {},
@@ -120,6 +122,11 @@ function createWebSocketServer(params: {
     undefined,
     undefined,
     createProviderSnapshotManagerStub().manager,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    params.providerUsageService,
   );
 }
 
@@ -193,5 +200,51 @@ describe("provider rename migration wiring", () => {
 
     const other = await harness.agentStorage.get("agent-other");
     expect(other?.provider).toBe("claude");
+  });
+});
+
+describe("provider usage service wiring", () => {
+  // Bootstrap builds the usage service with the daemon's provider-account
+  // configs; the server must use that instance. A merge once reintroduced a
+  // bare `new ProviderUsageService(...)` after the injected assignment, which
+  // silently dropped every account fetcher.
+  it("uses the injected provider usage service", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-provider-usage-"));
+    tempDirs.push(paseoHome);
+
+    const agentStorage = new AgentStorage(path.join(paseoHome, "agents"), createTestLogger());
+    const configStore = new DaemonConfigStore(paseoHome, {
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: { "claude-work": { extends: "claude", label: "Work" } },
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+    const providerUsageService = new ProviderUsageService({
+      logger: createTestLogger(),
+      providerConfigs: configStore.get().providers,
+    });
+
+    const httpServer = createServer();
+    const wsServer = createWebSocketServer({
+      httpServer,
+      paseoHome,
+      agentStorage,
+      configStore,
+      renameProviderOnLiveAgents: vi.fn(),
+      providerUsageService,
+    });
+
+    try {
+      expect(
+        (wsServer as unknown as { providerUsageService: ProviderUsageService })
+          .providerUsageService,
+      ).toBe(providerUsageService);
+    } finally {
+      await wsServer.close();
+      httpServer.close();
+    }
   });
 });
