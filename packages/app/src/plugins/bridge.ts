@@ -138,13 +138,23 @@ export const PLUGIN_NEUTERED_GLOBALS = [
  * quietly does nothing. Non-configurable constructors are worth little if the
  * machinery that enforces the removal is left writable.
  *
- * The rule, because reviewing this case by case has now failed twice: **nothing
- * in this script may call a method it did not capture at init.** `observe` was
- * the last one to break it — `watch()` looked it up on `MutationObserver.prototype`
- * at call time, and the wrapper calls `watch()` after the plugin has run, so a
- * no-op `observe` left every shadow root handed out unwatched and a frame inside
- * a `closed` one invisible to everything. Written as `obj.method(...)` anywhere
- * below, it is a bug; use `A(captured, obj, [...])`.
+ * The rule, in two halves, because each half was learned by shipping the other
+ * one alone:
+ *
+ * 1. **Nothing here may call a method it did not capture at init.** `observe`
+ *    broke this — `watch()` looked it up on `MutationObserver.prototype` at call
+ *    time, and the wrapper calls `watch()` after the plugin has run, so a no-op
+ *    `observe` left every shadow root unwatched and a frame inside a `closed`
+ *    one invisible to everything. Written `obj.method(...)`, it is a bug; use
+ *    `A(captured, obj, [...])`.
+ * 2. **Nothing here may hand a web API an object whose prototype the plugin can
+ *    reach.** Capturing the callee does nothing for the argument. A dictionary
+ *    parameter is converted with one `Get` per member, so every member the
+ *    object does not own comes off `Object.prototype`: with
+ *    `Object.prototype.attributeFilter = 1` the sequence conversion throws and
+ *    `observe` never runs, and with `Object.prototype.clonable = true` a
+ *    `cloneNode` mints a shadow root the `attachShadow` wrapper never sees.
+ *    Build them with `bare()`.
  *
  * Follow shadow roots. A `MutationObserver` on `document` is never notified of
  * mutations inside a shadow root and `querySelectorAll` does not cross the
@@ -189,7 +199,15 @@ var countOf = own(NodeList.prototype, "length").get;
 var at = NodeList.prototype.item;
 var startWatching = MutationObserver.prototype.observe;
 var SELECTOR = "iframe,frame,object,embed,link";
-var WATCH = { childList: true, subtree: true };
+// Null-prototype, because a dictionary argument is a lookup surface. Converting
+// this to a \`MutationObserverInit\` is one Get per member, and every member it
+// does not own would be read off \`Object.prototype\` — which the plugin owns.
+// \`Object.prototype.attributeFilter = 1\` makes the sequence conversion throw, and
+// \`observe\` then never runs.
+var bare = function () { return Object.create(null); };
+var WATCH = bare();
+WATCH.childList = true;
+WATCH.subtree = true;
 function drop(node) {
   var parent = A(parentOf, node, []);
   if (parent) { try { A(detach, parent, [node]); } catch (e) {} }
@@ -213,13 +231,18 @@ function follow(element) {
   if (root) watch(root);
 }
 function watch(root) {
-  A(startWatching, observer, [root, WATCH]);
+  // Guarded, and the sweep runs either way: a throw here used to skip it, which
+  // left the root both unwatched and unswept.
+  try { A(startWatching, observer, [root, WATCH]); } catch (e) {}
   sweep(root);
 }
 var observer = new MutationObserver(function (records) {
   for (var i = 0; i < records.length; i++) {
     var added = A(addedOf, records[i], []);
-    for (var j = 0, n = A(countOf, added, []); j < n; j++) sweep(A(at, added, [j]));
+    // Per node, so one throw cannot abandon the records after it.
+    for (var j = 0, n = A(countOf, added, []); j < n; j++) {
+      try { sweep(A(at, added, [j])); } catch (e) {}
+    }
   }
 });
 A(startWatching, observer, [document, WATCH]);
@@ -229,7 +252,21 @@ if (attach) {
     // Forced open. A closed root is reachable only through this wrapper, so if
     // the watch is ever defeated again the frame inside one would be invisible
     // to every later sweep as well. Open leaves \`follow()\` a way back in.
-    var root = A(attach, this, [{ mode: "open", delegatesFocus: init && init.delegatesFocus }]);
+    //
+    // Null-prototype for the same reason as \`WATCH\`, and the plugin's own
+    // members are copied across explicitly: on a plain object literal,
+    // \`clonable\`, \`slotAssignment\` and \`serializable\` would be read off
+    // \`Object.prototype\`, and \`clonable\` there mints a shadow root from
+    // \`cloneNode\` with no \`attachShadow\` call to wrap.
+    var options = bare();
+    options.mode = "open";
+    if (init) {
+      options.delegatesFocus = init.delegatesFocus;
+      options.slotAssignment = init.slotAssignment;
+      options.clonable = init.clonable;
+      options.serializable = init.serializable;
+    }
+    var root = A(attach, this, [options]);
     watch(root);
     return root;
   });

