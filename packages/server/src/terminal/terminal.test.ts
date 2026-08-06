@@ -1059,3 +1059,42 @@ describe("mouse events", () => {
     session.send({ type: "mouse", row: 0, col: 0, button: 0, action: "up" });
   });
 });
+
+describe("terminal activity interruption", () => {
+  it.each([
+    ["Ctrl-C", "\x03"],
+    ["Escape", "\x1b"],
+  ])("clears working activity when %s is sent", async (_name, data) => {
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: realpathSync(tmpdir()),
+        shell: "/bin/sh",
+      }),
+    );
+    session.setActivity("working");
+
+    session.send({ type: "input", data });
+
+    expect(session.getActivity()).toBeNull();
+  });
+
+  it.each([
+    ["an arrow sequence", "\x1b[A"],
+    ["pasted text containing Ctrl-C", "before\x03after"],
+    ["ordinary input", "hello"],
+  ])("keeps a working terminal active for %s", async (_name, data) => {
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: realpathSync(tmpdir()),
+        shell: "/bin/sh",
+      }),
+    );
+    session.setActivity("working");
+
+    session.send({ type: "input", data });
+
+    expect(session.getActivity()).toMatchObject({ state: "working" });
+  });
+});
