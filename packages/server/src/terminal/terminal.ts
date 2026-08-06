@@ -301,8 +301,9 @@ function escapeCmdExeMetaChars(text: string): string {
  * metacharacters — including the quotes just added, because cmd.exe's own
  * tokenizer runs first and would otherwise treat them as toggling a quoted
  * region. It is the same algorithm `cross-spawn` uses for its `.cmd`/`.bat`
- * auto-shell path (`lib/util/escape.js`), a widely used, actively
- * maintained package that exists specifically to solve this problem.
+ * auto-shell path (`lib/util/escape.js`). Command shims forward `%*`, which
+ * adds a second cmd.exe parse, so metacharacters need a second escape pass to
+ * survive as literal argv in the Node process behind an npm-generated shim.
  *
  * cmd.exe has no escape for a literal CR or LF inside a single command
  * line — its parser treats them as command separators regardless of
@@ -320,7 +321,7 @@ function escapeCmdExeArgument(rawArg: string): string {
   escaped = escaped.replace(/(\\*)$/, "$1$1");
   escaped = `"${escaped}"`;
 
-  return escapeCmdExeMetaChars(escaped);
+  return escapeCmdExeMetaChars(escapeCmdExeMetaChars(escaped));
 }
 
 /**

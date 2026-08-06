@@ -23,6 +23,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
+import * as pty from "node-pty";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
@@ -127,10 +128,9 @@ const temporaryDirs: string[] = [];
  * writes come from processes zsh forked, which outlive the pty and answer to
  * nothing we hold. Retries alone did not close it either.
  *
- * So teardown is best-effort. A temp directory we cannot remove is not a defect
- * in the terminal code these tests cover, and failing on it reports the race
- * against whichever assertion happened to run last, which is how this surfaced:
- * as a flake in an unrelated zsh title test. The OS reclaims the directory.
+ * The known post-retry `ENOTEMPTY` race is reported and tolerated because it
+ * belongs to a descendant shell outliving the tested terminal. Any other
+ * cleanup error still fails the test that owns the directory.
  */
 async function waitForSessionExit(session: TerminalSession): Promise<void> {
   const exited = new Promise<void>((resolve) => {
@@ -153,7 +153,15 @@ afterEach(async () => {
       try {
         rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 });
       } catch (error) {
-        console.warn(`leaving temp dir behind: ${dir}`, error);
+        if (
+          typeof error !== "object" ||
+          error === null ||
+          !("code" in error) ||
+          error.code !== "ENOTEMPTY"
+        ) {
+          throw error;
+        }
+        console.warn(`leaving temp dir behind after ENOTEMPTY retries: ${dir}`);
       }
     }
   }
@@ -295,7 +303,7 @@ describe("createTerminal", () => {
     // cmd.exe-escaped argument. See escapeCmdExeArgument in terminal.ts.
     expect(resolved).toEqual({
       command: "C:\\Windows\\System32\\cmd.exe",
-      args: '/d /s /c "C:\\npm\\claude.cmd ^"--foo^""',
+      args: '/d /s /c "C:\\npm\\claude.cmd ^^^"--foo^^^""',
     });
   });
 
@@ -323,20 +331,20 @@ describe("createTerminal", () => {
     // (modulo the documented newline-to-space normalization below).
     it("neutralizes cmd.exe's own metacharacters instead of letting them execute", async () => {
       expect(await resolveCmdShimArgs("a & b | c")).toBe(
-        '/d /s /c "C:\\npm\\claude.cmd ^"a^ ^&^ b^ ^|^ c^""',
+        '/d /s /c "C:\\npm\\claude.cmd ^^^"a^^^ ^^^&^^^ b^^^ ^^^|^^^ c^^^""',
       );
       expect(await resolveCmdShimArgs("100% done %PATH%")).toBe(
-        '/d /s /c "C:\\npm\\claude.cmd ^"100^%^ done^ ^%PATH^%^""',
+        '/d /s /c "C:\\npm\\claude.cmd ^^^"100^^^%^^^ done^^^ ^^^%PATH^^^%^^^""',
       );
-      expect(await resolveCmdShimArgs("a^b")).toBe('/d /s /c "C:\\npm\\claude.cmd ^"a^^b^""');
+      expect(await resolveCmdShimArgs("a^b")).toBe('/d /s /c "C:\\npm\\claude.cmd ^^^"a^^^^b^^^""');
     });
 
     it("escapes embedded double quotes and backslash runs preceding them", async () => {
       expect(await resolveCmdShimArgs('say "hello" now')).toBe(
-        '/d /s /c "C:\\npm\\claude.cmd ^"say^ \\^"hello\\^"^ now^""',
+        '/d /s /c "C:\\npm\\claude.cmd ^^^"say^^^ \\^^^"hello\\^^^"^^^ now^^^""',
       );
       expect(await resolveCmdShimArgs('C:\\path\\ "quoted"')).toBe(
-        '/d /s /c "C:\\npm\\claude.cmd ^"C:\\path\\^ \\^"quoted\\^"^""',
+        '/d /s /c "C:\\npm\\claude.cmd ^^^"C:\\path\\^^^ \\^^^"quoted\\^^^"^^^""',
       );
     });
 
@@ -348,17 +356,17 @@ describe("createTerminal", () => {
     // the cost of losing the original line breaks.
     it("normalizes embedded newlines to spaces instead of letting them split the command", async () => {
       expect(await resolveCmdShimArgs("line one\nline two")).toBe(
-        '/d /s /c "C:\\npm\\claude.cmd ^"line^ one^ line^ two^""',
+        '/d /s /c "C:\\npm\\claude.cmd ^^^"line^^^ one^^^ line^^^ two^^^""',
       );
       expect(await resolveCmdShimArgs("line one\r\nline two")).toBe(
-        '/d /s /c "C:\\npm\\claude.cmd ^"line^ one^ line^ two^""',
+        '/d /s /c "C:\\npm\\claude.cmd ^^^"line^^^ one^^^ line^^^ two^^^""',
       );
     });
 
     it("handles a multi-line prompt combining quotes, backslashes, and every cmd.exe metacharacter", async () => {
       const prompt = 'multi\nline "quoted \\path\\" & piped | percent %VAR% ^caret';
       expect(await resolveCmdShimArgs(prompt)).toBe(
-        '/d /s /c "C:\\npm\\claude.cmd ^"multi^ line^ \\^"quoted^ \\path\\\\\\^"^ ^&^ piped^ ^|^ percent^ ^%VAR^%^ ^^caret^""',
+        '/d /s /c "C:\\npm\\claude.cmd ^^^"multi^^^ line^^^ \\^^^"quoted^^^ \\path\\\\\\^^^"^^^ ^^^&^^^ piped^^^ ^^^|^^^ percent^^^ ^^^%VAR^^^%^^^ ^^^^caret^^^""',
       );
     });
   });
@@ -1258,55 +1266,69 @@ describe("terminal activity interruption", () => {
 describe.runIf(isPlatform("win32"))(".cmd shim argv round-trip on Windows", () => {
   function writeArgvEchoShim(): { dir: string; cmdPath: string } {
     const dir = mkdtempSync(join(tmpdir(), "paseo-cmd-shim-"));
+    temporaryDirs.push(dir);
     const cmdPath = join(dir, "echoargv.cmd");
-    // `%*` would re-expand; echo each positional verbatim, one per line.
-    writeFileSync(
-      cmdPath,
-      '@echo off\r\n:loop\r\nif "%~1"=="" goto :eof\r\necho %~1\r\nshift\r\ngoto loop\r\n',
-    );
+    const scriptPath = join(dir, "echoargv.js");
+    writeFileSync(scriptPath, "process.stdout.write(JSON.stringify(process.argv.slice(2)));\n");
+    writeFileSync(cmdPath, `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`);
     return { dir, cmdPath };
   }
 
-  async function roundTrip(promptArg: string): Promise<string> {
+  function runCommandLine(command: string, args: string, cwd: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const terminal = pty.spawn(command, args, { cwd, cols: 500, rows: 30 });
+      let output = "";
+      const dataDisposable = terminal.onData((data) => {
+        output += data;
+      });
+      const timeout = setTimeout(() => {
+        terminal.kill();
+        reject(new Error("Timed out waiting for cmd.exe fixture"));
+      }, 10_000);
+      timeout.unref();
+      terminal.onExit(({ exitCode }) => {
+        clearTimeout(timeout);
+        dataDisposable.dispose();
+        if (exitCode !== 0) {
+          reject(new Error(`cmd.exe fixture exited ${exitCode}: ${output}`));
+          return;
+        }
+        resolve(output);
+      });
+    });
+  }
+
+  async function roundTrip(promptArg: string): Promise<string[]> {
     const { dir, cmdPath } = writeArgvEchoShim();
-    try {
-      const resolved = await resolveTerminalSpawnCommand("echoargv", [promptArg], {
-        platform: "win32",
-        env: process.env,
-        resolveExecutable: async () => cmdPath,
-      });
-      const result = spawnSync(resolved.command, resolved.args as string, {
-        encoding: "utf8",
-        windowsVerbatimArguments: true,
-      });
-      expect(result.error).toBeUndefined();
-      return result.stdout.replace(/\r\n/g, "\n").trim();
-    } finally {
-      try {
-        rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 });
-      } catch (error) {
-        console.warn(`leaving temp dir behind: ${dir}`, error);
-      }
+    const resolved = await resolveTerminalSpawnCommand("echoargv", [promptArg], {
+      platform: "win32",
+      env: process.env,
+      resolveExecutable: async () => cmdPath,
+    });
+    if (typeof resolved.args !== "string") {
+      throw new Error(`expected a cmd.exe command line, got ${JSON.stringify(resolved.args)}`);
     }
+    const output = await runCommandLine(resolved.command, resolved.args, dir);
+    const argv: unknown = JSON.parse(output.trim());
+    if (!Array.isArray(argv) || !argv.every((arg) => typeof arg === "string")) {
+      throw new Error(`expected string argv, got ${output}`);
+    }
+    return argv;
   }
 
   it("passes cmd.exe metacharacters through as literal text", async () => {
-    expect(await roundTrip("a & b | c")).toBe("a & b | c");
-    expect(await roundTrip("100% done %PATH%")).toBe("100% done %PATH%");
-    expect(await roundTrip("a^b")).toBe("a^b");
-    expect(await roundTrip('say "hi"')).toBe('say "hi"');
-    expect(await roundTrip("c:\\path\\to\\thing")).toBe("c:\\path\\to\\thing");
+    expect(await roundTrip("a & b | c")).toEqual(["a & b | c"]);
+    expect(await roundTrip("100% done %PATH%")).toEqual(["100% done %PATH%"]);
+    expect(await roundTrip("a^b")).toEqual(["a^b"]);
+    expect(await roundTrip('say "hi"')).toEqual(['say "hi"']);
+    expect(await roundTrip("c:\\path\\to\\thing")).toEqual(["c:\\path\\to\\thing"]);
   });
 
   it("does not let a metacharacter start a second command", async () => {
-    // If escaping failed, cmd.exe would run `echo pwned` and it would appear
-    // in stdout as its own line.
-    const output = await roundTrip("safe & echo pwned");
-    expect(output).toBe("safe & echo pwned");
-    expect(output).not.toMatch(/^pwned$/m);
+    expect(await roundTrip("safe & echo pwned")).toEqual(["safe & echo pwned"]);
   });
 
   it("normalizes newlines to spaces rather than splitting the command", async () => {
-    expect(await roundTrip("first\nsecond")).toBe("first second");
+    expect(await roundTrip("first\nsecond")).toEqual(["first second"]);
   });
 });
