@@ -9,6 +9,10 @@ Ship a plugin system + marketplace for Paseo on branch `gallant-elephant` (cut f
 Nothing pushed. No PR open. Branch is `gallant-elephant`, cut from `origin/main`.
 
 ```
+58b5e12de Capture Object.create in the plugin shell, and verify the root it forced open <- round 10 fix
+c9a950658 Stop the attachShadow wrapper swallowing what the platform would reject     <- round 9 correctness
+faeecf01c Give the observer nothing the plugin can reach through a prototype        <- round 9 security
+fb954accd Capture the observer's own method, and fix the script-type list           <- round 8 fixes
 68e6bb13d Sanitise plugin markup before it is connected, and pin the shell's contract  <- round 7 fixes
 57ce09192 Stop enumerating the doors to a fresh plugin realm                          <- round 6 fixes
 d2fd1221b Update the plugin PR handoff for round 5
@@ -28,7 +32,7 @@ Gate green at HEAD: `npm run typecheck` clean, `npm run lint` 0/0, `npm run form
 
 ## Review status
 
-Seven rounds, all rejected so far. **Eight exfiltration holes and four silent regressions have now shipped past a fully green typecheck/lint/test gate.** Do not treat the gate as evidence for this feature.
+Ten rounds, all rejected so far. **Eleven exfiltration holes and eight silent regressions have now shipped past a fully green typecheck/lint/test gate.** Do not treat the gate as evidence for this feature.
 
 - Round 1 (2 holes): regex-placed CSP defeated by `<!-- <head> -->` in guest HTML; `originWhitelist: ["about:blank"]` on native, which react-native-webview consults _before_ the navigation callback, handing the URL to `Linking.openURL` and the user's real browser.
 - Round 2 (1 hole, survived the round-1 fixes): the plugin iframe navigating **itself**. The guest CSP cannot stop that — `navigate-to` was dropped from the spec and `default-src` does not cover a document's own navigation. Fixed with `frame-src 'none'` on the **host** document (a child frame's navigation is checked against the parent's policy; `about:srcdoc` is exempt so the plugin still renders). Reproduced and closed in real Electron with a local HTTP server counting hits.
@@ -43,9 +47,11 @@ Seven rounds, all rejected so far. **Eight exfiltration holes and four silent re
 
 **A residual is now documented rather than closed:** a plugin _script_ can still append `<link rel="preconnect">` and cause one DNS lookup plus TCP/TLS connect to a host of its choosing. CSP has no directive, `x-dns-prefetch-control` is a separate Blink setting that does not cover preconnect, and the hint fires before any interception installable universally — wrapping the dozen DOM insertion APIs would be incomplete by construction, which is the failure mode rounds 4–6 established. Stated in `docs/plugins.md`, `SECURITY.md`, and owed in the PR.
 
-Round 8 is running as of this writing: adversarial security on the round-7 sanitiser (Claude frontier), and correctness on the whole branch with the newest attach path first (workhorse).
+- Rounds 8, 9 and 10 (3 holes + 3 silent regressions) are **one class: late binding.** Round 8, `MutationObserver.prototype.observe` was resolved when the `attachShadow` wrapper called it, so a plugin that no-ops it first gets an unwatched root. Round 9, capturing the callee did nothing for the **argument** — a dictionary is converted with one `Get` per member, so every member the object does not own comes off `Object.prototype`; `attributeFilter` made the conversion throw and `observe` never ran, `clonable` minted a root from `cloneNode` with no `attachShadow` call to wrap. Round 10, the helper that built those null-prototype objects read the **global** `Object.create` when called, and the wrapper calls it on every `attachShadow` — a replacement returning an accessor pair swallows `mode = "open"` and hands back the closed clonable root the wrapper exists to deny.
 
-**The lesson that keeps repeating:** a denial test has to be driven from where the attacker's code runs. Two rounds in a row, a test written from the host's point of view passed against a live hole.
+  Each round found the previous round's fix broken. So the rule is now written into `bridge.ts` above `KILL_CHILD_REALMS` as a three-clause invariant — capture the callee, build the argument bare, resolve nothing global at call time — and the wrapper re-reads `shadowRoot` afterwards and drops the host on a mismatch, so a fourth instance fails closed instead of silently. The round-9 correctness pass also caught the round-8/9 fixes dropping `slotAssignment`/`clonable`/`serializable` and making invalid `attachShadow` calls quietly succeed, and a react-query refresh flag cleared before its await so the retry lost it.
+
+**The lesson that keeps repeating:** a denial test has to be driven from where the attacker's code runs. Two rounds in a row, a test written from the host's point of view passed against a live hole. And a fix is not evidence — four consecutive rounds broke the fix in front of them.
 
 ## What round 2 fixed, in 53cac5843
 
@@ -59,7 +65,7 @@ Round 8 is running as of this writing: adversarial security on the round-7 sanit
 
 ## Still to do
 
-1. Round 8 verdicts. **The PR does not open until reviewers approve** — that is the user's explicit instruction, not a guideline.
+1. Round 11 verdicts (security on the frontier tier, correctness on the workhorse; both running as of this writing). **The PR does not open until reviewers approve** — that is the user's explicit instruction, not a guideline. A REJECT-then-fix is not an approval.
 2. Push, open PR, babysit comments.
 
 QA evidence is **done**: `.qa/plugins/qa-report.md` plus 4 screenshots (gitignored), e2e 6/6 including a new test that a user-selected theme change (Dark → Zinc, same colour scheme, OS pinned dark) reaches the plugin — proven to fail against the pre-fix code. Platform matrix in the report says plainly that iOS and Android have zero runtime evidence.
@@ -74,6 +80,8 @@ CONTRIBUTING.md is **done** — it already had the Plugins section (write a plug
 - The frame-removal control is a runtime removal racing a parser, not a policy. It holds in Chromium; that is an empirical result, not a guarantee.
 - A plugin cannot embed an `<iframe>`, `<object>` or `<embed>` at all — no YouTube frames, no external SVG. They are removed silently. As of round 7 the same is true of `<link>`, for any `rel`; CSP already denied every resource one could fetch.
 - **The `preconnect` residual** described under Review status: a plugin script can still cause one DNS lookup to a host of its choosing. This weakens the "your content stays on your machine" claim for installed plugins specifically, and the honest framing is the VS Code one — an installed plugin is code you trust with the files you open in it.
+- **`attachShadow` always returns an open root.** `mode: "closed"` is accepted and ignored, so `element.shadowRoot` is readable. Everything else about the call is forwarded unchanged.
+- `<script type="speculationrules">` is inferred to be blocked by the shell's MIME allowlist but was never demonstrated either way.
 - `plugins.paseo.sh` does not resolve (NXDOMAIN), so nobody can exercise Browse/Install against the real index. Local `file://` index installs are covered end to end by a real-daemon test; the untested gap is browse-and-install _through the Settings UI_.
 
 ## Key decisions (do not relitigate)
