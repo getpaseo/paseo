@@ -16,10 +16,31 @@ A configuration comes from exactly one source:
 
 - **GitHub source**: one repository, the file `.paseo/hub.yml`, on the repository's current default branch.
 - **Manual source**: edited in the dashboard and saved with **Save and activate**.
+- **CLI/API install**: YAML sent explicitly with an organization API key.
 
 Pick a GitHub source by choosing a repository and clicking **Use for configuration**. That syncs immediately and enables automatic deployment.
 
 The path and the branch are fixed. There is no setting for either.
+
+## Deploy from the CLI
+
+From a project checkout, add the target project slug as optional deployment metadata:
+
+```yaml
+project: my-project
+```
+
+Then deploy:
+
+```sh
+PASEO_HUB_URL=https://hub.example.com \
+PASEO_HUB_API_KEY=paseo_pk_... \
+paseo hub deploy
+```
+
+The default path is exactly `.paseo/hub.yml` relative to the current directory. The CLI does not search parent directories or alternate filenames. Use `paseo hub deploy path/to/config.yml` for another file, or `--project <slug>` to override the file's `project` value without changing the YAML sent to Hub.
+
+The API key supplies organization scope and needs `configuration:install`. `project` only selects the deployment target; workflows cannot reference it. The CLI currently stores no login or profile.
 
 ## Sync
 

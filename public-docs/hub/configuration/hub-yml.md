@@ -8,9 +8,11 @@ category: Hub
 
 # `hub.yml` reference
 
-A configuration has `environments` and `triggers`. Execution fields belong to each trigger's `steps`.
+A configuration has `environments` and `triggers`. It may also include top-level `project` deployment metadata for `paseo hub deploy`. Execution fields belong to each trigger's `steps`.
 
 ```yaml
+project: my-project
+
 environments:
   - name: development
     kind: daemon
@@ -34,6 +36,8 @@ triggers:
         prompt:
           - text: ${{ paseo.prompt }}
 ```
+
+`project` is an optional bare project slug. The deploy CLI uses it to choose the target project when `--project` is absent. It is not available to triggers, expressions, or agents, and `--project` does not rewrite the YAML.
 
 ## Environments
 

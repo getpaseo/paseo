@@ -39,6 +39,8 @@ Open **Projects → New project**. On its **Configuration** tab, pick a reposito
 Add `.paseo/hub.yml` to that repository:
 
 ```yaml
+project: your-project
+
 environments:
   - name: dev
     kind: daemon
@@ -67,13 +69,23 @@ triggers:
               ${{ paseo.prompt }}
 ```
 
-`daemon` is the normalized slug from step 3. `cwd` is a directory on that machine.
+`project` is the project slug from step 4. The deploy CLI reads it as deployment metadata; it does not affect workflow behavior. `daemon` is the normalized slug from step 3. `cwd` is a directory on that machine.
 
 ## 6. Push
 
 Push to the default branch. Hub fetches the file at that commit, validates it, and activates it. The **Configuration** tab shows the active revision and the last sync.
 
 If the file is invalid, Hub records the failure and keeps the previous revision active.
+
+To deploy the file directly instead, create an organization API key with the `configuration:install` scope, then run:
+
+```sh
+export PASEO_HUB_URL=https://your-hub.example.com
+export PASEO_HUB_API_KEY=paseo_pk_...
+paseo hub deploy
+```
+
+The command reads exactly `.paseo/hub.yml` from the current directory. It does not search parent directories. Pass another file explicitly or override its `project` metadata with `--project <slug>`.
 
 ## 7. Trigger it
 

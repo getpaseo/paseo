@@ -9,7 +9,7 @@ category: Hub
 # Hub public API
 
 The Hub public API lets automation operate on projects and daemons in one
-organization. Set the Hub origin in `HUB_URL` below, for example
+organization. Set the Hub origin in `PASEO_HUB_URL` below, for example
 `https://hub.example.com`.
 
 ## Authentication
@@ -38,17 +38,18 @@ Each key has one or more selectable scopes:
 API keys do not grant dashboard access. They cannot manage connections,
 projects, or organization members.
 
-Missing, invalid, or revoked credentials return `401`:
+API failures use RFC 9457 problem details. Missing, invalid, or revoked credentials return `401` with `application/problem+json`:
 
 ```json
-{ "error": "unauthorized" }
+{
+  "type": "https://hub.example.com/problems/unauthorized",
+  "title": "Unauthorized",
+  "status": 401,
+  "detail": "Provide a valid organization API key."
+}
 ```
 
-A valid key without the scope required by an endpoint returns `403`:
-
-```json
-{ "error": "forbidden" }
-```
+A valid key without the scope required by an endpoint returns `403` in the same format.
 
 ## Configuration install
 
@@ -57,7 +58,7 @@ supplied YAML after Hub validates and compiles it, then activates the new
 revision.
 
 ```http
-POST /api/configurations/install
+POST /api/v1/configurations/install
 ```
 
 Request body:
@@ -69,8 +70,7 @@ Request body:
 }
 ```
 
-The YAML must describe a valid Hub configuration. Replace the example daemon,
-working directory, and trigger values with resources in your organization.
+The YAML must describe a valid Hub configuration. `projectSlug` is deployment metadata and determines the target project; the API key determines its organization. Replace the example daemon, working directory, and trigger values with resources in your organization.
 
 On success, Hub returns `201`:
 
@@ -83,17 +83,13 @@ On success, Hub returns `201`:
 }
 ```
 
-Common responses are `400 {"error":"invalid_request"}` for a missing or
-malformed body, `404 {"error":"project_not_found"}` for an inactive or
-unknown project in the key's organization, and `422` for invalid YAML or an
-invalid configuration. An invalid configuration includes the provisional
-`versionId` in its response.
+Common responses are `400` for a missing or malformed body, `404` for an inactive or unknown project in the key's organization, and `422` for invalid YAML or an invalid configuration. Validation problem details include field issues. A failed install does not replace the active revision.
 
 Example:
 
 ```bash
-curl --fail-with-body -sS -X POST "$HUB_URL/api/configurations/install" \
-  -H "Authorization: Bearer $PASEO_API_KEY" \
+curl --fail-with-body -sS -X POST "$PASEO_HUB_URL/api/v1/configurations/install" \
+  -H "Authorization: Bearer $PASEO_HUB_API_KEY" \
   -H "Content-Type: application/json" \
   --data @configuration-install.json
 ```
