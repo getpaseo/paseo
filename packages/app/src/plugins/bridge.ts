@@ -66,6 +66,11 @@ export interface PluginSandboxProps {
  * `form-action` and `base-uri` do not fall back to `default-src`, so without
  * them a form POST is a live exfiltration path — and on native there is no
  * iframe `sandbox` attribute to deny forms for us.
+ *
+ * This does NOT deny every outbound request. `default-src 'none'` does not cover
+ * WebRTC, and there is no CSP directive that does — Chromium rejects `webrtc`
+ * as an unrecognised directive and sends the packets anyway. See
+ * `PLUGIN_NEUTER_SCRIPT`.
  */
 export const PLUGIN_CONTENT_SECURITY_POLICY =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; form-action 'none'; base-uri 'none'; frame-src 'none'; object-src 'none'";
@@ -73,8 +78,37 @@ export const PLUGIN_CONTENT_SECURITY_POLICY =
 const CSP_META_TAG = `<meta http-equiv="Content-Security-Policy" content="${PLUGIN_CONTENT_SECURITY_POLICY}">`;
 
 /**
+ * The one exfiltration channel CSP cannot express.
+ *
+ * `RTCPeerConnection` lets a plugin choose the ICE server's host, port,
+ * username and credential, so both the destination and the payload are its own:
+ * the STUN/TURN Allocate carries ~500 bytes of whatever it wants per
+ * connection, and the hostname alone is enough for DNS exfiltration even with
+ * no server answering. `default-src 'none'` does not gate it, `frame-src` is
+ * irrelevant (nothing navigates), and `sandbox="allow-scripts"` does not
+ * withhold the API. Deleting the constructors from the realm does.
+ *
+ * Non-configurable so the plugin cannot restore them. Recovering a fresh realm
+ * fails on web because a nested frame under `sandbox` without
+ * `allow-same-origin` gets its own opaque origin and reading its `contentWindow`
+ * throws; on native the sandboxes inject this into subframes as well.
+ */
+export const PLUGIN_NEUTERED_GLOBALS = [
+  "RTCPeerConnection",
+  "webkitRTCPeerConnection",
+  "mozRTCPeerConnection",
+  "RTCDataChannel",
+] as const;
+
+export const PLUGIN_NEUTER_SCRIPT = `(function(){${JSON.stringify(PLUGIN_NEUTERED_GLOBALS).replace(
+  /"/g,
+  "'",
+)}.forEach(function(name){try{delete window[name];}catch(e){}try{Object.defineProperty(window,name,{value:undefined,writable:false,configurable:false});}catch(e){}});})();`;
+
+/**
  * Wrap the plugin's HTML in our own document shell. A CSP meta only governs what
- * the parser has not seen yet, so it has to be the first element in `<head>`.
+ * the parser has not seen yet, so it has to be the first element in `<head>`,
+ * and the neutering script has to run before any plugin script.
  *
  * Never look for the plugin's own `<head>`: the HTML is attacker-controlled, and
  * any textual match can be faked (`<!-- <head> -->`, `<p title="<head>">`) so the
@@ -83,7 +117,7 @@ const CSP_META_TAG = `<meta http-equiv="Content-Security-Policy" content="${PLUG
  * first; a nested html/head from the plugin is ignored by the parser.
  */
 export function wrapPluginHtml(html: string): string {
-  return `<!doctype html><html><head>${CSP_META_TAG}</head><body>${html}</body></html>`;
+  return `<!doctype html><html><head>${CSP_META_TAG}<script>${PLUGIN_NEUTER_SCRIPT}</script></head><body>${html}</body></html>`;
 }
 
 function isHomeRelative(value: string): boolean {

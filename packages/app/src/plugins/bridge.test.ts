@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PLUGIN_CONTENT_SECURITY_POLICY,
+  PLUGIN_NEUTER_SCRIPT,
   createInitMessage,
   createUpdateMessage,
   fromPluginRelativePath,
@@ -192,7 +193,7 @@ describe("plugin path round trip", () => {
 
 describe("wrapPluginHtml", () => {
   const CSP_META = `<meta http-equiv="Content-Security-Policy" content="${PLUGIN_CONTENT_SECURITY_POLICY}">`;
-  const SHELL_PREFIX = `<!doctype html><html><head>${CSP_META}</head><body>`;
+  const SHELL_PREFIX = `<!doctype html><html><head>${CSP_META}<script>${PLUGIN_NEUTER_SCRIPT}</script></head><body>`;
 
   // Every one of these defeats a regex that hunts for the plugin's own <head>:
   // the match is inside a comment, inside an attribute value, or absent, and the

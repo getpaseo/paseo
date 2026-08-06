@@ -6,6 +6,7 @@ import {
   createUpdateMessage,
   handlePluginGuestMessage,
   wrapPluginHtml,
+  PLUGIN_NEUTER_SCRIPT,
   type PluginHostMessage,
   type PluginSandboxProps,
 } from "./bridge";
@@ -25,9 +26,17 @@ import { PLUGIN_READY_TIMEOUT_MS, PluginReadyTimeout } from "./sandbox-error";
  * `window.parent`, listen on `window`.
  *
  * Host messages (`init`/`update`) are skipped so the relay cannot echo them.
+ *
+ * This is injected into subframes as well, which is why it leads with
+ * `PLUGIN_NEUTER_SCRIPT` and then returns early anywhere but the top: native has
+ * no iframe `sandbox` attribute, so a nested frame is same-origin and would
+ * otherwise hand the plugin back an untouched `RTCPeerConnection`. Only the top
+ * document relays messages.
  */
 const GUEST_MESSAGE_FORWARDER = `
+${PLUGIN_NEUTER_SCRIPT}
 (function () {
+  if (window.top !== window) return;
   window.addEventListener("message", function (event) {
     var data = event.data;
     if (!data || data.paseo !== 1) return;
@@ -140,6 +149,7 @@ function PluginSandboxView({
       originWhitelist={ORIGIN_WHITELIST}
       onShouldStartLoadWithRequest={allowPluginDocumentOnly}
       injectedJavaScriptBeforeContentLoaded={GUEST_MESSAGE_FORWARDER}
+      injectedJavaScriptBeforeContentLoadedForMainFrameOnly={false}
       onMessage={handleMessage}
       javaScriptEnabled
       incognito

@@ -66,6 +66,29 @@ const HOSTILE_PLUGIN_HTML = `<!doctype html>
           nested.src = target + "/frame";
           document.body.appendChild(nested);
 
+          // WebRTC is the channel no CSP directive can express: the plugin picks
+          // the ICE server host, port, username and credential, so a TURN
+          // Allocate carries whatever it wants to wherever it wants.
+          outcomes.rtc = typeof RTCPeerConnection === "undefined" ? "absent" : "present";
+          try {
+            new RTCPeerConnection({ iceServers: [{ urls: "stun:" + data.rtcHost }] });
+            outcomes.rtcConstruct = "constructed";
+          } catch (error) {
+            outcomes.rtcConstruct = "threw";
+          }
+          // A fresh realm must not hand the constructor back.
+          try {
+            var realm = document.createElement("iframe");
+            realm.srcdoc = "<p>realm</p>";
+            document.body.appendChild(realm);
+            outcomes.rtcViaFrame =
+              realm.contentWindow && realm.contentWindow.RTCPeerConnection
+                ? "recovered"
+                : "denied";
+          } catch (error) {
+            outcomes.rtcViaFrame = "denied";
+          }
+
           fetch(target + "/fetch").then(
             function () { outcomes.fetch = "sent"; },
             function () { outcomes.fetch = "blocked"; }
@@ -97,6 +120,9 @@ interface Outcomes {
   windowOpen: string;
   fetch: string;
   img: string;
+  rtc: string;
+  rtcConstruct: string;
+  rtcViaFrame: string;
   violations: string[];
 }
 
@@ -177,7 +203,10 @@ describe("a hostile plugin", () => {
         return;
       }
       if (event.data.type === "ready") {
-        iframe.contentWindow?.postMessage({ exfil: 1, type: "attack", base, imageUrl }, "*");
+        iframe.contentWindow?.postMessage(
+          { exfil: 1, type: "attack", base, imageUrl, rtcHost: new URL(base).host },
+          "*",
+        );
       }
       if (event.data.type === "report") {
         report = event.data.outcomes as Outcomes;
@@ -204,6 +233,12 @@ describe("a hostile plugin", () => {
     expect(outcomes.violations).toEqual(
       expect.arrayContaining(["connect-src", "img-src", "frame-src"]),
     );
+
+    // No CSP directive can express this one, so the shell deletes the
+    // constructors outright and a fresh realm must not return them.
+    expect(outcomes.rtc).toBe("absent");
+    expect(outcomes.rtcConstruct).toBe("threw");
+    expect(outcomes.rtcViaFrame).toBe("denied");
 
     // Now the vector the guest's own policy cannot stop.
     iframe.contentWindow?.postMessage({ exfil: 1, type: "navigate", base, secret }, "*");

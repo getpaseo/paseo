@@ -53,9 +53,17 @@ Plugin HTML never runs in the app's own context. The client renders it in a sand
 | Web, Electron | `<iframe sandbox="allow-scripts" srcDoc=...>` — opaque origin           |
 | iOS, Android  | `react-native-webview`, navigation denied for anything but the document |
 
-Both get the same injected CSP: `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; form-action 'none'; base-uri 'none'; frame-src 'none'; object-src 'none'`. A plugin cannot fetch, cannot read cookies, and cannot reach the daemon except through the bridge below.
+Both get the same injected CSP: `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; form-action 'none'; base-uri 'none'; frame-src 'none'; object-src 'none'`. That stops `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, images, fonts, forms, and nested frames, and a plugin cannot read cookies or reach the daemon except through the bridge below.
 
 `form-action` and `base-uri` are listed explicitly because neither falls back to `default-src`. Without them a form POST is an open exfiltration path on native, where there is no iframe `sandbox` attribute to fall back on.
+
+### WebRTC has no CSP directive, so the shell deletes it
+
+`default-src 'none'` does not cover `RTCPeerConnection`, and no directive does — Chromium treats `webrtc` as unrecognised and sends the packets anyway. A plugin picks the ICE server's host, port, username and credential, so a single STUN/TURN Allocate carries a few hundred bytes of its choosing to a server of its choosing; the hostname alone is enough for DNS exfiltration with nothing listening.
+
+`wrapPluginHtml` therefore emits a script, before any plugin markup, that deletes `RTCPeerConnection` and its vendor aliases from the realm and redefines them non-configurable. On web a plugin cannot recover them from a nested frame: without `allow-same-origin` the child gets its own opaque origin and reading its `contentWindow` throws. Native has no `sandbox` attribute, so the WebView injects the same script into subframes as well.
+
+This is the one control that is a runtime deletion rather than a policy, which makes it the easy one to lose in a refactor. `sandbox-denial.browser.test.ts` asserts the constructors are gone.
 
 The CSP is injected by wrapping the plugin's HTML in our own document shell, never by locating the plugin's own `<head>`. Searching attacker-controlled markup for an injection point is defeated by putting `<head>` in a comment or an attribute, which ships the document with no policy at all.
 
@@ -70,6 +78,8 @@ The guest CSP cannot stop the plugin navigating _itself_. `navigate-to` was drop
 What stops it is `frame-src 'none'` on the **host** document, because a child frame's navigation is checked against the parent's policy, not its own. `about:srcdoc` is exempt, so the plugin still renders. It is set in both places the app HTML is served: `packages/server/src/server/web-ui.ts` (header) and `packages/app/public/index.html` (meta, which is what Electron's `paseo://` handler and the Expo dev server deliver). `setupSubframeNavigationPrevention()` in the desktop window manager is a second line of defence on `will-frame-navigate`.
 
 A blocked navigation does not leave the plugin running: Chromium replaces the frame with an empty document. The plugin stops working and later host `postMessage`s go nowhere. That is the intended failure — fail closed, not fail quiet.
+
+That includes in-page anchors. `<a href="#section">` is a frame navigation, so clicking one blanks the plugin. Scroll with `scrollIntoView()` instead; do not put `href="#..."` in plugin HTML.
 
 Electron's in-app browser `<webview>` is unaffected; it is not a frame navigation and never reaches either gate.
 
@@ -123,9 +133,17 @@ A plugin whose `paseoVersion` does not match, whose manifest stopped parsing, or
 
 Installing a plugin means trusting whoever published it with what the bridge exposes: the content of files you preview with it, and the ability to ask the app to open a path inside the workspace.
 
-Four mechanisms keep that content on the machine, and all four have to hold: the guest CSP denies every outbound request, `frame-src 'none'` on the host document denies the frame navigating itself, the iframe has no `allow-forms`/`allow-popups`/`allow-top-navigation` on web, and navigation is denied on native.
+Five mechanisms keep that content on the machine, and all five have to hold:
 
-Three of the four were found broken during review, in two rounds — a regex-placed CSP, an `originWhitelist` that bypassed our own navigation check, and the self-navigation hole that survived the first round of fixes. All three passed typecheck, lint, and the test suite. Treat any change to the sandbox as security-relevant, and prove the denial in a real browser rather than reasoning about the policy: `packages/app/src/plugins/sandbox-denial.browser.test.ts` reads the shipped CSP out of `public/index.html` and mounts a plugin that actually tries each escape.
+1. the guest CSP denies network requests it can express,
+2. the document shell deletes `RTCPeerConnection`, which the CSP cannot express,
+3. `frame-src 'none'` on the host document denies the frame navigating itself,
+4. the iframe has no `allow-forms`/`allow-popups`/`allow-top-navigation`/`allow-same-origin` on web,
+5. navigation is denied on native.
+
+Four of the five were found broken during review, across three rounds: a regex-placed CSP, an `originWhitelist` that bypassed our own navigation check, the self-navigation hole that survived the first round of fixes, and WebRTC — which was reproduced against a real TURN server that received the file content verbatim. Every one of them passed typecheck, lint, and the full test suite.
+
+Treat any change to the sandbox as security-relevant, and prove the denial in a real browser rather than reasoning about the policy. `packages/app/src/plugins/sandbox-denial.browser.test.ts` reads the shipped CSP out of `public/index.html` and mounts a plugin that actually tries each escape. When you add a capability, add its escape attempt there first — the enumeration being incomplete is how all four shipped.
 
 The daemon serves an entry only when its plugin is enabled and the entry is declared in the manifest's `contributes`, and it re-checks containment after resolving symlinks. A disabled plugin's code does not leave the daemon.
 
