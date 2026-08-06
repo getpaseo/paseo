@@ -6,7 +6,6 @@
  * other during startup, and every combination used to be exercised only by
  * running the whole sidebar.
  */
-import { useEffect, useState } from "react";
 import type { InstalledPlugin } from "@getpaseo/protocol/plugin/types";
 import {
   buildPluginExplorerTab,
@@ -97,37 +96,4 @@ export function resolveExplorerTab(input: {
     return { resolvedTab: fallback, activePluginTab: null, pluginTabPending: false };
   }
   return { resolvedTab: requestedTab, activePluginTab, pluginTabPending: false };
-}
-
-/**
- * How long the sidebar holds a remembered plugin tab before giving up on the
- * plugin list. The file pane bounds its identical wait the same way
- * (`file-pane/pane.tsx`).
- */
-export const PLUGIN_TABS_WAIT_MS = 2_000;
-
-/**
- * `usePlugins` reports loading until `server_info` lands, which for a host that
- * never answers is forever — so the hold above is bounded.
- *
- * `serverId` is a dep for the same reason `filePath` is one in the file pane:
- * switching to another host does not make `isLoading` flip false first, so
- * without it one unreachable host spends the budget and every host selected
- * after it skips the wait entirely.
- */
-export function useBoundedPluginsLoading(input: {
-  isLoading: boolean;
-  serverId: string | null;
-}): boolean {
-  const { isLoading, serverId } = input;
-  const [waitedTooLong, setWaitedTooLong] = useState(false);
-  useEffect(() => {
-    setWaitedTooLong(false);
-    if (!isLoading) {
-      return;
-    }
-    const timer = setTimeout(() => setWaitedTooLong(true), PLUGIN_TABS_WAIT_MS);
-    return () => clearTimeout(timer);
-  }, [isLoading, serverId]);
-  return isLoading && !waitedTooLong;
 }

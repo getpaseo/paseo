@@ -26,6 +26,7 @@ import {
 } from "@/components/file-pane-render-mode";
 import { PluginSandbox } from "@/plugins/sandbox";
 import { usePluginEntry, usePlugins } from "@/plugins/queries";
+import { useBoundedPluginListWait } from "@/plugins/plugin-list-wait";
 import {
   fromPluginRelativePath,
   isPluginPreviewablePath,
@@ -483,9 +484,6 @@ function PluginFilePreview({
   );
 }
 
-/** How long the pane waits for the plugin list before rendering without it. */
-const PLUGIN_RENDERER_WAIT_MS = 2_000;
-
 /**
  * Which viewer renders this file, and whether that answer is still settling.
  *
@@ -518,22 +516,15 @@ function useFilePreviewRenderer(input: {
   // Bounded, because the file pane is a core path and the plugin list is a
   // separate RPC: a daemon that is slow or never answers must not hold the
   // whole pane on a spinner. Past the deadline the built-in renderer wins, and
-  // a plugin answer that lands later just re-renders into it.
-  const waiting = isLoading && pluggable;
-  const [waitedTooLong, setWaitedTooLong] = useState(false);
-  // `filePath` is a dep so the deadline restarts per file. Without it, one slow
-  // file spends the budget and every file opened after it while the list is
-  // still in flight skips the wait entirely and renders as source.
-  useEffect(() => {
-    setWaitedTooLong(false);
-    if (!waiting) {
-      return;
-    }
-    const timer = setTimeout(() => setWaitedTooLong(true), PLUGIN_RENDERER_WAIT_MS);
-    return () => clearTimeout(timer);
-  }, [waiting, filePath]);
+  // a plugin answer that lands later just re-renders into it. Keyed on the file
+  // so one slow file does not spend the budget for every file after it, and on
+  // the host so switching hosts does not either.
+  const rendererPending = useBoundedPluginListWait({
+    waiting: isLoading && pluggable,
+    key: `${serverId ?? ""}\u0000${filePath}`,
+  });
 
-  return { renderer, rendererPending: waiting && !waitedTooLong };
+  return { renderer, rendererPending };
 }
 
 export function FilePane({

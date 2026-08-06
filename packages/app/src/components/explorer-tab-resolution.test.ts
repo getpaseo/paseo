@@ -1,15 +1,6 @@
-/**
- * @vitest-environment jsdom
- */
-import { act, renderHook } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { InstalledPlugin } from "@getpaseo/protocol/plugin/types";
-import {
-  PLUGIN_TABS_WAIT_MS,
-  resolveExplorerTab,
-  resolvePluginSidebarTabs,
-  useBoundedPluginsLoading,
-} from "@/components/explorer-tab-resolution";
+import { resolveExplorerTab, resolvePluginSidebarTabs } from "@/components/explorer-tab-resolution";
 
 function installedPlugin(input: {
   id: string;
@@ -167,56 +158,5 @@ describe("resolveExplorerTab", () => {
         pluginsLoading: false,
       }).resolvedTab,
     ).toBe("changes");
-  });
-});
-
-describe("useBoundedPluginsLoading", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
-  function render(initialProps: { isLoading: boolean; serverId: string | null }) {
-    return renderHook((props) => useBoundedPluginsLoading(props), { initialProps });
-  }
-
-  it("gives up on a host that never answers", () => {
-    const { result } = render({ isLoading: true, serverId: "a" });
-
-    expect(result.current).toBe(true);
-
-    act(() => vi.advanceTimersByTime(PLUGIN_TABS_WAIT_MS));
-    expect(result.current).toBe(false);
-  });
-
-  it("still reports loading just before the deadline", () => {
-    const { result } = render({ isLoading: true, serverId: "a" });
-
-    act(() => vi.advanceTimersByTime(PLUGIN_TABS_WAIT_MS - 1));
-    expect(result.current).toBe(true);
-  });
-
-  // The deadline is per host: `isLoading` never flips false between two hosts
-  // that are both still connecting, so without the reset the first one spends
-  // the budget and every host after it skips the hold entirely.
-  it("restarts the deadline when the host changes mid-wait", () => {
-    const { result, rerender } = render({ isLoading: true, serverId: "a" });
-
-    act(() => vi.advanceTimersByTime(PLUGIN_TABS_WAIT_MS));
-    expect(result.current).toBe(false);
-
-    rerender({ isLoading: true, serverId: "b" });
-    expect(result.current).toBe(true);
-
-    act(() => vi.advanceTimersByTime(PLUGIN_TABS_WAIT_MS));
-    expect(result.current).toBe(false);
-  });
-
-  it("reports not-loading once the list lands, and holds again for the next host", () => {
-    const { result, rerender } = render({ isLoading: true, serverId: "a" });
-
-    rerender({ isLoading: false, serverId: "a" });
-    expect(result.current).toBe(false);
-
-    rerender({ isLoading: true, serverId: "a" });
-    expect(result.current).toBe(true);
   });
 });

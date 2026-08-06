@@ -45,9 +45,9 @@ import { useDraftStore } from "@/stores/draft-store";
 import {
   resolveExplorerTab,
   resolvePluginSidebarTabs,
-  useBoundedPluginsLoading,
   type PluginSidebarTab,
 } from "@/components/explorer-tab-resolution";
+import { useBoundedPluginListWait } from "@/plugins/plugin-list-wait";
 import { usePluginEntry, usePlugins } from "@/plugins/queries";
 import { PluginSandbox } from "@/plugins/sandbox";
 import { fromPluginRelativePath, type PluginContext } from "@/plugins/bridge";
@@ -328,7 +328,7 @@ function ExplorerSidebarContent({
   const hasPullRequest = prPane.prNumber !== null;
   const showPrTab = hasPullRequest || (activeTab === "pr" && prPane.isLoading);
   const { plugins, isLoading } = usePlugins(serverId);
-  const pluginsLoading = useBoundedPluginsLoading({ isLoading, serverId });
+  const pluginsLoading = useBoundedPluginListWait({ waiting: isLoading, key: serverId });
   const pluginTabs = useMemo(() => resolvePluginSidebarTabs(plugins), [plugins]);
   const { resolvedTab, activePluginTab, pluginTabPending } = resolveExplorerTab({
     activeTab,
