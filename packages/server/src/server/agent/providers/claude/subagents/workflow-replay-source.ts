@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { AgentTimelineItem } from "../../../agent-sdk-types.js";
+import { normalizeProviderReplayTimestamp } from "../../../provider-history-timestamps.js";
 import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
 import type { SubagentObservation } from "./observation.js";
 import { buildClaudeSubagentSubtitle } from "./presentation.js";
@@ -75,12 +76,12 @@ export function observeReplayWorkflows(input: {
       });
     }
 
-    const entries = input.entriesByRunId?.get(workflow.runId) ?? [];
+    const entries = [...(input.entriesByRunId?.get(workflow.runId) ?? [])].sort(
+      compareReplayTimestamps,
+    );
     if (input.convertEntry) {
       for (const entry of entries) {
-        const timestamp = normalizeIsoTimestamp(
-          typeof entry.timestamp === "string" ? entry.timestamp : undefined,
-        );
+        const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
         for (const item of input.convertEntry(entry)) {
           observations.push({
             kind: "timeline",
@@ -116,6 +117,15 @@ export function observeReplayWorkflows(input: {
   }
 
   return observations;
+}
+
+function compareReplayTimestamps(a: ClaudeReplayEntry, b: ClaudeReplayEntry): number {
+  const aTimestamp = normalizeProviderReplayTimestamp(a.timestamp);
+  const bTimestamp = normalizeProviderReplayTimestamp(b.timestamp);
+  if (!aTimestamp && !bTimestamp) return 0;
+  if (!aTimestamp) return 1;
+  if (!bTimestamp) return -1;
+  return Date.parse(aTimestamp) - Date.parse(bTimestamp);
 }
 
 function readWorkflowLinks(entries: readonly ClaudeWorkflowParentEntry[]): Map<string, string> {

@@ -4538,9 +4538,14 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
 
+    const parentEntries = parseClaudeHistoryRecords(content).filter(
+      (entry) => entry.isSidechain !== true,
+    );
+    const providerSubagentToolCallIds =
+      readClaudeHistoricalProviderSubagentToolCallIds(parentEntries);
     const timeline: PersistedTimelineEntry[] = [];
     for (const line of content.split(/\r?\n/)) {
-      this.ingestPersistedHistoryLine(line, timeline);
+      this.ingestPersistedHistoryLine(line, timeline, providerSubagentToolCallIds);
     }
 
     if (timeline.length > 0) {
@@ -4600,7 +4605,11 @@ class ClaudeAgentSession implements AgentSession {
     this.historyPending = true;
   }
 
-  private ingestPersistedHistoryLine(line: string, timeline: PersistedTimelineEntry[]): void {
+  private ingestPersistedHistoryLine(
+    line: string,
+    timeline: PersistedTimelineEntry[],
+    providerSubagentToolCallIds: ReadonlySet<string>,
+  ): void {
     const trimmed = line.trim();
     if (!trimmed) {
       return;
@@ -4619,6 +4628,14 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     if (entry.isSidechain) {
+      return;
+    }
+    if (
+      entry.type === "system" &&
+      entry.subtype === "task_notification" &&
+      typeof entry.tool_use_id === "string" &&
+      providerSubagentToolCallIds.has(entry.tool_use_id)
+    ) {
       return;
     }
 
@@ -5528,6 +5545,28 @@ function readClaudeHistoricalSubagentToolCalls(
     }
   }
   return toolCalls;
+}
+
+function readClaudeHistoricalProviderSubagentToolCallIds(
+  entries: ClaudeHistoryEntry[],
+): Set<string> {
+  const toolCallIds = new Set<string>();
+  for (const entry of entries) {
+    const content = toObjectRecord(entry.message)?.content;
+    if (!Array.isArray(content)) continue;
+    for (const value of content) {
+      const block = toObjectRecord(value);
+      if (
+        block?.type === "tool_use" &&
+        typeof block.name === "string" &&
+        isClaudeSubagentToolName(block.name) &&
+        typeof block.id === "string"
+      ) {
+        toolCallIds.add(block.id);
+      }
+    }
+  }
+  return toolCallIds;
 }
 
 function readClaudeHistoricalSubagentToolResults(

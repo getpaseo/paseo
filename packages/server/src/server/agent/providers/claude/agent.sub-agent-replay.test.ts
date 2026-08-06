@@ -119,7 +119,12 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     });
   }
 
-  function writeWorkflowSession(status: string, options: { childOutput?: string } = {}): void {
+  function writeWorkflowSession(
+    status: string,
+    options: {
+      children?: { agentId: string; output: string; timestamp: string }[];
+    } = {},
+  ): void {
     const subagentDirectory = writeParentSession([
       parentEntry([
         {
@@ -142,6 +147,15 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
           ],
         },
       }),
+      JSON.stringify({
+        type: "system",
+        subtype: "task_notification",
+        task_id: WORKFLOW_RUN_ID,
+        tool_use_id: WORKFLOW_TOOL_USE_ID,
+        status: "completed",
+        summary: "Workflow completed",
+        output_file: "/tmp/workflow.output",
+      }),
     ]);
     const workflowDirectory = path.join(path.dirname(subagentDirectory), "workflows");
     mkdirSync(workflowDirectory, { recursive: true });
@@ -157,22 +171,22 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
         totalTokens: 20_417,
       }),
     );
-    if (options.childOutput) {
+    for (const child of options.children ?? []) {
       const workflowChildDirectory = path.join(subagentDirectory, "workflows", WORKFLOW_RUN_ID);
       writeSubagent({
         subagentDir: workflowChildDirectory,
-        agentId: "workflow-child",
+        agentId: child.agentId,
         meta: JSON.stringify({ agentType: "workflow-subagent", spawnDepth: 1 }),
         sidechainLines: [
           JSON.stringify({
             type: "assistant",
             isSidechain: true,
-            agentId: "workflow-child",
+            agentId: child.agentId,
             sessionId: "replay-session",
-            timestamp: "2026-08-06T08:04:45.000Z",
+            timestamp: child.timestamp,
             message: {
               role: "assistant",
-              content: [{ type: "text", text: options.childOutput }],
+              content: [{ type: "text", text: child.output }],
               stop_reason: "end_turn",
             },
           }),
@@ -181,9 +195,7 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     }
   }
 
-  async function replayDescriptors(): Promise<
-    Extract<AgentStreamEvent, { type: "provider_subagent" }>[]
-  > {
+  async function replayEvents(): Promise<AgentStreamEvent[]> {
     const client = new ClaudeAgentClient({
       logger,
       queryFactory,
@@ -193,12 +205,18 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       { provider: "claude", sessionId: "replay-session" },
       { cwd },
     );
-    const events: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
+    const events: AgentStreamEvent[] = [];
     for await (const event of session.streamHistory()) {
-      if (event.type === "provider_subagent") events.push(event);
+      events.push(event);
     }
     await session.close();
     return events;
+  }
+
+  async function replayDescriptors(): Promise<
+    Extract<AgentStreamEvent, { type: "provider_subagent" }>[]
+  > {
+    return (await replayEvents()).filter((event) => event.type === "provider_subagent");
   }
 
   function upserts(events: Extract<AgentStreamEvent, { type: "provider_subagent" }>[]) {
@@ -334,9 +352,23 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
   });
 
   test("replays a completed workflow as one generic provider-subagent row", async () => {
-    writeWorkflowSession("completed", { childOutput: "workflow child result" });
+    writeWorkflowSession("completed", {
+      children: [
+        {
+          agentId: "a-later-child",
+          output: "later workflow child result",
+          timestamp: "2026-08-06T08:04:45.500Z",
+        },
+        {
+          agentId: "z-earlier-child",
+          output: "earlier workflow child result",
+          timestamp: "2026-08-06T08:04:45.000Z",
+        },
+      ],
+    });
 
-    const descriptors = await replayDescriptors();
+    const replayed = await replayEvents();
+    const descriptors = replayed.filter((event) => event.type === "provider_subagent");
     const events = upserts(descriptors);
     expect(events[0]).toMatchObject({
       id: WORKFLOW_TOOL_USE_ID,
@@ -360,12 +392,26 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
         id: WORKFLOW_TOOL_USE_ID,
         item: expect.objectContaining({
           type: "assistant_message",
-          text: "workflow child result",
+          text: "earlier workflow child result",
         }),
         timestamp: "2026-08-06T08:04:45.000Z",
       },
     });
     expect(new Set(events.map((event) => event.id))).toEqual(new Set([WORKFLOW_TOOL_USE_ID]));
+    const workflowOutputs = descriptors
+      .map((event) => event.event)
+      .filter((event) => event.type === "timeline" && event.item.type === "assistant_message")
+      .map((event) => (event.item.type === "assistant_message" ? event.item.text : ""));
+    expect(workflowOutputs).toEqual([
+      "earlier workflow child result",
+      "later workflow child result",
+    ]);
+    expect(
+      replayed
+        .filter((event) => event.type === "timeline")
+        .map((event) => event.item)
+        .filter((item) => item.type === "tool_call" && item.name === "task_notification"),
+    ).toEqual([]);
   });
 
   test("does not replay a subagent whose toolUseId names no Task call in this transcript", async () => {
