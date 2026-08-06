@@ -2164,9 +2164,16 @@ export const ko: TranslationResources = {
       },
     },
     shortcuts: {
+      modKey: {
+        title: "보조 키",
+        hint: "단축키 보조 키로 사용할 키",
+        auto: "자동",
+        cmd: "Cmd / Super",
+        ctrl: "Ctrl",
+      },
       dialogTitle: "단축키",
       searchPlaceholder: "검색 단축키",
-      unavailableOnMobile: "키보드 단축키는 데스크톱에서만 사용할 수 있습니다",
+      unavailableOnMobile: "단축키 사용자 지정은 데스크톱에서만 가능합니다",
       capturePrompt: "단축키를 누르세요...",
       unassigned: "설정되지 않음",
       actions: {
