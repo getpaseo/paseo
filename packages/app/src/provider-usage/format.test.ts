@@ -47,4 +47,20 @@ describe("provider usage formatting", () => {
     expect(formatRunsOutLabel(daysFromNow)).toBe("s’épuise dans 1\u202f234 j");
     expect(formatAgo(daysAgo)).toBe("il y a 1\u202f234 j");
   });
+
+  it("selects Arabic plural forms for relative durations", async () => {
+    await i18n.changeLanguage("ar");
+    const twoHoursFromNow = new Date(NOW + 2 * 60 * 60 * 1000).toISOString();
+    const threeHoursFromNow = new Date(NOW + 3 * 60 * 60 * 1000).toISOString();
+    const twoDaysAgo = new Date(NOW - 2 * 24 * 60 * 60 * 1000).toISOString();
+
+    expect(formatResetLabel(twoHoursFromNow)).toBe("تتم إعادة التعيين خلال ساعتين");
+    expect(formatRunsOutLabel(threeHoursFromNow)).toBe("ينفد خلال 3 ساعات");
+    expect(formatAgo(twoDaysAgo)).toBe("قبل يومين");
+  });
+
+  it("uses locale-aware compact notation for token balances", () => {
+    expect(formatAmount(1_234, "tokens", "en")).toBe("1.2K");
+    expect(formatAmount(1_234, "tokens", "ar")).toBe("1.2\u00a0ألف");
+  });
 });
