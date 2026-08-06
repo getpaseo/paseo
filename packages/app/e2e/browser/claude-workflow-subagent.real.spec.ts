@@ -7,6 +7,7 @@ import {
   expectWorkflowCompleted,
   expectWorkflowRunning,
   openWorkflowTimeline,
+  releaseWorkflow,
 } from "../support/helpers/claude-workflow";
 import { cleanupRewindFlow, launchAgent, type AgentHandle } from "../support/helpers/rewind-flow";
 
@@ -23,15 +24,17 @@ test.describe("real Claude workflow subagent row", () => {
     page,
   }, testInfo) => {
     const cwd = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-claude-workflow-row-")));
+    const gatePath = path.join(cwd, "release-workflow");
     let handle: AgentHandle | undefined;
 
     try {
       handle = await launchAgent({ page, provider: "claude", cwd, mode: "full-access" });
 
       await test.step("ask Claude to run the workflow", async () => {
-        await askClaudeToRunWorkflow(handle!, WORKFLOW_SCRIPT);
+        await askClaudeToRunWorkflow(handle!, WORKFLOW_SCRIPT, gatePath);
         await expectWorkflowRunning(page);
         await page.screenshot({ path: testInfo.outputPath("workflow-running.png") });
+        releaseWorkflow(gatePath);
       });
 
       await test.step("see the workflow finish without leaving a running row", async () => {

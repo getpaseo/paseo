@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { expect, type Page } from "@playwright/test";
 import { submitMessage } from "./composer";
 import type { AgentHandle } from "./rewind-flow";
@@ -9,15 +10,20 @@ export const WORKFLOW_ROW_MARKER = "PASEO_WORKFLOW_ROW_OK";
 export async function askClaudeToRunWorkflow(
   handle: AgentHandle,
   scriptPath: string,
+  gatePath: string,
 ): Promise<void> {
   await submitMessage(
     handle.page,
     `Use Claude Code's Workflow tool exactly once with scriptPath ${JSON.stringify(
       scriptPath,
-    )} and args {}. Wait for its completion notification, then reply with exactly ${WORKFLOW_ROW_MARKER}.`,
+    )} and args ${JSON.stringify({ gatePath })}. Wait for its completion notification, then reply with exactly ${WORKFLOW_ROW_MARKER}.`,
   );
   await expect(handle.page.getByTestId("subagents-track-header")).toBeVisible({ timeout: 60_000 });
   await openSubagentsTrack(handle.page);
+}
+
+export function releaseWorkflow(gatePath: string): void {
+  writeFileSync(gatePath, "release\n", "utf8");
 }
 
 export function workflowRow(page: Page) {
