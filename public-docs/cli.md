@@ -208,7 +208,7 @@ Pass `-p, --project <slug>` to select the project, or add optional top-level `pr
 
 Deployment requires an explicit Hub origin and organization API key. `--hub <origin>` overrides `PASEO_HUB_URL`; `--api-key <secret>` overrides `PASEO_HUB_API_KEY`. The key's organization supplies organization scope. Durable Hub login and credential persistence are not implemented.
 
-See [Daemons in Hub](/docs/hub/daemons) and [Hub configuration](/docs/hub/configuration).
+See [Daemons in Hub](/docs/hub/daemons), [Hub configuration](/docs/hub/configuration), and the [Hub public API](/docs/hub/api).
 
 ## Connecting to a remote daemon
 
