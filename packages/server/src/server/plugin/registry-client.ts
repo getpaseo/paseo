@@ -93,6 +93,8 @@ export interface PluginRegistryClientOptions {
   cacheTtlMs?: number;
   now?: () => number;
   maxTotalBytes?: number;
+  /** Called when an entry is dropped, so a publisher's vanished listing has a reason somewhere. */
+  onEntryDropped?: (input: { pluginId: unknown; reason: string }) => void;
 }
 
 /**
@@ -180,6 +182,7 @@ export class PluginRegistryClient {
   private readonly cacheTtlMs: number;
   private readonly now: () => number;
   private readonly maxTotalBytes: number;
+  private readonly onEntryDropped: PluginRegistryClientOptions["onEntryDropped"];
   private cache: { index: PluginRegistryIndex; fetchedAt: number } | null = null;
 
   readonly registryUrl: string;
@@ -190,6 +193,7 @@ export class PluginRegistryClient {
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_INDEX_CACHE_TTL_MS;
     this.now = options.now ?? Date.now;
     this.maxTotalBytes = options.maxTotalBytes ?? PLUGIN_INSTALL_MAX_TOTAL_BYTES;
+    this.onEntryDropped = options.onEntryDropped;
   }
 
   async browse(options?: { refresh?: boolean }): Promise<PluginRegistryIndex> {
@@ -219,7 +223,16 @@ export class PluginRegistryClient {
       version: envelope.data.version,
       plugins: envelope.data.plugins.flatMap((entry) => {
         const parsed = PluginRegistryEntrySchema.safeParse(entry);
-        return parsed.success ? [parsed.data] : [];
+        if (parsed.success) {
+          return [parsed.data];
+        }
+        // Reported, because the publisher's plugin just vanished from the
+        // listing and the reason lives in a schema they cannot see.
+        this.onEntryDropped?.({
+          pluginId: (entry as { manifest?: { id?: unknown } })?.manifest?.id,
+          reason: parsed.error.issues.map((issue) => issue.message).join("; "),
+        });
+        return [];
       }),
     };
     this.cache = { index, fetchedAt: this.now() };

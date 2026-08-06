@@ -117,9 +117,16 @@ export function usePluginRegistry(serverId: string | null): UsePluginRegistryRes
       }
       // The daemon caches the index for five minutes, so invalidating the query
       // alone re-asks and gets the same stale answer back. Refresh has to say so.
-      const bypassCache = wantsFreshIndex.current;
+      //
+      // Cleared after the request, not before: react-query retries a failed
+      // `queryFn` three times by default, and forcing the upstream fetch is
+      // exactly the slow path that times out. Clearing first meant the retries
+      // went back to the cache and "succeeded" with the stale index the user was
+      // trying to get past. A stray `refresh` on a later refetch is harmless.
+      const payload = await client.pluginsBrowse(
+        wantsFreshIndex.current ? { refresh: true } : undefined,
+      );
       wantsFreshIndex.current = false;
-      const payload = await client.pluginsBrowse(bypassCache ? { refresh: true } : undefined);
       if (payload.error) {
         throw new Error(payload.error);
       }

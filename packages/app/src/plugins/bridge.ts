@@ -227,8 +227,12 @@ function sweep(node) {
   for (var j = 0, m = A(countOf, hosts, []); j < m; j++) follow(A(at, hosts, [j]));
 }
 function follow(element) {
-  var root = A(shadowOf, element, []);
-  if (root) watch(root);
+  // Guarded: one unreachable root must not abort the loop that is still
+  // sweeping the rest of an inserted subtree.
+  try {
+    var root = A(shadowOf, element, []);
+    if (root) watch(root);
+  } catch (e) {}
 }
 function watch(root) {
   // Guarded, and the sweep runs either way: a throw here used to skip it, which
@@ -258,16 +262,27 @@ if (attach) {
     // \`clonable\`, \`slotAssignment\` and \`serializable\` would be read off
     // \`Object.prototype\`, and \`clonable\` there mints a shadow root from
     // \`cloneNode\` with no \`attachShadow\` call to wrap.
-    var options = bare();
-    options.mode = "open";
-    if (init) {
+    // Anything the platform would reject is handed straight to it, so a missing
+    // argument or a typo'd \`mode\` still throws where the author expects rather
+    // than quietly succeeding with a root they did not ask for.
+    var mode = init && init.mode;
+    var options = init;
+    if (mode === "open" || mode === "closed") {
+      options = bare();
+      options.mode = "open";
+      // Forwarded, not dropped: \`slotAssignment: "manual"\` is what makes
+      // \`HTMLSlotElement.assign()\` work, and \`clonable\`/\`serializable\` are what
+      // carry the root through \`cloneNode\` and \`getHTML\`. A bad value here is
+      // still the platform's to reject.
       options.delegatesFocus = init.delegatesFocus;
       options.slotAssignment = init.slotAssignment;
       options.clonable = init.clonable;
       options.serializable = init.serializable;
     }
     var root = A(attach, this, [options]);
-    watch(root);
+    // Guarded so a throw cannot leave the element holding a root that was never
+    // watched: nothing sweeps an already-connected host again on its own.
+    try { watch(root); } catch (e) {}
     return root;
   });
 }
@@ -364,9 +379,11 @@ for (var i = 0, n = A(countOf, scripts, []); i < n; i++) {
   if (old === host) continue;
   var type = A(readAttr, old, ["type"]);
   if (type) {
-    // Trimmed, because the parser does: \` text/javascript \` is script.
+    // Trimmed, because the parser does: \` text/javascript \` is script. The
+    // space check keeps the list an exact-membership test — without it a value
+    // spanning two adjacent entries would match the join rather than a member.
     var kind = A(lower, A(trim, type, []), []);
-    if (kind && A(indexOf, JS, [" " + kind + " "]) < 0) continue;
+    if (kind && (A(indexOf, kind, [" "]) >= 0 || A(indexOf, JS, [" " + kind + " "]) < 0)) continue;
   }
   var parent = A(parentOf, old, []);
   if (!parent) continue;

@@ -102,6 +102,16 @@ describe("the plugin document shell", () => {
     expect(seen).toEqual(types.map((type) => type.trim()));
   });
 
+  it("leaves alone what the parser would not run", async () => {
+    const seen = await run(
+      `<script type="text/javascript;charset=utf-8">say("param")</script>
+       <script type="application/json">say("json")</script>
+       <script type="text/plain">say("plain")</script>
+       <script>say("real")</script>`,
+    );
+    expect(seen).toEqual(["real"]);
+  });
+
   it("runs a module, after the classic scripts", async () => {
     expect(
       await run(`<script type="module">export const x = 1; say("module")</script>

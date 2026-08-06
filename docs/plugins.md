@@ -196,7 +196,7 @@ The daemon serves an entry only when its plugin is enabled and the entry is decl
 
 The registry operator is a trust boundary — the index says which bytes are the plugin. SHA-256 verification protects the download, not the publisher's intent. The installed manifest is the one embedded in the index rather than a separately hashed file, so it carries exactly the same trust as the hashes sitting next to it. Downloads are capped while streaming, not after buffering, so a host that declares a small size and streams gigabytes cannot exhaust daemon memory. See [SECURITY.md](../SECURITY.md).
 
-The index is parsed one entry at a time and bad entries are dropped. Parsing it all-or-nothing means a single over-long description published to the registry takes the marketplace offline for every daemon already in the wild.
+The index is parsed one entry at a time and bad entries are dropped. Parsing it all-or-nothing means a single over-long description published to the registry takes the registry offline for every daemon already in the wild.
 
 ## Writing one
 
@@ -209,7 +209,7 @@ The shell hands your markup to `insertAdjacentHTML` and then re-creates your inl
 - **`<script type="module">` runs after the classic scripts**, not in document order. That is module semantics, not a quirk, but the ordering is new if you were relying on a document parse.
 - **A script sees the whole document**, not only the markup above it. `getElementById` for an element further down now returns it.
 - **`<script src="...">` does nothing.** `script-src 'unsafe-inline'` denies external scripts anyway; inline your code.
-- **Declarative shadow DOM does nothing.** `<template shadowrootmode>` stays an inert `<template>`. `attachShadow()` works, but always hands back an **open** root: `mode: "closed"` is ignored, so `element.shadowRoot` is readable. Encapsulation for styling and querying is unchanged; only the hiding is.
+- **Declarative shadow DOM does nothing.** `<template shadowrootmode>` stays an inert `<template>`. `attachShadow()` works, but always hands back an **open** root: `mode: "closed"` is ignored, so `element.shadowRoot` is readable. Nothing else about it changes — `delegatesFocus`, `slotAssignment`, `clonable` and `serializable` are forwarded, and a missing or invalid argument throws exactly as it would without the wrapper.
 - **No `<head>` semantics.** Your `<html>`/`<head>` tags are dropped. `<style>` works fine in the body; `<meta>` and `<base>` do nothing.
 - **`<link>`, `<iframe>`, `<frame>`, `<object>` and `<embed>` are removed**, silently and whatever the attributes say. Nothing they could load is reachable — the CSP denies external stylesheets, scripts and frames, and even a `data:` stylesheet, so a `<link>` never worked here. Inline your CSS in a `<style>`. The reasons are under [Resource hints](#resource-hints-leak-a-hostname-and-one-of-them-is-not-closed) and above it.
 - **Non-script `<script>` blocks are left alone**, so `type="application/json"` data blocks survive and are not executed. Every `type` the parser treats as JavaScript still runs, including the legacy ones (`text/jscript`, `application/x-javascript`).

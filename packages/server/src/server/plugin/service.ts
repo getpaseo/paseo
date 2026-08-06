@@ -47,6 +47,9 @@ export class PluginService {
     this.registry = new PluginRegistryClient({
       registryUrl: options.registryUrl ?? DEFAULT_PLUGIN_REGISTRY_URL,
       http: options.http ?? createFetchPluginRegistryHttp(),
+      onEntryDropped: (dropped) => {
+        this.logger.warn({ ...dropped }, "registry entry dropped, it did not parse");
+      },
     });
   }
 
