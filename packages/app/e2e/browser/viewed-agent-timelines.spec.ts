@@ -198,4 +198,23 @@ test.describe("Viewed agent timelines", () => {
       await scenario.cleanup();
     }
   });
+
+  test("preserves reconnecting toast through retained tab switches", async ({ page }) => {
+    const gate = await installDaemonWebSocketGate(page);
+    const scenario = await seedViewedTimelineScenario();
+    try {
+      await openAgent(page, scenario, scenario.firstAgentId);
+      await selectAgent(page, "Second viewed chat");
+      await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeVisible();
+      await selectAgent(page, "First viewed chat");
+      await gate.drop();
+      await expectReconnectingToastVisible(page);
+
+      await selectAgent(page, "Second viewed chat");
+      await expectReconnectingToastVisible(page, { timeout: 500 });
+    } finally {
+      gate.restore();
+      await scenario.cleanup();
+    }
+  });
 });

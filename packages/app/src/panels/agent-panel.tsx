@@ -116,6 +116,13 @@ interface ChatAgentStateShape {
 
 const RECONNECT_TOAST_DELAY_MS = 1_000;
 
+interface ReconnectToastState {
+  startedAt: number;
+  presented: boolean;
+}
+
+const reconnectToastStateByServerId = new Map<string, ReconnectToastState>();
+
 interface ChatAgentSelectedState extends ChatAgentStateShape {
   archivedAt: Date | null;
   requiresAttention: boolean;
@@ -863,6 +870,10 @@ function ChatAgentContent({
     isPaneVisible && connectionStatus !== "online" && connectionStatus !== "idle";
 
   useEffect(() => {
+    if (connectionStatus === "online" || connectionStatus === "idle") {
+      reconnectToastStateByServerId.delete(serverId);
+    }
+
     if (!shouldPresentReconnectToast) {
       if (reconnectToastPresentedRef.current) {
         reconnectToastPresentedRef.current = false;
@@ -871,11 +882,42 @@ function ChatAgentContent({
       return;
     }
 
-    if (reconnectToastPresentedRef.current) {
+    let reconnectToastState = reconnectToastStateByServerId.get(serverId);
+    if (!reconnectToastState) {
+      reconnectToastState = {
+        startedAt: Date.now(),
+        presented: false,
+      };
+      reconnectToastStateByServerId.set(serverId, reconnectToastState);
+    }
+
+    if (reconnectToastState.presented) {
+      if (!reconnectToastPresentedRef.current) {
+        reconnectToastPresentedRef.current = true;
+        toastApi.show(t("agentPanel.states.reconnecting"), {
+          durationMs: null,
+          icon: (
+            <View
+              accessible={false}
+              testID="agent-reconnecting-status-dot"
+              style={styles.reconnectingStatusDot}
+            />
+          ),
+          testID: "agent-reconnecting-toast",
+        });
+      }
       return;
     }
 
+    const delayMs = Math.max(
+      0,
+      reconnectToastState.startedAt + RECONNECT_TOAST_DELAY_MS - Date.now(),
+    );
     const timer = setTimeout(() => {
+      if (reconnectToastStateByServerId.get(serverId) !== reconnectToastState) {
+        return;
+      }
+      reconnectToastState.presented = true;
       reconnectToastPresentedRef.current = true;
       toastApi.show(t("agentPanel.states.reconnecting"), {
         durationMs: null,
@@ -888,10 +930,10 @@ function ChatAgentContent({
         ),
         testID: "agent-reconnecting-toast",
       });
-    }, RECONNECT_TOAST_DELAY_MS);
+    }, delayMs);
 
     return () => clearTimeout(timer);
-  }, [dismissToast, shouldPresentReconnectToast, toastApi, t]);
+  }, [connectionStatus, dismissToast, serverId, shouldPresentReconnectToast, toastApi, t]);
 
   const isArchivingCurrentAgent = Boolean(agentId && isArchivingAgent({ serverId, agentId }));
 
