@@ -52,6 +52,10 @@ import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { reconcileMissingAgentStateWithPresentAgent } from "@/panels/agent-panel-load-state";
+import {
+  reconcileReconnectToastState,
+  type ReconnectToastState,
+} from "@/panels/reconnect-toast-state";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -116,10 +120,6 @@ interface ChatAgentStateShape {
 }
 
 const RECONNECT_TOAST_DELAY_MS = 1_000;
-
-interface ReconnectToastState {
-  presented: boolean;
-}
 
 const reconnectToastStateByServerId = new Map<string, ReconnectToastState>();
 
@@ -882,11 +882,13 @@ function ChatAgentContent({
       return;
     }
 
-    let reconnectToastState = reconnectToastStateByServerId.get(serverId);
-    if (!reconnectToastState) {
-      reconnectToastState = {
-        presented: false,
-      };
+    const startedAt = getHostRuntimeConnectionStatusSince(serverId) ?? Date.now();
+    const previousReconnectToastState = reconnectToastStateByServerId.get(serverId);
+    const reconnectToastState = reconcileReconnectToastState(
+      previousReconnectToastState,
+      startedAt,
+    );
+    if (reconnectToastState !== previousReconnectToastState) {
       reconnectToastStateByServerId.set(serverId, reconnectToastState);
     }
 
@@ -908,7 +910,6 @@ function ChatAgentContent({
       return;
     }
 
-    const startedAt = getHostRuntimeConnectionStatusSince(serverId) ?? Date.now();
     const delayMs = Math.max(0, startedAt + RECONNECT_TOAST_DELAY_MS - Date.now());
     const timer = setTimeout(() => {
       if (reconnectToastStateByServerId.get(serverId) !== reconnectToastState) {
