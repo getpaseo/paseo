@@ -172,7 +172,7 @@ function protocolOf(url: string): string | null {
 }
 
 /**
- * Reads the marketplace index and downloads plugin files, verifying every byte
+ * Reads the registry index and downloads plugin files, verifying every byte
  * against the index before the caller is allowed to write anything.
  */
 export class PluginRegistryClient {
@@ -214,7 +214,7 @@ export class PluginRegistryClient {
     }
 
     // Per entry, so one malformed plugin costs that plugin its listing rather
-    // than taking the whole marketplace offline.
+    // than taking the whole registry offline.
     const index: PluginRegistryIndex = {
       version: envelope.data.version,
       plugins: envelope.data.plugins.flatMap((entry) => {

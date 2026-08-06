@@ -27,7 +27,7 @@ export interface PluginServiceOptions {
 }
 
 /**
- * Coordinates the on-disk plugin directory and the marketplace registry, and
+ * Coordinates the on-disk plugin directory and the plugin registry, and
  * notifies listeners whenever the installed set changes so every connected
  * session can be pushed a fresh list.
  */

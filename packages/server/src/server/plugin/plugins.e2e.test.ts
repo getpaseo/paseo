@@ -13,7 +13,7 @@ const PREVIEW_HTML = "<!doctype html><h1>csv table</h1>";
 /**
  * Drives the plugins.* RPCs against a real daemon whose registry is a local
  * `file://` index — the same path `daemon.plugins.registryUrl` takes when a
- * plugin author develops against a local marketplace.
+ * plugin author develops against a local registry.
  */
 describe("plugins RPCs", () => {
   let daemon: TestPaseoDaemon;

@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { InstalledPlugin, PluginRegistryEntry } from "@getpaseo/protocol/plugin/types";
@@ -105,6 +105,7 @@ export function usePluginRegistry(serverId: string | null): UsePluginRegistryRes
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
+  const wantsFreshIndex = useRef(false);
   const query = useFetchQuery({
     queryKey: pluginRegistryQueryKey(serverId),
     enabled: Boolean(serverId && client && support === "supported"),
@@ -114,7 +115,11 @@ export function usePluginRegistry(serverId: string | null): UsePluginRegistryRes
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      const payload = await client.pluginsBrowse();
+      // The daemon caches the index for five minutes, so invalidating the query
+      // alone re-asks and gets the same stale answer back. Refresh has to say so.
+      const bypassCache = wantsFreshIndex.current;
+      wantsFreshIndex.current = false;
+      const payload = await client.pluginsBrowse(bypassCache ? { refresh: true } : undefined);
       if (payload.error) {
         throw new Error(payload.error);
       }
@@ -123,6 +128,7 @@ export function usePluginRegistry(serverId: string | null): UsePluginRegistryRes
   });
 
   const refresh = useCallback(() => {
+    wantsFreshIndex.current = true;
     void queryClient.invalidateQueries({ queryKey: pluginRegistryQueryKey(serverId) });
   }, [queryClient, serverId]);
 

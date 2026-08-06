@@ -99,7 +99,10 @@ export type PluginRegistryFile = z.infer<typeof PluginRegistryFileSchema>;
 
 export const PluginRegistryEntrySchema = z.object({
   manifest: PluginManifestSchema,
-  files: z.array(PluginRegistryFileSchema).min(1),
+  // Capped as well as floored: the download budget bounds total bytes, not the
+  // number of requests, so an entry declaring millions of tiny files would stay
+  // inside it while the daemon walked the whole list.
+  files: z.array(PluginRegistryFileSchema).min(1).max(64),
   /** Optional listing metadata the registry owns rather than the plugin. */
   publishedAt: z.string().optional(),
   installs: z.number().int().nonnegative().optional(),
@@ -109,7 +112,7 @@ export type PluginRegistryEntry = z.infer<typeof PluginRegistryEntrySchema>;
 /**
  * What the registry sends. Parsed loosely on purpose: `version` is a number so
  * a version bump does not brick every shipped daemon, and entries stay
- * `unknown` so one malformed plugin does not take the marketplace offline. The
+ * `unknown` so one malformed plugin does not take the registry offline. The
  * registry client validates each entry with `PluginRegistryEntrySchema` and
  * drops the ones that fail.
  */

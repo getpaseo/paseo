@@ -281,7 +281,7 @@ export const PersistedConfigSchema = z
           .optional(),
         plugins: z
           .object({
-            /** Marketplace index. Point at a `file://` URL to develop against a local index. */
+            /** Registry index. Point at a `file://` URL to develop against a local index. */
             registryUrl: z.url().optional(),
           })
           .strict()
