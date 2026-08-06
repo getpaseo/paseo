@@ -91,9 +91,14 @@ function flattenClipboardListMarkup(html: string): string {
     items.forEach((item, index) => {
       const line = document.createElement("div");
       line.append(start === null ? "- " : `${start + index}. `);
+      let hasParagraph = false;
       for (const child of Array.from(item.childNodes)) {
         if (child instanceof HTMLParagraphElement) {
+          if (hasParagraph) {
+            line.append(document.createElement("br"), document.createElement("br"));
+          }
           line.append(...child.childNodes);
+          hasParagraph = true;
         } else {
           line.append(child);
         }

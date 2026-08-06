@@ -23,6 +23,18 @@ function mountFixture(): HTMLElement {
   return message;
 }
 
+function fixtureElement<T extends Element = HTMLElement>(
+  root: ParentNode,
+  selector: string,
+  index = 0,
+): T {
+  const element = root.querySelectorAll<T>(selector).item(index);
+  if (!element) {
+    throw new Error(`Expected fixture element ${selector} at index ${index}`);
+  }
+  return element;
+}
+
 function textNode(element: Element): Text {
   const node = element.firstChild;
   if (!(node instanceof Text)) {
@@ -89,10 +101,7 @@ describe("assistant selection copy ranges", () => {
     expect(createAssistantSelectionClipboardContent(null)).toBeNull();
 
     const message = mountFixture();
-    const strong = message.querySelector('[data-paseo-markdown-tag="strong"]');
-    if (!strong) {
-      throw new Error("Expected strong text");
-    }
+    const strong = fixtureElement(message, '[data-paseo-markdown-tag="strong"]');
     expect(copiedMarkdown(selectText(strong, 2, 2))).toBeNull();
 
     const outside = document.createElement("span");
@@ -104,11 +113,8 @@ describe("assistant selection copy ranges", () => {
   it("does not replace the browser clipboard for a range spanning assistant messages", () => {
     const firstMessage = mountFixture();
     const secondMessage = mountFixture();
-    const firstText = firstMessage.querySelector('[data-paseo-markdown-tag="strong"]');
-    const secondText = secondMessage.querySelector('[data-paseo-markdown-tag="strong"]');
-    if (!firstText || !secondText) {
-      throw new Error("Expected text in both assistant messages");
-    }
+    const firstText = fixtureElement(firstMessage, '[data-paseo-markdown-tag="strong"]');
+    const secondText = fixtureElement(secondMessage, '[data-paseo-markdown-tag="strong"]');
     expect(copiedMarkdown(selectRange(firstText, 0, secondText, 4))).toBeNull();
   });
 
@@ -140,10 +146,7 @@ describe("assistant selection copy ranges", () => {
     "copies a partial $tag range without expanding to its delimiters",
     ({ tag, range, expected, forbiddenHtml }) => {
       const message = mountFixture();
-      const element = message.querySelector(`[data-paseo-markdown-tag="${tag}"]`);
-      if (!element) {
-        throw new Error(`Expected ${tag} text`);
-      }
+      const element = fixtureElement(message, `[data-paseo-markdown-tag="${tag}"]`);
       const content = createAssistantSelectionClipboardContent(
         selectText(element, range[0], range[1]),
       );
@@ -157,13 +160,9 @@ describe("assistant selection copy ranges", () => {
     { tag: "code", expected: "`inline code`" },
   ])("retains $tag delimiters when its complete contents are selected", ({ tag, expected }) => {
     const message = mountFixture();
-    const elements = message.querySelectorAll(`[data-paseo-markdown-tag="${tag}"]`);
-    const element = tag === "code" ? elements[0] : elements.item(0);
-    if (!element?.textContent) {
-      throw new Error(`Expected ${tag} text`);
-    }
+    const element = fixtureElement(message, `[data-paseo-markdown-tag="${tag}"]`);
     const content = createAssistantSelectionClipboardContent(
-      selectText(element, 0, element.textContent.length),
+      selectText(element, 0, textNode(element).length),
     );
     expect(content?.plainText).toBe(expected);
     expect(content?.html).toContain(`<${tag}>`);
@@ -171,22 +170,16 @@ describe("assistant selection copy ranges", () => {
 
   it("keeps a complete inline node but drops formatting from a partial node at the other edge", () => {
     const message = mountFixture();
-    const strong = message.querySelector('[data-paseo-markdown-tag="strong"]');
-    const code = message.querySelector('[data-paseo-markdown-tag="code"]');
-    if (!strong?.textContent || !code) {
-      throw new Error("Expected formatted inline text");
-    }
+    const strong = fixtureElement(message, '[data-paseo-markdown-tag="strong"]');
+    const code = fixtureElement(message, '[data-paseo-markdown-tag="code"]');
     expect(copiedMarkdown(selectRange(strong, 0, code, 6))).toBe("**bold text** and inline");
   });
 
   it("copies list-item text without inventing a bullet", () => {
     const message = mountFixture();
-    const itemText = message.querySelector('[data-paseo-markdown-tag="li"] div span');
-    if (!itemText?.textContent) {
-      throw new Error("Expected list item text");
-    }
+    const itemText = fixtureElement(message, '[data-paseo-markdown-tag="li"] div span');
     const content = createAssistantSelectionClipboardContent(
-      selectText(itemText, 0, itemText.textContent.length),
+      selectText(itemText, 0, textNode(itemText).length),
     );
     expect(content?.plainText).toBe("First bullet text");
     expect(content?.html).toContain("<p>First bullet text</p>");
@@ -195,34 +188,40 @@ describe("assistant selection copy ranges", () => {
 
   it("retains a bullet when the range includes the marker and the complete item", () => {
     const message = mountFixture();
-    const item = message.querySelector('[data-paseo-markdown-tag="li"]');
-    if (!item) {
-      throw new Error("Expected list item");
-    }
+    const item = fixtureElement(message, '[data-paseo-markdown-tag="li"]');
     expect(copiedMarkdown(selectNodeContents(item))).toBe("- First bullet text");
+  });
+
+  it("preserves paragraph breaks when rich HTML flattens a loose list item", () => {
+    const message = mountFixture();
+    const item = fixtureElement(message, '[data-paseo-markdown-tag="li"]');
+    item.replaceChildren();
+    item.insertAdjacentHTML(
+      "beforeend",
+      '<div data-paseo-markdown-tag="p">First paragraph</div><div data-paseo-markdown-tag="p">Second paragraph</div>',
+    );
+
+    const content = createAssistantSelectionClipboardContent(selectNodeContents(item));
+    expect(content?.plainText).toBe("- First paragraph\n\n    Second paragraph");
+    expect(content?.html).toMatch(/<div>-\s*First paragraph\s*<br><br>Second paragraph\s*<\/div>/);
   });
 
   it("omits a partial leading bullet and retains the marker crossed before the trailing item", () => {
     const message = mountFixture();
-    const itemTexts = message.querySelectorAll('[data-paseo-markdown-tag="li"] div span');
-    const first = itemTexts[0];
-    const second = itemTexts[1];
-    if (!first || !second?.textContent) {
-      throw new Error("Expected two list items");
-    }
-    expect(copiedMarkdown(selectRange(first, 6, second, second.textContent.length))).toBe(
+    const selector = '[data-paseo-markdown-tag="li"] div span';
+    const first = fixtureElement(message, selector);
+    const second = fixtureElement(message, selector, 1);
+    expect(copiedMarkdown(selectRange(first, 6, second, textNode(second).length))).toBe(
       "bullet text\n\n- Second bullet text",
     );
   });
 
   it("copies part of a fenced code block without adding an inline or fenced delimiter", () => {
     const message = mountFixture();
-    const blockCode = message.querySelector(
+    const blockCode = fixtureElement(
+      message,
       '[data-paseo-markdown-tag="pre"] [data-paseo-markdown-tag="code"]',
     );
-    if (!blockCode) {
-      throw new Error("Expected fenced code text");
-    }
     const content = createAssistantSelectionClipboardContent(selectText(blockCode, 6, 12));
     expect(content?.plainText).toBe("answer");
     expect(content?.html).not.toContain("<code>");
@@ -231,13 +230,11 @@ describe("assistant selection copy ranges", () => {
 
   it("retains the fence and language when the complete code block is selected", () => {
     const message = mountFixture();
-    const blockCode = message.querySelector(
+    const blockCode = fixtureElement(
+      message,
       '[data-paseo-markdown-tag="pre"] [data-paseo-markdown-tag="code"]',
     );
-    if (!blockCode?.textContent) {
-      throw new Error("Expected fenced code text");
-    }
-    expect(copiedMarkdown(selectText(blockCode, 0, blockCode.textContent.length))).toBe(
+    expect(copiedMarkdown(selectText(blockCode, 0, textNode(blockCode).length))).toBe(
       "```ts\nconst answer = true;\n```",
     );
   });
