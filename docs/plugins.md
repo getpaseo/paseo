@@ -219,7 +219,7 @@ What the daemon enforces, and why it is worth knowing before you publish rather 
 - **`name` is a flat `*.html` filename**, and every entry a contribution names has to be listed or the install is refused before anything is written. Two entries with the same `name` are refused too, before anything is downloaded — otherwise the second write silently wins and which bytes you get depends on the order they finish in.
 - **A malformed entry loses its own listing, not the registry's.** The index envelope is parsed loosely and each entry strictly, so one bad plugin does not take the index offline — which also means a publisher's plugin can vanish from Browse with the reason only in the daemon log.
 
-Point a daemon at it with `daemon.plugins.registryUrl` in `config.json`. The daemon caches the index for five minutes; Browse's refresh forces past that.
+Point a daemon at it with `daemon.plugins.registryUrl` in `config.json`. It has to be `https:` or `file:` — the index is the trust root, so serving it over plaintext lets whoever is on the path name both the download URL and the hash it is checked against. The daemon caches the index for five minutes; Browse's refresh forces past that.
 
 ## Trust
 

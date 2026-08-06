@@ -2,11 +2,11 @@
 
 ## Goal
 
-Ship a plugin system + marketplace for Paseo on branch `gallant-elephant` (cut from `origin/main`, no pre-existing PR covers this). Stakeholder ask: VS Code-style extensions so things like the CSV/HTML file previews and a "sidebar pet" become plugins instead of core PRs. User's requirements: review loop first, **only open the PR once reviewer agents approve**, do everything needed for CONTRIBUTING.md, then babysit the PR until every comment is resolved.
+Ship a plugin system + marketplace for Paseo on branch `feat/plugin-system` (cut from `origin/main`, no pre-existing PR covers this). Stakeholder ask: VS Code-style extensions so things like the CSV/HTML file previews and a "sidebar pet" become plugins instead of core PRs. User's requirements: review loop first, **only open the PR once reviewer agents approve**, do everything needed for CONTRIBUTING.md, then babysit the PR until every comment is resolved.
 
 ## Branch state
 
-Nothing pushed. No PR open. Branch is `gallant-elephant`, cut from `origin/main`.
+Nothing pushed. No PR open. Branch is `feat/plugin-system`, cut from `origin/main`.
 
 ```
 58b5e12de Capture Object.create in the plugin shell, and verify the root it forced open <- round 10 fix
