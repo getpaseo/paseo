@@ -18,9 +18,11 @@ On the machine:
 paseo hub connect https://hub.example.com
 ```
 
-The CLI prints a URL and a verification code, and opens your browser if it can. In Hub, open **Daemons → Register a daemon**, enter the code, name the daemon, and approve it.
+The CLI prints a URL and a verification code, and opens your browser if it can. In Hub, open **Daemons → Register a daemon**, enter the code, choose a friendly slug, and approve it.
 
-The name you choose here is what configuration references. It can be renamed later, but renaming after a configuration is active means updating that configuration.
+Each daemon has two identifiers: an immutable generated ID and a friendly slug. Hub normalizes the slug you enter with lowercase words joined by hyphens, so `Build Studio` becomes `build-studio`. The slug is what the dashboard shows and what configuration references.
+
+You can rename the slug later without changing the daemon ID. Renaming after a configuration is active means updating that configuration.
 
 For unattended setup, skip the browser with an enrollment token:
 
@@ -48,7 +50,7 @@ environments:
     cwd: /Users/you/code/your-repo
 ```
 
-`daemon` is the display name. It resolves to a daemon id when the configuration activates, so a daemon that no longer exists fails activation instead of failing at dispatch.
+`daemon` is the friendly slug. It resolves to the immutable daemon ID when the configuration activates, so a daemon that no longer exists fails activation instead of failing at dispatch.
 
 `cwd` is a path on that machine. Hub does not clone anything for you; the directory must already exist.
 

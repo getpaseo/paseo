@@ -52,7 +52,7 @@ The [Workflows guide](/docs/hub/workflows) starts with a one-step Slack example 
 When Hub syncs `.paseo/hub.yml`, it validates the configuration and resolves its references:
 
 - `filters.repo`, `filters.workspace`, and `filters.guild` must name resources available through the organization's connections.
-- `environment.daemon` must name a registered daemon.
+- `environment.daemon` must match a registered daemon's friendly slug.
 - Step ids, expressions, input filters, output schemas, and durations must be valid.
 
 If activation fails, Hub keeps the previous active revision. The Configuration tab shows the failed sync and its validation error; Activity continues to reflect the last active revision.

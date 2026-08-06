@@ -41,7 +41,7 @@ triggers:
 | ---------- | ----------- | --------------------------------------------------------------------------------------------------------- |
 | `name`     | yes         | Lowercase identifier referenced by a step.                                                                |
 | `kind`     | yes         | `daemon`, `fly`, or `docker` in the authored schema; workflow steps must resolve to a daemon environment. |
-| `daemon`   | daemon only | Daemon name, resolved when the revision activates.                                                        |
+| `daemon`   | daemon only | Friendly daemon slug, resolved to its immutable ID when the revision activates.                           |
 | `cwd`      | daemon only | Absolute path on the daemon.                                                                              |
 | `image`    | fly/docker  | Image name.                                                                                               |
 | `worktree` | no          | `branch-off`, `checkout-branch`, or `checkout-pr` target.                                                 |

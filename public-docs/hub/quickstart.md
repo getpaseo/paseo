@@ -28,7 +28,7 @@ On the machine that will run agents:
 paseo hub connect https://your-hub.example.com
 ```
 
-The CLI prints a verification code. In Hub, open **Daemons → Register a daemon**, enter the code, and give it a name. See [Daemons](/docs/hub/daemons).
+The CLI prints a verification code. In Hub, open **Daemons → Register a daemon**, enter the code, and choose a friendly slug. Hub normalizes `Build Studio` to `build-studio`. See [Daemons](/docs/hub/daemons).
 
 ## 4. Create a project
 
@@ -67,7 +67,7 @@ triggers:
               ${{ paseo.prompt }}
 ```
 
-`daemon` is the name you gave it in step 3. `cwd` is a directory on that machine.
+`daemon` is the normalized slug from step 3. `cwd` is a directory on that machine.
 
 ## 6. Push
 
