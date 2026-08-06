@@ -120,6 +120,33 @@ Use `${{ paseo.prompt }}`, `${{ paseo.inputs.* }}`, `${{ steps.*.outputs.* }}`, 
 
 `include` paths are relative to `.paseo/partials/` and are resolved at the exact GitHub configuration commit. Hub stores the resolved content and SHA-256 hash in the immutable revision. Missing files, unsafe paths, symlinks, submodules, directories, and nested includes are rejected. Manual configurations cannot use repository partials.
 
+## Deadlines
+
+The trigger's `max_runtime` is the hard limit for the complete workflow run. Each step also has `max_runtime` and `idle_timeout`:
+
+```yaml
+max_runtime: 2h
+steps:
+  - id: classify
+    max_runtime: 2m
+    idle_timeout: 30s
+  - id: implement
+    max_runtime: 90m
+    idle_timeout: 10m
+```
+
+The effective step hard and idle deadlines are capped by the remaining trigger deadline. Meaningful daemon activity refreshes idle time, but cannot extend a hard deadline. Hub persists absolute deadlines, so a restart or deployment does not reset them. A step timeout fails the run; a trigger timeout stops later steps and interrupts a live agent.
+
+## Provider invocation
+
+The provider removes its mention or marker before Hub parses leading declared input tokens. Slack and Discord place the inputs immediately after the bot mention. GitHub places them after the configured marker. Manual runs send the same string as the API `input`:
+
+```text
+@Paseo repo=project investigate the failed sync
+```
+
+The first token that is not a declared input begins the prompt. The clean prompt is available as `${{ paseo.prompt }}`. The raw provider message remains separate Activity evidence. See [provider triggers](/docs/hub/triggers) for provider-specific marker and filter behavior.
+
 ## Removed fields
 
 Do not put execution fields directly on a trigger. `environment`, `agent`, `prompt`, `timeout`, `idle_timeout`, `auto_archive`, and `allow_outputs` are step fields now. The duration field is `max_runtime`; `timeout` is not an alias.
