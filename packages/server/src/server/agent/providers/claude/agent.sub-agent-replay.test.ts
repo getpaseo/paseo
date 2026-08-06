@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -204,6 +204,18 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
         ],
       });
     }
+  }
+
+  function workflowNotificationContent(): string {
+    return [
+      "<task-notification>",
+      `<task-id>workflow-task</task-id>`,
+      `<tool-use-id>${WORKFLOW_TOOL_USE_ID}</tool-use-id>`,
+      "<output-file>/tmp/workflow.output</output-file>",
+      "<status>completed</status>",
+      "<summary>Workflow completed</summary>",
+      "</task-notification>",
+    ].join("\n");
   }
 
   async function replayEvents(): Promise<AgentStreamEvent[]> {
@@ -479,6 +491,39 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
         status: "completed",
       }),
     ]);
+  });
+
+  test("suppresses restored workflow notifications from Claude's persisted queue forms", async () => {
+    writeWorkflowSession("completed");
+    const sessionPath = path.join(claudeProjectDirSync(cwd, { configDir }), "replay-session.jsonl");
+    const parentContent = readFileSync(sessionPath, "utf8");
+    writeFileSync(
+      sessionPath,
+      [
+        parentContent,
+        JSON.stringify({
+          type: "queue-operation",
+          operation: "enqueue",
+          content: workflowNotificationContent(),
+        }),
+        JSON.stringify({
+          type: "user",
+          uuid: "workflow-notification-user",
+          message: { role: "user", content: workflowNotificationContent() },
+        }),
+      ].join("\n"),
+    );
+
+    const replayed = await replayEvents();
+    expect(
+      upserts(replayed.filter((event) => event.type === "provider_subagent")).at(-1),
+    ).toMatchObject({ id: WORKFLOW_TOOL_USE_ID, status: "completed" });
+    expect(
+      replayed
+        .filter((event) => event.type === "timeline")
+        .map((event) => event.item)
+        .filter((item) => item.type === "tool_call" && item.name === "task_notification"),
+    ).toEqual([]);
   });
 
   test("does not replay a subagent whose toolUseId names no Task call in this transcript", async () => {

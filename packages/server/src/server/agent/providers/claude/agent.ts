@@ -28,6 +28,7 @@ import {
 import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
+  readTaskNotificationToolUseIdFromHistoryRecord,
 } from "./task-notification-tool-call.js";
 import {
   findClaudeModel,
@@ -4652,12 +4653,8 @@ class ClaudeAgentSession implements AgentSession {
     if (entry.isSidechain) {
       return;
     }
-    if (
-      entry.type === "system" &&
-      entry.subtype === "task_notification" &&
-      typeof entry.tool_use_id === "string" &&
-      restoredProviderSubagentIds.has(entry.tool_use_id)
-    ) {
+    const notificationToolUseId = readTaskNotificationToolUseIdFromHistoryRecord(entry);
+    if (notificationToolUseId && restoredProviderSubagentIds.has(notificationToolUseId)) {
       return;
     }
 
