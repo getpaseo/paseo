@@ -142,7 +142,7 @@ export function ContextWindowMeter({
     if (!pending) {
       return null;
     }
-    return (
+    const meterPlaceholder = (
       <View style={geometry.containerStyle}>
         <Svg
           width={geometry.svgSize}
@@ -162,6 +162,15 @@ export function ContextWindowMeter({
           />
         </Svg>
         {showPercentage ? <View style={styles.skeletonLabel} /> : null}
+      </View>
+    );
+    if (!showPercentage) {
+      return meterPlaceholder;
+    }
+    return (
+      <View style={styles.mobileUsage} testID="context-window-meter-mobile-placeholder">
+        {meterPlaceholder}
+        <ProviderUsageMobileSession view={providerUsageView} activeProviderId={provider} />
       </View>
     );
   }
