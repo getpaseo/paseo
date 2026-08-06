@@ -15,6 +15,10 @@ export function formatPct(value: number, locale?: string): string {
 
 type RelativeDuration = { unit: "now" } | { unit: "minutes" | "hours" | "days"; count: number };
 
+function formatCount(value: number): string {
+  return new Intl.NumberFormat(i18n.resolvedLanguage).format(value);
+}
+
 function relativeDuration(iso: string): RelativeDuration | null {
   const diffMs = new Date(iso).getTime() - Date.now();
   if (!Number.isFinite(diffMs)) return null;
@@ -32,11 +36,11 @@ function formatRelativeDuration(duration: RelativeDuration): string | null {
     case "now":
       return null;
     case "days":
-      return i18n.t("providerUsage.duration.days", { value: duration.count });
+      return i18n.t("providerUsage.duration.days", { value: formatCount(duration.count) });
     case "hours":
-      return i18n.t("providerUsage.duration.hours", { value: duration.count });
+      return i18n.t("providerUsage.duration.hours", { value: formatCount(duration.count) });
     case "minutes":
-      return i18n.t("providerUsage.duration.minutes", { value: duration.count });
+      return i18n.t("providerUsage.duration.minutes", { value: formatCount(duration.count) });
   }
 }
 
@@ -66,9 +70,13 @@ export function formatAgo(iso: string | null | undefined): string | null {
   const diffMinutes = Math.floor(diffMs / 60_000);
   const diffHours = Math.floor(diffMinutes / 60);
   const diffDays = Math.floor(diffHours / 24);
-  if (diffDays > 0) return i18n.t("providerUsage.timing.daysAgo", { value: diffDays });
-  if (diffHours > 0) return i18n.t("providerUsage.timing.hoursAgo", { value: diffHours });
-  return i18n.t("providerUsage.timing.minutesAgo", { value: diffMinutes });
+  if (diffDays > 0) {
+    return i18n.t("providerUsage.timing.daysAgo", { value: formatCount(diffDays) });
+  }
+  if (diffHours > 0) {
+    return i18n.t("providerUsage.timing.hoursAgo", { value: formatCount(diffHours) });
+  }
+  return i18n.t("providerUsage.timing.minutesAgo", { value: formatCount(diffMinutes) });
 }
 
 export function formatAmount(

@@ -36,4 +36,15 @@ describe("provider usage formatting", () => {
     expect(formatRunsOutLabel(twoHoursFromNow)).toBe("2時間後に上限に到達");
     expect(formatAgo(threeDaysAgo)).toBe("3日前");
   });
+
+  it("formats relative-time counts with the active locale", async () => {
+    await i18n.changeLanguage("fr");
+    const days = 1_234;
+    const daysFromNow = new Date(NOW + days * 24 * 60 * 60 * 1000).toISOString();
+    const daysAgo = new Date(NOW - days * 24 * 60 * 60 * 1000).toISOString();
+
+    expect(formatResetLabel(daysFromNow)).toBe("se réinitialise dans 1\u202f234 j");
+    expect(formatRunsOutLabel(daysFromNow)).toBe("s’épuise dans 1\u202f234 j");
+    expect(formatAgo(daysAgo)).toBe("il y a 1\u202f234 j");
+  });
 });
