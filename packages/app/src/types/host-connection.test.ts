@@ -242,6 +242,37 @@ describe("upsertHostConnectionInProfiles", () => {
 
     expect(profile.connections).toHaveLength(1);
   });
+
+  it("replaces a direct connection when its custom headers change", () => {
+    const existingConnection: HostConnection = {
+      id: "direct:example.test:6767",
+      type: "directTcp",
+      endpoint: "example.test:6767",
+      headers: { "X-Tenant": "old" },
+    };
+    const existing = {
+      ...makeHost("srv_known"),
+      connections: [existingConnection],
+      preferredConnectionId: existingConnection.id,
+    };
+
+    const [profile] = upsertHostConnectionInProfiles({
+      profiles: [existing],
+      serverId: "srv_known",
+      connection: {
+        ...existingConnection,
+        headers: { "X-Tenant": "new" },
+      },
+    });
+
+    expect(profile.connections).toEqual([
+      {
+        ...existingConnection,
+        headers: { "X-Tenant": "new" },
+      },
+    ]);
+    expect(profile.preferredConnectionId).toBe(existingConnection.id);
+  });
 });
 
 describe("resolveActiveHostServerId", () => {
