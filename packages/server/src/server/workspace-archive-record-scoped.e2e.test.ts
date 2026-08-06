@@ -192,6 +192,55 @@ test("archiving one of two workspaces sharing a cwd spares the sibling and the d
   await ctx.client.killTerminal(terminalBId);
 }, 60000);
 
+test("archiving a workspace does not cascade-archive a subagent living in another workspace", async () => {
+  const cwdA = makeTempDir("workspace-archive-cascade-a-");
+  const cwdB = makeTempDir("workspace-archive-cascade-b-");
+
+  const workspaceA = await createLocalWorkspace(cwdA, "workspace-a");
+  const workspaceB = await createLocalWorkspace(cwdB, "workspace-b");
+
+  const agentA = await ctx.client.createAgent({
+    ...getFullAccessConfig("codex"),
+    cwd: cwdA,
+    workspaceId: workspaceA,
+    title: "A agent",
+  });
+
+  // Agent A launches a child agent into workspace B (a different workspace).
+  // Per docs/agent-lifecycle.md, placement never changes parentage: the child
+  // still carries paseo.parent-agent-id pointing at A even though it lives in B.
+  const agentB = await ctx.client.createAgent({
+    ...getFullAccessConfig("codex"),
+    cwd: cwdB,
+    workspaceId: workspaceB,
+    callerAgentId: agentA.id,
+    title: "B subagent",
+  });
+  expect(agentB.workspaceId).toBe(workspaceB);
+
+  expect((await activeAgentIds()).has(agentA.id)).toBe(true);
+  expect((await activeAgentIds()).has(agentB.id)).toBe(true);
+
+  // Archiving workspace A should archive only agent A. Agent B lives in
+  // workspace B, which was never asked to archive anything.
+  const archive = await ctx.client.archiveWorkspace(workspaceA);
+  expect(archive.error).toBe(null);
+
+  await expect
+    .poll(async () => (await activeWorkspaceIds()).has(workspaceA), {
+      timeout: 10000,
+      interval: 100,
+    })
+    .toBe(false);
+
+  expect((await activeAgentIds()).has(agentA.id)).toBe(false);
+  expect(await archivedAgentIds()).toContain(agentA.id);
+
+  expect((await activeWorkspaceIds()).has(workspaceB)).toBe(true);
+  expect((await activeAgentIds()).has(agentB.id)).toBe(true);
+  expect(await archivedAgentIds()).not.toContain(agentB.id);
+}, 60000);
+
 test("archiving a workspace removes it from every subscribed client", async () => {
   const cwd = makeTempDir("workspace-archive-global-");
   const workspaceId = await createLocalWorkspace(cwd, "shared workspace");

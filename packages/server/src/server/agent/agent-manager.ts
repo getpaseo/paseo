@@ -1561,11 +1561,17 @@ export class AgentManager {
     }
   }
 
-  async archiveAgent(agentId: string): Promise<{ archivedAt: string }> {
-    return this.runLifecycleMutation(agentId, () => this.archiveAgentUnlocked(agentId));
+  async archiveAgent(
+    agentId: string,
+    options?: { cascadeWorkspaceId?: string },
+  ): Promise<{ archivedAt: string }> {
+    return this.runLifecycleMutation(agentId, () => this.archiveAgentUnlocked(agentId, options));
   }
 
-  private async archiveAgentUnlocked(agentId: string): Promise<{ archivedAt: string }> {
+  private async archiveAgentUnlocked(
+    agentId: string,
+    options?: { cascadeWorkspaceId?: string },
+  ): Promise<{ archivedAt: string }> {
     const agent = this.requireAgent(agentId);
     if (!this.registry) {
       throw new Error("Agent storage is not configured");
@@ -1584,7 +1590,7 @@ export class AgentManager {
     await this.closeAgent(agentId);
     this.discardRetainedAgentState(agentId);
 
-    await this.cascadeArchiveChildren(agentId);
+    await this.cascadeArchiveChildren(agentId, options?.cascadeWorkspaceId);
 
     return { archivedAt };
   }
@@ -1593,7 +1599,17 @@ export class AgentManager {
   // label pointing back at the caller. Archiving the parent cascades to those
   // children so subagent fleets don't outlive their orchestrator. Detached
   // handoff agents omit this label, so they stand outside the cascade.
-  private async cascadeArchiveChildren(parentAgentId: string): Promise<void> {
+  //
+  // Workspace teardown archives every agent scoped to that workspace and passes
+  // its workspaceId as `restrictToWorkspaceId`, so cascading here is limited to
+  // children in the same workspace: a cross-workspace subagent has its own
+  // workspace lifecycle and must not be pulled in by archiving its parent's
+  // workspace. Direct, single-agent archive omits the restriction and cascades
+  // to every child regardless of workspace, as before.
+  private async cascadeArchiveChildren(
+    parentAgentId: string,
+    restrictToWorkspaceId?: string,
+  ): Promise<void> {
     const registry = this.registry;
     if (!registry) {
       return;
@@ -1610,8 +1626,16 @@ export class AgentManager {
       if (record.labels?.[PARENT_AGENT_ID_LABEL] !== parentAgentId) {
         continue;
       }
+      if (restrictToWorkspaceId !== undefined && record.workspaceId !== restrictToWorkspaceId) {
+        continue;
+      }
       const child = await registry.get(record.id);
-      if (!child || child.archivedAt || child.labels?.[PARENT_AGENT_ID_LABEL] !== parentAgentId) {
+      if (
+        !child ||
+        child.archivedAt ||
+        child.labels?.[PARENT_AGENT_ID_LABEL] !== parentAgentId ||
+        (restrictToWorkspaceId !== undefined && child.workspaceId !== restrictToWorkspaceId)
+      ) {
         continue;
       }
       await this.runLifecycleMutation(child.id, async () => {
@@ -1619,16 +1643,22 @@ export class AgentManager {
         if (
           !currentChild ||
           currentChild.archivedAt ||
-          currentChild.labels?.[PARENT_AGENT_ID_LABEL] !== parentAgentId
+          currentChild.labels?.[PARENT_AGENT_ID_LABEL] !== parentAgentId ||
+          (restrictToWorkspaceId !== undefined &&
+            currentChild.workspaceId !== restrictToWorkspaceId)
         ) {
           return;
         }
         if (shouldDetachFromArchivedParent(parent, currentChild)) {
           await this.detachAgentUnlocked(currentChild.id);
         } else if (this.agents.has(currentChild.id)) {
-          await this.archiveAgentUnlocked(currentChild.id);
+          await this.archiveAgentUnlocked(currentChild.id, {
+            cascadeWorkspaceId: restrictToWorkspaceId,
+          });
         } else {
-          await this.archiveSnapshot(currentChild.id, new Date().toISOString());
+          await this.archiveSnapshot(currentChild.id, new Date().toISOString(), {
+            cascadeWorkspaceId: restrictToWorkspaceId,
+          });
         }
       });
     }
@@ -1911,7 +1941,11 @@ export class AgentManager {
     }
   }
 
-  async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {
+  async archiveSnapshot(
+    agentId: string,
+    archivedAt: string,
+    options?: { cascadeWorkspaceId?: string },
+  ): Promise<StoredAgentRecord> {
     const registry = this.requireRegistry();
     const liveAgent = this.getAgent(agentId);
     if (liveAgent) {
@@ -1940,7 +1974,7 @@ export class AgentManager {
     }
 
     await this.fireAgentArchived(agentId);
-    await this.cascadeArchiveChildren(agentId);
+    await this.cascadeArchiveChildren(agentId, options?.cascadeWorkspaceId);
 
     return nextRecord;
   }

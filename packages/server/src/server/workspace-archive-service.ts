@@ -472,8 +472,10 @@ export async function archiveWorkspaceContents(
   const archiveResults = await Promise.allSettled([
     ...[...agentIdsToArchive].map((agentId) =>
       dependencies.agentManager.getAgent(agentId)
-        ? dependencies.agentManager.archiveAgent(agentId)
-        : dependencies.agentManager.archiveSnapshot(agentId, archivedAt),
+        ? dependencies.agentManager.archiveAgent(agentId, { cascadeWorkspaceId: workspaceId })
+        : dependencies.agentManager.archiveSnapshot(agentId, archivedAt, {
+            cascadeWorkspaceId: workspaceId,
+          }),
     ),
     dependencies.killTerminalsForWorkspace(workspaceId),
   ]);

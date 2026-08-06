@@ -5179,6 +5179,69 @@ test("archiveAgent does not cascade to a detached former child", async () => {
   expect((await storage.get(child.id))?.archivedAt).toBeFalsy();
 });
 
+test("archiveAgent with cascadeWorkspaceId does not cascade to a child in another workspace", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-workspace-scoped-cascade-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+
+  const parent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Parent" },
+    undefined,
+    { workspaceId: "ws-a" },
+  );
+  const sameWorkspaceChild = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Same workspace child" },
+    undefined,
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: "ws-a" },
+  );
+  const crossWorkspaceChild = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Cross workspace child" },
+    undefined,
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: "ws-b" },
+  );
+
+  await manager.archiveAgent(parent.id, { cascadeWorkspaceId: "ws-a" });
+
+  expect((await storage.get(parent.id))?.archivedAt).toEqual(expect.any(String));
+  expect((await storage.get(sameWorkspaceChild.id))?.archivedAt).toEqual(expect.any(String));
+  expect((await storage.get(crossWorkspaceChild.id))?.archivedAt).toBeFalsy();
+});
+
+test("archiveAgent detaches but does not archive a child in another workspace", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unscoped-cascade-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+
+  const parent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Parent" },
+    undefined,
+    { workspaceId: "ws-a" },
+  );
+  const crossWorkspaceChild = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Cross workspace child" },
+    undefined,
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: "ws-b" },
+  );
+
+  await manager.archiveAgent(parent.id);
+
+  expect((await storage.get(parent.id))?.archivedAt).toEqual(expect.any(String));
+  expect((await storage.get(crossWorkspaceChild.id))?.archivedAt).toBeFalsy();
+  expect((await storage.get(crossWorkspaceChild.id))?.labels).not.toHaveProperty(
+    PARENT_AGENT_ID_LABEL,
+  );
+});
+
 test("runAgent persists finished attention and idle status without an external snapshot subscriber", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-finished-attention-"));
   const storagePath = join(workdir, "agents");
