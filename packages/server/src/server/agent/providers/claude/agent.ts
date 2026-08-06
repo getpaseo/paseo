@@ -3457,6 +3457,11 @@ class ClaudeAgentSession implements AgentSession {
       { agentId: this.agentId, pid: child.pid, code, signal },
       "Claude runtime exited unexpectedly",
     );
+    this.dispatchEvents(
+      foldSubagentObservations(this.taskProtocolSource.failRunningTasks()).map(
+        (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }),
+      ),
+    );
     if (this.activeForegroundTurnId || this.autonomousTurn) {
       // The pump is about to throw. It waits for stderr to flush and reports the
       // real cause; reporting here first would replace that with a bare exit code

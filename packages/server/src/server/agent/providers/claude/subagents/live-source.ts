@@ -265,6 +265,17 @@ export class ClaudeTaskProtocolSource {
     return observations;
   }
 
+  /** A lost Claude process terminates every task it owned, including backgrounded workflows. */
+  failRunningTasks(): SubagentObservation[] {
+    const observations: SubagentObservation[] = [];
+    for (const id of this.declaredIds) {
+      if (this.lastStatusById.get(id) !== "running") continue;
+      this.lastStatusById.set(id, "failed");
+      observations.push({ kind: "status", id, status: "failed" });
+    }
+    return observations;
+  }
+
   private observeTaskStarted(message: TaskStartedMessage): SubagentObservation[] {
     // Recorded before the filter: what this proves is that the CLI announces its tasks, which is
     // true whether or not this particular one is a subagent.
