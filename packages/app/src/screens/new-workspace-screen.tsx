@@ -83,6 +83,20 @@ import type { AgentAttachment, ForgeSearchItem } from "@getpaseo/protocol/messag
 import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { getIsElectron } from "@/constants/platform";
+import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
+import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
+import { NewWorkspaceTabsRow } from "@/screens/new-workspace/new-workspace-tabs-row";
+import {
+  initialPanelsState,
+  panelsReducer,
+  selectActivePanel,
+  type NewWorkspacePanel,
+} from "@/screens/new-workspace/panels-state";
+import {
+  buildWorkspacePaneContentModel,
+  WorkspacePaneContent,
+} from "@/screens/workspace/workspace-pane-content";
 import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
 import {
   getWorkspaceNamingAttachments,
@@ -168,6 +182,24 @@ interface NewWorkspaceScreenProps {
   projectId?: string;
   displayName?: string;
   draftId?: string;
+}
+
+function buildActivePanelTarget(panel: NewWorkspacePanel): WorkspaceTabTarget | null {
+  if (panel.kind === "terminal" && panel.terminalId) {
+    return { kind: "terminal", terminalId: panel.terminalId };
+  }
+  if (panel.kind === "browser" && panel.browserId) {
+    return { kind: "browser", browserId: panel.browserId };
+  }
+  return null;
+}
+
+function isTerminalCreationDisabled(input: {
+  isConnected: boolean;
+  hasClient: boolean;
+  hasSourceDirectory: boolean;
+}): boolean {
+  return !input.isConnected || !input.hasClient || !input.hasSourceDirectory;
 }
 
 const PROJECT_ICON_FALLBACK_FONT_SIZE = 10;
@@ -1500,6 +1532,8 @@ export function NewWorkspaceScreen({
   const isolationPickerAnchorRef = useRef<View>(null);
   const hostPickerAnchorRef = useRef<View | null>(null);
   const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
+  const [panelsState, dispatchPanels] = useReducer(panelsReducer, initialPanelsState);
+  const activePanel = selectActivePanel(panelsState);
 
   useEffect(() => {
     const trimmed = pickerSearchQuery.trim();
@@ -1939,6 +1973,7 @@ export function NewWorkspaceScreen({
             navigate: (targetServerId, workspaceId) =>
               navigateToWorkspace({ serverId: targetServerId, workspaceId }),
           });
+          committedRef.current = true;
           return;
         }
 
@@ -1957,6 +1992,7 @@ export function NewWorkspaceScreen({
             selectModel: t("newWorkspace.errors.selectModel"),
           },
         });
+        committedRef.current = true;
       } catch (error) {
         const message = toErrorMessage(error);
         setPendingAction(null);
@@ -1976,6 +2012,159 @@ export function NewWorkspaceScreen({
       toast,
     ],
   );
+
+  const isElectron = getIsElectron();
+  const terminalDisabled = isTerminalCreationDisabled({
+    isConnected,
+    hasClient: Boolean(client),
+    hasSourceDirectory: selectedSourceDirectory !== null,
+  });
+
+  // Route-driven unmount must not orphan the daemon terminals and persisted
+  // browser records this screen creates. A submit hands terminals off to the
+  // created workspace (the workspace screen lists them), so only browsers are
+  // cleaned up then; abandoning the screen without submitting releases both.
+  const committedRef = useRef(false);
+  const panelsRef = useRef<NewWorkspacePanel[]>([]);
+  const clientRef = useRef(client);
+  useEffect(() => {
+    panelsRef.current = panelsState.panels;
+  }, [panelsState.panels]);
+  useEffect(() => {
+    clientRef.current = client;
+  }, [client]);
+  useEffect(() => {
+    return () => {
+      const committed = committedRef.current;
+      const liveClient = clientRef.current;
+      for (const panel of panelsRef.current) {
+        if (panel.kind === "browser" && panel.browserId) {
+          useBrowserStore.getState().removeBrowser(panel.browserId);
+          removeResidentBrowserWebview(panel.browserId);
+        } else if (panel.kind === "terminal" && panel.terminalId && !committed && liveClient) {
+          liveClient.killTerminal(panel.terminalId).catch(() => {});
+        }
+      }
+    };
+  }, []);
+
+  const handleCreateTerminal = useCallback(async () => {
+    if (!client || !isConnected || !selectedSourceDirectory) {
+      return;
+    }
+    try {
+      const ensuredWorkspace = await ensureWorkspace({
+        cwd: selectedSourceDirectory,
+        prompt: "",
+        attachments: [],
+        withInitialAgent: false,
+      });
+      const terminalCwd = ensuredWorkspace.workspaceDirectory || selectedSourceDirectory;
+      const payload = await client.createTerminal(terminalCwd, undefined, undefined, {
+        workspaceId: ensuredWorkspace.id,
+      });
+      if (!payload.terminal && payload.error) {
+        toast.error(payload.error);
+        return;
+      }
+      if (!payload.terminal) {
+        return;
+      }
+      dispatchPanels({
+        type: "add-terminal",
+        terminalId: payload.terminal.id,
+        createdAt: Date.now(),
+      });
+    } catch (error) {
+      toast.error(toErrorMessage(error));
+    }
+  }, [client, ensureWorkspace, isConnected, selectedSourceDirectory, toast]);
+
+  const handleCreateBrowser = useCallback(() => {
+    const { browserId } = createWorkspaceBrowser();
+    dispatchPanels({ type: "add-browser", browserId, createdAt: Date.now() });
+  }, []);
+
+  const handleClosePanel = useCallback(
+    (panel: NewWorkspacePanel) => {
+      if (panel.kind === "terminal" && panel.terminalId && client) {
+        void client.killTerminal(panel.terminalId).catch(() => {
+          toast.error(t("workspace.terminal.hostDisconnected"));
+        });
+      } else if (panel.kind === "browser" && panel.browserId) {
+        useBrowserStore.getState().removeBrowser(panel.browserId);
+        removeResidentBrowserWebview(panel.browserId);
+      }
+      dispatchPanels({ type: "close", panelId: panel.panelId });
+    },
+    [client, t, toast],
+  );
+
+  const handleCreateAgentTab = useCallback(() => {
+    dispatchPanels({ type: "activate-composer" });
+  }, []);
+
+  const handleActivatePanel = useCallback((panelId: string) => {
+    dispatchPanels({ type: "activate", panelId });
+  }, []);
+
+  const handleClosePanelById = useCallback(
+    (panelId: string) => {
+      const panel = panelsState.panels.find((candidate) => candidate.panelId === panelId);
+      if (panel) {
+        handleClosePanel(panel);
+      }
+    },
+    [handleClosePanel, panelsState.panels],
+  );
+
+  const handleCloseComposer = useCallback(() => {
+    const lastPanel = panelsState.panels[panelsState.panels.length - 1];
+    if (lastPanel) {
+      dispatchPanels({ type: "activate", panelId: lastPanel.panelId });
+    }
+  }, [panelsState.panels]);
+
+  const handleOpenTabTarget = useCallback((target: WorkspaceTabTarget) => {
+    if (target.kind === "terminal") {
+      dispatchPanels({ type: "activate", panelId: target.terminalId });
+    } else if (target.kind === "browser") {
+      dispatchPanels({ type: "activate", panelId: target.browserId });
+    }
+  }, []);
+
+  const activePanelModel = useMemo(() => {
+    if (!activePanel) {
+      return null;
+    }
+    const target = buildActivePanelTarget(activePanel);
+    if (!target) {
+      return null;
+    }
+    return buildWorkspacePaneContentModel({
+      tab: {
+        key: activePanel.panelId,
+        tabId: activePanel.panelId,
+        kind: activePanel.kind,
+        target,
+      },
+      normalizedServerId: selectedServerId,
+      normalizedWorkspaceId: "",
+      cwdOverride: workspace?.workspaceDirectory ?? selectedSourceDirectory ?? undefined,
+      onOpenTab: handleOpenTabTarget,
+      onCloseCurrentTab: () => handleClosePanel(activePanel),
+      onRetargetCurrentTab: handleOpenTabTarget,
+      onOpenWorkspaceFile: () => {},
+      onOpenImportSheet: () => {},
+    });
+  }, [
+    activePanel,
+    handleClosePanel,
+    handleOpenTabTarget,
+    selectedServerId,
+    selectedSourceDirectory,
+    workspace,
+  ]);
 
   const renderPickerOption = useCallback(
     (props: {
@@ -2102,42 +2291,62 @@ export function NewWorkspaceScreen({
   return (
     <FileDropZone style={styles.container}>
       <ScreenHeader left={screenHeaderLeft} borderless />
+      {!isCompact ? (
+        <NewWorkspaceTabsRow
+          panels={panelsState.panels}
+          activePanelId={panelsState.activePanelId}
+          onCreateAgentTab={handleCreateAgentTab}
+          onCreateTerminal={handleCreateTerminal}
+          onCreateBrowser={handleCreateBrowser}
+          onActivatePanel={handleActivatePanel}
+          onClosePanel={handleClosePanelById}
+          onCloseComposer={handleCloseComposer}
+          terminalDisabled={terminalDisabled}
+          showCreateBrowser={isElectron}
+        />
+      ) : null}
       <View style={contentStyle}>
         <TitlebarDragRegion />
-        <ReanimatedAnimated.View style={centeredStyle}>
-          <View style={styles.composerTitleContainer}>
-            <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
+        {activePanelModel ? (
+          <View style={styles.paneContainer}>
+            <WorkspacePaneContent content={activePanelModel} isWorkspaceFocused isPaneFocused />
           </View>
-          {formStack}
-          <Composer
-            externalKeyboardShift
-            agentId={draftKey}
-            serverId={selectedServerId}
-            isPaneFocused={true}
-            onSubmitMessage={handleSubmitNewWorkspace}
-            allowEmptySubmit={true}
-            submitButtonAccessibilityLabel={t("newWorkspace.create")}
-            submitButtonTestID="workspace-create-submit"
-            submitIcon="return"
-            isSubmitLoading={isPending}
-            waitForGithubAutoAttachOnSubmit
-            submitBehavior="preserve-and-lock"
-            blurOnSubmit={true}
-            value={chatDraft.text}
-            onChangeText={chatDraft.setText}
-            attachments={chatDraft.attachments}
-            attachmentScopeKeys={visibleDraftContextScopeKeys}
-            onChangeAttachments={chatDraft.setAttachments}
-            onGithubPrDetected={handleGithubPrDetected}
-            onGithubPrAutoAttach={handleGithubPrAutoAttach}
-            cwd={selectedSourceDirectory ?? ""}
-            clearDraft={handleClearDraft}
-            autoFocus
-            commandDraftConfig={composerState?.commandDraftConfig}
-            agentControls={agentControlsWithDisabled}
-          />
-          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-        </ReanimatedAnimated.View>
+        ) : (
+          <ReanimatedAnimated.View style={centeredStyle}>
+            <View style={styles.composerTitleContainer}>
+              <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
+            </View>
+            {formStack}
+            <Composer
+              externalKeyboardShift
+              agentId={draftKey}
+              serverId={selectedServerId}
+              isPaneFocused={true}
+              onSubmitMessage={handleSubmitNewWorkspace}
+              allowEmptySubmit={true}
+              submitButtonAccessibilityLabel={t("newWorkspace.create")}
+              submitButtonTestID="workspace-create-submit"
+              submitIcon="return"
+              isSubmitLoading={isPending}
+              waitForGithubAutoAttachOnSubmit
+              submitBehavior="preserve-and-lock"
+              blurOnSubmit={true}
+              value={chatDraft.text}
+              onChangeText={chatDraft.setText}
+              attachments={chatDraft.attachments}
+              attachmentScopeKeys={visibleDraftContextScopeKeys}
+              onChangeAttachments={chatDraft.setAttachments}
+              onGithubPrDetected={handleGithubPrDetected}
+              onGithubPrAutoAttach={handleGithubPrAutoAttach}
+              cwd={selectedSourceDirectory ?? ""}
+              clearDraft={handleClearDraft}
+              autoFocus
+              commandDraftConfig={composerState?.commandDraftConfig}
+              agentControls={agentControlsWithDisabled}
+            />
+            {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+          </ReanimatedAnimated.View>
+        )}
       </View>
     </FileDropZone>
   );
@@ -2167,6 +2376,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   contentCompact: {
     justifyContent: "flex-end",
+  },
+  paneContainer: {
+    flex: 1,
+    width: "100%",
+    alignSelf: "stretch",
   },
   composerTitleContainer: {
     marginBottom: theme.spacing[8],

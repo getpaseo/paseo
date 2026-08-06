@@ -8,6 +8,13 @@ export interface PaneContextValue {
   workspaceId: string;
   tabId: string;
   target: WorkspaceTabTarget;
+  /**
+   * Optional working directory override for panels that resolve their cwd
+   * from the workspace (e.g. the terminal panel). Used by surfaces that render
+   * panels before a workspace exists (the New Workspace screen). When unset,
+   * panels fall back to the workspace directory as before.
+   */
+  cwdOverride?: string;
   fileNavigationRevision?: number;
   openTab: (target: WorkspaceTabTarget) => void;
   closeCurrentTab: () => void;
