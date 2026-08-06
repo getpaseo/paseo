@@ -1,16 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { withUnistyles } from "react-native-unistyles";
 import { createInitMessage, createUpdateMessage, type PluginSandboxProps } from "./bridge";
 import { attachPluginBridge, createPluginIframe, postToPluginIframe } from "./frame.web";
-import { usePluginThemeTokens } from "./theme";
+import { resolvePluginThemeTokens, type ThemedPluginSandboxProps } from "./theme";
 import { PLUGIN_READY_TIMEOUT_MS, PluginReadyTimeout } from "./sandbox-error";
 
-export function PluginSandbox({ html, context, onOpenFile, testID }: PluginSandboxProps) {
+function PluginSandboxView({
+  html,
+  context,
+  onOpenFile,
+  testID,
+  themeTokens,
+}: ThemedPluginSandboxProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const readyRef = useRef(false);
   const [handshake, setHandshake] = useState<"waiting" | "ready" | "timeout">("waiting");
   const [attempt, setAttempt] = useState(0);
-  const themeTokens = usePluginThemeTokens();
   const latest = useRef({ context, onOpenFile, themeTokens });
 
   useEffect(() => {
@@ -77,6 +83,15 @@ export function PluginSandbox({ html, context, onOpenFile, testID }: PluginSandb
 
   return <div ref={containerRef} data-testid={testID} style={CONTAINER_STYLE} />;
 }
+
+/**
+ * The theme reaches the plugin as a prop rather than a hook so a theme switch
+ * re-renders this subtree. `useUnistyles()` would do it too and is banned
+ * (docs/unistyles.md).
+ */
+export const PluginSandbox = withUnistyles(PluginSandboxView, (theme) => ({
+  themeTokens: resolvePluginThemeTokens(theme),
+})) as (props: PluginSandboxProps) => React.ReactElement;
 
 const CONTAINER_STYLE = {
   display: "flex",

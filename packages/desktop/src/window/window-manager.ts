@@ -470,3 +470,24 @@ export function setupDragDropPrevention(win: BrowserWindow): void {
     }
   });
 }
+
+/** The plugin sandbox is `about:srcdoc`; nothing else may load in a subframe. */
+export function isAllowedAppSubframeUrl(url: string): boolean {
+  return url.trim().toLowerCase().startsWith("about:");
+}
+
+/**
+ * Belt to the braces of `frame-src 'none'` on the app document: a sandboxed
+ * plugin frame is always allowed to navigate itself, and the app embeds no
+ * frame other than that plugin sandbox. `will-navigate` above is main-frame
+ * only, so it never sees this. Electron `<webview>` is a guest view, not a
+ * subframe of this WebContents, so the in-app browser is unaffected.
+ */
+export function setupSubframeNavigationPrevention(win: BrowserWindow): void {
+  win.webContents.on("will-frame-navigate", (event) => {
+    if (event.isMainFrame || isAllowedAppSubframeUrl(event.url)) {
+      return;
+    }
+    event.preventDefault();
+  });
+}

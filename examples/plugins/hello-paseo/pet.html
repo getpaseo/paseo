@@ -134,7 +134,6 @@
 
       function render(context) {
         document.getElementById("cwd").textContent = context.cwd ?? "no workspace";
-        post({ type: "resize", height: Math.ceil(document.body.scrollHeight) });
       }
 
       window.addEventListener("message", (event) => {

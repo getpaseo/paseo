@@ -91,6 +91,25 @@ function isHomeRelative(value: string): boolean {
 }
 
 /**
+ * The workspace-relative path a plugin sees, and sends back.
+ *
+ * Plugins are handed the relative path rather than the absolute one for two
+ * reasons: the absolute path leaks the user's home directory into untrusted
+ * HTML, and `open-file` only accepts relative paths, so handing over an
+ * absolute one gives the plugin a value the host then refuses back.
+ */
+export function toPluginRelativePath(workspaceRoot: string, absolutePath: string): string {
+  return (
+    resolveWorkspaceFilePaths({ path: absolutePath, workspaceRoot })?.relativePath ?? absolutePath
+  );
+}
+
+/** Re-absolutise a path that came back through `open-file`, for host consumers. */
+export function fromPluginRelativePath(workspaceRoot: string, relativePath: string): string {
+  return `${workspaceRoot.replace(/\/+$/, "")}/${relativePath}`;
+}
+
+/**
  * `open-file` is the only verb that names a path, so it is the only place a
  * plugin could turn the bridge into an arbitrary-file-read primitive: it asks
  * for `~/.npmrc`, the pane opens it, and — if the plugin also claims that

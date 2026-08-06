@@ -31,15 +31,28 @@ Other confirmed: `open-file` is an arbitrary-file-read primitive (C3); install()
 
 Full reviewer text: `/tmp/claude-1000/.../tasks/{a6f4f4bbcde8ccb2d,a9d73972fd9495596,a6daef1da43e2142b}.output`
 
-## Fix wave 1 — three agents in flight (results not yet seen)
+## Fix round 1 — DONE, committed as `289d48125`
 
-Non-overlapping file sets: (A) app sandbox C1/C2/C3/C4/CSP gaps/dead resize; (B) server store+registry atomicity, missing-manifest, download cap, per-entry registry parse, readEntry hardening; (C) plugin-session + CLI feature gate + dead unavailable branches + error leaking.
+All four fix agents' work landed (sandbox security, server store/registry, session+CLI, app UI). 46 files, +1955/-459. Docs (`docs/plugins.md`, `SECURITY.md`) reconciled by me — the false "cannot exfiltrate" claim is gone, replaced with the three controls that have to hold.
 
-## Still to do after that
+Gate re-verified by me personally after the agents: `npm run typecheck` exit 0, `npm run lint` 0 errors, `npm run format:check` clean, app plugin tests 39 pass + 4 browser pass, server plugin 50 pass, protocol 21 pass, CLI 10 pass.
 
-1. **Second wave** — app/UI reviewer's I2/I3/I5/I6/I7/I8/I9/I10 + minors are NOT assigned yet (mutation invalidation, not-connected vs too-old, dropped `lineStart`, one-shot theme, ignored `icon`, tab row overflow, sandbox runs while drawer closed, editor flash). Deliberately held back to avoid file conflicts with agent A. Dispatch once A reports.
-2. Reconcile `docs/plugins.md` with what the bridge actually implements (resize/theme/icon/Trust claim) — I own this doc, agents were told not to touch it.
-3. Re-review after fixes. **Only then** QA evidence, push, PR.
+The UI agent **died on a session quota limit** mid-task and left broken edits. I finished them myself:
+
+- missing `useHostFeature` import in `queries.ts` (typecheck was red)
+- it had introduced **two `useUnistyles()` calls**, which `docs/unistyles.md` bans outright with no carveout. Replaced with `usePluginThemeTokens()` in `plugins/theme.ts`, built on RN's reactive `useColorScheme()` plus a static theme import (sanctioned alternative 2). Works because unistyles is configured `adaptiveThemes: true` and nothing calls `setTheme`.
+- `FilePane` complexity over the limit → extracted `useFilePreviewRenderer`
+- `type` → `interface` in `model.test.ts`
+
+**Quota limit resets 11:10pm America/Sao_Paulo.** Per DELEGATION.md's circuit-breaker, do NOT re-spawn agents before then.
+
+## Still to do
+
+1. **Re-review** the fixes. Round 1 proved a green gate means nothing for this feature — two exfil holes shipped past typecheck/lint/tests. The security reviewer must specifically re-check the CSP shell and the native navigation gate.
+2. **QA evidence** — still missing, CONTRIBUTING closes PRs without it. Screenshots of Settings → Plugins, a plugin file preview, the sidebar pet. `docs/qa.md`, `docs/browser-capture-harness.md`. Platform matrix honestly: only Linux/web exercised, native sandbox changes are UNTESTED on a real device.
+3. Push, open PR, babysit comments.
+
+Known loose end: `PluginService.install` accepts `{refresh}` but no RPC/CLI flag reaches it.
 
 ## Key decisions (do not relitigate)
 

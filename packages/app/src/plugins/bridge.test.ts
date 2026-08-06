@@ -3,8 +3,11 @@ import {
   PLUGIN_CONTENT_SECURITY_POLICY,
   createInitMessage,
   createUpdateMessage,
+  fromPluginRelativePath,
   handlePluginGuestMessage,
   parsePluginGuestMessage,
+  resolvePluginOpenFilePath,
+  toPluginRelativePath,
   wrapPluginHtml,
   type PluginGuestHandlers,
   type PluginThemeTokens,
@@ -147,6 +150,31 @@ describe("handlePluginGuestMessage", () => {
     handlePluginGuestMessage({ paseo: 1, type: "ready" }, handlers);
 
     expect(sent).toEqual([{ paseo: 1, type: "init", context, theme: THEME }]);
+  });
+});
+
+describe("plugin path round trip", () => {
+  const ROOT = "/home/dev/project";
+
+  // The documented example plugin echoes back the `path` it was handed. That is
+  // the one call every plugin makes, and it silently did nothing while the host
+  // sent absolutes into a resolver that rejects them.
+  it("accepts the path it handed the plugin, and lands back where it started", () => {
+    for (const absolute of [`${ROOT}/src/a.ts`, `${ROOT}/README.md`, `${ROOT}/a/b/c.txt`]) {
+      const given = toPluginRelativePath(ROOT, absolute);
+      expect(resolvePluginOpenFilePath(given)).toBe(given);
+      expect(fromPluginRelativePath(ROOT, given)).toBe(absolute);
+    }
+  });
+
+  it("still refuses what the plugin makes up", () => {
+    for (const path of ["/etc/passwd", "~/.ssh/id_rsa", "../../etc/passwd", "  ", ""]) {
+      expect(resolvePluginOpenFilePath(path)).toBeNull();
+    }
+  });
+
+  it("tolerates a trailing slash on the root", () => {
+    expect(fromPluginRelativePath(`${ROOT}/`, "src/a.ts")).toBe(`${ROOT}/src/a.ts`);
   });
 });
 

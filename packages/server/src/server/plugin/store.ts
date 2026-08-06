@@ -258,7 +258,13 @@ export class PluginStore {
         if (!installed) {
           await rm(stagingDir, { recursive: true, force: true });
         }
-        await rm(trashDir, { recursive: true, force: true });
+        // Only once the new copy is in place. If the swap failed *and* the
+        // restore rename also failed, the trash holds the user's only surviving
+        // plugin — deleting it here is the very data loss this dance avoids. A
+        // leaked `.trash-*` is swept by `initialize()` on the next start.
+        if (installed) {
+          await rm(trashDir, { recursive: true, force: true });
+        }
       }
 
       await this.mutateState((state) => [

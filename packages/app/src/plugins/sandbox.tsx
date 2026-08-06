@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   createInitMessage,
   createUpdateMessage,
@@ -9,7 +9,8 @@ import {
   type PluginHostMessage,
   type PluginSandboxProps,
 } from "./bridge";
-import { usePluginThemeTokens } from "./theme";
+import { resolvePluginThemeTokens, type ThemedPluginSandboxProps } from "./theme";
+import { isPluginDocumentUrl } from "./sandbox-url";
 import { PLUGIN_READY_TIMEOUT_MS, PluginReadyTimeout } from "./sandbox-error";
 
 /**
@@ -44,18 +45,17 @@ true;
  */
 const ORIGIN_WHITELIST = ["*"];
 
-/** The plugin document itself. Anything else is a navigation we deny. */
-function isPluginDocumentUrl(url: string): boolean {
-  const normalized = url.trim().toLowerCase();
-  return normalized === "about:blank" || normalized.startsWith("data:");
-}
-
-export function PluginSandbox({ html, context, onOpenFile, testID }: PluginSandboxProps) {
+function PluginSandboxView({
+  html,
+  context,
+  onOpenFile,
+  testID,
+  themeTokens,
+}: ThemedPluginSandboxProps) {
   const webViewRef = useRef<WebView | null>(null);
   const readyRef = useRef(false);
   const [handshake, setHandshake] = useState<"waiting" | "ready" | "timeout">("waiting");
   const [attempt, setAttempt] = useState(0);
-  const themeTokens = usePluginThemeTokens();
   const latest = useRef({ context, onOpenFile, themeTokens });
 
   useEffect(() => {
@@ -148,6 +148,15 @@ export function PluginSandbox({ html, context, onOpenFile, testID }: PluginSandb
     />
   );
 }
+
+/**
+ * The theme reaches the plugin as a prop rather than a hook so a theme switch
+ * re-renders this subtree. `useUnistyles()` would do it too and is banned
+ * (docs/unistyles.md).
+ */
+export const PluginSandbox = withUnistyles(PluginSandboxView, (theme) => ({
+  themeTokens: resolvePluginThemeTokens(theme),
+})) as (props: PluginSandboxProps) => React.ReactElement;
 
 const styles = StyleSheet.create((theme) => ({
   webView: {

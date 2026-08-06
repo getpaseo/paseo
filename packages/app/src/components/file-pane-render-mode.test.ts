@@ -12,6 +12,7 @@ function installedPlugin(input: {
   extensions: string[];
   enabled?: boolean;
   unavailableReason?: string | null;
+  title?: string;
 }): InstalledPlugin {
   return {
     manifest: {
@@ -20,7 +21,12 @@ function installedPlugin(input: {
       version: "1.0.0",
       contributes: {
         filePreviews: [
-          { id: "table", title: "Table", extensions: input.extensions, entry: "preview.html" },
+          {
+            id: "table",
+            title: input.title ?? "Table",
+            extensions: input.extensions,
+            entry: "preview.html",
+          },
         ],
       },
     },
@@ -106,6 +112,15 @@ describe("resolveFilePreviewRenderer", () => {
     expect(resolveFilePreviewRenderer({ filePath: "/w/data.csv", plugins })).toMatchObject({
       pluginId: "gamma-view",
     });
+  });
+
+  // The title reaches a segmented control that neither wraps nor scrolls, and
+  // nothing upstream bounds what a plugin author puts there.
+  it("truncates a plugin title that would run off the toolbar", () => {
+    const plugins = [installedPlugin({ id: "loud", extensions: [".csv"], title: "T".repeat(400) })];
+    const renderer = resolveFilePreviewRenderer({ filePath: "data.csv", plugins });
+    expect(renderer.kind).toBe("plugin");
+    expect(renderer.kind === "plugin" && renderer.title.length).toBe(24);
   });
 
   it("matches extensions case-insensitively and honours multi-dot extensions", () => {

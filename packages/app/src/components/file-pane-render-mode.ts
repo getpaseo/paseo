@@ -27,6 +27,7 @@ export function pluginFilePreviewsForPath(input: {
   filePath: string;
   plugins: readonly InstalledPlugin[];
 }): PluginFilePreview[] {
+  const PLUGIN_TITLE_MAX_CHARS = 24;
   const path = input.filePath.trim().toLowerCase();
   if (!path) {
     return [];
@@ -45,7 +46,10 @@ export function pluginFilePreviewsForPath(input: {
         pluginId: plugin.manifest.id,
         pluginName: plugin.manifest.name,
         contributionId: preview.id,
-        title: preview.title,
+        // ponytail: the title is plugin-authored and lands in a segmented
+        // control that does not wrap. Truncate here so every consumer of the
+        // render model gets a bounded string.
+        title: preview.title.trim().slice(0, PLUGIN_TITLE_MAX_CHARS),
         entry: preview.entry,
       });
       break;

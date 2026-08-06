@@ -9,6 +9,7 @@ import {
 } from "../../plugin/registry-client.js";
 import {
   PluginEntryNotFoundError,
+  PluginEntryUnavailableError,
   PluginNotInstalledError,
   PluginPathTraversalError,
 } from "../../plugin/store.js";
@@ -33,6 +34,7 @@ function clientMessage(error: unknown, fallback: string): string {
   if (
     error instanceof PluginNotInstalledError ||
     error instanceof PluginEntryNotFoundError ||
+    error instanceof PluginEntryUnavailableError ||
     error instanceof PluginPathTraversalError ||
     error instanceof PluginRegistryUnavailableError ||
     error instanceof PluginNotInRegistryError ||

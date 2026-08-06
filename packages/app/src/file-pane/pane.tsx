@@ -26,7 +26,7 @@ import {
 } from "@/components/file-pane-render-mode";
 import { PluginSandbox } from "@/plugins/sandbox";
 import { usePluginEntry, usePlugins } from "@/plugins/queries";
-import type { PluginContext } from "@/plugins/bridge";
+import { fromPluginRelativePath, toPluginRelativePath, type PluginContext } from "@/plugins/bridge";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes } from "@/attachments/service";
@@ -64,6 +64,7 @@ interface CodeLineProps {
 
 interface FilePreviewBodyProps {
   serverId: string;
+  workspaceRoot: string;
   preview: ExplorerFile | null;
   renderer: FilePreviewRenderer;
   isLoading: boolean;
@@ -218,6 +219,7 @@ const codeLineStyles = StyleSheet.create((theme) => ({
 
 function FilePreviewBody({
   serverId,
+  workspaceRoot,
   preview,
   renderer,
   isLoading,
@@ -299,6 +301,7 @@ function FilePreviewBody({
         <PluginFilePreview
           serverId={serverId}
           renderer={renderer}
+          workspaceRoot={workspaceRoot}
           path={filePath}
           content={preview.content ?? ""}
           onOpenFile={onOpenFile}
@@ -408,12 +411,14 @@ function FilePreviewBody({
 function PluginFilePreview({
   serverId,
   renderer,
+  workspaceRoot,
   path,
   content,
   onOpenFile,
 }: {
   serverId: string;
   renderer: Extract<FilePreviewRenderer, { kind: "plugin" }>;
+  workspaceRoot: string;
   path: string;
   content: string;
   onOpenFile?: (input: { path: string; lineStart?: number }) => void;
@@ -424,9 +429,17 @@ function PluginFilePreview({
     pluginId: renderer.pluginId,
     entry: renderer.entry,
   });
+  // The plugin sees, and sends back, a workspace-relative path: `open-file`
+  // rejects absolute paths, so handing it an absolute one would make its own
+  // context unusable as a reply.
   const context = useMemo<PluginContext>(
-    () => ({ kind: "file-preview", path, content }),
-    [path, content],
+    () => ({ kind: "file-preview", path: toPluginRelativePath(workspaceRoot, path), content }),
+    [workspaceRoot, path, content],
+  );
+  const handleOpenFile = useCallback(
+    (input: { path: string; lineStart?: number }) =>
+      onOpenFile?.({ ...input, path: fromPluginRelativePath(workspaceRoot, input.path) }),
+    [onOpenFile, workspaceRoot],
   );
 
   if (entry.data === undefined) {
@@ -454,7 +467,7 @@ function PluginFilePreview({
     <PluginSandbox
       html={entry.data}
       context={context}
-      onOpenFile={onOpenFile}
+      onOpenFile={handleOpenFile}
       testID="plugin-file-preview"
     />
   );
@@ -584,6 +597,7 @@ export function FilePane({
       serverId={serverId}
       client={client}
       readTarget={readTarget}
+      workspaceRoot={normalizedWorkspaceRoot}
       preview={preview}
       liveFile={liveFile.model}
       onRetryRead={liveFile.refresh}
@@ -631,6 +645,7 @@ function FilePanePresentation({
   serverId,
   client,
   readTarget,
+  workspaceRoot,
   preview,
   liveFile,
   onRetryRead,
@@ -656,6 +671,7 @@ function FilePanePresentation({
   serverId: string;
   client: DaemonClient | null;
   readTarget: { cwd: string; path: string } | null;
+  workspaceRoot: string;
   preview: ExplorerFile | null;
   liveFile: LiveFileModel;
   onRetryRead: () => void;
@@ -706,6 +722,7 @@ function FilePanePresentation({
         client={client}
         cwd={readTarget.cwd}
         path={readTarget.path}
+        workspaceRoot={workspaceRoot}
         preview={preview as TextExplorerFile}
         liveFile={liveFile}
         onRetryRead={onRetryRead}
@@ -751,6 +768,7 @@ function FilePanePresentation({
       ) : null}
       <FilePreviewBody
         serverId={serverId}
+        workspaceRoot={workspaceRoot}
         preview={preview}
         renderer={previewMode === "source" ? SOURCE_RENDERER : renderer}
         isLoading={isLoading}
@@ -770,6 +788,7 @@ function EditableFilePane({
   client,
   cwd,
   path,
+  workspaceRoot,
   preview,
   liveFile,
   onRetryRead,
@@ -789,6 +808,7 @@ function EditableFilePane({
   client: DaemonClient;
   cwd: string;
   path: string;
+  workspaceRoot: string;
   preview: TextExplorerFile;
   liveFile: LiveFileModel;
   onRetryRead: () => void;
@@ -937,6 +957,7 @@ function EditableFilePane({
       ) : (
         <FilePreviewBody
           serverId={serverId}
+          workspaceRoot={workspaceRoot}
           preview={renderedPreview}
           renderer={renderer}
           isLoading={isLoading}

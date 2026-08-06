@@ -87,6 +87,7 @@ packages/server/src/server/fixtures/dictation/dictation-debug-largest.transcript
 packages/protocol/src/generated/validation/*.aot.ts
 
 /artifacts
+/.qa
 packages/desktop/.cache/
 packages/desktop/src-tauri/resources/managed-runtime/
 app.json

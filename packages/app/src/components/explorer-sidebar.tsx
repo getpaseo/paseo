@@ -45,7 +45,7 @@ import { useDraftStore } from "@/stores/draft-store";
 import { buildPluginExplorerTab, isPluginExplorerTab } from "@/stores/explorer-tab-memory";
 import { usePluginEntry, usePlugins } from "@/plugins/queries";
 import { PluginSandbox } from "@/plugins/sandbox";
-import type { PluginContext } from "@/plugins/bridge";
+import { fromPluginRelativePath, type PluginContext } from "@/plugins/bridge";
 
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
 
@@ -568,6 +568,13 @@ function PluginTabContent({
     () => ({ kind: "sidebar-panel", cwd: workspaceRoot, workspaceId }),
     [workspaceRoot, workspaceId],
   );
+  // `open-file` only yields workspace-relative paths; host consumers want the
+  // absolute one.
+  const handleOpenFile = useCallback(
+    (input: { path: string; lineStart?: number }) =>
+      onOpenFile?.({ ...input, path: fromPluginRelativePath(workspaceRoot, input.path) }),
+    [onOpenFile, workspaceRoot],
+  );
   if (entry.data === undefined) {
     return (
       <View style={styles.pluginState}>
@@ -587,7 +594,7 @@ function PluginTabContent({
     <PluginSandbox
       html={entry.data}
       context={context}
-      onOpenFile={onOpenFile}
+      onOpenFile={handleOpenFile}
       testID={`plugin-sidebar-${panel.pluginId}`}
     />
   );
