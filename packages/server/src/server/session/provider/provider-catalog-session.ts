@@ -10,11 +10,12 @@ import {
   isGlobalProviderSnapshotKey,
   type ProviderSnapshotManager,
 } from "../../agent/provider-snapshot-manager.js";
-import type {
-  AgentFeature,
-  AgentProvider,
-  AgentSessionConfig,
-  ProviderSnapshotEntry,
+import {
+  filterSelectableAgentModels,
+  type AgentFeature,
+  type AgentProvider,
+  type AgentSessionConfig,
+  type ProviderSnapshotEntry,
 } from "../../agent/agent-sdk-types.js";
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
 import type { ProviderUsageService } from "../../../services/quota-fetcher/service.js";
@@ -202,7 +203,7 @@ export class ProviderCatalogSession {
         type: "list_provider_models_response",
         payload: {
           provider: msg.provider,
-          models: entry.models ?? [],
+          models: filterSelectableAgentModels(entry.models),
           error: null,
           fetchedAt: entry.fetchedAt ?? fetchedAt,
           requestId: msg.requestId,

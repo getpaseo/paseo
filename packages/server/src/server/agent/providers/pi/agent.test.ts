@@ -717,6 +717,61 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("streams Pi task calls as sub-agent cards with lifecycle status", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("delegate this");
+    fakeSession.emit({
+      type: "tool_execution_start",
+      toolCallId: "task-1",
+      toolName: "task",
+      args: {
+        agent: "explore",
+        task: "Trace the Pi provider tool mapper",
+      },
+    });
+    fakeSession.emit({
+      type: "tool_execution_end",
+      toolCallId: "task-1",
+      toolName: "task",
+      result: { content: [{ type: "text", text: "Found the mapper." }] },
+      isError: false,
+    });
+    fakeSession.finishTurn();
+
+    await events.nextTurnCompletion();
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "tool_call",
+        callId: "task-1",
+        name: "task",
+        status: "running",
+        detail: {
+          type: "sub_agent",
+          subAgentType: "explore",
+          description: "Trace the Pi provider tool mapper",
+          log: "",
+        },
+        error: null,
+      },
+      {
+        type: "tool_call",
+        callId: "task-1",
+        name: "task",
+        status: "completed",
+        detail: {
+          type: "sub_agent",
+          subAgentType: "explore",
+          description: "Trace the Pi provider tool mapper",
+          log: "Found the mapper.",
+        },
+        error: null,
+      },
+    ]);
+  });
+
   test("keeps one generated message id when Pi omits message start and response id", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

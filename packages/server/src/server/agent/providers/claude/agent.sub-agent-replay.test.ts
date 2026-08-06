@@ -57,14 +57,18 @@ function taskToolResult(options: { isError?: boolean; mentionAgentId?: boolean }
   });
 }
 
-function sidechainEntry(): string {
+function sidechainEntry(options: { agentId?: string; stopReason?: string | null } = {}): string {
   return JSON.stringify({
     type: "assistant",
     isSidechain: true,
-    agentId: AGENT_ID,
+    agentId: options.agentId ?? AGENT_ID,
     sessionId: "replay-session",
     timestamp: "2026-07-26T06:27:50.000Z",
-    message: { role: "assistant", content: [{ type: "text", text: "summary of the docs" }] },
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "summary of the docs" }],
+      stop_reason: options.stopReason ?? null,
+    },
   });
 }
 
@@ -77,24 +81,40 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
   let cwd: string;
   let configDir: string;
 
+  function writeParentSession(parentLines: string[]): string {
+    const historyDir = claudeProjectDirSync(cwd, { configDir });
+    mkdirSync(historyDir, { recursive: true });
+    writeFileSync(path.join(historyDir, "replay-session.jsonl"), parentLines.join("\n"));
+    return path.join(historyDir, "replay-session", "subagents");
+  }
+
+  function writeSubagent(options: {
+    subagentDir: string;
+    agentId?: string;
+    meta?: string | null;
+    sidechainLines?: string[];
+  }): void {
+    const agentId = options.agentId ?? AGENT_ID;
+    mkdirSync(options.subagentDir, { recursive: true });
+    writeFileSync(
+      path.join(options.subagentDir, `agent-${agentId}.jsonl`),
+      (options.sidechainLines ?? [sidechainEntry({ agentId })]).join("\n"),
+    );
+    if (options.meta !== null && options.meta !== undefined) {
+      writeFileSync(path.join(options.subagentDir, `agent-${agentId}.meta.json`), options.meta);
+    }
+  }
+
   function writeSession(options: {
     parentLines: string[];
     meta?: string | null;
     sidechainLines?: string[];
   }): void {
-    const historyDir = claudeProjectDirSync(cwd, { configDir });
-    mkdirSync(historyDir, { recursive: true });
-    writeFileSync(path.join(historyDir, "replay-session.jsonl"), options.parentLines.join("\n"));
-
-    const subagentDir = path.join(historyDir, "replay-session", "subagents");
-    mkdirSync(subagentDir, { recursive: true });
-    writeFileSync(
-      path.join(subagentDir, `agent-${AGENT_ID}.jsonl`),
-      (options.sidechainLines ?? [sidechainEntry()]).join("\n"),
-    );
-    if (options.meta !== null && options.meta !== undefined) {
-      writeFileSync(path.join(subagentDir, `agent-${AGENT_ID}.meta.json`), options.meta);
-    }
+    writeSubagent({
+      subagentDir: writeParentSession(options.parentLines),
+      meta: options.meta,
+      sidechainLines: options.sidechainLines,
+    });
   }
 
   async function replayDescriptors(): Promise<
@@ -196,6 +216,69 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     expect(statuses).not.toContain("completed");
     expect(statuses).not.toContain("failed");
     expect(statuses).toContain("running");
+  });
+
+  test("finishes a Task subagent from its own end_turn when the parent outcome is missing", async () => {
+    writeSession({
+      parentLines: [taskToolUse()],
+      meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+      sidechainLines: [sidechainEntry({ stopReason: "end_turn" })],
+    });
+
+    expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({
+      id: TOOL_USE_ID,
+      status: "completed",
+    });
+  });
+
+  test("does not replay a skill-spawned subagent the parent never named", async () => {
+    // The reported bug. A /code-review subagent has no Task tool_use, so its sidecar carries only
+    // agentType and its id appears nowhere in the parent — it used to replay as running forever,
+    // and every reopen resurrected it.
+    writeSession({
+      parentLines: [parentEntry([{ type: "text", text: "running /code-review" }])],
+      meta: JSON.stringify({ agentType: "general-purpose" }),
+      sidechainLines: [sidechainEntry({ stopReason: "end_turn" })],
+    });
+
+    expect(upserts(await replayDescriptors())).toEqual([]);
+  });
+
+  test("does not accumulate internal workflow agents as replay-only running rows", async () => {
+    const subagentRoot = writeParentSession([
+      parentEntry([
+        {
+          type: "tool_use",
+          id: "toolu_workflow",
+          name: "Workflow",
+          input: { script: "await Promise.all([agent('one'), agent('two'), agent('three')])" },
+        },
+      ]),
+    ]);
+    const workflowDir = path.join(subagentRoot, "workflows", "wf_c240e728-6ea");
+
+    for (const agentId of ["a17a341a0902f5799", "ae2d01ba2dfa46032", "abc9f20546c326c53"]) {
+      writeSubagent({
+        subagentDir: workflowDir,
+        agentId,
+        meta: JSON.stringify({ agentType: "workflow-subagent", spawnDepth: 1 }),
+        sidechainLines: [sidechainEntry({ agentId, stopReason: "end_turn" })],
+      });
+    }
+
+    expect(upserts(await replayDescriptors())).toEqual([]);
+  });
+
+  test("does not replay a subagent whose toolUseId names no Task call in this transcript", async () => {
+    // A grandchild recorded before spawnDepth existed: the Task call it names was made inside a
+    // sibling's session, so no tool_result for it can ever reach this parent.
+    writeSession({
+      parentLines: [parentEntry([{ type: "text", text: "no task calls here" }])],
+      meta: JSON.stringify({ toolUseId: TOOL_USE_ID, agentType: "Explore" }),
+      sidechainLines: [sidechainEntry({ stopReason: "end_turn" })],
+    });
+
+    expect(upserts(await replayDescriptors())).toEqual([]);
   });
 
   test.each([

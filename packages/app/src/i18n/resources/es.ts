@@ -939,9 +939,14 @@ export const es: TranslationResources = {
         host: "Host",
         changeRequest: "Pull request",
         checks: "Comprobaciones",
-        scripts: "Scripts",
+        services: "Servicios",
         diff: "Estadísticas de cambios",
         timestamp: "Última actividad",
+      },
+      checks: {
+        iconAndText: "Icono y texto",
+        icon: "Solo icono",
+        none: "Oculto",
       },
       hostFilter: {
         label: "Host",
@@ -1015,7 +1020,8 @@ export const es: TranslationResources = {
     },
     workspace: {
       status: {
-        scriptsAvailable: "Guiones disponibles",
+        serviceRunning: "Servicio {{name}} en ejecución",
+        serviceUnhealthy: "Servicio {{name}} con fallos",
         creating: "Creando...",
       },
       actions: {
@@ -1440,6 +1446,19 @@ export const es: TranslationResources = {
         show: "Mostrar avanzado",
         hide: "Ocultar avanzado",
       },
+      headers: {
+        title: "Encabezados personalizados",
+        add: "Añadir encabezado",
+        name: "Nombre",
+        value: "Valor",
+        remove: "Eliminar encabezado",
+        errors: {
+          missingName: "Introduce un nombre para cada encabezado",
+          invalidName: "{{name}} no es un nombre de encabezado válido",
+          invalidValue: "{{name}} contiene un salto de línea no válido",
+          duplicateName: "{{name}} se ha introducido más de una vez",
+        },
+      },
       passwordVisibility: {
         show: "Mostrar contraseña",
         hide: "Ocultar contraseña",
@@ -1791,6 +1810,7 @@ export const es: TranslationResources = {
           es: "Español",
           fr: "Français",
           ja: "日本語",
+          ko: "한국어",
           ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",

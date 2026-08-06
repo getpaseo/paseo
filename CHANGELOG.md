@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0-beta.2 - 2026-08-05
+
+### Fixed
+
+- Terminal output keeps updating when you leave the app and come back ([#2896](https://github.com/getpaseo/paseo/pull/2896))
+
 ## 0.3.0-beta.1 - 2026-08-04
 
 ### Added

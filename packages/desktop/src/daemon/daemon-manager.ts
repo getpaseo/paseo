@@ -26,8 +26,10 @@ import {
 import { createSkillsCommandHandlers, getSkillsController } from "../integrations/skills/index.js";
 import {
   openLocalTransportSession,
+  openWebSocketTransportSession,
   sendLocalTransportMessage,
   closeLocalTransportSession,
+  type WebSocketTransportTarget,
 } from "./local-transport.js";
 import { createNodeEntrypointInvocation, resolveDaemonRunnerEntrypoint } from "./runtime-paths.js";
 import { runExternalCliJsonCommand, runExternalCliTextCommand } from "./cli/external.js";
@@ -536,6 +538,9 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     open_local_daemon_transport: async (args) => {
       const target = args as { transportType: "socket" | "pipe"; transportPath: string };
       return await openLocalTransportSession(target);
+    },
+    open_websocket_daemon_transport: async (args) => {
+      return await openWebSocketTransportSession(args as unknown as WebSocketTransportTarget);
     },
     send_local_daemon_transport_message: async (args) => {
       await sendLocalTransportMessage(

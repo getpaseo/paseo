@@ -39,6 +39,18 @@ public class ExpoTwoWayAudioModule: Module {
             }
         }
 
+        // Safety net for the JS-driven release in `stopCapture`/`processQueue`: never leave
+        // the non-mixing `.playAndRecord` session active while backgrounded, or iOS
+        // re-asserts it on the next foreground and kills the user's music again.
+        OnAppEntersBackground {
+            guard self.audioEngine?.isRecording == false else { return }
+            self.audioEngine?.releaseAudioSession()
+        }
+
+        Function("releaseAudioSession") {
+            self.audioEngine?.releaseAudioSession()
+        }
+
         Function("isRecording") { () -> Bool in
             guard let audioEngine = self.audioEngine else {
                 print("AudioEngine not initialized")

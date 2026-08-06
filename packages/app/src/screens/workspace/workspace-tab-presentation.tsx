@@ -9,7 +9,7 @@ import { ensurePanelsRegistered } from "@/panels/register-panels";
 import { getPanelRegistration } from "@/panels/panel-registry";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
-import { isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
+import { getStatusDotColor, isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import type { Theme } from "@/styles/theme";
 import { usePanelInstanceAttributes } from "@/panels/panel-instance-attributes";
@@ -125,7 +125,7 @@ export function WorkspaceTabIcon({
 }: WorkspaceTabIconProps): ReactElement {
   const iconColor = active ? styles.iconActive.color : styles.iconInactive.color;
   const bucket = presentation.statusBucket;
-  let statusDotColor: string | null = null;
+  let statusDotColor: string | undefined;
   if (bucket === "needs_input") statusDotColor = styles.statusDotNeedsInput.color;
   else if (bucket === "failed") statusDotColor = styles.statusDotFailed.color;
   else if (bucket === "running") statusDotColor = styles.statusDotRunning.color;
@@ -149,7 +149,7 @@ export function WorkspaceTabIcon({
     () => [
       styles.statusDot,
       {
-        backgroundColor: statusDotColor ?? undefined,
+        backgroundColor: statusDotColor,
         borderColor: statusDotBorderColor ?? styles.statusDotBorderDefault.borderColor,
         width: statusDotSize,
         height: statusDotSize,
@@ -255,16 +255,16 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.surface0,
   },
   statusDotNeedsInput: {
-    color: theme.colors.palette.amber[500],
+    color: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
   },
   statusDotFailed: {
-    color: theme.colors.palette.red[500],
+    color: getStatusDotColor({ theme, bucket: "failed" }) ?? undefined,
   },
   statusDotRunning: {
-    color: theme.colors.palette.blue[500],
+    color: getStatusDotColor({ theme, bucket: "running" }) ?? undefined,
   },
   statusDotAttention: {
-    color: theme.colors.palette.green[500],
+    color: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
   },
   iconActive: {
     color: theme.colors.foreground,
@@ -273,10 +273,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
   },
   syncedLoader: {
-    color:
-      theme.colorScheme === "light"
-        ? theme.colors.palette.amber[700]
-        : theme.colors.palette.amber[500],
+    color: theme.colors.foreground,
   },
   optionRow: {
     flexDirection: "row",

@@ -69,10 +69,13 @@ function WorkspaceTimestamp({ enteredAt }: { enteredAt: Date }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // A step below the project title it shares the row with. The timestamp is the one thing here
+  // you never came looking for, so it sits at the bottom of the muted ramp rather than tying
+  // with the label naming the group.
   timestamp: {
     height: 20,
     lineHeight: 20,
-    color: theme.colors.foregroundMuted,
+    color: theme.colors.foregroundExtraMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
     flexShrink: 0,

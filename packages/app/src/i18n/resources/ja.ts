@@ -919,9 +919,14 @@ export const ja: TranslationResources = {
         host: "ホスト",
         changeRequest: "プルリクエスト",
         checks: "チェック",
-        scripts: "スクリプト",
+        services: "サービス",
         diff: "差分統計",
         timestamp: "最終アクティビティ",
+      },
+      checks: {
+        iconAndText: "アイコンとテキスト",
+        icon: "アイコンのみ",
+        none: "非表示",
       },
       hostFilter: {
         label: "ホスト",
@@ -995,7 +1000,8 @@ export const ja: TranslationResources = {
     },
     workspace: {
       status: {
-        scriptsAvailable: "スクリプトが利用可能",
+        serviceRunning: "サービス {{name}} 実行中",
+        serviceUnhealthy: "サービス {{name}} 異常",
         creating: "作成中...",
       },
       actions: {
@@ -1413,6 +1419,19 @@ export const ja: TranslationResources = {
         show: "詳細設定を表示",
         hide: "詳細設定を非表示",
       },
+      headers: {
+        title: "カスタムヘッダー",
+        add: "ヘッダーを追加",
+        name: "名前",
+        value: "値",
+        remove: "ヘッダーを削除",
+        errors: {
+          missingName: "各ヘッダーの名前を入力してください",
+          invalidName: "{{name}} は有効なヘッダー名ではありません",
+          invalidValue: "{{name}} に無効な改行が含まれています",
+          duplicateName: "{{name}} が複数回入力されています",
+        },
+      },
       passwordVisibility: {
         show: "パスワードを表示",
         hide: "パスワードを非表示",
@@ -1759,6 +1778,7 @@ export const ja: TranslationResources = {
           es: "スペイン語",
           fr: "フランス語",
           ja: "日本語",
+          ko: "韓国語",
           ptBR: "ブラジルポルトガル語",
           ru: "ロシア語",
           zhCN: "簡体字中国語",

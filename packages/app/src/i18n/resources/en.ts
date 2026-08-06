@@ -918,9 +918,14 @@ export const en = {
         host: "Host",
         changeRequest: "Pull request",
         checks: "Checks",
-        scripts: "Scripts",
+        services: "Services",
         diff: "Diff stats",
         timestamp: "Last activity",
+      },
+      checks: {
+        iconAndText: "Icon and text",
+        icon: "Icon only",
+        none: "Hidden",
       },
       hostFilter: {
         label: "Host",
@@ -994,7 +999,8 @@ export const en = {
     },
     workspace: {
       status: {
-        scriptsAvailable: "Scripts available",
+        serviceRunning: "Service {{name}} running",
+        serviceUnhealthy: "Service {{name}} unhealthy",
         creating: "Creating...",
       },
       actions: {
@@ -1410,6 +1416,19 @@ export const en = {
         show: "Show advanced",
         hide: "Hide advanced",
       },
+      headers: {
+        title: "Custom headers",
+        add: "Add header",
+        name: "Name",
+        value: "Value",
+        remove: "Remove header",
+        errors: {
+          missingName: "Enter a name for each header",
+          invalidName: "{{name}} is not a valid header name",
+          invalidValue: "{{name}} contains an invalid line break",
+          duplicateName: "{{name}} is entered more than once",
+        },
+      },
       passwordVisibility: {
         show: "Show password",
         hide: "Hide password",
@@ -1754,6 +1773,7 @@ export const en = {
           es: "Spanish",
           fr: "French",
           ja: "Japanese",
+          ko: "Korean",
           ptBR: "Brazilian Portuguese",
           ru: "Russian",
           zhCN: "Simplified Chinese",
