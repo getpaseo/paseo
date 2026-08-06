@@ -121,8 +121,16 @@ const temporaryDirs: string[] = [];
  * the way out (zsh drops a history file and a compdump into `$ZDOTDIR`).
  * Deleting its directory before then loses the race as `ENOTEMPTY`: the
  * recursive walk empties the directory, the dying shell recreates a file in it,
- * and the final rmdir fails. Waiting for the exit removes the race instead of
- * retrying through it.
+ * and the final rmdir fails.
+ *
+ * Waiting for the exit shrinks that window but does not close it: some of those
+ * writes come from processes zsh forked, which outlive the pty and answer to
+ * nothing we hold. Retries alone did not close it either.
+ *
+ * So teardown is best-effort. A temp directory we cannot remove is not a defect
+ * in the terminal code these tests cover, and failing on it reports the race
+ * against whichever assertion happened to run last, which is how this surfaced:
+ * as a flake in an unrelated zsh title test. The OS reclaims the directory.
  */
 async function waitForSessionExit(session: TerminalSession): Promise<void> {
   const exited = new Promise<void>((resolve) => {
@@ -142,7 +150,11 @@ afterEach(async () => {
   while (temporaryDirs.length > 0) {
     const dir = temporaryDirs.pop();
     if (dir) {
-      rmSync(dir, { recursive: true, force: true });
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 });
+      } catch (error) {
+        console.warn(`leaving temp dir behind: ${dir}`, error);
+      }
     }
   }
 });
@@ -294,8 +306,15 @@ describe("createTerminal", () => {
         env: { ComSpec: "C:\\Windows\\System32\\cmd.exe" },
         resolveExecutable: async () => "C:\\npm\\claude.cmd",
       });
-      expect(typeof resolved.args).toBe("string");
-      return resolved.args as string;
+      // A real narrow rather than a cast: the `.cmd` branch is the one case
+      // that returns a pre-escaped command line instead of argv, so if that
+      // contract ever changes these tests should fail loudly here rather than
+      // assert against a stringified array.
+      const { args } = resolved;
+      if (typeof args !== "string") {
+        throw new Error(`expected a cmd.exe command line, got ${JSON.stringify(args)}`);
+      }
+      return args;
     }
 
     // Each expected string is the exact cmd.exe command line the escaping
@@ -1263,7 +1282,11 @@ describe.runIf(isPlatform("win32"))(".cmd shim argv round-trip on Windows", () =
       expect(result.error).toBeUndefined();
       return result.stdout.replace(/\r\n/g, "\n").trim();
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 });
+      } catch (error) {
+        console.warn(`leaving temp dir behind: ${dir}`, error);
+      }
     }
   }
 
