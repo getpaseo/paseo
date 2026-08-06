@@ -15,6 +15,10 @@
  * graph — and so `./sandbox` can keep resolving to the per-platform variant.
  */
 export function isPluginDocumentUrl(url: string): boolean {
-  const normalized = url.trim().toLowerCase();
+  // Fragment dropped before the comparison. `<a href="#section">` is the first
+  // thing a document-preview plugin writes and it arrives as
+  // `about:srcdoc#section`; the fragment names a position in the document the
+  // frame is already showing, so it is not a destination.
+  const normalized = url.trim().toLowerCase().split("#")[0];
   return normalized === "about:blank" || normalized === "about:srcdoc";
 }

@@ -472,22 +472,39 @@ interface PluginSidebarTab {
   entry: string;
 }
 
-/** Enabled, usable plugins' sidebar panels, ordered stably by plugin id. */
+/**
+ * Enabled, usable plugins' sidebar panels, ordered stably by plugin id.
+ *
+ * First panel wins a repeated id. The tab key is `plugin:<id>:<panel>`, so a
+ * manifest declaring the same panel id twice produces two identical keys — a
+ * duplicate React key, and a second tab that can never be selected because the
+ * first answers to the same key. Nothing rejects such a manifest: the id is
+ * unique per plugin only by convention.
+ */
 function resolvePluginSidebarTabs(
   plugins: readonly InstalledPlugin[],
 ): readonly PluginSidebarTab[] {
   return [...plugins]
     .filter((plugin) => plugin.enabled && plugin.unavailableReason === null)
     .sort((left, right) => left.manifest.id.localeCompare(right.manifest.id))
-    .flatMap((plugin) =>
-      (plugin.manifest.contributes.sidebarPanels ?? []).map((panel) => ({
-        tab: buildPluginExplorerTab(plugin.manifest.id, panel.id),
-        pluginId: plugin.manifest.id,
-        pluginName: plugin.manifest.name,
-        title: panel.title,
-        entry: panel.entry,
-      })),
-    );
+    .flatMap((plugin) => {
+      const seen = new Set<string>();
+      return (plugin.manifest.contributes.sidebarPanels ?? [])
+        .filter((panel) => {
+          if (seen.has(panel.id)) {
+            return false;
+          }
+          seen.add(panel.id);
+          return true;
+        })
+        .map((panel) => ({
+          tab: buildPluginExplorerTab(plugin.manifest.id, panel.id),
+          pluginId: plugin.manifest.id,
+          pluginName: plugin.manifest.name,
+          title: panel.title,
+          entry: panel.entry,
+        }));
+    });
 }
 
 const ThemedPuzzle = withUnistyles(Puzzle);

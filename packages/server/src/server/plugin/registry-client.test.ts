@@ -269,6 +269,25 @@ describe("PluginRegistryClient", () => {
     expect(http.byteRequests).toEqual([]);
   });
 
+  // Both entries verify against their own hash, and the second write wins — so
+  // the file that lands is not the one whose hash the user's daemon checked.
+  test("refuses an entry that lists the same file twice", async () => {
+    const index = buildIndex();
+    const first = index.plugins[0];
+    if (!first?.files[0]) {
+      throw new Error("fixture changed");
+    }
+    first.files = [first.files[0], { ...first.files[0], url: `${first.files[0].url}?v=2` }];
+    const http = createFakeHttp({
+      index,
+      files: { "https://plugins.paseo.sh/csv-table/preview.html": PREVIEW_HTML },
+    });
+    const client = new PluginRegistryClient({ registryUrl: REGISTRY_URL, http });
+
+    await expect(client.download("csv-table")).rejects.toBeInstanceOf(PluginDownloadRejectedError);
+    expect(http.byteRequests).toEqual([]);
+  });
+
   test("aborts a body that streams past the declared size", async () => {
     // The index claims a kilobyte, the server streams megabytes with no
     // content-length: the transfer has to stop while reading, not after the

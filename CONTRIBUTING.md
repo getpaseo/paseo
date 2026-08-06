@@ -40,7 +40,9 @@ Due to the volume and my limited bandwidth, I may not participate in all the dis
 
 Plugins extend Paseo's UI without a PR to this repo. If what you want is a file preview or a sidebar panel, write a plugin instead of asking for the feature. [docs/plugins.md](docs/plugins.md) is the contract, and `examples/plugins/hello-paseo/` is a working starting point.
 
-Plugins are published to the registry, not to this monorepo. Don't open a PR adding your plugin here.
+Plugins are published to a registry, not to this monorepo. Don't open a PR adding your plugin here.
+
+**There is no open registry yet.** `plugins.paseo.sh` is the default in `daemon.plugins.registryUrl` and it does not exist — there is no submission process and no queue to join. Until there is one, the way to ship a plugin to other people is to host your own index and tell them to point their daemon at it; [Self-hosting an index](docs/plugins.md#self-hosting-an-index) has the file format and the `https`/SHA-256 rules the daemon enforces. Opening a discussion about a plugin you have published is welcome — that is how the first registry gets seeded.
 
 A PR adding a new contribution point, or widening the host bridge, is a product decision. Open a discussion first — those decisions shape what every plugin can do, and I close unsolicited ones.
 

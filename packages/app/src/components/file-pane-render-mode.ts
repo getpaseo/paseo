@@ -71,6 +71,31 @@ export function resolveFilePreviewRenderer(input: {
   return isRenderedMarkdownFile(input.filePath) ? { kind: "markdown" } : { kind: "code" };
 }
 
+/**
+ * The file pane's whole renderer decision, minus the query.
+ *
+ * The two gates are separate on purpose. `previewable` is false for a binary
+ * preview or a line target — only the code view can honour a specific line — and
+ * turns everything off. `pluginEligible` is narrower: it is false for a file
+ * with no workspace-relative path, because there is no path a plugin could be
+ * handed. Only the plugin half is gated on it. Collapsing the two took the
+ * built-in markdown view away from `~/notes.md`, which it had always rendered.
+ */
+export function resolveFilePreviewRendererGated(input: {
+  filePath: string;
+  plugins: readonly InstalledPlugin[];
+  previewable: boolean;
+  pluginEligible: boolean;
+}): FilePreviewRenderer {
+  if (!input.previewable) {
+    return { kind: "code" };
+  }
+  return resolveFilePreviewRenderer({
+    filePath: input.filePath,
+    plugins: input.pluginEligible ? input.plugins : [],
+  });
+}
+
 export interface PluginFilePreviewConflict {
   extension: string;
   winnerPluginId: string;

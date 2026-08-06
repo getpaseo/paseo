@@ -173,6 +173,41 @@ The registry index defaults to `https://plugins.paseo.sh/index.json` and is over
 
 A plugin whose `paseoVersion` does not match, whose manifest stopped parsing, or whose entry file is missing stays listed with an `unavailableReason` instead of disappearing. Silent disappearance is worse than a visible broken row.
 
+### Self-hosting an index
+
+`plugins.paseo.sh` does not exist yet and there is no submission process, so hosting your own index is how you get a plugin to other people. It is one JSON file at any URL a daemon can reach:
+
+```json
+{
+  "version": 1,
+  "plugins": [
+    {
+      "manifest": { "id": "hello-paseo", "...": "the plugin's paseo-plugin.json, verbatim" },
+      "files": [
+        {
+          "name": "preview.html",
+          "url": "https://example.com/hello-paseo/1.0.0/preview.html",
+          "sha256": "5f2c…",
+          "bytes": 1843
+        }
+      ],
+      "publishedAt": "2026-01-01T00:00:00Z",
+      "installs": 0
+    }
+  ]
+}
+```
+
+What the daemon enforces, and why it is worth knowing before you publish rather than after:
+
+- **Every file URL is `https:`.** A `file:` URL is accepted only when the index itself is a `file:` URL, which is the development case.
+- **`sha256` and `bytes` both have to match**, and the download is aborted mid-stream once it passes `bytes` — a CDN that streams more than the entry declares fails the install rather than filling the daemon's heap. Re-hash and re-measure on every publish; a stale hash is the most common broken listing.
+- **`files` holds 1 to 64 entries and 8 MiB total.** The count is capped separately from the bytes: an entry declaring thousands of tiny files stays inside the byte budget while the daemon walks the whole list.
+- **`name` is a flat `*.html` filename**, and every entry a contribution names has to be listed or the install is refused before anything is written.
+- **A malformed entry loses its own listing, not the registry's.** The index envelope is parsed loosely and each entry strictly, so one bad plugin does not take the index offline — which also means a publisher's plugin can vanish from Browse with the reason only in the daemon log.
+
+Point a daemon at it with `daemon.plugins.registryUrl` in `config.json`. The daemon caches the index for five minutes; Browse's refresh forces past that.
+
 ## Trust
 
 Installing a plugin means trusting whoever published it with what the bridge exposes: the content of files you preview with it, and the ability to ask the app to open a path inside the workspace.

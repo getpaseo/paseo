@@ -26,6 +26,8 @@ import { satisfiesVersionRange } from "./version-range.js";
 
 export const PLUGIN_MANIFEST_FILENAME = "paseo-plugin.json";
 const STATE_FILENAME = "installed.json";
+/** Stands in for an install time the state file does not have. */
+const EPOCH_ISO = new Date(0).toISOString();
 const PluginStateEntrySchema = PluginStateFileSchema.shape.plugins.element;
 
 /** The requested plugin has no directory under `$PASEO_HOME/plugins/`. */
@@ -140,8 +142,7 @@ export class PluginStore {
 
   async list(): Promise<InstalledPlugin[]> {
     await this.initialize();
-    const directories = await this.listPluginDirectories();
-    const state = await this.reconcileState(directories);
+    const { directories, state } = await this.reconcileState();
     const plugins = await Promise.all(
       directories.map(async (pluginId) => this.describe(pluginId, state)),
     );
@@ -192,7 +193,17 @@ export class PluginStore {
         await rm(source, { recursive: true, force: true });
       }
     })();
-    await this.ready;
+    try {
+      await this.ready;
+    } catch (error) {
+      // Uncached on failure. The promise is memoised so the scan runs once, but
+      // memoising a rejection makes a transient `mkdir`/`readdir` failure — a
+      // full disk, a home directory not mounted yet — reject every later
+      // list/read/install until the daemon restarts. Dropping it lets the next
+      // caller retry.
+      this.ready = null;
+      throw error;
+    }
   }
 
   async get(pluginId: string): Promise<InstalledPlugin | null> {
@@ -406,7 +417,11 @@ export class PluginStore {
     const stateEntry = state.find((entry) => entry.id === pluginId);
     const base = {
       enabled: stateEntry?.enabled ?? true,
-      installedAt: stateEntry?.installedAt ?? this.now().toISOString(),
+      // `reconcileState` puts an entry there for every directory in the same
+      // snapshot, so this fallback is unreachable. The epoch rather than `now()`
+      // if it ever is reached: a plugin listed as installed seconds ago reads as
+      // a fact, and this one would be an invention.
+      installedAt: stateEntry?.installedAt ?? EPOCH_ISO,
       source: stateEntry?.source ?? ({ kind: "local" } as const),
     };
 
@@ -507,13 +522,15 @@ export class PluginStore {
   }
 
   private async mutateState(
-    mutate: (state: readonly PluginStateEntry[]) => PluginStateEntry[],
+    mutate: (
+      state: readonly PluginStateEntry[],
+    ) => PluginStateEntry[] | Promise<PluginStateEntry[]>,
   ): Promise<PluginStateEntry[]> {
     const next = this.mutations
       .catch(() => undefined)
       .then(async () => {
         const current = await this.readState();
-        const updated = mutate(current);
+        const updated = await mutate(current);
         // `list()` reconciles on every call; skip the write when it changed
         // nothing. ponytail: JSON compare, both sides are built in schema key
         // order, and a false mismatch only costs one redundant write.
@@ -531,9 +548,20 @@ export class PluginStore {
    * is gone, so a hand-installed plugin gets a stable `installedAt` instead of
    * a new one on every list.
    */
-  private async reconcileState(directories: readonly string[]): Promise<PluginStateEntry[]> {
-    return this.mutateState((state) => {
-      const kept = state.filter((entry) => directories.includes(entry.id));
+  private async reconcileState(): Promise<{
+    directories: string[];
+    state: PluginStateEntry[];
+  }> {
+    let directories: string[] = [];
+    // The directory listing is taken inside the serialized chain, not by the
+    // caller beforehand. A snapshot read before a concurrent `uninstall` removed
+    // the directory, whose reconcile then lands after that uninstall's filter,
+    // re-adds the removed plugin with a fresh `installedAt` — it self-heals on
+    // the next list, but reports the plugin as installed-with-missing-manifest
+    // in between.
+    const state = await this.mutateState(async (current) => {
+      directories = await this.listPluginDirectories();
+      const kept = current.filter((entry) => directories.includes(entry.id));
       const discovered = directories
         .filter((pluginId) => !kept.some((entry) => entry.id === pluginId))
         .map((pluginId) => ({
@@ -544,6 +572,7 @@ export class PluginStore {
         }));
       return [...kept, ...discovered];
     });
+    return { directories, state };
   }
 }
 

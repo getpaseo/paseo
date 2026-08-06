@@ -21,7 +21,7 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import {
-  resolveFilePreviewRenderer,
+  resolveFilePreviewRendererGated,
   type FilePreviewRenderer,
 } from "@/components/file-pane-render-mode";
 import { PluginSandbox } from "@/plugins/sandbox";
@@ -483,6 +483,9 @@ function PluginFilePreview({
   );
 }
 
+/** How long the pane waits for the plugin list before rendering without it. */
+const PLUGIN_RENDERER_WAIT_MS = 2_000;
+
 /**
  * Which viewer renders this file, and whether that answer is still settling.
  *
@@ -499,15 +502,35 @@ function useFilePreviewRenderer(input: {
 }): { renderer: FilePreviewRenderer; rendererPending: boolean } {
   const { serverId, workspaceRoot, filePath, lineStart, isTextPreview } = input;
   const { plugins, isLoading } = usePlugins(serverId);
-  // A line target means the user asked for a specific line, which only the
-  // code view can honour. A file outside the workspace has no path a plugin
-  // could be handed.
-  const pluggable = isTextPreview && !lineStart && isPluginPreviewablePath(workspaceRoot, filePath);
+  const previewable = isTextPreview && !lineStart;
+  const pluggable = previewable && isPluginPreviewablePath(workspaceRoot, filePath);
   const renderer = useMemo<FilePreviewRenderer>(
-    () => (pluggable ? resolveFilePreviewRenderer({ filePath, plugins }) : { kind: "code" }),
-    [filePath, plugins, pluggable],
+    () =>
+      resolveFilePreviewRendererGated({
+        filePath,
+        plugins,
+        previewable,
+        pluginEligible: pluggable,
+      }),
+    [filePath, plugins, previewable, pluggable],
   );
-  return { renderer, rendererPending: isLoading && pluggable };
+
+  // Bounded, because the file pane is a core path and the plugin list is a
+  // separate RPC: a daemon that is slow or never answers must not hold the
+  // whole pane on a spinner. Past the deadline the built-in renderer wins, and
+  // a plugin answer that lands later just re-renders into it.
+  const waiting = isLoading && pluggable;
+  const [waitedTooLong, setWaitedTooLong] = useState(false);
+  useEffect(() => {
+    if (!waiting) {
+      setWaitedTooLong(false);
+      return;
+    }
+    const timer = setTimeout(() => setWaitedTooLong(true), PLUGIN_RENDERER_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [waiting]);
+
+  return { renderer, rendererPending: waiting && !waitedTooLong };
 }
 
 export function FilePane({

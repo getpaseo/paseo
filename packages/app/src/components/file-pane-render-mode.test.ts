@@ -5,6 +5,7 @@ import {
   pluginFilePreviewConflicts,
   pluginFilePreviewsForPath,
   resolveFilePreviewRenderer,
+  resolveFilePreviewRendererGated,
 } from "@/components/file-pane-render-mode";
 
 function installedPlugin(input: {
@@ -132,6 +133,60 @@ describe("resolveFilePreviewRenderer", () => {
     expect(resolveFilePreviewRenderer({ filePath: "/w/archive.gz", plugins })).toEqual({
       kind: "code",
     });
+  });
+});
+
+describe("resolveFilePreviewRendererGated", () => {
+  const plugins = [installedPlugin({ id: "csv", extensions: [".csv"] })];
+
+  // The regression this exists for: a file with no workspace-relative path is
+  // ineligible for plugins, and gating the whole decision on that took the
+  // built-in markdown view away from every `~/notes.md` in the file explorer.
+  it("still renders markdown for a file no plugin could be handed", () => {
+    expect(
+      resolveFilePreviewRendererGated({
+        filePath: "/home/someone/notes.md",
+        plugins,
+        previewable: true,
+        pluginEligible: false,
+      }),
+    ).toEqual({ kind: "markdown" });
+  });
+
+  it("does not give a plugin a file it has no path for", () => {
+    expect(
+      resolveFilePreviewRendererGated({
+        filePath: "/home/someone/data.csv",
+        plugins,
+        previewable: true,
+        pluginEligible: false,
+      }),
+    ).toEqual({ kind: "code" });
+  });
+
+  it("lets a plugin win inside the workspace", () => {
+    expect(
+      resolveFilePreviewRendererGated({
+        filePath: "/repo/data.csv",
+        plugins,
+        previewable: true,
+        pluginEligible: true,
+      }),
+    ).toMatchObject({ kind: "plugin", pluginId: "csv" });
+  });
+
+  it("falls back to code when nothing is previewable", () => {
+    for (const filePath of ["/repo/notes.md", "/repo/data.csv"]) {
+      expect(
+        resolveFilePreviewRendererGated({
+          filePath,
+          plugins,
+          previewable: false,
+          pluginEligible: true,
+        }),
+        filePath,
+      ).toEqual({ kind: "code" });
+    }
   });
 });
 

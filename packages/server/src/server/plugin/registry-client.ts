@@ -124,7 +124,11 @@ export function createFetchPluginRegistryHttp(): PluginRegistryHttp {
 
   return {
     async getJson(url) {
-      return JSON.parse(new TextDecoder().decode(await read(url, Number.POSITIVE_INFINITY)));
+      // The cap is stated here rather than left to `read`'s own clamp: the index
+      // has no per-file size to go on, so this call site is the one that decides.
+      return JSON.parse(
+        new TextDecoder().decode(await read(url, PLUGIN_REGISTRY_MAX_RESPONSE_BYTES)),
+      );
     },
     async getBytes(url, options) {
       return read(url, options?.maxBytes ?? Number.POSITIVE_INFINITY);
@@ -264,6 +268,14 @@ export class PluginRegistryClient {
         pluginId,
         `the index does not list the contributed entry "${missing}"`,
       );
+    }
+
+    // Two files under one name both verify, and the second write silently wins —
+    // so the entry that ships is not the one whose hashes were checked. The
+    // schema's `.max(64)` bounds the count, not the names.
+    const names = new Set(entry.files.map((file) => file.name));
+    if (names.size !== entry.files.length) {
+      throw new PluginDownloadRejectedError(pluginId, "the index lists the same file twice");
     }
 
     const declaredBytes = entry.files.reduce((total, file) => total + file.bytes, 0);
