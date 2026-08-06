@@ -94,6 +94,7 @@ object PaseoHardwareKeyboardKeyDispatcher {
         "ctrlKey" to ctrlKey,
         "altKey" to altKey,
         "shiftKey" to shiftKey,
+        "repeat" to (event.repeatCount > 0),
       )
     )
     // Never consumed: text inputs ignore unknown modifier combos, and consuming
