@@ -1641,6 +1641,8 @@ export const ru: TranslationResources = {
     versionLine: "v{{version}} · {{author}}",
     unsupportedTitle: "Для плагинов нужен более новый хост",
     unsupportedMessage: "Обновите этот хост до Paseo 0.2.6 или новее, чтобы использовать плагины.",
+    disconnectedTitle: "Нет подключённого хоста",
+    disconnectedMessage: "Подключитесь к хосту, чтобы устанавливать плагины и управлять ими.",
     unavailableTitle: "Плагин недоступен",
     uninstallTitle: "Удалить плагин",
     uninstallMessage: "Удалить {{name}} и его файлы с этого хоста?",
@@ -1663,8 +1665,11 @@ export const ru: TranslationResources = {
     toast: {
       installed: "Плагин установлен",
       uninstalled: "Плагин удалён",
+      enabled: "Плагин включён",
+      disabled: "Плагин отключён",
     },
     errors: {
+      readyTimeout: "Этот плагин не завершил загрузку.",
       listFailed: "Не удалось загрузить плагины",
       actionFailed: "Действие плагина не выполнено",
       registryFailed: "Не удалось загрузить реестр плагинов",

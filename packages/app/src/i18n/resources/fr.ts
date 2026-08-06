@@ -1655,6 +1655,8 @@ export const fr: TranslationResources = {
     unsupportedTitle: "Les extensions nécessitent un hôte plus récent",
     unsupportedMessage:
       "Mettez cet hôte à jour vers Paseo 0.2.6 ou version ultérieure pour utiliser les extensions.",
+    disconnectedTitle: "Aucun hôte connecté",
+    disconnectedMessage: "Connectez-vous à un hôte pour installer et gérer les extensions.",
     unavailableTitle: "Extension indisponible",
     uninstallTitle: "Désinstaller l'extension",
     uninstallMessage: "Supprimer {{name}} et ses fichiers de cet hôte ?",
@@ -1677,8 +1679,11 @@ export const fr: TranslationResources = {
     toast: {
       installed: "Extension installée",
       uninstalled: "Extension désinstallée",
+      enabled: "Extension activée",
+      disabled: "Extension désactivée",
     },
     errors: {
+      readyTimeout: "Cette extension n'a pas fini de se charger.",
       listFailed: "Impossible de charger les extensions",
       actionFailed: "L'action de l'extension a échoué",
       registryFailed: "Impossible de charger le registre des extensions",

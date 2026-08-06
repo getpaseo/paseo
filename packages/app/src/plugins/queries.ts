@@ -6,6 +6,7 @@ import { useReplicaQuery, useFetchQuery } from "@/data/query";
 import { useHostFeature } from "@/runtime/host-features";
 import { useSessionStore } from "@/stores/session-store";
 import { pluginEntryQueryKey, pluginRegistryQueryKey, pluginsQueryKey } from "./query-keys";
+import { resolvePluginsSupport, type PluginsSupport } from "./model";
 
 export { pluginEntryQueryKey, pluginRegistryQueryKey, pluginsQueryKey };
 
@@ -13,23 +14,31 @@ function usePluginClient(serverId: string | null) {
   return useSessionStore((state) => state.sessions[serverId ?? ""]?.client ?? null);
 }
 
+/** Whether this host has plugins, has no plugins, or has not said yet. */
+export function usePluginsSupport(serverId: string | null): PluginsSupport {
+  // COMPAT(plugins): added in v0.2.6, remove gate after 2027-02-05.
+  const hasPluginsFeature = useHostFeature(serverId, "plugins");
+  const hasServerInfo = useSessionStore(
+    (state) => (state.sessions[serverId ?? ""]?.serverInfo ?? null) !== null,
+  );
+  return resolvePluginsSupport({ serverId, hasServerInfo, hasPluginsFeature });
+}
+
 export interface UsePluginsResult {
   plugins: InstalledPlugin[];
-  /** False when the daemon is too old to have plugins at all. */
-  supported: boolean;
+  support: PluginsSupport;
   isLoading: boolean;
   error: Error | null;
 }
 
 export function usePlugins(serverId: string | null): UsePluginsResult {
   const client = usePluginClient(serverId);
-  // COMPAT(plugins): added in v0.2.6, remove gate after 2027-02-05.
-  const supported = useHostFeature(serverId, "plugins");
+  const support = usePluginsSupport(serverId);
   const { t } = useTranslation();
 
   const query = useReplicaQuery({
     queryKey: pluginsQueryKey(serverId),
-    enabled: Boolean(serverId && client && supported),
+    enabled: Boolean(serverId && client && support === "supported"),
     pushEvent: "plugins.changed",
     queryFn: async () => {
       if (!client) {
@@ -45,7 +54,7 @@ export function usePlugins(serverId: string | null): UsePluginsResult {
 
   return {
     plugins: query.data ?? EMPTY_PLUGINS,
-    supported,
+    support,
     isLoading: query.isLoading,
     error: query.error ?? null,
   };
@@ -60,13 +69,13 @@ export function usePluginEntry(input: {
   entry: string | null;
 }) {
   const client = usePluginClient(input.serverId);
-  const supported = useHostFeature(input.serverId, "plugins");
+  const support = usePluginsSupport(input.serverId);
   const { t } = useTranslation();
   const { pluginId, entry } = input;
 
   return useReplicaQuery({
     queryKey: pluginEntryQueryKey(input.serverId, pluginId ?? "", entry ?? ""),
-    enabled: Boolean(input.serverId && client && supported && pluginId && entry),
+    enabled: Boolean(input.serverId && client && support === "supported" && pluginId && entry),
     pushEvent: "plugins.changed",
     queryFn: async () => {
       if (!client || !pluginId || !entry) {
@@ -92,13 +101,13 @@ export interface UsePluginRegistryResult {
 
 export function usePluginRegistry(serverId: string | null): UsePluginRegistryResult {
   const client = usePluginClient(serverId);
-  const supported = useHostFeature(serverId, "plugins");
+  const support = usePluginsSupport(serverId);
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
   const query = useFetchQuery({
     queryKey: pluginRegistryQueryKey(serverId),
-    enabled: Boolean(serverId && client && supported),
+    enabled: Boolean(serverId && client && support === "supported"),
     dataShape: "list",
     staleTimeMs: 5 * 60_000,
     queryFn: async () => {

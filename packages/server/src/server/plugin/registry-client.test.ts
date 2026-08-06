@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { describe, expect, test } from "vitest";
 import type { PluginRegistryIndex } from "@getpaseo/protocol/plugin/types";
 import {
+  createFetchPluginRegistryHttp,
   PluginDownloadRejectedError,
   PluginDownloadVerificationError,
   PluginNotInRegistryError,
@@ -12,6 +15,8 @@ import {
 
 const REGISTRY_URL = "https://plugins.paseo.sh/index.json";
 const PREVIEW_HTML = "<h1>table</h1>";
+
+function ignoreSocketError(): void {}
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -52,6 +57,8 @@ function buildIndex(overrides?: {
 interface FakeHttp extends PluginRegistryHttp {
   readonly jsonRequests: string[];
   readonly byteRequests: string[];
+  /** The `maxBytes` ceiling the client handed the transport, per request. */
+  readonly byteLimits: Array<number | undefined>;
 }
 
 function createFakeHttp(options: {
@@ -61,9 +68,11 @@ function createFakeHttp(options: {
 }): FakeHttp {
   const jsonRequests: string[] = [];
   const byteRequests: string[] = [];
+  const byteLimits: Array<number | undefined> = [];
   return {
     jsonRequests,
     byteRequests,
+    byteLimits,
     async getJson(url) {
       jsonRequests.push(url);
       if (options.failIndexWith) {
@@ -71,8 +80,9 @@ function createFakeHttp(options: {
       }
       return options.index;
     },
-    async getBytes(url) {
+    async getBytes(url, byteOptions) {
       byteRequests.push(url);
+      byteLimits.push(byteOptions?.maxBytes);
       const body = options.files?.[url];
       if (body === undefined) {
         throw new Error(`404 for ${url}`);
@@ -112,11 +122,61 @@ describe("PluginRegistryClient", () => {
     expect(http.jsonRequests).toHaveLength(2);
   });
 
-  test("reports an index that does not parse", async () => {
-    const http = createFakeHttp({ index: { version: 2, plugins: [] } });
+  test("reports an index whose envelope does not parse", async () => {
+    const http = createFakeHttp({ index: { version: 1, plugins: "nope" } });
     const client = new PluginRegistryClient({ registryUrl: REGISTRY_URL, http });
 
     await expect(client.browse()).rejects.toBeInstanceOf(PluginRegistryUnavailableError);
+  });
+
+  test("still browses an index version this daemon has never seen", async () => {
+    const index = { ...buildIndex(), version: 2 };
+    const http = createFakeHttp({ index });
+    const client = new PluginRegistryClient({ registryUrl: REGISTRY_URL, http });
+
+    expect((await client.browse()).plugins.map((entry) => entry.manifest.id)).toEqual([
+      "csv-table",
+    ]);
+  });
+
+  test("drops a malformed entry instead of taking the whole index offline", async () => {
+    const index = buildIndex();
+    const http = createFakeHttp({
+      index: {
+        version: 1,
+        plugins: [{ manifest: { id: "broken" }, files: [] }, ...index.plugins],
+      },
+    });
+    const client = new PluginRegistryClient({ registryUrl: REGISTRY_URL, http });
+
+    expect((await client.browse()).plugins.map((entry) => entry.manifest.id)).toEqual([
+      "csv-table",
+    ]);
+  });
+
+  test("caps each download at the size the index declared", async () => {
+    const http = createFakeHttp({
+      index: buildIndex(),
+      files: { "https://plugins.paseo.sh/csv-table/preview.html": PREVIEW_HTML },
+    });
+    const client = new PluginRegistryClient({ registryUrl: REGISTRY_URL, http });
+
+    await client.download("csv-table");
+
+    expect(http.byteLimits).toEqual([Buffer.byteLength(PREVIEW_HTML)]);
+  });
+
+  test("download can force a fresh index", async () => {
+    const http = createFakeHttp({
+      index: buildIndex(),
+      files: { "https://plugins.paseo.sh/csv-table/preview.html": PREVIEW_HTML },
+    });
+    const client = new PluginRegistryClient({ registryUrl: REGISTRY_URL, http, now: () => 0 });
+
+    await client.browse();
+    await client.download("csv-table", { refresh: true });
+
+    expect(http.jsonRequests).toHaveLength(2);
   });
 
   test("reports a transport failure", async () => {
@@ -207,6 +267,49 @@ describe("PluginRegistryClient", () => {
 
     await expect(client.download("csv-table")).rejects.toBeInstanceOf(PluginDownloadRejectedError);
     expect(http.byteRequests).toEqual([]);
+  });
+
+  test("aborts a body that streams past the declared size", async () => {
+    // The index claims a kilobyte, the server streams megabytes with no
+    // content-length: the transfer has to stop while reading, not after the
+    // daemon buffered all of it.
+    const server = createServer((_request, response) => {
+      // The client aborts mid-stream, which resets the socket under us.
+      response.on("error", ignoreSocketError);
+      response.writeHead(200, { "transfer-encoding": "chunked" });
+      const chunk = "x".repeat(64 * 1024);
+      for (let written = 0; written < 2 * 1024 * 1024; written += chunk.length) {
+        response.write(chunk);
+      }
+      response.end();
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const http = createFetchPluginRegistryHttp();
+      await expect(
+        http.getBytes(`http://127.0.0.1:${port}/preview.html`, { maxBytes: 1024 }),
+      ).rejects.toThrow(/1024 byte limit/);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("refuses a body whose declared content-length is over the cap", async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-length": "5000" });
+      response.end("x".repeat(5000));
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const http = createFetchPluginRegistryHttp();
+      await expect(
+        http.getBytes(`http://127.0.0.1:${port}/preview.html`, { maxBytes: 10 }),
+      ).rejects.toThrow(/10 byte limit/);
+    } finally {
+      server.close();
+    }
   });
 
   test("refuses an entry the index does not ship a file for", async () => {

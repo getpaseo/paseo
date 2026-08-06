@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { InstalledPlugin, PluginRegistryIndex } from "@getpaseo/protocol/plugin/types";
 import type { PluginRegistryHttp } from "./registry-client.js";
 import { PluginService } from "./service.js";
+import { PluginStore } from "./store.js";
 
 const REGISTRY_URL = "https://plugins.paseo.sh/index.json";
 const PREVIEW_URL = "https://plugins.paseo.sh/csv-table/preview.html";
@@ -101,11 +102,12 @@ describe("PluginService", () => {
     await expect(service.install("csv-table")).rejects.toThrow(/failed verification/);
 
     expect(await service.list()).toEqual([]);
-    // Nothing but the daemon-owned state file: no plugin directory, no staging leftovers.
-    expect(await readdir(dir).catch(() => [])).toEqual(["installed.json"]);
+    // No plugin directory and no staging leftovers. Nothing was installed, so
+    // there is no state to write either.
+    expect(await readdir(dir).catch(() => [])).toEqual([]);
   });
 
-  test("a failed reinstall leaves the previously installed copy intact", async () => {
+  test("a failed download leaves the previously installed copy intact", async () => {
     const service = createService(buildIndex());
     await service.install("csv-table");
 
@@ -113,6 +115,27 @@ describe("PluginService", () => {
     await expect(tampered.install("csv-table")).rejects.toThrow(/failed verification/);
 
     expect(await service.getEntry("csv-table", "preview.html")).toBe(PREVIEW_HTML);
+    expect(await readdir(dir)).toEqual(["csv-table", "installed.json"]);
+  });
+
+  test("a reinstall that fails inside the store keeps the installed copy servable", async () => {
+    const service = createService(buildIndex());
+    await service.install("csv-table");
+
+    // Same registry entry, but the file the CDN serves no longer matches its
+    // declared name, so the write fails after the store already staged files.
+    const store = new PluginStore({ dir, daemonVersion: "0.2.6" });
+    await expect(
+      store.install({
+        pluginId: "csv-table",
+        files: [{ name: "not-html.txt", bytes: new TextEncoder().encode("nope") }],
+        manifest: buildIndex().plugins[0]!.manifest,
+        source: { kind: "registry", registryUrl: REGISTRY_URL },
+      }),
+    ).rejects.toThrow();
+
+    expect(await service.getEntry("csv-table", "preview.html")).toBe(PREVIEW_HTML);
+    expect(await readdir(dir)).toEqual(["csv-table", "installed.json"]);
   });
 
   test("notifies listeners on install, disable, and uninstall", async () => {

@@ -1,11 +1,32 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { PluginStateFileSchema } from "@getpaseo/protocol/plugin/types";
-import { PluginPathTraversalError, PluginStore } from "./store.js";
+import { PluginStateFileSchema, type PluginManifest } from "@getpaseo/protocol/plugin/types";
+import {
+  PluginEntryNotFoundError,
+  PluginEntryUnavailableError,
+  PluginPathTraversalError,
+  PluginStore,
+} from "./store.js";
 
 const DAEMON_VERSION = "0.2.6";
+const REGISTRY_URL = "https://plugins.paseo.sh/index.json";
+
+function encode(value: string): Uint8Array {
+  return new TextEncoder().encode(value);
+}
+
+function manifestFor(pluginId: string): PluginManifest {
+  return {
+    id: pluginId,
+    name: "CSV Table",
+    version: "1.0.0",
+    contributes: {
+      filePreviews: [{ id: "table", title: "Table", extensions: [".csv"], entry: "preview.html" }],
+    },
+  };
+}
 
 interface WritePluginOptions {
   manifest?: unknown;
@@ -181,6 +202,183 @@ describe("PluginStore", () => {
 
     await reloaded.setEnabled("csv-table", true);
     expect((await reloaded.list())[0]?.enabled).toBe(true);
+  });
+
+  test("install writes the manifest and every file, and records the source", async () => {
+    await store.install({
+      pluginId: "csv-table",
+      files: [{ name: "preview.html", bytes: encode("<h1>installed</h1>") }],
+      manifest: manifestFor("csv-table"),
+      source: { kind: "registry", registryUrl: REGISTRY_URL },
+    });
+
+    const plugins = await store.list();
+    expect(plugins).toMatchObject([
+      { manifest: { id: "csv-table" }, source: { kind: "registry" }, unavailableReason: null },
+    ]);
+    expect(await store.readEntry("csv-table", "preview.html")).toBe("<h1>installed</h1>");
+    expect(await readdir(tempDir)).toEqual(["csv-table", "installed.json"]);
+  });
+
+  test("re-installing replaces the previous copy, files and all", async () => {
+    await writePlugin("csv-table", { files: { "preview.html": "old", "stale.html": "old" } });
+    await store.list();
+
+    await store.install({
+      pluginId: "csv-table",
+      files: [{ name: "preview.html", bytes: encode("new") }],
+      manifest: manifestFor("csv-table"),
+      source: { kind: "registry", registryUrl: REGISTRY_URL },
+    });
+
+    expect(await readdir(join(tempDir, "csv-table"))).toEqual([
+      "paseo-plugin.json",
+      "preview.html",
+    ]);
+    expect(await store.readEntry("csv-table", "preview.html")).toBe("new");
+  });
+
+  test("a failed install leaves the previously installed copy intact", async () => {
+    await writePlugin("csv-table", { files: { "preview.html": "old" } });
+    await store.list();
+
+    await expect(
+      store.install({
+        pluginId: "csv-table",
+        // Rejected by PluginEntrySchema after the manifest is already staged.
+        files: [{ name: "../escape.html", bytes: encode("evil") }],
+        manifest: manifestFor("csv-table"),
+        source: { kind: "registry", registryUrl: REGISTRY_URL },
+      }),
+    ).rejects.toThrow();
+
+    expect(await store.readEntry("csv-table", "preview.html")).toBe("old");
+    expect(await readdir(tempDir)).toEqual(["csv-table", "installed.json"]);
+  });
+
+  test("concurrent installs of one id do not interleave", async () => {
+    const install = (body: string): Promise<void> =>
+      store.install({
+        pluginId: "csv-table",
+        files: [{ name: "preview.html", bytes: encode(body) }],
+        manifest: manifestFor("csv-table"),
+        source: { kind: "registry", registryUrl: REGISTRY_URL },
+      });
+
+    await Promise.all([install("first"), install("second")]);
+
+    expect(await store.readEntry("csv-table", "preview.html")).toBe("second");
+    expect(await readdir(tempDir)).toEqual(["csv-table", "installed.json"]);
+    expect(await store.list()).toHaveLength(1);
+  });
+
+  test("an uninstall queued behind an install removes both directory and state", async () => {
+    const install = store.install({
+      pluginId: "csv-table",
+      files: [{ name: "preview.html", bytes: encode("body") }],
+      manifest: manifestFor("csv-table"),
+      source: { kind: "registry", registryUrl: REGISTRY_URL },
+    });
+    const uninstall = store.uninstall("csv-table");
+
+    await Promise.all([install, uninstall]);
+
+    expect(await store.list()).toEqual([]);
+    expect(await readdir(tempDir)).toEqual(["installed.json"]);
+  });
+
+  test("keeps a plugin whose manifest went missing, with its enabled state", async () => {
+    await writePlugin("csv-table");
+    await store.install({
+      pluginId: "csv-table",
+      files: [{ name: "preview.html", bytes: encode("body") }],
+      manifest: manifestFor("csv-table"),
+      source: { kind: "registry", registryUrl: REGISTRY_URL },
+    });
+    await store.setEnabled("csv-table", false);
+
+    await rm(join(tempDir, "csv-table", "paseo-plugin.json"));
+
+    const plugins = await store.list();
+    expect(plugins).toMatchObject([
+      {
+        manifest: { id: "csv-table" },
+        enabled: false,
+        source: { kind: "registry", registryUrl: REGISTRY_URL },
+        unavailableReason: "Manifest file is missing",
+      },
+    ]);
+  });
+
+  test("keeps readable state entries when installed.json is partly unreadable", async () => {
+    await writePlugin("csv-table");
+    await writeFile(
+      join(tempDir, "installed.json"),
+      JSON.stringify({
+        version: 7,
+        plugins: [
+          { id: "csv-table", enabled: false, installedAt: "2024-01-01T00:00:00.000Z", source: {} },
+          {
+            id: "csv-table",
+            enabled: false,
+            installedAt: "2024-01-01T00:00:00.000Z",
+            source: { kind: "local" },
+          },
+        ],
+      }),
+    );
+
+    const plugins = await store.list();
+
+    expect(plugins).toMatchObject([{ enabled: false, installedAt: "2024-01-01T00:00:00.000Z" }]);
+  });
+
+  test("sweeps scratch directories a crashed install left behind", async () => {
+    await mkdir(join(tempDir, ".staging-csv-table-abc"), { recursive: true });
+    await mkdir(join(tempDir, ".trash-csv-table-abc"), { recursive: true });
+    await writePlugin("csv-table");
+
+    expect(await store.list()).toHaveLength(1);
+    expect(await readdir(tempDir)).toEqual(["csv-table", "installed.json"]);
+  });
+
+  test("listing again does not rewrite installed.json", async () => {
+    await writePlugin("csv-table");
+    await store.list();
+    const first = (await stat(join(tempDir, "installed.json"))).mtimeMs;
+
+    await store.list();
+
+    expect((await stat(join(tempDir, "installed.json"))).mtimeMs).toBe(first);
+  });
+
+  test("refuses to serve a disabled plugin's entry", async () => {
+    await writePlugin("csv-table");
+    await store.setEnabled("csv-table", false);
+
+    await expect(store.readEntry("csv-table", "preview.html")).rejects.toBeInstanceOf(
+      PluginEntryUnavailableError,
+    );
+  });
+
+  test("refuses to serve an html file the manifest never declared", async () => {
+    await writePlugin("csv-table", {
+      files: { "preview.html": "<h1>table</h1>", "private.html": "<h1>private</h1>" },
+    });
+
+    await expect(store.readEntry("csv-table", "private.html")).rejects.toBeInstanceOf(
+      PluginEntryNotFoundError,
+    );
+  });
+
+  test("refuses an entry that symlinks out of the plugin directory", async () => {
+    await writePlugin("csv-table", { files: {} });
+    await writeFile(join(tempDir, "secret.html"), "id_rsa");
+    await symlink(join(tempDir, "secret.html"), join(tempDir, "csv-table", "preview.html"));
+
+    await expect(store.readEntry("csv-table", "preview.html")).rejects.toBeInstanceOf(
+      PluginPathTraversalError,
+    );
   });
 
   test("uninstall removes the directory and the state entry", async () => {

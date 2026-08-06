@@ -2,13 +2,20 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import {
-  PluginRegistryIndexSchema,
+  PluginRegistryEntrySchema,
+  PluginRegistryIndexEnvelopeSchema,
   type PluginRegistryEntry,
   type PluginRegistryIndex,
 } from "@getpaseo/protocol/plugin/types";
 
 /** Total verified bytes a single install is allowed to write. */
 export const PLUGIN_INSTALL_MAX_TOTAL_BYTES = 8 * 1024 * 1024;
+/**
+ * Hard ceiling on any single body the daemon reads from the registry. The
+ * registry operator is a trust boundary (SECURITY.md), so a response is aborted
+ * mid-stream rather than buffered and measured afterwards.
+ */
+export const PLUGIN_REGISTRY_MAX_RESPONSE_BYTES = PLUGIN_INSTALL_MAX_TOTAL_BYTES;
 const DEFAULT_INDEX_CACHE_TTL_MS = 5 * 60_000;
 
 /**
@@ -17,7 +24,11 @@ const DEFAULT_INDEX_CACHE_TTL_MS = 5 * 60_000;
  */
 export interface PluginRegistryHttp {
   getJson(url: string): Promise<unknown>;
-  getBytes(url: string): Promise<Uint8Array>;
+  /**
+   * `maxBytes` is a hard ceiling the transport enforces while reading, not a
+   * check after the fact — a hostile registry must not be able to fill the heap.
+   */
+  getBytes(url: string, options?: { maxBytes?: number }): Promise<Uint8Array>;
 }
 
 /** The registry index could not be fetched or did not parse. */
@@ -89,23 +100,63 @@ export interface PluginRegistryClientOptions {
  * `daemon.plugins.registryUrl` at a local index; `fetch` does not read it.
  */
 export function createFetchPluginRegistryHttp(): PluginRegistryHttp {
-  async function read(url: string): Promise<Uint8Array> {
+  async function read(url: string, maxBytes: number): Promise<Uint8Array> {
+    const cap = Math.min(maxBytes, PLUGIN_REGISTRY_MAX_RESPONSE_BYTES);
     if (url.startsWith("file://")) {
-      return new Uint8Array(await readFile(fileURLToPath(url)));
+      const bytes = new Uint8Array(await readFile(fileURLToPath(url)));
+      if (bytes.byteLength > cap) {
+        throw new Error(`${url} is larger than the ${cap} byte limit`);
+      }
+      return bytes;
     }
     const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} for ${url}`);
     }
-    return new Uint8Array(await response.arrayBuffer());
+    const declared = response.headers.get("content-length");
+    if (declared !== null && Number(declared) > cap) {
+      throw new Error(`${url} declares ${declared} bytes, over the ${cap} byte limit`);
+    }
+    return readCapped(response, url, cap);
   }
 
   return {
     async getJson(url) {
-      return JSON.parse(new TextDecoder().decode(await read(url)));
+      return JSON.parse(new TextDecoder().decode(await read(url, Number.POSITIVE_INFINITY)));
     },
-    getBytes: read,
+    async getBytes(url, options) {
+      return read(url, options?.maxBytes ?? Number.POSITIVE_INFINITY);
+    },
   };
+}
+
+/** Reads a response body, aborting the transfer as soon as it passes `cap`. */
+async function readCapped(response: Response, url: string, cap: number): Promise<Uint8Array> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    return new Uint8Array();
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    total += value.byteLength;
+    if (total > cap) {
+      await reader.cancel();
+      throw new Error(`${url} exceeds the ${cap} byte limit`);
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
 }
 
 function sha256Hex(bytes: Uint8Array): string {
@@ -157,12 +208,22 @@ export class PluginRegistryClient {
       );
     }
 
-    const parsed = PluginRegistryIndexSchema.safeParse(raw);
-    if (!parsed.success) {
+    const envelope = PluginRegistryIndexEnvelopeSchema.safeParse(raw);
+    if (!envelope.success) {
       throw new PluginRegistryUnavailableError(this.registryUrl, "index did not parse");
     }
-    this.cache = { index: parsed.data, fetchedAt: this.now() };
-    return parsed.data;
+
+    // Per entry, so one malformed plugin costs that plugin its listing rather
+    // than taking the whole marketplace offline.
+    const index: PluginRegistryIndex = {
+      version: envelope.data.version,
+      plugins: envelope.data.plugins.flatMap((entry) => {
+        const parsed = PluginRegistryEntrySchema.safeParse(entry);
+        return parsed.success ? [parsed.data] : [];
+      }),
+    };
+    this.cache = { index, fetchedAt: this.now() };
+    return index;
   }
 
   clearCache(): void {
@@ -173,8 +234,8 @@ export class PluginRegistryClient {
    * Fetches every file of a plugin and verifies it. Resolves only when all of
    * them matched, so a partial install cannot land.
    */
-  async download(pluginId: string): Promise<PluginDownload> {
-    const index = await this.browse();
+  async download(pluginId: string, options?: { refresh?: boolean }): Promise<PluginDownload> {
+    const index = await this.browse(options);
     const entry = index.plugins.find((candidate) => candidate.manifest.id === pluginId);
     if (!entry) {
       throw new PluginNotInRegistryError(pluginId, this.registryUrl);
@@ -213,7 +274,10 @@ export class PluginRegistryClient {
 
       let bytes: Uint8Array;
       try {
-        bytes = await this.http.getBytes(file.url);
+        // The index's own claim is the ceiling, and the transport enforces it
+        // while reading: a CDN that streams gigabytes for a file declared at a
+        // kilobyte is aborted instead of buffered.
+        bytes = await this.http.getBytes(file.url, { maxBytes: file.bytes });
       } catch (error) {
         throw new PluginDownloadRejectedError(
           pluginId,

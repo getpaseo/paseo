@@ -60,8 +60,9 @@ export const pluginRegistrySchema: OutputSchema<PluginRegistryRow> = {
 
 export async function connectPluginClient(host: string | undefined): Promise<DaemonClient> {
   const resolvedHost = getDaemonHost({ host });
+  let client: DaemonClient;
   try {
-    return await connectToDaemon({ host });
+    client = await connectToDaemon({ host });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw {
@@ -70,11 +71,27 @@ export async function connectPluginClient(host: string | undefined): Promise<Dae
       details: "Start the daemon with: paseo daemon start",
     } satisfies CommandError;
   }
+  // COMPAT(plugins): added in v0.2.6, remove gate after 2027-02-05.
+  // Without it the plugins.* messages fail inbound validation on an older
+  // daemon and the command sits there until its RPC timeout.
+  if (client.getLastServerInfoMessage()?.features?.plugins !== true) {
+    await client.close().catch(() => {});
+    throw {
+      code: "PLUGINS_UNSUPPORTED",
+      message: `The daemon at ${resolvedHost} does not support plugins`,
+      details: "Update the daemon to v0.2.6 or newer.",
+    } satisfies CommandError;
+  }
+  return client;
+}
+
+function isCommandError(error: unknown): error is CommandError {
+  return typeof error === "object" && error !== null && "code" in error && "message" in error;
 }
 
 export function toPluginCommandError(code: string, action: string, error: unknown): CommandError {
-  if (error && typeof error === "object" && "code" in error) {
-    return error as CommandError;
+  if (isCommandError(error)) {
+    return error;
   }
   const message = error instanceof Error ? error.message : String(error);
   return {

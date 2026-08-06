@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { useMutation } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { InstalledPlugin, PluginRegistryEntry } from "@getpaseo/protocol/plugin/types";
 import { Alert } from "@/components/ui/alert";
@@ -13,7 +13,13 @@ import { settingsStyles } from "@/styles/settings";
 import { useToast } from "@/contexts/toast-context";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useSessionStore } from "@/stores/session-store";
-import { usePluginRegistry, usePlugins } from "@/plugins/queries";
+import { pluginsQueryKey, usePluginRegistry, usePlugins } from "@/plugins/queries";
+import {
+  runPluginAction,
+  type PluginActionKind,
+  type PluginActionRequest,
+  type PluginActionsPort,
+} from "@/plugins/model";
 import { pluginFilePreviewConflicts } from "@/components/file-pane-render-mode";
 
 type PluginsView = "installed" | "browse";
@@ -23,8 +29,12 @@ export function PluginsSection({ serverId }: { serverId: string | null }) {
   const toast = useToast();
   const [view, setView] = useState<PluginsView>("installed");
   const [errorByPlugin, setErrorByPlugin] = useState<Record<string, string>>({});
+  // Pending is keyed by plugin id so two concurrent installs each keep their own
+  // spinner instead of collapsing into one shared mutation's variables.
+  const [pendingByPlugin, setPendingByPlugin] = useState<Record<string, PluginActionKind>>({});
   const client = useSessionStore((state) => state.sessions[serverId ?? ""]?.client ?? null);
-  const { plugins, supported, isLoading, error } = usePlugins(serverId);
+  const { plugins, support, isLoading, error } = usePlugins(serverId);
+  const queryClient = useQueryClient();
 
   const clearError = useCallback((pluginId: string) => {
     setErrorByPlugin((current) => {
@@ -37,47 +47,62 @@ export function PluginsSection({ serverId }: { serverId: string | null }) {
     });
   }, []);
 
-  const recordError = useCallback((pluginId: string, cause: unknown) => {
-    setErrorByPlugin((current) => ({
-      ...current,
-      [pluginId]: cause instanceof Error ? cause.message : String(cause),
-    }));
-  }, []);
+  const port = useMemo<PluginActionsPort | null>(
+    () =>
+      client
+        ? {
+            setEnabled: (input) => client.pluginsSetEnabled(input),
+            install: (input) => client.pluginsInstall(input),
+            uninstall: (input) => client.pluginsUninstall(input),
+          }
+        : null,
+    [client],
+  );
 
-  const setEnabled = useMutation({
-    mutationFn: async (input: { pluginId: string; enabled: boolean }) => {
-      if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
-      const payload = await client.pluginsSetEnabled(input);
-      if (payload.error) throw new Error(payload.error);
-      return payload;
-    },
-    onMutate: (input) => clearError(input.pluginId),
-    onError: (cause, input) => recordError(input.pluginId, cause),
-  });
+  const successMessages = useMemo<Record<PluginActionKind, string>>(
+    () => ({
+      enable: t("plugins.toast.enabled"),
+      disable: t("plugins.toast.disabled"),
+      install: t("plugins.toast.installed"),
+      uninstall: t("plugins.toast.uninstalled"),
+    }),
+    [t],
+  );
 
-  const uninstall = useMutation({
-    mutationFn: async (pluginId: string) => {
-      if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
-      const payload = await client.pluginsUninstall({ pluginId });
-      if (payload.error) throw new Error(payload.error);
-      return payload;
+  const runAction = useCallback(
+    (request: PluginActionRequest) => {
+      void runPluginAction({
+        request,
+        port,
+        disconnectedMessage: t("workspace.terminal.hostDisconnected"),
+        effects: {
+          setPending: (pluginId, kind) =>
+            setPendingByPlugin((current) => {
+              if (kind) {
+                return { ...current, [pluginId]: kind };
+              }
+              const next = { ...current };
+              delete next[pluginId];
+              return next;
+            }),
+          setError: (pluginId, message) => {
+            if (message === null) {
+              clearError(pluginId);
+              return;
+            }
+            setErrorByPlugin((current) => ({ ...current, [pluginId]: message }));
+          },
+          notifySuccess: (kind) => toast.show(successMessages[kind]),
+          // The installed list is a replica refreshed by one `plugins.changed`
+          // broadcast; invalidating here is the recovery for a dropped one.
+          refresh: () => {
+            void queryClient.invalidateQueries({ queryKey: pluginsQueryKey(serverId) });
+          },
+        },
+      });
     },
-    onMutate: (pluginId) => clearError(pluginId),
-    onSuccess: () => toast.show(t("plugins.toast.uninstalled")),
-    onError: (cause, pluginId) => recordError(pluginId, cause),
-  });
-
-  const install = useMutation({
-    mutationFn: async (pluginId: string) => {
-      if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
-      const payload = await client.pluginsInstall({ pluginId });
-      if (payload.error) throw new Error(payload.error);
-      return payload;
-    },
-    onMutate: (pluginId) => clearError(pluginId),
-    onSuccess: () => toast.show(t("plugins.toast.installed")),
-    onError: (cause, pluginId) => recordError(pluginId, cause),
-  });
+    [clearError, port, queryClient, serverId, successMessages, t, toast],
+  );
 
   const handleUninstall = useCallback(
     (plugin: InstalledPlugin) => {
@@ -89,11 +114,11 @@ export function PluginsSection({ serverId }: { serverId: string | null }) {
           destructive: true,
         });
         if (confirmed) {
-          uninstall.mutate(plugin.manifest.id);
+          runAction({ kind: "uninstall", pluginId: plugin.manifest.id });
         }
       })();
     },
-    [t, uninstall],
+    [runAction, t],
   );
 
   const installedIds = useMemo(
@@ -111,10 +136,14 @@ export function PluginsSection({ serverId }: { serverId: string | null }) {
   );
 
   const handleToggleEnabled = useCallback(
-    (pluginId: string, enabled: boolean) => setEnabled.mutate({ pluginId, enabled }),
-    [setEnabled],
+    (pluginId: string, enabled: boolean) =>
+      runAction({ kind: enabled ? "enable" : "disable", pluginId }),
+    [runAction],
   );
-  const handleInstall = useCallback((pluginId: string) => install.mutate(pluginId), [install]);
+  const handleInstall = useCallback(
+    (pluginId: string) => runAction({ kind: "install", pluginId }),
+    [runAction],
+  );
 
   const viewControl = useMemo(
     () => (
@@ -129,16 +158,27 @@ export function PluginsSection({ serverId }: { serverId: string | null }) {
     [view, viewOptions],
   );
 
-  if (!supported) {
+  // "No host answered yet" and "this host is too old" are different problems and
+  // get different copy; only the second one is about upgrading the daemon.
+  if (support !== "supported") {
     return (
       <ScrollView contentContainerStyle={styles.content}>
         <SettingsSection title={t("settings.sections.plugins")}>
-          <Alert
-            variant="info"
-            title={t("plugins.unsupportedTitle")}
-            description={t("plugins.unsupportedMessage")}
-            testID="plugins-unsupported"
-          />
+          {support === "unknown" ? (
+            <Alert
+              variant="info"
+              title={t("plugins.disconnectedTitle")}
+              description={t("plugins.disconnectedMessage")}
+              testID="plugins-disconnected"
+            />
+          ) : (
+            <Alert
+              variant="info"
+              title={t("plugins.unsupportedTitle")}
+              description={t("plugins.unsupportedMessage")}
+              testID="plugins-unsupported"
+            />
+          )}
         </SettingsSection>
       </ScrollView>
     );
@@ -161,8 +201,7 @@ export function PluginsSection({ serverId }: { serverId: string | null }) {
             plugins={plugins}
             isLoading={isLoading}
             errorByPlugin={errorByPlugin}
-            pendingEnableId={setEnabled.isPending ? (setEnabled.variables?.pluginId ?? null) : null}
-            pendingUninstallId={uninstall.isPending ? (uninstall.variables ?? null) : null}
+            pendingByPlugin={pendingByPlugin}
             onToggleEnabled={handleToggleEnabled}
             onUninstall={handleUninstall}
             onDismissError={clearError}
@@ -172,7 +211,7 @@ export function PluginsSection({ serverId }: { serverId: string | null }) {
             serverId={serverId}
             installedIds={installedIds}
             errorByPlugin={errorByPlugin}
-            pendingInstallId={install.isPending ? (install.variables ?? null) : null}
+            pendingByPlugin={pendingByPlugin}
             onInstall={handleInstall}
             onDismissError={clearError}
           />
@@ -203,8 +242,7 @@ function InstalledPluginList({
   plugins,
   isLoading,
   errorByPlugin,
-  pendingEnableId,
-  pendingUninstallId,
+  pendingByPlugin,
   onToggleEnabled,
   onUninstall,
   onDismissError,
@@ -212,8 +250,7 @@ function InstalledPluginList({
   plugins: readonly InstalledPlugin[];
   isLoading: boolean;
   errorByPlugin: Record<string, string>;
-  pendingEnableId: string | null;
-  pendingUninstallId: string | null;
+  pendingByPlugin: Record<string, PluginActionKind>;
   onToggleEnabled: (pluginId: string, enabled: boolean) => void;
   onUninstall: (plugin: InstalledPlugin) => void;
   onDismissError: (pluginId: string) => void;
@@ -235,8 +272,7 @@ function InstalledPluginList({
           plugin={plugin}
           withBorder={index > 0}
           error={errorByPlugin[plugin.manifest.id] ?? null}
-          enablePending={pendingEnableId === plugin.manifest.id}
-          uninstallPending={pendingUninstallId === plugin.manifest.id}
+          pendingKind={pendingByPlugin[plugin.manifest.id] ?? null}
           onToggleEnabled={onToggleEnabled}
           onUninstall={onUninstall}
           onDismissError={onDismissError}
@@ -250,8 +286,7 @@ function InstalledPluginRow({
   plugin,
   withBorder,
   error,
-  enablePending,
-  uninstallPending,
+  pendingKind,
   onToggleEnabled,
   onUninstall,
   onDismissError,
@@ -259,14 +294,15 @@ function InstalledPluginRow({
   plugin: InstalledPlugin;
   withBorder: boolean;
   error: string | null;
-  enablePending: boolean;
-  uninstallPending: boolean;
+  pendingKind: PluginActionKind | null;
   onToggleEnabled: (pluginId: string, enabled: boolean) => void;
   onUninstall: (plugin: InstalledPlugin) => void;
   onDismissError: (pluginId: string) => void;
 }) {
   const { t } = useTranslation();
   const pluginId = plugin.manifest.id;
+  const enablePending = pendingKind === "enable" || pendingKind === "disable";
+  const uninstallPending = pendingKind === "uninstall";
   const handleToggle = useCallback(
     (value: boolean) => onToggleEnabled(pluginId, value),
     [onToggleEnabled, pluginId],
@@ -293,7 +329,9 @@ function InstalledPluginRow({
           <Switch
             value={plugin.enabled}
             onValueChange={handleToggle}
-            disabled={enablePending || plugin.unavailableReason !== null}
+            // A broken plugin can always be turned off; only turning one back
+            // on is blocked, otherwise uninstall is the sole way out.
+            disabled={enablePending || (plugin.unavailableReason !== null && !plugin.enabled)}
             accessibilityLabel={t("plugins.actions.toggle", { name: plugin.manifest.name })}
             testID={`plugin-toggle-${pluginId}`}
           />
@@ -342,14 +380,14 @@ function BrowsePluginList({
   serverId,
   installedIds,
   errorByPlugin,
-  pendingInstallId,
+  pendingByPlugin,
   onInstall,
   onDismissError,
 }: {
   serverId: string | null;
   installedIds: ReadonlySet<string>;
   errorByPlugin: Record<string, string>;
-  pendingInstallId: string | null;
+  pendingByPlugin: Record<string, PluginActionKind>;
   onInstall: (pluginId: string) => void;
   onDismissError: (pluginId: string) => void;
 }) {
@@ -390,7 +428,7 @@ function BrowsePluginList({
           entry={entry}
           withBorder={index > 0}
           installed={installedIds.has(entry.manifest.id)}
-          pending={pendingInstallId === entry.manifest.id}
+          pending={pendingByPlugin[entry.manifest.id] === "install"}
           error={errorByPlugin[entry.manifest.id] ?? null}
           onInstall={onInstall}
           onDismissError={onDismissError}

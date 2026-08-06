@@ -38,7 +38,11 @@ export type PluginFilePreviewContribution = z.infer<typeof PluginFilePreviewCont
 export const PluginSidebarPanelContributionSchema = z.object({
   id: z.string().trim().min(1).max(64),
   title: z.string().trim().min(1).max(64),
-  /** Lucide icon name. Unknown names fall back to a generic plugin icon. */
+  /**
+   * Lucide icon name. Accepted and stored, but every plugin tab currently
+   * renders the same generic icon — see docs/plugins.md. Kept so manifests do
+   * not have to change if that becomes honoured.
+   */
   icon: z.string().trim().min(1).max(64).optional(),
   entry: PluginEntrySchema,
 });
@@ -102,8 +106,22 @@ export const PluginRegistryEntrySchema = z.object({
 });
 export type PluginRegistryEntry = z.infer<typeof PluginRegistryEntrySchema>;
 
+/**
+ * What the registry sends. Parsed loosely on purpose: `version` is a number so
+ * a version bump does not brick every shipped daemon, and entries stay
+ * `unknown` so one malformed plugin does not take the marketplace offline. The
+ * registry client validates each entry with `PluginRegistryEntrySchema` and
+ * drops the ones that fail.
+ */
+export const PluginRegistryIndexEnvelopeSchema = z.object({
+  version: z.number(),
+  plugins: z.array(z.unknown()),
+});
+export type PluginRegistryIndexEnvelope = z.infer<typeof PluginRegistryIndexEnvelopeSchema>;
+
+/** An index whose entries have already been validated one by one. */
 export const PluginRegistryIndexSchema = z.object({
-  version: z.literal(1),
+  version: z.number(),
   plugins: z.array(PluginRegistryEntrySchema),
 });
 export type PluginRegistryIndex = z.infer<typeof PluginRegistryIndexSchema>;

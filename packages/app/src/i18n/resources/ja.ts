@@ -1623,6 +1623,8 @@ export const ja: TranslationResources = {
     versionLine: "v{{version}} · {{author}}",
     unsupportedTitle: "プラグインには新しいホストが必要です",
     unsupportedMessage: "プラグインを使うには、このホストを Paseo 0.2.6 以降に更新してください。",
+    disconnectedTitle: "接続中のホストがありません",
+    disconnectedMessage: "プラグインをインストールして管理するには、ホストに接続してください。",
     unavailableTitle: "プラグインを利用できません",
     uninstallTitle: "プラグインをアンインストール",
     uninstallMessage: "{{name}} とそのファイルをこのホストから削除しますか？",
@@ -1645,8 +1647,11 @@ export const ja: TranslationResources = {
     toast: {
       installed: "プラグインをインストールしました",
       uninstalled: "プラグインをアンインストールしました",
+      enabled: "プラグインを有効にしました",
+      disabled: "プラグインを無効にしました",
     },
     errors: {
+      readyTimeout: "このプラグインの読み込みが完了しませんでした。",
       listFailed: "プラグインを読み込めませんでした",
       actionFailed: "プラグインの操作に失敗しました",
       registryFailed: "プラグインレジストリを読み込めませんでした",

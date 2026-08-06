@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { PluginEntrySchema, PluginIdSchema, PluginManifestSchema } from "./types.js";
+import {
+  PluginEntrySchema,
+  PluginIdSchema,
+  PluginManifestSchema,
+  PluginRegistryIndexEnvelopeSchema,
+} from "./types.js";
 
 const manifest = {
   id: "csv-table",
@@ -57,6 +62,26 @@ describe("PluginManifestSchema", () => {
   it("parses a manifest with no contributions", () => {
     const empty = { ...manifest, contributes: {} };
     expect(PluginManifestSchema.parse(empty).contributes).toEqual({});
+  });
+});
+
+describe("PluginRegistryIndexEnvelopeSchema", () => {
+  it("accepts an index version this daemon predates", () => {
+    expect(PluginRegistryIndexEnvelopeSchema.parse({ version: 2, plugins: [] }).version).toBe(2);
+  });
+
+  it("accepts entries it cannot validate, so the client can drop them one by one", () => {
+    const parsed = PluginRegistryIndexEnvelopeSchema.parse({
+      version: 1,
+      plugins: [{ nonsense: true }],
+    });
+    expect(parsed.plugins).toEqual([{ nonsense: true }]);
+  });
+
+  it("rejects an envelope that is not an index at all", () => {
+    expect(PluginRegistryIndexEnvelopeSchema.safeParse({ version: 1, plugins: {} }).success).toBe(
+      false,
+    );
   });
 });
 

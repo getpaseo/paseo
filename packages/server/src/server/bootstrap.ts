@@ -1,7 +1,7 @@
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { constants, existsSync, unlinkSync } from "fs";
-import { open } from "fs/promises";
+import { mkdir, open } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
@@ -1213,12 +1213,26 @@ export async function createPaseoDaemon(
     }
   });
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");
+  const pluginsDir = path.join(config.paseoHome, "plugins");
   const pluginService = new PluginService({
-    dir: path.join(config.paseoHome, "plugins"),
+    dir: pluginsDir,
     daemonVersion,
     logger,
     ...(config.plugins?.registryUrl ? { registryUrl: config.plugins.registryUrl } : {}),
   });
+  // Probe before advertising features.plugins: on a read-only home every
+  // plugins.* RPC would answer with a filesystem error instead of the client
+  // simply hiding the feature.
+  let pluginsAvailable = true;
+  try {
+    await mkdir(pluginsDir, { recursive: true });
+  } catch (error) {
+    pluginsAvailable = false;
+    logger.warn(
+      { err: error, dir: pluginsDir },
+      "Plugin directory is not usable; plugins are disabled for this daemon",
+    );
+  }
   logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
   const persistedRecords = await agentStorage.list();
   logger.info(
@@ -1557,7 +1571,7 @@ export async function createPaseoDaemon(
               serviceProxyPublicBaseUrl,
               browserToolsBroker,
               hubRelationships,
-              pluginService,
+              { service: pluginService, available: pluginsAvailable },
             );
             relayRuntime = createRelayRuntime({
               config: {

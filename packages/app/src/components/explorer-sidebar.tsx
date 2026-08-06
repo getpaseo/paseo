@@ -54,7 +54,11 @@ interface ExplorerSidebarProps {
   workspaceId?: string | null;
   workspaceRoot: string;
   isGit: boolean;
-  onOpenFile?: (filePath: string) => void;
+  /**
+   * The location shape, not a bare path: a sidebar plugin's `open-file` carries
+   * an optional `lineStart` and dropping it here diverged from the file pane.
+   */
+  onOpenFile?: (location: { path: string; lineStart?: number }) => void;
 }
 
 interface ExplorerSidebarSharedState {
@@ -248,6 +252,8 @@ interface ExplorerTabButtonProps {
   tab: ExplorerTab;
   active: boolean;
   label?: string;
+  /** Untrusted labels (plugin titles) clamp to one line and a bounded width. */
+  clampLabel?: boolean;
   onTabPress: (tab: ExplorerTab) => void;
   testID: string;
   children?: React.ReactNode;
@@ -257,17 +263,25 @@ function ExplorerTabButton({
   tab,
   active,
   label,
+  clampLabel,
   onTabPress,
   testID,
   children,
 }: ExplorerTabButtonProps) {
   const handlePress = useCallback(() => onTabPress(tab), [onTabPress, tab]);
   const tabStyle = useMemo(() => [styles.tab, active && styles.tabActive], [active]);
-  const tabTextStyle = useMemo(() => [styles.tabText, active && styles.tabTextActive], [active]);
+  const tabTextStyle = useMemo(
+    () => [styles.tabText, active && styles.tabTextActive, clampLabel && styles.tabTextClamped],
+    [active, clampLabel],
+  );
   return (
     <Pressable testID={testID} style={tabStyle} onPress={handlePress}>
       {children}
-      {label !== undefined ? <Text style={tabTextStyle}>{label}</Text> : null}
+      {label !== undefined ? (
+        <Text style={tabTextStyle} numberOfLines={clampLabel ? 1 : undefined}>
+          {label}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -281,7 +295,7 @@ interface SidebarContentProps {
   workspaceRoot: string;
   isGit: boolean;
   isOpen: boolean;
-  onOpenFile?: (filePath: string) => void;
+  onOpenFile?: (location: { path: string; lineStart?: number }) => void;
 }
 
 function ExplorerSidebarContent({
@@ -431,7 +445,10 @@ function ExplorerSidebarContent({
             onRetry={handlePrRetry}
           />
         )}
-        {activePluginTab && (
+        {/* Gated on isOpen like the PR pane: on compact the sidebar stays
+            mounted under RetainedPanelActivity, and a closed drawer must not
+            keep a WebView running untrusted plugin JS. */}
+        {activePluginTab && isOpen && (
           <PluginTabContent
             key={activePluginTab.tab}
             serverId={serverId}
@@ -490,6 +507,7 @@ function PluginTabButtons({
           tab={panel.tab}
           active={resolvedTab === panel.tab}
           label={panel.title}
+          clampLabel
           onTabPress={onTabPress}
           testID={`explorer-tab-${panel.tab}`}
         >
@@ -542,7 +560,7 @@ function PluginTabContent({
   workspaceId: string | null;
   workspaceRoot: string;
   panel: PluginSidebarTab;
-  onOpenFile?: (filePath: string) => void;
+  onOpenFile?: (location: { path: string; lineStart?: number }) => void;
 }) {
   const { t } = useTranslation();
   const entry = usePluginEntry({ serverId, pluginId: panel.pluginId, entry: panel.entry });
@@ -550,11 +568,6 @@ function PluginTabContent({
     () => ({ kind: "sidebar-panel", cwd: workspaceRoot, workspaceId }),
     [workspaceRoot, workspaceId],
   );
-  const handleOpenFile = useCallback(
-    (input: { path: string }) => onOpenFile?.(input.path),
-    [onOpenFile],
-  );
-
   if (entry.data === undefined) {
     return (
       <View style={styles.pluginState}>
@@ -574,7 +587,7 @@ function PluginTabContent({
     <PluginSandbox
       html={entry.data}
       context={context}
-      onOpenFile={handleOpenFile}
+      onOpenFile={onOpenFile}
       testID={`plugin-sidebar-${panel.pluginId}`}
     />
   );
@@ -627,13 +640,14 @@ function ChangedFilesPane({
   "serverId" | "workspaceId" | "workspaceRoot" | "isOpen" | "onOpenFile"
 >) {
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
+  const openPath = usePathOpener(onOpenFile);
   return (
     <GitDiffPane
       serverId={serverId}
       workspaceId={workspaceId}
       cwd={workspaceRoot}
       enabled={isOpen}
-      onOpenFile={onOpenFile}
+      onOpenFile={openPath}
       onAddToChat={canAddToChat ? addFile : undefined}
     />
   );
@@ -646,15 +660,21 @@ function FilesPane({
   onOpenFile,
 }: Pick<SidebarContentProps, "serverId" | "workspaceId" | "workspaceRoot" | "onOpenFile">) {
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
+  const openPath = usePathOpener(onOpenFile);
   return (
     <FileExplorerPane
       serverId={serverId}
       workspaceId={workspaceId}
       workspaceRoot={workspaceRoot}
-      onOpenFile={onOpenFile}
+      onOpenFile={openPath}
       onAddToChat={canAddToChat ? addFile : undefined}
     />
   );
+}
+
+/** The file tree and diff panes only ever name a path; plugins also name a line. */
+function usePathOpener(onOpenFile?: (location: { path: string; lineStart?: number }) => void) {
+  return useCallback((path: string) => onOpenFile?.({ path }), [onOpenFile]);
 }
 
 interface PrTabContentProps {
@@ -718,13 +738,21 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
+  // Plugin titles are untrusted and the panel count is unbounded, so the row has
+  // to give way to the close button and window controls instead of running into
+  // them — on iOS an overflowing row is not clipped, it overlaps.
   tabsContainer: {
     flexDirection: "row",
+    flexShrink: 1,
+    minWidth: 0,
+    overflow: "hidden",
     gap: theme.spacing[1],
   },
   tab: {
     flexDirection: "row",
     alignItems: "center",
+    flexShrink: 1,
+    minWidth: 0,
     gap: theme.spacing[2],
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
@@ -743,6 +771,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   tabTextMuted: {
     opacity: 0.8,
+  },
+  tabTextClamped: {
+    flexShrink: 1,
+    maxWidth: 120,
   },
   headerRightSection: {
     flexDirection: "row",

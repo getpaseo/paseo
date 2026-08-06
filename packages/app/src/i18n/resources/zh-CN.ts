@@ -1587,6 +1587,8 @@ export const zhCN: TranslationResources = {
     versionLine: "v{{version}} · {{author}}",
     unsupportedTitle: "插件需要更新的主机",
     unsupportedMessage: "请将此主机升级到 Paseo 0.2.6 或更高版本以使用插件。",
+    disconnectedTitle: "未连接主机",
+    disconnectedMessage: "请连接主机以安装和管理插件。",
     unavailableTitle: "插件不可用",
     uninstallTitle: "卸载插件",
     uninstallMessage: "要从此主机移除 {{name}} 及其文件吗？",
@@ -1609,8 +1611,11 @@ export const zhCN: TranslationResources = {
     toast: {
       installed: "插件已安装",
       uninstalled: "插件已卸载",
+      enabled: "插件已启用",
+      disabled: "插件已禁用",
     },
     errors: {
+      readyTimeout: "此插件未能完成加载。",
       listFailed: "无法加载插件",
       actionFailed: "插件操作失败",
       registryFailed: "无法加载插件仓库",

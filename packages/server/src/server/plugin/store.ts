@@ -1,4 +1,13 @@
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join, resolve, sep } from "node:path";
 import type { z } from "zod";
@@ -17,6 +26,7 @@ import { satisfiesVersionRange } from "./version-range.js";
 
 export const PLUGIN_MANIFEST_FILENAME = "paseo-plugin.json";
 const STATE_FILENAME = "installed.json";
+const PluginStateEntrySchema = PluginStateFileSchema.shape.plugins.element;
 
 /** The requested plugin has no directory under `$PASEO_HOME/plugins/`. */
 export class PluginNotInstalledError extends Error {
@@ -34,6 +44,17 @@ export class PluginEntryNotFoundError extends Error {
   ) {
     super(`Plugin "${pluginId}" has no entry "${entry}"`);
     this.name = "PluginEntryNotFoundError";
+  }
+}
+
+/** The plugin is installed but disabled or unavailable, so its HTML is not served. */
+export class PluginEntryUnavailableError extends Error {
+  constructor(
+    public readonly pluginId: string,
+    public readonly reason: string,
+  ) {
+    super(`Plugin "${pluginId}" is not available: ${reason}`);
+    this.name = "PluginEntryUnavailableError";
   }
 }
 
@@ -99,6 +120,8 @@ export class PluginStore {
   private readonly daemonVersion: string;
   private readonly now: () => Date;
   private mutations: Promise<unknown> = Promise.resolve();
+  private readonly pluginMutations = new Map<string, Promise<unknown>>();
+  private ready: Promise<void> | null = null;
 
   constructor(options: PluginStoreOptions) {
     this.dir = options.dir;
@@ -107,15 +130,35 @@ export class PluginStore {
   }
 
   async list(): Promise<InstalledPlugin[]> {
-    await mkdir(this.dir, { recursive: true });
+    await this.initialize();
     const directories = await this.listPluginDirectories();
     const state = await this.reconcileState(directories);
     const plugins = await Promise.all(
       directories.map(async (pluginId) => this.describe(pluginId, state)),
     );
-    return plugins
-      .filter((plugin): plugin is InstalledPlugin => plugin !== null)
-      .sort((left, right) => left.manifest.id.localeCompare(right.manifest.id));
+    return plugins.sort((left, right) => left.manifest.id.localeCompare(right.manifest.id));
+  }
+
+  /**
+   * Creates the plugins directory and sweeps scratch directories left behind by
+   * a daemon that died mid-install. They are invisible to `list()` because a
+   * plugin id can never start with a dot.
+   */
+  private async initialize(): Promise<void> {
+    this.ready ??= (async () => {
+      await mkdir(this.dir, { recursive: true });
+      const entries = await readdir(this.dir, { withFileTypes: true });
+      await Promise.all(
+        entries
+          .filter(
+            (entry) =>
+              entry.isDirectory() &&
+              (entry.name.startsWith(".staging-") || entry.name.startsWith(".trash-")),
+          )
+          .map(async (entry) => rm(join(this.dir, entry.name), { recursive: true, force: true })),
+      );
+    })();
+    await this.ready;
   }
 
   async get(pluginId: string): Promise<InstalledPlugin | null> {
@@ -123,11 +166,43 @@ export class PluginStore {
     return plugins.find((plugin) => plugin.manifest.id === pluginId) ?? null;
   }
 
-  /** Reads a contribution's HTML. Both arguments are re-validated here. */
+  /**
+   * Reads a contribution's HTML. Only an enabled, available plugin's declared
+   * contributions are served, and the resolved file is re-checked after
+   * `realpath` so a symlink cannot point out of the plugin directory.
+   */
   async readEntry(pluginId: string, entry: string): Promise<string> {
     const filePath = this.resolveEntryPath(pluginId, entry);
+    const plugin = await this.get(pluginId);
+    if (!plugin) {
+      throw new PluginNotInstalledError(pluginId);
+    }
+    if (!plugin.enabled) {
+      throw new PluginEntryUnavailableError(pluginId, "the plugin is disabled");
+    }
+    if (plugin.unavailableReason !== null) {
+      throw new PluginEntryUnavailableError(pluginId, plugin.unavailableReason);
+    }
+    if (!entryFilenames(plugin.manifest).includes(entry.trim())) {
+      throw new PluginEntryNotFoundError(pluginId, entry);
+    }
+
+    let realPath: string;
     try {
-      return await readFile(filePath, "utf-8");
+      realPath = await realpath(filePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new PluginEntryNotFoundError(pluginId, entry);
+      }
+      throw error;
+    }
+    const realPluginDir = await realpath(this.pluginDir(pluginId));
+    if (!realPath.startsWith(`${realPluginDir}${sep}`)) {
+      throw new PluginPathTraversalError(pluginId, entry);
+    }
+
+    try {
+      return await readFile(realPath, "utf-8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         throw new PluginEntryNotFoundError(pluginId, entry);
@@ -139,7 +214,12 @@ export class PluginStore {
   /**
    * Replaces a plugin directory with verified bytes. The files land in a
    * scratch directory first and are renamed into place, so an interrupted
-   * install never leaves a half-written plugin behind.
+   * install never leaves a half-written plugin behind, and the copy being
+   * replaced is only deleted once the new one is in place.
+   *
+   * The whole body is serialized per plugin id, so two installs of one id, or
+   * an install racing an uninstall, cannot interleave into a half-installed
+   * directory with no state entry.
    */
   async install(options: {
     pluginId: string;
@@ -148,66 +228,103 @@ export class PluginStore {
     source: PluginSource;
   }): Promise<void> {
     const pluginId = PluginIdSchema.parse(options.pluginId);
-    const pluginDir = this.pluginDir(pluginId);
-    const stagingDir = join(this.dir, `.staging-${pluginId}-${randomUUID()}`);
-    await mkdir(stagingDir, { recursive: true });
-    try {
-      await writeFile(
-        join(stagingDir, PLUGIN_MANIFEST_FILENAME),
-        `${JSON.stringify(options.manifest, null, 2)}\n`,
-      );
-      for (const file of options.files) {
-        const name = PluginEntrySchema.parse(file.name);
-        await writeFile(join(stagingDir, name), file.bytes);
+    await this.serializePluginMutation(pluginId, async () => {
+      await this.initialize();
+      const pluginDir = this.pluginDir(pluginId);
+      const stagingDir = join(this.dir, `.staging-${pluginId}-${randomUUID()}`);
+      const trashDir = join(this.dir, `.trash-${pluginId}-${randomUUID()}`);
+      await mkdir(stagingDir, { recursive: true });
+      let installed = false;
+      try {
+        await writeFile(
+          join(stagingDir, PLUGIN_MANIFEST_FILENAME),
+          `${JSON.stringify(options.manifest, null, 2)}\n`,
+        );
+        for (const file of options.files) {
+          const name = PluginEntrySchema.parse(file.name);
+          await writeFile(join(stagingDir, name), file.bytes);
+        }
+        const replaced = await renameIfExists(pluginDir, trashDir);
+        try {
+          await rename(stagingDir, pluginDir);
+          installed = true;
+        } catch (error) {
+          if (replaced) {
+            await rename(trashDir, pluginDir);
+          }
+          throw error;
+        }
+      } finally {
+        if (!installed) {
+          await rm(stagingDir, { recursive: true, force: true });
+        }
+        await rm(trashDir, { recursive: true, force: true });
       }
-      await rm(pluginDir, { recursive: true, force: true });
-      await rename(stagingDir, pluginDir);
-    } finally {
-      await rm(stagingDir, { recursive: true, force: true });
-    }
 
-    await this.mutateState((state) => [
-      ...state.filter((entry) => entry.id !== pluginId),
-      {
-        id: pluginId,
-        enabled: true,
-        installedAt: this.now().toISOString(),
-        source: options.source,
-      },
-    ]);
+      await this.mutateState((state) => [
+        ...state.filter((entry) => entry.id !== pluginId),
+        {
+          id: pluginId,
+          enabled: true,
+          installedAt: this.now().toISOString(),
+          source: options.source,
+        },
+      ]);
+    });
   }
 
   async setEnabled(pluginId: string, enabled: boolean): Promise<void> {
     const id = PluginIdSchema.parse(pluginId);
-    const directories = await this.listPluginDirectories();
-    if (!directories.includes(id)) {
-      throw new PluginNotInstalledError(id);
-    }
-    await this.mutateState((state) => {
-      const existing = state.find((entry) => entry.id === id);
-      if (!existing) {
-        return [
-          ...state,
-          {
-            id,
-            enabled,
-            installedAt: this.now().toISOString(),
-            source: { kind: "local" as const },
-          },
-        ];
+    await this.serializePluginMutation(id, async () => {
+      const directories = await this.listPluginDirectories();
+      if (!directories.includes(id)) {
+        throw new PluginNotInstalledError(id);
       }
-      return state.map((entry) => (entry.id === id ? { ...entry, enabled } : entry));
+      await this.mutateState((state) => {
+        const existing = state.find((entry) => entry.id === id);
+        if (!existing) {
+          return [
+            ...state,
+            {
+              id,
+              enabled,
+              installedAt: this.now().toISOString(),
+              source: { kind: "local" as const },
+            },
+          ];
+        }
+        return state.map((entry) => (entry.id === id ? { ...entry, enabled } : entry));
+      });
     });
   }
 
   async uninstall(pluginId: string): Promise<void> {
     const id = PluginIdSchema.parse(pluginId);
-    const directories = await this.listPluginDirectories();
-    if (!directories.includes(id)) {
-      throw new PluginNotInstalledError(id);
+    await this.serializePluginMutation(id, async () => {
+      const directories = await this.listPluginDirectories();
+      if (!directories.includes(id)) {
+        throw new PluginNotInstalledError(id);
+      }
+      await rm(this.pluginDir(id), { recursive: true, force: true });
+      await this.mutateState((state) => state.filter((entry) => entry.id !== id));
+    });
+  }
+
+  /** Same shape as `ScheduleStore.serializeScheduleMutation`. */
+  private async serializePluginMutation<T>(
+    pluginId: string,
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.pluginMutations.get(pluginId) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(mutation);
+    this.pluginMutations.set(pluginId, next);
+    try {
+      return await next;
+    } finally {
+      if (this.pluginMutations.get(pluginId) === next) {
+        this.pluginMutations.delete(pluginId);
+      }
     }
-    await rm(this.pluginDir(id), { recursive: true, force: true });
-    await this.mutateState((state) => state.filter((entry) => entry.id !== id));
   }
 
   private pluginDir(pluginId: string): string {
@@ -228,46 +345,40 @@ export class PluginStore {
     return filePath;
   }
 
+  /**
+   * A plugin's identity is its directory, not its manifest. A directory whose
+   * manifest went missing still lists — with `unavailableReason` — so the
+   * user's enabled state and install source survive a broken manifest.
+   */
   private async listPluginDirectories(): Promise<string[]> {
     await mkdir(this.dir, { recursive: true });
     const entries = await readdir(this.dir, { withFileTypes: true });
-    const candidates = entries
+    return entries
       .filter((entry) => entry.isDirectory() && PluginIdSchema.safeParse(entry.name).success)
       .map((entry) => entry.name)
       .sort();
-    const withManifest = await Promise.all(
-      candidates.map(async (pluginId) => {
-        try {
-          await readFile(join(this.pluginDir(pluginId), PLUGIN_MANIFEST_FILENAME), "utf-8");
-          return pluginId;
-        } catch {
-          return null;
-        }
-      }),
-    );
-    return withManifest.filter((pluginId): pluginId is string => pluginId !== null);
   }
 
   private async describe(
     pluginId: string,
     state: readonly PluginStateEntry[],
-  ): Promise<InstalledPlugin | null> {
+  ): Promise<InstalledPlugin> {
     const stateEntry = state.find((entry) => entry.id === pluginId);
-    if (!stateEntry) {
-      return null;
-    }
     const base = {
-      enabled: stateEntry.enabled,
-      installedAt: stateEntry.installedAt,
-      source: stateEntry.source,
+      enabled: stateEntry?.enabled ?? true,
+      installedAt: stateEntry?.installedAt ?? this.now().toISOString(),
+      source: stateEntry?.source ?? ({ kind: "local" } as const),
     };
 
     let raw: string;
     try {
       raw = await readFile(join(this.pluginDir(pluginId), PLUGIN_MANIFEST_FILENAME), "utf-8");
     } catch {
-      // The caller only lists directories that had a manifest a moment ago.
-      return null;
+      return {
+        ...base,
+        manifest: placeholderManifest(pluginId),
+        unavailableReason: "Manifest file is missing",
+      };
     }
 
     const parsed = PluginManifestSchema.safeParse(safeJsonParse(raw));
@@ -313,7 +424,9 @@ export class PluginStore {
   ): Promise<string | null> {
     for (const entry of entryFilenames(manifest)) {
       try {
-        await readFile(this.resolveEntryPath(pluginId, entry));
+        // `access`, not `readFile`: entries are inlined-JS HTML and this runs on
+        // every list, which every client triggers on connect.
+        await access(this.resolveEntryPath(pluginId, entry));
       } catch {
         return entry;
       }
@@ -325,11 +438,21 @@ export class PluginStore {
     return join(this.dir, STATE_FILENAME);
   }
 
+  /**
+   * Read per entry rather than all-or-nothing: one unreadable entry, or a
+   * `version` a newer daemon wrote, must not wipe every plugin's enabled state.
+   */
   private async readState(): Promise<PluginStateEntry[]> {
     try {
       const raw = await readFile(this.statePath(), "utf-8");
-      const parsed = PluginStateFileSchema.safeParse(safeJsonParse(raw));
-      return parsed.success ? [...parsed.data.plugins] : [];
+      const plugins = (safeJsonParse(raw) as { plugins?: unknown } | null)?.plugins;
+      if (!Array.isArray(plugins)) {
+        return [];
+      }
+      return plugins.flatMap((entry) => {
+        const parsed = PluginStateEntrySchema.safeParse(entry);
+        return parsed.success ? [parsed.data] : [];
+      });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return [];
@@ -351,7 +474,12 @@ export class PluginStore {
       .then(async () => {
         const current = await this.readState();
         const updated = mutate(current);
-        await this.writeState(updated);
+        // `list()` reconciles on every call; skip the write when it changed
+        // nothing. ponytail: JSON compare, both sides are built in schema key
+        // order, and a false mismatch only costs one redundant write.
+        if (JSON.stringify(updated) !== JSON.stringify(current)) {
+          await this.writeState(updated);
+        }
         return updated;
       });
     this.mutations = next;
@@ -376,6 +504,19 @@ export class PluginStore {
         }));
       return [...kept, ...discovered];
     });
+  }
+}
+
+/** Renames `from` to `to`, reporting whether there was anything to rename. */
+async function renameIfExists(from: string, to: string): Promise<boolean> {
+  try {
+    await rename(from, to);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
   }
 }
 

@@ -1618,6 +1618,8 @@ export const en = {
     versionLine: "v{{version}} · {{author}}",
     unsupportedTitle: "Plugins need a newer host",
     unsupportedMessage: "Update this host to Paseo 0.2.6 or later to use plugins.",
+    disconnectedTitle: "No host connected",
+    disconnectedMessage: "Connect to a host to install and manage plugins.",
     unavailableTitle: "Plugin unavailable",
     uninstallTitle: "Uninstall plugin",
     uninstallMessage: "Remove {{name}} and its files from this host?",
@@ -1640,8 +1642,11 @@ export const en = {
     toast: {
       installed: "Plugin installed",
       uninstalled: "Plugin uninstalled",
+      enabled: "Plugin enabled",
+      disabled: "Plugin disabled",
     },
     errors: {
+      readyTimeout: "This plugin did not finish loading.",
       listFailed: "Couldn't load plugins",
       actionFailed: "Plugin action failed",
       registryFailed: "Couldn't load the plugin registry",

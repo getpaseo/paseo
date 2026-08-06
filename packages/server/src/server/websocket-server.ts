@@ -463,11 +463,23 @@ export class MissingDaemonVersionError extends Error {
   }
 }
 
+/** How the daemon wires plugins in. See {@link PluginRuntime.available}. */
+export interface PluginRuntime {
+  service: PluginService;
+  /**
+   * Whether `$PASEO_HOME/plugins` was creatable at startup. When it was not,
+   * every `plugins.*` RPC would fail on the filesystem, so `features.plugins`
+   * stays off and clients never offer the feature.
+   */
+  available: boolean;
+}
+
 interface RequiredWebSocketServices {
   chatService: FileBackedChatService;
   loopService: LoopService;
   scheduleService: ScheduleService;
   checkoutDiffManager: CheckoutDiffManager;
+  plugins: PluginRuntime;
 }
 
 function requireWebSocketServices(params: {
@@ -475,8 +487,9 @@ function requireWebSocketServices(params: {
   loopService?: LoopService;
   scheduleService?: ScheduleService;
   checkoutDiffManager?: CheckoutDiffManager;
+  plugins?: PluginRuntime;
 }): RequiredWebSocketServices {
-  const { chatService, loopService, scheduleService, checkoutDiffManager } = params;
+  const { chatService, loopService, scheduleService, checkoutDiffManager, plugins } = params;
   if (!chatService) {
     throw new Error("VoiceAssistantWebSocketServer requires a chat service.");
   }
@@ -489,7 +502,10 @@ function requireWebSocketServices(params: {
   if (!checkoutDiffManager) {
     throw new Error("VoiceAssistantWebSocketServer requires a checkout diff manager.");
   }
-  return { chatService, loopService, scheduleService, checkoutDiffManager };
+  if (!plugins) {
+    throw new Error("VoiceAssistantWebSocketServer requires a plugin service.");
+  }
+  return { chatService, loopService, scheduleService, checkoutDiffManager, plugins };
 }
 
 /**
@@ -512,8 +528,9 @@ export class VoiceAssistantWebSocketServer {
   private readonly chatService: FileBackedChatService;
   private readonly loopService: LoopService;
   private readonly scheduleService: ScheduleService;
-  private readonly pluginService: PluginService | null;
-  private unsubscribePluginChanges: (() => void) | null = null;
+  private readonly pluginService: PluginService;
+  private readonly pluginsAvailable: boolean;
+  private readonly unsubscribePluginChanges: () => void;
   private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly github: ForgeService;
   private readonly workspaceGitService: WorkspaceGitService;
@@ -606,7 +623,7 @@ export class VoiceAssistantWebSocketServer {
     serviceProxyPublicBaseUrl?: string | null,
     browserToolsBroker?: BrowserToolsBroker | null,
     hubRelationships?: HubRelationshipManagement | null,
-    pluginService?: PluginService | null,
+    plugins?: PluginRuntime,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.advertiseDaemonStatusRpc = wsConfig.daemonStatusRpc !== false;
@@ -628,15 +645,18 @@ export class VoiceAssistantWebSocketServer {
       loopService,
       scheduleService,
       checkoutDiffManager,
+      plugins,
     });
     this.chatService = requiredServices.chatService;
     this.loopService = requiredServices.loopService;
     this.scheduleService = requiredServices.scheduleService;
-    this.pluginService = pluginService ?? null;
-    this.unsubscribePluginChanges =
-      this.pluginService?.onChanged((plugins) => {
-        this.broadcast(wrapSessionMessage({ type: "plugins.changed", payload: { plugins } }));
-      }) ?? null;
+    this.pluginService = requiredServices.plugins.service;
+    this.pluginsAvailable = requiredServices.plugins.available;
+    this.unsubscribePluginChanges = this.pluginService.onChanged((installed) => {
+      this.broadcast(
+        wrapSessionMessage({ type: "plugins.changed", payload: { plugins: installed } }),
+      );
+    });
     this.checkoutDiffManager = requiredServices.checkoutDiffManager;
     this.github = github ?? createGitHubService();
     this.workspaceGitService = workspaceGitService ?? createFallbackWorkspaceGitService();
@@ -968,8 +988,7 @@ export class VoiceAssistantWebSocketServer {
     this.unsubscribeDaemonConfigChange = null;
     this.unsubscribeTerminalActivity?.();
     this.unsubscribeTerminalActivity = null;
-    this.unsubscribePluginChanges?.();
-    this.unsubscribePluginChanges = null;
+    this.unsubscribePluginChanges();
     if (this.runtimeMetricsInterval) {
       clearInterval(this.runtimeMetricsInterval);
       this.runtimeMetricsInterval = null;
@@ -1542,9 +1561,9 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(relayConfig): added in v0.2.6, remove gate after 2027-01-31.
         ...(this.advertiseRelayConfig ? { relayConfig: true } : {}),
         // COMPAT(plugins): added in v0.2.6, remove gate after 2027-02-05.
-        // Only advertised when a plugin service is wired in; without one the
-        // plugins.* RPCs have nothing to serve.
-        ...(this.pluginService ? { plugins: true } : {}),
+        // Only advertised once the plugin directory is known to be usable;
+        // otherwise every plugins.* RPC would fail on the filesystem.
+        ...(this.pluginsAvailable ? { plugins: true } : {}),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": true,
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.

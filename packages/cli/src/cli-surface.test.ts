@@ -48,13 +48,39 @@ describe("canonical CLI surface", () => {
     expect(scheduleCreate?.helpInformation()).toContain("--thinking <id>");
   });
 
-  it("exposes the plugin lifecycle commands", () => {
+  it("exposes the plugin lifecycle commands, each with its own action and arguments", () => {
     const plugin = createCli().commands.find((command) => command.name() === "plugin");
-    const help = plugin?.helpInformation();
+    const subcommands = new Map(plugin?.commands.map((command) => [command.name(), command]));
 
-    for (const subcommand of ["ls", "browse", "install", "uninstall", "enable", "disable"]) {
-      expect(help).toContain(subcommand);
+    expect([...subcommands.keys()].sort()).toEqual([
+      "browse",
+      "disable",
+      "enable",
+      "install",
+      "ls",
+      "uninstall",
+    ]);
+
+    // Every subcommand takes a plugin id except the two that operate on the whole set.
+    const idArgument = new Map([
+      ["ls", []],
+      ["browse", []],
+      ["install", ["<id>"]],
+      ["uninstall", ["<id>"]],
+      ["enable", ["<id>"]],
+      ["disable", ["<id>"]],
+    ]);
+    for (const [name, expectedArguments] of idArgument) {
+      const subcommand = subcommands.get(name);
+      expect(subcommand?.registeredArguments.map((argument) => `<${argument.name()}>`)).toEqual(
+        expectedArguments,
+      );
+      // A registered action handler is what separates a wired command from a stub.
+      expect(Reflect.get(subcommand ?? {}, "_actionHandler")).toBeTypeOf("function");
+      expect(subcommand?.options.map((option) => option.long)).toContain("--json");
     }
+
+    expect(subcommands.get("browse")?.options.map((option) => option.long)).toContain("--refresh");
   });
 
   it("offers opening an existing agent in the desktop app", () => {

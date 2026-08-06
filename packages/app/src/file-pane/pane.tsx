@@ -460,6 +460,31 @@ function PluginFilePreview({
   );
 }
 
+/**
+ * Which viewer renders this file, and whether that answer is still settling.
+ *
+ * `pending` is not the same as "code": resolving to the code view before the
+ * plugin list lands mounts CodeMirror and tears it straight back down when a
+ * plugin turns out to claim the extension.
+ */
+function useFilePreviewRenderer(input: {
+  serverId: string | null;
+  filePath: string;
+  lineStart: number | undefined;
+  isTextPreview: boolean;
+}): { renderer: FilePreviewRenderer; rendererPending: boolean } {
+  const { serverId, filePath, lineStart, isTextPreview } = input;
+  const { plugins, isLoading } = usePlugins(serverId);
+  // A line target means the user asked for a specific line, which only the
+  // code view can honour.
+  const pluggable = isTextPreview && !lineStart;
+  const renderer = useMemo<FilePreviewRenderer>(
+    () => (pluggable ? resolveFilePreviewRenderer({ filePath, plugins }) : { kind: "code" }),
+    [filePath, plugins, pluggable],
+  );
+  return { renderer, rendererPending: isLoading && pluggable };
+}
+
 export function FilePane({
   serverId,
   workspaceRoot,
@@ -538,15 +563,12 @@ export function FilePane({
   const imagePreviewUri = useAttachmentPreviewUrl(
     resolvedPreview.key === previewKey ? resolvedPreview.imageAttachment : null,
   );
-  const { plugins } = usePlugins(serverId);
-  const renderer = useMemo<FilePreviewRenderer>(() => {
-    // A line target means the user asked for a specific line, which only the
-    // code view can honour.
-    if (preview?.kind !== "text" || location.lineStart) {
-      return { kind: "code" };
-    }
-    return resolveFilePreviewRenderer({ filePath: location.path, plugins });
-  }, [location.lineStart, location.path, plugins, preview?.kind]);
+  const { renderer, rendererPending } = useFilePreviewRenderer({
+    serverId,
+    filePath: location.path,
+    lineStart: location.lineStart,
+    isTextPreview: preview?.kind === "text",
+  });
   const editable = isEditableTextFile({
     preview,
     supportsEditing,
@@ -569,6 +591,7 @@ export function FilePane({
       retryLabel={t("common.actions.retry")}
       filename={getFileNameFromPath(location.path) ?? location.path}
       renderer={renderer}
+      rendererPending={rendererPending}
       previewMode={canTogglePreviewMode ? previewMode : undefined}
       onPreviewModeChange={canTogglePreviewMode ? setPreviewMode : undefined}
       previewLabel={renderer.kind === "plugin" ? renderer.title : undefined}
@@ -615,6 +638,7 @@ function FilePanePresentation({
   retryLabel,
   filename,
   renderer,
+  rendererPending,
   previewMode,
   onPreviewModeChange,
   previewLabel,
@@ -639,6 +663,8 @@ function FilePanePresentation({
   retryLabel: string;
   filename: string;
   renderer: FilePreviewRenderer;
+  /** The plugin list has not arrived, so `renderer` is not decided yet. */
+  rendererPending: boolean;
   previewMode?: "preview" | "source";
   onPreviewModeChange?: (mode: "preview" | "source") => void;
   previewLabel?: string;
@@ -658,6 +684,16 @@ function FilePanePresentation({
       <View style={styles.container} testID="workspace-file-pane">
         <View style={styles.centerState}>
           <Text style={styles.errorText}>{disconnectedMessage}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (rendererPending) {
+    return (
+      <View style={styles.container} testID="workspace-file-pane">
+        <View style={styles.centerState}>
+          <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
         </View>
       </View>
     );

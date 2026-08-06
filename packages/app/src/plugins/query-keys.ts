@@ -1,6 +1,6 @@
 /**
- * The installed-list key is a prefix of the entry and registry keys on purpose:
- * one `plugins.changed` invalidation then drops everything derived from it.
+ * The installed-list key is a prefix of the entry key on purpose: one
+ * `plugins.changed` invalidation then drops the entry HTML derived from it.
  */
 export function pluginsQueryKey(serverId: string | null) {
   return ["plugins", serverId ?? ""] as const;
@@ -10,6 +10,11 @@ export function pluginEntryQueryKey(serverId: string | null, pluginId: string, e
   return ["plugins", serverId ?? "", "entry", pluginId, entry] as const;
 }
 
+/**
+ * Deliberately its own root key. The registry is a remote HTTP fetch the daemon
+ * proxies; sitting under the `plugins` prefix made every enable/disable toggle
+ * re-download it.
+ */
 export function pluginRegistryQueryKey(serverId: string | null) {
-  return ["plugins", serverId ?? "", "registry"] as const;
+  return ["plugin-registry", serverId ?? ""] as const;
 }

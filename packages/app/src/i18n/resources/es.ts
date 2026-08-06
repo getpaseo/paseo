@@ -1650,6 +1650,8 @@ export const es: TranslationResources = {
     versionLine: "v{{version}} · {{author}}",
     unsupportedTitle: "Los complementos requieren un host más reciente",
     unsupportedMessage: "Actualiza este host a Paseo 0.2.6 o posterior para usar complementos.",
+    disconnectedTitle: "Ningún host conectado",
+    disconnectedMessage: "Conéctate a un host para instalar y gestionar complementos.",
     unavailableTitle: "Complemento no disponible",
     uninstallTitle: "Desinstalar complemento",
     uninstallMessage: "¿Eliminar {{name}} y sus archivos de este host?",
@@ -1672,8 +1674,11 @@ export const es: TranslationResources = {
     toast: {
       installed: "Complemento instalado",
       uninstalled: "Complemento desinstalado",
+      enabled: "Complemento activado",
+      disabled: "Complemento desactivado",
     },
     errors: {
+      readyTimeout: "Este complemento no terminó de cargarse.",
       listFailed: "No se pudieron cargar los complementos",
       actionFailed: "La acción del complemento falló",
       registryFailed: "No se pudo cargar el registro de complementos",

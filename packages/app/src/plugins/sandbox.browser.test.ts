@@ -25,9 +25,9 @@ const THEME: PluginThemeTokens = {
 };
 
 /**
- * A minimal real plugin: announces `ready`, echoes what the host sends back out
- * as an `open-file`, and reports a height. Everything the bridge contract
- * promises, exercised by a real script in a real sandboxed frame.
+ * A minimal real plugin: announces `ready` and echoes what the host sends back
+ * out as an `open-file`. Everything the bridge contract promises, exercised by
+ * a real script in a real sandboxed frame.
  */
 const ECHO_PLUGIN_HTML = `<!doctype html>
 <html>
@@ -43,7 +43,6 @@ const ECHO_PLUGIN_HTML = `<!doctype html>
             { paseo: 1, type: "open-file", path: "init:" + data.context.path + ":" + data.theme.accent, lineStart: 7 },
             "*"
           );
-          window.parent.postMessage({ paseo: 1, type: "resize", height: 321 }, "*");
         }
         if (data.type === "update") {
           window.parent.postMessage({ paseo: 1, type: "open-file", path: "update:" + data.context.path }, "*");
@@ -73,7 +72,6 @@ function mountEchoPlugin(context: PluginContext) {
       postToPluginIframe(iframe, createInitMessage(context, THEME));
     },
     onOpenFile: (input) => events.push(`open-file:${input.path}:${input.lineStart ?? "-"}`),
-    onResize: (height) => events.push(`resize:${height}`),
   });
   document.body.appendChild(iframe);
   cleanups.push(() => {
@@ -126,16 +124,16 @@ describe("the web plugin sandbox", () => {
     }).toThrow();
   });
 
-  it("answers the plugin's ready with init and round-trips open-file and resize", async () => {
+  it("answers the plugin's ready with init and round-trips open-file", async () => {
     const { events } = mountEchoPlugin({
       kind: "file-preview",
       path: "/w/data.csv",
       content: "a,b",
     });
 
-    await waitFor(() => events.length >= 3);
+    await waitFor(() => events.length >= 2);
 
-    expect(events).toEqual(["ready", "open-file:init:/w/data.csv:#20744A:7", "resize:321"]);
+    expect(events).toEqual(["ready", "open-file:init:/w/data.csv:#20744A:7"]);
   });
 
   it("delivers update when the context changes", async () => {
@@ -145,14 +143,14 @@ describe("the web plugin sandbox", () => {
       content: "a,b",
     });
 
-    await waitFor(() => events.length >= 3);
+    await waitFor(() => events.length >= 2);
     postToPluginIframe(
       iframe,
-      createUpdateMessage({ kind: "file-preview", path: "/w/other.csv", content: "c,d" }),
+      createUpdateMessage({ kind: "file-preview", path: "/w/other.csv", content: "c,d" }, THEME),
     );
-    await waitFor(() => events.length >= 4);
+    await waitFor(() => events.length >= 3);
 
-    expect(events[3]).toBe("open-file:update:/w/other.csv:-");
+    expect(events[2]).toBe("open-file:update:/w/other.csv:-");
   });
 
   it("ignores messages from another frame on the page", async () => {
@@ -161,7 +159,7 @@ describe("the web plugin sandbox", () => {
       path: "/w/data.csv",
       content: "a,b",
     });
-    await waitFor(() => events.length >= 3);
+    await waitFor(() => events.length >= 2);
 
     const impostor = createPluginIframe(
       `<!doctype html><html><body><script>
@@ -174,11 +172,11 @@ describe("the web plugin sandbox", () => {
     // Give the impostor a real chance to be heard, then prove it was not.
     postToPluginIframe(
       iframe,
-      createUpdateMessage({ kind: "file-preview", path: "/w/after.csv", content: "" }),
+      createUpdateMessage({ kind: "file-preview", path: "/w/after.csv", content: "" }, THEME),
     );
-    await waitFor(() => events.length >= 4);
+    await waitFor(() => events.length >= 3);
 
     expect(events.some((event) => event.includes("/etc/passwd"))).toBe(false);
-    expect(events[3]).toBe("open-file:update:/w/after.csv:-");
+    expect(events[2]).toBe("open-file:update:/w/after.csv:-");
   });
 });

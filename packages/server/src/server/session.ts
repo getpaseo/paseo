@@ -429,8 +429,7 @@ export interface SessionOptions {
   chatService: FileBackedChatService;
   scheduleService: ScheduleService;
   loopService: LoopService;
-  /** Absent when the daemon was built without a plugin directory. */
-  pluginService?: PluginService | null;
+  pluginService: PluginService;
   checkoutDiffManager: CheckoutDiffManager;
   github?: ForgeService;
   createAgentMcpTransport?: AgentMcpTransportFactory;

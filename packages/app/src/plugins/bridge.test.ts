@@ -27,7 +27,6 @@ function recordingHandlers() {
   const handlers: PluginGuestHandlers = {
     onReady: () => calls.push("ready"),
     onOpenFile: (input) => calls.push(`open-file:${input.path}:${input.lineStart ?? "-"}`),
-    onResize: (height) => calls.push(`resize:${height}`),
   };
   return { calls, handlers };
 }
@@ -51,7 +50,7 @@ describe("parsePluginGuestMessage", () => {
     ).toBeNull();
     expect(
       parsePluginGuestMessage(
-        createUpdateMessage({ kind: "sidebar-panel", cwd: "/w", workspaceId: null }),
+        createUpdateMessage({ kind: "sidebar-panel", cwd: "/w", workspaceId: null }, THEME),
       ),
     ).toBeNull();
   });
@@ -59,13 +58,43 @@ describe("parsePluginGuestMessage", () => {
   it("ignores malformed guest payloads", () => {
     expect(parsePluginGuestMessage({ paseo: 1, type: "open-file" })).toBeNull();
     expect(parsePluginGuestMessage({ paseo: 1, type: "open-file", path: "  " })).toBeNull();
-    expect(parsePluginGuestMessage({ paseo: 1, type: "resize" })).toBeNull();
-    expect(parsePluginGuestMessage({ paseo: 1, type: "resize", height: -1 })).toBeNull();
-    expect(parsePluginGuestMessage({ paseo: 1, type: "resize", height: Number.NaN })).toBeNull();
     expect(parsePluginGuestMessage({ paseo: 1, type: "exfiltrate" })).toBeNull();
+    expect(parsePluginGuestMessage({ paseo: 1, type: "resize", height: 240 })).toBeNull();
   });
 
-  it("parses the three guest messages, from objects and from JSON strings", () => {
+  it("rejects open-file paths that reach outside the workspace", () => {
+    for (const path of [
+      "/etc/passwd",
+      "/home/me/.npmrc",
+      "C:\\Users\\me\\.npmrc",
+      "\\\\server\\share\\secret",
+      "~",
+      "~/.npmrc",
+      "~\\.npmrc",
+      "../../.env",
+      "src/../../.ssh/id_rsa",
+      "  /etc/passwd  ",
+    ]) {
+      expect(parsePluginGuestMessage({ paseo: 1, type: "open-file", path })).toBeNull();
+    }
+  });
+
+  it("normalises the workspace-relative paths it does accept", () => {
+    expect(parsePluginGuestMessage({ paseo: 1, type: "open-file", path: "./src/./a.ts" })).toEqual({
+      paseo: 1,
+      type: "open-file",
+      path: "src/a.ts",
+    });
+    expect(parsePluginGuestMessage({ paseo: 1, type: "open-file", path: "src/x/../a.ts" })).toEqual(
+      {
+        paseo: 1,
+        type: "open-file",
+        path: "src/a.ts",
+      },
+    );
+  });
+
+  it("parses the two guest messages, from objects and from JSON strings", () => {
     expect(parsePluginGuestMessage({ paseo: 1, type: "ready" })).toEqual({
       paseo: 1,
       type: "ready",
@@ -82,11 +111,6 @@ describe("parsePluginGuestMessage", () => {
       path: "src/a.ts",
       lineStart: 12,
     });
-    expect(parsePluginGuestMessage({ paseo: 1, type: "resize", height: 240 })).toEqual({
-      paseo: 1,
-      type: "resize",
-      height: 240,
-    });
   });
 });
 
@@ -98,9 +122,8 @@ describe("handlePluginGuestMessage", () => {
     expect(handlePluginGuestMessage({ paseo: 1, type: "open-file", path: "a.ts" }, handlers)).toBe(
       true,
     );
-    expect(handlePluginGuestMessage({ paseo: 1, type: "resize", height: 12 }, handlers)).toBe(true);
 
-    expect(calls).toEqual(["ready", "open-file:a.ts:-", "resize:12"]);
+    expect(calls).toEqual(["ready", "open-file:a.ts:-"]);
   });
 
   it("calls nothing for foreign or malformed messages", () => {
@@ -119,7 +142,6 @@ describe("handlePluginGuestMessage", () => {
     const handlers: PluginGuestHandlers = {
       onReady: () => sent.push(createInitMessage(context, THEME)),
       onOpenFile: () => {},
-      onResize: () => {},
     };
 
     handlePluginGuestMessage({ paseo: 1, type: "ready" }, handlers);
@@ -129,29 +151,42 @@ describe("handlePluginGuestMessage", () => {
 });
 
 describe("wrapPluginHtml", () => {
-  it("injects the CSP as the first thing inside an existing head", () => {
-    const wrapped = wrapPluginHtml("<html><head><title>x</title></head><body>hi</body></html>");
+  const CSP_META = `<meta http-equiv="Content-Security-Policy" content="${PLUGIN_CONTENT_SECURITY_POLICY}">`;
+  const SHELL_PREFIX = `<!doctype html><html><head>${CSP_META}</head><body>`;
 
-    expect(wrapped).toBe(
-      `<html><head><meta http-equiv="Content-Security-Policy" content="${PLUGIN_CONTENT_SECURITY_POLICY}"><title>x</title></head><body>hi</body></html>`,
-    );
+  // Every one of these defeats a regex that hunts for the plugin's own <head>:
+  // the match is inside a comment, inside an attribute value, or absent, and the
+  // meta lands where the parser never treats it as an element.
+  const HOSTILE = [
+    "<!-- <head> --><script>fetch('https://evil.tld')</script>",
+    '<p title="<head>">x</p><script>fetch("https://evil.tld")</script>',
+    "<html><!-- <head> --><body>x</body></html>",
+    "<script>fetch('https://evil.tld')</script>",
+    "<html><head><title>x</title></head><body>hi</body></html>",
+    '<html lang="en"><body>hi</body></html>',
+    "<p>hi</p>",
+    "",
+  ];
+
+  it("always emits its own shell with the CSP first in head", () => {
+    for (const html of HOSTILE) {
+      expect(wrapPluginHtml(html)).toBe(`${SHELL_PREFIX}${html}</body></html>`);
+    }
   });
 
-  it("creates a head when the document has none", () => {
-    expect(wrapPluginHtml('<html lang="en"><body>hi</body></html>')).toBe(
-      `<html lang="en"><head><meta http-equiv="Content-Security-Policy" content="${PLUGIN_CONTENT_SECURITY_POLICY}"></head><body>hi</body></html>`,
-    );
+  it("never lets guest markup precede the CSP meta", () => {
+    for (const html of HOSTILE) {
+      const wrapped = wrapPluginHtml(html);
+      expect(wrapped.indexOf(CSP_META)).toBe("<!doctype html><html><head>".length);
+      // The guest starts only after the head is closed, so the parser has
+      // committed to the policy before it sees a byte of plugin markup.
+      expect(wrapped.slice(SHELL_PREFIX.length)).toBe(`${html}</body></html>`);
+    }
   });
 
-  it("prepends the CSP for a bare fragment", () => {
-    expect(wrapPluginHtml("<p>hi</p>")).toBe(
-      `<meta http-equiv="Content-Security-Policy" content="${PLUGIN_CONTENT_SECURITY_POLICY}"><p>hi</p>`,
-    );
-  });
-
-  it("denies network and storage in the policy it injects", () => {
+  it("denies network, storage, forms, and base rewriting in the policy it injects", () => {
     expect(PLUGIN_CONTENT_SECURITY_POLICY).toBe(
-      "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:",
+      "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; form-action 'none'; base-uri 'none'; frame-src 'none'; object-src 'none'",
     );
   });
 });

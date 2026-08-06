@@ -1,6 +1,17 @@
 import type pino from "pino";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 import type { PluginService } from "../../plugin/service.js";
+import {
+  PluginDownloadRejectedError,
+  PluginDownloadVerificationError,
+  PluginNotInRegistryError,
+  PluginRegistryUnavailableError,
+} from "../../plugin/registry-client.js";
+import {
+  PluginEntryNotFoundError,
+  PluginNotInstalledError,
+  PluginPathTraversalError,
+} from "../../plugin/store.js";
 
 export interface PluginSessionHost {
   emit(msg: SessionOutboundMessage): void;
@@ -8,15 +19,29 @@ export interface PluginSessionHost {
 
 export interface PluginSessionOptions {
   host: PluginSessionHost;
-  /** Absent when the daemon runs without a plugin directory; every RPC then errors. */
-  pluginService: PluginService | null | undefined;
+  pluginService: PluginService;
   logger: pino.Logger;
 }
 
-const PLUGINS_UNAVAILABLE = "Plugins are not available on this daemon";
-
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+/**
+ * Errors whose message is safe to put on the wire. Anything else — a raw
+ * `EACCES`/`EISDIR` from the filesystem, say — carries the absolute
+ * `$PASEO_HOME` path in its message, so the client gets a generic sentence and
+ * the real error goes to the daemon log.
+ */
+function clientMessage(error: unknown, fallback: string): string {
+  if (
+    error instanceof PluginNotInstalledError ||
+    error instanceof PluginEntryNotFoundError ||
+    error instanceof PluginPathTraversalError ||
+    error instanceof PluginRegistryUnavailableError ||
+    error instanceof PluginNotInRegistryError ||
+    error instanceof PluginDownloadVerificationError ||
+    error instanceof PluginDownloadRejectedError
+  ) {
+    return error.message;
+  }
+  return fallback;
 }
 
 /**
@@ -26,25 +51,18 @@ function describe(error: unknown): string {
  */
 export class PluginSession {
   private readonly host: PluginSessionHost;
-  private readonly pluginService: PluginService | null;
+  private readonly pluginService: PluginService;
   private readonly logger: pino.Logger;
 
   constructor(options: PluginSessionOptions) {
     this.host = options.host;
-    this.pluginService = options.pluginService ?? null;
+    this.pluginService = options.pluginService;
     this.logger = options.logger;
   }
 
   async handleListRequest(
     msg: Extract<SessionInboundMessage, { type: "plugins.list.request" }>,
   ): Promise<void> {
-    if (!this.pluginService) {
-      this.host.emit({
-        type: "plugins.list.response",
-        payload: { requestId: msg.requestId, plugins: [], error: PLUGINS_UNAVAILABLE },
-      });
-      return;
-    }
     try {
       const plugins = await this.pluginService.list();
       this.host.emit({
@@ -55,7 +73,11 @@ export class PluginSession {
       this.logger.warn({ err: error }, "Failed to list plugins");
       this.host.emit({
         type: "plugins.list.response",
-        payload: { requestId: msg.requestId, plugins: [], error: describe(error) },
+        payload: {
+          requestId: msg.requestId,
+          plugins: [],
+          error: clientMessage(error, "Could not read the plugin directory"),
+        },
       });
     }
   }
@@ -64,13 +86,6 @@ export class PluginSession {
     msg: Extract<SessionInboundMessage, { type: "plugins.get_entry.request" }>,
   ): Promise<void> {
     const base = { requestId: msg.requestId, pluginId: msg.pluginId, entry: msg.entry };
-    if (!this.pluginService) {
-      this.host.emit({
-        type: "plugins.get_entry.response",
-        payload: { ...base, html: null, error: PLUGINS_UNAVAILABLE },
-      });
-      return;
-    }
     try {
       const html = await this.pluginService.getEntry(msg.pluginId, msg.entry);
       this.host.emit({
@@ -84,7 +99,11 @@ export class PluginSession {
       );
       this.host.emit({
         type: "plugins.get_entry.response",
-        payload: { ...base, html: null, error: describe(error) },
+        payload: {
+          ...base,
+          html: null,
+          error: clientMessage(error, "Could not read the plugin entry"),
+        },
       });
     }
   }
@@ -92,18 +111,6 @@ export class PluginSession {
   async handleBrowseRequest(
     msg: Extract<SessionInboundMessage, { type: "plugins.browse.request" }>,
   ): Promise<void> {
-    if (!this.pluginService) {
-      this.host.emit({
-        type: "plugins.browse.response",
-        payload: {
-          requestId: msg.requestId,
-          registryUrl: "",
-          plugins: [],
-          error: PLUGINS_UNAVAILABLE,
-        },
-      });
-      return;
-    }
     const registryUrl = this.pluginService.registryUrl;
     try {
       const plugins = await this.pluginService.browse({ refresh: msg.refresh === true });
@@ -115,7 +122,12 @@ export class PluginSession {
       this.logger.warn({ err: error, registryUrl }, "Failed to browse plugin registry");
       this.host.emit({
         type: "plugins.browse.response",
-        payload: { requestId: msg.requestId, registryUrl, plugins: [], error: describe(error) },
+        payload: {
+          requestId: msg.requestId,
+          registryUrl,
+          plugins: [],
+          error: clientMessage(error, "Could not read the plugin registry"),
+        },
       });
     }
   }
@@ -123,13 +135,6 @@ export class PluginSession {
   async handleInstallRequest(
     msg: Extract<SessionInboundMessage, { type: "plugins.install.request" }>,
   ): Promise<void> {
-    if (!this.pluginService) {
-      this.host.emit({
-        type: "plugins.install.response",
-        payload: { requestId: msg.requestId, plugin: null, error: PLUGINS_UNAVAILABLE },
-      });
-      return;
-    }
     try {
       const plugin = await this.pluginService.install(msg.pluginId);
       this.host.emit({
@@ -140,7 +145,11 @@ export class PluginSession {
       this.logger.warn({ err: error, pluginId: msg.pluginId }, "Failed to install plugin");
       this.host.emit({
         type: "plugins.install.response",
-        payload: { requestId: msg.requestId, plugin: null, error: describe(error) },
+        payload: {
+          requestId: msg.requestId,
+          plugin: null,
+          error: clientMessage(error, "Could not install the plugin"),
+        },
       });
     }
   }
@@ -149,13 +158,6 @@ export class PluginSession {
     msg: Extract<SessionInboundMessage, { type: "plugins.uninstall.request" }>,
   ): Promise<void> {
     const base = { requestId: msg.requestId, pluginId: msg.pluginId };
-    if (!this.pluginService) {
-      this.host.emit({
-        type: "plugins.uninstall.response",
-        payload: { ...base, error: PLUGINS_UNAVAILABLE },
-      });
-      return;
-    }
     try {
       await this.pluginService.uninstall(msg.pluginId);
       this.host.emit({ type: "plugins.uninstall.response", payload: { ...base, error: null } });
@@ -163,7 +165,7 @@ export class PluginSession {
       this.logger.warn({ err: error, pluginId: msg.pluginId }, "Failed to uninstall plugin");
       this.host.emit({
         type: "plugins.uninstall.response",
-        payload: { ...base, error: describe(error) },
+        payload: { ...base, error: clientMessage(error, "Could not uninstall the plugin") },
       });
     }
   }
@@ -171,13 +173,6 @@ export class PluginSession {
   async handleSetEnabledRequest(
     msg: Extract<SessionInboundMessage, { type: "plugins.set_enabled.request" }>,
   ): Promise<void> {
-    if (!this.pluginService) {
-      this.host.emit({
-        type: "plugins.set_enabled.response",
-        payload: { requestId: msg.requestId, plugin: null, error: PLUGINS_UNAVAILABLE },
-      });
-      return;
-    }
     try {
       const plugin = await this.pluginService.setEnabled(msg.pluginId, msg.enabled);
       this.host.emit({
@@ -191,7 +186,11 @@ export class PluginSession {
       );
       this.host.emit({
         type: "plugins.set_enabled.response",
-        payload: { requestId: msg.requestId, plugin: null, error: describe(error) },
+        payload: {
+          requestId: msg.requestId,
+          plugin: null,
+          error: clientMessage(error, "Could not change the plugin's enabled state"),
+        },
       });
     }
   }

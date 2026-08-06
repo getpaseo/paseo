@@ -74,6 +74,7 @@ import { PairLinkModal } from "@/components/pair-link-modal";
 import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-section";
 import { EditorSection } from "@/screens/settings/editor-section";
 import { PluginsSection } from "@/screens/settings/plugins-section";
+import { usePluginsSupport } from "@/plugins/queries";
 import { Button } from "@/components/ui/button";
 import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
@@ -971,7 +972,15 @@ function SettingsSidebar({
   const hasHosts = sortedHosts.length > 0;
   const enableBuiltInDaemonOption = useEnableBuiltInDaemonOption();
   const isDesktopApp = isElectronRuntime();
-  const items = SIDEBAR_SECTION_ITEMS.filter((item) => !item.desktopOnly || isDesktopApp);
+  // A daemon without the `plugins` capability gets no plugins UI at all
+  // (docs/plugins.md). A host that has not handshaked yet keeps the entry — it
+  // may well support them.
+  const pluginsSupport = usePluginsSupport(activeHostServerId);
+  const items = SIDEBAR_SECTION_ITEMS.filter(
+    (item) =>
+      (!item.desktopOnly || isDesktopApp) &&
+      (item.id !== "plugins" || pluginsSupport !== "unsupported"),
+  );
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
   const outerContainerStyle = useMemo(

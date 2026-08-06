@@ -72,9 +72,13 @@ Paseo wraps agent CLIs (Claude Code, Codex, OpenCode) but does not manage their 
 
 ## Plugins
 
-Plugins are third-party HTML rendered by the client. They run in a sandboxed frame with no network access, no storage, and no origin, and they reach the app only through a fixed `postMessage` bridge. A plugin sees the content of files you preview with it and can ask the app to open a path; it cannot send that anywhere, call the daemon, or read anything else. [docs/plugins.md](docs/plugins.md) documents the sandbox and the bridge.
+Plugins are third-party HTML rendered by the client. They run in a sandboxed frame with no storage and no origin, and they reach the app only through a fixed `postMessage` bridge. A plugin sees the content of files you preview with it and can ask the app to open a path inside the workspace; it cannot call the daemon or reach anything else.
 
-The registry is a trust boundary. The daemon verifies each downloaded file against the SHA-256 in the index, which protects the bytes in transit but says nothing about the publisher's intent — installing a plugin means trusting whoever published it. Point `daemon.plugins.registryUrl` at your own index if you want to control what is installable.
+Keeping that content on the machine depends on three separate controls: a CSP that denies every outbound request, an iframe with no `allow-forms`/`allow-popups`/`allow-top-navigation` on web, and a deny-by-default navigation check on native. Any one of them failing is an exfiltration path — two did fail during this feature's review — so changes to the sandbox need a test that proves the denial. [docs/plugins.md](docs/plugins.md) documents the sandbox and the bridge.
+
+The daemon serves a plugin's HTML only while that plugin is enabled and only for entries its manifest declares, and it resolves symlinks before re-checking that the file is inside the plugin directory.
+
+The registry is a trust boundary. The daemon verifies each downloaded file against the SHA-256 in the index, which protects the bytes in transit but says nothing about the publisher's intent — installing a plugin means trusting whoever published it. Downloads are capped while streaming rather than after buffering, so a registry host that declares a small file and serves a huge one cannot exhaust daemon memory. Point `daemon.plugins.registryUrl` at your own index if you want to control what is installable.
 
 ## Forge host trust
 

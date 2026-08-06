@@ -1636,6 +1636,8 @@ export const ptBR: TranslationResources = {
     versionLine: "v{{version}} · {{author}}",
     unsupportedTitle: "Os plugins exigem um host mais recente",
     unsupportedMessage: "Atualize este host para o Paseo 0.2.6 ou posterior para usar plugins.",
+    disconnectedTitle: "Nenhum host conectado",
+    disconnectedMessage: "Conecte-se a um host para instalar e gerenciar plugins.",
     unavailableTitle: "Plugin indisponível",
     uninstallTitle: "Desinstalar plugin",
     uninstallMessage: "Remover {{name}} e seus arquivos deste host?",
@@ -1658,8 +1660,11 @@ export const ptBR: TranslationResources = {
     toast: {
       installed: "Plugin instalado",
       uninstalled: "Plugin desinstalado",
+      enabled: "Plugin ativado",
+      disabled: "Plugin desativado",
     },
     errors: {
+      readyTimeout: "Este plugin não terminou de carregar.",
       listFailed: "Não foi possível carregar os plugins",
       actionFailed: "A ação do plugin falhou",
       registryFailed: "Não foi possível carregar o registro de plugins",

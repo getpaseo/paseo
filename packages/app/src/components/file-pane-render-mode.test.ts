@@ -132,6 +132,30 @@ describe("pluginFilePreviewConflicts", () => {
     ]);
   });
 
+  it("does not report a plugin as conflicting with itself", () => {
+    const plugins: InstalledPlugin[] = [
+      {
+        manifest: {
+          id: "csv-table",
+          name: "CSV Table",
+          version: "1.0.0",
+          contributes: {
+            filePreviews: [
+              { id: "table", title: "Table", extensions: [".csv"], entry: "table.html" },
+              { id: "chart", title: "Chart", extensions: [".csv"], entry: "chart.html" },
+            ],
+          },
+        },
+        enabled: true,
+        installedAt: "2026-02-05T00:00:00.000Z",
+        source: { kind: "local" },
+        unavailableReason: null,
+      },
+    ];
+
+    expect(pluginFilePreviewConflicts(plugins)).toEqual([]);
+  });
+
   it("reports nothing when the only other claimant is disabled", () => {
     const plugins = [
       installedPlugin({ id: "zeta-view", extensions: [".csv"] }),

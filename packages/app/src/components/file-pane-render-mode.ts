@@ -77,7 +77,10 @@ export interface PluginFilePreviewConflict {
 export function pluginFilePreviewConflicts(
   plugins: readonly InstalledPlugin[],
 ): PluginFilePreviewConflict[] {
-  const claimsByExtension = new Map<string, string[]>();
+  // A set per extension, not a list: a plugin that claims one extension from two
+  // of its own previews resolves to itself in the pane, so counting it twice
+  // would report it as conflicting with itself.
+  const claimsByExtension = new Map<string, Set<string>>();
   for (const plugin of plugins) {
     if (!plugin.enabled || plugin.unavailableReason !== null) {
       continue;
@@ -85,15 +88,15 @@ export function pluginFilePreviewConflicts(
     for (const preview of plugin.manifest.contributes.filePreviews ?? []) {
       for (const extension of preview.extensions) {
         const normalized = extension.toLowerCase();
-        const claims = claimsByExtension.get(normalized) ?? [];
-        claims.push(plugin.manifest.id);
+        const claims = claimsByExtension.get(normalized) ?? new Set<string>();
+        claims.add(plugin.manifest.id);
         claimsByExtension.set(normalized, claims);
       }
     }
   }
 
   return [...claimsByExtension.entries()]
-    .filter(([, claims]) => claims.length > 1)
+    .filter(([, claims]) => claims.size > 1)
     .map(([extension, claims]) => {
       const [winnerPluginId, ...losingPluginIds] = [...claims].sort((left, right) =>
         left.localeCompare(right),

@@ -1607,6 +1607,8 @@ export const ar: TranslationResources = {
     versionLine: "الإصدار {{version}} · {{author}}",
     unsupportedTitle: "الإضافات تتطلب مضيفًا أحدث",
     unsupportedMessage: "حدّث هذا المضيف إلى Paseo 0.2.6 أو أحدث لاستخدام الإضافات.",
+    disconnectedTitle: "لا يوجد مضيف متصل",
+    disconnectedMessage: "اتصل بمضيف لتثبيت الإضافات وإدارتها.",
     unavailableTitle: "الإضافة غير متاحة",
     uninstallTitle: "إزالة الإضافة",
     uninstallMessage: "هل تريد إزالة {{name}} وملفاتها من هذا المضيف؟",
@@ -1629,8 +1631,11 @@ export const ar: TranslationResources = {
     toast: {
       installed: "تم تثبيت الإضافة",
       uninstalled: "تمت إزالة الإضافة",
+      enabled: "تم تفعيل الإضافة",
+      disabled: "تم تعطيل الإضافة",
     },
     errors: {
+      readyTimeout: "لم تكتمل عملية تحميل هذه الإضافة.",
       listFailed: "تعذّر تحميل الإضافات",
       actionFailed: "فشل إجراء الإضافة",
       registryFailed: "تعذّر تحميل سجل الإضافات",
