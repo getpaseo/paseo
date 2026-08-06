@@ -3,7 +3,10 @@ import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 import { expectRunningAgentChrome } from "../support/helpers/agent-stream";
 import { startLocalElixirRelay } from "../support/helpers/local-elixir-relay";
 import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
-import { startPackagedWebDaemon } from "../support/helpers/packaged-web-daemon";
+import {
+  startPackagedWebDaemon,
+  type PackagedWebDaemon,
+} from "../support/helpers/packaged-web-daemon";
 import {
   connectDaemonWebAppOnlyThroughRelay,
   measureRelayRestartDuringStream,
@@ -14,25 +17,31 @@ test("a streaming chat recovers from a relay deployment without user action", as
 }, testInfo) => {
   test.setTimeout(180_000);
   const relay = await startLocalElixirRelay();
-  const daemon = await startPackagedWebDaemon({ relayEndpoint: relay.endpoint });
+  let daemon: PackagedWebDaemon | null = null;
   let cleanupChat = async () => {};
 
   try {
+    daemon = await startPackagedWebDaemon({ relayEndpoint: relay.endpoint });
+    const runningDaemon = daemon;
     await test.step("Connect the daemon-served app only through the relay", async () => {
-      await connectDaemonWebAppOnlyThroughRelay(page, daemon);
+      await connectDaemonWebAppOnlyThroughRelay(page, runningDaemon);
     });
 
     await test.step("Open a running mock-provider chat", async () => {
       const chat = await seedMockAgentWorkspace({
         repoPrefix: "relay-deployment-reconnect-",
         title: "Relay deployment stream",
-        port: daemon.port,
+        port: runningDaemon.port,
         model: "five-minute-stream",
         initialPrompt: "Stream while the relay is deployed.",
       });
       cleanupChat = chat.cleanup;
-      const route = buildHostAgentDetailRoute(daemon.serverId, chat.agentId, chat.workspaceId);
-      await page.goto(new URL(route, daemon.origin).toString());
+      const route = buildHostAgentDetailRoute(
+        runningDaemon.serverId,
+        chat.agentId,
+        chat.workspaceId,
+      );
+      await page.goto(new URL(route, runningDaemon.origin).toString());
       await expectRunningAgentChrome(page, "Relay deployment stream");
     });
 
@@ -49,8 +58,14 @@ test("a streaming chat recovers from a relay deployment without user action", as
       console.log(`Relay deployment measurements: ${JSON.stringify(measurements)}`);
     });
   } finally {
-    await cleanupChat();
-    await daemon.close();
-    await relay.close();
+    try {
+      await cleanupChat();
+    } finally {
+      try {
+        await daemon?.close();
+      } finally {
+        await relay.close();
+      }
+    }
   }
 });
