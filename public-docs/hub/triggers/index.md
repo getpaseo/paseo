@@ -88,4 +88,4 @@ Both run. Triggers are not ordered and do not shadow each other, in one configur
 
 ## Replying
 
-Put `allow_outputs` on the step that should reply. The available provider reply types are `slack.reply`, `discord.reply`, and `github.reply`; set `max` when a step needs more than one update. GitHub-triggered agents also receive a scoped GitHub credential for `gh`.
+Put `allow_outputs` on the step that should reply. The available provider reply types are `slack.reply`, `discord.reply`, and `github.reply`; set `max` when a step needs more than one update, or `required: true` when it must emit at least one reply before it can finish. GitHub-triggered agents also receive a scoped GitHub credential for `gh`. See the [`hub.yml` output capability reference](/docs/hub/configuration/hub-yml#output-capabilities) for the contract.
