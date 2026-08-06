@@ -32,6 +32,7 @@ const HOST_B_MODELS: AgentModelDefinition[] = [
     provider: "mock",
     id: "model-b",
     label: "Model B",
+    aliases: ["model-b-legacy"],
     isDefault: true,
     defaultThinkingOptionId: "high",
     thinkingOptions: [
@@ -281,7 +282,7 @@ describe("schedule form model", () => {
         serverId: "host-b",
         serverName: "Host B",
         cwd: "/repo/b",
-        model: "model-b",
+        model: "model-b-legacy",
         thinkingOptionId: "low",
       }),
       defaults: { serverId: null, projectTargets: PROJECT_TARGETS, preferences: {} },

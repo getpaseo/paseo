@@ -11,7 +11,7 @@ import {
   buildSelectableProviderSelectorProviders,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
-import { filterSelectableModels } from "@/provider-selection/model-catalog";
+import { filterSelectableModels, findModelByReference } from "@/provider-selection/model-catalog";
 import {
   buildProviderDefinitionMapForStatuses,
   INITIAL_USER_MODIFIED,
@@ -812,6 +812,36 @@ function seedThinkingDrafts(
   }
 }
 
+function canonicalizeThinkingDrafts(
+  drafts: Map<string, string>,
+  entries: readonly ProviderSnapshotEntry[],
+): void {
+  for (const entry of entries) {
+    const models = filterSelectableModels(entry.models ?? null);
+    if (!models) {
+      continue;
+    }
+    for (const model of models) {
+      const canonicalKey = thinkingDraftKey(entry.provider, model.id);
+      if (drafts.has(canonicalKey)) {
+        continue;
+      }
+      const resolvedAlias = model.aliases?.find(
+        (alias) =>
+          findModelByReference(models, alias)?.id === model.id &&
+          drafts.has(thinkingDraftKey(entry.provider, alias)),
+      );
+      if (!resolvedAlias) {
+        continue;
+      }
+      const aliasedThinking = drafts.get(thinkingDraftKey(entry.provider, resolvedAlias));
+      if (aliasedThinking !== undefined) {
+        drafts.set(canonicalKey, aliasedThinking);
+      }
+    }
+  }
+}
+
 export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormModel {
   const listeners = new Set<() => void>();
   const initialValues = normalizeInitialValues({
@@ -957,6 +987,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
         return;
       }
       providerEntries = providerSnapshot.entries;
+      canonicalizeThinkingDrafts(thinkingDrafts, providerEntries);
       const isPendingResolution = state.providerSnapshotRequest?.serverId === serverId;
       const resolved =
         state.targetKind === "new-agent"

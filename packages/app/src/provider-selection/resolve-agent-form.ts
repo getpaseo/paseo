@@ -9,6 +9,7 @@ import {
   type FormPreferences,
   type ProviderPreferences,
 } from "@/hooks/use-form-preferences";
+import { findModelByReference } from "./model-catalog";
 
 export interface FormInitialValues {
   serverId?: string | null;
@@ -122,20 +123,6 @@ export function resolveDefaultModel(
 
 export function resolveDefaultModelId(availableModels: AgentModelDefinition[] | null): string {
   return resolveDefaultModel(availableModels)?.id ?? "";
-}
-
-export function findModelByReference(
-  availableModels: AgentModelDefinition[] | null,
-  modelId: string,
-): AgentModelDefinition | null {
-  if (!availableModels || availableModels.length === 0) return null;
-  const normalizedModelId = normalizeSelectedModelId(modelId);
-  if (!normalizedModelId) return null;
-  return (
-    availableModels.find((model) => model.id === normalizedModelId) ??
-    availableModels.find((model) => model.aliases?.includes(normalizedModelId)) ??
-    null
-  );
 }
 
 function resolveCanonicalModelId(
