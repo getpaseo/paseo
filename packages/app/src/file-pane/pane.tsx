@@ -26,7 +26,12 @@ import {
 } from "@/components/file-pane-render-mode";
 import { PluginSandbox } from "@/plugins/sandbox";
 import { usePluginEntry, usePlugins } from "@/plugins/queries";
-import { fromPluginRelativePath, toPluginRelativePath, type PluginContext } from "@/plugins/bridge";
+import {
+  fromPluginRelativePath,
+  isPluginPreviewablePath,
+  toPluginRelativePath,
+  type PluginContext,
+} from "@/plugins/bridge";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes } from "@/attachments/service";
@@ -296,13 +301,17 @@ function FilePreviewBody({
   }
 
   if (preview.kind === "text") {
-    if (renderer.kind === "plugin") {
+    // `useFilePreviewRenderer` only picks a plugin for a path inside the
+    // workspace, so this is non-null whenever the renderer says plugin.
+    const relativePath =
+      renderer.kind === "plugin" ? toPluginRelativePath(workspaceRoot, filePath) : null;
+    if (renderer.kind === "plugin" && relativePath !== null) {
       return (
         <PluginFilePreview
           serverId={serverId}
           renderer={renderer}
           workspaceRoot={workspaceRoot}
-          path={filePath}
+          relativePath={relativePath}
           content={preview.content ?? ""}
           onOpenFile={onOpenFile}
         />
@@ -412,14 +421,15 @@ function PluginFilePreview({
   serverId,
   renderer,
   workspaceRoot,
-  path,
+  relativePath,
   content,
   onOpenFile,
 }: {
   serverId: string;
   renderer: Extract<FilePreviewRenderer, { kind: "plugin" }>;
   workspaceRoot: string;
-  path: string;
+  /** Workspace-relative, already resolved by the caller. */
+  relativePath: string;
   content: string;
   onOpenFile?: (input: { path: string; lineStart?: number }) => void;
 }) {
@@ -433,8 +443,8 @@ function PluginFilePreview({
   // rejects absolute paths, so handing it an absolute one would make its own
   // context unusable as a reply.
   const context = useMemo<PluginContext>(
-    () => ({ kind: "file-preview", path: toPluginRelativePath(workspaceRoot, path), content }),
-    [workspaceRoot, path, content],
+    () => ({ kind: "file-preview", path: relativePath, content }),
+    [relativePath, content],
   );
   const handleOpenFile = useCallback(
     (input: { path: string; lineStart?: number }) =>
@@ -482,15 +492,17 @@ function PluginFilePreview({
  */
 function useFilePreviewRenderer(input: {
   serverId: string | null;
+  workspaceRoot: string;
   filePath: string;
   lineStart: number | undefined;
   isTextPreview: boolean;
 }): { renderer: FilePreviewRenderer; rendererPending: boolean } {
-  const { serverId, filePath, lineStart, isTextPreview } = input;
+  const { serverId, workspaceRoot, filePath, lineStart, isTextPreview } = input;
   const { plugins, isLoading } = usePlugins(serverId);
   // A line target means the user asked for a specific line, which only the
-  // code view can honour.
-  const pluggable = isTextPreview && !lineStart;
+  // code view can honour. A file outside the workspace has no path a plugin
+  // could be handed.
+  const pluggable = isTextPreview && !lineStart && isPluginPreviewablePath(workspaceRoot, filePath);
   const renderer = useMemo<FilePreviewRenderer>(
     () => (pluggable ? resolveFilePreviewRenderer({ filePath, plugins }) : { kind: "code" }),
     [filePath, plugins, pluggable],
@@ -578,6 +590,7 @@ export function FilePane({
   );
   const { renderer, rendererPending } = useFilePreviewRenderer({
     serverId,
+    workspaceRoot: normalizedWorkspaceRoot,
     filePath: location.path,
     lineStart: location.lineStart,
     isTextPreview: preview?.kind === "text",

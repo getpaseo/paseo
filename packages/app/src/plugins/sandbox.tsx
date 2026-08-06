@@ -9,7 +9,11 @@ import {
   type PluginHostMessage,
   type PluginSandboxProps,
 } from "./bridge";
-import { resolvePluginThemeTokens, type ThemedPluginSandboxProps } from "./theme";
+import {
+  resolvePluginThemeTokens,
+  useStableThemeTokens,
+  type ThemedPluginSandboxProps,
+} from "./theme";
 import { isPluginDocumentUrl } from "./sandbox-url";
 import { PLUGIN_READY_TIMEOUT_MS, PluginReadyTimeout } from "./sandbox-error";
 
@@ -50,8 +54,9 @@ function PluginSandboxView({
   context,
   onOpenFile,
   testID,
-  themeTokens,
+  themeTokens: rawThemeTokens,
 }: ThemedPluginSandboxProps) {
+  const themeTokens = useStableThemeTokens(rawThemeTokens);
   const webViewRef = useRef<WebView | null>(null);
   const readyRef = useRef(false);
   const [handshake, setHandshake] = useState<"waiting" | "ready" | "timeout">("waiting");

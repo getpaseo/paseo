@@ -2,80 +2,65 @@
 
 ## Goal
 
-Ship a plugin system + marketplace for Paseo on branch `feat/plugin-system` (cut from `origin/main`, no pre-existing PR covers this). Stakeholder ask: VS Code-style extensions so things like the CSV/HTML file previews and a "sidebar pet" become plugins instead of core PRs. Requirements from the user: review loop first, **only open the PR once reviewer agents approve**, do everything needed for CONTRIBUTING.md, then babysit the PR until every comment is resolved.
+Ship a plugin system + marketplace for Paseo on branch `feat/plugin-system` (cut from `origin/main`, no pre-existing PR covers this). Stakeholder ask: VS Code-style extensions so things like the CSV/HTML file previews and a "sidebar pet" become plugins instead of core PRs. User's requirements: review loop first, **only open the PR once reviewer agents approve**, do everything needed for CONTRIBUTING.md, then babysit the PR until every comment is resolved.
 
-## Done and verified
+## Branch state
 
-4 commits on `feat/plugin-system`, ~5.5k lines, 72 files:
+6 commits, 98 files, +8151/-244. Nothing pushed. No PR open.
 
-- `c4022e844` protocol — manifest + RPC schemas, wired into inbound/outbound unions and `server_info.features.plugins`
-- `be22d767f` client — 6 `pluginsX` methods on `DaemonClient`
-- `34aabbb84` server + CLI + docs + example plugin
-- `40153460e` app — sandbox, file preview, sidebar panel, Settings → Plugins
+```
+53cac5843 Close the plugin frame self-navigation hole and fix the theme regression   <- round 2 fixes
+289d48125 Fix plugin sandbox escapes and store atomicity from review                 <- round 1 fixes
+40153460e feat(app): render plugin file previews and sidebar panels in a sandbox
+34aabbb84 feat(server,cli): plugin store, registry install, RPCs, and CLI
+be22d767f feat(client): add plugin RPC methods to the daemon client
+c4022e844 feat(protocol): add plugin manifest and plugin RPC schemas
+```
 
-Green at repo root: `npm run typecheck` exit 0, `npm run lint` 0 warnings/0 errors, `npm run format:check` clean.
-Agent-reported test runs: server plugin suite PASS (50), app unit PASS (61), app browser PASS (4), protocol PASS (18), cli PASS (7). Per CLAUDE.md do NOT re-run these.
+Gate green at HEAD: `npm run typecheck` clean, `npm run lint` 0/0, `npm run format:check` clean. App plugin suites 54 unit + 5 browser pass; server/desktop suites reported green by the agent that wrote them. Per CLAUDE.md do NOT re-run these.
 
-Replaced the server agent's 162-line hand-rolled semver with the real `semver` package (declared in `packages/server/package.json`, `includePrerelease: true` so beta daemons don't mark every plugin unavailable). Its 19 tests still pass.
+## Review status
 
-## Review round 1 — ALL THREE REVIEWERS SAID DO NOT SHIP
+Two rounds, both rejected. **Three exfiltration holes have now shipped past a fully green typecheck/lint/test gate.** Do not treat the gate as evidence for this feature.
 
-No approval. PR stays closed. Two criticals were found **independently by two reviewers**, so treat them as certain:
+- Round 1 (2 holes): regex-placed CSP defeated by `<!-- <head> -->` in guest HTML; `originWhitelist: ["about:blank"]` on native, which react-native-webview consults _before_ the navigation callback, handing the URL to `Linking.openURL` and the user's real browser.
+- Round 2 (1 hole, survived the round-1 fixes): the plugin iframe navigating **itself**. The guest CSP cannot stop that — `navigate-to` was dropped from the spec and `default-src` does not cover a document's own navigation. Fixed with `frame-src 'none'` on the **host** document (a child frame's navigation is checked against the parent's policy; `about:srcdoc` is exempt so the plugin still renders). Reproduced and closed in real Electron with a local HTTP server counting hits.
 
-- **C1 native exfiltration.** `sandbox.tsx` sets `originWhitelist={["about:blank"]}`. react-native-webview checks the whitelist _first_ and hands non-matching URLs to `Linking.openURL` — opens the user's real browser with the payload in the query string, and `onShouldStartLoadWithRequest` is never called. Fix is counterintuitive: `originWhitelist={["*"]}` so everything reaches the callback, then deny by URL there.
-- **C2 CSP defeated.** `wrapPluginHtml` regex-matches `<head>` in attacker-controlled HTML; `<!-- <head> -->` puts the meta in a comment and the doc ships with no CSP → full `fetch`/`sendBeacon` exfil on every platform. Fix: always emit our own shell, never parse guest HTML.
+Round 3 reviewers are running as of this writing: security (fable, tasked with finding a fourth hole and told to prove it with a probe) and correctness (opus, tasked with verifying the round-2 fixes rather than trusting them).
 
-Both falsify the `docs/plugins.md` Trust claim "It cannot exfiltrate any of that". **That doc line must not ship as written.**
+## What round 2 fixed, in 53cac5843
 
-Other confirmed: `open-file` is an arbitrary-file-read primitive (C3); install() non-atomic + no per-id lock (destroys the working copy on a failed reinstall); a missing manifest silently erases installed.json state; uncapped download OOMs the daemon; one bad registry entry bricks browse for every deployed daemon; `list()` writes to disk on every read; CLI has no `features.plugins` gate.
-
-Full reviewer text: `/tmp/claude-1000/.../tasks/{a6f4f4bbcde8ccb2d,a9d73972fd9495596,a6daef1da43e2142b}.output`
-
-## Fix round 1 — DONE, committed as `289d48125`
-
-All four fix agents' work landed (sandbox security, server store/registry, session+CLI, app UI). 46 files, +1955/-459. Docs (`docs/plugins.md`, `SECURITY.md`) reconciled by me — the false "cannot exfiltrate" claim is gone, replaced with the three controls that have to hold.
-
-Gate re-verified by me personally after the agents: `npm run typecheck` exit 0, `npm run lint` 0 errors, `npm run format:check` clean, app plugin tests 39 pass + 4 browser pass, server plugin 50 pass, protocol 21 pass, CLI 10 pass.
-
-The UI agent **died on a session quota limit** mid-task and left broken edits. I finished them myself:
-
-- missing `useHostFeature` import in `queries.ts` (typecheck was red)
-- it had introduced **two `useUnistyles()` calls**, which `docs/unistyles.md` bans outright with no carveout. Replaced with `usePluginThemeTokens()` in `plugins/theme.ts`, built on RN's reactive `useColorScheme()` plus a static theme import (sanctioned alternative 2). Works because unistyles is configured `adaptiveThemes: true` and nothing calls `setTheme`.
-- `FilePane` complexity over the limit → extracted `useFilePreviewRenderer`
-- `type` → `interface` in `model.test.ts`
-
-**Quota limit resets 11:10pm America/Sao_Paulo.** Per DELEGATION.md's circuit-breaker, do NOT re-spawn agents before then.
+- Host-document `frame-src 'none'` in `packages/server/src/server/web-ui.ts` (header) and `packages/app/public/index.html` (meta — this is what Electron's `paseo://` handler and the Expo dev server serve). Plus `setupSubframeNavigationPrevention()` in the desktop window manager on `will-frame-navigate`.
+- `packages/app/src/plugins/theme.ts` no longer derives tokens from `useColorScheme()` + a static theme import. That was a real regression: the app theme is user-selectable independently of the OS scheme (`app/_layout.tsx` calls `UnistylesRuntime.setTheme`), so OS-dark + app-light gave a fully inverted palette, and font patches applied via `UnistylesRuntime.updateTheme` never arrived. Both sandboxes now take `themeTokens` as a prop via `withUnistyles`. `useUnistyles()` stays banned (docs/unistyles.md).
+- `open-file` round trip. The host handed plugins an absolute `context.path` and then rejected it on the way back, so the documented example plugin's line-click silently did nothing. `toPluginRelativePath`/`fromPluginRelativePath` in bridge.ts, `workspaceRoot` threaded through the file pane chain.
+- Install rollback no longer `rm`s the trash dir when the _restore_ rename failed (that destroyed the last copy). `PluginEntryUnavailableError` allowlisted in `clientMessage()`.
+- Plugin-authored preview titles clamped at 24 chars where they enter the render model.
+- Reverted a repo-wide `allowImportingTsExtensions` in `packages/app/tsconfig.json` that an agent added to work around a test import; moved `isPluginDocumentUrl` into `sandbox-url.ts` instead.
+- `docs/plugins.md` and `SECURITY.md` said three mechanisms had to hold. It is four. Corrected, and both now say three of the four were found broken across two rounds.
 
 ## Still to do
 
-1. **Re-review** the fixes. Round 1 proved a green gate means nothing for this feature — two exfil holes shipped past typecheck/lint/tests. The security reviewer must specifically re-check the CSP shell and the native navigation gate.
-2. **QA evidence** — still missing, CONTRIBUTING closes PRs without it. Screenshots of Settings → Plugins, a plugin file preview, the sidebar pet. `docs/qa.md`, `docs/browser-capture-harness.md`. Platform matrix honestly: only Linux/web exercised, native sandbox changes are UNTESTED on a real device.
+1. Round 3 verdicts. **The PR does not open until reviewers approve** — that is the user's explicit instruction, not a guideline.
+2. QA evidence. CONTRIBUTING closes PRs without it. Screenshots of Settings → Plugins, a plugin file preview, the sidebar pet. `docs/qa.md`, `docs/browser-capture-harness.md`. `.qa/` is gitignored. Platform matrix must be honest: only Linux/web exercised; **native sandbox changes are UNTESTED on a real device**.
 3. Push, open PR, babysit comments.
 
-Known loose end: `PluginService.install` accepts `{refresh}` but no RPC/CLI flag reaches it.
+## Must be disclosed in the PR
+
+- **Codex reviewers are unavailable here** — both attempts died with HTTP 401 from api.openai.com. The cross-family pairing rule in DELEGATION.md could not be satisfied; every review is Claude-on-Claude.
+- `https://plugins.paseo.sh/index.json` (the default `daemon.plugins.registryUrl`) **does not exist yet**, so registry installs fail until stakeholders host it. Local and by-hand installs work.
+- iOS and Android are untested on real devices.
+- Known loose end: `PluginService.install` accepts `{refresh}` but no RPC or CLI flag reaches it.
 
 ## Key decisions (do not relitigate)
 
 - **A plugin is a manifest + self-contained HTML files**, served over the existing WebSocket RPC, not over HTTP. Kills the asset-server, auth-ordering, and relay problems in one stroke. Entries are flat `*.html` only.
-- **Sandbox:** web/Electron `<iframe sandbox="allow-scripts">` (deliberately no `allow-same-origin`), native `react-native-webview` with navigation locked. Injected CSP denies network.
-- **Bridge is tiny on purpose:** `ready`/`init`/`update`/`open-file`/`resize`. Widening it is a product decision.
-- **Marketplace = a registry index JSON** (`daemon.plugins.registryUrl`, default `https://plugins.paseo.sh/index.json` — does not exist yet, so installs fail until stakeholders host it; say so in the PR). Install verifies SHA-256 per file.
-- Codex reviewers were attempted first per the cross-family pairing rule but **both died with HTTP 401** (OpenAI auth unavailable here). Circuit-breaker applied: did not re-spawn. Fell back to Claude reviewers — **disclose this limitation in the PR**.
-
-## Files that matter
-
-- `docs/plugins.md` — the contract; authoritative, agents were told not to edit it
-- `packages/protocol/src/plugin/{types,rpc-schemas}.ts` — wire shapes
-- `packages/server/src/server/plugin/{store,registry-client,service,version-range}.ts` — install + discovery
-- `packages/server/src/server/session/plugin/plugin-session.ts` — the 6 RPC handlers
-- `packages/app/src/plugins/{bridge,frame.web,sandbox,sandbox.web,queries}.ts(x)` — sandbox + bridge
-- `packages/app/src/components/file-pane-render-mode.ts` — extension → viewer resolution
-- `packages/app/src/stores/explorer-tab-memory.ts` — `ExplorerTab` widened to `plugin:${string}`
-- `examples/plugins/hello-paseo/` — working example, both contribution kinds
-- CONTRIBUTING.md / SECURITY.md / CLAUDE.md / docs/{architecture,glossary,providers}.md — already updated
+- **Sandbox:** web/Electron `<iframe sandbox="allow-scripts">` (deliberately no `allow-same-origin`), native `react-native-webview` with navigation locked. Guest CSP denies network; host CSP denies the frame navigating out.
+- **Bridge is tiny on purpose:** `ready`/`init`/`update`/`open-file`. (`resize` was removed — nothing consumed it.) Widening it is a product decision.
+- **Marketplace = a registry index JSON.** Install verifies SHA-256 per file.
 
 ## Traps
 
-- Pre-commit runs a whole-repo typecheck; commit with `--no-verify` only while other agents have files in flight, and always run the full gate before pushing.
+- Pre-commit runs a whole-repo typecheck; `--no-verify` only while agents have files in flight, and always run the full gate before pushing.
 - Rebuild with `npm run build:client` / `build:server` before believing a cross-package type error.
 - Never run the full test suite locally.
+- `rg` returned false "0 matches" in this checkout at least once and caused a wrong conclusion. Prefer `grep`, and verify negative results before acting on them.

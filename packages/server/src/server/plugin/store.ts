@@ -100,6 +100,15 @@ function entryFilenames(manifest: PluginManifest): string[] {
   ];
 }
 
+/**
+ * `.trash-<id>-<uuid>` back to `<id>`. Returns null when the name is not that
+ * shape, so a stray directory is deleted rather than restored to a guess.
+ */
+function trashedPluginId(dirName: string): string | null {
+  const match = /^\.trash-(.+)-[0-9a-f-]{36}$/.exec(dirName);
+  return match?.[1] ?? null;
+}
+
 function describeManifestIssues(error: z.ZodError): string {
   return error.issues
     .slice(0, 3)
@@ -140,22 +149,37 @@ export class PluginStore {
   }
 
   /**
-   * Creates the plugins directory and sweeps scratch directories left behind by
-   * a daemon that died mid-install. They are invisible to `list()` because a
-   * plugin id can never start with a dot.
+   * Creates the plugins directory and deals with scratch directories left
+   * behind by a daemon that died mid-install. They are invisible to `list()`
+   * because a plugin id can never start with a dot.
+   *
+   * `.staging-*` is a partial download; delete it. `.trash-<id>-*` is the
+   * user's previous copy, moved aside during a swap — if `<id>` is not there,
+   * the swap did not complete and the trash is the only copy left, so restore
+   * it rather than deleting the plugin the user installed.
    */
   private async initialize(): Promise<void> {
     this.ready ??= (async () => {
       await mkdir(this.dir, { recursive: true });
       const entries = await readdir(this.dir, { withFileTypes: true });
+      const names = new Set(entries.map((entry) => entry.name));
       await Promise.all(
         entries
-          .filter(
-            (entry) =>
-              entry.isDirectory() &&
-              (entry.name.startsWith(".staging-") || entry.name.startsWith(".trash-")),
-          )
+          .filter((entry) => entry.isDirectory() && entry.name.startsWith(".staging-"))
           .map(async (entry) => rm(join(this.dir, entry.name), { recursive: true, force: true })),
+      );
+      await Promise.all(
+        entries
+          .filter((entry) => entry.isDirectory() && entry.name.startsWith(".trash-"))
+          .map(async (entry) => {
+            const pluginId = trashedPluginId(entry.name);
+            const source = join(this.dir, entry.name);
+            if (pluginId && !names.has(pluginId)) {
+              await rename(source, join(this.dir, pluginId));
+              return;
+            }
+            await rm(source, { recursive: true, force: true });
+          }),
       );
     })();
     await this.ready;
@@ -260,8 +284,8 @@ export class PluginStore {
         }
         // Only once the new copy is in place. If the swap failed *and* the
         // restore rename also failed, the trash holds the user's only surviving
-        // plugin — deleting it here is the very data loss this dance avoids. A
-        // leaked `.trash-*` is swept by `initialize()` on the next start.
+        // plugin — deleting it here is the very data loss this dance avoids.
+        // `initialize()` restores it on the next start.
         if (installed) {
           await rm(trashDir, { recursive: true, force: true });
         }

@@ -342,6 +342,33 @@ describe("PluginStore", () => {
     expect(await readdir(tempDir)).toEqual(["csv-table", "installed.json"]);
   });
 
+  // The install swap parks the previous copy in `.trash-<id>-<uuid>`. If the
+  // swap and the restore rename both fail, that trash is the only copy left, so
+  // startup must put it back instead of sweeping it.
+  test("restores a trashed plugin when the install that moved it aside never completed", async () => {
+    const trash = join(tempDir, ".trash-csv-table-0f9c1d4e-6b2a-4c3d-8e5f-1a2b3c4d5e6f");
+    await mkdir(trash, { recursive: true });
+    await writeFile(
+      join(trash, "paseo-plugin.json"),
+      JSON.stringify({ ...manifestFor("csv-table"), paseoVersion: ">=0.2.0" }),
+    );
+    await writeFile(join(trash, "preview.html"), "<p>the user's only copy</p>");
+
+    expect(await store.list()).toMatchObject([{ manifest: { id: "csv-table" } }]);
+    expect(await readdir(tempDir)).toEqual(["csv-table", "installed.json"]);
+    expect(await store.readEntry("csv-table", "preview.html")).toBe("<p>the user's only copy</p>");
+  });
+
+  test("discards trash whose plugin is already back in place", async () => {
+    await writePlugin("csv-table");
+    const trash = join(tempDir, ".trash-csv-table-0f9c1d4e-6b2a-4c3d-8e5f-1a2b3c4d5e6f");
+    await mkdir(trash, { recursive: true });
+    await writeFile(join(trash, "paseo-plugin.json"), JSON.stringify(manifestFor("csv-table")));
+
+    expect(await store.list()).toHaveLength(1);
+    expect(await readdir(tempDir)).toEqual(["csv-table", "installed.json"]);
+  });
+
   test("listing again does not rewrite installed.json", async () => {
     await writePlugin("csv-table");
     await store.list();

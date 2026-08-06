@@ -91,17 +91,28 @@ function isHomeRelative(value: string): boolean {
 }
 
 /**
- * The workspace-relative path a plugin sees, and sends back.
+ * The workspace-relative path a plugin sees, and sends back. `null` when the
+ * file is outside the workspace, which is what makes a plugin preview
+ * workspace-only — see `isPluginPreviewablePath`.
  *
  * Plugins are handed the relative path rather than the absolute one for two
  * reasons: the absolute path leaks the user's home directory into untrusted
  * HTML, and `open-file` only accepts relative paths, so handing over an
  * absolute one gives the plugin a value the host then refuses back.
  */
-export function toPluginRelativePath(workspaceRoot: string, absolutePath: string): string {
-  return (
-    resolveWorkspaceFilePaths({ path: absolutePath, workspaceRoot })?.relativePath ?? absolutePath
-  );
+export function toPluginRelativePath(workspaceRoot: string, absolutePath: string): string | null {
+  return resolveWorkspaceFilePaths({ path: absolutePath, workspaceRoot })?.relativePath ?? null;
+}
+
+/**
+ * The file pane can preview `~`-relative files and absolute files outside the
+ * workspace (`file-explorer/preview-target.ts`). Plugins do not get those: there
+ * is no relative path to hand over, so the plugin would receive an absolute path
+ * — leaking the home directory — and could never send it back through
+ * `open-file`. Those files fall back to the built-in code view.
+ */
+export function isPluginPreviewablePath(workspaceRoot: string, path: string): boolean {
+  return toPluginRelativePath(workspaceRoot, path) !== null;
 }
 
 /** Re-absolutise a path that came back through `open-file`, for host consumers. */

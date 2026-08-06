@@ -2,7 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { withUnistyles } from "react-native-unistyles";
 import { createInitMessage, createUpdateMessage, type PluginSandboxProps } from "./bridge";
 import { attachPluginBridge, createPluginIframe, postToPluginIframe } from "./frame.web";
-import { resolvePluginThemeTokens, type ThemedPluginSandboxProps } from "./theme";
+import {
+  resolvePluginThemeTokens,
+  useStableThemeTokens,
+  type ThemedPluginSandboxProps,
+} from "./theme";
 import { PLUGIN_READY_TIMEOUT_MS, PluginReadyTimeout } from "./sandbox-error";
 
 function PluginSandboxView({
@@ -10,8 +14,9 @@ function PluginSandboxView({
   context,
   onOpenFile,
   testID,
-  themeTokens,
+  themeTokens: rawThemeTokens,
 }: ThemedPluginSandboxProps) {
+  const themeTokens = useStableThemeTokens(rawThemeTokens);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const readyRef = useRef(false);

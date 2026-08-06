@@ -5,6 +5,7 @@ import {
   createUpdateMessage,
   fromPluginRelativePath,
   handlePluginGuestMessage,
+  isPluginPreviewablePath,
   parsePluginGuestMessage,
   resolvePluginOpenFilePath,
   toPluginRelativePath,
@@ -162,8 +163,9 @@ describe("plugin path round trip", () => {
   it("accepts the path it handed the plugin, and lands back where it started", () => {
     for (const absolute of [`${ROOT}/src/a.ts`, `${ROOT}/README.md`, `${ROOT}/a/b/c.txt`]) {
       const given = toPluginRelativePath(ROOT, absolute);
-      expect(resolvePluginOpenFilePath(given)).toBe(given);
-      expect(fromPluginRelativePath(ROOT, given)).toBe(absolute);
+      expect(given, absolute).not.toBeNull();
+      expect(resolvePluginOpenFilePath(given ?? "")).toBe(given);
+      expect(fromPluginRelativePath(ROOT, given ?? "")).toBe(absolute);
     }
   });
 
@@ -171,6 +173,16 @@ describe("plugin path round trip", () => {
     for (const path of ["/etc/passwd", "~/.ssh/id_rsa", "../../etc/passwd", "  ", ""]) {
       expect(resolvePluginOpenFilePath(path)).toBeNull();
     }
+  });
+
+  // The file pane can preview these; a plugin must not be offered them, because
+  // there is no relative path to hand over and the absolute one leaks $HOME.
+  it("reports a file outside the workspace as not previewable by a plugin", () => {
+    for (const outside of ["/etc/passwd", "~/.npmrc", "/home/dev/other-project/a.ts"]) {
+      expect(toPluginRelativePath(ROOT, outside), outside).toBeNull();
+      expect(isPluginPreviewablePath(ROOT, outside), outside).toBe(false);
+    }
+    expect(isPluginPreviewablePath(ROOT, `${ROOT}/src/a.ts`)).toBe(true);
   });
 
   it("tolerates a trailing slash on the root", () => {
