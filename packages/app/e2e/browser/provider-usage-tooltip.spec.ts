@@ -118,4 +118,44 @@ test.describe("provider usage tooltip", () => {
       await session.cleanup();
     }
   });
+
+  test("keeps the mobile session footprint when the provider has no session window", async ({
+    page,
+  }) => {
+    test.setTimeout(180_000);
+    const usageFixture = await installProviderUsageFixture(
+      page,
+      [
+        {
+          fetchedAt: "2026-06-19T00:00:00.000Z",
+          providers: [
+            {
+              providerId: "mock",
+              displayName: "Mock provider",
+              status: "available",
+              planLabel: null,
+              windows: [{ id: "weekly", label: "Weekly", usedPct: 21 }],
+            },
+          ],
+        },
+      ],
+      { deferResponses: true },
+    );
+    const session = await openMockAgent(page);
+    try {
+      await usageFixture.waitForRequestCount(1);
+
+      const placeholder = page.getByTestId("provider-usage-mobile-session-placeholder");
+      const placeholderBox = await placeholder.boundingBox();
+      expect(placeholderBox).not.toBeNull();
+      usageFixture.releaseNextResponse();
+
+      const spacer = page.getByTestId("provider-usage-mobile-session-spacer");
+      await expect(spacer).toBeAttached();
+      const spacerBox = await spacer.boundingBox();
+      expect(spacerBox?.height).toBeCloseTo(placeholderBox?.height ?? 0, 1);
+    } finally {
+      await session.cleanup();
+    }
+  });
 });

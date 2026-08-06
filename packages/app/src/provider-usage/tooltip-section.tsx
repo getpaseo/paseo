@@ -56,30 +56,38 @@ export function ProviderUsageMobileSession({
   activeProviderId: string | null | undefined;
 }) {
   if (view.kind === "loading") {
-    return (
-      <View
-        style={styles.mobileSession}
-        testID="provider-usage-mobile-session-placeholder"
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-      >
-        <View style={styles.mobileSessionPlaceholderRow}>
-          <View style={styles.mobileSessionPlaceholderLabel} />
-          <View style={styles.mobileSessionPlaceholderValue} />
-        </View>
-        <View style={styles.mobileSessionPlaceholderTrack} />
-      </View>
-    );
+    return <ProviderUsageMobileSessionPlaceholder />;
   }
 
-  if (view.kind !== "ready") return null;
+  if (view.kind !== "ready") return <ProviderUsageMobileSessionPlaceholder hidden />;
 
   const sessionWindow = findActiveProviderSessionWindow(view.payload.providers, activeProviderId);
-  if (!sessionWindow) return null;
+  if (!sessionWindow) return <ProviderUsageMobileSessionPlaceholder hidden />;
 
   return (
     <View style={styles.mobileSession} testID="provider-usage-mobile-session">
       <ProviderUsageWindowBar window={sessionWindow} />
+    </View>
+  );
+}
+
+function ProviderUsageMobileSessionPlaceholder({ hidden = false }: { hidden?: boolean }) {
+  return (
+    <View
+      style={[styles.mobileSession, hidden ? styles.mobileSessionHidden : undefined]}
+      testID={
+        hidden
+          ? "provider-usage-mobile-session-spacer"
+          : "provider-usage-mobile-session-placeholder"
+      }
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      <View style={styles.mobileSessionPlaceholderRow}>
+        <View style={styles.mobileSessionPlaceholderLabel} />
+        <View style={styles.mobileSessionPlaceholderValue} />
+      </View>
+      <View style={styles.mobileSessionPlaceholderTrack} />
     </View>
   );
 }
@@ -106,6 +114,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   mobileSession: {
     width: "100%",
+  },
+  mobileSessionHidden: {
+    opacity: 0,
   },
   mobileSessionPlaceholderRow: {
     height: theme.fontSize.xs * 1.4,
