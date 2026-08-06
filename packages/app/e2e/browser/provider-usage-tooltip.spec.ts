@@ -73,6 +73,41 @@ test.describe("provider usage tooltip", () => {
     }
   });
 
+  test("shows provider session usage without context telemetry", async ({ page }) => {
+    test.setTimeout(180_000);
+    await page.setViewportSize(MOBILE_VIEWPORT);
+    const usageFixture = await installProviderUsageFixture(page, [
+      {
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        providers: [
+          {
+            providerId: "mock",
+            displayName: "Mock provider",
+            status: "available",
+            planLabel: "Test plan",
+            windows: [{ id: "session", label: "Session", usedPct: 37 }],
+          },
+        ],
+      },
+    ]);
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "provider-usage-no-context-",
+      title: "Provider usage without context telemetry",
+    });
+    try {
+      await openAgentRoute(page, session);
+      await expectComposerVisible(page);
+      await usageFixture.waitForRequestCount(1);
+
+      await expect(page.getByTestId("context-window-meter")).toHaveCount(0);
+      await expect(page.getByTestId("provider-usage-mobile-session")).toContainText("37% used", {
+        timeout: 10_000,
+      });
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("refreshes usage when the context meter is opened", async ({ page }) => {
     test.setTimeout(180_000);
     const usageFixture = await installProviderUsageFixture(page, [
