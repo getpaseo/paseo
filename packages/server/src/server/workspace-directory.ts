@@ -11,7 +11,7 @@ import {
   getWorkspaceStateBucketPriority,
   type WorkspaceStateBucket,
 } from "@getpaseo/protocol/agent-state-bucket";
-import { getParentAgentIdFromLabels, isDelegatedAgent } from "@getpaseo/protocol/agent-labels";
+import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import { SortablePager } from "./pagination/sortable-pager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
 import { resolveProjectDisplayName } from "./workspace-registry.js";
@@ -19,6 +19,7 @@ import {
   deriveTerminalActivityStatusBucket,
   type TerminalActivity,
 } from "@getpaseo/protocol/terminal-activity";
+import type { ProviderSubagentDescriptor } from "./agent/provider-subagents/store.js";
 
 const FETCH_WORKSPACES_SORT_KEYS = [
   "status_priority",
@@ -41,6 +42,11 @@ interface WorkspaceBucketHistoryEntry {
   enteredAt: string;
 }
 
+interface WorkspaceBucketTimestampEntry {
+  bucket: WorkspaceStateBucket;
+  changedAtIso: string;
+}
+
 type FetchWorkspacesRequestMessage = Extract<
   SessionInboundMessage,
   { type: "fetch_workspaces_request" }
@@ -57,6 +63,11 @@ type WorkspaceProjectDescriptor = FetchWorkspacesResponsePayload["emptyProjects"
 
 export type WorkspaceUpdatesFilter = FetchWorkspacesRequestFilter;
 
+export type ProviderSubagentWorkspaceActivity = Pick<
+  ProviderSubagentDescriptor,
+  "parentAgentId" | "status" | "updatedAt"
+>;
+
 export interface WorkspaceDirectoryDeps {
   logger: pino.Logger;
   projectRegistry: {
@@ -66,6 +77,7 @@ export interface WorkspaceDirectoryDeps {
     list(): Promise<PersistedWorkspaceRecord[]>;
   };
   listAgentPayloads(): Promise<AgentSnapshotPayload[]>;
+  listProviderSubagentActivity(): Promise<ProviderSubagentWorkspaceActivity[]>;
   listTerminalActivityContributions(): Promise<
     Array<{ cwd: string; workspaceId?: string; activity: TerminalActivity | null }>
   >;
@@ -130,6 +142,17 @@ export function workspaceIdsOnCheckout(
     .map((workspace) => workspace.workspaceId);
 }
 
+export function workspaceIdsForProjects(
+  workspaces: Iterable<PersistedWorkspaceRecord>,
+  projectIds: ReadonlySet<string>,
+): string[] {
+  const workspaceIds = new Set<string>();
+  for (const workspace of workspaces) {
+    if (projectIds.has(workspace.projectId)) workspaceIds.add(workspace.workspaceId);
+  }
+  return Array.from(workspaceIds);
+}
+
 export class WorkspaceDirectory {
   private readonly archivingByWorkspaceId = new Map<string, string>();
   /**
@@ -181,13 +204,19 @@ export class WorkspaceDirectory {
     includeGitData: boolean;
     workspaceIds?: Iterable<string>;
   }): Promise<Map<string, WorkspaceDescriptorPayload>> {
-    const [agents, persistedWorkspaces, persistedProjects, terminalContributions] =
-      await Promise.all([
-        this.deps.listAgentPayloads(),
-        this.deps.workspaceRegistry.list(),
-        this.deps.projectRegistry.list(),
-        this.deps.listTerminalActivityContributions(),
-      ]);
+    const [
+      agents,
+      providerSubagentActivity,
+      persistedWorkspaces,
+      persistedProjects,
+      terminalContributions,
+    ] = await Promise.all([
+      this.deps.listAgentPayloads(),
+      this.deps.listProviderSubagentActivity(),
+      this.deps.workspaceRegistry.list(),
+      this.deps.projectRegistry.list(),
+      this.deps.listTerminalActivityContributions(),
+    ]);
 
     const activeProjects = new Map(
       persistedProjects
@@ -235,10 +264,16 @@ export class WorkspaceDirectory {
     });
 
     // Terminal activity contributions: working terminal → running bucket.
-    const terminalEntriesByWorkspaceId = this.applyTerminalContributions(
+    const activityEntriesByWorkspaceId = this.applyTerminalContributions(
       terminalContributions,
       descriptorsByWorkspaceId,
     );
+    this.applyProviderSubagentContributions({
+      activeAgents,
+      providerSubagentActivity,
+      descriptorsByWorkspaceId,
+      activityEntriesByWorkspaceId,
+    });
 
     const contributingAgentsByWorkspaceId = groupAgentsByWorkspaceId(
       activeAgents,
@@ -250,12 +285,12 @@ export class WorkspaceDirectory {
     const nowIso = new Date().toISOString();
     for (const [workspaceId, descriptor] of descriptorsByWorkspaceId) {
       const contributingAgents = contributingAgentsByWorkspaceId.get(workspaceId) ?? [];
-      const terminalEntries = terminalEntriesByWorkspaceId.get(workspaceId) ?? [];
+      const activityEntries = activityEntriesByWorkspaceId.get(workspaceId) ?? [];
       const result = this.resolveStatusEnteredAt({
         workspaceId,
         winningBucket: descriptor.status,
         contributingAgents,
-        terminalEntries,
+        activityEntries,
         previous: this.bucketHistoryByWorkspaceId.get(workspaceId) ?? null,
         workspaceCreatedAt: activeRecordsByWorkspaceId.get(workspaceId)?.createdAt ?? null,
         nowIso,
@@ -271,10 +306,54 @@ export class WorkspaceDirectory {
     return descriptorsByWorkspaceId;
   }
 
+  private applyProviderSubagentContributions(params: {
+    activeAgents: AgentSnapshotPayload[];
+    providerSubagentActivity: ProviderSubagentWorkspaceActivity[];
+    descriptorsByWorkspaceId: Map<string, WorkspaceDescriptorPayload>;
+    activityEntriesByWorkspaceId: Map<string, WorkspaceBucketTimestampEntry[]>;
+  }): void {
+    const {
+      activeAgents,
+      providerSubagentActivity,
+      descriptorsByWorkspaceId,
+      activityEntriesByWorkspaceId,
+    } = params;
+    const activeAgentsById = new Map(activeAgents.map((agent) => [agent.id, agent] as const));
+
+    for (const subagent of providerSubagentActivity) {
+      if (subagent.status !== "running") {
+        continue;
+      }
+      const parent = activeAgentsById.get(subagent.parentAgentId);
+      if (!parent) {
+        continue;
+      }
+      const workspaceAgent = resolveWorkspaceRootAgent(parent, activeAgentsById);
+      const workspaceId = workspaceAgent?.workspaceId;
+      if (!workspaceId) {
+        continue;
+      }
+      const descriptor = descriptorsByWorkspaceId.get(workspaceId);
+      if (!descriptor) {
+        continue;
+      }
+      if (
+        getWorkspaceStateBucketPriority("running") <
+        getWorkspaceStateBucketPriority(descriptor.status)
+      ) {
+        descriptor.status = "running";
+      }
+      const entries = activityEntriesByWorkspaceId.get(workspaceId) ?? [];
+      entries.push({ bucket: "running", changedAtIso: subagent.updatedAt });
+      activityEntriesByWorkspaceId.set(workspaceId, entries);
+    }
+  }
+
   // Aggregate each agent's state bucket into its owning workspace descriptor,
   // keeping the highest-priority bucket. A record's owner IS its `workspaceId`;
-  // status never fans out to same-cwd siblings. Delegated agents contribute to
-  // their delegation root's workspace; their own status is ignored unless running.
+  // status never fans out to same-cwd siblings. A subagent in another workspace
+  // is a root for that workspace. Same-workspace descendants contribute only
+  // running activity to the nearest ancestor in that workspace.
   private applyAgentBucketContributions(params: {
     activeAgents: AgentSnapshotPayload[];
     descriptorsByWorkspaceId: Map<string, WorkspaceDescriptorPayload>;
@@ -283,26 +362,22 @@ export class WorkspaceDirectory {
     const activeAgentsById = new Map(activeAgents.map((agent) => [agent.id, agent] as const));
 
     for (const agent of activeAgents) {
-      let workspaceAgent = agent;
-      let bucket: WorkspaceDescriptorPayload["status"];
-      if (isDelegatedAgent(agent)) {
-        if (agent.status !== "running") {
-          continue;
-        }
-        const parentAgent = resolveDelegationRootAgent(agent, activeAgentsById);
-        if (!parentAgent) {
-          continue;
-        }
-        workspaceAgent = parentAgent;
-        bucket = "running";
-      } else {
-        bucket = deriveAgentStateBucket({
-          status: agent.status,
-          pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
-          requiresAttention: agent.requiresAttention,
-          attentionReason: agent.attentionReason ?? null,
-        });
+      const workspaceAgent = resolveWorkspaceRootAgent(agent, activeAgentsById);
+      if (!workspaceAgent) {
+        continue;
       }
+      const isWorkspaceRoot = workspaceAgent.id === agent.id;
+      if (!isWorkspaceRoot && agent.status !== "running") {
+        continue;
+      }
+      const bucket = isWorkspaceRoot
+        ? deriveAgentStateBucket({
+            status: agent.status,
+            pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+            requiresAttention: agent.requiresAttention,
+            attentionReason: agent.attentionReason ?? null,
+          })
+        : "running";
 
       const workspaceId = workspaceAgent.workspaceId;
       if (!workspaceId) {
@@ -320,8 +395,8 @@ export class WorkspaceDirectory {
     }
   }
 
-  // Apply working terminal contributions to descriptor statuses and build a map
-  // of terminal timestamp entries per workspace for use in `resolveStatusEnteredAt`.
+  // Apply working terminal contributions to descriptor statuses and seed the
+  // activity timestamp entries used by `resolveStatusEnteredAt`.
   // A terminal contributes only to the workspace it carries; same-cwd siblings
   // are untouched.
   private applyTerminalContributions(
@@ -331,11 +406,8 @@ export class WorkspaceDirectory {
       activity: TerminalActivity | null;
     }>,
     descriptorsByWorkspaceId: Map<string, WorkspaceDescriptorPayload>,
-  ): Map<string, Array<{ bucket: WorkspaceStateBucket; changedAtIso: string }>> {
-    const terminalEntriesByWorkspaceId = new Map<
-      string,
-      Array<{ bucket: WorkspaceStateBucket; changedAtIso: string }>
-    >();
+  ): Map<string, WorkspaceBucketTimestampEntry[]> {
+    const activityEntriesByWorkspaceId = new Map<string, WorkspaceBucketTimestampEntry[]>();
     for (const { workspaceId, activity } of terminalContributions) {
       if (!activity || !workspaceId) {
         continue;
@@ -351,21 +423,21 @@ export class WorkspaceDirectory {
       ) {
         existing.status = bucket;
       }
-      const entries = terminalEntriesByWorkspaceId.get(workspaceId) ?? [];
+      const entries = activityEntriesByWorkspaceId.get(workspaceId) ?? [];
       entries.push({ bucket, changedAtIso: new Date(activity.changedAt).toISOString() });
-      terminalEntriesByWorkspaceId.set(workspaceId, entries);
+      activityEntriesByWorkspaceId.set(workspaceId, entries);
     }
-    return terminalEntriesByWorkspaceId;
+    return activityEntriesByWorkspaceId;
   }
 
-  // Aggregate the workspace-level `statusEnteredAt` from its contributing
-  // agents and terminals. Aggregate semantics:
-  //   - winning bucket = highest-priority across contributing agents and terminals;
-  //   - entry time = best-effort timestamp from agents/terminals in the winning bucket;
+  // Aggregate the workspace-level `statusEnteredAt` from its activity sources.
+  // Aggregate semantics:
+  //   - winning bucket = highest-priority across contributing activity;
+  //   - entry time = best-effort timestamp from sources in the winning bucket;
   //   - priority unmasking: when the winning bucket transitions (e.g. a
   //     higher-priority bucket cleared), the new entry time is "now";
   //   - same-bucket emits reuse the previous entered-at;
-  //   - empty workspaces that never had contributing agents or terminals use
+  //   - empty workspaces that never had contributing activity use
   //     their workspace creation time as their initial `done` entry time.
   //   - when archived agents leave a previously active workspace empty, keep
   //     the previous done timestamp or stamp the transition to done now.
@@ -373,7 +445,7 @@ export class WorkspaceDirectory {
     workspaceId: string;
     winningBucket: WorkspaceStateBucket;
     contributingAgents: AgentSnapshotPayload[];
-    terminalEntries: Array<{ bucket: WorkspaceStateBucket; changedAtIso: string }>;
+    activityEntries: WorkspaceBucketTimestampEntry[];
     previous: WorkspaceBucketHistoryEntry | null;
     workspaceCreatedAt: string | null;
     nowIso: string;
@@ -385,13 +457,13 @@ export class WorkspaceDirectory {
     const {
       winningBucket,
       contributingAgents,
-      terminalEntries,
+      activityEntries,
       previous,
       workspaceCreatedAt,
       nowIso,
     } = params;
 
-    if (contributingAgents.length === 0 && terminalEntries.length === 0) {
+    if (contributingAgents.length === 0 && activityEntries.length === 0) {
       if (!previous) {
         if (!workspaceCreatedAt) {
           return { statusEnteredAt: null };
@@ -413,7 +485,7 @@ export class WorkspaceDirectory {
     if (!previous) {
       const newestInWinningBucket = this.findNewestTimestampInBucket(
         contributingAgents,
-        terminalEntries,
+        activityEntries,
         winningBucket,
       );
       const enteredAt = newestInWinningBucket ?? nowIso;
@@ -436,14 +508,14 @@ export class WorkspaceDirectory {
     };
   }
 
-  // Best-effort newest timestamp across contributing agents and terminal entries
+  // Best-effort newest timestamp across contributing agents and other activity
   // whose bucket matches `winningBucket`. For agents, uses:
   //   - `attentionTimestamp` when attention is set (covers attention/failed)
   //   - `updatedAt` as a general fallback for any bucket
   // Returns `null` if no matching contributor has a parseable timestamp.
   private findNewestTimestampInBucket(
     contributingAgents: AgentSnapshotPayload[],
-    terminalEntries: Array<{ bucket: WorkspaceStateBucket; changedAtIso: string }>,
+    activityEntries: WorkspaceBucketTimestampEntry[],
     winningBucket: WorkspaceStateBucket,
   ): string | null {
     const agentTimestamps = contributingAgents
@@ -467,11 +539,11 @@ export class WorkspaceDirectory {
       })
       .filter((value): value is string => typeof value === "string" && value.length > 0);
 
-    const terminalTimestamps = terminalEntries
+    const activityTimestamps = activityEntries
       .filter((entry) => entry.bucket === winningBucket)
       .map((entry) => entry.changedAtIso);
 
-    const candidates = [...agentTimestamps, ...terminalTimestamps].sort();
+    const candidates = [...agentTimestamps, ...activityTimestamps].sort();
     return candidates.at(-1) ?? null;
   }
 
@@ -494,8 +566,10 @@ export class WorkspaceDirectory {
       )
       .map((project) => ({
         projectId: project.projectId,
+        projectKey: project.projectKey ?? undefined,
         projectDisplayName: resolveProjectDisplayName(project),
         projectCustomName: project.customName ?? null,
+        projectCustomIconRevision: project.customIconRevision ?? null,
         projectRootPath: project.rootPath,
         projectKind: project.kind,
       }));
@@ -619,7 +693,7 @@ function groupAgentsByWorkspaceId(
   return byWorkspaceId;
 }
 
-function resolveDelegationRootAgent(
+function resolveWorkspaceRootAgent(
   agent: AgentSnapshotPayload,
   activeAgentsById: ReadonlyMap<string, AgentSnapshotPayload>,
 ): AgentSnapshotPayload | null {
@@ -637,6 +711,9 @@ function resolveDelegationRootAgent(
     const parent = activeAgentsById.get(parentAgentId);
     if (!parent) {
       return null;
+    }
+    if (parent.workspaceId !== current.workspaceId) {
+      return current;
     }
     seen.add(parentAgentId);
     current = parent;

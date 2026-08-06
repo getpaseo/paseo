@@ -18,17 +18,18 @@ import {
   type AppUpdateCheckIntent,
   type AppReleaseChannel,
 } from "../features/auto-updater.js";
-import { getCliInstallStatus, installCli } from "../integrations/cli-install/index.js";
 import {
-  getSkillsStatus,
-  installSkills,
-  uninstallSkills,
-  updateSkills,
-} from "../integrations/skills/index.js";
+  getBundledCliShimPath,
+  getCliInstallStatus,
+  installCli,
+} from "../integrations/cli-install/index.js";
+import { createSkillsCommandHandlers, getSkillsController } from "../integrations/skills/index.js";
 import {
   openLocalTransportSession,
+  openWebSocketTransportSession,
   sendLocalTransportMessage,
   closeLocalTransportSession,
+  type WebSocketTransportTarget,
 } from "./local-transport.js";
 import { createNodeEntrypointInvocation, resolveDaemonRunnerEntrypoint } from "./runtime-paths.js";
 import { runExternalCliJsonCommand, runExternalCliTextCommand } from "./cli/external.js";
@@ -77,12 +78,6 @@ export interface DesktopDaemonStatus {
 interface DesktopDaemonLogs {
   logPath: string;
   contents: string;
-}
-
-interface DesktopPairingOffer {
-  relayEnabled: boolean;
-  url: string | null;
-  qr: string | null;
 }
 
 function parseReleaseChannel(
@@ -218,18 +213,6 @@ function logDesktopDaemonLifecycle(message: string, details?: Record<string, unk
     pid: process.pid,
     ...details,
   });
-}
-
-function toTrimmedString(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function resolveDesktopAppVersion(): string {
@@ -385,10 +368,12 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   }
 
   const daemonRunner = resolveDaemonRunnerEntrypoint();
+  const reclaimStalePidLock =
+    current.status === "errored" && current.desktopManaged && current.error === null;
   const invocation = createNodeEntrypointInvocation({
     entrypoint: daemonRunner,
     argvMode: "node-script",
-    args: [],
+    args: reclaimStalePidLock ? ["--reclaim-stale-pid-lock"] : [],
     baseEnv: process.env,
   });
 
@@ -411,7 +396,11 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     detached: true,
     envMode: "internal",
     env: invocation.env,
-    envOverlay: { PASEO_DESKTOP_MANAGED: "1", PASEO_WEB_UI_ENABLED: "false" },
+    envOverlay: {
+      PASEO_DESKTOP_MANAGED: "1",
+      PASEO_CLI: getBundledCliShimPath(),
+      PASEO_WEB_UI_ENABLED: "false",
+    },
     stdio: ["ignore", "ignore", "ignore"],
   });
 
@@ -504,36 +493,6 @@ async function getCliDaemonStatus(): Promise<string> {
   return await runExternalCliTextCommand(["daemon", "status"]);
 }
 
-async function getDaemonPairing(): Promise<DesktopPairingOffer> {
-  const status = await resolveDesktopDaemonStatus();
-  if (status.status !== "running") {
-    return {
-      relayEnabled: false,
-      url: null,
-      qr: null,
-    };
-  }
-
-  try {
-    const payload = await runExternalCliJsonCommand(["daemon", "pair", "--json"]);
-    if (!isRecord(payload)) {
-      throw new Error("Daemon pairing response was not an object.");
-    }
-
-    return {
-      relayEnabled: payload.relayEnabled === true,
-      url: toTrimmedString(payload.url),
-      qr: toTrimmedString(payload.qr),
-    };
-  } catch {
-    return {
-      relayEnabled: false,
-      url: null,
-      qr: null,
-    };
-  }
-}
-
 async function getLocalDaemonVersion(): Promise<{ version: string | null; error: string | null }> {
   const status = await resolveDesktopDaemonStatus();
   if (status.status !== "running") {
@@ -568,7 +527,6 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     restart_desktop_daemon: () => restartDaemon(),
     desktop_daemon_logs: () => getDaemonLogs(),
     desktop_app_logs: () => getDesktopAppLogs(),
-    desktop_daemon_pairing: () => getDaemonPairing(),
     desktop_get_system_idle_time: () => powerMonitor.getSystemIdleTime() * 1000,
     cli_daemon_status: () => getCliDaemonStatus(),
     write_attachment_base64: (args) => writeAttachmentBase64(args ?? {}),
@@ -580,6 +538,9 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     open_local_daemon_transport: async (args) => {
       const target = args as { transportType: "socket" | "pipe"; transportPath: string };
       return await openLocalTransportSession(target);
+    },
+    open_websocket_daemon_transport: async (args) => {
+      return await openWebSocketTransportSession(args as unknown as WebSocketTransportTarget);
     },
     send_local_daemon_transport_message: async (args) => {
       await sendLocalTransportMessage(
@@ -613,10 +574,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     get_local_daemon_version: () => getLocalDaemonVersion(),
     install_cli: () => installCli(),
     get_cli_install_status: () => getCliInstallStatus(),
-    get_skills_status: () => getSkillsStatus(),
-    install_skills: () => installSkills(),
-    update_skills: () => updateSkills(),
-    uninstall_skills: () => uninstallSkills(),
+    ...createSkillsCommandHandlers({ controller: getSkillsController() }),
   };
 }
 

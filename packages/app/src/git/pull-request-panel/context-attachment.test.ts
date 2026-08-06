@@ -11,14 +11,15 @@ import {
 import type { PrPaneActivity, PrPaneCheck } from "./data";
 import type { PrThreadEntry } from "./timeline";
 
-const baseInput: Omit<PullRequestContextBuilderInput, "activity"> = {
+const baseInput = {
   provider: { id: "github", label: "GitHub" },
+  forge: "github",
   pullRequest: {
     number: 42,
     title: "Fix flaky build",
     url: "https://github.com/getpaseo/paseo/pull/42",
   },
-};
+} satisfies Omit<PullRequestContextBuilderInput, "activity">;
 
 function comment(overrides: Partial<PrPaneActivity> = {}): PrPaneActivity {
   return {
@@ -55,7 +56,7 @@ function check(overrides: Partial<PrPaneCheck> = {}): PrPaneCheck {
     provider: "github",
     status: "failure",
     url: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
-    github: { checkRunId: 12345, workflowRunId: 456 },
+    detailRef: { checkRunId: 12345, workflowRunId: 456 },
     ...overrides,
   };
 }
@@ -76,7 +77,7 @@ describe("pull request context attachments", () => {
         }),
       }),
     ).toEqual({
-      kind: "github.pull_request_comment",
+      kind: "forge.change_request_comment",
       id: "42:comment-1",
       title: "octocat",
       subtitle: "#42 Fix flaky build",
@@ -97,7 +98,7 @@ describe("pull request context attachments", () => {
 
   it("formats a review with state as a workspace context attachment", () => {
     expect(buildPullRequestReviewContextAttachment({ ...baseInput, activity: review() })).toEqual({
-      kind: "github.pull_request_review",
+      kind: "forge.change_request_review",
       id: "42:review-1",
       title: "reviewer",
       subtitle: "#42 Fix flaky build",
@@ -112,6 +113,41 @@ describe("pull request context attachments", () => {
         "Created: 2d ago",
         "",
         "Please simplify this.",
+      ].join("\n"),
+    });
+  });
+
+  it("labels a GitLab comment as a merge request with the ! prefix", () => {
+    expect(
+      buildPullRequestCommentContextAttachment({
+        ...baseInput,
+        provider: { id: "gitlab", label: "GitLab" },
+        forge: "gitlab",
+        pullRequest: {
+          number: 14,
+          title: "Wire up the timeline",
+          url: "https://gitlab.com/acme/app/-/merge_requests/14",
+        },
+        activity: comment({
+          provider: "gitlab",
+          url: "https://gitlab.com/acme/app/-/merge_requests/14#note_401",
+        }),
+      }),
+    ).toEqual({
+      kind: "forge.change_request_comment",
+      id: "14:comment-1",
+      title: "octocat",
+      subtitle: "!14 Wire up the timeline",
+      url: "https://gitlab.com/acme/app/-/merge_requests/14#note_401",
+      text: [
+        "GitLab merge request comment",
+        "Merge request: !14 Wire up the timeline",
+        "Merge request URL: https://gitlab.com/acme/app/-/merge_requests/14",
+        "URL: https://gitlab.com/acme/app/-/merge_requests/14#note_401",
+        "Author: octocat",
+        "Created: 3d ago",
+        "",
+        "Looks good.",
       ].join("\n"),
     });
   });
@@ -185,7 +221,7 @@ describe("pull request context attachments", () => {
         },
       }),
     ).toEqual({
-      kind: "github.pull_request_check",
+      kind: "forge.change_request_check",
       id: "42:check-run:12345",
       title: "server-tests",
       subtitle: "#42 Fix flaky build",
@@ -222,12 +258,12 @@ describe("pull request context attachments", () => {
   it("keeps same-named GitHub checks distinct by check run", () => {
     const ubuntu = buildPullRequestCheckContextAttachment({
       ...baseInput,
-      check: check({ github: { checkRunId: 12345, workflowRunId: 456 } }),
+      check: check({ detailRef: { checkRunId: 12345, workflowRunId: 456 } }),
       githubDetails: null,
     });
     const windows = buildPullRequestCheckContextAttachment({
       ...baseInput,
-      check: check({ github: { checkRunId: 67890, workflowRunId: 456 } }),
+      check: check({ detailRef: { checkRunId: 67890, workflowRunId: 456 } }),
       githubDetails: null,
     });
 
@@ -242,12 +278,12 @@ describe("pull request context attachments", () => {
         check: check({
           name: "status/context",
           url: "https://github.com/getpaseo/paseo/status/context",
-          github: undefined,
+          detailRef: undefined,
         }),
         githubDetails: null,
       }),
     ).toEqual({
-      kind: "github.pull_request_check",
+      kind: "forge.change_request_check",
       id: "42:check:status/context",
       title: "status/context",
       subtitle: "#42 Fix flaky build",
@@ -259,6 +295,42 @@ describe("pull request context attachments", () => {
         "Check: status/context",
         "Status: failure",
         "Check URL: https://github.com/getpaseo/paseo/status/context",
+      ].join("\n"),
+    });
+  });
+
+  it("formats GitLab failed check context as a merge request", () => {
+    expect(
+      buildPullRequestCheckContextAttachment({
+        ...baseInput,
+        provider: { id: "gitlab", label: "GitLab" },
+        forge: "gitlab",
+        pullRequest: {
+          number: 14,
+          title: "Wire up pipelines",
+          url: "https://gitlab.com/acme/app/-/merge_requests/14",
+        },
+        check: check({
+          name: "pipeline",
+          provider: "gitlab",
+          url: "https://gitlab.com/acme/app/-/pipelines/99",
+          detailRef: undefined,
+        }),
+        githubDetails: null,
+      }),
+    ).toEqual({
+      kind: "forge.change_request_check",
+      id: "14:check:pipeline",
+      title: "pipeline",
+      subtitle: "!14 Wire up pipelines",
+      url: "https://gitlab.com/acme/app/-/pipelines/99",
+      text: [
+        "GitLab merge request check",
+        "Merge request: !14 Wire up pipelines",
+        "Merge request URL: https://gitlab.com/acme/app/-/merge_requests/14",
+        "Check: pipeline",
+        "Status: failure",
+        "Check URL: https://gitlab.com/acme/app/-/pipelines/99",
       ].join("\n"),
     });
   });
@@ -284,7 +356,7 @@ describe("buildPullRequestThreadContextAttachment", () => {
 
   it("bundles the whole thread conversation into one attachment", () => {
     expect(buildPullRequestThreadContextAttachment({ ...baseInput, thread: thread() })).toEqual({
-      kind: "github.pull_request_comment",
+      kind: "forge.change_request_comment",
       id: "42:thread:PRRT_1",
       title: "src/a.ts:12",
       subtitle: "#42 Fix flaky build",

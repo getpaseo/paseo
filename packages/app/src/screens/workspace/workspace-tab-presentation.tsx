@@ -9,15 +9,18 @@ import { ensurePanelsRegistered } from "@/panels/register-panels";
 import { getPanelRegistration } from "@/panels/panel-registry";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
-import { isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
+import { getStatusDotColor, isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import type { Theme } from "@/styles/theme";
+import { usePanelInstanceAttributes } from "@/panels/panel-instance-attributes";
 
 export interface WorkspaceTabPresentation {
   key: string;
   kind: WorkspaceTabDescriptor["kind"];
   label: string;
   subtitle: string;
+  tooltip: string;
+  modified: boolean;
   titleState: "ready" | "loading";
   icon: React.ComponentType<{ size: number; color: string }>;
   statusBucket: SidebarStateBucket | null;
@@ -72,7 +75,9 @@ function WorkspaceTabPresentationResolverInner({
   const descriptor = registration.useDescriptor(tab.target as never, {
     serverId,
     workspaceId,
+    tabId: tab.tabId,
   });
+  const attributes = usePanelInstanceAttributes({ serverId, workspaceId, tabId: tab.tabId });
 
   const presentation = useMemo(
     () => ({
@@ -80,6 +85,8 @@ function WorkspaceTabPresentationResolverInner({
       kind: tab.kind,
       label: descriptor.label,
       subtitle: descriptor.subtitle,
+      tooltip: descriptor.tooltip,
+      modified: attributes.modified,
       titleState: descriptor.titleState,
       icon: descriptor.icon,
       statusBucket: descriptor.statusBucket,
@@ -87,11 +94,13 @@ function WorkspaceTabPresentationResolverInner({
     [
       descriptor.icon,
       descriptor.label,
+      descriptor.tooltip,
       descriptor.statusBucket,
       descriptor.subtitle,
       descriptor.titleState,
       tab.key,
       tab.kind,
+      attributes.modified,
     ],
   );
 
@@ -116,7 +125,7 @@ export function WorkspaceTabIcon({
 }: WorkspaceTabIconProps): ReactElement {
   const iconColor = active ? styles.iconActive.color : styles.iconInactive.color;
   const bucket = presentation.statusBucket;
-  let statusDotColor: string | null = null;
+  let statusDotColor: string | undefined;
   if (bucket === "needs_input") statusDotColor = styles.statusDotNeedsInput.color;
   else if (bucket === "failed") statusDotColor = styles.statusDotFailed.color;
   else if (bucket === "running") statusDotColor = styles.statusDotRunning.color;
@@ -140,7 +149,7 @@ export function WorkspaceTabIcon({
     () => [
       styles.statusDot,
       {
-        backgroundColor: statusDotColor ?? undefined,
+        backgroundColor: statusDotColor,
         borderColor: statusDotBorderColor ?? styles.statusDotBorderDefault.borderColor,
         width: statusDotSize,
         height: statusDotSize,
@@ -153,7 +162,11 @@ export function WorkspaceTabIcon({
 
   if (shouldShowLoader) {
     return (
-      <View style={agentIconWrapperStyle}>
+      <View
+        style={agentIconWrapperStyle}
+        accessibilityRole="progressbar"
+        accessibilityLabel="Agent running"
+      >
         <SyncedLoader size={size - 1} color={styles.syncedLoader.color} />
       </View>
     );
@@ -208,6 +221,9 @@ export function WorkspaceTabOptionRow({
           </Text>
         </View>
       </Pressable>
+      {presentation.modified ? (
+        <View style={styles.optionModifiedDot} accessibilityLabel={t("workspace.tabs.modified")} />
+      ) : null}
       {selected ? (
         <View style={styles.optionTrailingSlot}>
           <ThemedCheckIcon size={16} uniProps={mutedColorMapping} />
@@ -239,16 +255,16 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.surface0,
   },
   statusDotNeedsInput: {
-    color: theme.colors.palette.amber[500],
+    color: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
   },
   statusDotFailed: {
-    color: theme.colors.palette.red[500],
+    color: getStatusDotColor({ theme, bucket: "failed" }) ?? undefined,
   },
   statusDotRunning: {
-    color: theme.colors.palette.blue[500],
+    color: getStatusDotColor({ theme, bucket: "running" }) ?? undefined,
   },
   statusDotAttention: {
-    color: theme.colors.palette.green[500],
+    color: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
   },
   iconActive: {
     color: theme.colors.foreground,
@@ -257,10 +273,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
   },
   syncedLoader: {
-    color:
-      theme.colorScheme === "light"
-        ? theme.colors.palette.amber[700]
-        : theme.colors.palette.amber[500],
+    color: theme.colors.foreground,
   },
   optionRow: {
     flexDirection: "row",
@@ -302,6 +315,12 @@ const styles = StyleSheet.create((theme) => ({
     width: 16,
     alignItems: "center",
     justifyContent: "center",
+  },
+  optionModifiedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.foregroundMuted,
   },
   optionTrailingAccessorySlot: {
     alignItems: "center",

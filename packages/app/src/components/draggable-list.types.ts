@@ -34,7 +34,6 @@ export interface DraggableListProps<T> {
   ListHeaderComponent?: ReactElement | null;
   ListEmptyComponent?: ReactElement | null;
   showsVerticalScrollIndicator?: boolean;
-  enableDesktopWebScrollbar?: boolean;
   /** When false, disables internal scrolling (use outer list to scroll). */
   scrollEnabled?: boolean;
   /**
@@ -50,6 +49,8 @@ export interface DraggableListProps<T> {
   extraData?: unknown;
   /** Gesture ref for simultaneous handling with parent gestures (e.g., sidebar close) */
   simultaneousGestureRef?: MutableRefObject<GestureType | undefined>;
+  /** Whether the retained native gesture host is currently presented. */
+  gestureHostPresented?: boolean;
   /** Gesture ref(s) that the list should wait for before handling scroll */
   waitFor?: MutableRefObject<GestureType | undefined> | MutableRefObject<GestureType | undefined>[];
   /** Called when a drag gesture begins (before items are reordered) */

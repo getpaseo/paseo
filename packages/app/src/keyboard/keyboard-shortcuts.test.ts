@@ -7,10 +7,11 @@ import {
   resolveKeyboardShortcut,
   type ChordState,
   type KeyboardShortcutContext,
+  type KeyboardShortcutInput,
   type ParsedShortcutBinding,
 } from "./keyboard-shortcuts";
 
-function keyboardEvent(overrides: Partial<KeyboardEvent>): KeyboardEvent {
+function keyboardInput(overrides: Partial<KeyboardShortcutInput>): KeyboardShortcutInput {
   return {
     key: "",
     code: "",
@@ -20,7 +21,7 @@ function keyboardEvent(overrides: Partial<KeyboardEvent>): KeyboardEvent {
     shiftKey: false,
     repeat: false,
     ...overrides,
-  } as KeyboardEvent;
+  };
 }
 
 function shortcutContext(
@@ -44,14 +45,14 @@ function initialChordState(): ChordState {
 }
 
 function resolveShortcut(input: {
-  event: Partial<KeyboardEvent>;
+  event: Partial<KeyboardShortcutInput>;
   context?: Partial<KeyboardShortcutContext>;
   chordState?: ChordState;
   onChordReset?: () => void;
   bindings?: readonly ParsedShortcutBinding[];
 }) {
   return resolveKeyboardShortcut({
-    event: keyboardEvent(input.event),
+    event: keyboardInput(input.event),
     context: shortcutContext(input.context),
     chordState: input.chordState ?? initialChordState(),
     onChordReset: input.onChordReset ?? (() => undefined),
@@ -60,7 +61,7 @@ function resolveShortcut(input: {
 }
 
 function expectShortcutResolution(input: {
-  event: Partial<KeyboardEvent>;
+  event: Partial<KeyboardShortcutInput>;
   context?: Partial<KeyboardShortcutContext>;
   action: string;
   payload?: unknown;
@@ -83,7 +84,7 @@ function expectShortcutResolution(input: {
 }
 
 function expectNoShortcutResolution(input: {
-  event: Partial<KeyboardEvent>;
+  event: Partial<KeyboardShortcutInput>;
   context?: Partial<KeyboardShortcutContext>;
 }) {
   const result = resolveShortcut({
@@ -98,7 +99,7 @@ function expectNoShortcutResolution(input: {
 
 interface MatchingShortcutCase {
   name: string;
-  event: Partial<KeyboardEvent>;
+  event: Partial<KeyboardShortcutInput>;
   context?: Partial<KeyboardShortcutContext>;
   action: string;
   payload?: unknown;
@@ -108,7 +109,7 @@ interface MatchingShortcutCase {
 
 interface NonMatchingShortcutCase {
   name: string;
-  event: Partial<KeyboardEvent>;
+  event: Partial<KeyboardShortcutInput>;
   context?: Partial<KeyboardShortcutContext>;
 }
 
@@ -140,6 +141,18 @@ describe("keyboard-shortcuts", () => {
       event: { key: "n", code: "KeyN", ctrlKey: true },
       context: { isMac: false, commandCenterOpen: false, focusScope: "other" },
       action: "workspace.new",
+    },
+    {
+      name: "matches Cmd+P to switch project on mac",
+      event: { key: "p", code: "KeyP", metaKey: true },
+      context: { isMac: true, commandCenterOpen: false },
+      action: "workspace.project.pick",
+    },
+    {
+      name: "matches Ctrl+P to switch project on non-mac",
+      event: { key: "p", code: "KeyP", ctrlKey: true },
+      context: { isMac: false, commandCenterOpen: false, focusScope: "other" },
+      action: "workspace.project.pick",
     },
     {
       name: "matches question-mark shortcut to toggle the shortcuts dialog",
@@ -410,6 +423,16 @@ describe("keyboard-shortcuts", () => {
       context: { focusScope: "message-input" },
     },
     {
+      name: "does not switch project with Ctrl+P on non-mac while terminal is focused",
+      event: { key: "p", code: "KeyP", ctrlKey: true },
+      context: { isMac: false, focusScope: "terminal" },
+    },
+    {
+      name: "does not switch project with Cmd+P while the command center is open",
+      event: { key: "p", code: "KeyP", metaKey: true },
+      context: { isMac: true, commandCenterOpen: true },
+    },
+    {
       name: "does not close tab with Ctrl+W on mac desktop (Cmd+W only)",
       event: { key: "w", code: "KeyW", ctrlKey: true },
       context: { isMac: true, isDesktop: true },
@@ -546,6 +569,14 @@ describe("keyboard-shortcuts", () => {
     expect(secondResult.match?.stopPropagation).toBe(true);
     expect(secondResult.preventDefault).toBe(false);
     expect(secondResult.nextChordState).toEqual(initialChordState());
+  });
+
+  it("resolves a browser-origin shortcut with browser focus instead of host focus", () => {
+    expectShortcutResolution({
+      event: { key: "t", code: "KeyT", ctrlKey: true },
+      context: { isDesktop: true, focusScope: "browser" },
+      action: "workspace.tab.new",
+    });
   });
 
   it("schedules a chord reset timeout for advancing candidates", () => {

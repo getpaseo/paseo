@@ -52,6 +52,10 @@ const sessionMock = vi.hoisted(() => {
     handleMessage = vi.fn(async () => {});
     handleBinaryFrame = vi.fn((_frame: unknown) => {});
     supports = vi.fn((capability: string) => this.args.clientCapabilities?.[capability] === true);
+    updateClientCapabilities = vi.fn((capabilities: Record<string, unknown> | null) => {
+      this.args.clientCapabilities = capabilities;
+    });
+    clearAgentTimelineSubscription = vi.fn();
     getClientActivity = vi.fn(() => null);
     getSessionId = vi.fn(() => "mock-session-id");
     resetPeakInflight = vi.fn(() => {});
@@ -914,6 +918,24 @@ describe("relay external socket reconnect behavior", () => {
     await vi.advanceTimersByTimeAsync(90_000);
     expect(session.cleanup).toHaveBeenCalledTimes(1);
 
+    await server.close();
+  });
+
+  test("advertises current features in initial server_info", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+
+    const serverInfo = await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-stable-project-identity",
+    });
+
+    expect(serverInfo.features?.stableProjectIdentity).toBe(true);
+    expect(serverInfo.features?.canonicalSubmittedPrompts).toBe(true);
+    expect(serverInfo.features?.["terminal-input-mode-replay"]).toBe(true);
+    expect(serverInfo.features?.["terminal-size-ownership"]).toBe(true);
+    expect(serverInfo.features?.agentTurnIdentity).toBeUndefined();
     await server.close();
   });
 

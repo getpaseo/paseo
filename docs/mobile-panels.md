@@ -70,11 +70,18 @@ definition, no longer eligible to begin.
 
 - Callers request semantic targets through `panel-store`; they never write shared values.
 - Gesture behavior comes from the four explicit hooks in `mobile-panels/gestures.ts`.
+- A focused interactive surface may block panel-opening gestures through
+  `useBlockMobilePanelOpenGestures`. Register only while the conflicting interaction is active and
+  unregister when the surface is hidden or unfocused. The blocker never disables gestures that close
+  an already-open panel.
 - Keep `SidebarModelProvider` outside `MobileGestureWrapper`. The provider shares sidebar derivation
   across consumers, while Gesture Handler requires the wrapper's direct child to be a native `View`
   so its injected `collapsable={false}` reaches Android/Fabric.
 - Mobile sidebars render through `MobilePanelOverlay`; do not duplicate overlay lifecycle or motion
   styles in sidebar components.
+- The desktop left sidebar is retained too. App chrome owns separate mounted and visible decisions:
+  closing it or yielding its width marks it inactive and applies `display: none` without conditionally
+  removing the sidebar tree.
 - Animated panel nodes use React Native static styles plus inline theme values. Do not attach
   Unistyles-generated styles to those nodes; Unistyles and Reanimated patching the same Fabric node
   has caused native crashes.

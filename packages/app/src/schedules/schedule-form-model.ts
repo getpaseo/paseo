@@ -6,11 +6,12 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type { ScheduleCadence, ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import type { FormPreferences } from "@/create-agent-preferences/preferences";
-import { formatThinkingOptionLabel } from "@/composer/agent-controls/utils";
+import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import {
   buildSelectableProviderSelectorProviders,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
+import { filterSelectableModels, findModelByReference } from "@/provider-selection/model-catalog";
 import {
   buildProviderDefinitionMapForStatuses,
   INITIAL_USER_MODIFIED,
@@ -77,6 +78,7 @@ export interface ScheduleFormProjectOption {
 }
 
 export type ScheduleFormTargetKind = "agent" | "new-agent";
+type CronCadence = Extract<ScheduleCadence, { type: "cron" }>;
 type ProviderResolutionStatus = "idle" | "pending" | "complete";
 
 export interface ScheduleFormState {
@@ -86,7 +88,7 @@ export interface ScheduleFormState {
   prompt: string;
   maxRuns: string;
   cadence: ScheduleCadence;
-  submitCadence: ScheduleCadence;
+  submitCadence: CronCadence | undefined;
   hosts: ScheduleFormHost[];
   projectOptions: ScheduleFormProjectOption[];
   selectedServerId: string | null;
@@ -220,7 +222,7 @@ function resolveProjectDisplay(input: {
 function buildProviderModelsByProvider(entries: ProviderSnapshotEntry[]): ProviderModelsByProvider {
   const map: ProviderModelsByProvider = new Map();
   for (const entry of entries) {
-    map.set(entry.provider, entry.models ?? null);
+    map.set(entry.provider, filterSelectableModels(entry.models ?? null));
   }
   return map;
 }
@@ -246,7 +248,7 @@ function resolveAvailableModels(
   entries: readonly ProviderSnapshotEntry[],
   provider: AgentProvider | null,
 ): AgentModelDefinition[] | null {
-  return resolveSelectedEntry(entries, provider)?.models ?? null;
+  return filterSelectableModels(resolveSelectedEntry(entries, provider)?.models ?? null);
 }
 
 function resolveEffectiveModel(
@@ -436,13 +438,10 @@ function formatInitialMaxRuns(schedule: ScheduleFormSnapshot["schedule"]): strin
 }
 
 function resolveInitialSubmitCadence(
-  snapshot: ScheduleFormSnapshot,
-  initialCadence: ScheduleCadence,
-): ScheduleCadence {
-  if (snapshot.mode === "edit" && snapshot.schedule) {
-    return snapshot.schedule.cadence;
-  }
-  return initialCadence;
+  schedule: ScheduleFormSnapshot["schedule"],
+  initialCadence: CronCadence,
+): CronCadence | undefined {
+  return schedule ? undefined : initialCadence;
 }
 
 function resolveInitialIsolation(input: {
@@ -547,11 +546,11 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
 }
 
 function resolveCanSubmit(state: ScheduleFormState): boolean {
+  if (state.targetKind === "agent") {
+    return state.submitCadence !== undefined;
+  }
   if (state.prompt.trim().length === 0) {
     return false;
-  }
-  if (state.targetKind === "agent") {
-    return true;
   }
   const hasWorkingDir = state.workingDir.trim().length > 0;
   const hasMatchedProject = state.selectedProjectOptionId.trim().length > 0;
@@ -604,6 +603,11 @@ function updateDerivedState(input: {
     ...input.state,
     hosts: [...input.hosts],
     projectOptions: buildProjectOptions(input.targets, input.state.selectedServerId),
+    projectDisplay: resolveProjectDisplay({
+      targets: input.targets,
+      serverId: input.state.selectedServerId,
+      cwd: input.state.workingDir,
+    }),
     selectedProjectOptionId: projectTarget?.optionId ?? input.state.selectedProjectOptionId,
     selectedModelDisplay: resolveModelDisplay({
       entries: input.providerEntries,
@@ -657,7 +661,7 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
     prompt: snapshot.schedule?.prompt ?? "",
     maxRuns: formatInitialMaxRuns(snapshot.schedule),
     cadence: initialCadence,
-    submitCadence: resolveInitialSubmitCadence(snapshot, initialCadence),
+    submitCadence: resolveInitialSubmitCadence(snapshot.schedule, initialCadence),
     hosts: [...snapshot.hosts],
     projectOptions: buildProjectOptions(snapshot.defaults.projectTargets, selectedServerId),
     selectedServerId,
@@ -786,6 +790,58 @@ function pickModelForProvider(input: {
   return resolveDefaultModelId(resolveAvailableModels(input.entries, input.provider));
 }
 
+function thinkingDraftKey(provider: AgentProvider, modelId: string): string {
+  return `${provider}:${modelId}`;
+}
+
+function seedThinkingDrafts(
+  drafts: Map<string, string>,
+  preferences: FormPreferences | null,
+): void {
+  for (const [provider, providerPreferences] of Object.entries(
+    preferences?.providerPreferences ?? {},
+  )) {
+    for (const [modelId, thinkingOptionId] of Object.entries(
+      providerPreferences?.thinkingByModel ?? {},
+    )) {
+      const key = thinkingDraftKey(provider as AgentProvider, modelId);
+      if (!drafts.has(key)) {
+        drafts.set(key, thinkingOptionId);
+      }
+    }
+  }
+}
+
+function canonicalizeThinkingDrafts(
+  drafts: Map<string, string>,
+  entries: readonly ProviderSnapshotEntry[],
+): void {
+  for (const entry of entries) {
+    const models = filterSelectableModels(entry.models ?? null);
+    if (!models) {
+      continue;
+    }
+    for (const model of models) {
+      const canonicalKey = thinkingDraftKey(entry.provider, model.id);
+      if (drafts.has(canonicalKey)) {
+        continue;
+      }
+      const resolvedAlias = model.aliases?.find(
+        (alias) =>
+          findModelByReference(models, alias)?.id === model.id &&
+          drafts.has(thinkingDraftKey(entry.provider, alias)),
+      );
+      if (!resolvedAlias) {
+        continue;
+      }
+      const aliasedThinking = drafts.get(thinkingDraftKey(entry.provider, resolvedAlias));
+      if (aliasedThinking !== undefined) {
+        drafts.set(canonicalKey, aliasedThinking);
+      }
+    }
+  }
+}
+
 export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormModel {
   const listeners = new Set<() => void>();
   const initialValues = normalizeInitialValues({
@@ -796,6 +852,19 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
   let hosts = snapshot.hosts;
   let projectTargets = snapshot.defaults.projectTargets;
   let preferences = snapshot.defaults.preferences ?? null;
+  const thinkingDrafts = new Map<string, string>();
+  seedThinkingDrafts(thinkingDrafts, preferences);
+  const initialAgentConfig = newAgentConfig(snapshot.schedule);
+  if (
+    initialAgentConfig?.provider &&
+    initialAgentConfig.model &&
+    initialAgentConfig.thinkingOptionId
+  ) {
+    thinkingDrafts.set(
+      thinkingDraftKey(initialAgentConfig.provider, initialAgentConfig.model),
+      initialAgentConfig.thinkingOptionId,
+    );
+  }
   let providerEntries: ProviderSnapshotEntry[] = [];
   let userModified = { ...INITIAL_USER_MODIFIED, isolation: false };
   const timezone = snapshot.defaults.timezone ?? DEFAULT_TIMEZONE;
@@ -910,6 +979,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
         return;
       }
       preferences = normalizedPreferences;
+      seedThinkingDrafts(thinkingDrafts, preferences);
       publish(resolvePreferences(state));
     },
     applyProviderSnapshot(serverId, providerSnapshot) {
@@ -917,17 +987,19 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
         return;
       }
       providerEntries = providerSnapshot.entries;
+      canonicalizeThinkingDrafts(thinkingDrafts, providerEntries);
       const isPendingResolution = state.providerSnapshotRequest?.serverId === serverId;
-      const resolved = isPendingResolution
-        ? resolveSnapshotSelection({
-            state,
-            snapshot,
-            initialValues,
-            preferences: preferencesForSnapshotResolution(snapshot, preferences),
-            providerEntries,
-            userModified,
-          })
-        : state;
+      const resolved =
+        state.targetKind === "new-agent"
+          ? resolveSnapshotSelection({
+              state,
+              snapshot,
+              initialValues,
+              preferences: preferencesForSnapshotResolution(snapshot, preferences),
+              providerEntries,
+              userModified,
+            })
+          : state;
       const providerResolutionByServerId: Record<string, ProviderResolutionStatus> = {
         ...state.providerResolutionByServerId,
       };
@@ -997,9 +1069,19 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       const selectedThinkingOptionId = resolveThinkingOptionId({
         availableModels,
         modelId: selectedModel,
-        requestedThinkingOptionId: "",
+        requestedThinkingOptionId:
+          thinkingDrafts.get(thinkingDraftKey(provider, selectedModel)) ?? "",
       });
-      userModified = { ...userModified, provider: true, model: true };
+      if (selectedModel && selectedThinkingOptionId) {
+        thinkingDrafts.set(thinkingDraftKey(provider, selectedModel), selectedThinkingOptionId);
+      }
+      userModified = {
+        ...userModified,
+        provider: true,
+        model: true,
+        modeId: true,
+        thinkingOptionId: true,
+      };
       publish({
         ...state,
         selectedProvider: provider,
@@ -1016,6 +1098,12 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
     setThinking(thinkingOptionId) {
       if (closed) {
         return;
+      }
+      if (state.selectedProvider && state.selectedModel) {
+        thinkingDrafts.set(
+          thinkingDraftKey(state.selectedProvider, state.selectedModel),
+          thinkingOptionId,
+        );
       }
       userModified = { ...userModified, thinkingOptionId: true };
       publish({ ...state, selectedThinkingOptionId: thinkingOptionId });

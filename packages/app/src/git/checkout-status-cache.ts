@@ -2,14 +2,16 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { CheckoutStatusResponse, CheckoutStatusUpdate } from "@getpaseo/protocol/messages";
 import equal from "fast-deep-equal/es6";
 import {
+  checkoutCommitsQueryKey,
   checkoutPrStatusQueryKey,
   checkoutStatusQueryKey,
   invalidatePrPaneTimelineForCheckout,
 } from "@/git/query-keys";
+import { type CheckoutPrStatusPayload, normalizeCheckoutPrStatusPayload } from "@/git/pr-status";
 import { expireStaleDiffModeOverrides } from "@/review/store";
 
 export type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
-export type CheckoutPrStatusPayload = NonNullable<CheckoutStatusUpdate["payload"]["prStatus"]>;
+export type { CheckoutPrStatusPayload } from "@/git/pr-status";
 
 export interface CheckoutStatusClient {
   getCheckoutStatus: (cwd: string) => Promise<CheckoutStatusPayload>;
@@ -33,6 +35,24 @@ export async function fetchCheckoutStatus({
   return payload;
 }
 
+export async function ensureCheckoutStatus({
+  queryClient,
+  client,
+  serverId,
+  cwd,
+}: {
+  queryClient: QueryClient;
+  client: CheckoutStatusClient;
+  serverId: string;
+  cwd: string;
+}): Promise<CheckoutStatusPayload> {
+  return await queryClient.fetchQuery({
+    queryKey: checkoutStatusQueryKey(serverId, cwd),
+    queryFn: () => fetchCheckoutStatus({ client, serverId, cwd }),
+    staleTime: Infinity,
+  });
+}
+
 export function applyCheckoutStatusUpdateFromEvent({
   queryClient,
   serverId,
@@ -43,14 +63,20 @@ export function applyCheckoutStatusUpdateFromEvent({
   message: CheckoutStatusUpdate;
 }): void {
   const { payload } = message;
-  queryClient.setQueryData(checkoutStatusQueryKey(serverId, payload.cwd), payload);
+  const prStatus = payload.prStatus
+    ? normalizeCheckoutPrStatusPayload(payload.prStatus)
+    : undefined;
+  const cachePayload = prStatus ? { ...payload, prStatus } : payload;
+  queryClient.setQueryData(checkoutStatusQueryKey(serverId, payload.cwd), cachePayload);
+  void queryClient.invalidateQueries({
+    queryKey: checkoutCommitsQueryKey(serverId, payload.cwd),
+  });
   expireStaleDiffModeOverrides({
     serverId,
     cwd: payload.cwd,
     isDirty: payload.isGit && payload.isDirty,
   });
 
-  const prStatus = payload.prStatus;
   if (!prStatus) {
     return;
   }

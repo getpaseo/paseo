@@ -46,6 +46,11 @@ interface ProviderListRow {
 
 const EXPECTED_CLAUDE_MODELS = [
   {
+    id: "claude-opus-5",
+    model: "Opus 5",
+    descriptionFragment: "Latest release",
+  },
+  {
     id: "claude-fable-5",
     model: "Fable 5",
     descriptionFragment: "Most powerful",
@@ -58,7 +63,7 @@ const EXPECTED_CLAUDE_MODELS = [
   {
     id: "claude-opus-4-8",
     model: "Opus 4.8",
-    descriptionFragment: "Latest release",
+    descriptionFragment: "Previous release",
   },
   {
     id: "claude-sonnet-5",
@@ -102,6 +107,23 @@ const EXPECTED_CLAUDE_MODELS = [
   },
 ] as const;
 
+const EXPECTED_CLAUDE_CONTEXT_MODELS = [
+  {
+    id: "claude-sonnet-5[1m]",
+    model: "Sonnet 5 1M",
+    descriptionFragment: "1M context window",
+  },
+] as const;
+
+const EXPECTED_CLAUDE_CATALOG_MODELS = [
+  ...new Map(
+    [...EXPECTED_CLAUDE_MODELS, ...EXPECTED_CLAUDE_CONTEXT_MODELS].map((model) => [
+      model.id,
+      model,
+    ]),
+  ).values(),
+];
+
 let claudeModelIdsFromJson: string[] = [];
 let claudeModelsFromJson: ProviderModel[] = [];
 
@@ -134,18 +156,18 @@ async function runProviderModelsJson(provider: string): Promise<ProviderModel[]>
 function assertClaudeModels(data: ProviderModel[]): void {
   assert.strictEqual(
     data.length,
-    EXPECTED_CLAUDE_MODELS.length,
+    EXPECTED_CLAUDE_CATALOG_MODELS.length,
     "claude output should match the current catalog size",
   );
 
   const byId = new Map(data.map((model) => [model.id, model]));
   const ids = [...byId.keys()].sort();
-  const expectedIds = EXPECTED_CLAUDE_MODELS.map((model) => model.id).sort();
+  const expectedIds = EXPECTED_CLAUDE_CATALOG_MODELS.map((model) => model.id).sort();
 
   assert.strictEqual(byId.size, data.length, "claude model IDs should be unique");
   assert.deepStrictEqual(ids, expectedIds, "claude IDs should match the current catalog");
 
-  for (const expectedModel of EXPECTED_CLAUDE_MODELS) {
+  for (const expectedModel of EXPECTED_CLAUDE_CATALOG_MODELS) {
     const actualModel = byId.get(expectedModel.id);
     assert(actualModel, `claude output should include ${expectedModel.id}`);
     assert.strictEqual(
@@ -383,7 +405,7 @@ try {
     const lines = result.stdout.trim().split("\n").filter(Boolean);
     assert.strictEqual(
       lines.length,
-      EXPECTED_CLAUDE_MODELS.length,
+      EXPECTED_CLAUDE_CATALOG_MODELS.length,
       "should have one line per Claude catalog model",
     );
     assert.deepStrictEqual(
@@ -393,7 +415,7 @@ try {
     );
     assert.deepStrictEqual(
       [...lines].sort(),
-      EXPECTED_CLAUDE_MODELS.map((model) => model.id).sort(),
+      EXPECTED_CLAUDE_CATALOG_MODELS.map((model) => model.id).sort(),
       "--quiet should print the current Claude catalog IDs",
     );
     assert(

@@ -12,7 +12,8 @@ export interface StreamTurnTiming {
 }
 
 export function deriveStreamTurnTiming(params: {
-  agentStatus: string;
+  isTurnActive: boolean;
+  activeTurnStartedAt: Date | null;
   tail: StreamItem[];
   head: StreamItem[];
 }): StreamTurnTiming {
@@ -59,11 +60,8 @@ export function deriveStreamTurnTiming(params: {
     visitItem(item);
   }
 
-  const runningStartedAt =
-    params.agentStatus === "running"
-      ? (findLastUserMessageTimestamp(params.head) ?? currentUserAt)
-      : null;
-  if (params.agentStatus !== "running") {
+  const runningStartedAt = params.isTurnActive ? params.activeTurnStartedAt : null;
+  if (!params.isTurnActive) {
     flushCompletedTurn();
   }
 
@@ -71,14 +69,4 @@ export function deriveStreamTurnTiming(params: {
     byAssistantId,
     runningStartedAt,
   };
-}
-
-function findLastUserMessageTimestamp(items: StreamItem[]): Date | null {
-  for (let i = items.length - 1; i >= 0; i -= 1) {
-    const item = items[i];
-    if (item?.kind === "user_message") {
-      return item.timestamp;
-    }
-  }
-  return null;
 }

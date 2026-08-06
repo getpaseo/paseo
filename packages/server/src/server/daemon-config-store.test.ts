@@ -63,6 +63,110 @@ describe("DaemonConfigStore", () => {
     }
   });
 
+  test("patch persists relay state and emits its field change", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+    const changes: unknown[] = [];
+    store.onFieldChange("relay.enabled", (value) => changes.push(value));
+
+    store.patch({ relay: { enabled: true } });
+
+    expect(changes).toEqual([true]);
+    expect(loadPersistedConfig(paseoHome).daemon?.relay?.enabled).toBe(true);
+  });
+
+  test("rolls back config when a field transition fails", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+    store.onFieldChange("relay.enabled", (enabled) => {
+      if (enabled === true) {
+        throw new Error("Relay transport failed to start");
+      }
+    });
+
+    expect(() => store.patch({ relay: { enabled: true } })).toThrow(
+      "Relay transport failed to start",
+    );
+    expect(store.get().relay?.enabled).toBe(false);
+    expect(loadPersistedConfig(paseoHome).daemon?.relay?.enabled).toBe(false);
+  });
+
+  test("rejects relay patches when a launch override owns the setting", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        relay: { enabled: false },
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+      { relayEnabledMutable: false },
+    );
+
+    expect(() => store.patch({ relay: { enabled: true } })).toThrow(
+      "Relay is controlled by a daemon launch override",
+    );
+  });
+
+  test("unrelated patches do not persist a one-launch relay override", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const persisted = loadPersistedConfig(paseoHome);
+    writeFileSync(
+      path.join(paseoHome, "config.json"),
+      `${JSON.stringify({
+        ...persisted,
+        daemon: { ...persisted.daemon, relay: { enabled: false } },
+      })}\n`,
+    );
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        relay: { enabled: true },
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+      { relayEnabledMutable: false },
+    );
+
+    store.patch({ browserTools: { enabled: true } });
+
+    expect(loadPersistedConfig(paseoHome).daemon?.relay?.enabled).toBe(false);
+  });
+
   test("patch persists provider enabled flags into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);
@@ -117,6 +221,220 @@ describe("DaemonConfigStore", () => {
       command: ["gemini", "--acp"],
       enabled: false,
     });
+  });
+
+  test("patch removes provider entries from config.json", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const configPath = path.join(paseoHome, "config.json");
+    writeFileSync(
+      configPath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          agents: {
+            providers: {
+              gemini: {
+                extends: "acp",
+                label: "Gemini",
+                command: ["gemini", "--acp"],
+              },
+              claude: {
+                enabled: false,
+              },
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {
+          gemini: {},
+          claude: { enabled: false },
+        },
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    const next = store.patch({ removeProviders: ["gemini"] });
+
+    expect(next.providers.gemini).toBeUndefined();
+    expect(next.providers.claude).toEqual({ enabled: false });
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.agents?.providers?.gemini).toBeUndefined();
+    expect(persisted.agents?.providers?.claude).toEqual({ enabled: false });
+  });
+
+  test("patch removes the providers object when the last provider is deleted", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const configPath = path.join(paseoHome, "config.json");
+    writeFileSync(
+      configPath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          agents: {
+            providers: {
+              gemini: {
+                extends: "acp",
+                label: "Gemini",
+                command: ["gemini", "--acp"],
+              },
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: { gemini: {} },
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    store.patch({ removeProviders: ["gemini"] });
+
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.agents?.providers).toBeUndefined();
+  });
+
+  test("patch removes deleted providers from metadata generation", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const configPath = path.join(paseoHome, "config.json");
+    writeFileSync(
+      configPath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          agents: {
+            providers: {
+              gemini: {
+                extends: "acp",
+                label: "Gemini",
+                command: ["gemini", "--acp"],
+              },
+              claude: {
+                enabled: false,
+              },
+            },
+            metadataGeneration: {
+              providers: [
+                { provider: "gemini", model: "flash" },
+                { provider: "claude", model: "haiku" },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {
+          gemini: {},
+          claude: { enabled: false },
+        },
+        metadataGeneration: {
+          providers: [
+            { provider: "gemini", model: "flash" },
+            { provider: "claude", model: "haiku" },
+          ],
+        },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    const next = store.patch({ removeProviders: ["gemini"] });
+
+    expect(next.metadataGeneration.providers).toEqual([{ provider: "claude", model: "haiku" }]);
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.agents?.metadataGeneration).toEqual({
+      providers: [{ provider: "claude", model: "haiku" }],
+    });
+  });
+
+  test("patch persists provider removal when in-memory config is already clean", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const configPath = path.join(paseoHome, "config.json");
+    writeFileSync(
+      configPath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          agents: {
+            providers: {
+              gemini: {
+                extends: "acp",
+                label: "Gemini",
+                command: ["gemini", "--acp"],
+              },
+            },
+            metadataGeneration: {
+              providers: [{ provider: "gemini", model: "flash" }],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    const next = store.patch({ removeProviders: ["gemini"] });
+
+    expect(next.providers.gemini).toBeUndefined();
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.agents?.providers).toBeUndefined();
+    expect(persisted.agents?.metadataGeneration).toEqual({ providers: [] });
   });
 
   test("patch persists append system prompt into config.json", () => {

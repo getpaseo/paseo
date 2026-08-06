@@ -1,549 +1,108 @@
-import { describe, expect, it } from "vitest";
-import type { ProjectPlacementPayload } from "@getpaseo/protocol/messages";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
-import { buildProjects } from "./projects";
+import { describe, expect, test } from "vitest";
+import { createProjectViewKey } from "@/projects/workspace-structure";
+import type { ProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
+import { buildProjects, getProjectSummaryForHostProject } from "./projects";
 
-function placement(input: {
-  projectKey: string;
-  projectName: string;
-  cwd: string;
-  remoteUrl: string | null;
-  mainRepoRoot?: string | null;
-}): ProjectPlacementPayload {
+function descriptor(id: string, key: string, root: string): ProjectDescriptor {
   return {
-    projectKey: input.projectKey,
-    projectName: input.projectName,
-    checkout: {
-      cwd: input.cwd,
-      isGit: true,
-      currentBranch: "main",
-      remoteUrl: input.remoteUrl,
-      worktreeRoot: input.cwd,
-      isPaseoOwnedWorktree: false,
-      mainRepoRoot: input.mainRepoRoot ?? null,
-    },
+    projectId: id,
+    projectKey: key,
+    projectDisplayName: "acme/app",
+    projectCustomName: null,
+    projectRootPath: root,
+    projectKind: "git",
   };
 }
 
-function workspace(input: {
-  id: string;
-  repoRoot: string;
-  project?: ProjectPlacementPayload;
-  projectId?: string;
-  projectName?: string;
-  remoteUrl?: string | null;
-}): WorkspaceDescriptor {
+function workspace(id: string, projectId: string, root: string): WorkspaceDescriptor {
   return {
-    id: input.id,
-    projectId: input.projectId ?? input.project?.projectKey ?? input.repoRoot,
-    projectDisplayName: input.projectName ?? input.project?.projectName ?? "Project",
-    projectRootPath: input.repoRoot,
-    workspaceDirectory: input.repoRoot,
+    id,
+    projectId,
+    projectDisplayName: "acme/app",
+    projectCustomName: null,
+    projectRootPath: root,
+    workspaceDirectory: root,
     projectKind: "git",
     workspaceKind: "local_checkout",
-    name: input.id,
+    name: "main",
     status: "done",
-    archivingAt: null,
     statusEnteredAt: null,
+    archivingAt: null,
     diffStat: null,
     scripts: [],
-    gitRuntime: {
-      currentBranch: "main",
-      remoteUrl: input.remoteUrl ?? input.project?.checkout.remoteUrl ?? null,
-      isPaseoOwnedWorktree: false,
-      isDirty: false,
-      aheadBehind: null,
-      aheadOfOrigin: null,
-      behindOfOrigin: null,
-    },
-    githubRuntime: null,
-    project: input.project,
   };
 }
 
 describe("buildProjects", () => {
-  it("groups two daemons with the same GitHub project key into one project with one host entry per daemon", () => {
+  test("uses the grouped project list while retaining each host project id", () => {
+    const key = "remote:github.com/acme/app";
     const result = buildProjects({
       hosts: [
         {
-          serverId: "local",
-          serverName: "Local",
+          serverId: "host-a",
+          serverName: "Host A",
           isOnline: true,
-          workspaces: [
-            workspace({
-              id: "main",
-              repoRoot: "/repo/app",
-              project: placement({
-                projectKey: "remote:github.com/acme/app",
-                projectName: "acme/app",
-                cwd: "/repo/app",
-                remoteUrl: "https://github.com/acme/app.git",
-              }),
-            }),
-            workspace({
-              id: "feature-a",
-              repoRoot: "/repo/app",
-              project: placement({
-                projectKey: "remote:github.com/acme/app",
-                projectName: "acme/app",
-                cwd: "/repo/app/feature-a",
-                remoteUrl: "https://github.com/acme/app.git",
-              }),
-            }),
-            workspace({
-              id: "feature-b",
-              repoRoot: "/repo/app",
-              project: placement({
-                projectKey: "remote:github.com/acme/app",
-                projectName: "acme/app",
-                cwd: "/repo/app/feature-b",
-                remoteUrl: "https://github.com/acme/app.git",
-              }),
-            }),
-          ],
+          projects: [descriptor("prj_a", key, "/a/app")],
+          workspaces: [workspace("ws-a", "prj_a", "/a/app")],
         },
         {
-          serverId: "laptop",
-          serverName: "Laptop",
-          isOnline: true,
-          workspaces: [
-            workspace({
-              id: "main",
-              repoRoot: "/work/app",
-              project: placement({
-                projectKey: "remote:github.com/acme/app",
-                projectName: "acme/app",
-                cwd: "/work/app",
-                remoteUrl: "git@github.com:acme/app.git",
-              }),
-            }),
-            workspace({
-              id: "feature",
-              repoRoot: "/work/app",
-              project: placement({
-                projectKey: "remote:github.com/acme/app",
-                projectName: "acme/app",
-                cwd: "/work/app/feature",
-                remoteUrl: "git@github.com:acme/app.git",
-              }),
-            }),
-          ],
-        },
-      ],
-    });
-
-    expect(result.projects).toHaveLength(1);
-    const summary = result.projects[0];
-    expect(summary?.projectKey).toBe("remote:github.com/acme/app");
-    expect(summary?.projectName).toBe("acme/app");
-    expect(summary?.hostCount).toBe(2);
-    expect(summary?.onlineHostCount).toBe(2);
-    expect(summary?.totalWorkspaceCount).toBe(5);
-    expect(summary?.githubUrl).toBe("https://github.com/acme/app");
-    expect(summary?.hosts).toHaveLength(2);
-    const local = summary?.hosts.find((host) => host.serverId === "local");
-    const laptop = summary?.hosts.find((host) => host.serverId === "laptop");
-    expect(local?.workspaceCount).toBe(3);
-    expect(laptop?.workspaceCount).toBe(2);
-    expect(local?.workspaces.map((entry) => entry.id)).toEqual(["main", "feature-a", "feature-b"]);
-    expect(laptop?.workspaces.map((entry) => entry.id)).toEqual(["main", "feature"]);
-  });
-
-  it("collapses five workspaces on one host into a single host entry whose workspaceCount is five", () => {
-    const result = buildProjects({
-      hosts: [
-        {
-          serverId: "local",
-          serverName: "Local",
-          isOnline: true,
-          workspaces: Array.from({ length: 5 }, (_, index) =>
-            workspace({
-              id: `ws-${index}`,
-              repoRoot: "/repo/app",
-              project: placement({
-                projectKey: "remote:github.com/acme/app",
-                projectName: "acme/app",
-                cwd: `/repo/app/ws-${index}`,
-                remoteUrl: "https://github.com/acme/app.git",
-              }),
-            }),
-          ),
-        },
-      ],
-    });
-
-    expect(result.projects).toHaveLength(1);
-    expect(result.projects[0]?.hosts).toHaveLength(1);
-    expect(result.projects[0]?.hosts[0]?.workspaceCount).toBe(5);
-    expect(result.projects[0]?.totalWorkspaceCount).toBe(5);
-    expect(result.projects[0]?.hostCount).toBe(1);
-  });
-
-  it("prefers placement mainRepoRoot for the host repoRoot and falls back to projectRootPath when placement is absent", () => {
-    const result = buildProjects({
-      hosts: [
-        {
-          serverId: "local",
-          serverName: "Local",
-          isOnline: true,
-          workspaces: [
-            workspace({
-              id: "main",
-              repoRoot: "/worktrees/app/main",
-              project: placement({
-                projectKey: "remote:github.com/acme/app",
-                projectName: "acme/app",
-                cwd: "/worktrees/app/main",
-                remoteUrl: "https://github.com/acme/app.git",
-                mainRepoRoot: "/repo/app",
-              }),
-            }),
-          ],
-        },
-        {
-          serverId: "legacy",
-          serverName: "Legacy",
-          isOnline: true,
-          workspaces: [
-            workspace({
-              id: "legacy",
-              repoRoot: "/repo/legacy",
-              projectId: "legacy-project",
-              projectName: "Legacy",
-            }),
-          ],
-        },
-      ],
-    });
-
-    const acme = result.projects.find(
-      (project) => project.projectKey === "remote:github.com/acme/app",
-    );
-    const legacy = result.projects.find((project) => project.projectKey === "legacy-project");
-
-    expect(acme?.hosts[0]?.repoRoot).toBe("/repo/app");
-    expect(legacy?.hosts[0]?.repoRoot).toBe("/repo/legacy");
-  });
-
-  it("derives githubUrl only when projectKey matches remote:github.com/{owner}/{repo}", () => {
-    const result = buildProjects({
-      hosts: [
-        {
-          serverId: "local",
-          serverName: "Local",
-          isOnline: true,
-          workspaces: [
-            workspace({
-              id: "github",
-              repoRoot: "/repo/app",
-              project: placement({
-                projectKey: "remote:github.com/acme/app",
-                projectName: "acme/app",
-                cwd: "/repo/app",
-                remoteUrl: "https://github.com/acme/app.git",
-              }),
-            }),
-            workspace({
-              id: "local",
-              repoRoot: "/repo/local",
-              project: placement({
-                projectKey: "/repo/local",
-                projectName: "local",
-                cwd: "/repo/local",
-                remoteUrl: null,
-              }),
-            }),
-          ],
-        },
-      ],
-    });
-
-    const github = result.projects.find(
-      (project) => project.projectKey === "remote:github.com/acme/app",
-    );
-    const local = result.projects.find((project) => project.projectKey === "/repo/local");
-
-    expect(github?.githubUrl).toBe("https://github.com/acme/app");
-    expect(local?.githubUrl).toBeUndefined();
-  });
-
-  it("totals hostCount across all hosts and counts only online ones in onlineHostCount", () => {
-    const result = buildProjects({
-      hosts: [
-        {
-          serverId: "online",
-          serverName: "Online",
-          isOnline: true,
-          workspaces: [
-            workspace({
-              id: "ws",
-              repoRoot: "/repo/app",
-              project: placement({
-                projectKey: "remote:github.com/acme/app",
-                projectName: "acme/app",
-                cwd: "/repo/app",
-                remoteUrl: "https://github.com/acme/app.git",
-              }),
-            }),
-          ],
-        },
-        {
-          serverId: "offline",
-          serverName: "Offline",
+          serverId: "host-b",
+          serverName: "Host B",
           isOnline: false,
-          workspaces: [
-            workspace({
-              id: "ws",
-              repoRoot: "/repo/app",
-              project: placement({
-                projectKey: "remote:github.com/acme/app",
-                projectName: "acme/app",
-                cwd: "/repo/app",
-                remoteUrl: "https://github.com/acme/app.git",
-              }),
-            }),
-          ],
+          projects: [descriptor("prj_b", key, "/b/app")],
+          workspaces: [workspace("ws-b", "prj_b", "/b/app")],
         },
       ],
     });
 
-    expect(result.projects).toHaveLength(1);
-    expect(result.projects[0]?.hostCount).toBe(2);
-    expect(result.projects[0]?.onlineHostCount).toBe(1);
-    expect(result.projects[0]?.hosts.find((host) => host.serverId === "online")?.isOnline).toBe(
-      true,
-    );
-    expect(result.projects[0]?.hosts.find((host) => host.serverId === "offline")?.isOnline).toBe(
-      false,
-    );
-  });
-
-  it("does not merge fallback repo-root-keyed projects with different roots", () => {
-    const result = buildProjects({
-      hosts: [
-        {
-          serverId: "local",
-          serverName: "Local",
-          isOnline: true,
-          workspaces: [
-            workspace({
-              id: "one",
-              repoRoot: "/repo/one",
-              project: placement({
-                projectKey: "/repo/one",
-                projectName: "one",
-                cwd: "/repo/one",
-                remoteUrl: null,
-              }),
-            }),
-            workspace({
-              id: "two",
-              repoRoot: "/repo/two",
-              project: placement({
-                projectKey: "/repo/two",
-                projectName: "two",
-                cwd: "/repo/two",
-                remoteUrl: null,
-              }),
-            }),
-          ],
-        },
-      ],
-    });
-
-    expect(result.projects.map((project) => project.projectKey)).toEqual([
-      "/repo/one",
-      "/repo/two",
+    expect(result.projects).toEqual([
+      expect.objectContaining({
+        viewKey: createProjectViewKey({ kind: "equivalence", projectKey: key }),
+        hostCount: 2,
+        onlineHostCount: 1,
+        totalWorkspaceCount: 2,
+        hosts: [
+          expect.objectContaining({ serverId: "host-a", projectId: "prj_a" }),
+          expect.objectContaining({ serverId: "host-b", projectId: "prj_b" }),
+        ],
+      }),
     ]);
   });
 
-  it("includes GitHub, GitLab, Bitbucket and local projects together, sorted by name", () => {
+  test("includes a project with no workspaces", () => {
     const result = buildProjects({
       hosts: [
         {
-          serverId: "local",
-          serverName: "Local",
+          serverId: "host-a",
+          serverName: "Host A",
           isOnline: true,
-          workspaces: [
-            workspace({
-              id: "github",
-              repoRoot: "/repo/github",
-              project: placement({
-                projectKey: "remote:github.com/acme/web",
-                projectName: "acme/web",
-                cwd: "/repo/github",
-                remoteUrl: "https://github.com/acme/web.git",
-              }),
-            }),
-            workspace({
-              id: "gitlab",
-              repoRoot: "/repo/gitlab",
-              project: placement({
-                projectKey: "remote:gitlab.com/acme/api",
-                projectName: "acme/api",
-                cwd: "/repo/gitlab",
-                remoteUrl: "https://gitlab.com/acme/api.git",
-              }),
-            }),
-            workspace({
-              id: "bitbucket",
-              repoRoot: "/repo/bitbucket",
-              project: placement({
-                projectKey: "remote:bitbucket.org/acme/cli",
-                projectName: "acme/cli",
-                cwd: "/repo/bitbucket",
-                remoteUrl: "https://bitbucket.org/acme/cli.git",
-              }),
-            }),
-            workspace({
-              id: "local",
-              repoRoot: "/repo/local",
-              project: placement({
-                projectKey: "/repo/local",
-                projectName: "local",
-                cwd: "/repo/local",
-                remoteUrl: null,
-              }),
-            }),
-          ],
-        },
-      ],
-    });
-
-    expect(result.projects.map((project) => project.projectKey)).toEqual([
-      "remote:gitlab.com/acme/api",
-      "remote:bitbucket.org/acme/cli",
-      "remote:github.com/acme/web",
-      "/repo/local",
-    ]);
-  });
-
-  it("renders a non-GitHub remote project on its own when no other projects are present", () => {
-    const result = buildProjects({
-      hosts: [
-        {
-          serverId: "local",
-          serverName: "Local",
-          isOnline: true,
-          workspaces: [
-            workspace({
-              id: "gitlab",
-              repoRoot: "/repo/gitlab",
-              project: placement({
-                projectKey: "remote:gitlab.com/acme/app",
-                projectName: "acme/app",
-                cwd: "/repo/gitlab",
-                remoteUrl: "https://gitlab.com/acme/app.git",
-              }),
-            }),
-          ],
-        },
-      ],
-    });
-
-    expect(result.projects).toHaveLength(1);
-    expect(result.projects[0]?.projectKey).toBe("remote:gitlab.com/acme/app");
-    expect(result.projects[0]?.projectName).toBe("acme/app");
-    expect(result.projects[0]?.githubUrl).toBeUndefined();
-  });
-
-  it("groups two workspaces sharing a non-GitHub remote into one project with workspaceCount two", () => {
-    const result = buildProjects({
-      hosts: [
-        {
-          serverId: "local",
-          serverName: "Local",
-          isOnline: true,
-          workspaces: [
-            workspace({
-              id: "main",
-              repoRoot: "/repo/gitlab",
-              project: placement({
-                projectKey: "remote:gitlab.com/acme/app",
-                projectName: "acme/app",
-                cwd: "/repo/gitlab",
-                remoteUrl: "https://gitlab.com/acme/app.git",
-              }),
-            }),
-            workspace({
-              id: "feature",
-              repoRoot: "/repo/gitlab",
-              project: placement({
-                projectKey: "remote:gitlab.com/acme/app",
-                projectName: "acme/app",
-                cwd: "/repo/gitlab/feature",
-                remoteUrl: "https://gitlab.com/acme/app.git",
-              }),
-            }),
-          ],
-        },
-      ],
-    });
-
-    expect(result.projects).toHaveLength(1);
-    expect(result.projects[0]?.hosts).toHaveLength(1);
-    expect(result.projects[0]?.hosts[0]?.workspaceCount).toBe(2);
-  });
-
-  it("falls back conservatively for mixed-version daemons whose descriptors lack project", () => {
-    const result = buildProjects({
-      hosts: [
-        {
-          serverId: "old-daemon",
-          serverName: "Old daemon",
-          isOnline: true,
-          workspaces: [
-            workspace({
-              id: "legacy",
-              repoRoot: "/repo/legacy",
-              projectId: "legacy-project",
-              projectName: "Legacy",
-              remoteUrl: "https://gitlab.com/acme/legacy.git",
-            }),
-          ],
-        },
-      ],
-    });
-
-    expect(result.projects).toHaveLength(1);
-    const summary = result.projects[0];
-    expect(summary?.projectKey).toBe("legacy-project");
-    expect(summary?.projectName).toBe("Legacy");
-    expect(summary?.githubUrl).toBeUndefined();
-    expect(summary?.hosts).toHaveLength(1);
-    expect(summary?.hosts[0]?.repoRoot).toBe("/repo/legacy");
-    expect(summary?.hosts[0]?.workspaceCount).toBe(1);
-  });
-
-  it("surfaces a project with no workspaces yet and gives its host an editable repoRoot", () => {
-    const result = buildProjects({
-      hosts: [
-        {
-          serverId: "local",
-          serverName: "Local",
-          isOnline: true,
+          projects: [descriptor("prj_a", "local-a", "/a/app")],
           workspaces: [],
-          emptyProjects: [
-            {
-              projectId: "/repo/fresh",
-              projectDisplayName: "fresh",
-              projectCustomName: null,
-              projectRootPath: "/repo/fresh",
-              projectKind: "git",
-            },
-          ],
         },
       ],
     });
 
-    expect(result.projects).toHaveLength(1);
-    const summary = result.projects[0];
-    expect(summary?.projectKey).toBe("/repo/fresh");
-    expect(summary?.totalWorkspaceCount).toBe(0);
-    expect(summary?.hosts).toHaveLength(1);
-    // repoRoot must be non-empty or the project settings screen treats the host
-    // as non-editable and shows its empty state.
-    expect(summary?.hosts[0]?.repoRoot).toBe("/repo/fresh");
-    expect(summary?.hosts[0]?.workspaceCount).toBe(0);
+    expect(result.projects[0]).toMatchObject({
+      totalWorkspaceCount: 0,
+      hosts: [{ projectId: "prj_a", repoRoot: "/a/app" }],
+    });
+  });
+
+  test("looks up a grouped project by host-local identity", () => {
+    const project = buildProjects({
+      hosts: [
+        {
+          serverId: "host-a",
+          serverName: "Host A",
+          isOnline: true,
+          projects: [descriptor("prj_a", "shared", "/a/app")],
+          workspaces: [],
+        },
+      ],
+    }).projects[0];
+
+    expect(getProjectSummaryForHostProject(project ? [project] : [], "host-a", "prj_a")).toBe(
+      project,
+    );
   });
 });

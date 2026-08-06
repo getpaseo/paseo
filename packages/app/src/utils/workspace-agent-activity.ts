@@ -1,4 +1,5 @@
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
+import { isWorkspaceRootAgent } from "@/subagents/policies";
 import { deriveSidebarStateBucket } from "./sidebar-agent-state";
 
 export interface WorkspaceAgentActivity {
@@ -15,7 +16,8 @@ export function buildWorkspaceAgentActivityIndex(
   const latestActivityAtByWorkspaceId = new Map<string, Date>();
 
   for (const agent of agents.values()) {
-    if (agent.archivedAt || agent.parentAgentId || !agent.workspaceId) {
+    const parentAgent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
+    if (agent.archivedAt || !agent.workspaceId || !isWorkspaceRootAgent(agent, parentAgent)) {
       continue;
     }
 

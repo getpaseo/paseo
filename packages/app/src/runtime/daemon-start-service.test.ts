@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { DaemonStartService, upsertDesktopDaemonConnection } from "./daemon-start-service";
 import type { HostRuntimeStore } from "./host-runtime";
 import type { DesktopDaemonStatus } from "@/desktop/daemon/desktop-daemon";
+import { defaultHostAppearance } from "@/hosts/appearance";
+import type { HostProfile } from "@/types/host-connection";
 
 interface RecordedUpsert {
   listenAddress: string;
@@ -9,12 +11,13 @@ interface RecordedUpsert {
   hostname: string | null;
 }
 
-function createFakeStore(): {
-  store: Pick<HostRuntimeStore, "upsertConnectionFromListen">;
+function createFakeStore(hosts: HostProfile[] = []): {
+  store: Pick<HostRuntimeStore, "getHosts" | "upsertConnectionFromListen">;
   upserts: RecordedUpsert[];
 } {
   const upserts: RecordedUpsert[] = [];
   const store = {
+    getHosts: () => hosts,
     upsertConnectionFromListen: async (input: RecordedUpsert) => {
       upserts.push(input);
       return {} as Awaited<ReturnType<HostRuntimeStore["upsertConnectionFromListen"]>>;
@@ -35,6 +38,26 @@ function makeStatus(overrides: Partial<DesktopDaemonStatus> = {}): DesktopDaemon
     desktopManaged: true,
     error: null,
     ...overrides,
+  };
+}
+
+function makeRelayOnlyHost(serverId: string): HostProfile {
+  return {
+    serverId,
+    label: "Relay host",
+    appearance: defaultHostAppearance(),
+    lifecycle: {},
+    connections: [
+      {
+        id: "relay:relay.example.com",
+        type: "relay",
+        relayEndpoint: "relay.example.com",
+        daemonPublicKeyB64: "public-key",
+      },
+    ],
+    preferredConnectionId: "relay:relay.example.com",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
   };
 }
 
@@ -164,6 +187,53 @@ describe("DaemonStartService", () => {
     expect(runningSnapshots).toEqual([true, false]);
   });
 
+  it("stays running while deciding whether the managed daemon should start", async () => {
+    const fake = createFakeStore();
+    let resolveCondition: ((value: boolean) => void) | undefined;
+    let daemonStartCount = 0;
+    const service = new DaemonStartService({
+      store: fake.store,
+      startDesktopDaemon: async () => {
+        daemonStartCount += 1;
+        return makeStatus();
+      },
+    });
+
+    const startPromise = service.startIfEnabled({
+      shouldStart: () =>
+        new Promise<boolean>((resolve) => {
+          resolveCondition = resolve;
+        }),
+    });
+
+    expect(service.isRunning()).toBe(true);
+    expect(daemonStartCount).toBe(0);
+
+    resolveCondition?.(true);
+    await startPromise;
+
+    expect(service.isRunning()).toBe(false);
+    expect(daemonStartCount).toBe(1);
+  });
+
+  it("finishes without starting the daemon when management is disabled", async () => {
+    const fake = createFakeStore();
+    let daemonStartCount = 0;
+    const service = new DaemonStartService({
+      store: fake.store,
+      startDesktopDaemon: async () => {
+        daemonStartCount += 1;
+        return makeStatus();
+      },
+    });
+
+    const result = await service.startIfEnabled({ shouldStart: false });
+
+    expect(result).toEqual({ ok: true });
+    expect(service.isRunning()).toBe(false);
+    expect(daemonStartCount).toBe(0);
+  });
+
   it("clears the error and notifies subscribers when retry begins", async () => {
     const fake = createFakeStore();
     const startMock = vi
@@ -188,19 +258,27 @@ describe("DaemonStartService", () => {
     expect(service.getLastError()).toBeNull();
   });
 
-  it("recordError surfaces an external error and notifies subscribers", () => {
+  it("surfaces settings errors through the daemon startup state", async () => {
     const fake = createFakeStore();
     const service = new DaemonStartService({
       store: fake.store,
       startDesktopDaemon: async () => makeStatus(),
     });
-    const notifications = vi.fn();
-    service.subscribe(notifications);
 
-    service.recordError("settings file unreadable");
+    const result = await service.startIfEnabled({
+      shouldStart: async () => {
+        throw new Error("settings file unreadable");
+      },
+    });
 
-    expect(service.getLastError()).toBe("settings file unreadable");
-    expect(notifications).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      ok: false,
+      error: "Failed to evaluate desktop daemon settings: settings file unreadable",
+    });
+    expect(service.getLastError()).toBe(
+      "Failed to evaluate desktop daemon settings: settings file unreadable",
+    );
+    expect(service.isRunning()).toBe(false);
   });
 
   it("stops notifying after a subscriber unsubscribes", async () => {
@@ -234,6 +312,15 @@ describe("upsertDesktopDaemonConnection", () => {
     expect(fake.upserts).toEqual([
       { listenAddress: "127.0.0.1:6767", serverId: "srv_desktop", hostname: "desktop" },
     ]);
+  });
+
+  it("does not add localhost when desktop bootstrap finds its server id already registered", async () => {
+    const fake = createFakeStore([makeRelayOnlyHost("srv_desktop")]);
+
+    const result = await upsertDesktopDaemonConnection(fake.store, makeStatus());
+
+    expect(result).toEqual({ ok: true });
+    expect(fake.upserts).toEqual([]);
   });
 
   it("rejects a missing listen address without upserting", async () => {

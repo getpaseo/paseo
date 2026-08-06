@@ -66,6 +66,24 @@ describe("combined model selector data", () => {
     ]);
   });
 
+  it("hides compatibility-only model entries from new clients", () => {
+    const compatibilityModel: AgentModelDefinition = {
+      ...codexModel,
+      id: "gpt-5.4-legacy",
+      label: "GPT-5.4 legacy",
+      isSelectable: false,
+    };
+
+    const [provider] = buildSelectableProviderSelectorProviders([
+      snapshotEntry({ provider: "codex", models: [codexModel, compatibilityModel] }),
+    ]);
+
+    expect(provider?.modelSelection).toMatchObject({
+      kind: "models",
+      rows: [{ modelId: "gpt-5.4" }],
+    });
+  });
+
   it("synthesizes a default model row for ready enabled providers without explicit models", () => {
     expect(
       buildSelectableProviderSelectorProviders([
@@ -258,6 +276,25 @@ describe("combined model selector data", () => {
         isLoading: false,
       }),
     ).toBe("Default");
+  });
+
+  it("distinguishes a loading selection from a resolved empty selection", () => {
+    expect(
+      resolveSelectedModelLabel({
+        providers: [],
+        selectedProvider: "",
+        selectedModel: "",
+        isLoading: true,
+      }),
+    ).toBe("Loading...");
+    expect(
+      resolveSelectedModelLabel({
+        providers: [],
+        selectedProvider: "",
+        selectedModel: "",
+        isLoading: false,
+      }),
+    ).toBe("Select model");
   });
 
   it("keeps a stored selected model visible when current snapshot rows no longer offer it", () => {

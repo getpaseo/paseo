@@ -347,9 +347,9 @@ Override the command used to launch any provider with the `command` field. This 
 
 The `command` array completely replaces the default command for that provider. The binary must exist on the system — Paseo checks for its availability and will mark the provider as unavailable if not found.
 
-### Pi-compatible forks with their own session directory
+### OMP profiles and Pi-compatible forks
 
-OMP already ships as a built-in provider option. It is disabled by default; enable it with:
+OMP ships as a first-class built-in provider option. It is disabled by default; enable it with:
 
 ```json
 {
@@ -360,6 +360,34 @@ OMP already ships as a built-in provider option. It is disabled by default; enab
   }
 }
 ```
+
+Custom OMP profiles should extend `omp`. They inherit the OMP adapter's `rpc-ui` approvals, native Paseo host tools, provider-managed subagents, and import behavior:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "omp-work": {
+        "extends": "omp",
+        "label": "Oh My Pi (Work)",
+        "command": ["omp"],
+        "env": {
+          "XDG_CONFIG_HOME": "~/.config/omp-work",
+          "XDG_STATE_HOME": "~/.local/state/omp-work"
+        },
+        "params": {
+          "sessionDir": "~/.local/state/omp-work/omp/agent/sessions",
+          "smolModel": "openai/gpt-5-mini",
+          "slowModel": "anthropic/claude-opus-4-1",
+          "planModel": "openai/o3"
+        }
+      }
+    }
+  }
+}
+```
+
+`params.sessionDir` is used only for importing sessions that were started outside Paseo. If `command` or XDG env vars move OMP's state directory, set `params.sessionDir` to the resulting OMP JSONL session directory; launching and resuming still go through the configured command.
 
 For other providers that keep Pi's `--mode rpc` API but write sessions somewhere else, extend `pi`, replace the command, and provide the JSONL session directory:
 
@@ -380,7 +408,7 @@ For other providers that keep Pi's `--mode rpc` API but write sessions somewhere
 }
 ```
 
-The session directory is used only for importing sessions that were started outside Paseo. Launching and resuming still go through the configured command, so this example resumes with `my-pi-fork --mode rpc --session <session-file>`.
+This session directory is also import-only. Launching and resuming still go through the configured command, so this example resumes with `my-pi-fork --mode rpc --session <session-file>`.
 
 ---
 
@@ -556,6 +584,11 @@ When you launch an agent with an ACP provider:
 4. Paseo creates a session and sends prompts through the ACP protocol
 5. The agent streams responses, tool calls, and permission requests back over stdout
 
+Every ACP provider exposes an **Auto Accept** toggle. Enable it per session to let Paseo approve
+ACP permission requests without surfacing each prompt. If the provider sends no allow option,
+Paseo leaves the request for you to answer. Unattended agents enable Auto Accept unless you
+explicitly disable it.
+
 Models and modes are discovered dynamically at runtime from the agent process. If you want to override the model list (e.g., to curate which models appear in the UI), use the `models` field:
 
 ```json
@@ -663,7 +696,7 @@ Each entry in the `models` array:
 
 The built-in `claude` provider appends concrete model IDs from `~/.claude/settings.json` to its first-party Claude model list. Paseo reads the top-level `model` field and these `env` keys: `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL`.
 
-This lets users who already configured Claude Code for Bedrock, OpenRouter, ollama, Z.AI, or another Anthropic-compatible gateway select the exact model ID in Paseo. When `agents.providers.claude.models` is set it **replaces** both the hardcoded first-party Claude list and any settings.json-discovered entries; use `agents.providers.claude.additionalModels` to keep the first-party list and append curated entries on top.
+This lets users who already configured Claude Code for Bedrock, OpenRouter, ollama, Z.AI, or another Anthropic-compatible gateway select the exact model ID in Paseo. Explicit model IDs are passed unchanged to Claude Code, even when the same string is a compatibility alias for a built-in model. When `agents.providers.claude.models` is set it **replaces** both the hardcoded first-party Claude list and any settings.json-discovered entries; use `agents.providers.claude.additionalModels` to keep the first-party list and append curated entries on top.
 
 ### Gotcha: `extends: "claude"` with third-party endpoints
 

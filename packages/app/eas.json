@@ -7,7 +7,6 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "channel": "development",
       "env": {
         "APP_VARIANT": "development"
       },
@@ -16,15 +15,18 @@
       }
     },
     "production": {
-      "channel": "production",
       "env": {
         "APP_VARIANT": "production"
+      },
+      "android": {
+        "resourceClass": "large"
       }
     },
     "production-apk": {
       "extends": "production",
       "distribution": "internal",
       "android": {
+        "resourceClass": "large",
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel"
       }

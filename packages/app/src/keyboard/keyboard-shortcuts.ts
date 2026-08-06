@@ -6,6 +6,7 @@ import type {
   MessageInputKeyboardActionKind,
 } from "@/keyboard/actions";
 import { type KeyCombo, parseChordString } from "@/keyboard/shortcut-string";
+import { chordStringToShortcutKeys } from "@/keyboard/shortcut-string";
 
 export type { KeyCombo } from "@/keyboard/shortcut-string";
 
@@ -16,6 +17,16 @@ export interface KeyboardShortcutContext {
   isDesktop: boolean;
   focusScope: KeyboardFocusScope;
   commandCenterOpen: boolean;
+}
+
+export interface KeyboardShortcutInput {
+  key: string;
+  code: string;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  repeat: boolean;
 }
 
 export interface KeyboardShortcutMatch {
@@ -121,6 +132,7 @@ const SHORTCUT_HELP_SECTION_LABEL_KEYS: Record<ShortcutSectionId, string> = {
 const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "new-agent": "settings.shortcuts.help.openProject",
   "new-workspace": "settings.shortcuts.help.newWorkspace",
+  "switch-project": "settings.shortcuts.help.switchProject",
   "archive-workspace": "settings.shortcuts.help.archiveWorkspace",
   "workspace-tab-new": "settings.shortcuts.help.newTab",
   "workspace-tab-close-current": "settings.shortcuts.help.closeCurrentTab",
@@ -218,6 +230,32 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       section: "projects",
       label: "New workspace",
       keys: ["mod", "N"],
+    },
+  },
+
+  // --- Switch project (New Workspace screen) ---
+  {
+    id: "workspace-project-pick-cmd-p-mac",
+    action: "workspace.project.pick",
+    combo: "Cmd+P",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "switch-project",
+      section: "projects",
+      label: "Switch project",
+      keys: ["mod", "P"],
+    },
+  },
+  {
+    id: "workspace-project-pick-ctrl-p-non-mac",
+    action: "workspace.project.pick",
+    combo: "Ctrl+P",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "switch-project",
+      section: "projects",
+      label: "Switch project",
+      keys: ["mod", "P"],
     },
   },
 
@@ -1060,8 +1098,8 @@ export function buildEffectiveBindings(overrides: Record<string, string>): Parse
 
 // --- Matching engine ---
 
-function parseDigit(event: KeyboardEvent): number | null {
-  const code = event.code ?? "";
+function parseDigit(event: KeyboardShortcutInput): number | null {
+  const code = event.code;
   if (code.startsWith("Digit")) {
     const value = Number(code.slice("Digit".length));
     return Number.isFinite(value) && value >= 1 && value <= 9 ? value : null;
@@ -1070,14 +1108,14 @@ function parseDigit(event: KeyboardEvent): number | null {
     const value = Number(code.slice("Numpad".length));
     return Number.isFinite(value) && value >= 1 && value <= 9 ? value : null;
   }
-  const key = event.key ?? "";
+  const key = event.key;
   if (key >= "1" && key <= "9") {
     return Number(key);
   }
   return null;
 }
 
-function matchesKeyOrCode(combo: KeyCombo, event: KeyboardEvent): boolean {
+function matchesKeyOrCode(combo: KeyCombo, event: KeyboardShortcutInput): boolean {
   if (combo.key === undefined) {
     return event.code === combo.code;
   }
@@ -1095,7 +1133,7 @@ function matchesKeyOrCode(combo: KeyCombo, event: KeyboardEvent): boolean {
   return combo.codeFallback === true && event.code === combo.code;
 }
 
-function matchesCombo(combo: KeyCombo, event: KeyboardEvent, isMac: boolean): boolean {
+function matchesCombo(combo: KeyCombo, event: KeyboardShortcutInput, isMac: boolean): boolean {
   if (combo.mod) {
     if (isMac) {
       if (!event.metaKey) return false;
@@ -1118,7 +1156,10 @@ function matchesCombo(combo: KeyCombo, event: KeyboardEvent, isMac: boolean): bo
   return matchesKeyOrCode(combo, event);
 }
 
-function matchesWhen(when: ShortcutWhen | undefined, context: KeyboardShortcutContext): boolean {
+export function matchesKeyboardShortcutContext(
+  when: ShortcutWhen | undefined,
+  context: KeyboardShortcutContext,
+): boolean {
   if (!when) return true;
   if (when.mac !== undefined && when.mac !== context.isMac) return false;
   if (when.desktop !== undefined && when.desktop !== context.isDesktop) return false;
@@ -1136,7 +1177,7 @@ function matchesWhen(when: ShortcutWhen | undefined, context: KeyboardShortcutCo
 
 function resolvePayload(
   def: ShortcutPayloadDef | undefined,
-  event: KeyboardEvent,
+  event: KeyboardShortcutInput,
 ): KeyboardShortcutPayload {
   if (!def) return null;
   switch (def.type) {
@@ -1187,7 +1228,7 @@ function helpMatchesPlatform(
 
 function buildMatchFromBinding(
   binding: ParsedShortcutBinding,
-  event: KeyboardEvent,
+  event: KeyboardShortcutInput,
 ): KeyboardShortcutMatch {
   return {
     action: binding.action,
@@ -1198,7 +1239,7 @@ function buildMatchFromBinding(
 }
 
 function resolveInitialChordStep(input: {
-  event: KeyboardEvent;
+  event: KeyboardShortcutInput;
   context: KeyboardShortcutContext;
   chordState: ChordState;
   onChordReset: () => void;
@@ -1220,7 +1261,7 @@ function resolveInitialChordStep(input: {
     if (!matchesCombo(firstCombo, event, context.isMac)) {
       continue;
     }
-    if (!matchesWhen(binding.when, context)) {
+    if (!matchesKeyboardShortcutContext(binding.when, context)) {
       continue;
     }
     if (binding.parsedChord.length > 1) {
@@ -1252,7 +1293,7 @@ function resolveInitialChordStep(input: {
 }
 
 function resolveAdvancingChordStep(input: {
-  event: KeyboardEvent;
+  event: KeyboardShortcutInput;
   context: KeyboardShortcutContext;
   chordState: ChordState;
   onChordReset: () => void;
@@ -1278,7 +1319,7 @@ function resolveAdvancingChordStep(input: {
     if (!matchesCombo(combo, event, context.isMac)) {
       continue;
     }
-    if (!matchesWhen(binding.when, context)) {
+    if (!matchesKeyboardShortcutContext(binding.when, context)) {
       continue;
     }
     if (chordState.step + 1 === binding.parsedChord.length) {
@@ -1317,7 +1358,7 @@ function resolveAdvancingChordStep(input: {
 }
 
 export function resolveKeyboardShortcut(input: {
-  event: KeyboardEvent;
+  event: KeyboardShortcutInput;
   context: KeyboardShortcutContext;
   chordState: ChordState;
   onChordReset: () => void;
@@ -1364,6 +1405,19 @@ export function getDefaultKeysForAction(
     return binding.help.keys;
   }
   return null;
+}
+
+export function resolveShortcutKeysForAction(
+  actionId: string,
+  overrides: Readonly<Record<string, string>>,
+  platform: { isMac: boolean; isDesktop: boolean },
+): ShortcutKey[][] | null {
+  const bindingId = getBindingIdForAction(actionId, platform);
+  if (!bindingId) return null;
+  const override = overrides[bindingId];
+  if (override) return chordStringToShortcutKeys(override);
+  const defaultKeys = getDefaultKeysForAction(actionId, platform);
+  return defaultKeys ? [defaultKeys] : null;
 }
 
 /**

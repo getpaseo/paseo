@@ -3,11 +3,34 @@ import { CheckoutPrStatusSchema } from "@getpaseo/protocol/messages";
 import { i18n } from "@/i18n/i18next";
 
 import { buildGitActions, type BuildGitActionsInput } from "./policy";
+import { deriveMergeCapability, type ForgeSpecificStatusFacts } from "./merge-capability";
 
-function githubStatus(
-  overrides: Partial<NonNullable<BuildGitActionsInput["pullRequestGithub"]>> = {},
-): NonNullable<BuildGitActionsInput["pullRequestGithub"]> {
+type GithubMergeFactsFixture = ForgeSpecificStatusFacts & {
+  forge: "github";
+  mergeStateStatus: string | null;
+  autoMergeRequest: {
+    enabledAt: string | null;
+    mergeMethod: string | null;
+    enabledBy: string | null;
+  } | null;
+  viewerCanEnableAutoMerge: boolean;
+  viewerCanDisableAutoMerge: boolean;
+  viewerCanMergeAsAdmin: boolean;
+  viewerCanUpdateBranch: boolean;
+  repository: {
+    autoMergeAllowed: boolean;
+    mergeCommitAllowed: boolean;
+    squashMergeAllowed: boolean;
+    rebaseMergeAllowed: boolean;
+    viewerDefaultMergeMethod: string | null;
+  };
+  isMergeQueueEnabled: boolean;
+  isInMergeQueue: boolean;
+};
+
+function githubStatus(overrides: Partial<GithubMergeFactsFixture> = {}): GithubMergeFactsFixture {
   return {
+    forge: "github",
     mergeStateStatus: "CLEAN",
     autoMergeRequest: null,
     viewerCanEnableAutoMerge: false,
@@ -27,10 +50,17 @@ function githubStatus(
   };
 }
 
-function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitActionsInput {
+function createInput(
+  overrides: Partial<Omit<BuildGitActionsInput, "mergeCapability">> & {
+    pullRequestGithub?: unknown;
+  } = {},
+): BuildGitActionsInput {
+  const { pullRequestGithub = null, ...rest } = overrides;
   return {
     isGit: true,
     githubFeaturesEnabled: true,
+    forgeBrandLabel: "GitHub",
+    forgeChangeRequestNoun: "PR",
     githubAutoMergeActionsEnabled: true,
     hasPullRequest: false,
     pullRequestUrl: null,
@@ -38,7 +68,7 @@ function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitAct
     pullRequestIsDraft: false,
     pullRequestIsMerged: false,
     pullRequestMergeable: "UNKNOWN",
-    pullRequestGithub: null,
+    mergeCapability: deriveMergeCapability(pullRequestGithub),
     hasRemote: false,
     isPaseoOwnedWorktree: false,
     isOnBaseBranch: true,
@@ -128,7 +158,7 @@ function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitAct
         handler: () => undefined,
       },
     },
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -344,6 +374,28 @@ describe("git-actions-policy", () => {
     });
   });
 
+  it("explains why pull-and-push is unavailable when there is nothing to pull first", () => {
+    const actions = buildGitActions(
+      createInput({ hasRemote: true, aheadOfOrigin: 1, behindOfOrigin: 0 }),
+    );
+    const action = actions.secondary.find((entry) => entry.id === "pull-and-push");
+
+    expect(action?.unavailableMessage).toBe(
+      "Pull and push isn't available because there are no incoming changes to pull first",
+    );
+  });
+
+  it("explains why pull-and-push is unavailable when there is nothing to push after pulling", () => {
+    const actions = buildGitActions(
+      createInput({ hasRemote: true, aheadOfOrigin: 0, behindOfOrigin: 1 }),
+    );
+    const action = actions.secondary.find((entry) => entry.id === "pull-and-push");
+
+    expect(action?.unavailableMessage).toBe(
+      "Pull and push isn't available because there is nothing new to send after pulling",
+    );
+  });
+
   it("explains why pull-and-push is unavailable when there are uncommitted changes", () => {
     const actions = buildGitActions(
       createInput({
@@ -505,6 +557,44 @@ describe("git-actions-policy", () => {
       id: "push",
       label: "Push",
     });
+  });
+
+  it("uses the forge change-request noun in unavailable no-forge copy", () => {
+    const createActions = buildGitActions(
+      createInput({
+        githubFeaturesEnabled: false,
+        forgeBrandLabel: "GitLab",
+        forgeChangeRequestNoun: "MR",
+        hasRemote: true,
+        isOnBaseBranch: false,
+        aheadCount: 1,
+      }),
+    );
+    const viewActions = buildGitActions(
+      createInput({
+        githubFeaturesEnabled: false,
+        forgeBrandLabel: "GitLab",
+        forgeChangeRequestNoun: "MR",
+        hasRemote: true,
+        isOnBaseBranch: false,
+        hasPullRequest: true,
+        pullRequestUrl: "https://gitlab.com/example/repo/-/merge_requests/1",
+      }),
+    );
+
+    const createPrAction = [...createActions.secondary, ...createActions.menu].find(
+      (action) => action.id === "pr",
+    );
+    const viewPrAction = [viewActions.primary, ...viewActions.secondary, ...viewActions.menu].find(
+      (action) => action?.id === "pr",
+    );
+
+    expect(createPrAction?.unavailableMessage).toBe(
+      "Create MR isn't available right now because GitLab isn't connected",
+    );
+    expect(viewPrAction?.unavailableMessage).toBe(
+      "View MR isn't available right now because GitLab isn't connected",
+    );
   });
 
   it("uses local merge when merge is the stored ship default", () => {
@@ -726,12 +816,12 @@ describe("git-actions-policy", () => {
         pullRequestIsDraft: oldDaemonStatus.isDraft,
         pullRequestIsMerged: oldDaemonStatus.isMerged,
         pullRequestMergeable: oldDaemonStatus.mergeable,
-        pullRequestGithub: oldDaemonStatus.github,
+        pullRequestGithub: oldDaemonStatus.forgeSpecific,
         shipDefault: "pr",
       }),
     );
 
-    expect(oldDaemonStatus.github).toBeUndefined();
+    expect(oldDaemonStatus.forgeSpecific).toBeUndefined();
     expect(actions.primary).toMatchObject({
       id: "merge-pr-squash",
       label: "Merge PR (squash)",

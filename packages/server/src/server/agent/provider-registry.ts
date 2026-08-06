@@ -14,6 +14,7 @@ import type {
   ProviderCatalog,
   ResolveAgentCreateConfigInput,
   ResolveAgentCreateConfigResult,
+  ResolveAgentDefaultModeInput,
 } from "./agent-sdk-types.js";
 import {
   isDefaultAgentCreateConfigUnattended,
@@ -35,6 +36,8 @@ import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { KiroACPAgentClient } from "./providers/kiro-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
+import { OmpAgentClient } from "./providers/omp/agent.js";
+import type { OmpRuntime } from "./providers/omp/runtime.js";
 import { PiRpcAgentClient } from "./providers/pi/agent.js";
 import { TraeACPAgentClient } from "./providers/trae-acp-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
@@ -79,11 +82,12 @@ export interface BuildProviderRegistryOptions {
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   managedProcesses?: ManagedProcessRegistry;
   isDev?: boolean;
+  ompRuntime?: OmpRuntime;
 }
 
 interface ProviderClientFactoryOptions extends Pick<
   BuildProviderRegistryOptions,
-  "workspaceGitService" | "managedProcesses"
+  "workspaceGitService" | "managedProcesses" | "ompRuntime"
 > {
   providerParams?: unknown;
   customProvider?: {
@@ -144,21 +148,11 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       providerParams: options?.providerParams,
     }),
   omp: (logger, runtimeSettings, options) =>
-    new PiRpcAgentClient({
+    new OmpAgentClient({
       logger,
-      runtimeSettings: mergeRuntimeSettings(
-        {
-          command: {
-            mode: "replace",
-            argv: ["omp"],
-          },
-        },
-        runtimeSettings,
-      ),
-      providerParams: options?.providerParams ?? {
-        sessionDir: "~/.omp/agent/sessions",
-      },
-      commandsRpcType: "get_available_commands",
+      runtimeSettings,
+      providerParams: options?.providerParams,
+      runtime: options?.ompRuntime,
     }),
   mock: (logger) => new MockLoadTestAgentClient(logger),
   "mock-slow": () => new MockSlowProviderClient(),
@@ -293,6 +287,17 @@ function mapModel(
   return normalizeAgentModelDefinition({ ...model, provider });
 }
 
+function resolveConfiguredModels(
+  provider: AgentProvider,
+  client: AgentClient,
+  models: ProviderProfileModel[],
+): AgentModelDefinition[] {
+  return models.map((model) => {
+    const mapped = mapModel(provider, model);
+    return client.resolveConfiguredModel?.(mapped) ?? mapped;
+  });
+}
+
 function mergeModels(
   provider: AgentProvider,
   profileModels: ProviderProfileModel[],
@@ -315,7 +320,7 @@ function mergeModels(
 function mergeModelAdditions(
   provider: AgentProvider,
   baseModels: AgentModelDefinition[],
-  modelAdditions: ProviderProfileModel[],
+  modelAdditions: Array<ProviderProfileModel | AgentModelDefinition>,
 ): AgentModelDefinition[] {
   if (modelAdditions.length === 0) {
     return baseModels;
@@ -334,9 +339,13 @@ function mergeModelAdditions(
       continue;
     }
 
+    const existingModel = mergedModels[existingIndex];
+    const explicitlyEnablesCompatibilityModel =
+      existingModel?.isSelectable === false && additionalModel.isSelectable === undefined;
     mergedModels[existingIndex] = {
-      ...mergedModels[existingIndex],
+      ...existingModel,
       ...additionalModel,
+      ...(explicitlyEnablesCompatibilityModel ? { isSelectable: true } : {}),
     };
   }
 
@@ -414,7 +423,7 @@ function wrapClientProvider(
           launchContext,
         ),
       ),
-    resumeSession: async (handle, overrides, launchContext) =>
+    resumeSession: async (handle, overrides, launchContext, options) =>
       wrapSessionProvider(
         provider,
         await inner.resumeSession(
@@ -429,18 +438,28 @@ function wrapClientProvider(
               }
             : undefined,
           launchContext,
+          options,
         ),
       ),
     fetchCatalog: async (options) => {
       const catalog = await inner.fetchCatalog(options);
       return {
+        ...catalog,
         models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
           profileModelsAreAdditive,
         }),
         modes: catalog.modes,
       };
     },
+    resolveDefaultModeId: inner.resolveDefaultModeId
+      ? async ({ config, env }: ResolveAgentDefaultModeInput) =>
+          await inner.resolveDefaultModeId?.({
+            config: { ...config, provider: inner.provider },
+            env,
+          })
+      : undefined,
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
+    resolveConfiguredModel: inner.resolveConfiguredModel?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
     listFeatures: listFeatures
       ? async (config) => await listFeatures({ ...config, provider: inner.provider })
@@ -487,10 +506,15 @@ function createRegistryEntry(
   resolved: ResolvedProvider,
 ): ProviderDefinition {
   const modelClient = resolved.createBaseClient(logger);
-  const hasReplacementModels =
-    resolved.profileModels.length > 0 && !resolved.profileModelsAreAdditive;
+  const profileModels = resolveConfiguredModels(provider, modelClient, resolved.profileModels);
+  const additionalModels = resolveConfiguredModels(
+    provider,
+    modelClient,
+    resolved.additionalModels,
+  );
+  const hasReplacementModels = profileModels.length > 0 && !resolved.profileModelsAreAdditive;
   const replacementModels = hasReplacementModels
-    ? resolved.profileModels.map((model) => mapModel(provider, model))
+    ? profileModels.map((model) => mapModel(provider, model))
     : [];
 
   const decorateModes = (modes: AgentMode[]): AgentMode[] =>
@@ -521,28 +545,30 @@ function createRegistryEntry(
         // Replacement models skip runtime model discovery, but additionalModels
         // must still be merged on top. If modes are dynamic, probe for modes via
         // the single catalog API; otherwise use static/empty modes with no runtime.
-        const models = mergeModelAdditions(provider, replacementModels, resolved.additionalModels);
+        const models = mergeModelAdditions(provider, replacementModels, additionalModels);
         if (hasStaticModes) {
+          const defaultModeId = await catalogClient.resolveDefaultModeId?.({
+            config: {
+              provider,
+              cwd: options.scope === "workspace" ? options.cwd : process.cwd(),
+            },
+          });
           return {
             models,
             modes: decorateModes(resolved.definition.modes),
+            defaultModeId,
           };
         }
         const catalog = await catalogClient.fetchCatalog(options);
-        return { models, modes: decorateModes(catalog.modes) };
+        return { ...catalog, models, modes: decorateModes(catalog.modes) };
       }
 
       const catalog = await catalogClient.fetchCatalog(options);
       return {
-        models: mergeModels(
-          provider,
-          resolved.profileModels,
-          resolved.additionalModels,
-          catalog.models,
-          {
-            profileModelsAreAdditive: resolved.profileModelsAreAdditive,
-          },
-        ),
+        ...catalog,
+        models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
+          profileModelsAreAdditive: resolved.profileModelsAreAdditive,
+        }),
         modes: decorateModes(catalog.modes),
       };
     },
@@ -555,16 +581,17 @@ function createResolvedProviderClient(
   resolved: ResolvedProvider,
 ): AgentClient {
   const inner = resolved.createBaseClient(logger);
-  const hasModelOverrides =
-    resolved.profileModels.length > 0 || resolved.additionalModels.length > 0;
+  const profileModels = resolveConfiguredModels(provider, inner, resolved.profileModels);
+  const additionalModels = resolveConfiguredModels(provider, inner, resolved.additionalModels);
+  const hasModelOverrides = profileModels.length > 0 || additionalModels.length > 0;
   if (inner.provider === provider && !hasModelOverrides) {
     return inner;
   }
   return wrapClientProvider(
     provider,
     inner,
-    resolved.profileModels,
-    resolved.additionalModels,
+    profileModels,
+    additionalModels,
     resolved.profileModelsAreAdditive,
   );
 }
@@ -572,7 +599,10 @@ function createResolvedProviderClient(
 function buildResolvedBuiltinProviders(
   providerOverrides: Record<string, ProviderOverride>,
   runtimeSettings: AgentProviderRuntimeSettingsMap | undefined,
-  options: Pick<BuildProviderRegistryOptions, "workspaceGitService" | "managedProcesses">,
+  options: Pick<
+    BuildProviderRegistryOptions,
+    "workspaceGitService" | "managedProcesses" | "ompRuntime"
+  >,
   isDev: boolean,
 ): Map<string, ResolvedProvider> {
   const resolvedProviders = new Map<string, ResolvedProvider>();
@@ -602,6 +632,7 @@ function buildResolvedBuiltinProviders(
         factory(logger, mergedRuntimeSettings, {
           workspaceGitService: options.workspaceGitService,
           managedProcesses: options.managedProcesses,
+          ompRuntime: options.ompRuntime,
           providerParams: override?.params,
         }),
     });
@@ -725,6 +756,7 @@ export function buildProviderRegistry(
     {
       workspaceGitService: options?.workspaceGitService,
       managedProcesses: options?.managedProcesses,
+      ompRuntime: options?.ompRuntime,
     },
     options?.isDev === true,
   );

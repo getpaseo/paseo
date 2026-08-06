@@ -1,7 +1,8 @@
 import type { Rectangle } from "electron";
 import { describe, expect, test, vi } from "vitest";
 import type { TabImage } from "./service.js";
-import { adaptWebContents } from "./ipc.js";
+import { adaptWebContents, HostSnapshotEngineRegistry } from "./ipc.js";
+import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
 class FakeImage implements TabImage {
   public toPNG(): Uint8Array {
@@ -19,11 +20,14 @@ class FakeDebugger {
   public blockCommands = false;
   public readonly blockedCommandNames = new Set<string>();
   public readonly failedCommandNames = new Set<string>();
+  public readonly failedCommandErrors = new Map<string, Error>();
   public readonly promptDialogs: unknown[] = [];
   public failPromptDrain = false;
+  public beforeCommand: ((command: string) => void) | null = null;
   private messageListener:
     | ((event: unknown, method: string, params?: Record<string, unknown>) => void)
     | null = null;
+  private detachListener: (() => void) | null = null;
   private readonly blockedCommands: Array<() => void> = [];
 
   public isAttached(): boolean {
@@ -36,6 +40,11 @@ class FakeDebugger {
 
   public async sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown> {
     this.commands.push({ command, params: params ?? {} });
+    this.beforeCommand?.(command);
+    const commandError = this.failedCommandErrors.get(command);
+    if (commandError) {
+      throw commandError;
+    }
     if (this.failedCommandNames.has(command)) {
       throw new Error(`${command} failed`);
     }
@@ -57,10 +66,15 @@ class FakeDebugger {
   }
 
   public on(
-    event: "message",
-    listener: (event: unknown, method: string, params?: Record<string, unknown>) => void,
+    event: "message" | "detach",
+    listener:
+      | ((event: unknown, method: string, params?: Record<string, unknown>) => void)
+      | (() => void),
   ): void {
-    expect(event).toBe("message");
+    if (event === "detach") {
+      this.detachListener = listener;
+      return;
+    }
     this.messageListener = listener;
   }
 
@@ -69,6 +83,11 @@ class FakeDebugger {
       throw new Error("Debugger message listener was not registered");
     }
     this.messageListener({}, method, params);
+  }
+
+  public emitDetach(): void {
+    this.attachedProtocolVersions.length = 0;
+    this.detachListener?.();
   }
 
   public finishNextCommand(): void {
@@ -90,6 +109,8 @@ type ConsoleMessageListener = (
 
 class FakeWebContents {
   public readonly debugger = new FakeDebugger();
+  public readonly inputEvents: IsolatedKeyboardInputEvent[] = [];
+  public readonly loadedUrls: string[] = [];
   public readonly captures: Array<{
     rect: Rectangle | undefined;
     options: { stayHidden?: boolean } | undefined;
@@ -99,7 +120,14 @@ class FakeWebContents {
   private destroyedListener: (() => void) | null = null;
   public destroyed = false;
 
-  public constructor(public readonly id: number) {}
+  public constructor(private readonly webContentsId: number) {}
+
+  public get id(): number {
+    if (this.destroyed) {
+      throw new TypeError("Object has been destroyed");
+    }
+    return this.webContentsId;
+  }
 
   public getURL(): string {
     return "https://example.com";
@@ -129,7 +157,9 @@ class FakeWebContents {
     return null;
   }
 
-  public async loadURL(): Promise<void> {}
+  public async loadURL(url: string): Promise<void> {
+    this.loadedUrls.push(url);
+  }
 
   public goBack(): void {}
 
@@ -147,6 +177,10 @@ class FakeWebContents {
 
   public invalidate(): void {
     this.invalidations.push("invalidate");
+  }
+
+  public sendInputEvent(event: IsolatedKeyboardInputEvent): void {
+    this.inputEvents.push(event);
   }
 
   public on(event: "console-message", listener: ConsoleMessageListener): void {
@@ -173,11 +207,36 @@ class FakeWebContents {
 
   public destroy(): void {
     this.destroyed = true;
+    this.debugger.emitDetach();
     this.destroyedListener?.();
   }
 }
 
 describe("browser automation IPC adapter", () => {
+  test("isolates snapshot refs by host window and releases them on destruction", () => {
+    const registry = new HostSnapshotEngineRegistry();
+    const firstHost = new FakeHostWebContents(1);
+    const secondHost = new FakeHostWebContents(2);
+
+    const firstEngine = registry.get(firstHost);
+    expect(registry.get(firstHost)).toBe(firstEngine);
+    expect(registry.get(secondHost)).not.toBe(firstEngine);
+
+    firstHost.destroy();
+    expect(registry.get(new FakeHostWebContents(1))).not.toBe(firstEngine);
+  });
+
+  test("sends contained keyboard input directly to the guest", () => {
+    const contents = new FakeWebContents(19);
+    const tab = adaptWebContents(contents);
+
+    tab.sendInputEvent({ type: "keyDown", keyCode: "Enter", skipIfUnhandled: true });
+
+    expect(contents.inputEvents).toEqual([
+      { type: "keyDown", keyCode: "Enter", skipIfUnhandled: true },
+    ]);
+  });
+
   test("delegates viewport capture to the guest without a renderer prep bridge", async () => {
     const contents = new FakeWebContents(20);
     const tab = adaptWebContents(contents);
@@ -211,7 +270,7 @@ describe("browser automation IPC adapter", () => {
       },
     ]);
 
-    contents.destroy();
+    expect(() => contents.destroy()).not.toThrow();
 
     expect(tab.getConsoleMessages?.()).toEqual([]);
   });
@@ -534,7 +593,70 @@ describe("browser automation IPC adapter", () => {
     );
     warn.mockRestore();
   });
+
+  test("does not run the command after the debugger target closes during setup", async () => {
+    const contents = new FakeWebContents(31);
+    contents.debugger.beforeCommand = (command) => {
+      if (command === "Page.enable") {
+        contents.destroy();
+      }
+    };
+    contents.debugger.failedCommandErrors.set(
+      "Page.enable",
+      new Error("target closed while handling command"),
+    );
+    const tab = adaptWebContents(contents);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(
+      tab.captureDialogs?.(() => tab.loadURL("https://replacement.example.com")),
+    ).rejects.toThrow("target closed while handling command");
+    expect(contents.loadedUrls).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+
+    warn.mockRestore();
+  });
+
+  test("runs without dialog capture after a live debugger session detaches", async () => {
+    const contents = new FakeWebContents(32);
+    const tab = adaptWebContents(contents);
+
+    await expect(tab.captureDialogs?.(async () => "captured")).resolves.toEqual({
+      result: "captured",
+      dialogs: [],
+    });
+    contents.debugger.emitDetach();
+    contents.debugger.failedCommandNames.add("Page.enable");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(
+      tab.captureDialogs?.(() => tab.loadURL("https://replacement.example.com")),
+    ).resolves.toEqual({ result: undefined, dialogs: [] });
+    expect(contents.loadedUrls).toEqual(["https://replacement.example.com"]);
+    expect(contents.debugger.attachedProtocolVersions).toEqual(["1.3"]);
+    expect(warn).toHaveBeenCalledWith(
+      "[browser-automation] Dialog capture unavailable; running command without it",
+      { contentsId: 32, error: expect.any(Error) },
+    );
+
+    warn.mockRestore();
+  });
 });
+
+class FakeHostWebContents {
+  private destroyedListener: (() => void) | null = null;
+
+  public constructor(public readonly id: number) {}
+
+  public once(event: "destroyed", listener: () => void): void {
+    expect(event).toBe("destroyed");
+    this.destroyedListener = listener;
+  }
+
+  public destroy(): void {
+    this.destroyedListener?.();
+  }
+}
 
 async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();

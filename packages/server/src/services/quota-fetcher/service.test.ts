@@ -51,6 +51,11 @@ function writeKimiCredentials(dir: string, accessToken: string): void {
   );
 }
 
+function writeGrokAuth(home: string, auth: Record<string, unknown>): void {
+  mkdirSync(join(home, ".grok"), { recursive: true });
+  writeFileSync(join(home, ".grok", "auth.json"), JSON.stringify(auth));
+}
+
 function writeMiniMaxConfig(dir: string, payload: Record<string, unknown>): void {
   mkdirSync(join(dir, ".mmx"), { recursive: true });
   writeFileSync(join(dir, ".mmx", "config.json"), JSON.stringify(payload));
@@ -382,7 +387,13 @@ describe("real provider usage fetchers", () => {
         new CopilotQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
         new CursorQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
         new ZaiQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
-        new GrokQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
+        new GrokQuotaProvider({
+          logger,
+          fetch: fetchThroughTestDouble,
+          // Match Kimi: inject temp HOME so nested auth-file tests work on Windows
+          // (os.homedir() uses USERPROFILE there and ignores process.env.HOME).
+          homeDir,
+        }),
         new KimiQuotaProvider({
           logger,
           fetch: fetchThroughTestDouble,
@@ -425,7 +436,7 @@ describe("real provider usage fetchers", () => {
       windows: expect.arrayContaining([
         expect.objectContaining({ id: "five_hour", usedPct: 11 }),
         expect.objectContaining({ id: "weekly", usedPct: 1 }),
-        expect.objectContaining({ id: "weekly_opus", usedPct: 0.5 }),
+        expect.objectContaining({ id: "weekly_model_opus", usedPct: 0.5 }),
       ]),
     });
     expect(fetchApi).toHaveBeenCalledWith(
@@ -720,8 +731,7 @@ describe("real provider usage fetchers", () => {
           "https://cli-chat-proxy.grok.com/v1/billing",
           () =>
             jsonResponse({
-              config: { monthlyLimit: { val: 0 } },
-              usage: { creditUsage: 0 },
+              config: { monthlyLimit: { val: 0 }, used: { val: 0 } },
             }),
         ],
       ]),
@@ -737,6 +747,109 @@ describe("real provider usage fetchers", () => {
           used: 0,
           remaining: 0,
           limit: 0,
+        }),
+      ],
+    });
+  });
+
+  it("fetches Grok usage from live billing shape (config.used.val)", async () => {
+    process.env["GROK_API_KEY"] = "grok_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://cli-chat-proxy.grok.com/v1/billing",
+          () =>
+            jsonResponse({
+              config: {
+                monthlyLimit: { val: 150000 },
+                used: { val: 37886 },
+                billingPeriodStart: "2026-07-01T00:00:00+00:00",
+                billingPeriodEnd: "2026-08-01T00:00:00+00:00",
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const grok = findProvider(await service().listUsage(), "grok");
+
+    expect(grok).toMatchObject({
+      status: "available",
+      balances: [
+        expect.objectContaining({
+          id: "monthly_credits",
+          used: 37886,
+          remaining: 112114,
+          limit: 150000,
+          unit: "credits",
+        }),
+      ],
+    });
+  });
+
+  it("fetches Grok usage with nested ~/.grok/auth.json key token", async () => {
+    writeGrokAuth(homeDir, {
+      "https://auth.x.ai::test-user-id": {
+        key: "nested_jwt_token",
+        refresh_token: "rt_nested",
+        expires_at: "2026-08-01T00:00:00Z",
+        user_id: "test-user-id",
+        email: "user@example.com",
+      },
+    });
+
+    let authorization: string | null = null;
+    fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return jsonResponse({
+        config: {
+          monthlyLimit: { val: 100 },
+          used: { val: 25 },
+        },
+      });
+    }) as typeof fetch;
+
+    const grok = findProvider(await service().listUsage(), "grok");
+
+    expect(authorization).toBe("Bearer nested_jwt_token");
+    expect(grok).toMatchObject({
+      status: "available",
+      balances: [
+        expect.objectContaining({
+          id: "monthly_credits",
+          used: 25,
+          remaining: 75,
+          limit: 100,
+        }),
+      ],
+    });
+  });
+
+  it("still accepts legacy Grok usage.creditUsage when config.used is absent", async () => {
+    process.env["GROK_API_KEY"] = "grok_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://cli-chat-proxy.grok.com/v1/billing",
+          () =>
+            jsonResponse({
+              config: { monthlyLimit: { val: 50 } },
+              usage: { creditUsage: 10 },
+            }),
+        ],
+      ]),
+    );
+
+    const grok = findProvider(await service().listUsage(), "grok");
+
+    expect(grok).toMatchObject({
+      status: "available",
+      balances: [
+        expect.objectContaining({
+          id: "monthly_credits",
+          used: 10,
+          remaining: 40,
+          limit: 50,
         }),
       ],
     });
@@ -945,5 +1058,433 @@ describe("real provider usage fetchers", () => {
         }),
       ]),
     });
+  });
+});
+
+// Regression for #2320: providers hardcoded `tone: "ok"`, which suppressed the client's
+// own thresholds (window-bar.tsx reads `window.tone ?? deriveTone(usedPct)`), so a bar
+// stayed green at 99%. Codex escalated to "warning" but could never reach "danger".
+describe("usage bars escalate as they fill", () => {
+  let claudeHome: string;
+  let codexHome: string;
+
+  beforeEach(() => {
+    claudeHome = mkdtempSync(join(tmpdir(), "paseo-tone-claude-"));
+    codexHome = mkdtempSync(join(tmpdir(), "paseo-tone-codex-"));
+  });
+
+  afterEach(() => {
+    rmSync(claudeHome, { recursive: true, force: true });
+    rmSync(codexHome, { recursive: true, force: true });
+  });
+
+  function claudeAt(utilization: number) {
+    writeClaudeCredentials(claudeHome, "at_valid");
+    return new ClaudeQuotaProvider({
+      logger: createLogger(),
+      claudeHome,
+      claudeKeychainReader: async () => null,
+      fetch: mockFetch(
+        new Map([
+          [
+            "https://api.anthropic.com/api/oauth/usage",
+            () =>
+              jsonResponse({
+                seven_day: { utilization, resets_at: "2026-06-04T00:00:00Z" },
+              }),
+          ],
+        ]),
+      ),
+    }).fetchUsage();
+  }
+
+  it.each([
+    [10, "ok"],
+    [75, "warning"],
+    [99, "danger"],
+  ])("a Claude window at %s%% is %s", async (utilization, tone) => {
+    const usage = await claudeAt(utilization);
+    expect(usage.windows).toEqual([expect.objectContaining({ id: "weekly", tone })]);
+  });
+
+  it("a Codex window can reach danger, not just warning", async () => {
+    writeCodexAuth(codexHome, "at_codex");
+    const usage = await new CodexQuotaProvider({
+      logger: createLogger(),
+      codexHome,
+      fetch: mockFetch(
+        new Map([
+          [
+            "https://chatgpt.com/backend-api/wham/usage",
+            () =>
+              jsonResponse(
+                makeCodexResponse({
+                  rate_limit: {
+                    primary_window: { used_percent: 12, reset_at: 1_748_812_800 },
+                    secondary_window: { used_percent: 96, reset_at: 1_749_072_000 },
+                  },
+                }),
+              ),
+          ],
+        ]),
+      ),
+    }).fetchUsage();
+
+    expect(usage.windows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "session", tone: "ok" }),
+        expect.objectContaining({ id: "weekly", tone: "danger" }),
+      ]),
+    );
+  });
+});
+
+// Model- and surface-scoped weekly limits arrive in a `limits[]` array rather than the
+// top-level `seven_day_*` keys, which now return null on most accounts.
+describe("ClaudeQuotaProvider scoped weekly limits", () => {
+  let claudeHome: string;
+
+  beforeEach(() => {
+    claudeHome = mkdtempSync(join(tmpdir(), "paseo-claude-limits-"));
+  });
+
+  afterEach(() => {
+    rmSync(claudeHome, { recursive: true, force: true });
+  });
+
+  function fableLimit(overrides: Record<string, unknown> = {}) {
+    return {
+      kind: "weekly_scoped",
+      group: "weekly",
+      percent: 0,
+      severity: "normal",
+      resets_at: "2026-06-04T00:00:00Z",
+      is_active: false,
+      scope: { model: { id: null, display_name: "Fable" }, surface: null },
+      ...overrides,
+    };
+  }
+
+  function claudeProvider(body: unknown) {
+    writeClaudeCredentials(claudeHome, "at_valid");
+    const logger = createLogger() as unknown as { warn: ReturnType<typeof vi.fn> };
+    const provider = new ClaudeQuotaProvider({
+      logger: logger as never,
+      claudeHome,
+      claudeKeychainReader: async () => null,
+      fetch: mockFetch(
+        new Map([["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(body)]]),
+      ),
+    });
+    return { provider, logger };
+  }
+
+  it("renders a scoped weekly limit as its own window", async () => {
+    const { provider } = claudeProvider({
+      five_hour: { utilization: 6, resets_at: "2026-06-01T21:00:00Z" },
+      seven_day: { utilization: 23, resets_at: "2026-06-04T00:00:00Z" },
+      limits: [fableLimit()],
+    });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.windows).toContainEqual(
+      expect.objectContaining({ id: "weekly_model_fable", label: "Weekly · Fable" }),
+    );
+  });
+
+  it("renders a scoped window that is at zero and inactive", async () => {
+    const { provider } = claudeProvider({
+      seven_day: { utilization: 23, resets_at: "2026-06-04T00:00:00Z" },
+      limits: [fableLimit({ percent: 0, is_active: false })],
+    });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.windows).toContainEqual(
+      expect.objectContaining({ id: "weekly_model_fable", usedPct: 0, remainingPct: 100 }),
+    );
+  });
+
+  it("ignores session and all-models entries so they do not duplicate the top-level windows", async () => {
+    const { provider } = claudeProvider({
+      five_hour: { utilization: 6, resets_at: "2026-06-01T21:00:00Z" },
+      seven_day: { utilization: 23, resets_at: "2026-06-04T00:00:00Z" },
+      limits: [
+        { kind: "session", percent: 6, resets_at: "2026-06-01T21:00:00Z", scope: null },
+        { kind: "weekly_all", percent: 23, resets_at: "2026-06-04T00:00:00Z", scope: null },
+        fableLimit(),
+      ],
+    });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.windows.map((window) => window.id)).toEqual([
+      "five_hour",
+      "weekly",
+      "weekly_model_fable",
+    ]);
+  });
+
+  it("labels a surface-scoped limit from its surface name", async () => {
+    const { provider } = claudeProvider({
+      seven_day: { utilization: 23, resets_at: "2026-06-04T00:00:00Z" },
+      limits: [
+        fableLimit({ scope: { model: null, surface: { id: "code", display_name: "Code" } } }),
+      ],
+    });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.windows).toContainEqual(
+      expect.objectContaining({ id: "weekly_surface_code", label: "Weekly · Code" }),
+    );
+  });
+
+  it("skips a scoped limit with no resolvable label rather than rendering an unlabelled bar", async () => {
+    const { provider, logger } = claudeProvider({
+      seven_day: { utilization: 23, resets_at: "2026-06-04T00:00:00Z" },
+      limits: [fableLimit({ scope: { model: { id: null, display_name: null }, surface: null } })],
+    });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.windows.map((window) => window.id)).toEqual(["weekly"]);
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  // Regression: an additive section must never take down data that already parsed.
+  it("keeps the top-level windows when a limits entry is malformed", async () => {
+    const { provider, logger } = claudeProvider({
+      five_hour: { utilization: 6, resets_at: "2026-06-01T21:00:00Z" },
+      seven_day: { utilization: 23, resets_at: "2026-06-04T00:00:00Z" },
+      limits: [{ percent: "not-a-kind" }, fableLimit()],
+    });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.status).toBe("available");
+    expect(usage.windows.map((window) => window.id)).toEqual([
+      "five_hour",
+      "weekly",
+      "weekly_model_fable",
+    ]);
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it("warns when a successful response describes no windows at all", async () => {
+    const { provider, logger } = claudeProvider({ limits: [] });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.windows).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Claude usage response parsed but produced no windows",
+    );
+  });
+});
+/**
+ * The reconciliation matrix.
+ *
+ * Four review rounds on PR #2303 each found a different hole in how the two
+ * representations of one scoped limit get combined, because each fix was tested against
+ * the case that was reported rather than the space of cases. This walks the space:
+ * every combination of which representation carries the limit, whether the `limits[]`
+ * entry supplies values, and whether the two descriptions denote the same limit at all.
+ */
+describe("ClaudeQuotaProvider scoped limit reconciliation", () => {
+  let claudeHome: string;
+
+  beforeEach(() => {
+    claudeHome = mkdtempSync(join(tmpdir(), "paseo-claude-matrix-"));
+  });
+
+  afterEach(() => {
+    rmSync(claudeHome, { recursive: true, force: true });
+  });
+
+  const RESETS = "2026-06-04T00:00:00Z";
+
+  function scoped(scope: unknown, percent: number | null = 30, resetsAt: string | null = RESETS) {
+    return { kind: "weekly_scoped", percent, resets_at: resetsAt, scope };
+  }
+
+  const model = (name: string | null, id: string | null = null) => ({
+    model: { id, display_name: name },
+    surface: null,
+  });
+  const surface = (name: string | null, id: string | null = null) => ({
+    model: null,
+    surface: { id, display_name: name },
+  });
+
+  async function windowsFor(body: Record<string, unknown>) {
+    writeClaudeCredentials(claudeHome, "at_valid");
+    const usage = await new ClaudeQuotaProvider({
+      logger: createLogger(),
+      claudeHome,
+      claudeKeychainReader: async () => null,
+      fetch: mockFetch(
+        new Map([["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(body)]]),
+      ),
+    }).fetchUsage();
+    return usage.windows;
+  }
+
+  it("which representation carries the limit: legacy only", async () => {
+    const windows = await windowsFor({
+      seven_day_omelette: { utilization: 12, resets_at: RESETS },
+    });
+    expect(windows).toEqual([
+      expect.objectContaining({
+        id: "weekly_model_omelette",
+        label: "Weekly · Omelette",
+        usedPct: 12,
+      }),
+    ]);
+  });
+
+  it("which representation carries the limit: limits[] only", async () => {
+    const windows = await windowsFor({ limits: [scoped(model("Fable"), 2)] });
+    expect(windows).toEqual([
+      expect.objectContaining({
+        id: "weekly_model_fable",
+        label: "Weekly · Fable",
+        usedPct: 2,
+      }),
+    ]);
+  });
+
+  it("which representation carries the limit: both, same limit — one bar, scoped identity", async () => {
+    const windows = await windowsFor({
+      seven_day_omelette: { utilization: 12, resets_at: RESETS },
+      limits: [scoped(model("Omelette"), 30)],
+    });
+    expect(windows).toEqual([
+      expect.objectContaining({ id: "weekly_model_omelette", usedPct: 30 }),
+    ]);
+  });
+
+  it("which representation carries the limit: both, different limits — two bars", async () => {
+    const windows = await windowsFor({
+      seven_day_opus: { utilization: 8, resets_at: RESETS },
+      limits: [scoped(model("Fable"), 2)],
+    });
+    expect(windows.map((w) => w.id)).toEqual(["weekly_model_opus", "weekly_model_fable"]);
+  });
+
+  it("which representation carries the limit: neither", async () => {
+    const windows = await windowsFor({ seven_day: { utilization: 23, resets_at: RESETS } });
+    expect(windows.map((w) => w.id)).toEqual(["weekly"]);
+  });
+
+  const legacy = { seven_day_omelette: { utilization: 12, resets_at: RESETS } };
+
+  it("value fallback when the scoped entry is sparse: scoped values win when present", async () => {
+    const windows = await windowsFor({
+      ...legacy,
+      limits: [scoped(model("Omelette"), 30, "2026-06-09T00:00:00Z")],
+    });
+    expect(windows[0]).toMatchObject({ usedPct: 30, resetsAt: "2026-06-09T00:00:00Z" });
+  });
+
+  it("value fallback when the scoped entry is sparse: percentage falls back per field", async () => {
+    const windows = await windowsFor({
+      ...legacy,
+      limits: [scoped(model("Omelette"), null, "2026-06-09T00:00:00Z")],
+    });
+    expect(windows[0]).toMatchObject({ usedPct: 12, resetsAt: "2026-06-09T00:00:00Z" });
+  });
+
+  it("value fallback when the scoped entry is sparse: reset time falls back per field", async () => {
+    const windows = await windowsFor({
+      ...legacy,
+      limits: [scoped(model("Omelette"), 30, null)],
+    });
+    expect(windows[0]).toMatchObject({ usedPct: 30, resetsAt: RESETS });
+  });
+
+  it("value fallback when the scoped entry is sparse: both fall back when the scoped entry only names the limit", async () => {
+    const windows = await windowsFor({
+      ...legacy,
+      limits: [scoped(model("Omelette"), null, null)],
+    });
+    expect(windows[0]).toMatchObject({ usedPct: 12, resetsAt: RESETS });
+  });
+
+  it("value fallback when the scoped entry is sparse: stays empty when neither side has a value", async () => {
+    const windows = await windowsFor({ limits: [scoped(model("Fable"), null, null)] });
+    expect(windows[0]).toMatchObject({ id: "weekly_model_fable", usedPct: null });
+  });
+
+  it("identity: a surface never matches a legacy model window of the same name", async () => {
+    const windows = await windowsFor({
+      seven_day_omelette: { utilization: 12, resets_at: RESETS },
+      limits: [scoped(surface("Omelette"), 30)],
+    });
+    expect(windows.map((w) => w.id)).toEqual(["weekly_model_omelette", "weekly_surface_omelette"]);
+    expect(windows[0]).toMatchObject({ usedPct: 12 });
+    expect(windows[1]).toMatchObject({ usedPct: 30 });
+  });
+
+  it("identity: a model and a surface of the same name stay apart", async () => {
+    const windows = await windowsFor({
+      limits: [scoped(model("Code"), 4), scoped(surface("Code"), 9)],
+    });
+    expect(windows.map((w) => w.id)).toEqual(["weekly_model_code", "weekly_surface_code"]);
+  });
+
+  it("identity: ids decide when both sides have one", async () => {
+    const windows = await windowsFor({
+      limits: [
+        scoped(model("Fable-Pro", "fable-pro"), 4),
+        scoped(model("Fable_Pro", "fable_pro"), 9),
+      ],
+    });
+    expect(windows.map((w) => w.id)).toEqual(["weekly_model_fable-pro", "weekly_model_fable_pro"]);
+  });
+
+  it("identity: names decide when ids are absent, so indistinguishable entries merge", async () => {
+    const windows = await windowsFor({
+      limits: [scoped(model("Fable Pro"), 4), scoped(model("Fable-Pro"), 9)],
+    });
+    expect(windows).toEqual([
+      expect.objectContaining({ id: "weekly_model_fable_pro", usedPct: 9 }),
+    ]);
+  });
+
+  it("identity: a renamed scope keeps its id when the API supplies one", async () => {
+    const before = await windowsFor({ limits: [scoped(model("Fable", "fable"), 2)] });
+    const after = await windowsFor({ limits: [scoped(model("Fable 5", "fable"), 2)] });
+    expect(before[0]?.id).toBe("weekly_model_fable");
+    expect(after[0]?.id).toBe("weekly_model_fable");
+    expect(after[0]?.label).toBe("Weekly · Fable 5");
+  });
+
+  it("identity: a limit keeps one id whichever representation carries it", async () => {
+    const viaLegacy = await windowsFor({
+      seven_day_omelette: { utilization: 12, resets_at: RESETS },
+    });
+    const viaLimits = await windowsFor({ limits: [scoped(model("Omelette"), 12)] });
+    expect(viaLegacy[0]?.id).toBe(viaLimits[0]?.id);
+  });
+
+  it("ordering and unscoped windows: puts session and weekly ahead of the scoped bars", async () => {
+    const windows = await windowsFor({
+      five_hour: { utilization: 6, resets_at: RESETS },
+      seven_day: { utilization: 23, resets_at: RESETS },
+      seven_day_opus: { utilization: 8, resets_at: RESETS },
+      limits: [
+        { kind: "session", percent: 6, resets_at: RESETS, scope: null },
+        { kind: "weekly_all", percent: 23, resets_at: RESETS, scope: null },
+        scoped(model("Fable"), 2),
+      ],
+    });
+    expect(windows.map((w) => w.id)).toEqual([
+      "five_hour",
+      "weekly",
+      "weekly_model_opus",
+      "weekly_model_fable",
+    ]);
   });
 });

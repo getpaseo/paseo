@@ -1,10 +1,19 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { Alert, Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import {
+  Alert,
+  Pressable,
+  Text,
+  View,
+  type GestureResponderEvent,
+  type PressableStateCallbackType,
+} from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { settingsStyles } from "@/styles/settings";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostFeature } from "@/runtime/host-features";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
@@ -16,9 +25,17 @@ import { ProviderCatalogList } from "@/components/provider-catalog-list";
 import { getProviderIcon } from "@/components/provider-icons";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Switch } from "@/components/ui/switch";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
-import { ChevronRight } from "lucide-react-native";
+import { confirmDialog } from "@/utils/confirm-dialog";
+import { filterSelectableModels } from "@/provider-selection/model-catalog";
+import { ChevronRight, MoreHorizontal, Trash2 } from "lucide-react-native";
 
 type ProviderDefinition = ReturnType<typeof buildProviderDefinitions>[number];
 type ProviderEntry = NonNullable<ReturnType<typeof useProvidersSnapshot>["entries"]>[number];
@@ -64,9 +81,89 @@ interface ProviderRowProps {
   entry: ProviderEntry;
   enabled: boolean;
   isToggling: boolean;
+  isRemoving: boolean;
+  canRemove: boolean;
   isFirst: boolean;
   onPress: (providerId: string) => void;
   onToggleEnabled: (providerId: string, enabled: boolean) => void;
+  onRemove: (providerId: string, providerLabel: string) => void;
+}
+
+function stopPressInPropagation(event: GestureResponderEvent) {
+  event.stopPropagation();
+}
+
+interface ProviderActionsMenuProps {
+  providerId: string;
+  providerLabel: string;
+  isRemoving: boolean;
+  iconSize: number;
+  foregroundColor: string;
+  foregroundMutedColor: string;
+  dangerColor: string;
+  onRemove: (providerId: string, providerLabel: string) => void;
+}
+
+function ProviderActionsMenu({
+  providerId,
+  providerLabel,
+  isRemoving,
+  iconSize,
+  foregroundColor,
+  foregroundMutedColor,
+  dangerColor,
+  onRemove,
+}: ProviderActionsMenuProps) {
+  const { t } = useTranslation();
+  const handleRemove = useCallback(() => {
+    onRemove(providerId, providerLabel);
+  }, [onRemove, providerId, providerLabel]);
+  const triggerStyle = useCallback(
+    ({
+      pressed,
+      hovered,
+      open,
+    }: PressableStateCallbackType & { hovered?: boolean; open?: boolean }) => [
+      styles.menuButton,
+      (hovered || open) && styles.menuButtonHovered,
+      pressed && styles.menuButtonPressed,
+    ],
+    [],
+  );
+  const trashLeading = useMemo(() => <Trash2 size={16} color={dangerColor} />, [dangerColor]);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        disabled={isRemoving}
+        hitSlop={8}
+        onPressIn={stopPressInPropagation}
+        style={triggerStyle}
+        accessibilityRole="button"
+        accessibilityLabel={t("settings.providers.actions.menu", { name: providerLabel })}
+        testID={`provider-actions-${providerId}`}
+      >
+        {({ hovered, open }) => (
+          <MoreHorizontal
+            size={iconSize}
+            color={hovered || open ? foregroundColor : foregroundMutedColor}
+          />
+        )}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" width={220}>
+        <DropdownMenuItem
+          destructive
+          leading={trashLeading}
+          onSelect={handleRemove}
+          status={isRemoving ? "pending" : "idle"}
+          pendingLabel={t("settings.providers.actions.removing")}
+          testID={`provider-remove-${providerId}`}
+        >
+          {t("settings.providers.actions.remove")}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 function ProviderRow({
@@ -74,12 +171,16 @@ function ProviderRow({
   entry,
   enabled,
   isToggling,
+  isRemoving,
+  canRemove,
   isFirst,
   onPress,
   onToggleEnabled,
+  onRemove,
 }: ProviderRowProps) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
+  const isCompact = useIsCompactFormFactor();
   const ProviderIcon = getProviderIcon(def.id);
   const providerError =
     enabled &&
@@ -88,7 +189,7 @@ function ProviderRow({
     entry.error.trim().length > 0
       ? entry.error.trim()
       : null;
-  const modelCount = entry.models?.length ?? 0;
+  const modelCount = filterSelectableModels(entry.models ?? null)?.length ?? 0;
   const providerStatus = getProviderStatus(entry.status, enabled, modelCount, t);
 
   const handlePress = useCallback(() => {
@@ -131,22 +232,38 @@ function ProviderRow({
                 <Text style={settingsStyles.rowTitle} numberOfLines={1}>
                   {def.label}
                 </Text>
-                <Text style={styles.separator}>·</Text>
-                <StatusIndicator status={providerStatus} />
+                {!isCompact ? <Text style={styles.separator}>·</Text> : null}
+                <StatusIndicator status={providerStatus} compact={isCompact} />
               </View>
-              {providerError ? (
+              {providerError && !isCompact ? (
                 <Text style={styles.errorText} numberOfLines={3}>
                   {providerError}
                 </Text>
               ) : null}
             </View>
           </View>
-          <Switch
-            value={enabled}
-            onValueChange={handleToggleValueChange}
-            disabled={isToggling}
-            accessibilityLabel={t("settings.providers.enableProvider", { name: def.label })}
-          />
+          <View style={styles.trailingControls}>
+            <Switch
+              value={enabled}
+              onValueChange={handleToggleValueChange}
+              disabled={isToggling || isRemoving}
+              accessibilityLabel={t("settings.providers.enableProvider", { name: def.label })}
+            />
+            <View style={styles.menuSlot}>
+              {canRemove ? (
+                <ProviderActionsMenu
+                  providerId={def.id}
+                  providerLabel={def.label}
+                  isRemoving={isRemoving}
+                  iconSize={theme.iconSize.sm}
+                  foregroundColor={theme.colors.foreground}
+                  foregroundMutedColor={theme.colors.foregroundMuted}
+                  dangerColor={theme.colors.statusDanger}
+                  onRemove={onRemove}
+                />
+              ) : null}
+            </View>
+          </View>
         </>
       )}
     </Pressable>
@@ -166,7 +283,7 @@ function getDotColor(tone: StatusTone, theme: ReturnType<typeof useUnistyles>["t
   }
 }
 
-function StatusIndicator({ status }: { status: ProviderStatus }) {
+function StatusIndicator({ status, compact }: { status: ProviderStatus; compact: boolean }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const dotStyle = useMemo(
@@ -181,15 +298,19 @@ function StatusIndicator({ status }: { status: ProviderStatus }) {
       ) : (
         <View style={dotStyle} />
       )}
-      <Text style={styles.statusLabel}>{status.label}</Text>
-      {status.modelCount !== null ? (
+      {!compact ? (
         <>
-          <Text style={styles.separator}>·</Text>
-          <Text style={styles.statusLabel}>
-            {status.modelCount === 1
-              ? t("settings.providers.models.one")
-              : t("settings.providers.models.many", { count: status.modelCount })}
-          </Text>
+          <Text style={styles.statusLabel}>{status.label}</Text>
+          {status.modelCount !== null ? (
+            <>
+              <Text style={styles.separator}>·</Text>
+              <Text style={styles.statusLabel}>
+                {status.modelCount === 1
+                  ? t("settings.providers.models.one")
+                  : t("settings.providers.models.many", { count: status.modelCount })}
+              </Text>
+            </>
+          ) : null}
         </>
       ) : null}
     </View>
@@ -203,10 +324,13 @@ export interface ProvidersSectionProps {
 export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const supportsProviderRemoval = useHostFeature(serverId, "providerRemoval");
   const { entries, isLoading, refresh } = useProvidersSnapshot(serverId);
   const { patchConfig } = useDaemonConfig(serverId);
   const openProviderSettings = useProviderSettingsStore((state) => state.open);
   const [pendingProviderId, setPendingProviderId] = useState<string | null>(null);
+  const [removingProviderId, setRemovingProviderId] = useState<string | null>(null);
+  const removingProviderIdRef = useRef<string | null>(null);
   const [installingProviderId, setInstallingProviderId] = useState<string | null>(null);
 
   const providerDefinitions = useMemo(() => buildProviderDefinitions(entries), [entries]);
@@ -231,6 +355,38 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
         );
       } finally {
         setPendingProviderId((current) => (current === providerId ? null : current));
+      }
+    },
+    [patchConfig, t],
+  );
+
+  const handleRemoveProvider = useCallback(
+    async (providerId: string, providerLabel: string) => {
+      if (removingProviderIdRef.current) return;
+      removingProviderIdRef.current = providerId;
+      setRemovingProviderId(providerId);
+      try {
+        const confirmed = await confirmDialog({
+          title: t("settings.providers.remove.confirmTitle", { name: providerLabel }),
+          message: t("settings.providers.remove.confirmMessage"),
+          confirmLabel: t("settings.providers.remove.confirm"),
+          destructive: true,
+        });
+        if (!confirmed) {
+          return;
+        }
+
+        await patchConfig({ removeProviders: [providerId] });
+      } catch (error) {
+        Alert.alert(
+          t("settings.providers.remove.errorTitle"),
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        if (removingProviderIdRef.current === providerId) {
+          removingProviderIdRef.current = null;
+        }
+        setRemovingProviderId((current) => (current === providerId ? null : current));
       }
     },
     [patchConfig, t],
@@ -263,12 +419,12 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
         style={styles.sectionSpacing}
       >
         {!hasServer || !isConnected ? (
-          <View style={EMPTY_CARD_STYLE}>
+          <View style={[settingsStyles.card, styles.emptyCard]}>
             <Text style={styles.emptyText}>{t("settings.providers.unavailable")}</Text>
           </View>
         ) : null}
         {hasServer && isConnected && isLoading ? (
-          <View style={EMPTY_CARD_STYLE}>
+          <View style={[settingsStyles.card, styles.emptyCard]}>
             <Text style={styles.emptyText}>{t("settings.providers.loading")}</Text>
           </View>
         ) : null}
@@ -284,9 +440,12 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
                   entry={entry}
                   enabled={entry.enabled ?? true}
                   isToggling={pendingProviderId === def.id}
+                  isRemoving={removingProviderId === def.id}
+                  canRemove={supportsProviderRemoval && entry.source === "custom"}
                   isFirst={index === 0}
                   onPress={handleOpenProviderSettings}
                   onToggleEnabled={handleToggleEnabled}
+                  onRemove={handleRemoveProvider}
                 />
               );
             })}
@@ -374,6 +533,26 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     marginTop: theme.spacing[1],
   },
+  trailingControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  menuButton: {
+    width: 32,
+    height: 32,
+    borderRadius: theme.borderRadius.lg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  menuSlot: {
+    width: 32,
+    height: 32,
+  },
+  menuButtonHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  menuButtonPressed: {
+    backgroundColor: theme.colors.surface3,
+  },
 }));
-
-const EMPTY_CARD_STYLE = [settingsStyles.card, styles.emptyCard];

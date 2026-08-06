@@ -13,7 +13,11 @@ import {
 } from "@/screens/workspace/workspace-tab-presentation";
 import type { Theme } from "@/styles/theme";
 import type { SubagentRow } from "./select";
-import { buildSubagentRowPresentationData, formatHeaderLabel } from "./track-presentation";
+import {
+  buildSubagentRowPresentationData,
+  countFinishedSubagents,
+  formatHeaderLabel,
+} from "./track-presentation";
 
 const ThemedArchive = withUnistyles(Archive);
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -30,14 +34,18 @@ export interface SubagentsTrackProps {
   onOpenSubagent: (id: string) => void;
   onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
   onArchiveSubagent: (id: string) => void;
+  onArchiveFinished?: () => void;
   onDetachSubagent?: (id: string) => void;
 }
 
 const SUBAGENTS_LIST_MAX_HEIGHT = 200;
 
 function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
+  const data = buildSubagentRowPresentationData(row);
   return {
-    ...buildSubagentRowPresentationData(row),
+    ...data,
+    tooltip: data.label,
+    modified: false,
     icon: getProviderIcon(row.provider),
   };
 }
@@ -47,8 +55,10 @@ export function SubagentsTrack({
   onOpenSubagent,
   onOpenProviderSubagent,
   onArchiveSubagent,
+  onArchiveFinished,
   onDetachSubagent,
 }: SubagentsTrackProps): ReactElement | null {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
   const toggleExpanded = useCallback(() => {
@@ -62,10 +72,13 @@ export function SubagentsTrack({
 
   const headerStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType) => [
-      styles.header,
-      expanded ? styles.headerDivider : styles.headerCollapsed,
+      styles.headerToggle,
       (hovered || pressed) && styles.headerActive,
     ],
+    [],
+  );
+  const headerContainerStyle = useMemo(
+    () => [styles.header, expanded ? styles.headerDivider : styles.headerCollapsed],
     [expanded],
   );
 
@@ -74,27 +87,42 @@ export function SubagentsTrack({
   }
 
   const headerLabel = formatHeaderLabel(rows);
+  const finishedCount = countFinishedSubagents(rows);
 
   return (
     <View style={styles.outer} testID="subagents-track">
       <View style={styles.track}>
         <View style={surfaceStyle}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={headerLabel}
-            testID="subagents-track-header"
-            onPress={toggleExpanded}
-            style={headerStyle}
-          >
-            {expanded ? (
-              <ThemedChevronDown size={12} uniProps={foregroundMutedColorMapping} />
-            ) : (
-              <ThemedChevronRight size={12} uniProps={foregroundMutedColorMapping} />
-            )}
-            <Text style={styles.headerLabel} numberOfLines={1}>
-              {headerLabel}
-            </Text>
-          </Pressable>
+          <View style={headerContainerStyle}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={headerLabel}
+              testID="subagents-track-header"
+              onPress={toggleExpanded}
+              style={headerStyle}
+            >
+              {expanded ? (
+                <ThemedChevronDown size={12} uniProps={foregroundMutedColorMapping} />
+              ) : (
+                <ThemedChevronRight size={12} uniProps={foregroundMutedColorMapping} />
+              )}
+              <Text style={styles.headerLabel} numberOfLines={1}>
+                {headerLabel}
+              </Text>
+            </Pressable>
+            {finishedCount > 0 && onArchiveFinished ? (
+              <View style={styles.headerAction}>
+                <SubagentActionButton
+                  accessibilityLabel={t("subagents.archiveFinishedAction")}
+                  testID="subagents-track-archive-finished"
+                  tooltipLabel={t("subagents.archiveFinishedTooltip")}
+                  icon="archive"
+                  visible
+                  onPress={onArchiveFinished}
+                />
+              </View>
+            ) : null}
+          </View>
           {expanded ? (
             <ScrollView
               style={styles.scroll}
@@ -176,6 +204,11 @@ function SubagentsTrackRow({
             <Text style={styles.rowLabel} numberOfLines={1}>
               {displayLabel}
             </Text>
+            {presentation.subtitle ? (
+              <Text style={styles.rowSubtitle} numberOfLines={1}>
+                {presentation.subtitle}
+              </Text>
+            ) : null}
             {row.kind === "paseo" ? (
               <SubagentRowActions
                 rowId={row.id}
@@ -306,12 +339,22 @@ const styles = StyleSheet.create((theme) => ({
   header: {
     flexDirection: "row",
     alignItems: "center",
+  },
+  headerToggle: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
     gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
+    paddingLeft: theme.spacing[3],
+    paddingRight: theme.spacing[1],
     paddingVertical: theme.spacing[2],
   },
+  headerAction: {
+    paddingRight: theme.spacing[2],
+  },
   headerCollapsed: {
-    paddingBottom: theme.spacing[6],
+    paddingBottom: theme.spacing[4],
   },
   headerActive: {
     backgroundColor: theme.colors.surface2,
@@ -352,6 +395,14 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
+  },
+  // Keep provider context secondary and bounded so the task remains readable on compact screens.
+  rowSubtitle: {
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: "45%",
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
   actionClusterVisible: {
     flexDirection: "row",

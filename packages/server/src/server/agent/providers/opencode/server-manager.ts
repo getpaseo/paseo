@@ -21,11 +21,10 @@ const OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
 
 export interface OpenCodeServerAcquisition {
   server: { port: number; url: string };
-  release: () => void;
+  release: () => Promise<void>;
 }
 
 export interface OpenCodeServerManagerLike {
-  ensureRunning(): Promise<{ port: number; url: string }>;
   acquireCurrent(): Promise<OpenCodeServerAcquisition>;
   acquireNew(): Promise<OpenCodeServerAcquisition>;
   acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition>;
@@ -54,6 +53,7 @@ export type OpenCodeServerProcessSpawner = (
 
 export interface OpenCodeServerManagerOptions {
   logger: Logger;
+  baseEnv?: SpawnProcessOptions["baseEnv"];
   runtimeSettings?: ProviderRuntimeSettings;
   managedProcesses?: ManagedProcessRegistry;
   terminateProcess?: ProcessTerminator;
@@ -71,6 +71,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private startPromise: Promise<OpenCodeServerGeneration> | null = null;
   private newServerPromise: Promise<OpenCodeServerGeneration> | null = null;
   private readonly logger: Logger;
+  private readonly baseEnv?: SpawnProcessOptions["baseEnv"];
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly runtimeSettingsKey: string;
   private readonly managedProcesses?: ManagedProcessRegistry;
@@ -82,6 +83,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
 
   constructor(options: OpenCodeServerManagerOptions) {
     this.logger = options.logger;
+    this.baseEnv = options.baseEnv;
     this.runtimeSettings = options.runtimeSettings;
     this.runtimeSettingsKey = JSON.stringify(this.runtimeSettings ?? {});
     this.managedProcesses = options.managedProcesses;
@@ -135,12 +137,6 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     process.on("SIGINT", cleanup);
   }
 
-  async ensureRunning(): Promise<{ port: number; url: string }> {
-    const acquisition = await this.acquireCurrent();
-    acquisition.release();
-    return acquisition.server;
-  }
-
   async acquireCurrent(): Promise<OpenCodeServerAcquisition> {
     const server = await this.getCurrentServer();
     return this.acquireServer(server);
@@ -160,7 +156,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       await server.ready;
       return acquisition;
     } catch (error) {
-      acquisition.release();
+      await acquisition.release();
       throw error;
     }
   }
@@ -188,18 +184,35 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
 
   private acquireServer(server: OpenCodeServerGeneration): OpenCodeServerAcquisition {
     server.refCount += 1;
-    let released = false;
+    let releasePromise: Promise<void> | null = null;
     return {
       server: { port: server.port, url: server.url },
-      release: () => {
-        if (released) {
-          return;
+      release: async () => {
+        if (releasePromise) {
+          return releasePromise;
         }
-        released = true;
-        server.refCount -= 1;
-        this.cleanupRetiredServers();
+        releasePromise = this.releaseServer(server);
+        return releasePromise;
       },
     };
+  }
+
+  private async releaseServer(server: OpenCodeServerGeneration): Promise<void> {
+    server.refCount = Math.max(0, server.refCount - 1);
+    if (server.refCount > 0) {
+      return;
+    }
+
+    if (this.currentServer === server) {
+      this.currentServer = null;
+      server.retired = true;
+    }
+    if (!server.retired) {
+      return;
+    }
+
+    this.retiredServers.delete(server);
+    await this.killServer(server);
   }
 
   private async getNewServer(): Promise<OpenCodeServerGeneration> {
@@ -261,14 +274,14 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       existing.retired = true;
       this.retiredServers.add(existing);
       this.currentServer = null;
-      this.cleanupRetiredServers();
+      await this.cleanupRetiredServers();
     }
     if (this.startPromise) {
       const pending = await this.startPromise;
       pending.retired = true;
       this.retiredServers.add(pending);
       this.currentServer = null;
-      this.cleanupRetiredServers();
+      await this.cleanupRetiredServers();
     }
   }
 
@@ -288,6 +301,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       ...createProviderEnvSpec({
+        baseEnv: this.baseEnv,
         runtimeSettings: this.runtimeSettings,
         overlays: [launchEnv],
       }),
@@ -417,13 +431,15 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     this.retiredServers.clear();
   }
 
-  private cleanupRetiredServers(): void {
+  private async cleanupRetiredServers(): Promise<void> {
+    const cleanup: Promise<void>[] = [];
     for (const server of Array.from(this.retiredServers)) {
       if (server.refCount === 0) {
         this.retiredServers.delete(server);
-        void this.killServer(server);
+        cleanup.push(this.killServer(server));
       }
     }
+    await Promise.all(cleanup);
   }
 
   private async killServer(server: OpenCodeServerGeneration): Promise<void> {

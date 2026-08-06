@@ -16,7 +16,7 @@ export function setupAutoArchiveOnMerge(
   return options.workspaceGitService.onSnapshotUpdated((snapshot) => {
     void archiveIfSafe({
       cwd: snapshot.cwd,
-      pullRequest: snapshot.github.pullRequest,
+      pullRequest: snapshot.forge.pullRequest,
       inFlight,
       options,
       log,

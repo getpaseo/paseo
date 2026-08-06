@@ -1,5 +1,12 @@
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
+import {
+  parseSkillsSaveResult,
+  parseSkillsSnapshot,
+  type SkillSelection,
+  type SkillsSaveResult,
+  type SkillsSnapshot,
+} from "@/desktop/daemon/skills-snapshot";
 
 export type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
 export type DesktopDaemonStopReason =
@@ -33,17 +40,21 @@ export interface DesktopAppLogs {
   contents: string;
 }
 
-export interface DesktopPairingOffer {
-  relayEnabled: boolean;
-  url: string | null;
-  qr: string | null;
-}
-
 export interface LocalTransportTarget {
   [key: string]: unknown;
   transportType: "socket" | "pipe";
   transportPath: string;
 }
+
+export interface WebSocketTransportTarget {
+  [key: string]: unknown;
+  transportType: "websocket";
+  url: string;
+  headers?: Record<string, string>;
+  protocols?: string[];
+}
+
+export type DesktopDaemonTransportTarget = LocalTransportTarget | WebSocketTransportTarget;
 
 interface LocalTransportEventPayload {
   sessionId: string;
@@ -112,17 +123,6 @@ function parseDesktopDaemonLogs(raw: unknown): DesktopDaemonLogs {
   };
 }
 
-function parseDesktopPairingOffer(raw: unknown): DesktopPairingOffer {
-  if (!isRecord(raw)) {
-    throw new Error("Unexpected desktop daemon pairing response.");
-  }
-  return {
-    relayEnabled: raw.relayEnabled === true,
-    url: toStringOrNull(raw.url),
-    qr: toStringOrNull(raw.qr),
-  };
-}
-
 export function shouldUseDesktopDaemon(): boolean {
   return isElectronRuntime();
 }
@@ -158,10 +158,6 @@ export async function getDesktopAppLogs(): Promise<DesktopAppLogs> {
     logPath: toStringOrNull(raw.logPath) ?? "",
     contents: typeof raw.contents === "string" ? raw.contents : "",
   };
-}
-
-export async function getDesktopDaemonPairing(): Promise<DesktopPairingOffer> {
-  return parseDesktopPairingOffer(await invokeDesktopCommand("desktop_daemon_pairing"));
 }
 
 export async function getCliDaemonStatus(): Promise<string> {
@@ -207,6 +203,16 @@ export async function openLocalTransportSession(target: LocalTransportTarget): P
   return raw;
 }
 
+export async function openWebSocketTransportSession(
+  target: WebSocketTransportTarget,
+): Promise<string> {
+  const raw = await invokeDesktopCommand<unknown>("open_websocket_daemon_transport", target);
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    throw new Error("Unexpected WebSocket transport session response.");
+  }
+  return raw;
+}
+
 export async function sendLocalTransportMessage(input: {
   sessionId: string;
   text?: string;
@@ -246,67 +252,38 @@ export async function installCli(): Promise<InstallStatus> {
   return parseInstallStatus(await invokeDesktopCommand("install_cli"));
 }
 
-export type SkillsState = "not-installed" | "up-to-date" | "drift";
+export type {
+  SkillOp,
+  SkillSelection,
+  SkillsSaveResult,
+  SkillsSnapshot,
+  SkillsState,
+} from "@/desktop/daemon/skills-snapshot";
 
-export type SkillOp =
-  | { kind: "add"; name: string }
-  | { kind: "update"; name: string }
-  | { kind: "delete"; name: string };
-
-export interface SkillsStatus {
-  state: SkillsState;
-  ops: SkillOp[];
+export async function getSkillsSnapshot(): Promise<SkillsSnapshot> {
+  return parseSkillsSnapshot(await invokeDesktopCommand("get_skills_status"));
 }
 
-function parseSkillsState(value: unknown): SkillsState {
-  switch (value) {
-    case "not-installed":
-    case "up-to-date":
-    case "drift":
-      return value;
-    default:
-      throw new Error(`Unexpected skills status state: ${String(value)}`);
-  }
+export async function installSkills(): Promise<SkillsSnapshot> {
+  return parseSkillsSnapshot(await invokeDesktopCommand("install_skills"));
 }
 
-function parseSkillOp(raw: unknown): SkillOp {
-  if (!isRecord(raw)) {
-    throw new Error("Unexpected skill op response.");
-  }
-  const name = toStringOrNull(raw.name);
-  if (!name) throw new Error("Skill op missing name.");
-  switch (raw.kind) {
-    case "add":
-      return { kind: "add", name };
-    case "update":
-      return { kind: "update", name };
-    case "delete":
-      return { kind: "delete", name };
-    default:
-      throw new Error(`Unexpected skill op kind: ${String(raw.kind)}`);
-  }
+export async function updateSkills(): Promise<SkillsSnapshot> {
+  return parseSkillsSnapshot(await invokeDesktopCommand("update_skills"));
 }
 
-function parseSkillsStatus(raw: unknown): SkillsStatus {
-  if (!isRecord(raw)) {
-    throw new Error("Unexpected skills status response.");
-  }
-  const ops = Array.isArray(raw.ops) ? raw.ops.map(parseSkillOp) : [];
-  return { state: parseSkillsState(raw.state), ops };
+export async function uninstallSkills(): Promise<SkillsSnapshot> {
+  return parseSkillsSnapshot(await invokeDesktopCommand("uninstall_skills"));
 }
 
-export async function getSkillsStatus(): Promise<SkillsStatus> {
-  return parseSkillsStatus(await invokeDesktopCommand("get_skills_status"));
-}
-
-export async function installSkills(): Promise<SkillsStatus> {
-  return parseSkillsStatus(await invokeDesktopCommand("install_skills"));
-}
-
-export async function updateSkills(): Promise<SkillsStatus> {
-  return parseSkillsStatus(await invokeDesktopCommand("update_skills"));
-}
-
-export async function uninstallSkills(): Promise<SkillsStatus> {
-  return parseSkillsStatus(await invokeDesktopCommand("uninstall_skills"));
+export async function saveSkillsSelection(
+  selection: SkillSelection,
+  confirmedRemovals: readonly string[] = [],
+): Promise<SkillsSaveResult> {
+  return parseSkillsSaveResult(
+    await invokeDesktopCommand("save_skills_selection", {
+      ...selection,
+      confirmedRemovals: [...confirmedRemovals],
+    }),
+  );
 }

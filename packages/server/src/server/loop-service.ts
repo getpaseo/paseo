@@ -10,7 +10,7 @@ import {
   type EnsureWorkspaceForCreate,
   formatProviderModel,
 } from "./agent/create-agent/create.js";
-import type { AgentManager } from "./agent/agent-manager.js";
+import type { AgentManager, AgentRunCancellationResult } from "./agent/agent-manager.js";
 import {
   buildStructuredAgentResponsePrompt,
   getStructuredAgentResponse,
@@ -232,9 +232,20 @@ function buildVerifierTitle(loop: LoopRecord, iterationIndex: number): string {
   return `${prefix} [loop ${iterationIndex} verifier]`;
 }
 
+function isUnknownLoopAgentError(error: unknown, agentId: string): boolean {
+  return error instanceof Error && error.message === `Unknown agent '${agentId}'`;
+}
+
 type LoopAgentManager = Pick<
   AgentManager,
-  "archiveAgent" | "cancelAgentRun" | "closeAgent" | "runAgent" | "subscribe" | "waitForAgentEvent"
+  | "archiveAgent"
+  | "cancelAgentRun"
+  | "closeAgent"
+  | "deleteAgentState"
+  | "getAgent"
+  | "runAgent"
+  | "subscribe"
+  | "waitForAgentEvent"
 >;
 
 interface LoopExecutionContext {
@@ -523,10 +534,10 @@ export class LoopService {
 
     if (running) {
       if (loop.activeWorkerAgentId) {
-        await this.options.agentManager.cancelAgentRun(loop.activeWorkerAgentId).catch(() => {});
+        await this.stopInternalAgent(loop.activeWorkerAgentId, loop.archive);
       }
       if (loop.activeVerifierAgentId) {
-        await this.options.agentManager.cancelAgentRun(loop.activeVerifierAgentId).catch(() => {});
+        await this.stopInternalAgent(loop.activeVerifierAgentId, loop.archive);
       }
       await running.promise.catch(() => {});
     } else {
@@ -537,6 +548,43 @@ export class LoopService {
     }
 
     return cloneLoop(loop);
+  }
+
+  private async stopInternalAgent(agentId: string, archive: boolean): Promise<void> {
+    let cancellation: AgentRunCancellationResult;
+    try {
+      cancellation = await this.options.agentManager.cancelAgentRun(agentId);
+    } catch (error) {
+      if (isUnknownLoopAgentError(error, agentId)) {
+        return;
+      }
+      throw error;
+    }
+    if (cancellation.status !== "refused") {
+      return;
+    }
+    if (!this.options.agentManager.getAgent(agentId)) {
+      return;
+    }
+    try {
+      if (archive) {
+        await this.options.agentManager.archiveAgent(agentId);
+        return;
+      }
+      await this.closeInternalAgent(agentId);
+    } catch (error) {
+      if (!isUnknownLoopAgentError(error, agentId)) {
+        throw error;
+      }
+    }
+  }
+
+  private async closeInternalAgent(agentId: string): Promise<void> {
+    try {
+      await this.options.agentManager.closeAgent(agentId);
+    } finally {
+      await this.options.agentManager.deleteAgentState(agentId);
+    }
   }
 
   private async executeLoop(loopId: string, signal: AbortSignal): Promise<void> {
@@ -736,7 +784,7 @@ export class LoopService {
         if (loop.archive) {
           await this.options.agentManager.archiveAgent(agent.id);
         } else {
-          await this.options.agentManager.closeAgent(agent.id);
+          await this.closeInternalAgent(agent.id);
         }
       } catch {
         // Ignore cleanup errors for internal loop workers.
@@ -878,7 +926,7 @@ export class LoopService {
         if (loop.archive) {
           await this.options.agentManager.archiveAgent(verifierAgent.id);
         } else {
-          await this.options.agentManager.closeAgent(verifierAgent.id);
+          await this.closeInternalAgent(verifierAgent.id);
         }
       } catch {
         // Ignore cleanup errors for internal loop verifiers.

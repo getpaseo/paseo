@@ -83,10 +83,7 @@ function decodeCiphertext(text: string): ArrayBuffer {
 }
 
 function parseEncryptedJson(sharedKey: Uint8Array, text: string): unknown {
-  const plaintext = decrypt(sharedKey, decodeCiphertext(text));
-  if (typeof plaintext !== "string") {
-    throw new Error("Expected encrypted relay frame to contain UTF-8 JSON");
-  }
+  const plaintext = new TextDecoder().decode(decrypt(sharedKey, decodeCiphertext(text)));
   return JSON.parse(plaintext);
 }
 
@@ -291,8 +288,13 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
           onerror: null,
         };
 
-        ws.on("message", (data) => {
-          transport.onmessage?.(typeof data === "string" ? data : data.toString());
+        ws.on("message", (data, isBinary) => {
+          transport.onmessage?.({
+            data: isBinary
+              ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+              : data.toString(),
+            isBinary,
+          });
         });
         ws.on("close", (code, reason) => {
           transport.onclose?.(code, reason.toString());
@@ -434,8 +436,13 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
           onerror: null,
         };
 
-        ws.on("message", (data) => {
-          transport.onmessage?.(typeof data === "string" ? data : data.toString());
+        ws.on("message", (data, isBinary) => {
+          transport.onmessage?.({
+            data: isBinary
+              ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+              : data.toString(),
+            isBinary,
+          });
         });
         ws.on("close", (code, reason) => {
           transport.onclose?.(code, reason.toString());

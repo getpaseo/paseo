@@ -63,6 +63,7 @@ import {
   getAgentStreamEventTurnId,
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentCreateConfigUnattendedInput,
   type AgentFeature,
   type AgentLaunchContext,
   type AgentMetadata,
@@ -90,9 +91,15 @@ import {
   type ListImportableSessionsOptions,
   type McpServerConfig,
   type ProviderCatalog,
+  type ResolveAgentCreateConfigInput,
+  type ResolveAgentCreateConfigResult,
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
+import {
+  isDefaultAgentCreateConfigUnattended,
+  resolveDefaultAgentCreateConfig,
+} from "../create-agent-mode.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
   checkProviderLaunchAvailable,
@@ -113,6 +120,8 @@ import {
   truncateForDiagnostic,
 } from "./diagnostic-utils.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
+
+const ACP_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 
 function assertChildWithPipes(
   child: ChildProcess,
@@ -467,14 +476,9 @@ interface PendingPermission {
   turnId: string | null;
 }
 
-interface MessageAssemblyState {
+interface PendingUserMessage {
   text: string;
-}
-
-interface SubmittedUserMessageEcho {
-  messageId: string;
-  text: string;
-  turnId: string;
+  messageId?: string;
 }
 
 export type SessionStateResponse = NewSessionResponse | LoadSessionResponse | ResumeSessionResponse;
@@ -699,9 +703,61 @@ export function deriveFeaturesFromACP(
   });
 }
 
+function isACPAutoAcceptEnabled(config: AgentSessionConfig): boolean {
+  return config.featureValues?.[ACP_AUTO_ACCEPT_FEATURE_ID] === true;
+}
+
+function buildACPAutoAcceptFeature(config: AgentSessionConfig): AgentFeature {
+  return {
+    type: "toggle",
+    id: ACP_AUTO_ACCEPT_FEATURE_ID,
+    label: "Auto Accept",
+    description: "Automatically approves ACP permission prompts.",
+    tooltip: "Auto accept permission prompts",
+    icon: "shield-check",
+    value: isACPAutoAcceptEnabled(config),
+  };
+}
+
+function resolveACPCreateConfig(
+  input: ResolveAgentCreateConfigInput,
+): ResolveAgentCreateConfigResult {
+  const isUnattendedCreate = input.unattended || input.parent?.isUnattended === true;
+  const featureValues =
+    isUnattendedCreate && input.featureValues?.[ACP_AUTO_ACCEPT_FEATURE_ID] === undefined
+      ? { ...input.featureValues, [ACP_AUTO_ACCEPT_FEATURE_ID]: true }
+      : input.featureValues;
+
+  if (
+    input.requestedMode === undefined &&
+    isUnattendedCreate &&
+    input.parent !== null &&
+    input.parent.provider !== input.provider
+  ) {
+    return { modeId: undefined, featureValues };
+  }
+
+  return resolveDefaultAgentCreateConfig({ ...input, featureValues });
+}
+
+function isACPCreateConfigUnattended(input: AgentCreateConfigUnattendedInput): boolean {
+  return (
+    isDefaultAgentCreateConfigUnattended(input) ||
+    input.config.featureValues?.[ACP_AUTO_ACCEPT_FEATURE_ID] === true ||
+    input.features?.some(
+      (feature) =>
+        feature.id === ACP_AUTO_ACCEPT_FEATURE_ID &&
+        feature.type === "toggle" &&
+        feature.value === true,
+    ) === true
+  );
+}
+
 export class ACPAgentClient implements AgentClient {
   readonly provider: string;
   readonly capabilities: AgentCapabilityFlags;
+  readonly resolveCreateConfig = resolveACPCreateConfig;
+  readonly isCreateConfigUnattended = isACPCreateConfigUnattended;
 
   protected readonly logger: Logger;
   protected readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -897,8 +953,9 @@ export class ACPAgentClient implements AgentClient {
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    const autoAcceptFeature = buildACPAutoAcceptFeature(config);
     if (this.configFeatureOptions.length === 0) {
-      return [];
+      return [autoAcceptFeature];
     }
 
     this.assertProvider(config);
@@ -911,7 +968,10 @@ export class ACPAgentClient implements AgentClient {
         }),
       );
       const transformed = this.transformSessionResponse(response);
-      return deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions);
+      return [
+        autoAcceptFeature,
+        ...deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions),
+      ];
     } finally {
       await this.closeProbe(probe);
     }
@@ -1302,9 +1362,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly launchEnv?: Record<string, string>;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
-  private readonly messageAssemblies = new Map<string, MessageAssemblyState>();
-  private readonly submittedUserMessageIds = new Set<string>();
-  private activeSubmittedUserMessage: SubmittedUserMessageEcho | null = null;
+  private pendingUserMessage: PendingUserMessage | null = null;
+  private submittedUserMessageTurnId: string | null = null;
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
   private readonly terminalEntries = new Map<string, TerminalEntry>();
   private readonly persistedHistory: AgentTimelineItem[] = [];
@@ -1376,21 +1435,25 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async initializeNewSession(): Promise<void> {
-    const spawned = await this.spawnProcess();
-    this.child = spawned.child;
-    this.connection = spawned.connection;
-    this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+    try {
+      const spawned = await this.spawnProcess();
+      this.child = spawned.child;
+      this.connection = spawned.connection;
+      this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
 
-    const response = await this.runACPRequest(() =>
-      this.connection!.newSession({
-        cwd: this.config.cwd,
-        mcpServers: this.acpMcpServers(),
-      }),
-    );
-    this.sessionId = response.sessionId;
-    this.bootstrapThreadEventPending = true;
-    this.applySessionState(response);
-    await this.applyConfiguredOverrides();
+      const response = await this.runACPRequest(() =>
+        this.connection!.newSession({
+          cwd: this.config.cwd,
+          mcpServers: this.acpMcpServers(),
+        }),
+      );
+      this.sessionId = response.sessionId;
+      this.bootstrapThreadEventPending = true;
+      this.applySessionState(response);
+      await this.applyConfiguredOverrides();
+    } catch (error) {
+      await this.closeAfterInitializationFailure(error);
+    }
   }
 
   /**
@@ -1401,45 +1464,62 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * from these calls regardless of capabilities.
    */
   async initializeResumedSession(): Promise<void> {
-    const handle = this.initialHandle;
-    if (!handle) {
-      throw new Error("Resume requested without persistence handle");
+    try {
+      const handle = this.initialHandle;
+      if (!handle) {
+        throw new Error("Resume requested without persistence handle");
+      }
+
+      const spawned = await this.spawnProcess();
+      this.child = spawned.child;
+      this.connection = spawned.connection;
+      this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.sessionId = handle.sessionId;
+      this.bootstrapThreadEventPending = true;
+
+      const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
+      if (this.agentCapabilities?.loadSession) {
+        this.replayingHistory = true;
+        const response = await this.runACPRequest(() =>
+          this.connection!.loadSession({
+            sessionId: handle.sessionId,
+            cwd: this.config.cwd,
+            mcpServers: this.acpMcpServers(),
+          }),
+        );
+        this.deliverTranslatedEvents(this.flushPendingUserMessage());
+        this.replayingHistory = false;
+        this.historyPending = this.persistedHistory.length > 0;
+        this.applySessionState(response);
+      } else if (sessionCapabilities?.resume) {
+        const response = await this.runACPRequest(() =>
+          this.connection!.unstable_resumeSession({
+            sessionId: handle.sessionId,
+            cwd: this.config.cwd,
+            mcpServers: this.acpMcpServers(),
+          }),
+        );
+        this.applySessionState(response);
+      } else {
+        throw new Error(`${this.provider} does not support ACP session resume`);
+      }
+
+      await this.applyConfiguredOverrides();
+    } catch (error) {
+      await this.closeAfterInitializationFailure(error);
     }
+  }
 
-    const spawned = await this.spawnProcess();
-    this.child = spawned.child;
-    this.connection = spawned.connection;
-    this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
-    this.sessionId = handle.sessionId;
-    this.bootstrapThreadEventPending = true;
-
-    const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
-    if (this.agentCapabilities?.loadSession) {
-      this.replayingHistory = true;
-      const response = await this.runACPRequest(() =>
-        this.connection!.loadSession({
-          sessionId: handle.sessionId,
-          cwd: this.config.cwd,
-          mcpServers: this.acpMcpServers(),
-        }),
+  private async closeAfterInitializationFailure(error: unknown): Promise<never> {
+    try {
+      await this.close();
+    } catch (closeError) {
+      this.logger.warn(
+        { err: closeError, initializationError: error },
+        "Failed to close ACP process after session initialization failure",
       );
-      this.replayingHistory = false;
-      this.historyPending = this.persistedHistory.length > 0;
-      this.applySessionState(response);
-    } else if (sessionCapabilities?.resume) {
-      const response = await this.runACPRequest(() =>
-        this.connection!.unstable_resumeSession({
-          sessionId: handle.sessionId,
-          cwd: this.config.cwd,
-          mcpServers: this.acpMcpServers(),
-        }),
-      );
-      this.applySessionState(response);
-    } else {
-      throw new Error(`${this.provider} does not support ACP session resume`);
     }
-
-    await this.applyConfiguredOverrides();
+    throw error;
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -1473,14 +1553,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error("A foreground turn is already active");
     }
 
+    this.deliverTranslatedEvents(this.flushPendingUserMessage());
     const turnId = randomUUID();
-    const messageId = options?.messageId ?? randomUUID();
+    const messageId = options?.clientMessageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
     this.fallbackAssistantMessageId = null;
-    this.activeSubmittedUserMessage = null;
+    this.submittedUserMessageTurnId = null;
     this.emitBootstrapThreadEvent();
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-    this.emitSubmittedUserMessage(prompt, messageId, turnId);
+    this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
 
     void this.connection
       .prompt({
@@ -1546,7 +1627,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   get features(): AgentFeature[] {
-    return deriveFeaturesFromACP(this.configOptions, this.configFeatureOptions);
+    return [
+      buildACPAutoAcceptFeature(this.config),
+      ...deriveFeaturesFromACP(this.configOptions, this.configFeatureOptions),
+    ];
   }
 
   private ensureCommandsReadyDeferred(): void {
@@ -1886,6 +1970,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error("ACP session not initialized");
     }
 
+    if (featureId === ACP_AUTO_ACCEPT_FEATURE_ID) {
+      this.config.featureValues = {
+        ...this.config.featureValues,
+        [ACP_AUTO_ACCEPT_FEATURE_ID]: value === true,
+      };
+      return;
+    }
+
     const featureOption = this.configFeatureOptions.find((option) => option.id === featureId);
     if (!featureOption) {
       throw new Error(`Unknown ${this.provider} feature: ${featureId}`);
@@ -1961,8 +2053,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error(`No pending permission request with id '${requestId}'`);
     }
 
-    this.pendingPermissions.delete(requestId);
     const selectedOption = selectPermissionOption(pending.options, response);
+    if (response.selectedActionId !== undefined && !selectedOption) {
+      throw new Error(
+        `ACP permission action '${response.selectedActionId}' does not exist or does not match '${response.behavior}' behavior`,
+      );
+    }
+
+    this.pendingPermissions.delete(requestId);
     pending.resolve(
       selectedOption
         ? {
@@ -2023,6 +2121,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.closed = true;
 
+    this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.settleCommandsReady();
 
     for (const pending of this.pendingPermissions.values()) {
@@ -2066,7 +2165,22 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-    // Match Zed acp.rs:3189-3220: generic ACP permission requests stay pure pass-through.
+    const canAutoAccept =
+      isACPAutoAcceptEnabled(this.config) && !isACPChooserRequest(params.options);
+    if (canAutoAccept) {
+      const allowOption = selectPermissionOption(params.options, { behavior: "allow" });
+      if (allowOption) {
+        this.logger.info(
+          { toolCallId: params.toolCall.toolCallId, optionId: allowOption.optionId },
+          "Auto-accepting ACP permission request",
+        );
+        return {
+          outcome: { outcome: "selected", optionId: allowOption.optionId },
+        };
+      }
+    }
+
+    // Match Zed acp.rs:3189-3220 when Paseo is not handling the request locally.
     const requestId = randomUUID();
     let toolSnapshot =
       this.toolCalls.get(params.toolCall.toolCallId) ??
@@ -2121,6 +2235,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       },
       "provider.acp.parsed_event",
     );
+    this.deliverTranslatedEvents(events);
+  }
+
+  private deliverTranslatedEvents(events: AgentStreamEvent[]): void {
     if (this.replayingHistory) {
       for (const event of events) {
         if (event.type === "timeline") {
@@ -2335,6 +2453,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       { logger: this.logger, provider: this.provider },
     );
     const connection = new ClientSideConnection(() => this, stream);
+    // Take ownership before initialize so the outer initialization guard can
+    // close the process even when the ACP handshake itself rejects.
+    this.child = child;
+    this.connection = connection;
     const initialize = await this.runACPRequest(() =>
       connection.initialize({
         protocolVersion: PROTOCOL_VERSION,
@@ -2443,45 +2565,43 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[] {
+    if (update.sessionUpdate === "user_message_chunk") {
+      return this.handleUserMessageChunk(update);
+    }
+
+    const pendingUserEvents = this.flushPendingUserMessage();
     switch (update.sessionUpdate) {
-      case "user_message_chunk": {
-        this.fallbackAssistantMessageId = null;
-        const item = this.createMessageTimelineItem("user_message", update);
-        if (!item) {
-          return [];
-        }
-        if (item.type !== "user_message") {
-          return [this.wrapTimeline(item)];
-        }
-        if (this.isSubmittedUserMessageEcho(item)) {
-          return [];
-        }
-        return [this.wrapTimeline(item)];
-      }
       case "agent_message_chunk": {
         const item = this.createMessageTimelineItem("assistant_message", update);
-        return item ? [this.wrapTimeline(item)] : [];
+        return item ? [...pendingUserEvents, this.wrapTimeline(item)] : pendingUserEvents;
       }
       case "agent_thought_chunk": {
         this.fallbackAssistantMessageId = null;
         const item = this.createMessageTimelineItem("reasoning", update);
-        return item ? [this.wrapTimeline(item)] : [];
+        return item ? [...pendingUserEvents, this.wrapTimeline(item)] : pendingUserEvents;
       }
       case "tool_call":
         this.fallbackAssistantMessageId = null;
-        return this.handleToolCallUpdate(update.toolCallId, update, undefined);
+        return [
+          ...pendingUserEvents,
+          ...this.handleToolCallUpdate(update.toolCallId, update, undefined),
+        ];
       case "tool_call_update":
-        return this.handleToolCallUpdate(
-          update.toolCallId,
-          update,
-          this.toolCalls.get(update.toolCallId),
-        );
+        return [
+          ...pendingUserEvents,
+          ...this.handleToolCallUpdate(
+            update.toolCallId,
+            update,
+            this.toolCalls.get(update.toolCallId),
+          ),
+        ];
       case "plan":
         this.fallbackAssistantMessageId = null;
-        return [this.wrapTimeline(mapPlanToTimeline(update))];
+        return [...pendingUserEvents, this.wrapTimeline(mapPlanToTimeline(update))];
       case "current_mode_update":
         this.handleCurrentModeUpdate(update);
         return [
+          ...pendingUserEvents,
           {
             type: "mode_changed",
             provider: this.provider,
@@ -2490,13 +2610,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           },
         ];
       case "config_option_update":
-        return this.handleConfigOptionUpdate(update);
+        return [...pendingUserEvents, ...this.handleConfigOptionUpdate(update)];
       case "session_info_update":
         this.handleSessionInfoUpdate(update);
-        return [];
+        return pendingUserEvents;
       case "usage_update":
         this.handleUsageUpdate(update);
-        return [];
+        return pendingUserEvents;
       case "available_commands_update":
         this.cachedCommands = update.availableCommands.map((command) => ({
           name: command.name,
@@ -2505,10 +2625,58 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           kind: "command",
         }));
         this.settleCommandsReady();
-        return [];
+        return pendingUserEvents;
       default:
-        return [];
+        return pendingUserEvents;
     }
+  }
+
+  private handleUserMessageChunk(
+    update: Extract<SessionUpdate, { sessionUpdate: "user_message_chunk" }>,
+  ): AgentStreamEvent[] {
+    this.fallbackAssistantMessageId = null;
+    if (
+      this.activeForegroundTurnId &&
+      this.submittedUserMessageTurnId === this.activeForegroundTurnId
+    ) {
+      return [];
+    }
+
+    const chunkText = contentBlockToText(update.content);
+    if (!chunkText) {
+      return [];
+    }
+
+    const messageId = update.messageId ?? undefined;
+    const pending = this.pendingUserMessage;
+    const startsNewMessage = Boolean(
+      pending?.messageId && messageId && pending.messageId !== messageId,
+    );
+    const events = startsNewMessage ? this.flushPendingUserMessage() : [];
+    this.pendingUserMessage ??= {
+      text: "",
+      ...(messageId ? { messageId } : {}),
+    };
+    if (!this.pendingUserMessage.messageId && messageId) {
+      this.pendingUserMessage.messageId = messageId;
+    }
+    this.pendingUserMessage.text += chunkText;
+    return events;
+  }
+
+  private flushPendingUserMessage(): AgentStreamEvent[] {
+    const pending = this.pendingUserMessage;
+    if (!pending) {
+      return [];
+    }
+    this.pendingUserMessage = null;
+    return [
+      this.wrapTimeline({
+        type: "user_message",
+        text: pending.text,
+        ...(pending.messageId ? { messageId: pending.messageId } : {}),
+      }),
+    ];
   }
 
   private handleToolCallUpdate(
@@ -2525,27 +2693,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private createMessageTimelineItem(
-    type: "user_message" | "assistant_message" | "reasoning",
+    type: "assistant_message" | "reasoning",
     update: Extract<
       SessionUpdate,
-      { sessionUpdate: "user_message_chunk" | "agent_message_chunk" | "agent_thought_chunk" }
+      { sessionUpdate: "agent_message_chunk" | "agent_thought_chunk" }
     >,
   ):
-    | { type: "user_message"; text: string; messageId?: string }
     | { type: "assistant_message"; text: string; messageId: string }
     | { type: "reasoning"; text: string }
     | null {
     const chunkText = contentBlockToText(update.content);
     if (!chunkText) {
       return null;
-    }
-    const key = this.messageAssemblyKey(type, update.messageId);
-    const state = this.messageAssemblies.get(key) ?? { text: "" };
-    state.text += chunkText;
-    this.messageAssemblies.set(key, state);
-
-    if (type === "user_message") {
-      return { type: "user_message", text: state.text, messageId: update.messageId ?? undefined };
     }
     if (type === "assistant_message") {
       return {
@@ -2564,15 +2723,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.fallbackAssistantMessageId ??= randomUUID();
     return this.fallbackAssistantMessageId;
-  }
-
-  private messageAssemblyKey(
-    type: "user_message" | "assistant_message" | "reasoning",
-    messageId: string | null | undefined,
-  ): string {
-    const fallbackId =
-      type === "user_message" ? (this.activeForegroundTurnId ?? "default") : "default";
-    return `${type}:${messageId ?? fallbackId}`;
   }
 
   private handleCurrentModeUpdate(update: CurrentModeUpdate): void {
@@ -2687,18 +2837,23 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     prompt: AgentPromptInput,
     messageId: string,
     turnId: string,
+    clientMessageId?: string,
   ): void {
     const text = extractPromptText(prompt);
     if (text.trim().length === 0) {
       return;
     }
-    this.submittedUserMessageIds.add(messageId);
-    this.activeSubmittedUserMessage = { messageId, text, turnId };
+    this.submittedUserMessageTurnId = turnId;
     this.pushEvent({
       type: "timeline",
       provider: this.provider,
       turnId,
-      item: { type: "user_message", text, messageId },
+      item: {
+        type: "user_message",
+        text,
+        messageId,
+        ...(clientMessageId ? { clientMessageId } : {}),
+      },
     });
   }
 
@@ -2719,27 +2874,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private finishTurn(
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
+    this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.activeForegroundTurnId = null;
     this.fallbackAssistantMessageId = null;
-    if (this.activeSubmittedUserMessage?.turnId === event.turnId) {
-      this.activeSubmittedUserMessage = null;
+    if (this.submittedUserMessageTurnId === event.turnId) {
+      this.submittedUserMessageTurnId = null;
     }
     this.pushEvent(event);
-  }
-
-  private isSubmittedUserMessageEcho(
-    item: Extract<AgentTimelineItem, { type: "user_message" }>,
-  ): boolean {
-    const active = this.activeSubmittedUserMessage;
-    if (!active || active.turnId !== this.activeForegroundTurnId) {
-      return false;
-    }
-    if (item.messageId) {
-      if (this.submittedUserMessageIds.has(item.messageId)) {
-        return true;
-      }
-    }
-    return active.text.startsWith(item.text);
   }
 
   private emitBootstrapThreadEvent(): void {
@@ -3308,13 +3449,28 @@ function mapPermissionRequest(
   snapshot: ACPToolSnapshot,
 ): AgentPermissionRequest {
   const kind: AgentPermissionRequestKind = snapshot.kind === "switch_mode" ? "mode" : "tool";
+  const chooserText = isACPChooserRequest(params.options)
+    ? extractToolText(params.toolCall.content)
+    : undefined;
   return {
     id: requestId,
     provider,
     name: snapshot.kind ?? snapshot.title,
     kind,
     title: params.toolCall.title ?? snapshot.title,
-    detail: mapToolDetail(snapshot, new Map()),
+    detail: chooserText
+      ? {
+          type: "plain_text",
+          label: params.toolCall.title ?? snapshot.title,
+          text: chooserText,
+          icon: "wrench",
+        }
+      : mapToolDetail(snapshot, new Map()),
+    actions: params.options.map((option) => ({
+      id: option.optionId,
+      label: option.name,
+      behavior: option.kind.startsWith("allow") ? "allow" : "deny",
+    })),
     metadata: {
       toolCallId: params.toolCall.toolCallId,
       rawRequest: params,
@@ -3327,6 +3483,13 @@ function selectPermissionOption(
   options: PermissionOption[],
   response: AgentPermissionResponse,
 ): PermissionOption | null {
+  if (response.selectedActionId !== undefined) {
+    const selectedOption = options.find((option) => option.optionId === response.selectedActionId);
+    if (!selectedOption) return null;
+    const selectedBehavior = selectedOption.kind.startsWith("allow") ? "allow" : "deny";
+    return selectedBehavior === response.behavior ? selectedOption : null;
+  }
+
   const order =
     response.behavior === "allow"
       ? ["allow_once", "allow_always"]
@@ -3338,6 +3501,20 @@ function selectPermissionOption(
     }
   }
   return null;
+}
+
+function isACPChooserRequest(options: PermissionOption[]): boolean {
+  const allowKinds = new Set<PermissionOption["kind"]>();
+  for (const option of options) {
+    if (!option.kind.startsWith("allow")) {
+      continue;
+    }
+    if (allowKinds.has(option.kind)) {
+      return true;
+    }
+    allowKinds.add(option.kind);
+  }
+  return false;
 }
 
 function appendTerminalOutput(entry: TerminalEntry, chunk: string): void {

@@ -1,0 +1,79 @@
+---
+title: Hub quickstart
+description: Sign in, connect GitHub, register a daemon, and get an agent starting from a mention.
+nav: Quickstart
+order: 61
+category: Hub
+---
+
+# Hub quickstart
+
+From an empty Hub to an agent that starts when someone mentions it. Each step links to the page that covers it properly.
+
+## 1. Sign in
+
+Open your Hub and sign in with the owner account created during deployment. Replace its temporary password when prompted. Your connections, daemons, and projects all live inside its organization.
+
+## 2. Connect GitHub
+
+Open **Connections** and connect GitHub. Choose the account or organization whose repositories you want to use.
+
+The connection appears with a generated slug like `yourname-github`.
+
+## 3. Register a daemon
+
+On the machine that will run agents:
+
+```sh
+paseo hub connect https://your-hub.example.com
+```
+
+The CLI prints a verification code. In Hub, open **Daemons → Register a daemon**, enter the code, and give it a name. See [Daemons](/docs/hub/daemons).
+
+## 4. Create a project
+
+Open **Projects → New project**. On its **Configuration** tab, pick a repository and choose **Use for configuration**. Hub now reads `.paseo/hub.yml` from that repository's default branch.
+
+## 5. Commit the configuration
+
+Add `.paseo/hub.yml` to that repository:
+
+```yaml
+environments:
+  - name: dev
+    kind: daemon
+    daemon: my-daemon
+    cwd: /Users/you/code/your-repo
+
+triggers:
+  - name: mention
+    on: github.issue_comment
+    environment: dev
+    filters:
+      repo: yourname/your-repo
+      contains: "@paseo"
+      from_users: [your-github-login]
+    agent:
+      provider: codex
+      mode: full-access
+    prompt: |
+      Someone asked for help on ${{ paseo.event.github.issue.html_url }}.
+
+      ${{ paseo.event.github.comment.body }}
+```
+
+`daemon` is the name you gave it in step 3. `cwd` is a directory on that machine.
+
+## 6. Push
+
+Push to the default branch. Hub fetches the file at that commit, validates it, and activates it. The **Configuration** tab shows the active revision and the last sync.
+
+If the file is invalid, Hub records the failure and keeps the previous revision active.
+
+## 7. Trigger it
+
+Comment `@paseo have a look at this` on an issue in that repository, from the account you listed in `from_users`.
+
+Open the project's **Activity** tab. You should see the event received and routed, and an execution in **Executions**. The agent itself appears in the Paseo app on that machine.
+
+Nothing happened? [Activity](/docs/hub/activity) has the checklist.

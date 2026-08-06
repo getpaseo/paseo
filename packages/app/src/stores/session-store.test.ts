@@ -5,9 +5,12 @@ import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 
 import {
   normalizeWorkspaceDescriptor,
+  selectAgentTurnPresentation,
+  selectAgentTimelineState,
   useSessionStore,
   type WorkspaceDescriptor,
 } from "./session-store";
+import type { StreamItem } from "../types/stream";
 import { patchWorkspaceScripts } from "../contexts/session-workspace-scripts";
 
 function createWorkspace(
@@ -17,6 +20,7 @@ function createWorkspace(
     id: input.id,
     projectId: input.projectId ?? "project-1",
     projectDisplayName: input.projectDisplayName ?? "Project 1",
+    projectCustomName: input.projectCustomName ?? null,
     projectRootPath: input.projectRootPath ?? "/repo",
     workspaceDirectory: input.workspaceDirectory ?? "/repo",
     projectKind: input.projectKind ?? "git",
@@ -48,9 +52,296 @@ function getTestSessionReferences() {
     sessions: state.sessions,
     session,
     workspaces: session.workspaces,
-    emptyProjects: session.emptyProjects,
   };
 }
+
+function submittedMessage(clientMessageId: string): Extract<StreamItem, { kind: "user_message" }> {
+  return {
+    kind: "user_message",
+    id: clientMessageId,
+    clientMessageId,
+    text: clientMessageId,
+    timestamp: new Date("2026-07-31T10:00:00.000Z"),
+  };
+}
+
+function hasSubmittedMessage(items: readonly StreamItem[] | undefined, clientMessageId: string) {
+  return items?.some(
+    (item) => item.kind === "user_message" && item.clientMessageId === clientMessageId,
+  );
+}
+
+function permutations<T>(values: readonly T[]): T[][] {
+  if (values.length === 0) return [[]];
+  return values.flatMap((value, index) =>
+    permutations([...values.slice(0, index), ...values.slice(index + 1)]).map((suffix) =>
+      [value].concat(suffix),
+    ),
+  );
+}
+
+describe("agent timeline state", () => {
+  it("commits canonical items, range, and older availability as one synced state", () => {
+    initializeTestSession();
+    const items: StreamItem[] = [
+      {
+        kind: "assistant_message",
+        id: "canonical-row",
+        text: "canonical",
+        timestamp: new Date("2026-07-27T10:00:00.000Z"),
+      },
+    ];
+
+    useSessionStore.getState().applyAgentTimelineResponseState("test-server", "agent-1", {
+      items,
+      head: [],
+      range: { epoch: "epoch-1", startSeq: 51, endSeq: 100 },
+      older: "available",
+      newer: false,
+      synchronized: true,
+      acknowledgedClientMessageIds: [],
+    });
+
+    expect(
+      selectAgentTimelineState(useSessionStore.getState().sessions["test-server"], "agent-1"),
+    ).toEqual({
+      status: "synced",
+      items,
+      range: { epoch: "epoch-1", startSeq: 51, endSeq: 100 },
+      older: "available",
+      newer: "none",
+    });
+  });
+
+  it("represents an empty authoritative timeline without inventing a range", () => {
+    initializeTestSession();
+    useSessionStore.getState().applyAgentTimelineResponseState("test-server", "agent-1", {
+      items: [],
+      head: [],
+      range: null,
+      older: "none",
+      newer: false,
+      synchronized: true,
+      acknowledgedClientMessageIds: [],
+    });
+
+    expect(
+      selectAgentTimelineState(useSessionStore.getState().sessions["test-server"], "agent-1"),
+    ).toEqual({ status: "synced", items: [], range: null, older: "none", newer: "none" });
+  });
+
+  it("preserves older availability when an applied response leaves it unchanged", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    store.applyAgentTimelineResponseState("test-server", "agent-1", {
+      items: [],
+      head: [],
+      range: { epoch: "epoch-1", startSeq: 200, endSeq: 240 },
+      older: "available",
+      newer: false,
+      synchronized: true,
+      acknowledgedClientMessageIds: [],
+    });
+
+    store.applyAgentTimelineResponseState("test-server", "agent-1", {
+      items: [],
+      head: [],
+      range: { epoch: "epoch-1", startSeq: 200, endSeq: 240 },
+      older: "unchanged",
+      newer: false,
+      synchronized: false,
+      acknowledgedClientMessageIds: [],
+    });
+
+    expect(
+      selectAgentTimelineState(useSessionStore.getState().sessions["test-server"], "agent-1"),
+    ).toEqual({
+      status: "synced",
+      items: [],
+      range: { epoch: "epoch-1", startSeq: 200, endSeq: 240 },
+      older: "available",
+      newer: "none",
+    });
+  });
+
+  it("stores turn liveness transitions without duplicating their policy", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    store.applyAgentTurnLiveness("test-server", "agent-1", {
+      type: "snapshot",
+      activeTurn: { turnId: "turn-1", startedAt: null },
+    });
+    expect(store.getSession("test-server")?.agentTurnLiveness.get("agent-1")).toEqual({
+      phase: "open",
+      turnId: "turn-1",
+      startedAt: null,
+      cancellationRequestId: null,
+    });
+
+    store.applyAgentTurnLiveness("test-server", "agent-1", {
+      type: "snapshot",
+      activeTurn: null,
+    });
+    expect(store.getSession("test-server")?.agentTurnLiveness.has("agent-1")).toBe(false);
+  });
+});
+
+describe("message submission ordering", () => {
+  const agentId = "agent-1";
+  const clientMessageId = "client-1";
+  const startedAt = new Date("2026-07-31T10:00:01.000Z");
+  const steps = [
+    "accept",
+    "canonical-row",
+    "stream-open",
+    "snapshot-idle",
+    "snapshot-open",
+    "stream-close",
+  ] as const;
+
+  function applyStep(step: (typeof steps)[number]): void {
+    const store = useSessionStore.getState();
+    if (step === "accept") {
+      store.acceptAgentMessageSubmission("test-server", agentId, clientMessageId);
+      return;
+    }
+    if (step === "canonical-row") {
+      store.setAgentStreamState("test-server", agentId, {
+        acknowledgedClientMessageIds: [clientMessageId],
+      });
+      return;
+    }
+    if (step === "stream-open") {
+      store.applyAgentTurnLiveness("test-server", agentId, {
+        type: "stream_open",
+        turn: { turnId: "turn-1", startedAt },
+      });
+      return;
+    }
+    if (step === "snapshot-open") {
+      store.applyAgentTurnLiveness("test-server", agentId, {
+        type: "snapshot",
+        activeTurn: { turnId: "turn-1", startedAt },
+      });
+      return;
+    }
+    if (step === "snapshot-idle") {
+      store.applyAgentTurnLiveness("test-server", agentId, {
+        type: "snapshot",
+        activeTurn: null,
+      });
+      return;
+    }
+    store.applyAgentTurnLiveness("test-server", agentId, {
+      type: "stream_close",
+      turnId: "turn-1",
+    });
+  }
+
+  it("keeps every ordering active until its canonical row and settles at quiescence", () => {
+    const continuityViolations: string[] = [];
+    const settlementViolations: string[] = [];
+
+    for (const ordering of permutations(steps)) {
+      useSessionStore.getState().clearSession("test-server");
+      initializeTestSession();
+      useSessionStore
+        .getState()
+        .beginAgentMessageSubmission("test-server", agentId, submittedMessage(clientMessageId));
+      let canonicalObserved = false;
+
+      for (const step of ordering) {
+        applyStep(step);
+        canonicalObserved ||= step === "canonical-row";
+        const presentation = selectAgentTurnPresentation(
+          useSessionStore.getState().sessions["test-server"],
+          agentId,
+        );
+        if (!canonicalObserved && !presentation.isActive) {
+          continuityViolations.push(`${ordering.join(" → ")}: inactive after ${step}`);
+        }
+      }
+
+      const store = useSessionStore.getState();
+      store.acceptAgentMessageSubmission("test-server", agentId, clientMessageId);
+      store.setAgentStreamState("test-server", agentId, {
+        acknowledgedClientMessageIds: [clientMessageId],
+      });
+      store.applyAgentTurnLiveness("test-server", agentId, [
+        { type: "stream_close", turnId: "turn-1" },
+        { type: "snapshot", activeTurn: null },
+      ]);
+      const settled = selectAgentTurnPresentation(
+        useSessionStore.getState().sessions["test-server"],
+        agentId,
+      );
+      if (settled.isActive) settlementViolations.push(ordering.join(" → "));
+    }
+
+    expect({ continuityViolations, settlementViolations }).toEqual({
+      continuityViolations: [],
+      settlementViolations: [],
+    });
+  });
+
+  it("publishes the optimistic row and active presentation in one store notification", () => {
+    initializeTestSession();
+    const notifications: Array<{ hasOptimisticRow: boolean; isActive: boolean }> = [];
+    const unsubscribe = useSessionStore.subscribe((state) => {
+      const session = state.sessions["test-server"];
+      notifications.push({
+        hasOptimisticRow:
+          hasSubmittedMessage(session?.agentStreamTail.get(agentId), clientMessageId) === true,
+        isActive: selectAgentTurnPresentation(session, agentId).isActive,
+      });
+    });
+
+    useSessionStore
+      .getState()
+      .beginAgentMessageSubmission("test-server", agentId, submittedMessage(clientMessageId));
+    unsubscribe();
+
+    expect(notifications).toEqual([{ hasOptimisticRow: true, isActive: true }]);
+  });
+
+  it("keeps another unacknowledged submission active after one row is acknowledged", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    store.beginAgentMessageSubmission("test-server", agentId, submittedMessage(clientMessageId));
+    store.beginAgentMessageSubmission("test-server", agentId, submittedMessage("client-2"));
+    store.acceptAgentMessageSubmission("test-server", agentId, clientMessageId);
+    store.setAgentStreamState("test-server", agentId, {
+      acknowledgedClientMessageIds: [clientMessageId],
+    });
+
+    expect(
+      selectAgentTurnPresentation(useSessionStore.getState().sessions["test-server"], agentId)
+        .isActive,
+    ).toBe(true);
+  });
+
+  it("reconciles a created-agent row without creating a submission transaction", () => {
+    initializeTestSession();
+    const message = submittedMessage(clientMessageId);
+
+    const handedOff = useSessionStore
+      .getState()
+      .handoffCreatedAgentUserMessage("test-server", agentId, message);
+
+    const session = useSessionStore.getState().sessions["test-server"];
+    expect({
+      handedOff,
+      tail: session?.agentStreamTail.get(agentId),
+      head: session?.agentStreamHead.get(agentId) ?? [],
+      submissions: session?.messageSubmissions.get(agentId) ?? [],
+    }).toEqual({
+      handedOff: true,
+      tail: [message],
+      head: [],
+      submissions: [],
+    });
+  });
+});
 
 describe("normalizeWorkspaceDescriptor", () => {
   it("normalizes workspace scripts and invalid activity timestamps", () => {
@@ -364,51 +655,6 @@ describe("mergeWorkspaces", () => {
     expect(after.workspaces).not.toBe(before.workspaces);
     expect(after.workspaces.get(workspace.id)?.diffStat).toBeNull();
   });
-
-  it("clears a pending restore status when the matching descriptor lands", () => {
-    const store = useSessionStore.getState();
-    initializeTestSession();
-    store.setWorkspaceRestoreStatus("test-server", "/repo/main", "restoring");
-    expect(getTestSessionReferences().session.restoringWorkspaces.get("/repo/main")).toBe(
-      "restoring",
-    );
-
-    store.mergeWorkspaces("test-server", [createWorkspace({ id: "/repo/main" })]);
-
-    expect(getTestSessionReferences().session.restoringWorkspaces.has("/repo/main")).toBe(false);
-  });
-});
-
-describe("setWorkspaceRestoreStatus", () => {
-  it("marks restoring then failed while the workspace is still absent", () => {
-    const store = useSessionStore.getState();
-    initializeTestSession();
-
-    store.setWorkspaceRestoreStatus("test-server", "/repo/main", "restoring");
-    store.setWorkspaceRestoreStatus("test-server", "/repo/main", "failed");
-
-    expect(getTestSessionReferences().session.restoringWorkspaces.get("/repo/main")).toBe("failed");
-  });
-
-  it("ignores a late failed once the descriptor has landed (no-op)", () => {
-    const store = useSessionStore.getState();
-    initializeTestSession();
-    store.setWorkspaceRestoreStatus("test-server", "/repo/main", "restoring");
-    store.mergeWorkspaces("test-server", [createWorkspace({ id: "/repo/main" })]);
-
-    store.setWorkspaceRestoreStatus("test-server", "/repo/main", "failed");
-
-    expect(getTestSessionReferences().session.restoringWorkspaces.has("/repo/main")).toBe(false);
-  });
-
-  it("ignores failed when no restore is in flight", () => {
-    const store = useSessionStore.getState();
-    initializeTestSession();
-
-    store.setWorkspaceRestoreStatus("test-server", "/repo/main", "failed");
-
-    expect(getTestSessionReferences().session.restoringWorkspaces.has("/repo/main")).toBe(false);
-  });
 });
 
 describe("setWorkspaces", () => {
@@ -446,48 +692,6 @@ describe("removeWorkspace", () => {
     expect(after.sessions).toBe(before.sessions);
     expect(after.session).toBe(before.session);
     expect(after.workspaces).toBe(before.workspaces);
-  });
-});
-
-describe("removeEmptyProject", () => {
-  it("removes an empty project by project id", () => {
-    const store = useSessionStore.getState();
-    initializeTestSession();
-    store.setEmptyProjects("test-server", [
-      {
-        projectId: "project-empty",
-        projectDisplayName: "Empty",
-        projectCustomName: null,
-        projectRootPath: "/repo/empty",
-        projectKind: "git",
-      },
-    ]);
-
-    store.removeEmptyProject("test-server", "project-empty");
-
-    expect(getTestSessionReferences().emptyProjects.has("project-empty")).toBe(false);
-  });
-
-  it("preserves identity when removing a missing empty project", () => {
-    const store = useSessionStore.getState();
-    initializeTestSession();
-    store.setEmptyProjects("test-server", [
-      {
-        projectId: "project-empty",
-        projectDisplayName: "Empty",
-        projectCustomName: null,
-        projectRootPath: "/repo/empty",
-        projectKind: "git",
-      },
-    ]);
-    const before = getTestSessionReferences();
-
-    store.removeEmptyProject("test-server", "project-missing");
-    const after = getTestSessionReferences();
-
-    expect(after.sessions).toBe(before.sessions);
-    expect(after.session).toBe(before.session);
-    expect(after.emptyProjects).toBe(before.emptyProjects);
   });
 });
 

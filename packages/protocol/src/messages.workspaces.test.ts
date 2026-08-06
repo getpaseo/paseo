@@ -286,36 +286,45 @@ describe("workspace message schemas", () => {
     expect(parsed.type).toBe("open_project_request");
   });
 
-  test("parses workspace GitHub clone request and response repo paths", () => {
+  test("parses a GitHub clone response that registers a project without a workspace", () => {
     const request = SessionInboundMessageSchema.parse({
-      type: "workspace.github.clone.request",
+      type: "project.github.clone.request",
       repo: "a/b",
       cloneProtocol: "https",
       targetDirectory: "~/workspace",
       requestId: "req-clone",
     });
     const response = SessionOutboundMessageSchema.parse({
-      type: "workspace.github.clone.response",
+      type: "project.github.clone.response",
       payload: {
         requestId: "req-clone",
         repo: "a/b",
         checkoutPath: "/tmp/b",
-        workspace: null,
+        project: {
+          projectId: "project-b",
+          projectDisplayName: "b",
+          projectRootPath: "/tmp/b",
+          projectKind: "git",
+        },
         error: null,
       },
     });
 
-    expect(request.type).toBe("workspace.github.clone.request");
-    if (request.type !== "workspace.github.clone.request") {
-      throw new Error("expected workspace.github.clone.request");
+    expect(request.type).toBe("project.github.clone.request");
+    if (request.type !== "project.github.clone.request") {
+      throw new Error("expected project.github.clone.request");
     }
     expect(request.cloneProtocol).toBe("https");
-    expect(response.type).toBe("workspace.github.clone.response");
+    expect(response.type).toBe("project.github.clone.response");
+    if (response.type !== "project.github.clone.response") {
+      throw new Error("expected project.github.clone.response");
+    }
+    expect(response.payload.project?.projectId).toBe("project-b");
   });
 
-  test("rejects invalid workspace GitHub clone protocols", () => {
+  test("rejects invalid project GitHub clone protocols", () => {
     const request = SessionInboundMessageSchema.safeParse({
-      type: "workspace.github.clone.request",
+      type: "project.github.clone.request",
       repo: "a/b",
       cloneProtocol: "ftp",
       targetDirectory: "~/workspace",
@@ -325,20 +334,20 @@ describe("workspace message schemas", () => {
     expect(request.success).toBe(false);
   });
 
-  test("rejects workspace GitHub clone repo paths shorter than owner slash repo", () => {
+  test("rejects project GitHub clone repo paths shorter than owner slash repo", () => {
     const request = SessionInboundMessageSchema.safeParse({
-      type: "workspace.github.clone.request",
+      type: "project.github.clone.request",
       repo: "ab",
       targetDirectory: "~/workspace",
       requestId: "req-clone",
     });
     const response = SessionOutboundMessageSchema.safeParse({
-      type: "workspace.github.clone.response",
+      type: "project.github.clone.response",
       payload: {
         requestId: "req-clone",
         repo: "ab",
         checkoutPath: null,
-        workspace: null,
+        project: null,
         error: "failed",
       },
     });
@@ -490,6 +499,26 @@ describe("workspace message schemas", () => {
       throw new Error("Expected workspace_update upsert payload");
     }
     expect(parsed.payload.workspace.workspaceDirectory).toBe("/repo");
+    expect(parsed.payload.workspace.worktreeSlug).toBeUndefined();
+  });
+
+  test("preserves a Paseo-owned worktree slug", () => {
+    const parsed = WorkspaceDescriptorPayloadSchema.parse({
+      id: "owned-worktree",
+      projectId: "project",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/paseo/worktrees/project/feature/packages/app",
+      worktreeSlug: "feature",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "feature",
+      status: "done",
+      activityAt: null,
+      scripts: [],
+    });
+
+    expect(parsed.worktreeSlug).toBe("feature");
   });
 
   test("defaults omitted workspace archiving state and preserves present timestamps", () => {
@@ -611,6 +640,42 @@ describe("workspace message schemas", () => {
     }
     expect(parsed.payload.workspace.projectKind).toBe("non_git");
     expect(parsed.payload.workspace.workspaceKind).toBe("directory");
+  });
+
+  test("parses workspace script management request and response payloads", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "workspace.script.stop.request",
+        requestId: "req-script-stop",
+        workspaceId: "ws-repo",
+        scriptName: "web",
+      }),
+    ).toMatchObject({ type: "workspace.script.stop.request", scriptName: "web" });
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.script.start.response",
+        payload: {
+          requestId: "req-script-start",
+          workspaceId: "ws-repo",
+          scriptName: "web",
+          script: {
+            scriptName: "web",
+            type: "service",
+            hostname: "web--repo.localhost",
+            port: 3000,
+            proxyUrl: "http://web--repo.localhost:6767",
+            lifecycle: "running",
+            health: "healthy",
+            terminalId: "terminal-1",
+          },
+          error: null,
+        },
+      }),
+    ).toMatchObject({
+      type: "workspace.script.start.response",
+      payload: { script: { terminalId: "terminal-1", lifecycle: "running" } },
+    });
   });
 
   test("parses script_status_update payload", () => {
@@ -973,6 +1038,30 @@ describe("workspace message schemas", () => {
     expect(checkout?.worktreeRoot).toBe("C:\\repo");
   });
 
+  test("workspace summary parses without forge and round-trips forge when present", () => {
+    const baseWorkspace = {
+      id: "ws-forge",
+      projectId: "proj",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "feature",
+      status: "done",
+      activityAt: null,
+      scripts: [],
+    } as const;
+
+    // Old daemon: forge omitted -> parses, field absent (client falls back to github).
+    expect(WorkspaceDescriptorPayloadSchema.parse(baseWorkspace).forge).toBeUndefined();
+
+    // New daemon: forge present -> round-trips (open string, like the PR-status forge).
+    expect(
+      WorkspaceDescriptorPayloadSchema.parse({ ...baseWorkspace, forge: "gitlab" }).forge,
+    ).toBe("gitlab");
+  });
+
   test("workspace.create.request rejects old flat backing shape and accepts new source envelope", () => {
     // Old flat shape with backing enum must be rejected.
     const oldFlat = WorkspaceCreateRequestSchema.safeParse({
@@ -997,6 +1086,25 @@ describe("workspace message schemas", () => {
     });
     expect(newWorktree.type).toBe("workspace.create.request");
     expect(newWorktree.source.kind).toBe("worktree");
+
+    const branchOff = WorkspaceCreateRequestSchema.parse({
+      type: "workspace.create.request",
+      requestId: "req-branch-off",
+      source: {
+        kind: "worktree",
+        cwd: "/tmp/repo",
+        action: "branch-off",
+        branchName: "feature/auth",
+        worktreeSlug: "feature-auth",
+      },
+    });
+    expect(branchOff.source).toEqual({
+      kind: "worktree",
+      cwd: "/tmp/repo",
+      action: "branch-off",
+      branchName: "feature/auth",
+      worktreeSlug: "feature-auth",
+    });
 
     // Directory source must also be accepted.
     const newDirectory = WorkspaceCreateRequestSchema.parse({

@@ -1,13 +1,8 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useCallback, useMemo } from "react";
-import {
-  View,
-  Text,
-  ActivityIndicator,
-  Pressable,
-  type PressableStateCallbackType,
-} from "react-native";
+import { View, Text, Pressable, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ChevronDown, Info, MoreVertical } from "lucide-react-native";
+import { ChevronDown, MoreVertical } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import {
   DropdownMenu,
@@ -20,8 +15,8 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { ShortcutKey } from "@/utils/format-shortcut";
-import { useToast } from "@/contexts/toast-context";
 import type { GitAction, GitActions } from "@/git/policy";
+import { useGitActionRunner } from "@/git/use-actions";
 
 interface GitActionsSplitButtonProps {
   gitActions: GitActions;
@@ -81,7 +76,7 @@ function GitActionMenuItem({
 export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSplitButtonProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const toast = useToast();
+  const runGitAction = useGitActionRunner();
   const archiveShortcutKeys = useShortcutKeys("archive-workspace");
 
   const getActionDisplayLabel = useCallback((action: GitAction): string => {
@@ -90,26 +85,12 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
     return action.label;
   }, []);
 
-  const handleActionSelect = useCallback(
-    (action: GitAction) => {
-      if (action.unavailableMessage) {
-        toast.show(action.unavailableMessage, {
-          durationMs: 3200,
-          icon: <Info size={16} color={theme.colors.foreground} />,
-        });
-        return;
-      }
-      action.handler();
-    },
-    [theme.colors.foreground, toast],
-  );
-
   const handlePrimaryPress = useCallback(() => {
     if (!gitActions.primary) {
       return;
     }
-    handleActionSelect(gitActions.primary);
-  }, [gitActions.primary, handleActionSelect]);
+    runGitAction(gitActions.primary);
+  }, [gitActions.primary, runGitAction]);
 
   const overflowMenuButtonStyle = useMemo(() => [styles.iconButton, styles.overflowMenuButton], []);
 
@@ -146,7 +127,7 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
             accessibilityLabel={gitActions.primary.label}
           >
             {gitActions.primary.status === "pending" ? (
-              <ActivityIndicator
+              <LoadingSpinner
                 size="small"
                 color={theme.colors.foreground}
                 style={styles.splitButtonSpinnerOnly}
@@ -177,7 +158,7 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
                   <GitActionMenuItem
                     key={action.id}
                     action={action}
-                    onSelect={handleActionSelect}
+                    onSelect={runGitAction}
                     archiveShortcutKeys={archiveShortcutKeys}
                     needsSeparator={action.startsGroup}
                     showSeparator={index > 0}
@@ -210,7 +191,7 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
               <GitActionMenuItem
                 key={action.id}
                 action={action}
-                onSelect={handleActionSelect}
+                onSelect={runGitAction}
                 closeOnSelect={false}
               />
             ))}

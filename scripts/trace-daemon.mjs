@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Emit the set of files the daemon and CLI need at runtime, computed by
-// static module-graph tracing (@vercel/nft) from the three entry points.
+// static module-graph tracing (@vercel/nft) from the daemon entry points.
 // Used by nix/package.nix's installPhase to materialize $out/lib/paseo
 // with only the bytes the daemon actually loads — no Expo, RN, Metro,
 // Electron, ML stacks, or other non-daemon workspace bloat.
@@ -14,17 +14,57 @@
 
 import { nodeFileTrace } from "@vercel/nft";
 import { glob } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 
-// Three entry points. The terminal worker is forked into its own Node
-// process and has its own require tree (node-pty, etc.) — nft does not
-// follow fork boundaries, so it must be traced separately.
+function toTracePath(absolutePath) {
+  return path.relative(REPO_ROOT, absolutePath).split(path.sep).join("/");
+}
+
+function parcelWatcherNativePackagePath() {
+  const requireFromRepo = createRequire(path.join(REPO_ROOT, "package.json"));
+  requireFromRepo("@parcel/watcher");
+
+  const nativeAddonPath = Object.keys(requireFromRepo.cache)
+    .map(toTracePath)
+    .find((file) => /^node_modules\/@parcel\/watcher-[^/]+\/watcher\.node$/.test(file));
+  if (!nativeAddonPath) {
+    throw new Error("@parcel/watcher loaded without a platform native addon");
+  }
+
+  return path.posix.dirname(nativeAddonPath);
+}
+
+const { sherpaPlatformPackageName } = await import(
+  pathToFileURL(
+    path.join(
+      REPO_ROOT,
+      "packages/server/dist/server/server/speech/providers/local/sherpa/sherpa-runtime-env.js",
+    ),
+  ).href
+);
+
+const traceDesktop = process.env.PASEO_TRACE_DESKTOP === "1";
+
+// Daemon entry points. Workers forked into their own Node processes have
+// independent require trees; nft does not follow fork boundaries, so trace
+// them separately. The desktop derivation opts into tracing its Electron main
+// process and preloads as well.
 const entries = [
   "packages/cli/dist/index.js",
   "packages/server/dist/scripts/supervisor-entrypoint.js",
   "packages/server/dist/server/terminal/terminal-worker-process.js",
+  "packages/server/dist/server/server/speech/providers/local/worker-process.js",
+  ...(traceDesktop
+    ? [
+        "packages/desktop/dist/main.js",
+        "packages/desktop/dist/preload.js",
+        "packages/desktop/dist/features/browser-keyboard/guest-preload.js",
+      ]
+    : []),
 ];
 
 // Files read at runtime via fs APIs rather than `require`. nft only
@@ -44,19 +84,36 @@ const additionalInputs = [
   // the Nix derivation builds for one platform at a time and ships only
   // its own binaries.
   `node_modules/node-pty/prebuilds/${process.platform}-${process.arch}/**`,
+  // @parcel/watcher dynamically resolves its optional platform package. npm's
+  // build closure can contain multiple libc variants, so copy the package the
+  // wrapper actually loaded rather than every installed optional package.
+  `${parcelWatcherNativePackagePath()}/**`,
+  // sherpa-onnx-node dynamically resolves a platform-specific native package.
+  // Copy the wrapper plus the host platform package explicitly.
+  "node_modules/sherpa-onnx-node/**",
+  `node_modules/${sherpaPlatformPackageName()}/**`,
+  ...(traceDesktop
+    ? [
+        // The unpackaged Nix launcher resolves these beside desktop/dist.
+        "packages/desktop/package.json",
+        "packages/desktop/assets/**",
+        // resolveExternalCliEntrypoint() looks up the workspace through this
+        // link at runtime; nft traces the target files but not the link.
+        "node_modules/@getpaseo/cli",
+      ]
+    : []),
 ];
 
 // Trace.
 const { fileList, warnings } = await nodeFileTrace(entries, {
   base: REPO_ROOT,
   // Tolerate the conditional / dynamic patterns we already audited:
-  // sherpa-onnx-${platform}-${arch} package resolution (sherpa is
-  // intentionally not built in the Nix sandbox; voice features degrade
-  // gracefully when unavailable), and a handful of test-only requires
-  // that get tree-shaken out by tsc.
+  // sherpa-onnx-${platform}-${arch} package resolution (the host package
+  // is copied explicitly above), and a handful of test-only requires that
+  // get tree-shaken out by tsc.
   ignore: [
     // Cross-platform native packages for the sherpa speech runtime;
-    // unsupported in the Nix build, lazily loaded when present.
+    // only the host platform package is needed at runtime.
     "sherpa-onnx-*/**",
     // Platform-specific clipboard variants; only the host's variant
     // is needed at runtime, and the package's index.js resolver picks
@@ -69,6 +126,9 @@ const { fileList, warnings } = await nodeFileTrace(entries, {
     // tries to walk into them via index files. Belt and suspenders.
     "**/*.test.js",
     "**/*.e2e.test.js",
+    // The Nix desktop package runs under nixpkgs' Electron. Tracing the npm
+    // package would duplicate the complete Electron distribution in $out.
+    ...(traceDesktop ? ["node_modules/electron/**"] : []),
   ],
 });
 

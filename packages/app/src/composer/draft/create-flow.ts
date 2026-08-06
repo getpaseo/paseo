@@ -1,16 +1,21 @@
 import { useCallback, useMemo, useReducer } from "react";
 import { useTranslation } from "react-i18next";
 import type { ComposerAttachment } from "@/attachments/types";
-import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
+import {
+  resolveComposerAttachmentSubmitFormat,
+  splitComposerAttachmentsForSubmit,
+} from "@/composer/attachments/submit";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
+import { handoffCreatedAgentMessageSubmission } from "@/composer/submission/writer";
 import { useSessionStore } from "@/stores/session-store";
 import {
-  buildOptimisticUserMessage,
+  createUserMessage,
   generateMessageId,
   type StreamItem,
   type UserMessageImageAttachment,
 } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type { PendingMessageSubmission } from "@/composer/submission/model";
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 
@@ -123,14 +128,10 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
   const updatePendingAgentId = useCreateFlowStore((state) => state.updateAgentId);
   const markPendingCreateLifecycle = useCreateFlowStore((state) => state.markLifecycle);
   const clearPendingCreateAttempt = useCreateFlowStore((state) => state.clear);
-  const handoffCreatedAgentUserMessage = useSessionStore(
-    (state) => state.handoffCreatedAgentUserMessage,
-  );
-
   const formErrorMessage = machine.tag === "draft" ? machine.errorMessage : "";
   const isSubmitting = machine.tag === "creating";
 
-  const optimisticStreamItems = useMemo<StreamItem[]>(() => {
+  const submittedStreamItems = useMemo<StreamItem[]>(() => {
     if (machine.tag !== "creating") {
       return EMPTY_STREAM_ITEMS;
     }
@@ -144,13 +145,21 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
     }
 
     return [
-      buildOptimisticUserMessage({
-        id: machine.attempt.clientMessageId,
+      createUserMessage({
+        clientMessageId: machine.attempt.clientMessageId,
         text: machine.attempt.text,
         timestamp: machine.attempt.timestamp,
         images: machine.attempt.images,
         attachments: machine.attempt.attachments,
       }),
+    ];
+  }, [machine]);
+  const pendingMessageSubmissions = useMemo<readonly PendingMessageSubmission[]>(() => {
+    if (machine.tag !== "creating") return [];
+    return [
+      {
+        clientMessageId: machine.attempt.clientMessageId,
+      },
     ];
   }, [machine]);
 
@@ -189,11 +198,11 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
 
         if (createResult.agentId) {
           updatePendingAgentId({ draftId, agentId: createResult.agentId });
-          handoffCreatedAgentUserMessage(
+          handoffCreatedAgentMessageSubmission(
             pendingServerId,
             createResult.agentId,
-            buildOptimisticUserMessage({
-              id: attempt.clientMessageId,
+            createUserMessage({
+              clientMessageId: attempt.clientMessageId,
               text: attempt.text,
               timestamp: attempt.timestamp,
               images: attempt.images,
@@ -215,7 +224,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       }
     },
     [
-      handoffCreatedAgentUserMessage,
       clearPendingCreateAttempt,
       createRequest,
       draftId,
@@ -236,10 +244,23 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       }
 
       dispatch({ type: "DRAFT_SET_ERROR", message: "" });
-      const wirePayload = splitComposerAttachmentsForSubmit(attachments);
+      const trimmedPrompt = text.trim();
+      const pendingServerId = getPendingServerId();
+      if (!pendingServerId) {
+        const error = new Error(t("composer.errors.noHostSelected"));
+        dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
+        throw error;
+      }
+      const supportsForgeSearch =
+        useSessionStore.getState().sessions[pendingServerId]?.serverInfo?.features?.forgeSearch ===
+        true;
+      const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
+        format: resolveComposerAttachmentSubmitFormat({
+          supportsForgeAttachments: supportsForgeSearch,
+        }),
+      });
       const images = wirePayload.images;
 
-      const trimmedPrompt = text.trim();
       const hasAttachmentContent = images.length > 0 || wirePayload.attachments.length > 0;
       if (!trimmedPrompt && !hasAttachmentContent && !allowEmptyText) {
         const error = new Error(t("composer.errors.initialPromptRequired"));
@@ -255,13 +276,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       if (validationError) {
         const error = new Error(validationError);
         dispatch({ type: "DRAFT_SET_ERROR", message: validationError });
-        throw error;
-      }
-
-      const pendingServerId = getPendingServerId();
-      if (!pendingServerId) {
-        const error = new Error(t("composer.errors.noHostSelected"));
-        dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
         throw error;
       }
 
@@ -317,7 +331,8 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
     machine,
     formErrorMessage,
     isSubmitting,
-    optimisticStreamItems,
+    submittedStreamItems,
+    pendingMessageSubmissions,
     draftAgent,
     handleCreateFromInput,
     continueCreateFromAttempt,

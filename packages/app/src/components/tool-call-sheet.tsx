@@ -114,6 +114,7 @@ export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) 
       {children}
       <IsolatedBottomSheetModal
         ref={bottomSheetRef}
+        contextBridge={null}
         snapPoints={snapPoints}
         index={0}
         enableDynamicSizing={false}

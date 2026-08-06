@@ -9,12 +9,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import { seedSessionWorkspaces } from "@/test/seed-session";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import type { HostProfile } from "@/types/host-connection";
 import { WorkspaceShortcutTargetsSubscriber } from "./workspace-shortcut-targets-subscriber";
 import { SidebarModelProvider } from "./sidebar/sidebar-model";
+import { defaultHostAppearance } from "@/hosts/appearance";
 
 vi.hoisted(() => {
   (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
@@ -50,6 +52,7 @@ function hostProfile(serverId = "srv"): HostProfile {
   return {
     serverId,
     label: "Shortcut Host",
+    appearance: defaultHostAppearance(),
     lifecycle: {},
     connections: [],
     preferredConnectionId: null,
@@ -93,7 +96,7 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
     act(() => {
       setHostProfiles([hostProfile()]);
       useSessionStore.getState().initializeSession("srv", null as unknown as DaemonClient);
-      useSessionStore.getState().setWorkspaces(
+      seedSessionWorkspaces(
         "srv",
         new Map([
           ["ws-1", workspaceDescriptor({ id: "ws-1", name: "Workspace 1" })],
@@ -139,7 +142,7 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
   it("publishes status-mode shortcut targets in visual status order", async () => {
     act(() => {
       useSidebarViewStore.getState().setGroupMode("status");
-      useSessionStore.getState().setWorkspaces(
+      seedSessionWorkspaces(
         "srv",
         new Map([
           [
@@ -211,18 +214,14 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
       setHostProfiles([hostProfile("host-a"), hostProfile("host-b")]);
       useSessionStore.getState().initializeSession("host-a", null as unknown as DaemonClient);
       useSessionStore.getState().initializeSession("host-b", null as unknown as DaemonClient);
-      useSessionStore
-        .getState()
-        .setWorkspaces(
-          "host-a",
-          new Map([["a-1", workspaceDescriptor({ id: "a-1", name: "Host A" })]]),
-        );
-      useSessionStore
-        .getState()
-        .setWorkspaces(
-          "host-b",
-          new Map([["b-1", workspaceDescriptor({ id: "b-1", name: "Host B" })]]),
-        );
+      seedSessionWorkspaces(
+        "host-a",
+        new Map([["a-1", workspaceDescriptor({ id: "a-1", name: "Host A" })]]),
+      );
+      seedSessionWorkspaces(
+        "host-b",
+        new Map([["b-1", workspaceDescriptor({ id: "b-1", name: "Host B" })]]),
+      );
       useSessionStore.getState().setHasHydratedWorkspaces("host-a", true);
       useSessionStore.getState().setHasHydratedWorkspaces("host-b", true);
       useSidebarViewStore.getState().toggleHostFilter("host-b");

@@ -993,6 +993,24 @@ function mapCollabAgentToolCallItem(
 function mapSubAgentActivityItem(
   item: z.infer<typeof CodexSubAgentActivityItemSchema>,
 ): ToolCallTimelineItem {
+  let nativeName = item.agentPath;
+  if (nativeName === "/root") {
+    nativeName = "";
+  } else if (nativeName.startsWith("/root/")) {
+    nativeName = nativeName.slice("/root/".length);
+  } else if (/[\\/]/.test(nativeName)) {
+    nativeName = nativeName.slice(
+      Math.max(nativeName.lastIndexOf("/"), nativeName.lastIndexOf("\\")) + 1,
+    );
+  }
+  const description = nativeName;
+  nativeName = nativeName
+    .split("/")
+    .map((segment) => segment.replace(/[_-]+/g, " ").trim())
+    .filter(Boolean)
+    .map((segment) => segment[0]?.toUpperCase() + segment.slice(1))
+    .join(" / ");
+  nativeName ||= "Sub-agent";
   return {
     type: "tool_call",
     callId: item.id,
@@ -1001,8 +1019,8 @@ function mapSubAgentActivityItem(
     error: null,
     detail: {
       type: "sub_agent",
-      subAgentType: "Sub-agent",
-      description: item.agentPath,
+      subAgentType: nativeName,
+      description,
       log: "",
       actions: [],
     },

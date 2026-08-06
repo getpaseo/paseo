@@ -17,7 +17,6 @@ import { useWorkspaceDirectory, useWorkspaceFields } from "@/stores/session-stor
 
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 
-const FLEX_FILL_STYLE = { flex: 1 } as const;
 const CENTERED_PADDED_STYLE = {
   flex: 1,
   alignItems: "center",
@@ -62,12 +61,14 @@ function useTerminalPanelDescriptor(
   );
   const terminal =
     terminalsQuery.data?.terminals.find((entry) => entry.id === target.terminalId) ?? null;
+  const label =
+    trimNonEmpty(terminal?.title ?? terminal?.name ?? null) ??
+    t("workspace.tabs.fallback.terminal");
 
   return {
-    label:
-      trimNonEmpty(terminal?.title ?? terminal?.name ?? null) ??
-      t("workspace.tabs.fallback.terminal"),
+    label,
     subtitle: t("workspace.tabs.fallback.terminal"),
+    tooltip: label,
     titleState: "ready",
     icon: Terminal,
     statusBucket: deriveTerminalActivityStatusBucket(terminal?.activity),
@@ -94,10 +95,6 @@ function TerminalPanel() {
     });
   }, [isGitCheckout, openFileExplorerForCheckout, serverId, workspaceDirectory]);
   invariant(target.kind === "terminal", "TerminalPanel requires terminal target");
-
-  if (!isWorkspaceFocused) {
-    return <View style={FLEX_FILL_STYLE} />;
-  }
 
   if (!workspaceDirectory) {
     return (

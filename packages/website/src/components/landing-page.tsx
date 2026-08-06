@@ -43,8 +43,15 @@ import {
   GlobeIcon,
 } from "~/downloads";
 import { useRelease } from "~/routes/__root";
-import { Mic } from "lucide-react";
 import { HeroMockup } from "~/components/hero-mockup";
+import {
+  ClaudeCodeIcon,
+  CodexIcon,
+  CursorIcon,
+  OpenCodeIcon,
+  PiIcon,
+} from "~/components/agent-icons";
+import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
 import { ClaudeIcon } from "~/components/mockup";
 import { FAQItem } from "~/components/faq-item";
 import { SiteFooter } from "~/components/site-footer";
@@ -84,17 +91,14 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
       <PhoneShowcase />
 
       {/* Content section */}
-      <div className="bg-background">
+      <div className="landing-content bg-background">
         <main className="p-6 md:p-20 md:pt-40 max-w-5xl mx-auto">
           <div className="space-y-24">
             <SocialProofWall />
             <MultiProviderSection />
             <SelfHostedSection />
+            <HubSection />
             <WorkflowSection />
-            <SplitPanelsSection />
-            <ServiceProxySection />
-            <ShortcutsSection />
-            <LocalVoiceSection />
             <CLISection />
             <FAQ />
             <SponsorCTA />
@@ -246,10 +250,12 @@ function AgentBadge({ name, icon }: { name: string; icon: React.ReactNode }) {
 function FeatureSection({
   title,
   description,
+  badge,
   children,
 }: {
   title: string;
   description: string;
+  badge?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -259,16 +265,31 @@ function FeatureSection({
       viewport={VIEWPORT_60}
       transition={EASE_OUT_05}
     >
-      <SectionTitle title={title} description={description} />
+      <SectionTitle title={title} description={description} badge={badge} />
       {children}
     </motion.section>
   );
 }
 
-function SectionTitle({ title, description }: { title: string; description: string }) {
+function SectionTitle({
+  title,
+  description,
+  badge,
+}: {
+  title: string;
+  description: string;
+  badge?: string;
+}) {
   return (
     <div className="mb-12 space-y-2">
-      <h2 className="text-3xl font-medium">{title}</h2>
+      <div className="flex items-center gap-3">
+        <h2 className="text-3xl font-medium">{title}</h2>
+        {badge && (
+          <span className="rounded-full bg-emerald-400/10 px-2 py-1 text-xs text-emerald-300">
+            {badge}
+          </span>
+        )}
+      </div>
       <p className="text-base text-muted-foreground max-w-lg">{description}</p>
     </div>
   );
@@ -837,371 +858,6 @@ function ShipPanel() {
   );
 }
 
-function SplitPanelsSection() {
-  return (
-    <FeatureSection
-      title="Split panels"
-      description="Open agents, browsers, terminals, diffs, and logs in the same workspace. Split them side by side or group them in tabs."
-    >
-      <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-3">
-        <div className="grid gap-3 md:h-[360px] md:grid-cols-[1.05fr_0.95fr]">
-          <PanelTile label="Agent" className="min-h-48 md:min-h-0" />
-          <div className="grid gap-3 md:grid-rows-[1fr_0.75fr]">
-            <PanelTile label="Browser" className="min-h-36" />
-            <div className="grid gap-3 sm:grid-cols-2">
-              <PanelTile label="Terminal" className="min-h-28" />
-              <PanelTile label="Diff" className="min-h-28" />
-            </div>
-          </div>
-        </div>
-      </div>
-    </FeatureSection>
-  );
-}
-
-function PanelTile({ label, className }: { label: string; className: string }) {
-  return (
-    <div
-      className={`flex items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-sm text-white/70 ${className}`}
-    >
-      {label}
-    </div>
-  );
-}
-
-function ServiceProxySection() {
-  const workspaces = [
-    { name: "fix-auth", url: "web.fix-auth.my-app.localhost" },
-    { name: "add-search", url: "web.add-search.my-app.localhost" },
-    { name: "upgrade-deps", url: "web.upgrade-deps.my-app.localhost" },
-  ];
-
-  return (
-    <FeatureSection
-      title="Forget about ports"
-      description="When agents work in parallel, they all run dev servers. Paseo gives each one a URL based on the branch name, no port conflicts, no guessing."
-    >
-      <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
-        <div className="px-5 py-4 space-y-3">
-          {/* Project */}
-          <div className="flex items-center gap-2.5">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="text-white/40"
-            >
-              <path d="M3 7V17C3 18.1046 3.89543 19 5 19H19C20.1046 19 21 18.1046 21 17V9C21 7.89543 20.1046 7 19 7H13L11 5H5C3.89543 5 3 5.89543 3 7Z" />
-            </svg>
-            <span className="text-sm font-medium text-white/60">my-app</span>
-          </div>
-
-          {/* Workspaces indented */}
-          <div className="pl-6 space-y-2">
-            {workspaces.map((ws) => (
-              <div key={ws.name} className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  <span className="text-sm text-white/80">{ws.name}</span>
-                  <span className="text-xs text-white/25 font-mono">npm run dev</span>
-                </div>
-                <span className="text-xs font-mono text-white/30">{ws.url}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </FeatureSection>
-  );
-}
-
-function ShortcutsSection() {
-  const shortcuts = [
-    { keys: ["⌘", "1-9"], action: "Switch panels" },
-    { keys: ["⌘", "D"], action: "Split vertical" },
-    { keys: ["⌘", "Shift", "D"], action: "Split horizontal" },
-    { keys: ["⌘", "W"], action: "Close panel" },
-    { keys: ["⌘", "N"], action: "New agent" },
-    { keys: ["⌘", "K"], action: "Command palette" },
-  ];
-
-  return (
-    <FeatureSection
-      title="Keyboard-first"
-      description="Every action has a shortcut. Panels, splits, agents - all from the keyboard."
-    >
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        {shortcuts.map((s) => (
-          <div
-            key={s.action}
-            className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2.5"
-          >
-            <span className="text-sm text-white/60">{s.action}</span>
-            <div className="flex items-center gap-1">
-              {s.keys.map((k) => (
-                <kbd
-                  key={k}
-                  className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-white/50 font-mono"
-                >
-                  {k}
-                </kbd>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </FeatureSection>
-  );
-}
-
-interface VoiceBarProps {
-  index: number;
-  barCount: number;
-}
-
-function VoiceBar({ index, barCount }: VoiceBarProps) {
-  const style = React.useMemo(() => {
-    const center = barCount / 2;
-    const dist = Math.abs(index - center) / center;
-    const envelope = 1 - dist * dist;
-    const minH = 4;
-    const maxH = 56;
-    const baseH = minH + (maxH - minH) * envelope;
-    const jitter = Math.sin(index * 2.3) * 0.3 + Math.cos(index * 1.7) * 0.2;
-    const h = Math.max(minH, baseH * (0.5 + 0.5 * Math.abs(jitter + Math.sin(index * 0.8))));
-    return {
-      height: h,
-      animationName: "voice-bar",
-      animationDuration: `${800 + (index % 5) * 200}ms`,
-      animationTimingFunction: "ease-in-out",
-      animationIterationCount: "infinite",
-      animationDirection: "alternate" as const,
-      animationDelay: `${(index % 7) * 80}ms`,
-    };
-  }, [index, barCount]);
-  return <div className="w-[3px] rounded-full bg-white/30" style={style} />;
-}
-
-const VOICE_BAR_COUNT = 48;
-const VOICE_BAR_INDICES = Array.from({ length: VOICE_BAR_COUNT }, (_, i) => i);
-
-function VoiceWaveform() {
-  return (
-    <div className="flex items-center justify-center gap-[3px] h-16">
-      {VOICE_BAR_INDICES.map((i) => (
-        <VoiceBar key={`voice-bar-${i}`} index={i} barCount={VOICE_BAR_COUNT} />
-      ))}
-    </div>
-  );
-}
-
-const USER_WORDS =
-  "Refactor the auth middleware to use the new session store, then run the test suite".split(" ");
-const RESPONSE_WORDS =
-  "I'll update the auth middleware to use SessionStore instead of the legacy cookie-based approach. Let me refactor the middleware and update the tests.".split(
-    " ",
-  );
-const DICTATION_LAG = 2;
-const RESPONSE_LAG = 3;
-const WORD_APPEAR_MS = 150;
-const RESPONSE_WORD_MS = 60;
-const PHASE_GAP_MS = 800;
-const LOOP_PAUSE_MS = 3000;
-
-type VoicePhase =
-  | "dictation"
-  | "dictation-flush"
-  | "pause"
-  | "response"
-  | "response-flush"
-  | "done";
-
-function useVoiceConversation() {
-  const [phase, setPhase] = React.useState<VoicePhase>("dictation");
-  const [wordIndex, setWordIndex] = React.useState(0);
-
-  React.useEffect(() => {
-    if (phase === "dictation") {
-      if (wordIndex < USER_WORDS.length) {
-        const t = setTimeout(() => setWordIndex((w) => w + 1), WORD_APPEAR_MS);
-        return () => clearTimeout(t);
-      }
-      setPhase("dictation-flush");
-      setWordIndex(0);
-      return;
-    }
-    if (phase === "dictation-flush") {
-      if (wordIndex < DICTATION_LAG) {
-        const t = setTimeout(() => setWordIndex((w) => w + 1), WORD_APPEAR_MS);
-        return () => clearTimeout(t);
-      }
-      const t = setTimeout(() => {
-        setPhase("pause");
-      }, PHASE_GAP_MS);
-      return () => clearTimeout(t);
-    }
-    if (phase === "pause") {
-      const t = setTimeout(() => {
-        setPhase("response");
-        setWordIndex(0);
-      }, PHASE_GAP_MS);
-      return () => clearTimeout(t);
-    }
-    if (phase === "response") {
-      if (wordIndex < RESPONSE_WORDS.length) {
-        const t = setTimeout(() => setWordIndex((w) => w + 1), RESPONSE_WORD_MS);
-        return () => clearTimeout(t);
-      }
-      setPhase("response-flush");
-      setWordIndex(0);
-      return;
-    }
-    if (phase === "response-flush") {
-      if (wordIndex < RESPONSE_LAG) {
-        const t = setTimeout(() => setWordIndex((w) => w + 1), RESPONSE_WORD_MS);
-        return () => clearTimeout(t);
-      }
-      const t = setTimeout(() => {
-        setPhase("done");
-      }, LOOP_PAUSE_MS);
-      return () => clearTimeout(t);
-    }
-    if (phase === "done") {
-      const t = setTimeout(() => {
-        setPhase("dictation");
-        setWordIndex(0);
-      }, 0);
-      return () => clearTimeout(t);
-    }
-  }, [phase, wordIndex]);
-
-  // Compute effective word indices for rendering
-  let dictationWordIndex: number;
-  if (phase === "dictation") {
-    dictationWordIndex = wordIndex;
-  } else if (phase === "dictation-flush") {
-    dictationWordIndex = USER_WORDS.length + wordIndex;
-  } else {
-    dictationWordIndex = USER_WORDS.length + DICTATION_LAG;
-  }
-
-  let responseWordIndex: number;
-  if (phase === "response") {
-    responseWordIndex = wordIndex;
-  } else if (phase === "response-flush") {
-    responseWordIndex = RESPONSE_WORDS.length + wordIndex;
-  } else if (phase === "done") {
-    responseWordIndex = RESPONSE_WORDS.length + RESPONSE_LAG;
-  } else {
-    responseWordIndex = 0;
-  }
-
-  const showResponse = phase === "response" || phase === "response-flush" || phase === "done";
-
-  return { dictationWordIndex, responseWordIndex, showResponse };
-}
-
-function makeWordKey(words: string[], i: number): string {
-  const word = words[i];
-  let occurrence = 0;
-  for (let j = 0; j < i; j++) {
-    if (words[j] === word) occurrence++;
-  }
-  return `${word}#${occurrence}`;
-}
-
-function WordSpan({ word, confirmed }: { word: string; confirmed: boolean }) {
-  return (
-    <span
-      className={`transition-colors duration-300 ${confirmed ? "text-white/90" : "text-white/40"}`}
-    >
-      {word}{" "}
-    </span>
-  );
-}
-
-function StreamingWords({
-  words,
-  wordIndex,
-  confirmLag = 2,
-}: {
-  words: string[];
-  wordIndex: number;
-  confirmLag?: number;
-}) {
-  return (
-    <div className="relative">
-      {/* Invisible full text to reserve height at any viewport width */}
-      <p className="text-sm leading-relaxed invisible" aria-hidden>
-        {words.join(" ")}
-      </p>
-      {/* Visible streaming text overlaid */}
-      <p className="text-sm leading-relaxed absolute inset-0">
-        {words.map((word, i) => {
-          if (i >= wordIndex) return null;
-          const confirmed = i < wordIndex - confirmLag;
-          return <WordSpan key={makeWordKey(words, i)} word={word} confirmed={confirmed} />;
-        })}
-      </p>
-    </div>
-  );
-}
-
-function LocalVoiceSection() {
-  const { dictationWordIndex, responseWordIndex, showResponse } = useVoiceConversation();
-
-  return (
-    <FeatureSection
-      title="Voice control, fully local"
-      description="Fully local voice stack. Speech-to-text and text-to-speech run entirely on your machine, nothing leaves your network."
-    >
-      <div className="relative w-full rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
-        <div className="px-6 pt-8 pb-6 space-y-3">
-          {/* Waveform area */}
-          <div className="relative">
-            <VoiceWaveform />
-          </div>
-
-          {/* User dictation */}
-          <div className="flex items-start gap-3">
-            <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0">
-              <Mic size={16} className="text-white/60" />
-            </div>
-            <div className="pt-1">
-              <StreamingWords
-                words={USER_WORDS}
-                wordIndex={dictationWordIndex}
-                confirmLag={DICTATION_LAG}
-              />
-            </div>
-          </div>
-
-          {/* Agent response — always rendered to reserve space */}
-          <div
-            className={`flex items-start gap-3 transition-opacity duration-300 ${showResponse ? "opacity-100" : "opacity-0"}`}
-          >
-            <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0">
-              <ClaudeIcon size={16} className="text-white/60" />
-            </div>
-            <div className="pt-1">
-              <StreamingWords
-                words={RESPONSE_WORDS}
-                wordIndex={responseWordIndex}
-                confirmLag={RESPONSE_LAG}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-    </FeatureSection>
-  );
-}
-
 function GetStarted() {
   return (
     <div className="pt-10">
@@ -1305,87 +961,6 @@ function ServerInstallButton() {
       command="npm install -g @getpaseo/cli && paseo"
       footnote={SERVER_INSTALL_FOOTNOTE}
     />
-  );
-}
-
-function ClaudeCodeIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      fillRule="evenodd"
-      aria-hidden="true"
-      {...props}
-    >
-      <path d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z" />
-    </svg>
-  );
-}
-
-function CodexIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      fillRule="evenodd"
-      aria-hidden="true"
-      {...props}
-    >
-      <path d="M21.55 10.004a5.416 5.416 0 00-.478-4.501c-1.217-2.09-3.662-3.166-6.05-2.66A5.59 5.59 0 0010.831 1C8.39.995 6.224 2.546 5.473 4.838A5.553 5.553 0 001.76 7.496a5.487 5.487 0 00.691 6.5 5.416 5.416 0 00.477 4.502c1.217 2.09 3.662 3.165 6.05 2.66A5.586 5.586 0 0013.168 23c2.443.006 4.61-1.546 5.361-3.84a5.553 5.553 0 003.715-2.66 5.488 5.488 0 00-.693-6.497v.001zm-8.381 11.558a4.199 4.199 0 01-2.675-.954c.034-.018.093-.05.132-.074l4.44-2.53a.71.71 0 00.364-.623v-6.176l1.877 1.069c.02.01.033.029.036.05v5.115c-.003 2.274-1.87 4.118-4.174 4.123zM4.192 17.78a4.059 4.059 0 01-.498-2.763c.032.02.09.055.131.078l4.44 2.53c.225.13.504.13.73 0l5.42-3.088v2.138a.068.068 0 01-.027.057L9.9 19.288c-1.999 1.136-4.552.46-5.707-1.51h-.001zM3.023 8.216A4.15 4.15 0 015.198 6.41l-.002.151v5.06a.711.711 0 00.364.624l5.42 3.087-1.876 1.07a.067.067 0 01-.063.005l-4.489-2.559c-1.995-1.14-2.679-3.658-1.53-5.63h.001zm15.417 3.54l-5.42-3.088L14.896 7.6a.067.067 0 01.063-.006l4.489 2.557c1.998 1.14 2.683 3.662 1.529 5.633a4.163 4.163 0 01-2.174 1.807V12.38a.71.71 0 00-.363-.623zm1.867-2.773a6.04 6.04 0 00-.132-.078l-4.44-2.53a.731.731 0 00-.729 0l-5.42 3.088V7.325a.068.068 0 01.027-.057L14.1 4.713c2-1.137 4.555-.46 5.707 1.513.487.833.664 1.809.499 2.757h.001zm-11.741 3.81l-1.877-1.068a.065.065 0 01-.036-.051V6.559c.001-2.277 1.873-4.122 4.181-4.12.976 0 1.92.338 2.671.954-.034.018-.092.05-.131.073l-4.44 2.53a.71.71 0 00-.365.623l-.003 6.173v.002zm1.02-2.168L12 9.25l2.414 1.375v2.75L12 14.75l-2.415-1.375v-2.75z" />
-    </svg>
-  );
-}
-
-function OpenCodeIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="96 64 288 384"
-      fill="currentColor"
-      aria-hidden="true"
-      {...props}
-    >
-      <path d="M320 224V352H192V224H320Z" opacity="0.4" />
-      <path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M384 416H128V96H384V416ZM320 160H192V352H320V160Z"
-      />
-    </svg>
-  );
-}
-
-function CursorIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 466.73 532.09"
-      fill="currentColor"
-      aria-hidden="true"
-      {...props}
-    >
-      <path d="M457.43,125.94L244.42,2.96c-6.84-3.95-15.28-3.95-22.12,0L9.3,125.94c-5.75,3.32-9.3,9.46-9.3,16.11v247.99c0,6.65,3.55,12.79,9.3,16.11l213.01,122.98c6.84,3.95,15.28,3.95,22.12,0l213.01-122.98c5.75-3.32,9.3-9.46,9.3-16.11v-247.99c0-6.65-3.55-12.79-9.3-16.11h-.01ZM444.05,151.99l-205.63,356.16c-1.39,2.4-5.06,1.42-5.06-1.36v-233.21c0-4.66-2.49-8.97-6.53-11.31L24.87,145.67c-2.4-1.39-1.42-5.06,1.36-5.06h411.26c5.84,0,9.49,6.33,6.57,11.39h-.01Z" />
-    </svg>
-  );
-}
-
-function PiIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 800 800"
-      fill="currentColor"
-      aria-hidden="true"
-      {...props}
-    >
-      <path
-        d="M165.29 165.29 H517.36 V400 H400 V517.36 H282.65 V634.72 H165.29 Z M282.65 282.65 V400 H400 V282.65 Z"
-        fillRule="evenodd"
-      />
-      <path d="M517.36 400 H634.72 V634.72 H517.36 Z" />
-    </svg>
   );
 }
 
@@ -1891,6 +1466,40 @@ function FAQ() {
         </FAQItem>
       </div>
     </motion.div>
+  );
+}
+
+const HUB_SURFACES = [
+  { name: "GitHub", icon: <GitHubIcon className="h-7 w-7" /> },
+  { name: "Slack", icon: <SlackIcon className="h-7 w-7" /> },
+  { name: "Discord", icon: <DiscordIcon className="h-7 w-7" /> },
+];
+
+function HubSection() {
+  return (
+    <FeatureSection
+      title="Paseo Hub"
+      badge="New"
+      description="An optional service you run on top of your daemons. It gives them triggers from GitHub, Slack, and Discord, and access for your team."
+    >
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        {HUB_SURFACES.map((surface) => (
+          <div
+            key={surface.name}
+            className="flex items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4"
+          >
+            <span className="text-white/80">{surface.icon}</span>
+            <span className="font-medium">{surface.name}</span>
+          </div>
+        ))}
+      </div>
+      <a
+        href="/hub"
+        className="mt-6 inline-flex items-center gap-2 rounded-lg bg-white/10 border border-white/20 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/15 transition-colors"
+      >
+        Learn more
+      </a>
+    </FeatureSection>
   );
 }
 

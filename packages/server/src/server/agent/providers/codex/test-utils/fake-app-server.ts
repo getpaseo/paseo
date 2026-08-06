@@ -51,8 +51,15 @@ export interface FakeCodexAppServer {
   waitForTurnStart(): Promise<JsonObject>;
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
+  updatesPlan(params: { threadId: string; steps: string[] }): void;
   completeTurn(params?: { threadId?: string }): void;
   startsSubAgent(params: {
+    callId: string;
+    threadId: string;
+    agentPath: string;
+    parentThreadId?: string;
+  }): void;
+  startsLegacyOnlySubAgent(params: {
     callId: string;
     threadId: string;
     agentPath: string;
@@ -313,16 +320,42 @@ export function createFakeCodexAppServer(
         })}\n`,
       );
     },
+    updatesPlan(params) {
+      child.stdout.write(
+        `${JSON.stringify({
+          method: "turn/plan/updated",
+          params: {
+            threadId: params.threadId,
+            plan: params.steps.map((step) => ({ step, status: "pending" })),
+          },
+        })}\n`,
+      );
+    },
     completeTurn(params = {}) {
       child.stdout.write(
         `${JSON.stringify({
           method: "turn/completed",
-          params: { threadId: params.threadId ?? "thread-1", turn: { status: "completed" } },
+          params: {
+            threadId: params.threadId ?? "thread-1",
+            turn: { status: "completed" },
+          },
         })}\n`,
       );
     },
     startsSubAgent(params) {
       writeSubAgentActivity("item/completed", { ...params, kind: "started" });
+    },
+    startsLegacyOnlySubAgent(params) {
+      writeLegacyEvent(params.parentThreadId ?? "thread-1", "codex/event/item_completed", {
+        type: "item_completed",
+        item: {
+          type: "subAgentActivity",
+          id: params.callId,
+          kind: "started",
+          agentThreadId: params.threadId,
+          agentPath: params.agentPath,
+        },
+      });
     },
     beginsSubAgentActivity(params) {
       writeSubAgentActivity("item/started", params);
@@ -534,6 +567,7 @@ function waitForNextEvent<TType extends StreamEventType>(
 }
 
 type TimelineEvent = StreamEventOfType<"timeline">;
+type ProviderSubagentEvent = StreamEventOfType<"provider_subagent">;
 
 export function waitForNextPermission(
   session: AgentSession,
@@ -554,4 +588,11 @@ export function waitForTimelineToolCall(
     "timeline",
     (event) => event.item.type === "tool_call" && event.item.callId === callId,
   );
+}
+
+export function waitForProviderSubagent(
+  session: AgentSession,
+  id: string,
+): Promise<ProviderSubagentEvent> {
+  return waitForNextEvent(session, "provider_subagent", (event) => event.event.id === id);
 }

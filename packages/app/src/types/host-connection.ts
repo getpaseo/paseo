@@ -6,6 +6,12 @@ import {
   DirectTcpHostConnectionSchema,
   type DirectTcpHostConnection,
 } from "@getpaseo/protocol/host-connection-schema";
+import {
+  type HostAppearance,
+  defaultHostAppearance,
+  normalizeStoredHostAppearance,
+} from "@/hosts/appearance";
+import { normalizeConnectionHeadersRecord } from "@/utils/connection-headers";
 
 export { DirectTcpHostConnectionSchema, type DirectTcpHostConnection };
 
@@ -40,6 +46,7 @@ export type HostLifecycle = Record<string, never>;
 export interface HostProfile {
   serverId: string;
   label: string;
+  appearance: HostAppearance;
   lifecycle: HostLifecycle;
   connections: HostConnection[];
   preferredConnectionId: string | null;
@@ -75,6 +82,41 @@ export function orderHostsLocalFirst<T extends { serverId: string }>(
   return ordered;
 }
 
+/**
+ * Resolves which host a settings host section should target: the picker
+ * selection, else the local daemon, else the first connected host.
+ *
+ * Only a serverId that names a currently connected host is used. Both the
+ * selection and the local daemon can name a host that isn't connected (a stale
+ * selection, or a local daemon whose id persists in storage while it's stopped);
+ * using one would resolve the section to an unknown id and render "host not found".
+ */
+export function resolveActiveHostServerId(params: {
+  selectedServerId: string | null;
+  localServerId: string | null;
+  hosts: readonly { serverId: string }[];
+  orderedHosts: readonly { serverId: string }[];
+}): string | null {
+  const { selectedServerId, localServerId, hosts, orderedHosts } = params;
+  const connected = (serverId: string | null): string | null =>
+    serverId && hosts.some((host) => host.serverId === serverId) ? serverId : null;
+  return (
+    connected(selectedServerId) ?? connected(localServerId) ?? orderedHosts[0]?.serverId ?? null
+  );
+}
+
+function stringRecordEquals(
+  left: Record<string, string> | undefined,
+  right: Record<string, string> | undefined,
+): boolean {
+  const leftEntries = Object.entries(left ?? {});
+  const rightRecord = right ?? {};
+  return (
+    leftEntries.length === Object.keys(rightRecord).length &&
+    leftEntries.every(([key, value]) => rightRecord[key] === value)
+  );
+}
+
 function hostConnectionEquals(left: HostConnection, right: HostConnection): boolean {
   if (left.type !== right.type || left.id !== right.id) {
     return false;
@@ -84,7 +126,8 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
     return (
       left.endpoint === right.endpoint &&
       (left.useTls ?? false) === (right.useTls ?? false) &&
-      left.password === right.password
+      left.password === right.password &&
+      stringRecordEquals(left.headers, right.headers)
     );
   }
   if (left.type === "directSocket" && right.type === "directSocket") {
@@ -108,14 +151,23 @@ function hostLifecycleEquals(left: HostLifecycle, right: HostLifecycle): boolean
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function dedupeHostConnections(connections: HostConnection[]): HostConnection[] {
+function upsertHostConnectionById(
+  connections: HostConnection[],
+  connection: HostConnection,
+): HostConnection[] {
   const next: HostConnection[] = [];
-  for (const connection of connections) {
-    if (next.some((existing) => hostConnectionEquals(existing, connection))) {
+  let replaced = false;
+  for (const existing of connections) {
+    if (existing.id !== connection.id) {
+      next.push(existing);
       continue;
     }
+
+    if (replaced) continue;
     next.push(connection);
+    replaced = true;
   }
+  if (!replaced) next.push(connection);
   return next;
 }
 
@@ -149,6 +201,7 @@ export function upsertHostConnectionInProfiles(input: {
     const profile: HostProfile = {
       serverId,
       label: derivedLabel,
+      appearance: defaultHostAppearance(),
       lifecycle: defaultLifecycle(),
       connections: [input.connection],
       preferredConnectionId: input.connection.id,
@@ -160,10 +213,10 @@ export function upsertHostConnectionInProfiles(input: {
 
   const matchedProfiles = matchingIndexes.map((index) => existing[index]);
   const prev = matchedProfiles.find((daemon) => daemon.serverId === serverId) ?? matchedProfiles[0];
-  const nextConnections = dedupeHostConnections([
-    ...matchedProfiles.flatMap((daemon) => daemon.connections),
+  const nextConnections = upsertHostConnectionById(
+    matchedProfiles.flatMap((daemon) => daemon.connections),
     input.connection,
-  ]);
+  );
   const nextLifecycle = prev.lifecycle;
   const nextLabel = prev.label === prev.serverId ? derivedLabel : prev.label;
   const nextPreferredConnectionId =
@@ -262,6 +315,11 @@ function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
   return isPlainRecord(value) ? value : undefined;
 }
 
+function normalizeStoredHeaders(value: unknown): { headers?: Record<string, string> } {
+  const headers = normalizeConnectionHeadersRecord(value);
+  return headers ? { headers } : {};
+}
+
 function normalizeStoredConnection(connection: unknown): HostConnection | null {
   const record = toObjectRecord(connection);
   if (!record) {
@@ -279,6 +337,7 @@ function normalizeStoredConnection(connection: unknown): HostConnection | null {
         endpoint,
         useTls: record.useTls,
         ...(typeof record.password === "string" ? { password: record.password } : {}),
+        ...normalizeStoredHeaders(record.headers),
       });
     } catch {
       return null;
@@ -349,6 +408,7 @@ export function normalizeStoredHostProfile(entry: unknown): HostProfile | null {
   return {
     serverId,
     label,
+    appearance: normalizeStoredHostAppearance(record.appearance),
     lifecycle: defaultLifecycle(),
     connections,
     preferredConnectionId,

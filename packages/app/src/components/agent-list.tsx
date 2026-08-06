@@ -21,8 +21,6 @@ import { Archive, ChevronRight } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
-import { useQueryClient } from "@tanstack/react-query";
-import { agentHistoryQueryKey } from "@/hooks/agent-history-query-key";
 
 interface AgentListProps {
   agents: AggregatedAgent[];
@@ -374,7 +372,6 @@ export function AgentList({
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
   const isMobile = useIsCompactFormFactor();
   const { archiveAgent } = useArchiveAgent();
-  const queryClient = useQueryClient();
 
   const actionClient = useSessionStore((state) =>
     actionAgent?.serverId ? (state.sessions[actionAgent.serverId]?.client ?? null) : null,
@@ -391,35 +388,16 @@ export function AgentList({
 
       const serverId = agent.serverId;
       const agentId = agent.id;
-      const openAgent = () => {
-        onAgentSelect?.();
-        navigateToAgent({
-          serverId,
-          agentId,
-          workspaceId: agent.workspaceId,
-          pin: false,
-        });
-      };
 
-      if (agent.archivedAt) {
-        const client = useSessionStore.getState().sessions[serverId]?.client ?? null;
-        if (client) {
-          void client
-            .refreshAgent(agentId)
-            .then(() => {
-              openAgent();
-              return queryClient.invalidateQueries({
-                queryKey: agentHistoryQueryKey(serverId),
-              });
-            })
-            .catch(() => {});
-        }
-        return;
-      }
-
-      openAgent();
+      onAgentSelect?.();
+      navigateToAgent({
+        serverId,
+        agentId,
+        workspaceId: agent.workspaceId,
+        pin: true,
+      });
     },
-    [isActionSheetVisible, onAgentSelect, queryClient],
+    [isActionSheetVisible, onAgentSelect],
   );
 
   const handleAgentLongPress = useCallback(
@@ -567,7 +545,7 @@ export function AgentList({
             </Text>
             <View style={styles.sheetButtonRow}>
               <Pressable
-                style={SHEET_CANCEL_BUTTON_STYLE}
+                style={[styles.sheetButton, styles.sheetCancelButton]}
                 onPress={handleCloseActionSheet}
                 testID="agent-action-cancel"
               >
@@ -575,7 +553,7 @@ export function AgentList({
               </Pressable>
               <Pressable
                 disabled={isActionDaemonUnavailable}
-                style={SHEET_ARCHIVE_BUTTON_STYLE}
+                style={[styles.sheetButton, styles.sheetArchiveButton]}
                 onPress={handleArchiveAgent}
                 testID="agent-action-archive"
               >
@@ -812,6 +790,3 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
   },
 }));
-
-const SHEET_CANCEL_BUTTON_STYLE = [styles.sheetButton, styles.sheetCancelButton];
-const SHEET_ARCHIVE_BUTTON_STYLE = [styles.sheetButton, styles.sheetArchiveButton];

@@ -13,6 +13,8 @@ import {
 import type { WindowState, WindowStateStore } from "../settings/window-state.js";
 
 const WINDOW_STATE_SAVE_DEBOUNCE_MS = 400;
+const MAC_TRAFFIC_LIGHT_POSITION = { x: 16, y: 14 } as const;
+const MAX_TRAFFIC_LIGHT_OFFSET_Y = 10;
 
 export function readBadgeCount(input: unknown): number {
   if (typeof input !== "number" || !Number.isSafeInteger(input) || input < 0) {
@@ -27,6 +29,7 @@ export interface WindowControlsOverlayUpdate {
   height?: number;
   backgroundColor?: string;
   foregroundColor?: string;
+  trafficLightOffsetY?: number;
 }
 
 export interface WindowControlsOverlayState {
@@ -79,7 +82,7 @@ export function getMainWindowChromeOptions(input: {
     return {
       titleBarStyle: "hidden",
       titleBarOverlay: true,
-      trafficLightPosition: { x: 16, y: 14 },
+      trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
     };
   }
 
@@ -128,6 +131,14 @@ function readOverlayColor(input: unknown): string | null {
   return input;
 }
 
+function readTrafficLightOffsetY(input: unknown): number | null {
+  if (typeof input !== "number" || !Number.isFinite(input)) {
+    return null;
+  }
+
+  return Math.abs(input) <= MAX_TRAFFIC_LIGHT_OFFSET_Y ? input : null;
+}
+
 export function readWindowControlsOverlayUpdate(
   input: unknown,
 ): WindowControlsOverlayUpdate | null {
@@ -139,8 +150,14 @@ export function readWindowControlsOverlayUpdate(
   const height = readFiniteOverlayHeight(candidate.height);
   const backgroundColor = readOverlayColor(candidate.backgroundColor);
   const foregroundColor = readOverlayColor(candidate.foregroundColor);
+  const trafficLightOffsetY = readTrafficLightOffsetY(candidate.trafficLightOffsetY);
 
-  if (height === null && backgroundColor === null && foregroundColor === null) {
+  if (
+    height === null &&
+    backgroundColor === null &&
+    foregroundColor === null &&
+    trafficLightOffsetY === null
+  ) {
     return null;
   }
 
@@ -148,6 +165,7 @@ export function readWindowControlsOverlayUpdate(
     ...(height !== null ? { height } : {}),
     ...(backgroundColor !== null ? { backgroundColor } : {}),
     ...(foregroundColor !== null ? { foregroundColor } : {}),
+    ...(trafficLightOffsetY !== null ? { trafficLightOffsetY } : {}),
   };
 }
 
@@ -176,6 +194,20 @@ export function applyWindowControlsOverlayUpdate(input: {
   return next;
 }
 
+export function applyMacWindowControlsUpdate(input: {
+  win: Pick<BrowserWindow, "setWindowButtonPosition">;
+  update: WindowControlsOverlayUpdate;
+}): void {
+  if (input.update.trafficLightOffsetY === undefined) {
+    return;
+  }
+
+  input.win.setWindowButtonPosition({
+    x: MAC_TRAFFIC_LIGHT_POSITION.x,
+    y: MAC_TRAFFIC_LIGHT_POSITION.y + input.update.trafficLightOffsetY,
+  });
+}
+
 export function registerWindowManager(): void {
   const overlayStateByWindow = new WeakMap<BrowserWindow, WindowControlsOverlayState>();
 
@@ -192,6 +224,11 @@ export function registerWindowManager(): void {
   ipcMain.handle("paseo:window:isFullscreen", (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     return win?.isFullScreen() ?? false;
+  });
+
+  ipcMain.handle("paseo:window:setFullscreen", (event, fullscreen: unknown) => {
+    if (typeof fullscreen !== "boolean") return;
+    BrowserWindow.fromWebContents(event.sender)?.setFullScreen(fullscreen);
   });
 
   ipcMain.handle("paseo:window:setBadgeCount", (_event, count?: unknown) => {
@@ -225,6 +262,7 @@ export function registerWindowManager(): void {
     }
 
     if (process.platform === "darwin") {
+      applyMacWindowControlsUpdate({ win, update: nextUpdate });
       return;
     }
 

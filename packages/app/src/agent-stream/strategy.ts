@@ -42,6 +42,7 @@ export interface StreamEdgeSlotProps {
 export interface StreamViewportHandle {
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
+  scrollToMessage?: (itemId: string) => void;
 }
 
 export interface StreamSegmentRenderers {
@@ -51,9 +52,17 @@ export interface StreamSegmentRenderers {
   renderLiveAuxiliary: () => ReactNode;
 }
 
+export interface StreamHistoryRowRevision {
+  contentById: { has(id: string): boolean };
+  displayStateById: { has(id: string): boolean };
+  globalDisplayState: boolean;
+}
+
 export interface StreamRenderInput {
   agentId: string;
   segments: StreamRenderSegments;
+  historyRowRevision?: StreamHistoryRowRevision;
+  liveHeadRowRevision?: unknown;
   boundary: StreamHistoryBoundary;
   renderers: StreamSegmentRenderers;
   listEmptyComponent: ReactNode;
@@ -61,9 +70,13 @@ export interface StreamRenderInput {
   routeBottomAnchorRequest: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady: boolean;
   onNearBottomChange: (value: boolean) => void;
-  onNearHistoryStart: () => void;
+  // The history row under the top of the viewport, for surfaces that mark where the reader
+  // is in the transcript. Only the web viewport measures it today.
+  onReadingPositionChange?: (rowId: string | null) => void;
+  onNearHistoryStart: () => boolean | Promise<boolean>;
   isLoadingOlderHistory: boolean;
   hasOlderHistory: boolean;
+  olderHistoryProgressKey: string | null;
   scrollEnabled: boolean;
   listStyle: StyleProp<ViewStyle>;
   baseListContentContainerStyle: StyleProp<ViewStyle>;

@@ -1,12 +1,14 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { AttachmentMetadata } from "@/attachments/types";
+import type { AttachmentMetadata, WorkspaceFileComposerAttachment } from "@/attachments/types";
+import { appendWorkspaceFileAttachment } from "@/attachments/workspace-file";
 import {
   garbageCollectAttachments,
   persistAttachmentFromDataUrl,
   persistAttachmentFromFileUri,
 } from "@/attachments/service";
+import { collectRetainedAttachmentIds } from "@/attachments/gc-retention";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
@@ -26,6 +28,7 @@ import {
   type DraftStoreState,
 } from "./state";
 import { migrateDraftInput, migratePersistedState, type MigrateLegacyImages } from "./migration";
+import { createDraftPersistStorage } from "./persistence";
 
 export type { DraftInput, DraftLifecycleState } from "./state";
 
@@ -38,17 +41,29 @@ interface DraftStoreActions {
     draftKey: string;
     lifecycle?: Exclude<DraftLifecycleState, "active">;
   }) => void;
+  attachWorkspaceFile: (input: {
+    draftKey: string;
+    attachment: WorkspaceFileComposerAttachment;
+  }) => Promise<void>;
   getCreateModalDraft: () => DraftInput | null;
   saveCreateModalDraft: (draft: DraftInput | null) => void;
-  beginDraftGeneration: (draftKey: string) => number;
-  isDraftGenerationCurrent: (input: { draftKey: string; generation: number }) => boolean;
   collectActiveAttachmentIds: () => string[];
 }
 
-type DraftStore = DraftStoreState & DraftStoreActions;
+interface DraftStoreRuntimeState {
+  attachmentFocusRequestByDraftKey: Record<string, number>;
+}
 
-const draftGenerations = new Map<string, number>();
+type DraftStore = DraftStoreState & DraftStoreRuntimeState & DraftStoreActions;
+
 let gcScheduled = false;
+const draftPersistStorage = createDraftPersistStorage(
+  createJSONStorage<DraftStoreState>(() => AsyncStorage),
+);
+
+export function flushDraftPersistStorage(): Promise<void> {
+  return draftPersistStorage?.flush() ?? Promise.resolve();
+}
 
 function createDraftRecord(input: {
   draft: DraftInput;
@@ -122,6 +137,9 @@ async function runAttachmentGc(): Promise<void> {
 
   const referencedIds = new Set<string>();
   for (const id of useDraftStore.getState().collectActiveAttachmentIds()) {
+    referencedIds.add(id);
+  }
+  for (const id of collectRetainedAttachmentIds()) {
     referencedIds.add(id);
   }
 
@@ -229,6 +247,7 @@ export const useDraftStore = create<DraftStore>()(
     (set, get) => ({
       drafts: {},
       createModalDraft: null,
+      attachmentFocusRequestByDraftKey: {},
 
       getDraftInput: (draftKey) => {
         const record = get().drafts[draftKey];
@@ -336,7 +355,32 @@ export const useDraftStore = create<DraftStore>()(
           return { drafts: nextDrafts };
         });
 
-        draftGenerations.delete(draftKey);
+        scheduleAttachmentGc();
+      },
+
+      attachWorkspaceFile: async ({ draftKey, attachment }) => {
+        await get().hydrateDraftInput({ draftKey });
+        set((state) => {
+          const existing = state.drafts[draftKey];
+          const draft = toDraftInputIfReady(existing) ?? { text: "", attachments: [] };
+          return {
+            drafts: {
+              ...state.drafts,
+              [draftKey]: createDraftRecord({
+                draft: {
+                  ...draft,
+                  attachments: appendWorkspaceFileAttachment(draft.attachments, attachment),
+                },
+                lifecycle: "active",
+                previousVersion: existing?.version,
+              }),
+            },
+            attachmentFocusRequestByDraftKey: {
+              ...state.attachmentFocusRequestByDraftKey,
+              [draftKey]: (state.attachmentFocusRequestByDraftKey[draftKey] ?? 0) + 1,
+            },
+          };
+        });
         scheduleAttachmentGc();
       },
 
@@ -361,16 +405,6 @@ export const useDraftStore = create<DraftStore>()(
         scheduleAttachmentGc();
       },
 
-      beginDraftGeneration: (draftKey) => {
-        const next = (draftGenerations.get(draftKey) ?? 0) + 1;
-        draftGenerations.set(draftKey, next);
-        return next;
-      },
-
-      isDraftGenerationCurrent: ({ draftKey, generation }) => {
-        return (draftGenerations.get(draftKey) ?? 0) === generation;
-      },
-
       collectActiveAttachmentIds: () => {
         return Array.from(collectReferencedAttachmentIdsFromState(get()).values());
       },
@@ -378,7 +412,8 @@ export const useDraftStore = create<DraftStore>()(
     {
       name: "paseo-drafts",
       version: DRAFT_STORE_VERSION,
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: draftPersistStorage,
+      partialize: ({ drafts, createModalDraft }) => ({ drafts, createModalDraft }),
       migrate: (persistedState) => {
         return migratePersistedState(persistedState, {
           migrateLegacyImages,

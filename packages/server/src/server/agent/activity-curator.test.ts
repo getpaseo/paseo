@@ -315,6 +315,8 @@ second line'`,
       contextKind: "chat_history",
       title: "Chat history",
     });
+    expect(result.attachment.text).toMatch(/^<chat-history-summary>\n/);
+    expect(result.attachment.text).toMatch(/\n<\/chat-history-summary>$/);
     expect(result.attachment.text).toContain("Source agent: Source Agent");
     expect(result.attachment.text).toContain("Source directory: /repo");
     expect(result.attachment.text).toContain("[User] Ship the thing");
@@ -392,6 +394,41 @@ second line'`,
     expect(result.attachment.text).toContain("[Terminal] before boundary");
     expect(result.attachment.text).toContain("[Assistant] Partial result.");
     expect(result.attachment.text).not.toContain("after boundary");
+  });
+
+  it("selects a synthetic assistant error by its timeline cursor", () => {
+    const result = buildAgentForkContextAttachment({
+      cursorBoundary: {
+        timelineEpoch: "timeline-1",
+        cursor: { epoch: "timeline-1", seq: 2 },
+      },
+      rows: [
+        row(1, { type: "user_message", text: "Try the task", messageId: "user-1" }),
+        row(2, { type: "assistant_message", text: "[System Error] provider failed" }),
+        row(3, {
+          type: "assistant_message",
+          text: "This belongs to a later turn.",
+          messageId: "assistant-2",
+        }),
+      ],
+    });
+
+    expect(result.boundaryCursor).toEqual({ epoch: "timeline-1", seq: 2 });
+    expect(result.boundaryMessageId).toBeNull();
+    expect(result.attachment.text).toContain("[System Error] provider failed");
+    expect(result.attachment.text).not.toContain("This belongs to a later turn.");
+  });
+
+  it("rejects a cursor from a previous timeline epoch", () => {
+    expect(() =>
+      buildAgentForkContextAttachment({
+        cursorBoundary: {
+          timelineEpoch: "timeline-2",
+          cursor: { epoch: "timeline-1", seq: 2 },
+        },
+        rows: [row(2, { type: "assistant_message", text: "Stale result." })],
+      }),
+    ).toThrow("Selected timeline position is no longer available.");
   });
 
   it("rejects missing assistant boundaries instead of silently using the wrong context", () => {

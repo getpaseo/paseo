@@ -32,11 +32,26 @@ const HOST_B_MODELS: AgentModelDefinition[] = [
     provider: "mock",
     id: "model-b",
     label: "Model B",
+    aliases: ["model-b-legacy"],
     isDefault: true,
     defaultThinkingOptionId: "high",
     thinkingOptions: [
       { id: "low", label: "Low" },
       { id: "high", label: "High", isDefault: true },
+    ],
+  },
+];
+
+const THINKING_MODELS: AgentModelDefinition[] = [
+  HOST_B_MODELS[0]!,
+  {
+    provider: "mock",
+    id: "model-c",
+    label: "Model C",
+    defaultThinkingOptionId: "low",
+    thinkingOptions: [
+      { id: "low", label: "Low", isDefault: true },
+      { id: "high", label: "High" },
     ],
   },
 ];
@@ -54,7 +69,7 @@ function target(input: {
     optionId: buildProjectOptionId(input.serverId, input.projectKey),
     serverId: input.serverId,
     serverName: input.serverId === "host-a" ? "Host A" : "Host B",
-    projectKey: input.projectKey,
+    projectViewKey: input.projectKey,
     projectName: input.projectName,
     cwd: input.cwd,
     isGit: input.isGit ?? true,
@@ -81,6 +96,7 @@ function scheduleOnHost(input: {
   serverName: string;
   cwd: string;
   model: string;
+  thinkingOptionId?: string | null;
   cadence?: ScheduleSummary["cadence"];
 }): TestSchedule {
   return {
@@ -97,7 +113,8 @@ function scheduleOnHost(input: {
         cwd: input.cwd,
         model: input.model,
         modeId: "load-test",
-        thinkingOptionId: "high",
+        thinkingOptionId:
+          input.thinkingOptionId === undefined ? "high" : (input.thinkingOptionId ?? undefined),
         archiveOnFinish: false,
         isolation: "worktree",
       },
@@ -113,13 +130,36 @@ function scheduleOnHost(input: {
   };
 }
 
-function providerSnapshot(models: AgentModelDefinition[]): { entries: ProviderSnapshotEntry[] } {
+function heartbeatOnHost(cadence: ScheduleSummary["cadence"]): TestSchedule {
+  return {
+    id: "heartbeat-host-a",
+    serverId: "host-a",
+    serverName: "Host A",
+    name: "Babysit",
+    prompt: "Check status",
+    cadence,
+    target: { type: "agent", agentId: "agent-1" },
+    status: "active",
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+    nextRunAt: "2026-07-02T00:00:00.000Z",
+    lastRunAt: null,
+    pausedAt: null,
+    expiresAt: null,
+    maxRuns: null,
+  };
+}
+
+function providerSnapshot(
+  models: AgentModelDefinition[],
+  status: ProviderSnapshotEntry["status"] = "ready",
+): { entries: ProviderSnapshotEntry[] } {
   return {
     entries: [
       {
         provider: "mock",
         label: "Mock",
-        status: "ready",
+        status,
         enabled: true,
         fetchedAt: "2026-07-01T00:00:00.000Z",
         models,
@@ -201,6 +241,69 @@ describe("schedule form model", () => {
       providerResolutionByServerId: { "host-b": "complete" },
       providerSnapshotRequest: null,
     });
+  });
+
+  it("reconciles untouched thinking when a loading provider snapshot becomes ready", () => {
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-b",
+        serverName: "Host B",
+        cwd: "/repo/b",
+        model: "model-b",
+        thinkingOptionId: null,
+      }),
+      defaults: { serverId: null, projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+    const loadingModel = { ...HOST_B_MODELS[0] };
+    delete loadingModel.thinkingOptions;
+    delete loadingModel.defaultThinkingOptionId;
+
+    form.applyProviderSnapshot("host-b", providerSnapshot([loadingModel], "loading"));
+    expect(form.getState().selectedThinkingOptionId).toBe("");
+
+    form.applyProviderSnapshot("host-b", providerSnapshot(HOST_B_MODELS));
+
+    expect(form.getState()).toMatchObject({
+      selectedModel: "model-b",
+      selectedThinkingOptionId: "high",
+      selectedThinkingDisplay: { label: "High" },
+    });
+
+    form.setThinking("low");
+    form.applyProviderSnapshot("host-b", providerSnapshot(HOST_B_MODELS));
+    expect(form.getState().selectedThinkingOptionId).toBe("low");
+  });
+
+  it("preserves per-model thinking across model switches and snapshot updates", () => {
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-b",
+        serverName: "Host B",
+        cwd: "/repo/b",
+        model: "model-b-legacy",
+        thinkingOptionId: "low",
+      }),
+      defaults: { serverId: null, projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+    form.applyProviderSnapshot("host-b", providerSnapshot(THINKING_MODELS));
+
+    form.setModel("mock", "model-b");
+    expect(form.getState().selectedThinkingOptionId).toBe("low");
+
+    form.setThinking("high");
+    form.setModel("mock", "model-c");
+    expect(form.getState().selectedThinkingOptionId).toBe("low");
+
+    form.setModel("mock", "model-b");
+    expect(form.getState().selectedThinkingOptionId).toBe("high");
+
+    form.setModel("mock", "model-b");
+    expect(form.getState().selectedThinkingOptionId).toBe("high");
+
+    form.applyProviderSnapshot("host-b", providerSnapshot(THINKING_MODELS));
+    expect(form.getState().selectedThinkingOptionId).toBe("high");
   });
 
   it("opens create pristine after an edit instance closes", () => {
@@ -389,7 +492,7 @@ describe("schedule form model", () => {
     });
   });
 
-  it("normalizes interval cadences to cron cadences when opening the form", () => {
+  it("displays a representable legacy interval without submitting a cadence change", () => {
     const form = open({
       mode: "edit",
       schedule: scheduleOnHost({
@@ -412,9 +515,12 @@ describe("schedule form model", () => {
       expression: "* * * * *",
       timezone: "Europe/Madrid",
     });
+    form.setName("Renamed without touching cadence");
+
+    expect(form.getState().submitCadence).toBeUndefined();
   });
 
-  it("preserves an edited schedule's interval cadence until the cadence changes", () => {
+  it("does not rewrite an unrepresentable legacy interval until cadence changes", () => {
     const originalCadence = { type: "every" as const, everyMs: 90 * 60_000 };
     const form = open({
       mode: "edit",
@@ -441,7 +547,7 @@ describe("schedule form model", () => {
 
     form.setName("Renamed without touching cadence");
 
-    expect(form.getState().submitCadence).toEqual(originalCadence);
+    expect(form.getState().submitCadence).toBeUndefined();
 
     form.setCadence({
       type: "cron",
@@ -453,6 +559,28 @@ describe("schedule form model", () => {
       type: "cron",
       expression: "0 9 * * *",
       timezone: "Europe/Madrid",
+    });
+  });
+
+  it("requires a cron choice before updating a legacy heartbeat", () => {
+    const form = open({
+      mode: "edit",
+      schedule: heartbeatOnHost({ type: "every", everyMs: 90 * 60_000 }),
+      defaults: {
+        serverId: null,
+        projectTargets: PROJECT_TARGETS,
+        preferences: {},
+        timezone: "Europe/Madrid",
+      },
+    });
+
+    expect(form.getState()).toMatchObject({ targetKind: "agent", canSubmit: false });
+
+    form.setCadence({ type: "cron", expression: "0 9 * * *", timezone: "Europe/Madrid" });
+
+    expect(form.getState()).toMatchObject({
+      submitCadence: { type: "cron", expression: "0 9 * * *", timezone: "Europe/Madrid" },
+      canSubmit: true,
     });
   });
 
@@ -540,6 +668,28 @@ describe("schedule form model", () => {
           testID: "schedule-project-option-project-c",
         },
       ],
+    });
+  });
+
+  it("hydrates an edited schedule's project label when its host targets arrive", () => {
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-b",
+        serverName: "Host B",
+        cwd: "/repo/b",
+        model: "model-b",
+      }),
+      defaults: { serverId: null, projectTargets: [], preferences: {} },
+    });
+
+    expect(form.getState().projectDisplay).toEqual({ label: "/repo/b" });
+
+    form.applyProjectTargets(PROJECT_TARGETS);
+
+    expect(form.getState()).toMatchObject({
+      projectDisplay: { label: "Project B" },
+      selectedProjectOptionId: buildProjectOptionId("host-b", "project-b"),
     });
   });
 

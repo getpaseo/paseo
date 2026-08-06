@@ -13,6 +13,7 @@ const AGENT_DEFAULTS: Agent = {
   id: "agent",
   provider: "codex",
   status: "idle",
+  activeTurn: null,
   createdAt: AGENT_TIMESTAMP,
   updatedAt: AGENT_TIMESTAMP,
   lastUserMessageAt: null,
@@ -59,7 +60,11 @@ function setAgents(agents: Agent[]): void {
 
 afterEach(() => {
   useSessionStore.getState().clearSession(SERVER_ID);
-  useProviderSubagentStore.setState({ descriptors: new Map(), timelines: new Map() });
+  useProviderSubagentStore.setState({
+    descriptors: new Map(),
+    timelines: new Map(),
+    hiddenFromTrack: new Set(),
+  });
 });
 
 describe("selectSubagentsForParent", () => {
@@ -72,6 +77,7 @@ describe("selectSubagentsForParent", () => {
         provider: "codex",
         title: "Provider child",
         description: null,
+        subtitle: "Codex worker · 4.2k tokens",
         status: "completed",
         createdAt: "2026-03-08T10:01:00.000Z",
         updatedAt: "2026-03-08T10:02:00.000Z",
@@ -88,6 +94,38 @@ describe("selectSubagentsForParent", () => {
         (row) => row.id,
       ),
     ).toEqual(["provider-child"]);
+    expect(
+      selectProviderSubagentsForParent(useProviderSubagentStore.getState(), params, true)[0]
+        ?.subtitle,
+    ).toBe("Codex worker · 4.2k tokens");
+  });
+
+  it("hides locally dismissed provider children while retaining their descriptor", () => {
+    const store = useProviderSubagentStore.getState();
+    store.applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        id: "provider-child",
+        parentAgentId: "parent-a",
+        provider: "codex",
+        title: "Provider child",
+        description: null,
+        status: "completed",
+        createdAt: "2026-03-08T10:01:00.000Z",
+        updatedAt: "2026-03-08T10:02:00.000Z",
+        toolCallId: "call-1",
+      },
+    });
+    store.hideFinishedForParent(SERVER_ID, "parent-a");
+
+    expect(
+      selectProviderSubagentsForParent(
+        useProviderSubagentStore.getState(),
+        { serverId: SERVER_ID, parentAgentId: "parent-a" },
+        true,
+      ),
+    ).toEqual([]);
+    expect(useProviderSubagentStore.getState().descriptors.size).toBe(1);
   });
 
   it("returns only non-archived children for the requested parent", () => {
@@ -227,6 +265,8 @@ describe("selectSubagentsForParent", () => {
         id: "child",
         provider: "claude",
         title: "Review child",
+        description: null,
+        subtitle: null,
         status: "running",
         requiresAttention: true,
         createdAt,
@@ -234,11 +274,13 @@ describe("selectSubagentsForParent", () => {
     ]);
     expect(Object.keys(rows[0] ?? {}).sort()).toEqual([
       "createdAt",
+      "description",
       "id",
       "kind",
       "provider",
       "requiresAttention",
       "status",
+      "subtitle",
       "title",
     ]);
     expect(rows[0]).not.toHaveProperty("onOpen");

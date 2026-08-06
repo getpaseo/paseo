@@ -1,8 +1,9 @@
 import { useMemo } from "react";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useReplicaQuery } from "@/data/query";
 import { checkoutDiffPushRoute } from "@/data/push-router";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import type { SubscribeCheckoutDiffResponse } from "@getpaseo/protocol/messages";
+import type { ParsedDiffFile, SubscribeCheckoutDiffResponse } from "@getpaseo/protocol/messages";
 import { checkoutDiffQueryKey } from "@/git/query-keys";
 
 interface UseCheckoutDiffQueryOptions {
@@ -12,11 +13,13 @@ interface UseCheckoutDiffQueryOptions {
   baseRef?: string;
   ignoreWhitespace?: boolean;
   enabled?: boolean;
+  queryScope?: string;
 }
 
 type CheckoutDiffQueryPayload = Omit<SubscribeCheckoutDiffResponse["payload"], "subscriptionId">;
 
-export type ParsedDiffFile = CheckoutDiffQueryPayload["files"][number];
+// Re-export the canonical protocol type so all consumers share one definition.
+export type { ParsedDiffFile };
 export type DiffHunk = ParsedDiffFile["hunks"][number];
 export type DiffLine = DiffHunk["lines"][number];
 export type HighlightToken = NonNullable<DiffLine["tokens"]>[number];
@@ -43,7 +46,10 @@ export function useCheckoutDiffQuery({
   baseRef,
   ignoreWhitespace,
   enabled = true,
+  queryScope,
 }: UseCheckoutDiffQueryOptions) {
+  const retainedPanelActive = useRetainedPanelActive();
+  const queryEnabled = enabled && retainedPanelActive;
   const isConnected = useHostRuntimeIsConnected(serverId);
   const normalizedCompare = useMemo(
     () => normalizeCheckoutDiffCompare({ mode, baseRef, ignoreWhitespace }),
@@ -52,12 +58,19 @@ export function useCheckoutDiffQuery({
   const compareMode = normalizedCompare.mode;
   const compareBaseRef = normalizedCompare.baseRef;
   const compareIgnoreWhitespace = normalizedCompare.ignoreWhitespace;
-  const queryKey = useMemo(
-    () => checkoutDiffQueryKey(serverId, cwd, mode, baseRef, compareIgnoreWhitespace),
-    [serverId, cwd, mode, baseRef, compareIgnoreWhitespace],
-  );
+  const queryKey = useMemo(() => {
+    const comparisonKey = checkoutDiffQueryKey(
+      serverId,
+      cwd,
+      compareMode,
+      compareBaseRef,
+      compareIgnoreWhitespace,
+    );
+    const normalizedScope = queryScope?.trim();
+    return normalizedScope ? [...comparisonKey, "scope", normalizedScope] : comparisonKey;
+  }, [serverId, cwd, compareMode, compareBaseRef, compareIgnoreWhitespace, queryScope]);
   const subscriptionId = useMemo(() => `checkoutDiff:${JSON.stringify(queryKey)}`, [queryKey]);
-  const routeEnabled = Boolean(enabled && isConnected && cwd);
+  const routeEnabled = Boolean(queryEnabled && isConnected && cwd);
 
   const query = useReplicaQuery<CheckoutDiffQueryPayload>({
     queryKey,
@@ -82,7 +95,8 @@ export function useCheckoutDiffQuery({
   return {
     files: payload?.files ?? [],
     payloadError,
-    isLoading: payload === null && enabled && isConnected,
+    diffTooLarge: payload?.diffTooLarge === true,
+    isLoading: payload === null && queryEnabled && isConnected,
     isFetching: false,
     isError: Boolean(payloadError),
     error: null,

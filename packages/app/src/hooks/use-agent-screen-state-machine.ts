@@ -41,11 +41,13 @@ export type AgentScreenMissingState =
 
 export interface AgentScreenMachineInput {
   agent: AgentScreenAgent | null;
+  isArchived: boolean;
   missingAgentState: AgentScreenMissingState;
   isConnected: boolean;
   isArchivingCurrentAgent: boolean;
   isHistorySyncing: boolean;
   needsAuthoritativeSync: boolean;
+  visibilityCatchUpStatus: "ready" | "pending" | "error";
   continuity: AgentScreenContinuity;
   hasHydratedHistoryBefore: boolean;
 }
@@ -60,6 +62,7 @@ function hasOptimisticCreateContinuity(input: AgentScreenMachineInput): boolean 
 
 function shouldBlockInitialAuthoritativeReadyState(input: AgentScreenMachineInput): boolean {
   return (
+    !input.isArchived &&
     !hasOptimisticCreateContinuity(input) &&
     !input.hasHydratedHistoryBefore &&
     (input.needsAuthoritativeSync || input.isHistorySyncing)
@@ -147,11 +150,13 @@ function resolveAgentScreenSource(args: {
 
 function resolveCatchingUpUi(args: {
   hasOptimisticCreateContinuity: boolean;
+  isVisibilityCatchUpPending: boolean;
   hasHydratedHistoryBefore: boolean;
   hadInitialSyncFailure: boolean;
 }): "overlay" | "silent" {
   if (args.hasOptimisticCreateContinuity) return "silent";
   if (args.hasHydratedHistoryBefore) return "silent";
+  if (args.isVisibilityCatchUpPending) return "overlay";
   if (args.hadInitialSyncFailure) return "silent";
   return "overlay";
 }
@@ -161,17 +166,28 @@ function resolveAgentScreenSync(args: {
   hadInitialSyncFailure: boolean;
 }): AgentScreenReadySyncState {
   const { input, hadInitialSyncFailure } = args;
+  if (input.isArchived) {
+    return { status: "idle" };
+  }
   if (!input.isConnected) {
     return { status: "reconnecting" };
   }
   if (input.missingAgentState.kind === "error") {
     return { status: "sync_error" };
   }
-  if (input.needsAuthoritativeSync || input.isHistorySyncing) {
+  if (input.visibilityCatchUpStatus === "error") {
+    return { status: "sync_error" };
+  }
+  if (
+    input.visibilityCatchUpStatus === "pending" ||
+    input.needsAuthoritativeSync ||
+    input.isHistorySyncing
+  ) {
     return {
       status: "catching_up",
       ui: resolveCatchingUpUi({
         hasOptimisticCreateContinuity: hasOptimisticCreateContinuity(input),
+        isVisibilityCatchUpPending: input.visibilityCatchUpStatus === "pending",
         hasHydratedHistoryBefore: input.hasHydratedHistoryBefore,
         hadInitialSyncFailure,
       }),

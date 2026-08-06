@@ -1,5 +1,6 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, { type ReactElement, useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Text, View } from "react-native";
+import { Alert, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -246,7 +247,7 @@ function DaemonInfoCard(props: DaemonInfoCardProps) {
           <Text style={styles.valueSubtext}>{daemonStatusDetailText}</Text>
         </View>
       </View>
-      <View style={ROW_WITH_BORDER_STYLE}>
+      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
         <View style={settingsStyles.rowContent}>
           <Text style={settingsStyles.rowTitle}>{t("desktop.daemon.management.title")}</Text>
           <Text style={settingsStyles.rowHint}>{t("desktop.daemon.management.hint")}</Text>
@@ -258,7 +259,7 @@ function DaemonInfoCard(props: DaemonInfoCardProps) {
           accessibilityLabel={t("desktop.daemon.management.title")}
         />
       </View>
-      <View style={ROW_WITH_BORDER_STYLE}>
+      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
         <View style={settingsStyles.rowContent}>
           <Text style={settingsStyles.rowTitle}>{t("desktop.daemon.keepRunning.title")}</Text>
           <Text style={settingsStyles.rowHint}>{t("desktop.daemon.keepRunning.hint")}</Text>
@@ -270,7 +271,7 @@ function DaemonInfoCard(props: DaemonInfoCardProps) {
           accessibilityLabel={t("desktop.daemon.keepRunning.title")}
         />
       </View>
-      <View style={ROW_WITH_BORDER_STYLE}>
+      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
         <View style={settingsStyles.rowContent}>
           <Text style={settingsStyles.rowTitle}>{t("desktop.daemon.logs.title")}</Text>
           <Text style={settingsStyles.rowHint}>
@@ -294,7 +295,7 @@ function DaemonInfoCard(props: DaemonInfoCardProps) {
           </Button>
         </View>
       </View>
-      <View style={ROW_WITH_BORDER_STYLE}>
+      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
         <View style={settingsStyles.rowContent}>
           <Text style={settingsStyles.rowTitle}>{t("desktop.daemon.fullStatus.title")}</Text>
           <Text style={settingsStyles.rowHint}>{t("desktop.daemon.fullStatus.hint")}</Text>
@@ -420,8 +421,8 @@ export function LocalDaemonSection() {
       testID="host-page-daemon-lifecycle-card"
     >
       {isLoading || isLoadingSettings ? (
-        <View style={LOADING_CARD_STYLE}>
-          <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+        <View style={[settingsStyles.card, styles.loadingCard]}>
+          <LoadingSpinner size="small" color={theme.colors.foregroundMuted} />
         </View>
       ) : (
         <>
@@ -524,7 +525,5 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-const LOADING_CARD_STYLE = [settingsStyles.card, styles.loadingCard];
-const ROW_WITH_BORDER_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
 const LOGS_MODAL_SNAP_POINTS = ["70%", "92%"];
 const CLI_STATUS_MODAL_SNAP_POINTS = ["60%", "85%"];

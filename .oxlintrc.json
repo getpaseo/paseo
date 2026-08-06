@@ -87,6 +87,9 @@
     {
       "files": ["packages/app/src/**/*.{ts,tsx}"],
       "rules": {
+        // React Native style arrays must read Unistyles proxies during render. Hoisting them to
+        // satisfy this allocation rule captures the temporary startup theme instead.
+        "react-perf/jsx-no-new-array-as-prop": "off",
         "no-restricted-imports": [
           "error",
           {
@@ -127,7 +130,7 @@
         ]
       }
     },
-    // Raw query burn-down: 35 files total; the 29 files below still enforce the useUnistyles ban.
+    // Raw query burn-down: 34 files total; the 28 files below still enforce the useUnistyles ban.
     {
       "files": [
         "packages/app/src/assistant-file-links/use-file-link.ts",
@@ -151,10 +154,9 @@
         "packages/app/src/hooks/use-is-local-daemon.ts",
         "packages/app/src/hooks/use-keyboard-shortcut-overrides.ts",
         "packages/app/src/hooks/use-preferred-editor.ts",
-        "packages/app/src/hooks/use-project-icon-query.ts",
         "packages/app/src/hooks/use-settings/index.ts",
         "packages/app/src/panels/terminal-panel.tsx",
-        "packages/app/src/projects/project-icons.ts",
+        "packages/app/src/projects/icons.ts",
         "packages/app/src/provider-usage/use-provider-usage.ts",
         "packages/app/src/screens/project-settings-screen.tsx",
         "packages/app/src/screens/workspace/use-workspace-checkout-status.ts",
@@ -186,9 +188,9 @@
         "packages/app/src/components/agent-list.tsx",
         "packages/app/src/components/agent-status-dot.tsx",
         "packages/app/src/components/attachment-lightbox.tsx",
-        "packages/app/src/components/browser-pane.electron.tsx",
-        "packages/app/src/components/browser-pane.tsx",
-        "packages/app/src/components/browser-pane.web.tsx",
+        "packages/app/src/desktop/browser/pane/index.electron.tsx",
+        "packages/app/src/desktop/browser/pane/index.tsx",
+        "packages/app/src/desktop/browser/pane/index.web.tsx",
         "packages/app/src/components/command-center.tsx",
         "packages/app/src/components/context-window-meter.tsx",
         "packages/app/src/components/dictation-controls.tsx",
@@ -277,7 +279,7 @@
       }
     },
     {
-      "files": ["**/e2e/fixtures.ts"],
+      "files": ["**/e2e/**/fixtures.ts"],
       "rules": {
         "no-empty-pattern": "off"
       }

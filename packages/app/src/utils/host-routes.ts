@@ -1,4 +1,5 @@
 import { Buffer } from "buffer";
+import { buildAgentDeepLinkRoute } from "@getpaseo/protocol/agent-deep-link";
 
 type NullableString = string | null | undefined;
 const BASE64_WORKSPACE_ID_PREFIX = "b64_";
@@ -174,11 +175,16 @@ export function parseWorkspaceOpenIntent(
 export function parseHostWorkspaceOpenIntentFromPathname(
   pathname: string,
 ): WorkspaceOpenIntent | null {
+  return parseWorkspaceOpenIntent(getHostWorkspaceOpenParamFromPathname(pathname));
+}
+
+export function getHostWorkspaceOpenParamFromPathname(pathname: string): string | null {
   const search = extractSearch(pathname);
   if (!search) {
     return null;
   }
-  return parseWorkspaceOpenIntent(new URLSearchParams(search).get("open"));
+  const open = new URLSearchParams(search).get("open");
+  return parseWorkspaceOpenIntent(open) ? open : null;
 }
 
 export function encodeWorkspaceIdForPathSegment(workspaceId: string): string {
@@ -384,7 +390,10 @@ export function buildHostAgentDetailRoute(serverId: string, agentId: string, wor
   if (!normalizedServerId || !normalizedAgentId) {
     return "/" as const;
   }
-  return `${buildHostRootRoute(normalizedServerId)}/agent/${encodeSegment(normalizedAgentId)}` as const;
+  return buildAgentDeepLinkRoute({
+    serverId: normalizedServerId,
+    agentId: normalizedAgentId,
+  });
 }
 
 export function buildHostRootRoute(serverId: string) {
@@ -483,6 +492,7 @@ export function resolveKnownHostRoute(input: {
 export const SETTINGS_SECTION_SLUGS = [
   "general",
   "appearance",
+  "editor",
   "shortcuts",
   "integrations",
   "permissions",
@@ -497,7 +507,9 @@ export function isSettingsSectionSlug(value: string): value is SettingsSectionSl
 }
 
 export const HOST_SECTION_SLUGS = [
+  "projects",
   "connections",
+  "pair-device",
   "agents",
   "workspaces",
   "providers",
@@ -552,14 +564,22 @@ export function buildSettingsHostSectionRoute(serverId: string, section: HostSec
   return `/settings/hosts/${encodeSegment(normalized)}/${section}` as const;
 }
 
-export function buildProjectsSettingsRoute() {
-  return "/settings/projects" as const;
+export function buildProjectsSettingsRoute(serverId: string) {
+  const normalized = trimNonEmpty(serverId);
+  if (!normalized) {
+    throw new Error("buildProjectsSettingsRoute requires a non-empty serverId");
+  }
+  return `/settings/hosts/${encodeSegment(normalized)}/projects` as const;
 }
 
-export function buildProjectSettingsRoute(projectKey: string) {
-  const normalized = trimNonEmpty(projectKey);
-  if (!normalized) {
-    throw new Error("buildProjectSettingsRoute requires a non-empty projectKey");
+export function buildProjectSettingsRoute(serverId: string, projectId: string) {
+  if (!serverId.trim() || !projectId.trim()) {
+    throw new Error("buildProjectSettingsRoute requires a serverId and projectId");
   }
-  return `/settings/projects/${encodeSegment(normalized)}` as const;
+  return `/settings/hosts/${encodeSegment(serverId)}/projects/${encodeSegment(projectId)}` as const;
+}
+
+export function normalizeProjectSettingsRouteId(value: string | string[] | undefined): string {
+  const id = Array.isArray(value) ? value[0] : value;
+  return typeof id === "string" ? id : "";
 }

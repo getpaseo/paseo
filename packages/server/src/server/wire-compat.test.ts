@@ -4,16 +4,19 @@ import { describe, expect, test } from "vitest";
 
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import {
-  AgentSnapshotPayloadSchema,
   AgentTimelineItemPayloadSchema,
   FetchAgentTimelineResponseMessageSchema,
   SessionInboundMessageSchema,
+  SessionOutboundMessageSchema,
   type SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 import { Session, type SessionOptions } from "./session.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import type { AgentTimelineRow } from "./agent/agent-manager.js";
+import { InMemoryAgentTimelineStore } from "./agent/agent-timeline-store.js";
+import type { AgentTimelineFetchOptions } from "./agent/agent-timeline-store-types.js";
 import { handleCreatePaseoWorktreeRequest } from "./worktree-session.js";
+import { createPersistedProjectRecord } from "./workspace-registry.js";
 
 const LegacyTimelineEntryPayloadSchema = z.object({
   provider: z.enum(["claude", "codex", "opencode"]),
@@ -38,41 +41,6 @@ const LegacyFetchAgentTimelineResponseMessageSchema = z.object({
   }),
 });
 
-const LegacySubAgentToolCallSchema = z.object({
-  type: z.literal("tool_call"),
-  callId: z.string(),
-  name: z.string(),
-  status: z.enum(["running", "completed", "failed", "canceled"]),
-  error: z.unknown().nullable(),
-  detail: z.object({
-    type: z.literal("sub_agent"),
-    subAgentType: z.string().optional(),
-    description: z.string().optional(),
-    log: z.string(),
-    // Copied from v0.1.65-beta.3: actions was required even though the UI ignored it.
-    actions: z.array(
-      z.object({
-        index: z.number().int().positive(),
-        toolName: z.string(),
-        summary: z.string().optional(),
-      }),
-    ),
-  }),
-});
-
-const LegacyAgentCapabilityFlagsSchema = z.object({
-  supportsStreaming: z.boolean(),
-  supportsSessionPersistence: z.boolean(),
-  supportsDynamicModes: z.boolean(),
-  supportsMcpServers: z.boolean(),
-  supportsReasoningStream: z.boolean(),
-  supportsToolInvocations: z.boolean(),
-});
-
-const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.extend({
-  capabilities: LegacyAgentCapabilityFlagsSchema,
-});
-
 interface SessionInternals {
   handleFetchAgentTimelineRequest: (
     message: Extract<
@@ -83,7 +51,15 @@ interface SessionInternals {
 }
 
 class InMemoryAgentManager {
-  constructor(private readonly rows: AgentTimelineRow[]) {}
+  private readonly timeline = new InMemoryAgentTimelineStore();
+
+  constructor(rows: AgentTimelineRow[]) {
+    this.timeline.initialize("agent-1", {
+      epoch: "epoch-1",
+      rows,
+      nextSeq: (rows.at(-1)?.seq ?? 0) + 1,
+    });
+  }
 
   getAgent() {
     return {
@@ -129,17 +105,8 @@ class InMemoryAgentManager {
     };
   }
 
-  fetchTimeline() {
-    return {
-      epoch: "epoch-1",
-      reset: false,
-      staleCursor: false,
-      gap: false,
-      window: { minSeq: 1, maxSeq: 3, nextSeq: 4 },
-      rows: this.rows,
-      hasOlder: false,
-      hasNewer: false,
-    };
+  fetchTimeline(_agentId: string, options?: AgentTimelineFetchOptions) {
+    return this.timeline.fetch("agent-1", options);
   }
 
   listAgents() {
@@ -214,6 +181,7 @@ class InMemoryWorktreeWorkflow {
 function createSessionForWireCompatTest(options?: {
   clientCapabilities?: Record<string, unknown> | null;
   messages?: SessionOutboundMessage[];
+  rows?: AgentTimelineRow[];
 }): Session {
   const messages = options?.messages ?? [];
   const rows: AgentTimelineRow[] = [
@@ -236,13 +204,16 @@ function createSessionForWireCompatTest(options?: {
 
   const session = new Session({
     clientId: "wire-compat-client",
+    scopes: ["*"],
     clientCapabilities: options?.clientCapabilities ?? null,
     onMessage: (message) => messages.push(message),
     logger: pino({ level: "silent" }),
     downloadTokenStore: {} as SessionOptions["downloadTokenStore"],
     pushTokenStore: {} as SessionOptions["pushTokenStore"],
     paseoHome: "/tmp/paseo-home",
-    agentManager: new InMemoryAgentManager(rows) as unknown as SessionOptions["agentManager"],
+    agentManager: new InMemoryAgentManager(
+      options?.rows ?? rows,
+    ) as unknown as SessionOptions["agentManager"],
     agentStorage: new EmptyAgentStorage() as unknown as SessionOptions["agentStorage"],
     projectRegistry: new EmptyProjectRegistry() as unknown as SessionOptions["projectRegistry"],
     workspaceRegistry:
@@ -288,8 +259,8 @@ function createSessionForWireCompatTest(options?: {
       async resolveRepoRemoteUrl() {
         return null;
       },
-      async getWorkspaceGitMetadata() {
-        return null;
+      async getProjectSlug() {
+        return "project";
       },
     } as unknown as SessionOptions["workspaceGitService"],
     daemonConfigStore:
@@ -303,11 +274,19 @@ function createSessionForWireCompatTest(options?: {
   return session;
 }
 
-async function emitTimelineResponse(
-  clientCapabilities?: Record<string, unknown> | null,
-): Promise<Extract<SessionOutboundMessage, { type: "fetch_agent_timeline_response" }>> {
+async function emitTimelineResponse(options?: {
+  clientCapabilities?: Record<string, unknown> | null;
+  rows?: AgentTimelineRow[];
+  request?: Partial<
+    Extract<z.infer<typeof SessionInboundMessageSchema>, { type: "fetch_agent_timeline_request" }>
+  >;
+}): Promise<Extract<SessionOutboundMessage, { type: "fetch_agent_timeline_response" }>> {
   const messages: SessionOutboundMessage[] = [];
-  const session = createSessionForWireCompatTest({ clientCapabilities, messages });
+  const session = createSessionForWireCompatTest({
+    clientCapabilities: options?.clientCapabilities,
+    rows: options?.rows,
+    messages,
+  });
   const internals = session as unknown as SessionInternals;
 
   await internals.handleFetchAgentTimelineRequest({
@@ -315,6 +294,7 @@ async function emitTimelineResponse(
     requestId: "req-timeline",
     agentId: "agent-1",
     projection: "projected",
+    ...options?.request,
   });
 
   const response = messages[0];
@@ -326,27 +306,50 @@ async function emitTimelineResponse(
 }
 
 describe("wire compatibility", () => {
-  test("assistant timeline message ids are optional on the wire", () => {
-    expect(
-      AgentTimelineItemPayloadSchema.parse({
-        type: "assistant_message",
-        text: "old daemon shape",
-      }),
-    ).toEqual({
-      type: "assistant_message",
-      text: "old daemon shape",
+  test("sends project updates only to clients that declare support", () => {
+    const project = createPersistedProjectRecord({
+      projectId: "project-1",
+      rootPath: "/tmp/project",
+      kind: "git",
+      displayName: "project",
+      customName: "Favorite project",
+      createdAt: "2026-07-15T00:00:00.000Z",
+      updatedAt: "2026-07-15T00:00:00.000Z",
     });
-    expect(
-      AgentTimelineItemPayloadSchema.parse({
-        type: "assistant_message",
-        text: "new daemon shape",
-        messageId: "msg-1",
-      }),
-    ).toEqual({
-      type: "assistant_message",
-      text: "new daemon shape",
-      messageId: "msg-1",
+    const legacyMessages: SessionOutboundMessage[] = [];
+    const capableMessages: SessionOutboundMessage[] = [];
+    const legacy = createSessionForWireCompatTest({ messages: legacyMessages });
+    const capable = createSessionForWireCompatTest({
+      clientCapabilities: { [CLIENT_CAPS.projectUpdates]: true },
+      messages: capableMessages,
     });
+
+    legacy.emitProjectUpdate({ kind: "upsert", project });
+    legacy.emitProjectUpdate({ kind: "remove", projectId: project.projectId });
+    capable.emitProjectUpdate({ kind: "upsert", project });
+    capable.emitProjectUpdate({ kind: "remove", projectId: project.projectId });
+
+    expect(legacyMessages).toEqual([]);
+    expect(capableMessages.map((message) => SessionOutboundMessageSchema.parse(message))).toEqual([
+      {
+        type: "project.update",
+        payload: {
+          kind: "upsert",
+          project: {
+            projectId: "project-1",
+            projectDisplayName: "Favorite project",
+            projectCustomName: "Favorite project",
+            projectCustomIconRevision: null,
+            projectRootPath: "/tmp/project",
+            projectKind: "git",
+          },
+        },
+      },
+      {
+        type: "project.update",
+        payload: { kind: "remove", projectId: "project-1" },
+      },
+    ]);
   });
 
   test("downgrades reasoning_merge for clients that do not declare the capability", async () => {
@@ -361,105 +364,11 @@ describe("wire compatibility", () => {
 
   test("preserves reasoning_merge for clients that declare the capability", async () => {
     const response = await emitTimelineResponse({
-      [CLIENT_CAPS.reasoningMergeEnum]: true,
+      clientCapabilities: { [CLIENT_CAPS.reasoningMergeEnum]: true },
     });
 
     const currentParsed = FetchAgentTimelineResponseMessageSchema.parse(response);
     expect(currentParsed.payload.entries[0]?.collapsed).toContain("reasoning_merge");
-  });
-
-  test("sub_agent tool-call payload still parses against the v0.1.65-beta.3 schema", () => {
-    const parsed = LegacySubAgentToolCallSchema.parse({
-      type: "tool_call",
-      callId: "call-sub-agent-1",
-      name: "Task",
-      status: "completed",
-      error: null,
-      detail: {
-        type: "sub_agent",
-        subAgentType: "Explore",
-        description: "Inspect repository structure",
-        childSessionId: "child-session-1",
-        log: "[Read] README.md",
-        actions: [],
-      },
-    });
-
-    expect(parsed.detail.actions).toEqual([]);
-  });
-
-  test("old clients parse agent snapshots with rewind capabilities", () => {
-    const parsed = LegacyAgentSnapshotPayloadSchema.parse({
-      id: "agent-1",
-      provider: "claude",
-      cwd: "/tmp/project",
-      model: null,
-      thinkingOptionId: null,
-      effectiveThinkingOptionId: null,
-      createdAt: "2026-05-23T00:00:00.000Z",
-      updatedAt: "2026-05-23T00:00:00.000Z",
-      lastUserMessageAt: null,
-      status: "idle",
-      capabilities: {
-        supportsStreaming: true,
-        supportsSessionPersistence: true,
-        supportsDynamicModes: true,
-        supportsMcpServers: true,
-        supportsReasoningStream: true,
-        supportsToolInvocations: true,
-        supportsRewindConversation: true,
-        supportsRewindFiles: true,
-        supportsRewindBoth: true,
-      },
-      currentModeId: null,
-      availableModes: [],
-      pendingPermissions: [],
-      persistence: null,
-      title: null,
-      labels: {},
-    });
-
-    expect(parsed.capabilities).toEqual({
-      supportsStreaming: true,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: true,
-      supportsMcpServers: true,
-      supportsReasoningStream: true,
-      supportsToolInvocations: true,
-    });
-  });
-
-  test("new clients parse agent snapshots without rewind capabilities", () => {
-    const parsed = AgentSnapshotPayloadSchema.parse({
-      id: "agent-1",
-      provider: "claude",
-      cwd: "/tmp/project",
-      model: null,
-      thinkingOptionId: null,
-      effectiveThinkingOptionId: null,
-      createdAt: "2026-05-23T00:00:00.000Z",
-      updatedAt: "2026-05-23T00:00:00.000Z",
-      lastUserMessageAt: null,
-      status: "idle",
-      capabilities: {
-        supportsStreaming: true,
-        supportsSessionPersistence: true,
-        supportsDynamicModes: true,
-        supportsMcpServers: true,
-        supportsReasoningStream: true,
-        supportsToolInvocations: true,
-      },
-      currentModeId: null,
-      availableModes: [],
-      pendingPermissions: [],
-      persistence: null,
-      title: null,
-      labels: {},
-    });
-
-    expect(parsed.capabilities.supportsRewindConversation).toBe(false);
-    expect(parsed.capabilities.supportsRewindFiles).toBe(false);
-    expect(parsed.capabilities.supportsRewindBoth).toBe(false);
   });
 
   test("legacy worktree request shape normalizes to the same internal input as the new shape", async () => {

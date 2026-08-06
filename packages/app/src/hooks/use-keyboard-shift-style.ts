@@ -1,15 +1,11 @@
-import {
-  createContext,
-  createElement,
-  useContext,
-  useEffect,
-  useMemo,
-  type ReactNode,
-} from "react";
+import { createElement, useEffect, useMemo, type ReactNode } from "react";
 import { Platform } from "react-native";
 import type { ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import {
+  useGenericKeyboardHandler,
+  useReanimatedKeyboardAnimation,
+} from "react-native-keyboard-controller";
 import {
   useAnimatedStyle,
   useDerivedValue,
@@ -20,15 +16,9 @@ import {
   DEFAULT_IOS_KEYBOARD_INSET_MIN_HEIGHT,
   resolveKeyboardShift,
 } from "@/hooks/keyboard-shift-policy";
+import { KeyboardShiftContext, useKeyboardShift } from "@/hooks/keyboard-shift-context";
 
 type KeyboardShiftMode = "translate" | "padding";
-
-interface KeyboardShiftContextValue {
-  shift: SharedValue<number>;
-  bottomInset: SharedValue<number>;
-}
-
-const KeyboardShiftContext = createContext<KeyboardShiftContextValue | null>(null);
 
 export function KeyboardShiftProvider({ children }: { children: ReactNode }) {
   const insets = useSafeAreaInsets();
@@ -39,6 +29,19 @@ export function KeyboardShiftProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     bottomInset.value = insets.bottom;
   }, [bottomInset, insets.bottom]);
+
+  useGenericKeyboardHandler(
+    {
+      onEnd: (event) => {
+        "worklet";
+        if (isIos) {
+          keyboardHeight.value = -event.height;
+          keyboardProgress.value = event.progress;
+        }
+      },
+    },
+    [isIos, keyboardHeight, keyboardProgress],
+  );
 
   const shift = useDerivedValue(() => {
     "worklet";
@@ -60,14 +63,6 @@ export function KeyboardShiftProvider({ children }: { children: ReactNode }) {
   );
 
   return createElement(KeyboardShiftContext.Provider, { value }, children);
-}
-
-export function useKeyboardShift(): KeyboardShiftContextValue {
-  const context = useContext(KeyboardShiftContext);
-  if (!context) {
-    throw new Error("useKeyboardShift must be used inside KeyboardShiftProvider");
-  }
-  return context;
 }
 
 export function useKeyboardShiftStyle(input: { mode: KeyboardShiftMode; enabled?: boolean }): {
