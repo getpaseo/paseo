@@ -173,7 +173,7 @@ The bridge is intentionally this small. A plugin gets the content it was opened 
 
 ## Contribution points
 
-**File preview.** The file pane resolves a preview by extension. A plugin preview wins over the built-in syntax-highlighted view for extensions it claims, and the user can switch back from the file pane toolbar. Two plugins claiming the same extension resolve alphabetically by plugin id; the loser is reported in Settings. Matching is by suffix, so `.csv` also claims `report.data.csv` and a plugin claiming the longer form loses to it — Settings reports that under the longer extension.
+**File preview.** The file pane resolves a preview by extension. A plugin preview wins over the built-in syntax-highlighted view for extensions it claims, and the user can switch back from the file pane toolbar. Two plugins claiming the same extension resolve alphabetically by plugin id; the loser is reported in Settings. Matching is by suffix, so `.csv` also claims `report.data.csv`: the two plugins compete for that file and the same alphabetical rule picks the winner. A more specific extension does not outrank a broader one. Settings reports the pair under the longer extension.
 
 **Sidebar panel.** One extra tab in the explorer sidebar next to Changes, Files, and PR. Every plugin tab renders the same generic icon; the manifest's `icon` is parsed but not honoured, because honouring it means bundling the whole icon set to satisfy a name only known at runtime.
 

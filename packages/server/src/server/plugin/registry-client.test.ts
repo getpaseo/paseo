@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { describe, expect, test } from "vitest";
 import type { PluginRegistryIndex } from "@getpaseo/protocol/plugin/types";
@@ -286,6 +290,23 @@ describe("PluginRegistryClient", () => {
 
     await expect(client.download("csv-table")).rejects.toBeInstanceOf(PluginDownloadRejectedError);
     expect(http.byteRequests).toEqual([]);
+  });
+
+  // `z.url()` accepts `file:/tmp/index.json` and the config's protocol check
+  // passes it, so the transport has to read it off the parsed URL too. A
+  // `startsWith("file://")` test sent this one to `fetch`, which does not
+  // implement the scheme: the config validated and Browse failed.
+  test("reads a file URL written without the empty authority", async () => {
+    const path = join(tmpdir(), `paseo-registry-${randomUUID()}.json`);
+    await writeFile(path, PREVIEW_HTML);
+    try {
+      const http = createFetchPluginRegistryHttp();
+      const bytes = await http.getBytes(`file:${path}`);
+
+      expect(new TextDecoder().decode(bytes)).toBe(PREVIEW_HTML);
+    } finally {
+      await rm(path, { force: true });
+    }
   });
 
   test("aborts a body that streams past the declared size", async () => {

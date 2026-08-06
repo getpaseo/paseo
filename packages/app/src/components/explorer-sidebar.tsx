@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   StyleSheet as RNStyleSheet,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { InstalledPlugin } from "@getpaseo/protocol/plugin/types";
 import Animated, { useAnimatedStyle, useSharedValue, runOnJS } from "react-native-reanimated";
 import { Gesture } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
@@ -43,7 +42,11 @@ import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { resolveFocusedChatTarget } from "@/composer/focused-chat-target";
 import { createWorkspaceFileAttachment } from "@/attachments/workspace-file";
 import { useDraftStore } from "@/stores/draft-store";
-import { buildPluginExplorerTab, isPluginExplorerTab } from "@/stores/explorer-tab-memory";
+import {
+  resolveExplorerTab,
+  resolvePluginSidebarTabs,
+  type PluginSidebarTab,
+} from "@/components/explorer-tab-resolution";
 import { usePluginEntry, usePlugins } from "@/plugins/queries";
 import { PluginSandbox } from "@/plugins/sandbox";
 import { fromPluginRelativePath, type PluginContext } from "@/plugins/bridge";
@@ -323,9 +326,10 @@ function ExplorerSidebarContent({
   });
   const hasPullRequest = prPane.prNumber !== null;
   const showPrTab = hasPullRequest || (activeTab === "pr" && prPane.isLoading);
-  const { plugins, isLoading: pluginsLoading } = usePlugins(serverId);
+  const { plugins, isLoading } = usePlugins(serverId);
+  const pluginsLoading = useBoundedPluginsLoading(isLoading);
   const pluginTabs = useMemo(() => resolvePluginSidebarTabs(plugins), [plugins]);
-  const { resolvedTab, activePluginTab } = resolveExplorerTab({
+  const { resolvedTab, activePluginTab, pluginTabPending } = resolveExplorerTab({
     activeTab,
     isGit,
     showPrTab,
@@ -447,6 +451,11 @@ function ExplorerSidebarContent({
             onRetry={handlePrRetry}
           />
         )}
+        {pluginTabPending && (
+          <View style={styles.pluginState}>
+            <Text style={styles.pluginStateText}>{t("plugins.loading")}</Text>
+          </View>
+        )}
         {/* Gated on isOpen like the PR pane: on compact the sidebar stays
             mounted under RetainedPanelActivity, and a closed drawer must not
             keep a WebView running untrusted plugin JS. */}
@@ -465,47 +474,25 @@ function ExplorerSidebarContent({
   );
 }
 
-interface PluginSidebarTab {
-  tab: ExplorerTab;
-  pluginId: string;
-  pluginName: string;
-  title: string;
-  entry: string;
-}
-
 /**
- * Enabled, usable plugins' sidebar panels, ordered stably by plugin id.
- *
- * First panel wins a repeated id. The tab key is `plugin:<id>:<panel>`, so a
- * manifest declaring the same panel id twice produces two identical keys — a
- * duplicate React key, and a second tab that can never be selected because the
- * first answers to the same key. Nothing rejects such a manifest: the id is
- * unique per plugin only by convention.
+ * `usePlugins` reports loading until `server_info` lands, which for a host that
+ * never answers is forever — so the hold below it is bounded the same way the
+ * file pane bounds its identical wait (`file-pane/pane.tsx`). Past the deadline
+ * the remembered plugin tab gives up and the built-in fallback renders.
  */
-function resolvePluginSidebarTabs(
-  plugins: readonly InstalledPlugin[],
-): readonly PluginSidebarTab[] {
-  return [...plugins]
-    .filter((plugin) => plugin.enabled && plugin.unavailableReason === null)
-    .sort((left, right) => left.manifest.id.localeCompare(right.manifest.id))
-    .flatMap((plugin) => {
-      const seen = new Set<string>();
-      return (plugin.manifest.contributes.sidebarPanels ?? [])
-        .filter((panel) => {
-          if (seen.has(panel.id)) {
-            return false;
-          }
-          seen.add(panel.id);
-          return true;
-        })
-        .map((panel) => ({
-          tab: buildPluginExplorerTab(plugin.manifest.id, panel.id),
-          pluginId: plugin.manifest.id,
-          pluginName: plugin.manifest.name,
-          title: panel.title,
-          entry: panel.entry,
-        }));
-    });
+const PLUGIN_TABS_WAIT_MS = 2_000;
+
+function useBoundedPluginsLoading(isLoading: boolean): boolean {
+  const [waitedTooLong, setWaitedTooLong] = useState(false);
+  useEffect(() => {
+    setWaitedTooLong(false);
+    if (!isLoading) {
+      return;
+    }
+    const timer = setTimeout(() => setWaitedTooLong(true), PLUGIN_TABS_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [isLoading]);
+  return isLoading && !waitedTooLong;
 }
 
 const ThemedPuzzle = withUnistyles(Puzzle);
@@ -545,37 +532,6 @@ function PluginTabButtons({
       ))}
     </>
   );
-}
-
-function resolveExplorerTab(input: {
-  activeTab: ExplorerTab;
-  isGit: boolean;
-  showPrTab: boolean;
-  pluginTabs: readonly PluginSidebarTab[];
-  pluginsLoading: boolean;
-}): { resolvedTab: ExplorerTab; activePluginTab: PluginSidebarTab | null } {
-  const requestedTab: ExplorerTab =
-    !input.isGit && (input.activeTab === "changes" || input.activeTab === "pr")
-      ? "files"
-      : input.activeTab;
-  const fallback: ExplorerTab = input.isGit ? "changes" : "files";
-  // A remembered plugin tab outlives its plugin: fall back rather than render
-  // a tab nothing can fill.
-  const activePluginTab = input.pluginTabs.find((panel) => panel.tab === requestedTab) ?? null;
-  if (requestedTab === "pr" && !input.showPrTab) {
-    return { resolvedTab: "changes", activePluginTab: null };
-  }
-  // Before the plugin list lands, every plugin tab looks uninstalled. Falling
-  // back here would mount Changes and fire its git RPCs for the split second
-  // until the list arrives, then swap. Hold the requested tab with an empty
-  // content area instead.
-  if (input.pluginsLoading && isPluginExplorerTab(requestedTab) && !activePluginTab) {
-    return { resolvedTab: requestedTab, activePluginTab: null };
-  }
-  if (isPluginExplorerTab(requestedTab) && !activePluginTab) {
-    return { resolvedTab: fallback, activePluginTab: null };
-  }
-  return { resolvedTab: requestedTab, activePluginTab };
 }
 
 function PluginTabContent({
