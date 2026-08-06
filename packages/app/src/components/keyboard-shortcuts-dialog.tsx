@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { getIsElectronRuntime } from "@/constants/layout";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Shortcut } from "@/components/ui/shortcut";
+import { getIsElectronRuntime } from "@/constants/layout";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import {
   buildEffectiveBindings,
@@ -12,7 +12,7 @@ import {
 } from "@/keyboard/keyboard-shortcuts";
 import { filterShortcutHelpSections } from "@/keyboard/shortcut-help-search";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
-import { useShortcutOs } from "@/utils/shortcut-platform";
+import { usesDesktopShortcutBindings, useShortcutOs } from "@/utils/shortcut-platform";
 
 const SNAP_POINTS: string[] = ["70%", "92%"];
 
@@ -24,7 +24,7 @@ export function KeyboardShortcutsDialog() {
 
   const shortcutOs = useShortcutOs();
   const isMac = shortcutOs === "mac";
-  const isDesktopApp = getIsElectronRuntime();
+  const isDesktopApp = usesDesktopShortcutBindings();
   const { overrides } = useKeyboardShortcutOverrides();
   // Effective bindings, so a shortcut the user unassigned lists no keys here
   // instead of advertising a default that no longer fires.

@@ -1,20 +1,41 @@
 package expo.modules.paseohardwarekeyboard
 
+import android.content.Context
+import android.hardware.input.InputManager
+import android.view.InputDevice
 import android.view.KeyEvent
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
 private const val HARDWARE_SUBMIT_EVENT_NAME = "onHardwareKeyboardSubmit"
 private const val HARDWARE_KEY_DOWN_EVENT_NAME = "onHardwareKeyDown"
+private const val HARDWARE_MODIFIER_EVENT_NAME = "onHardwareModifier"
+private const val HARDWARE_CONNECTION_EVENT_NAME = "onHardwareKeyboardConnectionChange"
 
 class PaseoHardwareKeyboardModule : Module() {
+  private var inputManager: InputManager? = null
+
+  private val inputDeviceListener = object : InputManager.InputDeviceListener {
+    override fun onInputDeviceAdded(deviceId: Int) = emitConnectionState()
+    override fun onInputDeviceRemoved(deviceId: Int) = emitConnectionState()
+    override fun onInputDeviceChanged(deviceId: Int) = emitConnectionState()
+  }
+
   override fun definition() = ModuleDefinition {
     Name("PaseoHardwareKeyboard")
 
-    Events(HARDWARE_SUBMIT_EVENT_NAME, HARDWARE_KEY_DOWN_EVENT_NAME)
+    Events(
+      HARDWARE_SUBMIT_EVENT_NAME,
+      HARDWARE_KEY_DOWN_EVENT_NAME,
+      HARDWARE_MODIFIER_EVENT_NAME,
+      HARDWARE_CONNECTION_EVENT_NAME,
+    )
 
     OnCreate {
       PaseoHardwareKeyboardKeyDispatcher.module = this@PaseoHardwareKeyboardModule
+      inputManager =
+        appContext.reactContext?.getSystemService(Context.INPUT_SERVICE) as? InputManager
+      inputManager?.registerInputDeviceListener(inputDeviceListener, null)
     }
 
     Function("setHardwareKeyboardSubmitEnabled") { enabled: Boolean ->
@@ -25,12 +46,18 @@ class PaseoHardwareKeyboardModule : Module() {
       PaseoHardwareKeyboardKeyDispatcher.isKeyEventsEnabled = enabled
     }
 
+    Function("getHardwareKeyboardConnected") {
+      isHardwareKeyboardConnected()
+    }
+
     OnDestroy {
       if (PaseoHardwareKeyboardKeyDispatcher.module === this@PaseoHardwareKeyboardModule) {
         PaseoHardwareKeyboardKeyDispatcher.module = null
       }
       PaseoHardwareKeyboardKeyDispatcher.isSubmitEnabled = false
       PaseoHardwareKeyboardKeyDispatcher.isKeyEventsEnabled = false
+      inputManager?.unregisterInputDeviceListener(inputDeviceListener)
+      inputManager = null
     }
   }
 
@@ -40,6 +67,23 @@ class PaseoHardwareKeyboardModule : Module() {
 
   internal fun emitHardwareKeyDown(payload: Map<String, Any>) {
     sendEvent(HARDWARE_KEY_DOWN_EVENT_NAME, payload)
+  }
+
+  internal fun emitHardwareModifier(key: String, down: Boolean) {
+    sendEvent(HARDWARE_MODIFIER_EVENT_NAME, mapOf("key" to key, "down" to down))
+  }
+
+  private fun emitConnectionState() {
+    sendEvent(HARDWARE_CONNECTION_EVENT_NAME, mapOf("connected" to isHardwareKeyboardConnected()))
+  }
+
+  private fun isHardwareKeyboardConnected(): Boolean {
+    return InputDevice.getDeviceIds().any { deviceId ->
+      val device = InputDevice.getDevice(deviceId) ?: return@any false
+      !device.isVirtual &&
+        device.supportsSource(InputDevice.SOURCE_KEYBOARD) &&
+        device.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC
+    }
   }
 }
 
@@ -56,10 +100,22 @@ object PaseoHardwareKeyboardKeyDispatcher {
 
   @JvmStatic
   fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    val module = this.module ?: return false
+
+    val modifier = modifierName(event.keyCode)
+    if (modifier != null) {
+      if (isKeyEventsEnabled && event.repeatCount == 0) {
+        when (event.action) {
+          KeyEvent.ACTION_DOWN -> module.emitHardwareModifier(modifier, true)
+          KeyEvent.ACTION_UP -> module.emitHardwareModifier(modifier, false)
+        }
+      }
+      return false
+    }
+
     if (event.action != KeyEvent.ACTION_DOWN) {
       return false
     }
-    val module = this.module ?: return false
 
     val ctrlKey = event.isCtrlPressed
     val altKey = event.isAltPressed
@@ -100,6 +156,16 @@ object PaseoHardwareKeyboardKeyDispatcher {
     // Never consumed: text inputs ignore unknown modifier combos, and consuming
     // here would break EditText combos the registry doesn't use (Ctrl+A/C/V/X/Z).
     return false
+  }
+
+  private fun modifierName(keyCode: Int): String? {
+    return when (keyCode) {
+      KeyEvent.KEYCODE_ALT_LEFT, KeyEvent.KEYCODE_ALT_RIGHT -> "Alt"
+      KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.KEYCODE_CTRL_RIGHT -> "Control"
+      KeyEvent.KEYCODE_META_LEFT, KeyEvent.KEYCODE_META_RIGHT -> "Meta"
+      KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> "Shift"
+      else -> null
+    }
   }
 
   private fun domCode(keyCode: Int): String? {
