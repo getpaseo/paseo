@@ -17,6 +17,8 @@ import { claudeProjectDirSync } from "./project-dir.js";
 
 const TOOL_USE_ID = "toolu_01DgLoPMW9";
 const AGENT_ID = "a1730a6215e1f5cf6";
+const WORKFLOW_TOOL_USE_ID = "toolu_01XskpjeASyuFyXC5qsLHYps";
+const WORKFLOW_RUN_ID = "wf_4a0af4f7-f56";
 
 function parentEntry(content: unknown): string {
   return JSON.stringify({
@@ -115,6 +117,46 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       meta: options.meta,
       sidechainLines: options.sidechainLines,
     });
+  }
+
+  function writeWorkflowSession(status: string): void {
+    const subagentDirectory = writeParentSession([
+      parentEntry([
+        {
+          type: "tool_use",
+          id: WORKFLOW_TOOL_USE_ID,
+          name: "Workflow",
+          input: { scriptPath: "/tmp/one-child.js", args: "{}" },
+        },
+      ]),
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: WORKFLOW_TOOL_USE_ID,
+              content: `Workflow launched in background.\nRun ID: ${WORKFLOW_RUN_ID}`,
+            },
+          ],
+        },
+      }),
+    ]);
+    const workflowDirectory = path.join(path.dirname(subagentDirectory), "workflows");
+    mkdirSync(workflowDirectory, { recursive: true });
+    writeFileSync(
+      path.join(workflowDirectory, `${WORKFLOW_RUN_ID}.json`),
+      JSON.stringify({
+        runId: WORKFLOW_RUN_ID,
+        summary: "Verify the workflow row lifecycle",
+        status,
+        startTime: 1786003484150,
+        timestamp: "2026-08-06T08:04:46.347Z",
+        defaultModel: "claude-sonnet-5",
+        totalTokens: 20_417,
+      }),
+    );
   }
 
   async function replayDescriptors(): Promise<
@@ -267,6 +309,26 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     }
 
     expect(upserts(await replayDescriptors())).toEqual([]);
+  });
+
+  test("replays a completed workflow as one generic provider-subagent row", async () => {
+    writeWorkflowSession("completed");
+
+    const events = upserts(await replayDescriptors());
+    expect(events[0]).toMatchObject({
+      id: WORKFLOW_TOOL_USE_ID,
+      toolCallId: WORKFLOW_TOOL_USE_ID,
+      title: "Workflow",
+      description: "Verify the workflow row lifecycle",
+      status: "running",
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({ subtitle: "Workflow · Sonnet 5 · 20.4k tokens" }),
+    );
+    expect(events.at(-1)).toMatchObject({
+      id: WORKFLOW_TOOL_USE_ID,
+      status: "completed",
+    });
   });
 
   test("does not replay a subagent whose toolUseId names no Task call in this transcript", async () => {

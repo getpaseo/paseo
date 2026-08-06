@@ -127,10 +127,7 @@ describe("background Claude subagents", () => {
     });
   });
 
-  test("keeps a filtered task out of the track even when it emits sidechain frames", async () => {
-    // A workflow child is refused at declaration, but its frames still carry a parent_tool_use_id.
-    // Attributing them would recreate exactly what the filter rejected: a descriptor with no
-    // title and a defaulted "running" status — a nameless row that never finishes.
+  test("exposes a workflow through the same provider-subagent stream as its child frames", async () => {
     queryFactory.mockImplementation(() =>
       buildQueryMock([
         { type: "system", subtype: "init", session_id: "bg-session", permissionMode: "default" },
@@ -148,6 +145,12 @@ describe("background Claude subagents", () => {
           parent_tool_use_id: "toolu_workflow",
           message: { model: "claude-opus-5", content: [{ type: "text", text: "working" }] },
         },
+        {
+          type: "system",
+          subtype: "task_updated",
+          task_id: "wf-1",
+          patch: { status: "completed" },
+        },
         { type: "result", subtype: "success", usage: {}, total_cost_usd: 0 },
       ]),
     );
@@ -159,7 +162,28 @@ describe("background Claude subagents", () => {
     const events = await collectUntilTerminal(streamSession(session, "run the workflow"));
     await session.close();
 
-    expect(events.filter((event) => event.type === "provider_subagent")).toEqual([]);
+    const providerEvents = events.filter((event) => event.type === "provider_subagent");
+    expect(providerEvents[0]).toMatchObject({
+      event: {
+        type: "upsert",
+        id: "toolu_workflow",
+        title: "Workflow",
+        description: "Run the spec workflow",
+        status: "running",
+      },
+    });
+    expect(providerEvents).toContainEqual(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "timeline",
+          id: "toolu_workflow",
+          item: expect.objectContaining({ type: "assistant_message", text: "working" }),
+        }),
+      }),
+    );
+    expect(providerEvents.at(-1)).toMatchObject({
+      event: { type: "upsert", id: "toolu_workflow", status: "completed" },
+    });
   });
 
   test("labels the parent's Task card with the type and task", async () => {

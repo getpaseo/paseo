@@ -54,6 +54,10 @@ import {
   type ClaudeSubagentMeta,
 } from "./subagents/replay-source.js";
 import { foldSubagentObservations, type SubagentObservation } from "./subagents/observation.js";
+import {
+  observeReplayWorkflows,
+  parseClaudeWorkflowRun,
+} from "./subagents/workflow-replay-source.js";
 import { buildClaudeFeatures, claudeModelSupportsFastMode } from "./feature-definitions.js";
 import {
   buildBinaryDiagnosticRows,
@@ -4547,21 +4551,27 @@ class ClaudeAgentSession implements AgentSession {
     const sidechainEntries = [parentContent, ...sidechains.contents]
       .flatMap(parseClaudeHistoryRecords)
       .filter((entry) => entry.isSidechain === true && typeof entry.agentId === "string");
-    if (sidechainEntries.length === 0) {
-      return;
-    }
 
     // Replay produces the same observations the live task protocol produces, then folds them
     // with the same function, so identity and status are derived once for both paths.
-    const observations = observeReplaySubagents({
-      subagents: [...groupClaudeSidechainEntries(sidechainEntries)].map(([agentId, entries]) => ({
-        agentId,
-        meta: sidechains.metaByAgentId.get(agentId) ?? null,
-        entries,
-      })),
-      parent: readClaudeReplayParentFacts(parentEntries),
-      convertEntry: (entry) => this.convertHistoryEntry(entry as ClaudeHistoryEntry),
-    });
+    const observations = [
+      ...observeReplaySubagents({
+        subagents: [...groupClaudeSidechainEntries(sidechainEntries)].map(([agentId, entries]) => ({
+          agentId,
+          meta: sidechains.metaByAgentId.get(agentId) ?? null,
+          entries,
+        })),
+        parent: readClaudeReplayParentFacts(parentEntries),
+        convertEntry: (entry) => this.convertHistoryEntry(entry as ClaudeHistoryEntry),
+      }),
+      ...observeReplayWorkflows({
+        workflows: sidechains.workflowContents
+          .map(parseClaudeWorkflowRun)
+          .filter((workflow) => workflow !== null),
+        parentEntries,
+      }),
+    ];
+    if (observations.length === 0) return;
 
     this.persistedProviderSubagentEvents.push(
       ...foldSubagentObservations(observations).map(
@@ -5385,6 +5395,7 @@ function readClaudeReplayParentFacts(parentEntries: ClaudeHistoryEntry[]): Claud
 
 interface ClaudeSidechainHistory {
   contents: string[];
+  workflowContents: string[];
   /** agentId -> sidecar metadata, when Claude Code wrote one next to the transcript. */
   metaByAgentId: Map<string, ClaudeSubagentMeta>;
 }
@@ -5397,7 +5408,24 @@ function readClaudeSidechainHistory(historyPath: string): ClaudeSidechainHistory
     path.basename(historyPath, ".jsonl"),
   );
   const sidechainDirectory = path.join(sessionDirectory, "subagents");
-  const history: ClaudeSidechainHistory = { contents: [], metaByAgentId: new Map() };
+  const history: ClaudeSidechainHistory = {
+    contents: [],
+    workflowContents: [],
+    metaByAgentId: new Map(),
+  };
+  const workflowDirectory = path.join(sessionDirectory, "workflows");
+  if (fs.existsSync(workflowDirectory)) {
+    for (const entry of fs.readdirSync(workflowDirectory, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      try {
+        history.workflowContents.push(
+          fs.readFileSync(path.join(workflowDirectory, entry.name), "utf8"),
+        );
+      } catch {
+        // A partial or unreadable run summary must not fail the rest of history ingestion.
+      }
+    }
+  }
   if (!fs.existsSync(sidechainDirectory)) return history;
 
   const directories = [sidechainDirectory];

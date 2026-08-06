@@ -133,11 +133,35 @@ describe("ClaudeTaskProtocolSource", () => {
     expect(source.isActive).toBe(false);
   });
 
-  it("ignores a workflow run", () => {
+  it("declares a workflow as a provider subagent with a provider-owned Workflow label", () => {
     const source = new ClaudeTaskProtocolSource();
     expect(
-      source.observe(taskStarted({ task_type: "local_workflow", subagent_type: undefined })),
-    ).toEqual([]);
+      source.observe(
+        taskStarted({
+          task_type: "local_workflow",
+          subagent_type: undefined,
+          workflow_name: "paseo-workflow-one-child",
+          description: "Runs one deterministic child and returns its structured result",
+          prompt: "export const meta = {};",
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: "declared",
+        id: "toolu_01DgLoPMW9",
+        toolCallId: "toolu_01DgLoPMW9",
+        title: "Workflow",
+        description: "Runs one deterministic child and returns its structured result",
+      },
+      {
+        kind: "timeline",
+        id: "toolu_01DgLoPMW9",
+        item: {
+          type: "user_message",
+          text: "Runs one deterministic child and returns its structured result",
+        },
+      },
+    ]);
   });
 
   it("accepts a subagent from a release that predates task_type", () => {

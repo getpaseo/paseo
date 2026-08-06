@@ -41,19 +41,27 @@ interface TaskStartedMessage {
 
 /** Task-tool subagents. Backgrounded shell commands announce as `local_bash`. */
 const CLAUDE_SUBAGENT_TASK_TYPE = "local_agent";
+/** Workflow executions use the same announced task lifecycle as Task-tool subagents. */
+const CLAUDE_WORKFLOW_TASK_TYPE = "local_workflow";
 
 /**
- * Not every announced task is a subagent. Verified on the wire:
+ * Not every announced task belongs in the subagents track. Verified on the wire:
  *
  *   Task subagent      task_type "local_agent", subagent_type "general-purpose"
+ *   Workflow           task_type "local_workflow", no subagent_type
  *   background shell   task_type "local_bash",  no subagent_type
  *
- * Both carry a `tool_use_id`, so presence of an id is not a discriminator — filtering on it
+ * All three carry a `tool_use_id`, so presence of an id is not a discriminator — filtering on it
  * alone puts `sleep 20` in the subagents track. Releases that predate `task_type` are covered
  * by requiring a subagent type instead.
  */
-function isSubagentTask(message: TaskStartedMessage): boolean {
-  if (message.task_type) return message.task_type === CLAUDE_SUBAGENT_TASK_TYPE;
+function isProviderSubagentTask(message: TaskStartedMessage): boolean {
+  if (message.task_type) {
+    return (
+      message.task_type === CLAUDE_SUBAGENT_TASK_TYPE ||
+      message.task_type === CLAUDE_WORKFLOW_TASK_TYPE
+    );
+  }
   return readString(message.subagent_type) !== undefined;
 }
 
@@ -257,7 +265,7 @@ export class ClaudeTaskProtocolSource {
 
     const id = readString(message.tool_use_id);
     // skip_transcript marks ambient housekeeping the transcript should not show.
-    if (!id || message.skip_transcript === true || !isSubagentTask(message)) return [];
+    if (!id || message.skip_transcript === true || !isProviderSubagentTask(message)) return [];
 
     this.sawTaskStarted = true;
     this.subagentIdByTaskId.set(message.task_id, id);
@@ -266,7 +274,10 @@ export class ClaudeTaskProtocolSource {
 
     // An explicit `name` on the Task call wins over the agent type, matching how replay titles the
     // same subagent. Without it a fan-out of five Explores reads as five identical rows.
-    const title = readString(this.getToolInput(id)?.name) ?? readString(message.subagent_type);
+    const isWorkflow = message.task_type === CLAUDE_WORKFLOW_TASK_TYPE;
+    const title = isWorkflow
+      ? "Workflow"
+      : (readString(this.getToolInput(id)?.name) ?? readString(message.subagent_type));
     const description = readString(message.description);
     const observations: SubagentObservation[] = [
       {
@@ -282,9 +293,11 @@ export class ClaudeTaskProtocolSource {
     const initialSubtitle = buildClaudeSubagentSubtitle(initialPresentation);
     if (initialSubtitle) this.lastSubtitleById.set(id, initialSubtitle);
 
-    // Open the child's timeline with the prompt it was actually given. Without this the pane
-    // starts mid-conversation, showing replies to a question the reader never sees.
-    const prompt = readString(message.prompt);
+    // Open the provider-subagent timeline with the task it was actually given. Without this the
+    // pane starts mid-conversation, showing replies to a question the reader never sees.
+    // A workflow's prompt is its JavaScript source, not a user-authored task. Open its generic
+    // timeline with Claude's summary instead, so the pane is meaningful without exposing source.
+    const prompt = isWorkflow ? description : readString(message.prompt);
     if (prompt) {
       observations.push({ kind: "timeline", id, item: { type: "user_message", text: prompt } });
     }
