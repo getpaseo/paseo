@@ -231,7 +231,13 @@ var addedOf = own(MutationRecord.prototype, "addedNodes").get;
 var countOf = own(NodeList.prototype, "length").get;
 var at = NodeList.prototype.item;
 var startWatching = MutationObserver.prototype.observe;
-var SELECTOR = "iframe,frame,object,embed,link,webview,fencedframe";
+// The last entry is not a browsing context: it is the one script type the
+// platform acts on when the element is connected, and it names URLs to fetch.
+// The detached sanitiser drops it out of plugin markup; without it here, a
+// plugin script could just append one at runtime and the two paths would
+// disagree. Everything else stays out of \`script\`, which plugins need.
+var SELECTOR =
+  'iframe,frame,object,embed,link,webview,fencedframe,script[type="speculationrules" i]';
 // \`WATCH\` is null-prototype, because a dictionary argument is a lookup surface.
 // Converting this to a \`MutationObserverInit\` is one Get per member, and every
 // member it does not own would be read off \`Object.prototype\` — which the plugin
@@ -330,6 +336,18 @@ lock(Document.prototype, "writeln", deny);
 lock(Document, "parseHTMLUnsafe", deny);
 if (Element.prototype.setHTMLUnsafe) lock(Element.prototype, "setHTMLUnsafe", deny);
 if (ShadowRoot.prototype.setHTMLUnsafe) lock(ShadowRoot.prototype, "setHTMLUnsafe", deny);
+// The Sanitizer API's *safe* halves are the same HTML document parser with a
+// filter bolted on the end, and they parse with declarative shadow roots
+// enabled. \`setHTML\` with a config naming \`template\` and \`shadowrootmode\` mints
+// a real closed root on a connected element — no \`attachShadow\` call to wrap —
+// and \`attachInternals().shadowRoot\` hands it straight back, because a root the
+// parser made is available to element internals. A frame appended in there is
+// invisible to every sweep: an observer on \`document\` is not told about
+// mutations inside a shadow tree and \`shadowRoot\` reads \`null\` on a closed one.
+// Measured: ICE gathering started from that child realm.
+if (Element.prototype.setHTML) lock(Element.prototype, "setHTML", deny);
+if (ShadowRoot.prototype.setHTML) lock(ShadowRoot.prototype, "setHTML", deny);
+if (Document.parseHTML) lock(Document, "parseHTML", deny);
 // XSLT with \`<xsl:output method="html"/>\` builds its result tree through the HTML
 // *document* parser, which honours \`<template shadowrootmode="closed">\` — so a
 // stylesheet mints a closed root with no \`attachShadow\` call to wrap, and

