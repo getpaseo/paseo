@@ -991,6 +991,11 @@ export default function RootLayout() {
       if (nextState !== "active") {
         void flushDraftPersistStorage();
       }
+      if (isNative) {
+        // Pause keep-alive work (heartbeat, reconnect, probes) in the background and
+        // force an immediate connection check on foreground resume.
+        getHostRuntimeStore().setBackgrounded(nextState !== "active");
+      }
     });
     return () => subscription.remove();
   }, []);

@@ -39,6 +39,7 @@ import {
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
+import type { AgentDirectoryChange } from "./agent/agent-directory-sequence.js";
 import {
   formatSystemNotificationPrompt,
   sendPromptToAgent,
@@ -4215,10 +4216,57 @@ export class Session {
     return matchedEntries;
   }
 
+  private async tryListIncrementalAgentDirectory(request: AgentDirectoryRequestMessage): Promise<{
+    entries: FetchAgentsResponseEntry[];
+    pageInfo: FetchAgentsResponsePageInfo;
+    deletedIds: string[];
+    incremental: true;
+    sequence: number;
+    directoryGeneration: string;
+  } | null> {
+    if (request.type !== "fetch_agents_request" || request.afterSequence === undefined) {
+      return null;
+    }
+    const sequenceTracker = this.agentStorage.getDirectorySequenceTracker();
+    if (request.directoryGeneration !== sequenceTracker.getGeneration()) {
+      return null;
+    }
+    const { changes, incremental } = sequenceTracker.changesAfter(request.afterSequence);
+    if (!incremental) {
+      return null;
+    }
+    // Snapshot the sequence before awaiting: `buildIncrementalAgentDirectory`
+    // does async I/O during which new recordChange calls can advance the
+    // sequence. Returning a sequence captured afterward would make the client
+    // believe it has applied changes it never saw. The snapshot is conservative
+    // — the next incremental sync re-requests anything added in between.
+    const snapshotSequence = sequenceTracker.getCurrentSequence();
+    const delta = await this.buildIncrementalAgentDirectory(changes);
+    if (!delta) {
+      return null;
+    }
+    return {
+      ...delta,
+      sequence: snapshotSequence,
+      directoryGeneration: sequenceTracker.getGeneration(),
+    };
+  }
+
   private async listFetchAgentsEntries(request: AgentDirectoryRequestMessage): Promise<{
     entries: FetchAgentsResponseEntry[];
     pageInfo: FetchAgentsResponsePageInfo;
+    deletedIds?: string[];
+    sequence?: number;
+    directoryGeneration?: string;
+    incremental?: boolean;
   }> {
+    // Incremental path: a client that remembers its last applied sequence asks
+    // for only the mutations it missed since then. Falls back to the full path
+    // when the generation changed (daemon restart), the delta window aged out,
+    // or the change set is too large to return in one page.
+    const incrementalDelta = await this.tryListIncrementalAgentDirectory(request);
+    if (incrementalDelta) return incrementalDelta;
+
     const filter =
       request.type === "fetch_agent_history_request" &&
       request.filter?.includeArchived === undefined
@@ -4288,6 +4336,7 @@ export class Session {
         ? this.agentsPager.encode(pagedEntries[pagedEntries.length - 1].agent, sort)
         : null;
 
+    const sequenceTracker = this.agentStorage.getDirectorySequenceTracker();
     return {
       entries: pagedEntries,
       pageInfo: {
@@ -4295,6 +4344,65 @@ export class Session {
         prevCursor: request.page?.cursor ?? null,
         hasMore,
       },
+      sequence: sequenceTracker.getCurrentSequence(),
+      directoryGeneration: sequenceTracker.getGeneration(),
+    };
+  }
+
+  /**
+   * Reconstructs an incremental agent directory delta from the sequence
+   * tracker's change log. For each `upsert` it resolves the agent's current
+   * snapshot and keeps it only when it still belongs to the active directory;
+   * agents that were archived, deleted, or whose workspace lost its placement
+   * are reported through `deletedIds` so the client drops them. Returns `null`
+   * when the change set is too large for one page — the caller falls back to a
+   * full snapshot.
+   */
+  private async buildIncrementalAgentDirectory(changes: readonly AgentDirectoryChange[]): Promise<{
+    entries: FetchAgentsResponseEntry[];
+    deletedIds: string[];
+    incremental: true;
+    pageInfo: FetchAgentsResponsePageInfo;
+  } | null> {
+    const upsertIds = Array.from(
+      new Set(changes.filter((c) => c.type === "upsert").map((c) => c.agentId)),
+    );
+    const deletedIds = new Set(changes.filter((c) => c.type === "delete").map((c) => c.agentId));
+    if (upsertIds.length + deletedIds.size > 200) {
+      return null;
+    }
+
+    const activePlacements = await this.buildActiveProjectPlacementsByWorkspaceId();
+    const entries: FetchAgentsResponseEntry[] = [];
+    for (const agentId of upsertIds) {
+      const agent = await this.getAgentPayloadById(agentId);
+      if (!agent || agent.archivedAt || agent.workspaceId == null) {
+        deletedIds.add(agentId);
+        continue;
+      }
+      if (!activePlacements.has(agent.workspaceId)) {
+        deletedIds.add(agentId);
+        continue;
+      }
+      const placement = activePlacements.get(agent.workspaceId);
+      if (!placement) {
+        deletedIds.add(agentId);
+        continue;
+      }
+      entries.push({ agent, project: placement });
+      // The same agent may appear in both upsert and delete change records when
+      // the window contains interleaved mutations (e.g. upsert, delete, upsert).
+      // An entry that survives still belongs in the directory, so it must not
+      // also be reported through deletedIds — the client applies entries then
+      // deletes, and an overlap would make the agent vanish client-side.
+      deletedIds.delete(agentId);
+    }
+
+    return {
+      entries,
+      deletedIds: Array.from(deletedIds),
+      incremental: true,
+      pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
     };
   }
 

@@ -558,6 +558,8 @@ export class HostRuntimeController {
   private unsubscribeClientStatus: (() => void) | null = null;
   private unsubscribeClientHandlers: (() => void) | null = null;
   private probeIntervalHandle: ReturnType<typeof setInterval> | null = null;
+  private autoProbe = true;
+  private backgrounded = false;
   private started = false;
   private connectionFirstSeenAt = new Map<string, number>();
   private connectionLastProbedAt = new Map<string, number>();
@@ -612,6 +614,7 @@ export class HostRuntimeController {
       return;
     }
     this.started = true;
+    this.autoProbe = options?.autoProbe !== false;
     this.trackConnectionFirstSeen();
     if (options?.initialConnection) {
       await this.switchToConnection({
@@ -653,6 +656,37 @@ export class HostRuntimeController {
       ...toSnapshotConnectionPatch(this.connectionMachineState, this.connectionEpoch),
       client: null,
     });
+  }
+
+  /**
+   * Pause probe work and delegate keep-alive pause to the active client while the app
+   * is backgrounded. On resume, restore the probe interval and let the caller trigger a
+   * forced liveness check so a silently-dead socket reconnects immediately instead of
+   * after the next heartbeat timeout.
+   */
+  setBackgrounded(backgrounded: boolean): void {
+    if (this.backgrounded === backgrounded) {
+      return;
+    }
+    this.backgrounded = backgrounded;
+    if (backgrounded) {
+      this.activeClient?.setBackgrounded(true);
+      if (this.probeIntervalHandle) {
+        clearInterval(this.probeIntervalHandle);
+        this.probeIntervalHandle = null;
+      }
+      return;
+    }
+    this.activeClient?.setBackgrounded(false);
+    if (this.started && this.autoProbe && !this.probeIntervalHandle) {
+      this.probeIntervalHandle = setInterval(() => {
+        void this.runProbeCycleNow();
+      }, PROBE_TICK_MS);
+    }
+  }
+
+  forceLivenessCheck(): void {
+    void this.activeClient?.forceLivenessCheck().catch(() => undefined);
   }
 
   async updateHost(host: HostProfile): Promise<void> {
@@ -2200,6 +2234,19 @@ export class HostRuntimeStore {
   ensureConnectedAll(): void {
     for (const controller of this.controllers.values()) {
       controller.ensureConnected();
+    }
+  }
+
+  setBackgrounded(backgrounded: boolean): void {
+    for (const controller of this.controllers.values()) {
+      controller.setBackgrounded(backgrounded);
+    }
+    if (!backgrounded) {
+      // Foreground resume: probe every active connection immediately so a socket the
+      // OS killed while backgrounded reconnects without waiting for a heartbeat timeout.
+      for (const controller of this.controllers.values()) {
+        controller.forceLivenessCheck();
+      }
     }
   }
 
