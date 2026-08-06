@@ -120,9 +120,11 @@ export const PLUGIN_NEUTERED_GLOBALS = [
  * out of markup is denied outright above it. Denying an API is a policy;
  * removing an element is a race.
  *
- * `object`/`embed` are already denied by `object-src 'none'`; they are in the
- * selector so it is the set of elements that can become a browsing context, not
- * a subset that happens to be reachable today.
+ * `object`/`embed` are already denied by `object-src 'none'`, and `fencedframe`
+ * has no way to navigate on an opaque origin — a `FencedFrameConfig` only comes
+ * from `runAdAuction` or `sharedStorage`, neither of which is exposed there. They
+ * are in the selector so it is the set of elements that can become a browsing
+ * context, not the subset that happens to be reachable today.
  *
  * Three things this has to get right, each found by breaking an earlier version:
  *
@@ -229,7 +231,7 @@ var addedOf = own(MutationRecord.prototype, "addedNodes").get;
 var countOf = own(NodeList.prototype, "length").get;
 var at = NodeList.prototype.item;
 var startWatching = MutationObserver.prototype.observe;
-var SELECTOR = "iframe,frame,object,embed,link,webview";
+var SELECTOR = "iframe,frame,object,embed,link,webview,fencedframe";
 // \`WATCH\` is null-prototype, because a dictionary argument is a lookup surface.
 // Converting this to a \`MutationObserverInit\` is one Get per member, and every
 // member it does not own would be read off \`Object.prototype\` — which the plugin
@@ -328,6 +330,17 @@ lock(Document.prototype, "writeln", deny);
 lock(Document, "parseHTMLUnsafe", deny);
 if (Element.prototype.setHTMLUnsafe) lock(Element.prototype, "setHTMLUnsafe", deny);
 if (ShadowRoot.prototype.setHTMLUnsafe) lock(ShadowRoot.prototype, "setHTMLUnsafe", deny);
+// XSLT with \`<xsl:output method="html"/>\` builds its result tree through the HTML
+// *document* parser, which honours \`<template shadowrootmode="closed">\` — so a
+// stylesheet mints a closed root with no \`attachShadow\` call to wrap, and
+// \`adoptNode\` moves it into the live document with whatever is inside it (a move,
+// not a clone, so \`clonable\` never comes into it). \`transformToFragment\` is
+// fragment parsing and does not honour DSD today; it is denied anyway, because
+// that distinction is one Chromium version from moving and no plugin needs either.
+if (typeof XSLTProcessor === "function") {
+  lock(XSLTProcessor.prototype, "transformToDocument", deny);
+  lock(XSLTProcessor.prototype, "transformToFragment", deny);
+}
 `;
 
 export const PLUGIN_NEUTER_SCRIPT = `(function(){${JSON.stringify(
@@ -406,7 +419,7 @@ if (hostParent) { try { A(detach, hostParent, [host]); } catch (e) {} }
 // has not fired and a frame has not loaded.
 var holder = A(make, document, ["div"]);
 A(insert, holder, ["beforeend", PLUGIN_HTML]);
-var junk = A(findAll, holder, ["link,iframe,frame,object,embed,webview"]);
+var junk = A(findAll, holder, ["link,iframe,frame,object,embed,webview,fencedframe"]);
 for (var j = 0, jn = A(countOf, junk, []); j < jn; j++) {
   var dead = A(at, junk, [j]);
   var deadParent = A(parentOf, dead, []);
@@ -422,7 +435,17 @@ for (var i = 0, n = A(countOf, scripts, []); i < n; i++) {
     // space check keeps the list an exact-membership test — without it a value
     // spanning two adjacent entries would match the join rather than a member.
     var kind = A(lower, A(trim, type, []), []);
-    if (kind && (A(indexOf, kind, [" "]) >= 0 || A(indexOf, JS, [" " + kind + " "]) < 0)) continue;
+    if (kind && (A(indexOf, kind, [" "]) >= 0 || A(indexOf, JS, [" " + kind + " "]) < 0)) {
+      // Left in place, because a non-JS \`<script>\` is data: \`application/json\`
+      // blocks are what plugins read back out. \`speculationrules\` is the
+      // exception — it is not data, the platform acts on it when it is inserted,
+      // and it names URLs to fetch. Dropped rather than carried over.
+      if (kind === "speculationrules") {
+        var rulesParent = A(parentOf, old, []);
+        if (rulesParent) { try { A(detach, rulesParent, [old]); } catch (e) {} }
+      }
+      continue;
+    }
   }
   var parent = A(parentOf, old, []);
   if (!parent) continue;

