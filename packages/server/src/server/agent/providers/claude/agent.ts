@@ -4572,6 +4572,13 @@ class ClaudeAgentSession implements AgentSession {
           .map(parseClaudeWorkflowRun)
           .filter((workflow) => workflow !== null),
         parentEntries,
+        entriesByRunId: new Map(
+          [...sidechains.workflowSidechainContentsByRunId].map(([runId, contents]) => [
+            runId,
+            contents.flatMap(parseClaudeHistoryRecords),
+          ]),
+        ),
+        convertEntry: (entry) => this.convertHistoryEntry(entry as ClaudeHistoryEntry),
       }),
     ];
     if (observations.length === 0) return;
@@ -5399,6 +5406,7 @@ function readClaudeReplayParentFacts(parentEntries: ClaudeHistoryEntry[]): Claud
 interface ClaudeSidechainHistory {
   contents: string[];
   workflowContents: string[];
+  workflowSidechainContentsByRunId: Map<string, string[]>;
   /** agentId -> sidecar metadata, when Claude Code wrote one next to the transcript. */
   metaByAgentId: Map<string, ClaudeSubagentMeta>;
 }
@@ -5414,6 +5422,7 @@ function readClaudeSidechainHistory(historyPath: string): ClaudeSidechainHistory
   const history: ClaudeSidechainHistory = {
     contents: [],
     workflowContents: [],
+    workflowSidechainContentsByRunId: new Map(),
     metaByAgentId: new Map(),
   };
   const workflowDirectory = path.join(sessionDirectory, "workflows");
@@ -5443,7 +5452,7 @@ function readClaudeSidechainHistory(historyPath: string): ClaudeSidechainHistory
       }
       if (!entry.isFile()) continue;
       if (entry.name.endsWith(".jsonl")) {
-        history.contents.push(fs.readFileSync(entryPath, "utf8"));
+        recordClaudeSidechainContents(history, sidechainDirectory, entryPath);
         continue;
       }
       // The sidecar carries the Task tool_use id, which is the same id the live stream keys on.
@@ -5459,6 +5468,25 @@ function readClaudeSidechainHistory(historyPath: string): ClaudeSidechainHistory
     }
   }
   return history;
+}
+
+function recordClaudeSidechainContents(
+  history: ClaudeSidechainHistory,
+  sidechainDirectory: string,
+  entryPath: string,
+): void {
+  const contents = fs.readFileSync(entryPath, "utf8");
+  const relativeParts = path.relative(sidechainDirectory, entryPath).split(path.sep);
+  const workflowRunId =
+    relativeParts[0] === "workflows" && relativeParts.length >= 3 ? relativeParts[1] : undefined;
+  if (!workflowRunId) {
+    history.contents.push(contents);
+    return;
+  }
+
+  const workflowContents = history.workflowSidechainContentsByRunId.get(workflowRunId) ?? [];
+  workflowContents.push(contents);
+  history.workflowSidechainContentsByRunId.set(workflowRunId, workflowContents);
 }
 
 interface ClaudeHistoricalSubagentToolCall {

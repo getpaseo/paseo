@@ -1,8 +1,10 @@
 import { z } from "zod";
 
+import type { AgentTimelineItem } from "../../../agent-sdk-types.js";
 import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
 import type { SubagentObservation } from "./observation.js";
 import { buildClaudeSubagentSubtitle } from "./presentation.js";
+import type { ClaudeReplayEntry } from "./replay-source.js";
 
 const ClaudeWorkflowRunSchema = z.object({
   runId: z.string(),
@@ -43,6 +45,8 @@ export function parseClaudeWorkflowRun(contents: string): ClaudeWorkflowRun | nu
 export function observeReplayWorkflows(input: {
   workflows: readonly ClaudeWorkflowRun[];
   parentEntries: readonly ClaudeWorkflowParentEntry[];
+  entriesByRunId?: ReadonlyMap<string, readonly ClaudeReplayEntry[]>;
+  convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[];
 }): SubagentObservation[] {
   const toolCallIdByRunId = readWorkflowLinks(input.parentEntries);
   const observations: SubagentObservation[] = [];
@@ -69,6 +73,23 @@ export function observeReplayWorkflows(input: {
         item: { type: "user_message", text: description },
         ...(startedAt ? { timestamp: startedAt } : {}),
       });
+    }
+
+    const entries = input.entriesByRunId?.get(workflow.runId) ?? [];
+    if (input.convertEntry) {
+      for (const entry of entries) {
+        const timestamp = normalizeIsoTimestamp(
+          typeof entry.timestamp === "string" ? entry.timestamp : undefined,
+        );
+        for (const item of input.convertEntry(entry)) {
+          observations.push({
+            kind: "timeline",
+            id,
+            item,
+            ...(timestamp ? { timestamp } : {}),
+          });
+        }
+      }
     }
 
     const subtitle = buildClaudeSubagentSubtitle({
