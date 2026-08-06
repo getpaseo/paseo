@@ -135,7 +135,7 @@ Hub counts an actual capability emission; ordinary assistant text does not satis
 
 ## Prompt partials
 
-`include` paths are relative to `.paseo/partials/` and are resolved at the exact GitHub configuration commit. Hub stores the resolved content and SHA-256 hash in the immutable revision. Missing files, unsafe paths, symlinks, submodules, directories, and nested includes are rejected. Manual configurations cannot use repository partials.
+`include` paths are relative to `.paseo/partials/`. For GitHub configuration, Hub reads them at the exact configuration commit and stores the resolved content and SHA-256 hash in the immutable revision. For `paseo hub deploy`, the CLI reads the referenced files from the local project root and sends them in the optional `partials` bundle; the bundle path omits the `.paseo/partials/` prefix. Missing files, unsafe paths, symlinks, submodules, directories, duplicate or unexpected bundle entries, and nested includes are rejected. Manual configurations cannot use repository partials.
 
 ## Deadlines
 

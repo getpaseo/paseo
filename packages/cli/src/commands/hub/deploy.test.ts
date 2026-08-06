@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -77,6 +77,84 @@ describe("hub deploy", () => {
     }
   });
 
+  it("deploys mixed inline and partial prompts with only the referenced partial files", async () => {
+    const cwd = await temporaryDirectory();
+    const configurationDirectory = path.join(cwd, ".paseo");
+    const partialDirectory = path.join(configurationDirectory, "partials", "docs");
+    const yaml = [
+      "project: studio-api",
+      "triggers:",
+      "  - steps:",
+      "      - prompt:",
+      "          - text: Inline request",
+      "          - include: docs/safety.md",
+      "          - include: docs/release.md",
+      "unknownNestedInclude: ignored.md",
+      "",
+    ].join("\n");
+    const safety = "Follow the safety checklist.\n{ include: nested.md }";
+    const release = "Use the release checklist.";
+    await mkdir(partialDirectory, { recursive: true });
+    await writeFile(path.join(configurationDirectory, "hub.yml"), yaml);
+    await writeFile(path.join(partialDirectory, "safety.md"), safety);
+    await writeFile(path.join(partialDirectory, "release.md"), release);
+    const hub = await startHub();
+
+    try {
+      await runHubDeploy(
+        {},
+        { cwd, env: { PASEO_HUB_URL: hub.origin, PASEO_HUB_API_KEY: "bundle-secret" } },
+      );
+
+      expect(await hub.received).toEqual({
+        method: "POST",
+        url: "/api/v1/configurations/install",
+        authorization: "Bearer bundle-secret",
+        body: JSON.stringify({
+          projectSlug: "studio-api",
+          yaml,
+          partials: [
+            { path: "docs/safety.md", content: safety },
+            { path: "docs/release.md", content: release },
+          ],
+        }),
+      });
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("anchors explicit configuration files and their partial bundle at the current project root", async () => {
+    const cwd = await temporaryDirectory();
+    const configurationDirectory = path.join(cwd, "configs");
+    const partialDirectory = path.join(cwd, ".paseo", "partials");
+    const yaml =
+      "project: explicit-project\ntriggers:\n  - steps:\n      - prompt:\n          - include: instructions.md\n";
+    const partial = "Explicit project-root partial";
+    await mkdir(configurationDirectory, { recursive: true });
+    await mkdir(partialDirectory, { recursive: true });
+    await writeFile(path.join(configurationDirectory, "production.yml"), yaml);
+    await writeFile(path.join(partialDirectory, "instructions.md"), partial);
+    const hub = await startHub();
+
+    try {
+      await runHubDeploy(
+        { file: "configs/production.yml", hub: hub.origin, apiKey: "explicit-secret" },
+        { cwd, env: {} },
+      );
+
+      expect(await hub.received).toMatchObject({
+        body: JSON.stringify({
+          projectSlug: "explicit-project",
+          yaml,
+          partials: [{ path: "instructions.md", content: partial }],
+        }),
+      });
+    } finally {
+      await hub.close();
+    }
+  });
+
   it("does not search parent directories or alternate default filenames", async () => {
     const parent = await temporaryDirectory();
     const cwd = path.join(parent, "child");
@@ -105,6 +183,288 @@ describe("hub deploy", () => {
     ).rejects.toMatchObject({
       message: "Project is required. Pass --project <slug> or add top-level project to the YAML.",
     });
+  });
+
+  it("fails locally for a missing partial without sending a request", async () => {
+    const cwd = await projectFile(
+      "project: studio-api\ntriggers:\n  - steps:\n      - prompt:\n          - include: missing.md\n",
+    );
+    const hub = await startHub();
+
+    try {
+      await expect(
+        runHubDeploy({ hub: hub.origin, apiKey: "missing-secret" }, { cwd, env: {} }),
+      ).rejects.toMatchObject({
+        code: "HUB_PARTIAL_MISSING",
+        message: "Referenced Hub partial missing.md does not exist.",
+      });
+      expect(hub.requestCount()).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it.each([
+    "../secret.md",
+    "%2e%2e/secret.md",
+    "/etc/passwd",
+    "\\\\server\\share\\secret.md",
+    "C:\\secret.md",
+  ])("fails locally for an unsafe partial path %s without sending a request", async (include) => {
+    const cwd = await projectFile(
+      `project: studio-api\ntriggers:\n  - steps:\n      - prompt:\n          - include: ${JSON.stringify(include)}\n`,
+    );
+    const hub = await startHub();
+
+    try {
+      await expect(
+        runHubDeploy({ hub: hub.origin, apiKey: "unsafe-path-secret" }, { cwd, env: {} }),
+      ).rejects.toMatchObject({ code: "HUB_PARTIAL_PATH_INVALID" });
+      expect(hub.requestCount()).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("fails locally when a referenced partial is a directory", async () => {
+    const cwd = await projectFile(
+      "project: studio-api\ntriggers:\n  - steps:\n      - prompt:\n          - include: docs\n",
+    );
+    await mkdir(path.join(cwd, ".paseo", "partials", "docs"), { recursive: true });
+    const hub = await startHub();
+
+    try {
+      await expect(
+        runHubDeploy({ hub: hub.origin, apiKey: "directory-secret" }, { cwd, env: {} }),
+      ).rejects.toMatchObject({
+        code: "HUB_PARTIAL_NOT_FILE",
+        message: "Referenced Hub partial docs must be a regular file.",
+      });
+      expect(hub.requestCount()).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("fails locally when a referenced partial cannot be read", async () => {
+    const cwd = await projectFile(
+      "project: studio-api\ntriggers:\n  - steps:\n      - prompt:\n          - include: unreadable.md\n",
+    );
+    const partial = path.join(cwd, ".paseo", "partials", "unreadable.md");
+    await mkdir(path.dirname(partial), { recursive: true });
+    await writeFile(partial, "secret instructions");
+    await chmod(partial, 0o000);
+    const hub = await startHub();
+
+    try {
+      await expect(
+        runHubDeploy({ hub: hub.origin, apiKey: "unreadable-secret" }, { cwd, env: {} }),
+      ).rejects.toMatchObject({
+        code: "HUB_PARTIAL_UNREADABLE",
+        message:
+          "Could not read referenced Hub partial unreadable.md. Check the file and permissions.",
+      });
+      expect(hub.requestCount()).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("fails locally for duplicate normalized partial references", async () => {
+    const cwd = await projectFile(
+      "project: studio-api\ntriggers:\n  - steps:\n      - prompt:\n          - include: docs/safety.md\n          - include: docs\\safety.md\n",
+    );
+    const hub = await startHub();
+
+    try {
+      await expect(
+        runHubDeploy({ hub: hub.origin, apiKey: "duplicate-secret" }, { cwd, env: {} }),
+      ).rejects.toMatchObject({
+        code: "HUB_PARTIAL_DUPLICATE",
+        message:
+          "Hub partial docs/safety.md is referenced more than once. Remove the duplicate include.",
+      });
+      expect(hub.requestCount()).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("fails locally when the configuration exceeds the YAML size limit", async () => {
+    const cwd = await temporaryDirectory();
+    await mkdir(path.join(cwd, ".paseo"));
+    await writeFile(
+      path.join(cwd, ".paseo", "hub.yml"),
+      `project: studio-api\n${"#".repeat(1_000_000)}`,
+    );
+    const hub = await startHub();
+
+    try {
+      await expect(
+        runHubDeploy({ hub: hub.origin, apiKey: "large-yaml-secret" }, { cwd, env: {} }),
+      ).rejects.toMatchObject({
+        code: "HUB_CONFIGURATION_TOO_LARGE",
+      });
+      expect(hub.requestCount()).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("fails locally when a partial exceeds its content size limit", async () => {
+    const cwd = await projectFile(
+      "project: studio-api\ntriggers:\n  - steps:\n      - prompt:\n          - include: large.md\n",
+    );
+    await writeFile(path.join(cwd, ".paseo", "partials", "large.md"), "x".repeat(1_000_001));
+    const hub = await startHub();
+
+    try {
+      await expect(
+        runHubDeploy({ hub: hub.origin, apiKey: "large-partial-secret" }, { cwd, env: {} }),
+      ).rejects.toMatchObject({
+        code: "HUB_PARTIAL_TOO_LARGE",
+      });
+      expect(hub.requestCount()).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("fails locally when the referenced partial bundle exceeds its combined size limit", async () => {
+    const cwd = await projectFile(
+      [
+        "project: studio-api",
+        "triggers:",
+        "  - steps:",
+        "      - prompt:",
+        ...Array.from({ length: 6 }, (_, index) => `          - include: part-${index}.md`),
+        "",
+      ].join("\n"),
+    );
+    await Promise.all(
+      Array.from({ length: 6 }, (_, index) =>
+        writeFile(path.join(cwd, ".paseo", "partials", `part-${index}.md`), "x".repeat(900_000)),
+      ),
+    );
+    const hub = await startHub();
+
+    try {
+      await expect(
+        runHubDeploy({ hub: hub.origin, apiKey: "large-bundle-secret" }, { cwd, env: {} }),
+      ).rejects.toMatchObject({
+        code: "HUB_PARTIAL_BUNDLE_TOO_LARGE",
+      });
+      expect(hub.requestCount()).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("fails locally for an explicit configuration path outside the project root", async () => {
+    const cwd = await temporaryDirectory();
+    const hub = await startHub();
+
+    try {
+      await expect(
+        runHubDeploy(
+          { file: "../hub.yml", hub: hub.origin, apiKey: "traversal-secret" },
+          { cwd, env: {} },
+        ),
+      ).rejects.toMatchObject({
+        code: "HUB_CONFIGURATION_PATH_INVALID",
+        message:
+          "Hub configuration path must stay within the current project root; parent-directory paths are not allowed.",
+      });
+      expect(hub.requestCount()).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("fails locally when the configuration is a directory", async () => {
+    const cwd = await temporaryDirectory();
+    await mkdir(path.join(cwd, ".paseo", "hub.yml"), { recursive: true });
+    const hub = await startHub();
+
+    try {
+      await expect(
+        runHubDeploy(
+          { hub: hub.origin, apiKey: "configuration-directory-secret" },
+          { cwd, env: {} },
+        ),
+      ).rejects.toMatchObject({
+        code: "HUB_CONFIGURATION_NOT_FILE",
+        message: "Hub configuration at .paseo/hub.yml must be a regular file.",
+      });
+      expect(hub.requestCount()).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("fails locally when the configuration cannot be read", async () => {
+    const cwd = await temporaryDirectory();
+    await mkdir(path.join(cwd, ".paseo"));
+    const configuration = path.join(cwd, ".paseo", "hub.yml");
+    await writeFile(configuration, "project: studio-api\n");
+    await chmod(configuration, 0o000);
+    const hub = await startHub();
+
+    try {
+      await expect(
+        runHubDeploy(
+          { hub: hub.origin, apiKey: "configuration-unreadable-secret" },
+          { cwd, env: {} },
+        ),
+      ).rejects.toMatchObject({ code: "HUB_CONFIGURATION_UNREADABLE" });
+      expect(hub.requestCount()).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("fails locally when the partial count exceeds the bundle limit", async () => {
+    const cwd = await projectFile(
+      [
+        "project: studio-api",
+        "triggers:",
+        "  - steps:",
+        "      - prompt:",
+        ...Array.from({ length: 101 }, (_, index) => `          - include: part-${index}.md`),
+        "",
+      ].join("\n"),
+    );
+    const hub = await startHub();
+
+    try {
+      await expect(
+        runHubDeploy({ hub: hub.origin, apiKey: "partial-count-secret" }, { cwd, env: {} }),
+      ).rejects.toMatchObject({
+        code: "HUB_PARTIAL_LIMIT_EXCEEDED",
+      });
+      expect(hub.requestCount()).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("fails locally when a canonical partial path exceeds its length limit", async () => {
+    const include = `${"a".repeat(497)}.md`;
+    const cwd = await projectFile(
+      `project: studio-api\ntriggers:\n  - steps:\n      - prompt:\n          - include: ${JSON.stringify(include)}\n`,
+    );
+    const hub = await startHub();
+
+    try {
+      await expect(
+        runHubDeploy({ hub: hub.origin, apiKey: "partial-path-length-secret" }, { cwd, env: {} }),
+      ).rejects.toMatchObject({
+        code: "HUB_PARTIAL_PATH_TOO_LONG",
+      });
+      expect(hub.requestCount()).toBe(0);
+    } finally {
+      await hub.close();
+    }
   });
 
   it("requires Hub origin and API key with actionable flag and env guidance", async () => {
@@ -240,6 +600,7 @@ async function temporaryDirectory(): Promise<string> {
 async function projectFile(yaml: string): Promise<string> {
   const cwd = await temporaryDirectory();
   await mkdir(path.join(cwd, ".paseo"));
+  await mkdir(path.join(cwd, ".paseo", "partials"));
   await writeFile(path.join(cwd, ".paseo", "hub.yml"), yaml);
   return cwd;
 }
@@ -260,6 +621,7 @@ interface ReceivedRequest {
 interface TestHub {
   origin: string;
   received: Promise<ReceivedRequest>;
+  requestCount(): number;
   close(): Promise<void>;
 }
 
@@ -274,11 +636,13 @@ async function startHub(
     },
   },
 ): Promise<TestHub> {
+  let requestCount = 0;
   let resolveRequest: (request: ReceivedRequest) => void;
   const received = new Promise<ReceivedRequest>((resolve) => {
     resolveRequest = resolve;
   });
   const server = createServer((request, response) => {
+    requestCount += 1;
     let body = "";
     request.setEncoding("utf8");
     request.on("data", (chunk: string) => {
@@ -304,6 +668,7 @@ async function startHub(
   return {
     origin: `http://127.0.0.1:${address.port}`,
     received,
+    requestCount: () => requestCount,
     close: () => closeServer(server),
   };
 }

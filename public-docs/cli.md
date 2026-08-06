@@ -206,6 +206,8 @@ paseo hub deploy [file]        # Install and activate a Hub configuration
 
 Pass `-p, --project <slug>` to select the project, or add optional top-level `project` metadata to the YAML. The flag wins when both are present. Project is deployment metadata, not workflow configuration, and the YAML is sent unchanged.
 
+Prompt `include` blocks are read from `.paseo/partials/` under the current directory, even when you pass an explicit configuration file. The CLI sends only the files referenced by the main YAML. Nested include-looking text inside a partial is content and is not resolved recursively. Inline-only configurations omit the partial bundle.
+
 Deployment requires an explicit Hub origin and organization API key. `--hub <origin>` overrides `PASEO_HUB_URL`; `--api-key <secret>` overrides `PASEO_HUB_API_KEY`. The key's organization supplies organization scope. Durable Hub login and credential persistence are not implemented.
 
 See [Daemons in Hub](/docs/hub/daemons), [Hub configuration](/docs/hub/configuration), and the [Hub public API](/docs/hub/api).

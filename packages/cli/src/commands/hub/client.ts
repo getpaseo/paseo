@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { HubDeployPartial } from "./deploy-input.js";
 import { HubDeployError } from "./error.js";
 
 const installResponseSchema = z
@@ -35,6 +36,7 @@ interface InstallHubConfigurationInput {
   apiKey: string;
   projectSlug: string;
   yaml: string;
+  partials?: readonly HubDeployPartial[];
 }
 
 export async function installHubConfiguration(
@@ -48,7 +50,13 @@ export async function installHubConfiguration(
         authorization: `Bearer ${input.apiKey}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ projectSlug: input.projectSlug, yaml: input.yaml }),
+      body: JSON.stringify({
+        projectSlug: input.projectSlug,
+        yaml: input.yaml,
+        ...(input.partials === undefined || input.partials.length === 0
+          ? {}
+          : { partials: input.partials }),
+      }),
     });
   } catch {
     throw new HubDeployError(

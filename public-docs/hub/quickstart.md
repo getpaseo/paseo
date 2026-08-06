@@ -71,6 +71,8 @@ triggers:
 
 `project` is the project slug from step 4. The deploy CLI reads it as deployment metadata; it does not affect workflow behavior. `daemon` is the normalized slug from step 3. `cwd` is a directory on that machine.
 
+If a prompt uses an `include` block, store the file below `.paseo/partials/`. The deploy CLI bundles only the files referenced by `.paseo/hub.yml`; nested include-looking text inside a partial is not resolved.
+
 ## 6. Push
 
 Push to the default branch. Hub fetches the file at that commit, validates it, and activates it. The **Configuration** tab shows the active revision and the last sync.
