@@ -41,6 +41,20 @@ const HOST_B_MODELS: AgentModelDefinition[] = [
   },
 ];
 
+const THINKING_MODELS: AgentModelDefinition[] = [
+  HOST_B_MODELS[0]!,
+  {
+    provider: "mock",
+    id: "model-c",
+    label: "Model C",
+    defaultThinkingOptionId: "low",
+    thinkingOptions: [
+      { id: "low", label: "Low", isDefault: true },
+      { id: "high", label: "High" },
+    ],
+  },
+];
+
 const ALL_MODELS = [...HOST_A_MODELS, ...HOST_B_MODELS];
 
 function target(input: {
@@ -260,7 +274,7 @@ describe("schedule form model", () => {
     expect(form.getState().selectedThinkingOptionId).toBe("low");
   });
 
-  it("preserves thinking selected with a model across provider snapshot updates", () => {
+  it("preserves per-model thinking across model switches and snapshot updates", () => {
     const form = open({
       mode: "edit",
       schedule: scheduleOnHost({
@@ -272,12 +286,22 @@ describe("schedule form model", () => {
       }),
       defaults: { serverId: null, projectTargets: PROJECT_TARGETS, preferences: {} },
     });
-    form.applyProviderSnapshot("host-b", providerSnapshot(HOST_B_MODELS));
+    form.applyProviderSnapshot("host-b", providerSnapshot(THINKING_MODELS));
+
+    form.setModel("mock", "model-b");
+    expect(form.getState().selectedThinkingOptionId).toBe("low");
+
+    form.setThinking("high");
+    form.setModel("mock", "model-c");
+    expect(form.getState().selectedThinkingOptionId).toBe("low");
 
     form.setModel("mock", "model-b");
     expect(form.getState().selectedThinkingOptionId).toBe("high");
 
-    form.applyProviderSnapshot("host-b", providerSnapshot(HOST_B_MODELS));
+    form.setModel("mock", "model-b");
+    expect(form.getState().selectedThinkingOptionId).toBe("high");
+
+    form.applyProviderSnapshot("host-b", providerSnapshot(THINKING_MODELS));
     expect(form.getState().selectedThinkingOptionId).toBe("high");
   });
 

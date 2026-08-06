@@ -790,6 +790,28 @@ function pickModelForProvider(input: {
   return resolveDefaultModelId(resolveAvailableModels(input.entries, input.provider));
 }
 
+function thinkingDraftKey(provider: AgentProvider, modelId: string): string {
+  return `${provider}:${modelId}`;
+}
+
+function seedThinkingDrafts(
+  drafts: Map<string, string>,
+  preferences: FormPreferences | null,
+): void {
+  for (const [provider, providerPreferences] of Object.entries(
+    preferences?.providerPreferences ?? {},
+  )) {
+    for (const [modelId, thinkingOptionId] of Object.entries(
+      providerPreferences?.thinkingByModel ?? {},
+    )) {
+      const key = thinkingDraftKey(provider as AgentProvider, modelId);
+      if (!drafts.has(key)) {
+        drafts.set(key, thinkingOptionId);
+      }
+    }
+  }
+}
+
 export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormModel {
   const listeners = new Set<() => void>();
   const initialValues = normalizeInitialValues({
@@ -800,6 +822,19 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
   let hosts = snapshot.hosts;
   let projectTargets = snapshot.defaults.projectTargets;
   let preferences = snapshot.defaults.preferences ?? null;
+  const thinkingDrafts = new Map<string, string>();
+  seedThinkingDrafts(thinkingDrafts, preferences);
+  const initialAgentConfig = newAgentConfig(snapshot.schedule);
+  if (
+    initialAgentConfig?.provider &&
+    initialAgentConfig.model &&
+    initialAgentConfig.thinkingOptionId
+  ) {
+    thinkingDrafts.set(
+      thinkingDraftKey(initialAgentConfig.provider, initialAgentConfig.model),
+      initialAgentConfig.thinkingOptionId,
+    );
+  }
   let providerEntries: ProviderSnapshotEntry[] = [];
   let userModified = { ...INITIAL_USER_MODIFIED, isolation: false };
   const timezone = snapshot.defaults.timezone ?? DEFAULT_TIMEZONE;
@@ -914,6 +949,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
         return;
       }
       preferences = normalizedPreferences;
+      seedThinkingDrafts(thinkingDrafts, preferences);
       publish(resolvePreferences(state));
     },
     applyProviderSnapshot(serverId, providerSnapshot) {
@@ -1002,8 +1038,12 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       const selectedThinkingOptionId = resolveThinkingOptionId({
         availableModels,
         modelId: selectedModel,
-        requestedThinkingOptionId: "",
+        requestedThinkingOptionId:
+          thinkingDrafts.get(thinkingDraftKey(provider, selectedModel)) ?? "",
       });
+      if (selectedModel && selectedThinkingOptionId) {
+        thinkingDrafts.set(thinkingDraftKey(provider, selectedModel), selectedThinkingOptionId);
+      }
       userModified = {
         ...userModified,
         provider: true,
@@ -1027,6 +1067,12 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
     setThinking(thinkingOptionId) {
       if (closed) {
         return;
+      }
+      if (state.selectedProvider && state.selectedModel) {
+        thinkingDrafts.set(
+          thinkingDraftKey(state.selectedProvider, state.selectedModel),
+          thinkingOptionId,
+        );
       }
       userModified = { ...userModified, thinkingOptionId: true };
       publish({ ...state, selectedThinkingOptionId: thinkingOptionId });
