@@ -55,6 +55,23 @@ export function ProviderUsageMobileSession({
   view: ProviderUsageView;
   activeProviderId: string | null | undefined;
 }) {
+  if (view.kind === "loading") {
+    return (
+      <View
+        style={styles.mobileSession}
+        testID="provider-usage-mobile-session-placeholder"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      >
+        <View style={styles.mobileSessionPlaceholderRow}>
+          <View style={styles.mobileSessionPlaceholderLabel} />
+          <View style={styles.mobileSessionPlaceholderValue} />
+        </View>
+        <View style={styles.mobileSessionPlaceholderTrack} />
+      </View>
+    );
+  }
+
   if (view.kind !== "ready") return null;
 
   const sessionWindow = findActiveProviderSessionWindow(view.payload.providers, activeProviderId);
@@ -88,6 +105,31 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: theme.fontSize.sm * 1.4,
   },
   mobileSession: {
-    width: 120,
+    width: "100%",
+  },
+  mobileSessionPlaceholderRow: {
+    height: theme.fontSize.xs * 1.4,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  mobileSessionPlaceholderLabel: {
+    width: 44,
+    height: theme.fontSize.xs,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface3,
+  },
+  mobileSessionPlaceholderValue: {
+    width: 96,
+    height: theme.fontSize.xs,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface3,
+  },
+  mobileSessionPlaceholderTrack: {
+    height: 4,
+    marginTop: 3,
+    borderRadius: 2,
+    backgroundColor: theme.colors.surface3,
   },
 }));

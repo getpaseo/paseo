@@ -47,7 +47,7 @@ export function ProviderUsageWindowBar({ window }: { window: ProviderUsageWindow
         <Text style={styles.label} numberOfLines={1}>
           {window.label}
         </Text>
-        <Text style={styles.value}>
+        <Text style={styles.value} numberOfLines={1} ellipsizeMode="tail">
           {usedPct != null
             ? t("providerUsage.values.used", {
                 percentage: formatPct(usedPct, i18n.resolvedLanguage),
@@ -79,10 +79,13 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.4,
   },
   value: {
+    flexShrink: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.4,
     fontWeight: theme.fontWeight.medium,
   },
   reset: {
