@@ -97,7 +97,10 @@ export class DaemonConnectionTestError extends Error {
 export async function buildClientConfig(
   connection: HostConnection,
   serverId?: string,
-  options?: { capabilities?: DaemonClientConfig["capabilities"] },
+  options?: {
+    capabilities?: DaemonClientConfig["capabilities"];
+    trace?: DaemonClientConfig["trace"];
+  },
   deps: Pick<
     DaemonConnectionDependencies<DaemonProbeClient>,
     "getClientId" | "resolveAppVersion" | "createLocalTransportFactory" | "buildLocalTransportUrl"
@@ -112,6 +115,7 @@ export async function buildClientConfig(
     suppressSendErrors: true,
     reconnect: { enabled: false },
     ...(options?.capabilities ? { capabilities: options.capabilities } : {}),
+    ...(options?.trace ? { trace: options.trace } : {}),
     ...((connection.type === "directSocket" || connection.type === "directPipe") &&
     localTransportFactory
       ? { transportFactory: localTransportFactory }
@@ -224,6 +228,7 @@ interface ProbeOptions {
   serverId?: string;
   timeoutMs?: number;
   capabilities?: DaemonClientConfig["capabilities"];
+  trace?: DaemonClientConfig["trace"];
 }
 
 function resolveTimeout(connection: HostConnection, options?: ProbeOptions): number {

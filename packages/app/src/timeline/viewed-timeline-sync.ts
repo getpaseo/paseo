@@ -33,7 +33,6 @@ export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
   setActive(active: boolean): void;
   setConnected(connected: boolean): void;
   setDeliveryMode(mode: TimelineDeliveryMode): void;
-  reconcileAgent(agentId: string): void;
   recoverGap(agentId: string, cursor: { epoch: string; endSeq: number }): void;
   dispose(): void;
 }
@@ -450,15 +449,6 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       notifyListeners();
       if (deliveryMode === "selective" && connected) void reconcileMembership();
       else if (connected) startAcknowledgedCatchUps();
-    },
-    reconcileAgent(agentId) {
-      if (!isDesired(agentId)) return;
-      const request = planTimelineTailFetch();
-      if (catchUps.get(agentId)?.status === "running") {
-        pendingCatchUps.set(agentId, request);
-        return;
-      }
-      startCatchUp(agentId, { request, supersede: true });
     },
     recoverGap(agentId, cursor) {
       if (!isDesired(agentId)) return;

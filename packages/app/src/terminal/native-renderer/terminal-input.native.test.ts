@@ -30,7 +30,7 @@ describe("native terminal typed input", () => {
 
     expect(input.receiveTextChange("npm run typecheck")).toEqual({
       data: "npm run typecheck",
-      shouldClear: true,
+      shouldClear: false,
     });
   });
 
@@ -122,11 +122,11 @@ describe("native terminal typed input", () => {
     const input = createTerminalTextInputState();
     const longText = "x".repeat(512);
 
-    expect(input.receiveTextChange(longText)).toEqual({ data: longText, shouldClear: true });
+    expect(input.receiveTextChange(longText)).toEqual({ data: longText, shouldClear: false });
 
     input.reset();
 
-    expect(input.receiveTextChange(longText)).toEqual({ data: longText, shouldClear: true });
+    expect(input.receiveTextChange(longText)).toEqual({ data: longText, shouldClear: false });
   });
 
   it("translates software keyboard terminal control keys", () => {
@@ -197,14 +197,35 @@ describe("native terminal typed input", () => {
 
     expect(input.receiveTextChange("echo clipboard item")).toEqual({
       data: "echo clipboard item",
-      shouldClear: true,
+      shouldClear: false,
     });
 
     input.reset();
 
     expect(input.receiveTextChange("echo clipboard item")).toEqual({
       data: "echo clipboard item",
-      shouldClear: true,
+      shouldClear: false,
+    });
+  });
+
+  it("does not replay a stale IME suggestion when the native clear leaves composing text behind", () => {
+    const input = createTerminalTextInputState();
+    let typed = "";
+
+    for (const key of "resta") {
+      typed += key;
+      input.receiveKeyPress(key);
+      input.receiveTextChange(typed);
+    }
+
+    expect(input.receiveTextChange("restaurant ")).toEqual({
+      data: "urant ",
+      shouldClear: false,
+    });
+
+    expect(input.receiveTextChange("restaurant x")).toEqual({
+      data: "x",
+      shouldClear: false,
     });
   });
 });

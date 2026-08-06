@@ -5,10 +5,9 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "reac
 import { CircleAlert, Folder, FolderGit2, Monitor } from "lucide-react-native";
 import { ProjectStatusIndicator } from "@/components/sidebar/project-leading-visual";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
-import { PulsingStatusDot } from "@/components/sidebar/pulsing-status-dot";
 import {
   WorkspaceMetaRow,
-  type WorkspaceScriptSummary,
+  type WorkspaceServiceSummary,
 } from "@/components/sidebar/workspace-meta-row";
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
 import type { HostBadgeModel } from "@/hosts/appearance";
@@ -29,24 +28,15 @@ import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sideba
 const SCRIM_WIDTH = 48;
 const SCRIM_SOLID_OFFSET = "55%";
 
-/**
- * How far a workspace row sits inside the status header above it. Only status grouping
- * indents: a project row carries an icon and its workspaces line up under it already, but a
- * status header is just a label, so its rows need the offset to read as belonging to it.
- *
- * It is row padding rather than a margin on the list, because the row's hover and selected
- * backgrounds have to keep spanning the group's full width. Indenting the container instead
- * pulls the highlight in with the content and the row stops lining up with its header.
- */
-const WORKSPACE_ROW_INDENT = 12;
-
 const DEFAULT_STATUS_DOT_SIZE = 7;
 const EMPHASIZED_STATUS_DOT_SIZE = 9;
 const DEFAULT_STATUS_DOT_OFFSET = 0;
 const EMPHASIZED_STATUS_DOT_OFFSET = -1;
 
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const amberColorMapping = (theme: Theme) => ({ color: theme.colors.palette.amber[500] });
+const needsInputColorMapping = (theme: Theme) => ({
+  color: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
+});
 
 const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedMonitor = withUnistyles(Monitor);
@@ -131,7 +121,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   hostBadge,
   leadingProjectName = null,
   leadingProjectIconDataUri = null,
-  scriptSummary = null,
+  serviceSummary = null,
   backdrop,
   isHovered,
   isLoading,
@@ -146,7 +136,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   /** Hoisted rows use their project icon as the leading visual because no project row contains them. */
   leadingProjectName?: string | null;
   leadingProjectIconDataUri?: string | null;
-  scriptSummary?: WorkspaceScriptSummary | null;
+  serviceSummary?: WorkspaceServiceSummary | null;
   /** The row's current background, so the project status badge can knock out of it. */
   backdrop: SurfaceBackdrop;
   isHovered: boolean;
@@ -202,7 +192,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
           <WorkspaceMetaRow
             hostBadge={hostBadge ?? null}
             prHint={workspace.prHint}
-            scriptSummary={scriptSummary}
+            serviceSummary={serviceSummary}
           />
         </View>
       </View>
@@ -226,14 +216,14 @@ function WorkspaceStatusIndicator({
   loading?: boolean;
   reserveIdleSpace?: boolean;
 }) {
-  // Busy is a pulsing dot here for the same reason it is on a project icon: every status in
-  // the sidebar is a dot, and a row with a project icon simply moves that dot onto the icon.
+  // Busy is a dot here for the same reason it is on a project icon: every status in the
+  // sidebar is a dot, and a row with a project icon simply moves that dot onto the icon.
   // A row starting up and a row working are both busy, so they share the dot and differ only
   // in testID.
   if (loading) {
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-loading">
-        <PulsingStatusDot style={styles.standaloneRunningDot} />
+        <View style={styles.standaloneRunningDot} />
       </View>
     );
   }
@@ -241,7 +231,7 @@ function WorkspaceStatusIndicator({
   if (shouldRenderSyncedStatusLoader({ bucket })) {
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-running">
-        <PulsingStatusDot style={styles.standaloneRunningDot} />
+        <View style={styles.standaloneRunningDot} />
       </View>
     );
   }
@@ -249,7 +239,7 @@ function WorkspaceStatusIndicator({
   if (bucket === "needs_input") {
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-needs_input">
-        <ThemedCircleAlert size={14} uniProps={amberColorMapping} />
+        <ThemedCircleAlert size={14} uniProps={needsInputColorMapping} />
       </View>
     );
   }
@@ -342,10 +332,16 @@ function getStatusDotColorStyle(bucket: SidebarStateBucket) {
 }
 
 export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
-  // Layered over the row's own padding rather than replacing it, so the indent stays one
-  // number here instead of being baked into a row style.
+  // How far a workspace row sits inside the group header above it — a project row or a
+  // status group header. Both groupings share this one indent, so every grouped workspace row
+  // in the sidebar sits on the same rail regardless of how the list is grouped. Pinned rows
+  // are not grouped and stay flush.
+  //
+  // It is row padding rather than a margin on the list, because the row's hover and selected
+  // backgrounds have to keep spanning the group's full width. Indenting the container instead
+  // pulls the highlight in with the content and the row stops lining up with its header.
   rowIndented: {
-    paddingLeft: theme.spacing[2] + WORKSPACE_ROW_INDENT,
+    paddingLeft: theme.spacing[2] + theme.spacing[2],
   },
   rowRight: {
     flexDirection: "row",
@@ -575,7 +571,7 @@ const styles = StyleSheet.create((theme) => ({
     width: 8,
     height: 8,
     borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.palette.green[500],
+    backgroundColor: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
   },
   standaloneRunningDot: {
     width: 8,
@@ -608,11 +604,11 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 1,
   },
   statusDotNeedsInput: {
-    backgroundColor: theme.colors.palette.amber[500],
+    backgroundColor: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
     borderColor: theme.colors.surface0,
   },
   statusDotFailed: {
-    backgroundColor: theme.colors.palette.red[500],
+    backgroundColor: getStatusDotColor({ theme, bucket: "failed" }) ?? undefined,
     borderColor: theme.colors.surface0,
   },
   statusDotRunning: {
@@ -620,7 +616,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.surface0,
   },
   statusDotAttention: {
-    backgroundColor: theme.colors.palette.green[500],
+    backgroundColor: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
     borderColor: theme.colors.surface0,
   },
 }));

@@ -8,51 +8,41 @@ import {
   GitPullRequest,
   GitPullRequestClosed,
   Globe,
-  Server,
-  SquareTerminal,
 } from "lucide-react-native";
-import { HOST_COLORS, type HostBadgeModel, type HostColor } from "@/hosts/appearance";
-import { identityColor } from "@/styles/identity-colors";
+import type { HostBadgeModel } from "@/hosts/appearance";
+import { HostBadge, HOST_BADGE_ICON_SIZE } from "@/hosts/host-badge";
 import type { PrHint } from "@/git/pr-hint";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { useSidebarRowItems } from "@/components/sidebar/display-preferences/model";
+import { useSidebarMetaPreferences } from "@/components/sidebar/display-preferences/model";
 import type { Theme } from "@/styles/theme";
 import { CheckIndicator } from "./check-indicator";
 import type { CheckSummary, CheckSummaryState } from "./check-summary";
 import { selectMetaRowItems, type MetaRowItem } from "./meta-items";
-import type { WorkspaceScriptSummary } from "./script-summary";
+import { workspaceServiceLabelKey, type WorkspaceServiceSummary } from "./service-summary";
 
-export { selectWorkspaceScriptSummary, type WorkspaceScriptSummary } from "./script-summary";
+export {
+  selectWorkspaceServiceSummary,
+  workspaceServiceLabelKey,
+  type WorkspaceServiceSummary,
+} from "./service-summary";
 
 /**
  * One size for every glyph on the line. The items are peers — host, change request, CI,
- * running service — so a glyph that differs in size reads as a different rank.
+ * running service — so a glyph that differs in size reads as a different rank. The host badge
+ * owns the size because it is the one item that also appears off this line.
  */
-const META_ICON_SIZE = 12;
+const META_ICON_SIZE = HOST_BADGE_ICON_SIZE;
 
-const ThemedServer = withUnistyles(Server);
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedGitMerge = withUnistyles(GitMerge);
 const ThemedGitPullRequestClosed = withUnistyles(GitPullRequestClosed);
 const ThemedGlobe = withUnistyles(Globe);
-const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 
-const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const foregroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
-const mergedMapping = (theme: Theme) => ({ color: theme.colors.statusMutedMerged });
-const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusMutedDanger });
-
-// Theme-independent, so the mapping per host color is fixed for the life of the module. A
-// fresh `uniProps` identity on every render makes withUnistyles re-subscribe each pass.
-const HOST_ICON_MAPPINGS: Record<HostColor, (theme: Theme) => { color: string }> = (() => {
-  const byColor = {} as Record<HostColor, (theme: Theme) => { color: string }>;
-  for (const color of HOST_COLORS) {
-    byColor[color] = color === "none" ? mutedMapping : () => ({ color: identityColor(color) });
-  }
-  return byColor;
-})();
+const mergedMapping = (theme: Theme) => ({ color: theme.colors.statusMerged });
+const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
 
 /**
  * The subtitle under a workspace title: which host it lives on, its change request, that
@@ -67,18 +57,19 @@ const HOST_ICON_MAPPINGS: Record<HostColor, (theme: Theme) => { color: string }>
 export function WorkspaceMetaRow({
   hostBadge,
   prHint,
-  scriptSummary,
+  serviceSummary,
 }: {
   hostBadge: HostBadgeModel | null;
   prHint: PrHint | null;
-  scriptSummary: WorkspaceScriptSummary | null;
+  serviceSummary: WorkspaceServiceSummary | null;
 }) {
-  const visible = useSidebarRowItems();
+  const { rowItems, checksDisplay } = useSidebarMetaPreferences();
   const items = selectMetaRowItems({
     hasHostBadge: hostBadge !== null,
     prHint,
-    scriptSummary,
-    visible,
+    serviceSummary,
+    visible: rowItems,
+    checksDisplay,
   });
 
   if (items.length === 0) return null;
@@ -103,32 +94,15 @@ function MetaItemNode({
   hostBadge: HostBadgeModel | null;
 }): ReactNode {
   if (item.kind === "host") {
-    return hostBadge ? <HostItem hostBadge={hostBadge} /> : null;
+    return hostBadge ? <HostBadge badge={hostBadge} /> : null;
   }
   if (item.kind === "changeRequest") {
     return <PullRequestItem hint={item.hint} />;
   }
   if (item.kind === "checks") {
-    return <ChecksItem summary={item.summary} />;
+    return <ChecksItem summary={item.summary} label={item.label} />;
   }
-  return <ScriptItem summary={item.summary} />;
-}
-
-function HostItem({ hostBadge }: { hostBadge: HostBadgeModel }) {
-  return (
-    <View
-      style={styles.hostItem}
-      testID={`sidebar-host-badge-${hostBadge.serverId}`}
-      accessibilityLabel={hostBadge.label}
-    >
-      <ThemedServer size={META_ICON_SIZE} uniProps={HOST_ICON_MAPPINGS[hostBadge.color]} />
-      {hostBadge.showLabel ? (
-        <Text style={styles.hostLabel} numberOfLines={1}>
-          {hostBadge.label}
-        </Text>
-      ) : null}
-    </View>
-  );
+  return <ServiceItem summary={item.summary} />;
 }
 
 /**
@@ -187,15 +161,19 @@ function PullRequestItem({ hint }: { hint: PrHint }) {
 }
 
 /**
- * Every state says its own name. A tick on its own has no subject — the reader has to already
- * know the glyph is about CI to read it at all, and sitting after a host and a change request it
- * reads as something left over. One short word costs less than that ambiguity.
+ * By default every state says its own name. A tick on its own has no subject — the reader has to
+ * already know the glyph is about CI to read it at all, and sitting after a host and a change
+ * request it reads as something left over. One short word costs less than that ambiguity, which
+ * is why icon-and-text is the default and dropping the word is something you ask for.
  *
  * The words are the outcome, not the noun: "passed" against "failed", both naming how a finished
  * run ended, "running" for one still deciding. Repeating the subject on every healthy row —
  * "checks passed" — is the noise worth avoiding; naming the outcome is not.
+ *
+ * The accessible name is on the wrapper either way, so turning the word off shrinks the row
+ * without taking the state away from a screen reader.
  */
-function ChecksItem({ summary }: { summary: CheckSummary }) {
+function ChecksItem({ summary, label }: { summary: CheckSummary; label: boolean }) {
   const { t } = useTranslation();
   return (
     <View
@@ -204,9 +182,11 @@ function ChecksItem({ summary }: { summary: CheckSummary }) {
       testID={`sidebar-workspace-checks-${summary.state}`}
     >
       <CheckIndicator summary={summary} size={META_ICON_SIZE} />
-      <Text style={checksTextStyle(summary.state)} numberOfLines={1}>
-        {t(CHECK_STATE_LABEL_KEYS[summary.state])}
-      </Text>
+      {label ? (
+        <Text style={checksTextStyle(summary.state)} numberOfLines={1}>
+          {t(CHECK_STATE_LABEL_KEYS[summary.state])}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -223,25 +203,32 @@ const CHECK_STATE_ACCESSIBLE_KEYS = {
   running: "workspace.git.pr.checksSummary.runningAccessible",
 } as const;
 
-function ScriptItem({ summary }: { summary: WorkspaceScriptSummary }) {
+/**
+ * A running service, named. It is the one item on the line whose text is arbitrary — everything
+ * else is a number, a short word, or a host label the user already picked — so it is also the
+ * only one allowed to shrink, and it truncates rather than pushing the line past the row.
+ *
+ * A failed health check turns the whole item danger, glyph and name together. Colouring only the
+ * glyph would leave the name reading as fine, and the name is the part you look at.
+ */
+function ServiceItem({ summary }: { summary: WorkspaceServiceSummary }) {
   const { t } = useTranslation();
+  const unhealthy = summary.health === "unhealthy";
   return (
     <View
-      style={styles.item}
-      accessibilityLabel={t("workspace.status.scriptsAvailable")}
-      testID={summary.kind === "service" ? "workspace-globe-icon" : "workspace-terminal-icon"}
+      style={styles.serviceItem}
+      accessibilityLabel={t(workspaceServiceLabelKey(summary), { name: summary.name })}
+      testID={unhealthy ? "workspace-service-unhealthy" : "workspace-service"}
     >
-      {summary.kind === "service" ? (
-        <ThemedGlobe size={META_ICON_SIZE} uniProps={successMapping} />
-      ) : (
-        <ThemedSquareTerminal size={META_ICON_SIZE} uniProps={successMapping} />
-      )}
-      {summary.port !== null ? <Text style={styles.scriptPort}>:{summary.port}</Text> : null}
+      <ThemedGlobe size={META_ICON_SIZE} uniProps={unhealthy ? dangerMapping : successMapping} />
+      <Text style={unhealthy ? styles.serviceNameUnhealthy : styles.serviceName} numberOfLines={1}>
+        {summary.name}
+      </Text>
     </View>
   );
 }
 
-const successMapping = (theme: Theme) => ({ color: theme.colors.statusMutedSuccess });
+const successMapping = (theme: Theme) => ({ color: theme.colors.statusSuccess });
 
 const PR_ICONS = {
   open: ThemedGitPullRequest,
@@ -280,15 +267,6 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 0,
   },
-  // The host is the only unbounded item, so it consumes the remaining width and gives way
-  // before the bounded change request, CI, and service items.
-  hostItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    minWidth: 0,
-    flexShrink: 1,
-  },
   itemPressed: {
     opacity: 0.82,
   },
@@ -298,18 +276,25 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 16,
     flexShrink: 0,
   },
-  hostLabel: {
-    color: theme.colors.foregroundMuted,
+  // The one item that gives way when the line runs out of room — see `ServiceItem`.
+  serviceItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    minWidth: 0,
+    flexShrink: 1,
+  },
+  serviceName: {
+    color: theme.colors.statusSuccess,
     fontSize: theme.fontSize.xs,
     lineHeight: 16,
     flexShrink: 1,
-    minWidth: 0,
   },
-  scriptPort: {
-    color: theme.colors.statusMutedSuccess,
+  serviceNameUnhealthy: {
+    color: theme.colors.statusDanger,
     fontSize: theme.fontSize.xs,
     lineHeight: 16,
-    flexShrink: 0,
+    flexShrink: 1,
   },
   prText: {
     color: theme.colors.foregroundMuted,
@@ -325,19 +310,19 @@ const styles = StyleSheet.create((theme) => ({
   },
   // Matches the indicator — see COLOR_MAPPINGS in check-indicator.tsx.
   checksTextPassed: {
-    color: theme.colors.statusMutedSuccess,
+    color: theme.colors.statusSuccess,
     fontSize: theme.fontSize.xs,
     lineHeight: 16,
     flexShrink: 0,
   },
   checksTextFailed: {
-    color: theme.colors.statusMutedDanger,
+    color: theme.colors.statusDanger,
     fontSize: theme.fontSize.xs,
     lineHeight: 16,
     flexShrink: 0,
   },
   checksTextRunning: {
-    color: theme.colors.statusMutedWarning,
+    color: theme.colors.statusWarning,
     fontSize: theme.fontSize.xs,
     lineHeight: 16,
     flexShrink: 0,

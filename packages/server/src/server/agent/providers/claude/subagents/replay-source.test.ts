@@ -99,7 +99,7 @@ describe("observeReplaySubagents", () => {
     // Claude Code writes every descendant into the same subagents/ directory. A grandchild's
     // toolUseId names a Task call made inside its parent's session, so nothing here can resolve
     // it: it would replay as an extra row the live stream never showed, with no Task card and no
-    // outcome, running forever. One recorded session showed 10 subagents live and 22 on reopen.
+    // outcome. One recorded session showed 10 subagents live and 22 on reopen.
     const observations = observeReplaySubagents({
       subagents: [
         { agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID, spawnDepth: 1 }, entries: [] },
@@ -126,8 +126,7 @@ describe("observeReplaySubagents", () => {
     expect(observations[0]).toMatchObject({ kind: "declared", id: TOOL_USE_ID });
   });
 
-  it("recovers identity from meta when the parent's Task call is missing", () => {
-    // The case the legacy scrape cannot handle: no tool_result, so no link and no identity.
+  it("drops a meta-linked subagent when the parent never declared its Task", () => {
     const observations = observeReplaySubagents({
       subagents: [
         {
@@ -140,12 +139,7 @@ describe("observeReplaySubagents", () => {
       convertEntry: () => [],
     });
 
-    expect(observations[0]).toMatchObject({
-      id: TOOL_USE_ID,
-      toolCallId: TOOL_USE_ID,
-      title: "Explore",
-      description: "Find the code",
-    });
+    expect(observations).toEqual([]);
   });
 
   it("falls back to the scraped link when there is no meta file", () => {
@@ -165,14 +159,127 @@ describe("observeReplaySubagents", () => {
     expect(rest.at(-1)).toMatchObject({ kind: "status", status: "completed" });
   });
 
-  it("keeps an unlinkable subagent visible under its own id", () => {
-    const [declared] = observeReplaySubagents({
+  it("drops an unlinkable subagent", () => {
+    const observations = observeReplaySubagents({
       subagents: [{ agentId: AGENT_ID, meta: null, entries: [] }],
       parent: emptyParent(),
       convertEntry: () => [],
     });
-    expect(declared).toMatchObject({ id: AGENT_ID });
-    expect(declared).not.toHaveProperty("toolCallId");
+    expect(observations).toEqual([]);
+  });
+
+  it("drops a terminal subagent the parent has no Task call for", () => {
+    // A legacy grandchild: its toolUseId names a Task call made inside a sibling's transcript, so
+    // no tool_result for it can ever reach the parent. Left running, it never stops.
+    const descriptor = applyToStore(
+      observeReplaySubagents({
+        subagents: [
+          {
+            agentId: AGENT_ID,
+            meta: { toolUseId: TOOL_USE_ID },
+            entries: [
+              {
+                type: "assistant",
+                timestamp: "2026-07-31T03:41:00.000Z",
+                message: { stop_reason: "end_turn" },
+              },
+            ],
+          },
+        ],
+        parent: emptyParent(),
+        convertEntry: () => [],
+      }),
+    );
+
+    expect(descriptor).toBeNull();
+  });
+
+  it("drops a terminal skill-spawned subagent that has no link at all", () => {
+    // A /code-review run: no Task tool_use exists to name it, so its sidecar carries only
+    // agentType and its id appears nowhere in the parent transcript.
+    const descriptor = applyToStore(
+      observeReplaySubagents({
+        subagents: [
+          {
+            agentId: AGENT_ID,
+            meta: { agentType: "general-purpose" },
+            entries: [
+              {
+                type: "assistant",
+                timestamp: "2026-07-31T03:41:00.000Z",
+                message: { stop_reason: "end_turn" },
+              },
+            ],
+          },
+        ],
+        parent: emptyParent(),
+        convertEntry: () => [],
+      }),
+    );
+
+    expect(descriptor).toBeNull();
+  });
+
+  it("reports a scraped link's failure as failed", () => {
+    const descriptor = applyToStore(
+      observeReplaySubagents({
+        subagents: [{ agentId: AGENT_ID, meta: null, entries: [] }],
+        parent: {
+          toolCalls: new Map([[TOOL_USE_ID, { title: "Explore" }]]),
+          linksByAgentId: new Map([[AGENT_ID, { toolCallId: TOOL_USE_ID, failed: true }]]),
+          outcomesByToolCallId: new Map(),
+        },
+        convertEntry: () => [],
+      }),
+    );
+
+    expect(descriptor).toMatchObject({ id: TOOL_USE_ID, status: "failed" });
+  });
+
+  it("drops a non-terminal linkless subagent", () => {
+    const observations = observeReplaySubagents({
+      subagents: [
+        {
+          agentId: AGENT_ID,
+          meta: { agentType: "general-purpose" },
+          entries: [
+            {
+              type: "assistant",
+              timestamp: "2026-07-31T03:41:00.000Z",
+              message: { stop_reason: null },
+            },
+          ],
+        },
+      ],
+      parent: emptyParent(),
+      convertEntry: () => [],
+    });
+
+    expect(observations).toEqual([]);
+  });
+
+  it("finishes a terminal Task child when the parent has not recorded its outcome", () => {
+    const descriptor = applyToStore(
+      observeReplaySubagents({
+        subagents: [
+          {
+            agentId: AGENT_ID,
+            meta: { toolUseId: TOOL_USE_ID },
+            entries: [
+              {
+                type: "assistant",
+                timestamp: "2026-07-31T03:41:00.000Z",
+                message: { stop_reason: "end_turn" },
+              },
+            ],
+          },
+        ],
+        parent: { ...parentWithTaskCall(), outcomesByToolCallId: new Map() },
+        convertEntry: () => [],
+      }),
+    );
+
+    expect(descriptor).toMatchObject({ status: "completed" });
   });
 
   it("leaves a subagent with no recorded outcome running", () => {

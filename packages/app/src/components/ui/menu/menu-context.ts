@@ -24,12 +24,14 @@ export type MenuPresentation = "popover" | "sheet";
 /** What a menu does on a compact screen. Wide screens are always a popover. */
 export type MenuCompactMode = "popover" | "sheet";
 
+/** How long UIKit is given to finish removing the menu surface before an action runs. */
+export const IOS_TEARDOWN_GRACE_MS = 250;
+
 export interface MenuContextValue {
   open: boolean;
   setOpen: (open: boolean) => void;
   /** Runs an item's action, closing the menu first when the item asks for it. */
   selectItem: (onSelect: (() => void) | undefined, closeOnSelect: boolean) => void;
-  flushPendingSelect: () => void;
   triggerRef: React.RefObject<View | null>;
   /** Point anchor for menus opened from a gesture rather than a trigger box. */
   anchorRect: Rect | null;
@@ -104,7 +106,6 @@ export function useMenuState({
   compactMode?: MenuCompactMode;
 }): MenuContextValue {
   const triggerRef = useRef<View>(null);
-  const pendingSelectRef = useRef<(() => void) | null>(null);
   const [anchorRect, setAnchorRect] = useState<Rect | null>(null);
   const [path, setPath] = useState<MenuPath>(MENU_ROOT_PATH);
   const isCompact = useIsCompactFormFactor();
@@ -126,21 +127,6 @@ export function useMenuState({
     [setIsOpenState],
   );
 
-  const flushPendingSelect = useCallback(() => {
-    const pendingSelect = pendingSelectRef.current;
-    pendingSelectRef.current = null;
-    if (!pendingSelect) return;
-
-    if (Platform.OS === "ios") {
-      // Native presenters such as PHPicker can hang if launched while an RN
-      // Modal is still completing dismissal on UIKit's side.
-      setTimeout(pendingSelect, 250);
-      return;
-    }
-
-    pendingSelect();
-  }, []);
-
   const selectItem = useCallback(
     (onSelect: (() => void) | undefined, closeOnSelect: boolean) => {
       if (!closeOnSelect) {
@@ -148,14 +134,19 @@ export function useMenuState({
         return;
       }
 
+      setOpen(false);
+      if (!onSelect) return;
+
       if (Platform.OS === "ios") {
-        pendingSelectRef.current = onSelect ?? null;
-        setOpen(false);
+        // Native presenters such as PHPicker can hang if launched while UIKit is still
+        // tearing down the surface this menu was drawn in. The wait is timed rather than
+        // driven by the surface's own dismissal callback: both surfaces unmount as soon as
+        // the menu closes, so any such callback is racing its own removal and usually loses.
+        setTimeout(onSelect, IOS_TEARDOWN_GRACE_MS);
         return;
       }
 
-      setOpen(false);
-      onSelect?.();
+      onSelect();
     },
     [setOpen],
   );
@@ -177,7 +168,6 @@ export function useMenuState({
       open: isOpen,
       setOpen,
       selectItem,
-      flushPendingSelect,
       triggerRef,
       anchorRect,
       setAnchorRect,
@@ -187,17 +177,6 @@ export function useMenuState({
       closeSub,
       goBack,
     }),
-    [
-      isOpen,
-      setOpen,
-      selectItem,
-      flushPendingSelect,
-      anchorRect,
-      presentation,
-      path,
-      openSub,
-      closeSub,
-      goBack,
-    ],
+    [isOpen, setOpen, selectItem, anchorRect, presentation, path, openSub, closeSub, goBack],
   );
 }

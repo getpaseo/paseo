@@ -411,6 +411,11 @@ describe("mountBrowserAutomationHandler", () => {
         height: 768,
       },
     });
+    expect(useBrowserStore.getState().browsersById[result.browserId]?.viewport).toEqual({
+      mode: "fixed",
+      width: 1024,
+      height: 768,
+    });
     expect(browser.browser.executedRequests).toHaveLength(1);
   });
 

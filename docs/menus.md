@@ -26,6 +26,17 @@ when you have actually looked at it on a phone.
 `ContextMenu` is the exception: it defaults to `compactMode="sheet"` and enables native long press.
 Disable mobile triggering explicitly on draggable rows, where long press belongs to drag instead.
 
+## Selecting an item on iOS
+
+An item that closes the menu runs its action after a fixed grace period on iOS, not immediately:
+a native presenter launched while UIKit is still tearing down the surface can hang. Both surfaces
+unmount the moment the menu closes, so the wait is a timer rather than the surface's own dismissal
+callback — a callback fired from inside a subtree that is being removed is racing its own removal,
+and it loses. Selections used to be dropped entirely for exactly that reason.
+
+The consequence for callers: an `onSelect` on iOS runs a beat after the press. Don't add a second
+delay on top of it, and don't read state that the same press mutated.
+
 ## Pages
 
 A submenu is a page, declared as data on the surface and reached by a `MenuSubTrigger` whose `id`
@@ -86,16 +97,32 @@ and a column of icons there is decoration competing with the values you actually
 
 ## Surface details
 
-- The hover fill is **inset by the same amount on every side and rounded** — a chip inside the
-  menu, not a band across it. The inset is taken _out of_ the row, never added to it: horizontally
-  padding gives up what margin takes so labels don't move, and vertically the fill is shorter by
-  the same amount so the row pitch is unchanged. Insetting by growing the row is how the menu ends
-  up taller than it started.
-- The fill's height only holds because the label's `lineHeight` is pinned. Leave it to the platform
-  and content outgrows `minHeight`, which then does nothing.
-- **The item's inset is the menu's only spacing.** Rows sit apart because each holds itself in, and
-  a separator gets clearance from its neighbours for free. Don't give the separator a margin of its
-  own — that is two numbers controlling one gap, and they will disagree.
+- The hover fill is **inset from the surface's edges and rounded** — a chip inside the menu, not a
+  band across it. The inset is taken _out of_ the row, never added to it: padding gives up what
+  margin takes, so labels sit at the same 13pt they always did. Insetting by growing the row is how
+  the menu ends up taller than it started.
+- **A row is as tall as what is driving it** — 28pt for a pointer, 40pt below `md` for a thumb. The
+  split is on breakpoint, not on `presentation`: the compact popover that `compactMode` defaults to
+  is worked with a thumb just as a sheet is, and sizing off the sheet would leave it at the desktop
+  height. `md` is where `useIsCompactFormFactor` divides, so row height and the popover/sheet choice
+  turn over together.
+- The desktop height only holds because the label's `lineHeight` is pinned — 18 line + 8 padding +
+  2 border is exactly 28. Leave it to the platform and content outgrows `minHeight`, which then does
+  nothing. Compact is the other way round: `minHeight` leads and the label centres in it.
+- **A row owns its fill; `MenuPage` owns the spacing between rows.** The vertical inset above the
+  first row and below the last, and the gap between rows, are the page's — one knob each,
+  `MENU_ROW_GAP` being the one a redesign turns. A row that carried vertical margin would be
+  serving both at once, and since margins don't collapse it would land as one unit at the edges and
+  two between rows, so shrinking the gap would eat the inset with it. Horizontal inset does stay on
+  the row: there is one left edge and one right edge, so nothing is doubling up.
+- `MenuPage` is also what provides a page's depth, so the popover and the sheet cannot disagree
+  about what a page is. Every entry point goes through it — root, flyout, pushed sheet page.
+- The gap reaches a page's **direct children**. A group of rows wrapped in a `View` of its own drops
+  out of it; at the current gap of zero there is nothing to lose, but anything above zero wants that
+  wrapper to carry the page style too.
+- The separator is the one row-level thing that asks for vertical space of its own, and now that
+  rows carry none, that is still one number controlling one gap. It takes no horizontal margin and
+  the page has no horizontal padding, so the rule runs the full width of the surface.
 - Separators use `borderAccent`, the same colour the surface outlines itself with. `border` sits
   between `surface1` and `surface2`, which put it within a hair of the hover fill and made
   separators disappear against a hovered row.

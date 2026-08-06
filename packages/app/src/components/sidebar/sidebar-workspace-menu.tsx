@@ -24,7 +24,10 @@ import {
 import { Shortcut } from "@/components/ui/shortcut";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 import { resolveSidebarWorkspaceAccessibilityLabel } from "@/components/sidebar/sidebar-workspace-title";
-import type { WorkspaceScriptSummary } from "@/components/sidebar/workspace-meta-row";
+import {
+  workspaceServiceLabelKey,
+  type WorkspaceServiceSummary,
+} from "@/components/sidebar/workspace-meta-row";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -250,7 +253,7 @@ export function SidebarWorkspaceMenu({
 
 type ContextTriggerProps = Omit<
   ComponentProps<typeof ContextMenuTrigger>,
-  "children" | "enabledOnMobile"
+  "children" | "enabledOnMobile" | "highlightStyle"
 >;
 
 export function SidebarWorkspaceContextMenu({
@@ -260,7 +263,7 @@ export function SidebarWorkspaceContextMenu({
   workspace,
   leadingProjectName,
   hostBadgeLabel,
-  scriptSummary,
+  serviceSummary,
   workspaceKey,
   onCopyPath,
   onCopyBranchName,
@@ -275,6 +278,7 @@ export function SidebarWorkspaceContextMenu({
   onTogglePin,
   openInFileManagerPath,
   accessibilityLabel,
+  highlightStyle,
   ...triggerProps
 }: PropsWithChildren<
   SidebarWorkspaceMenuItemsProps &
@@ -284,7 +288,8 @@ export function SidebarWorkspaceContextMenu({
       workspace: SidebarWorkspaceEntry;
       leadingProjectName?: string | null;
       hostBadgeLabel?: string | null;
-      scriptSummary?: WorkspaceScriptSummary | null;
+      serviceSummary?: WorkspaceServiceSummary | null;
+      highlightStyle: ComponentProps<typeof ContextMenuTrigger>["highlightStyle"];
     }
 >) {
   const {
@@ -303,7 +308,9 @@ export function SidebarWorkspaceContextMenu({
     leadingProjectName,
     hostBadgeLabel,
     pullRequestLabel,
-    scriptLabel: scriptSummary ? t("workspace.status.scriptsAvailable") : null,
+    serviceLabel: serviceSummary
+      ? t(workspaceServiceLabelKey(serviceSummary), { name: serviceSummary.name })
+      : null,
   });
 
   return (
@@ -312,6 +319,7 @@ export function SidebarWorkspaceContextMenu({
         {...triggerProps}
         enabledOnMobile={false}
         accessibilityLabel={accessibilityLabel ?? rowAccessibilityLabel}
+        highlightStyle={highlightStyle}
       >
         {children}
       </ContextMenuTrigger>

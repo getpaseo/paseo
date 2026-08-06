@@ -17,7 +17,7 @@ import { Check, CheckCircle } from "lucide-react-native";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Theme } from "@/styles/theme";
-import { useMenuContext } from "./menu-context";
+import { MenuDepthProvider, useMenuContext } from "./menu-context";
 
 const ThemedCheck = withUnistyles(Check);
 const ThemedCheckCircle = withUnistyles(CheckCircle);
@@ -28,19 +28,54 @@ const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted })
 const successMapping = (theme: Theme) => ({ color: theme.colors.palette.green[500] });
 
 /**
- * Height of the filled part of a row, which together with the uniform inset puts the row pitch
- * back at the 36pt it was before the fill was inset at all — the space is redistributed, not
- * added.
+ * Height of the filled part of a row, which is also its hit target.
  *
- * It only holds if the label's line box is pinned: 18 line + 8 padding + 2 border is exactly
- * this. Leave the text's `lineHeight` to the platform and the content outgrows `minHeight`,
- * which then does nothing and the rows drift taller again.
+ * A pointer aims; a thumb lands, so the row is sized by what is driving it. The split is on
+ * breakpoint rather than on `presentation`, because the compact popover — what `compactMode`
+ * defaults to — is worked with a thumb just as a sheet is, and would keep the desktop height if
+ * the sheet were the thing being asked about. `md` is where `useIsCompactFormFactor` divides, so
+ * this and the popover/sheet choice always turn over together.
+ *
+ * On desktop the number is exactly the content: 18 line + 8 padding + 2 border. Leave the text's
+ * `lineHeight` to the platform and the content outgrows `minHeight`, which then does nothing and
+ * the rows drift taller again. On compact, `minHeight` leads instead and the label centres in it.
  */
-const MENU_ITEM_HEIGHT = 28;
+const MENU_ITEM_HEIGHT = { xs: 40, md: 28 } as const;
 const MENU_ITEM_LINE_HEIGHT = 18;
+
+/**
+ * Space between two rows, owned by the page rather than the rows. Zero because only one row is
+ * ever filled at a time, so a gap here buys nothing on the common frame and only costs pitch.
+ *
+ * This is the knob a redesign turns. Note it applies to a page's direct children, so a group of
+ * rows wrapped in a `View` of its own would not receive it — at zero there is nothing to lose,
+ * but anything above it wants the wrapper to carry the same style.
+ */
+const MENU_ROW_GAP = 0;
 
 /** Action status for menu items with loading/success feedback. */
 export type ActionStatus = "idle" | "pending" | "success";
+
+/**
+ * One page of rows — the root surface, a flyout, or a pushed sheet page.
+ *
+ * It owns the vertical spacing of the menu: the inset above the first row and below the last,
+ * and the gap between rows. A row knows how to draw its own fill and nothing about where it sits
+ * in a list, so a redesign retunes the rhythm here and never touches `MenuItem`.
+ *
+ * Horizontal inset stays on the row. There is one left edge and one right edge, so a row's
+ * horizontal margin is not standing in for anything else, and leaving it there keeps labels,
+ * hints and the custom headers callers render into a surface aligned on the same 12pt.
+ *
+ * It also carries the page's depth, so the two presentations cannot disagree about what a page is.
+ */
+export function MenuPage({ depth, children }: PropsWithChildren<{ depth: number }>): ReactElement {
+  return (
+    <MenuDepthProvider value={depth}>
+      <View style={styles.page}>{children}</View>
+    </MenuDepthProvider>
+  );
+}
 
 export function MenuLabel({
   children,
@@ -247,6 +282,10 @@ export function MenuItem({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  page: {
+    paddingVertical: theme.spacing[1],
+    gap: MENU_ROW_GAP,
+  },
   labelContainer: {
     paddingHorizontal: theme.spacing[3],
     paddingTop: theme.spacing[2],
@@ -260,10 +299,15 @@ const styles = StyleSheet.create((theme) => ({
   // made separators vanish against a hovered row. `borderAccent` is the colour the menu surface
   // already outlines itself with, so the divider reads as part of the same frame.
   //
-  // No margin of its own: the items above and below already hold themselves off it. Giving the
-  // rule its own spacing on top of theirs is how you end up tuning two numbers to control one gap.
+  // The one thing on a page that wants more room than the row gap gives it, so it says so here.
+  // That is one number controlling one gap: rows no longer carry vertical spacing of their own,
+  // so there is nothing left for this to double up with.
+  //
+  // No horizontal margin, and the page has no horizontal padding, so the rule still runs the
+  // full width of the surface rather than reading as an inset tick between two chips.
   separator: {
     height: 1,
+    marginVertical: theme.spacing[1],
     backgroundColor: theme.colors.borderAccent,
   },
   hintContainer: {
@@ -278,21 +322,22 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
   },
-  // The fill is inset by the same amount on every side and rounded, so a hovered row reads as a
-  // chip sitting inside the menu. That inset is the only thing that spaces this menu: rows sit
-  // apart because each holds itself in, and a separator gets clearance from its neighbours for
-  // free instead of carrying its own margin.
+  // The fill is inset from the surface's edges and rounded, so a hovered row reads as a chip
+  // sitting inside the menu rather than a band across it.
   //
-  // The inset is taken out of the row, not added to it. Horizontally that means padding gives up
-  // what margin takes — margin 4 + padding 8 + border 1 lands the label at the same 13pt it
-  // always sat at. Vertically the fill itself is shorter by the same 8, so the pitch is unchanged
-  // and the menu did not grow; it just stopped filling every row edge to edge.
+  // The inset is taken out of the row, not added to it: margin 4 + padding 8 + border 1 lands the
+  // label at the same 13pt it always sat at.
+  //
+  // Horizontal only. Vertical spacing — the inset above the first row and below the last, and the
+  // gap between rows — belongs to `MenuPage`. A margin here would have to be both of those at
+  // once, and since margins do not collapse it would land as one unit at the edges and two
+  // between rows, so shrinking the gap would eat the inset with it.
   item: {
     flexDirection: "row",
     alignItems: "center",
     minHeight: MENU_ITEM_HEIGHT,
     gap: theme.spacing[2],
-    margin: theme.spacing[1],
+    marginHorizontal: theme.spacing[1],
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1],
     borderWidth: theme.borderWidth[1],
