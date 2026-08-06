@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -45,6 +45,7 @@ import { useDraftStore } from "@/stores/draft-store";
 import {
   resolveExplorerTab,
   resolvePluginSidebarTabs,
+  useBoundedPluginsLoading,
   type PluginSidebarTab,
 } from "@/components/explorer-tab-resolution";
 import { usePluginEntry, usePlugins } from "@/plugins/queries";
@@ -327,7 +328,7 @@ function ExplorerSidebarContent({
   const hasPullRequest = prPane.prNumber !== null;
   const showPrTab = hasPullRequest || (activeTab === "pr" && prPane.isLoading);
   const { plugins, isLoading } = usePlugins(serverId);
-  const pluginsLoading = useBoundedPluginsLoading(isLoading);
+  const pluginsLoading = useBoundedPluginsLoading({ isLoading, serverId });
   const pluginTabs = useMemo(() => resolvePluginSidebarTabs(plugins), [plugins]);
   const { resolvedTab, activePluginTab, pluginTabPending } = resolveExplorerTab({
     activeTab,
@@ -472,27 +473,6 @@ function ExplorerSidebarContent({
       </View>
     </View>
   );
-}
-
-/**
- * `usePlugins` reports loading until `server_info` lands, which for a host that
- * never answers is forever — so the hold below it is bounded the same way the
- * file pane bounds its identical wait (`file-pane/pane.tsx`). Past the deadline
- * the remembered plugin tab gives up and the built-in fallback renders.
- */
-const PLUGIN_TABS_WAIT_MS = 2_000;
-
-function useBoundedPluginsLoading(isLoading: boolean): boolean {
-  const [waitedTooLong, setWaitedTooLong] = useState(false);
-  useEffect(() => {
-    setWaitedTooLong(false);
-    if (!isLoading) {
-      return;
-    }
-    const timer = setTimeout(() => setWaitedTooLong(true), PLUGIN_TABS_WAIT_MS);
-    return () => clearTimeout(timer);
-  }, [isLoading]);
-  return isLoading && !waitedTooLong;
 }
 
 const ThemedPuzzle = withUnistyles(Puzzle);
