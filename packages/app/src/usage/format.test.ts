@@ -40,4 +40,15 @@ describe("formatAmount", () => {
   it("formats percentages with locale-specific spacing", () => {
     expect(formatPct(42, "fr")).toBe("42\u00a0%");
   });
+
+  it("formats relative-time counts with the active locale", async () => {
+    await i18n.changeLanguage("fr");
+    const days = 1_234;
+    const daysFromNow = new Date(NOW + days * 24 * 60 * 60 * 1000).toISOString();
+    const daysAgo = new Date(NOW - days * 24 * 60 * 60 * 1000).toISOString();
+
+    expect(formatResetLabel(daysFromNow, NOW)).toBe("se réinitialise dans 1\u202f234 j");
+    expect(formatRunsOutLabel(daysFromNow, NOW)).toBe("s’épuise dans 1\u202f234 j");
+    expect(formatAgo(daysAgo, NOW)).toBe("il y a 1\u202f234 j");
+  });
 });
