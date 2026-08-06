@@ -918,7 +918,7 @@ test("reload leaves a closed durable snapshot when shutdown starts during the sw
   }
 });
 
-test("reload closes both sessions when the closed snapshot cannot be persisted", async () => {
+test("reload retains the existing session when the closed snapshot cannot be persisted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-persist-failure-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -945,8 +945,6 @@ test("reload closes both sessions when the closed snapshot cannot be persisted",
     writeFileSync(storagePath, "blocks the storage directory");
 
     const reload = manager.reloadAgentSession(agentId).catch((error: unknown) => error);
-    await client.waitForCloseToStart();
-    client.finishClosing();
 
     expect(await reload).toBeInstanceOf(Error);
     await manager.flushForShutdown();
@@ -954,9 +952,9 @@ test("reload closes both sessions when the closed snapshot cannot be persisted",
       agents: manager.listAgents(),
       originalSessionClosed: client.originalSessionClosed,
       replacementSessionClosed: client.replacementSessionClosed,
-    }).toEqual({
-      agents: [],
-      originalSessionClosed: true,
+    }).toMatchObject({
+      agents: [{ id: agentId, lifecycle: "idle" }],
+      originalSessionClosed: false,
       replacementSessionClosed: true,
     });
   } finally {
@@ -8654,26 +8652,26 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
   const allowSecondRunToEnd = deferred<void>();
+  let staleSessionClosed = false;
+  let resumedSessionCreated = false;
 
-  // Session where the first foreground turn never emits a terminal event
-  // (simulates the claude-agent pendingInterruptAbort suppression bug),
-  // and interrupt() does not produce events either.
+  // Session where the first foreground turn never emits a terminal event and
+  // interrupt() does not produce events either.
   class StaleForegroundSession extends TestAgentSession {
+    private providerTurnIsStillActive = false;
+
     override async startTurn(): Promise<{ turnId: string }> {
+      if (this.providerTurnIsStillActive) {
+        throw new Error("A foreground turn is already active");
+      }
       this.interrupted = false;
+      this.providerTurnIsStillActive = true;
       const turnId = `turn-${++this.turnIdCounter}`;
-      const turnNum = this.turnIdCounter;
 
       setTimeout(async () => {
         this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-        if (turnNum === 1) {
-          // First turn: emit turn_started but NEVER emit a terminal event.
-          // This simulates the provider suppressing the result.
-        } else {
-          // Subsequent turns: complete normally
-          await allowSecondRunToEnd.promise;
-          this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
-        }
+        // The provider accepts cancel but never settles this turn, so a new
+        // prompt on the same session is rejected as still active.
       }, 0);
       return { turnId };
     }
@@ -8682,11 +8680,38 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
       this.interrupted = true;
       // No events produced — the terminal event was suppressed
     }
+
+    override async close(): Promise<void> {
+      staleSessionClosed = true;
+    }
+  }
+
+  class RecoveredForegroundSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "turn-recovered";
+      setTimeout(async () => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        await allowSecondRunToEnd.promise;
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
   }
 
   class StaleForegroundClient extends TestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       return new StaleForegroundSession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      resumedSessionCreated = true;
+      return new RecoveredForegroundSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
     }
   }
 
@@ -8715,9 +8740,9 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
   expect(beforeReplace?.lifecycle).toBe("running");
   expect(beforeReplace?.activeForegroundTurnId).toBe("turn-1");
 
-  // Replace the hung run. cancelAgentRun will time out after 2s because
-  // no terminal event arrives. After the fix, it should force-clear the
-  // stale foreground state so streamAgent can proceed.
+  // Replace the hung run. Cancellation times out because no terminal event
+  // arrives. Paseo must recreate the provider session before starting the
+  // replacement because the original session still rejects new foreground turns.
   const secondRun = await manager.replaceAgentRun(snapshot.id, "replacement prompt");
   const collectedEvents: AgentStreamEvent[] = [];
   const secondRunDrain = (async () => {
@@ -8732,9 +8757,138 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
   await secondRunDrain;
   await firstRunDrain;
 
+  expect(staleSessionClosed).toBe(true);
+  expect(resumedSessionCreated).toBe(true);
   expect(collectedEvents.some((e) => e.type === "turn_completed")).toBe(true);
   expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
   expect(manager.getAgent(snapshot.id)?.activeForegroundTurnId).toBeNull();
+}, 10_000);
+
+test("replaceAgentRun retains the existing agent when stale-session recovery registration fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-fg-recovery-failure-"));
+  const storagePath = join(workdir, "agents");
+  let originalSessionId: string | null = null;
+  let failRecoveredRegistration = false;
+  let staleSessionClosed = false;
+  let resumedSessionCreated = false;
+
+  class FailingRecoveredRegistrationStorage extends AgentStorage {
+    override async applySnapshot(
+      ...args: Parameters<AgentStorage["applySnapshot"]>
+    ): Promise<void> {
+      const [agent] = args;
+      if (
+        failRecoveredRegistration &&
+        originalSessionId !== null &&
+        agent.persistence?.sessionId !== originalSessionId
+      ) {
+        throw new Error("Injected recovery registration failure");
+      }
+      await super.applySnapshot(...args);
+    }
+  }
+
+  class StaleForegroundSession extends TestAgentSession {
+    private providerTurnIsStillActive = false;
+    private localTurnCounter = 0;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      if (this.providerTurnIsStillActive) {
+        throw new Error("A foreground turn is already active");
+      }
+      this.providerTurnIsStillActive = true;
+      const turnId = `turn-${++this.localTurnCounter}`;
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+
+    override async interrupt(): Promise<void> {}
+
+    override async close(): Promise<void> {
+      staleSessionClosed = true;
+    }
+  }
+
+  class RecoveredForegroundSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "turn-recovered";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+  }
+
+  class StaleForegroundClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new StaleForegroundSession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      resumedSessionCreated = true;
+      return new RecoveredForegroundSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+    }
+  }
+
+  const storage = new FailingRecoveredRegistrationStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: { codex: new StaleForegroundClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000501",
+  });
+
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  originalSessionId = manager.getAgent(snapshot.id)?.persistence?.sessionId ?? null;
+  expect(originalSessionId).not.toBeNull();
+
+  const firstRun = manager.streamAgent(snapshot.id, "hanging prompt");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // Draining the intentionally unterminated foreground turn.
+    }
+  })();
+  await manager.waitForAgentRunStart(snapshot.id);
+
+  failRecoveredRegistration = true;
+  await expect(manager.replaceAgentRun(snapshot.id, "replacement prompt")).rejects.toThrow(
+    "Injected recovery registration failure",
+  );
+
+  expect(manager.getAgent(snapshot.id)).toMatchObject({
+    id: snapshot.id,
+    lifecycle: "running",
+    activeForegroundTurnId: null,
+  });
+  const restartedStorage = new AgentStorage(storagePath, logger);
+  expect(await restartedStorage.get(snapshot.id)).toMatchObject({
+    id: snapshot.id,
+    lastStatus: "running",
+    persistence: { sessionId: originalSessionId },
+  });
+  expect(staleSessionClosed).toBe(false);
+
+  failRecoveredRegistration = false;
+  const retryRun = await manager.replaceAgentRun(snapshot.id, "retry replacement prompt");
+  for await (const _event of retryRun) {
+    // Drain the recovered retry.
+  }
+  await firstRunDrain;
+
+  expect(resumedSessionCreated).toBe(true);
+  expect(staleSessionClosed).toBe(true);
+  expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
 }, 10_000);
 
 class RecordingPersistedAgentsClient implements AgentClient {
