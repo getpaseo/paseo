@@ -900,9 +900,14 @@ export const zhCN: TranslationResources = {
         host: "主机",
         changeRequest: "拉取请求",
         checks: "检查",
-        scripts: "脚本",
+        services: "服务",
         diff: "差异统计",
         timestamp: "最近活动",
+      },
+      checks: {
+        iconAndText: "图标和文字",
+        icon: "仅图标",
+        none: "隐藏",
       },
       hostFilter: {
         label: "主机",
@@ -974,7 +979,8 @@ export const zhCN: TranslationResources = {
     },
     workspace: {
       status: {
-        scriptsAvailable: "有可用 scripts",
+        serviceRunning: "服务 {{name}} 运行中",
+        serviceUnhealthy: "服务 {{name}} 异常",
         creating: "正在创建...",
       },
       actions: {
@@ -1730,6 +1736,7 @@ export const zhCN: TranslationResources = {
           es: "Español",
           fr: "Français",
           ja: "日本語",
+          ko: "한국어",
           ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "简体中文",

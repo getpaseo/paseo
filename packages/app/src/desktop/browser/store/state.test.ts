@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   applyBrowserPatch,
   type BrowserIndexState,
+  createFixedBrowserViewport,
   createBrowserRecord,
+  normalizeBrowserIndexState,
   normalizeBrowserUrl,
   removeBrowserFromIndex,
   sanitizeBrowsersForPersist,
@@ -57,12 +59,25 @@ describe("createBrowserRecord", () => {
       canGoForward: false,
       faviconUrl: null,
       lastError: null,
+      viewport: { mode: "responsive" },
       createdAt: 1000,
     });
   });
 });
 
 describe("applyBrowserPatch", () => {
+  it("updates the browser's canonical viewport", () => {
+    const initial = withRecords([
+      createBrowserRecord({ browserId: "b1", initialUrl: "https://a.test", now: 0 }),
+    ]);
+
+    const next = applyBrowserPatch(initial, "b1", {
+      viewport: createFixedBrowserViewport(639.6, 479.6),
+    });
+
+    expect(next.browsersById.b1?.viewport).toEqual({ mode: "fixed", width: 640, height: 480 });
+  });
+
   it("normalizes URL updates", () => {
     const initial = withRecords([
       createBrowserRecord({ browserId: "b1", initialUrl: "https://a.test", now: 0 }),
@@ -144,5 +159,33 @@ describe("sanitizeBrowsersForPersist", () => {
 
     expect(persisted.browsersById.b1?.isLoading).toBe(false);
     expect(persisted.browsersById.b1?.lastError).toBe(null);
+  });
+
+  it("preserves viewport state", () => {
+    const base = createBrowserRecord({ browserId: "b1", initialUrl: "https://a.test", now: 0 });
+    const state = applyBrowserPatch(withRecords([base]), "b1", {
+      viewport: createFixedBrowserViewport(640, 480),
+    });
+
+    expect(sanitizeBrowsersForPersist(state).browsersById.b1?.viewport).toEqual({
+      mode: "fixed",
+      width: 640,
+      height: 480,
+    });
+  });
+});
+
+describe("normalizeBrowserIndexState", () => {
+  it("defaults legacy persisted records to Responsive", () => {
+    const legacy = createBrowserRecord({
+      browserId: "b1",
+      initialUrl: "https://a.test",
+      now: 0,
+    }) as Partial<ReturnType<typeof createBrowserRecord>>;
+    delete legacy.viewport;
+
+    expect(
+      normalizeBrowserIndexState({ browsersById: { b1: legacy } }).browsersById.b1?.viewport,
+    ).toEqual({ mode: "responsive" });
   });
 });

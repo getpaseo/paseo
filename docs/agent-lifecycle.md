@@ -24,6 +24,15 @@ primed.
 Idle agents remain resident indefinitely. Runtime closure happens only through an explicit lifecycle
 action such as archive, replacement, reload, workspace teardown, or daemon shutdown.
 
+A provider runtime can still die on its own — crash, OOM kill, host suspend. Work the agent parked
+inside that process dies with it: Claude Code's background Bash shells, `Monitor` watches, and
+workflows all live in the CLI process, and the completion notification that would have woken the
+agent never arrives. A runtime that dies mid-turn is reported by whatever is draining its stream, but
+between turns nothing is watching, so the agent sits at `idle` looking healthy while its background
+work is gone. Report that exit as a turn failure so the agent lands in `error` with a timeline entry.
+Only the Claude provider does this today; the others still report a death only when a turn happens to
+be in flight.
+
 ### Cancellation
 
 Cancellation changes lifecycle state only after the provider acknowledges the interrupt or emits a terminal turn event. If the interrupt is rejected or times out, the agent remains `running` with its active foreground turn intact. Follow-up actions such as replacement, reload, rewind, and Stop must report that failure instead of accepting work they cannot perform. Synthesizing a local cancellation without provider acknowledgment creates a split-brain session: Paseo accepts a new prompt while the provider still owns the previous foreground turn.

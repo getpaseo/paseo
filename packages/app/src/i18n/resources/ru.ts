@@ -930,9 +930,14 @@ export const ru: TranslationResources = {
         host: "Хост",
         changeRequest: "Pull request",
         checks: "Проверки",
-        scripts: "Скрипты",
+        services: "Сервисы",
         diff: "Статистика изменений",
         timestamp: "Последняя активность",
+      },
+      checks: {
+        iconAndText: "Значок и текст",
+        icon: "Только значок",
+        none: "Скрыто",
       },
       hostFilter: {
         label: "Хост",
@@ -1006,7 +1011,8 @@ export const ru: TranslationResources = {
     },
     workspace: {
       status: {
-        scriptsAvailable: "Доступны скрипты",
+        serviceRunning: "Сервис {{name}} запущен",
+        serviceUnhealthy: "Сервис {{name}} неисправен",
         creating: "Создание...",
       },
       actions: {
@@ -1786,6 +1792,7 @@ export const ru: TranslationResources = {
           es: "Español",
           fr: "Français",
           ja: "日本語",
+          ko: "한국어",
           ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
@@ -11,6 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
+import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
 import {
   searchDirectoryEntries,
   WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
@@ -115,6 +117,49 @@ describe("searchDirectoryEntries", () => {
         },
       ],
     });
+  });
+
+  it("prunes directories ignored by Git and caches concurrent lookups", async () => {
+    execFileSync("git", ["init", "-q"], { cwd: searchRoot });
+    writeFileSync(path.join(searchRoot, ".gitignore"), "data/\n");
+    mkdirSync(path.join(searchRoot, "data", "matching-ignored-directory"), {
+      recursive: true,
+    });
+    mkdirSync(path.join(searchRoot, "visible", "matching-visible-directory"), {
+      recursive: true,
+    });
+
+    startGitCommandMetrics();
+    const results = await Promise.all([
+      searchDirectoryEntries({
+        root: searchRoot,
+        query: "matching",
+        pathFormat: "relative",
+        includeFiles: false,
+        includeDirectories: true,
+        respectGitIgnore: true,
+      }),
+      searchDirectoryEntries({
+        root: searchRoot,
+        query: "visible",
+        pathFormat: "relative",
+        includeFiles: false,
+        includeDirectories: true,
+        respectGitIgnore: true,
+      }),
+    ]);
+    const gitMetrics = stopGitCommandMetrics();
+
+    expect(results).toEqual([
+      [{ path: "visible/matching-visible-directory", kind: "directory" }],
+      [
+        { path: "visible", kind: "directory" },
+        { path: "visible/matching-visible-directory", kind: "directory" },
+      ],
+    ]);
+    expect(gitMetrics.commands.filter((command) => command.args.includes("ls-files"))).toHaveLength(
+      1,
+    );
   });
 
   it("configures raw blank queries independently from explicit root aliases", async () => {
