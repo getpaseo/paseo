@@ -3,6 +3,7 @@ package expo.modules.paseohardwarekeyboard
 import android.content.Context
 import android.hardware.input.InputManager
 import android.view.InputDevice
+import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -61,8 +62,8 @@ class PaseoHardwareKeyboardModule : Module() {
     }
   }
 
-  internal fun emitHardwareKeyboardSubmit() {
-    sendEvent(HARDWARE_SUBMIT_EVENT_NAME)
+  internal fun emitHardwareKeyboardSubmit(alternate: Boolean) {
+    sendEvent(HARDWARE_SUBMIT_EVENT_NAME, mapOf("alternate" to alternate))
   }
 
   internal fun emitHardwareKeyDown(payload: Map<String, Any>) {
@@ -101,6 +102,12 @@ object PaseoHardwareKeyboardKeyDispatcher {
   @JvmStatic
   fun dispatchKeyEvent(event: KeyEvent): Boolean {
     val module = this.module ?: return false
+    // Soft keyboards deliver their return key as a virtual-device key event.
+    // Those must reach the text input as a newline — the on-screen send button
+    // is how touch users submit.
+    if (!isFromHardwareKeyboard(event)) {
+      return false
+    }
 
     val modifier = modifierName(event.keyCode)
     if (modifier != null) {
@@ -122,14 +129,15 @@ object PaseoHardwareKeyboardKeyDispatcher {
     val metaKey = event.isMetaPressed
     val shiftKey = event.isShiftPressed
 
-    // Shift+Enter sends the composer message. Consume it so the focused text
-    // input doesn't also insert a newline.
-    if (
-      isSubmitEnabled &&
-      event.keyCode == KeyEvent.KEYCODE_ENTER &&
-      shiftKey && !ctrlKey && !altKey && !metaKey
-    ) {
-      module.emitHardwareKeyboardSubmit()
+    // Matches desktop: Enter sends, Ctrl/Cmd+Enter takes the alternate send
+    // (queue while the agent runs), Shift+Enter falls through as a newline.
+    // Consume the ones we act on so the text input doesn't also insert one.
+    if (isSubmitEnabled && event.keyCode == KeyEvent.KEYCODE_ENTER && !shiftKey && !altKey) {
+      if (ctrlKey || metaKey) {
+        module.emitHardwareKeyboardSubmit(true)
+        return true
+      }
+      module.emitHardwareKeyboardSubmit(false)
       return true
     }
 
@@ -156,6 +164,12 @@ object PaseoHardwareKeyboardKeyDispatcher {
     // Never consumed: text inputs ignore unknown modifier combos, and consuming
     // here would break EditText combos the registry doesn't use (Ctrl+A/C/V/X/Z).
     return false
+  }
+
+  private fun isFromHardwareKeyboard(event: KeyEvent): Boolean {
+    if (event.deviceId == KeyCharacterMap.VIRTUAL_KEYBOARD) return false
+    val device = event.device ?: return false
+    return !device.isVirtual
   }
 
   private fun modifierName(keyCode: Int): String? {

@@ -3,6 +3,7 @@ import {
   addHardwareKeyboardSubmitListener,
   setHardwareKeyboardSubmitEnabled,
 } from "@/native/hardware-keyboard-submit";
+import type { HardwareKeyboardSubmitEvent } from "@/native/hardware-keyboard-submit.types";
 import {
   createHardwareKeyboardSubmitController,
   type HardwareKeyboardSubmitController,
@@ -10,7 +11,7 @@ import {
 
 interface UseHardwareKeyboardSubmitInput {
   isEnabled: boolean;
-  onSubmit: () => void;
+  onSubmit: (event: HardwareKeyboardSubmitEvent) => void;
 }
 
 export function useHardwareKeyboardSubmit(input: UseHardwareKeyboardSubmitInput) {
