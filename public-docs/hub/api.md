@@ -83,7 +83,7 @@ Request body:
 }
 ```
 
-The YAML must describe a valid Hub configuration. `projectSlug` is deployment metadata and determines the target project; the API key determines its organization. `partials` is optional for inline-only configurations. When the YAML uses prompt `include` blocks, send exactly one entry for each referenced file, with a path relative to `.paseo/partials/` and the file's UTF-8 content. The bundle accepts at most 100 files, each with a canonical path no longer than 512 characters and content no larger than 1,000,000 bytes; combined partial content may not exceed 5,000,000 bytes. Hub rejects missing, extra, duplicate, unsafe, or oversized entries. Replace the example daemon, working directory, and trigger values with resources in your organization.
+The YAML must describe a valid Hub configuration and its string value is limited to 1,000,000 characters. `projectSlug` is deployment metadata and determines the target project; the API key determines its organization. `partials` is optional for inline-only configurations. When the YAML uses prompt `include` blocks, send exactly one entry for each referenced file, with a path relative to `.paseo/partials/` and the file's UTF-8 content. The bundle accepts at most 100 files, each with a canonical path no longer than 512 characters and content no larger than 1,000,000 bytes; combined partial content may not exceed 5,000,000 bytes. Hub rejects missing, extra, duplicate, unsafe, or oversized entries. Replace the example daemon, working directory, and trigger values with resources in your organization.
 
 On success, Hub returns `201`:
 

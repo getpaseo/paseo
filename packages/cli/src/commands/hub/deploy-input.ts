@@ -7,7 +7,7 @@ const DEFAULT_CONFIGURATION_PATH = ".paseo/hub.yml";
 const PROMPT_PARTIAL_ROOT = ".paseo/partials";
 const PROMPT_PARTIAL_ROOT_PREFIX = `${PROMPT_PARTIAL_ROOT}/`;
 const PROJECT_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
-const MAX_CONFIGURATION_BYTES = 1_000_000;
+const MAX_CONFIGURATION_LENGTH = 1_000_000;
 const MAX_PROMPT_PARTIAL_COUNT = 100;
 const MAX_PROMPT_PARTIAL_PATH_LENGTH = 512;
 const MAX_PROMPT_PARTIAL_CONTENT_BYTES = 1_000_000;
@@ -117,13 +117,14 @@ async function readConfiguration(
   } catch (error) {
     throw configurationReadError(displayPath, error);
   }
-  if (bytes.byteLength > MAX_CONFIGURATION_BYTES) {
+  const yaml = bytes.toString("utf8");
+  if (yaml.length > MAX_CONFIGURATION_LENGTH) {
     throw new HubDeployError(
       "HUB_CONFIGURATION_TOO_LARGE",
-      `Hub configuration at ${displayPath} exceeds the ${MAX_CONFIGURATION_BYTES}-byte limit.`,
+      `Hub configuration at ${displayPath} exceeds the ${MAX_CONFIGURATION_LENGTH}-character limit.`,
     );
   }
-  return bytes.toString("utf8");
+  return yaml;
 }
 
 function parseConfiguration(yaml: string): Record<string, unknown> {

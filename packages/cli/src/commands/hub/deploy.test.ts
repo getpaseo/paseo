@@ -311,6 +311,27 @@ describe("hub deploy", () => {
     }
   });
 
+  it("uses the Hub YAML string limit rather than its UTF-8 byte length", async () => {
+    const cwd = await temporaryDirectory();
+    const yaml = `project: studio-api\n# ${"😀".repeat(400_000)}\n`;
+    await mkdir(path.join(cwd, ".paseo"));
+    await writeFile(path.join(cwd, ".paseo", "hub.yml"), yaml);
+    expect(yaml.length).toBeLessThan(1_000_000);
+    expect(Buffer.byteLength(yaml, "utf8")).toBeGreaterThan(1_000_000);
+    const hub = await startHub();
+
+    try {
+      await runHubDeploy(
+        {},
+        { cwd, env: { PASEO_HUB_URL: hub.origin, PASEO_HUB_API_KEY: "unicode-yaml-secret" } },
+      );
+
+      expect(JSON.parse((await hub.received).body)).toEqual({ projectSlug: "studio-api", yaml });
+    } finally {
+      await hub.close();
+    }
+  });
+
   it("fails locally when a partial exceeds its content size limit", async () => {
     const cwd = await projectFile(
       "project: studio-api\ntriggers:\n  - steps:\n      - prompt:\n          - include: large.md\n",
