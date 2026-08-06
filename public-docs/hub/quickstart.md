@@ -48,18 +48,23 @@ environments:
 triggers:
   - name: mention
     on: github.issue_comment
-    environment: dev
+    max_runtime: 2h
     filters:
       repo: yourname/your-repo
       contains: "@paseo"
       from_users: [your-github-login]
-    agent:
-      provider: codex
-      mode: full-access
-    prompt: |
-      Someone asked for help on ${{ paseo.event.github.issue.html_url }}.
-
-      ${{ paseo.event.github.comment.body }}
+    steps:
+      - id: work
+        environment: dev
+        max_runtime: 90m
+        idle_timeout: 10m
+        agent:
+          provider: codex
+          mode: full-access
+        prompt:
+          - text: |
+              Someone asked for help.
+              ${{ paseo.prompt }}
 ```
 
 `daemon` is the name you gave it in step 3. `cwd` is a directory on that machine.

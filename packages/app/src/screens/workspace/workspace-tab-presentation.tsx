@@ -154,7 +154,13 @@ export function WorkspaceTabIcon({
   return (
     <View style={agentIconWrapperStyle}>
       <Icon size={size} color={iconColor} />
-      {statusDotColor ? <View style={statusDotStyle} /> : null}
+      {statusDotColor ? (
+        <View
+          style={statusDotStyle}
+          accessibilityRole={bucket === "running" ? "progressbar" : undefined}
+          accessibilityLabel={bucket === "running" ? "Agent running" : undefined}
+        />
+      ) : null}
       {showNeedsInputAlert ? (
         <View style={styles.statusAlertOverlay}>
           <ThemedCircleAlert size={STATUS_INDICATOR_ALERT_SIZE} uniProps={needsInputAlertMapping} />

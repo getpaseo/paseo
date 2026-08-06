@@ -57,7 +57,7 @@ To keep executions off your working tree, add a worktree:
 ```yaml
 worktree:
   mode: branch-off
-  newBranch: hub/${{ paseo.event.github.issue.number }}
+  newBranch: hub/investigation
   base: main
 ```
 

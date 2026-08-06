@@ -2,27 +2,31 @@
 title: Hub triggers
 description: How Hub matches an inbound event to a trigger: events, filters, and the allowlist that gates every execution.
 nav: Triggers
-order: 64
+order: 65
 category: Hub
 ---
 
 # Triggers
 
-A trigger says: when this event arrives, from this source, from these people, run this agent with this prompt.
+A trigger says which provider event can start a workflow. The [Hub workflows](/docs/hub/workflows) page covers the steps, inputs, routing, prompts, and deadlines that run after a match.
 
 ```yaml
 triggers:
   - name: mention
     on: github.issue_comment
-    environment: dev
     filters:
       repo: acme/api
       contains: "@paseo"
       from_users: [alice]
-    agent:
-      provider: codex
-      mode: full-access
-    prompt: ${{ paseo.event.github.comment.body }}
+    max_runtime: 2h
+    steps:
+      - id: work
+        environment: dev
+        max_runtime: 90m
+        idle_timeout: 10m
+        agent: { provider: codex, mode: full-access }
+        prompt:
+          - text: ${{ paseo.prompt }}
 ```
 
 Field-by-field detail is in the [`hub.yml` reference](/docs/hub/configuration/hub-yml). This page covers matching.
@@ -84,11 +88,4 @@ Both run. Triggers are not ordered and do not shadow each other, in one configur
 
 ## Replying
 
-`allow_outputs` gives the agent a single-use `reply` tool for the conversation that triggered it:
-
-```yaml
-allow_outputs:
-  - type: slack.reply
-```
-
-Only `slack.reply` and `discord.reply` exist. GitHub-triggered agents reply with the scoped `GH_TOKEN` they already have, so `gh issue comment` works.
+Put `allow_outputs` on the step that should reply. The available provider reply types are `slack.reply`, `discord.reply`, and `github.reply`; set `max` when a step needs more than one update. GitHub-triggered agents also receive a scoped GitHub credential for `gh`.
