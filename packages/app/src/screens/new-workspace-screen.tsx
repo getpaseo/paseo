@@ -651,7 +651,7 @@ function IsolationPickerTrigger({
           disabled={disabled}
           style={badgePressableStyle}
           accessibilityRole="button"
-          accessibilityLabel={tooltipLabel}
+          accessibilityLabel="Workspace isolation"
         >
           <View style={styles.badgeIconBox}>
             {isolation === "worktree" ? (
@@ -1407,7 +1407,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
             <Pressable
               ref={host.anchorRef}
               accessibilityRole="button"
-              accessibilityLabel={t("newWorkspace.tooltips.host")}
+              accessibilityLabel="Host"
               onPress={host.open}
               disabled={isPending || host.allHosts.length === 0}
               style={badgePressableStyle}
