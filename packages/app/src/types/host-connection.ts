@@ -11,6 +11,7 @@ import {
   defaultHostAppearance,
   normalizeStoredHostAppearance,
 } from "@/hosts/appearance";
+import { normalizeConnectionHeadersRecord } from "@/utils/connection-headers";
 
 export { DirectTcpHostConnectionSchema, type DirectTcpHostConnection };
 
@@ -306,8 +307,8 @@ function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function normalizeStoredHeaders(value: unknown): { headers?: Record<string, string> } {
-  const headers = toObjectRecord(value);
-  return headers ? { headers: headers as Record<string, string> } : {};
+  const headers = normalizeConnectionHeadersRecord(value);
+  return headers ? { headers } : {};
 }
 
 function normalizeStoredConnection(connection: unknown): HostConnection | null {

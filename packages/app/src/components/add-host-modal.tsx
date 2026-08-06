@@ -1,9 +1,9 @@
 import { useCallback, useMemo, useReducer, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Platform, Pressable, Text, View } from "react-native";
+import { Alert, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isElectronRuntime } from "@/desktop/host";
+import { getIsElectron, isNative } from "@/constants/platform";
 import { Check, ChevronDown, ChevronRight, Eye, EyeOff, Link2, Plus, X } from "lucide-react-native";
 import type { HostProfile } from "@/types/host-connection";
 import { useHosts, useHostMutations } from "@/runtime/host-runtime";
@@ -776,7 +776,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
               onSubmitEditing={handleToggleAdvanced}
             />
 
-            {Platform.OS !== "web" || isElectronRuntime() ? (
+            {isNative || getIsElectron() ? (
               <View style={styles.headerSection}>
                 <View style={styles.headerTitleRow}>
                   <Text style={styles.label}>{t("pairing.direct.headers.title")}</Text>

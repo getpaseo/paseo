@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { prepareConnectionHeaders } from "./connection-headers";
+import { normalizeConnectionHeadersRecord, prepareConnectionHeaders } from "./connection-headers";
 
 describe("prepareConnectionHeaders", () => {
   it("trims and returns custom headers", () => {
@@ -37,5 +37,20 @@ describe("prepareConnectionHeaders", () => {
     expect(prepareConnectionHeaders([{ id: 1, name: "X-Test", value: "one\ntwo" }])).toEqual({
       issue: { type: "invalidValue", name: "X-Test" },
     });
+  });
+});
+
+describe("normalizeConnectionHeadersRecord", () => {
+  it("accepts a valid persisted string record", () => {
+    expect(normalizeConnectionHeadersRecord({ "X-Tenant": "acme" })).toEqual({
+      "X-Tenant": "acme",
+    });
+  });
+
+  it("rejects malformed persisted header values", () => {
+    expect(normalizeConnectionHeadersRecord({ "X-Tenant": 42 })).toBeUndefined();
+    expect(
+      normalizeConnectionHeadersRecord({ "X-Tenant": "acme\r\nX-Injected: true" }),
+    ).toBeUndefined();
   });
 });

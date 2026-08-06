@@ -12,6 +12,10 @@ export type ConnectionHeaderValidationIssue =
 
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 export function prepareConnectionHeaders(drafts: readonly ConnectionHeaderDraft[]): {
   headers?: Record<string, string>;
   issue?: ConnectionHeaderValidationIssue;
@@ -40,4 +44,22 @@ export function prepareConnectionHeaders(drafts: readonly ConnectionHeaderDraft[
   }
 
   return Object.keys(headers).length > 0 ? { headers } : {};
+}
+
+export function normalizeConnectionHeadersRecord(
+  value: unknown,
+): Record<string, string> | undefined {
+  if (!isPlainRecord(value)) {
+    return undefined;
+  }
+
+  const drafts: ConnectionHeaderDraft[] = [];
+  for (const [name, headerValue] of Object.entries(value)) {
+    if (typeof headerValue !== "string") {
+      return undefined;
+    }
+    drafts.push({ id: drafts.length, name, value: headerValue });
+  }
+  const result = prepareConnectionHeaders(drafts);
+  return result.issue ? undefined : result.headers;
 }

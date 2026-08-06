@@ -97,6 +97,27 @@ describe("normalizeStoredHostProfile", () => {
     });
   });
 
+  it("keeps the connection but discards malformed stored custom headers", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_malformed_headers",
+      connections: [
+        {
+          id: "direct:example.test:6767",
+          type: "directTcp",
+          endpoint: "example.test:6767",
+          headers: { "X-Tenant": 42 },
+        },
+      ],
+    });
+
+    expect(profile?.connections[0]).toEqual({
+      id: "direct:example.test:6767",
+      type: "directTcp",
+      endpoint: "example.test:6767",
+      useTls: false,
+    });
+  });
+
   it("preserves legacy relay ids when TLS is absent", () => {
     const profile = normalizeStoredHostProfile({
       serverId: "srv_relay",
