@@ -1,4 +1,3 @@
-import { formatTokenCount } from "@/components/context-window-meter.utils";
 import { i18n } from "@/i18n/i18next";
 import type { ProviderUsageBalanceUnit } from "./types";
 
@@ -36,11 +35,20 @@ function formatRelativeDuration(duration: RelativeDuration): string | null {
     case "now":
       return null;
     case "days":
-      return i18n.t("providerUsage.duration.days", { value: formatCount(duration.count) });
+      return i18n.t("providerUsage.duration.days", {
+        count: duration.count,
+        value: formatCount(duration.count),
+      });
     case "hours":
-      return i18n.t("providerUsage.duration.hours", { value: formatCount(duration.count) });
+      return i18n.t("providerUsage.duration.hours", {
+        count: duration.count,
+        value: formatCount(duration.count),
+      });
     case "minutes":
-      return i18n.t("providerUsage.duration.minutes", { value: formatCount(duration.count) });
+      return i18n.t("providerUsage.duration.minutes", {
+        count: duration.count,
+        value: formatCount(duration.count),
+      });
   }
 }
 
@@ -71,12 +79,21 @@ export function formatAgo(iso: string | null | undefined): string | null {
   const diffHours = Math.floor(diffMinutes / 60);
   const diffDays = Math.floor(diffHours / 24);
   if (diffDays > 0) {
-    return i18n.t("providerUsage.timing.daysAgo", { value: formatCount(diffDays) });
+    return i18n.t("providerUsage.timing.daysAgo", {
+      count: diffDays,
+      value: formatCount(diffDays),
+    });
   }
   if (diffHours > 0) {
-    return i18n.t("providerUsage.timing.hoursAgo", { value: formatCount(diffHours) });
+    return i18n.t("providerUsage.timing.hoursAgo", {
+      count: diffHours,
+      value: formatCount(diffHours),
+    });
   }
-  return i18n.t("providerUsage.timing.minutesAgo", { value: formatCount(diffMinutes) });
+  return i18n.t("providerUsage.timing.minutesAgo", {
+    count: diffMinutes,
+    value: formatCount(diffMinutes),
+  });
 }
 
 export function formatAmount(
@@ -91,7 +108,10 @@ export function formatAmount(
         currency: "USD",
       }).format(value);
     case "tokens":
-      return formatTokenCount(value);
+      return new Intl.NumberFormat(locale, {
+        notation: "compact",
+        maximumFractionDigits: 1,
+      }).format(value);
     default:
       return value.toLocaleString(locale);
   }
