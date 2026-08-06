@@ -141,6 +141,28 @@ describe("resolveTerminalProfiles", () => {
     expect(adoptedPi?.args).toEqual(["--thinking", "high", "{{{prompt}}}"]);
   });
 
+  it.each([
+    ["codex", ["--profile", "work", "login"]],
+    ["opencode", ["--model", "anthropic/claude", "run"]],
+  ])("does not adopt %s when a subcommand follows global options", (command, args) => {
+    const persisted = { id: "profile_generated", name: command, command, args };
+    const [resolved] = resolveTerminalProfiles([persisted]);
+
+    expect(resolved).toBe(persisted);
+  });
+
+  it.each([
+    ["codex", ["--profile", "work"]],
+    ["opencode", ["--model", "anthropic/claude"]],
+    ["pi", ["--thinking", "high"]],
+  ])("adopts %s when global options are the only existing args", (command, args) => {
+    const [resolved] = resolveTerminalProfiles([
+      { id: "profile_generated", name: command, command, args },
+    ]);
+
+    expect(resolved?.args).toEqual([...args, expect.stringContaining("{{{prompt}}}")]);
+  });
+
   it("codex profile has the correct icon", () => {
     const codex = DEFAULT_TERMINAL_PROFILES.find((p) => p.id === "codex");
     expect(codex?.icon).toBe("codex");

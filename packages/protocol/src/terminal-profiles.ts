@@ -134,6 +134,118 @@ const PROMPT_ARGS_BY_COMMAND = new Map(
   ]),
 );
 
+// Adoption applies only to the interactive, prompt-taking form of each CLI.
+// These are the global options whose values would otherwise look positional
+// while walking argv. Unknown options stay conservative: a following bare arg
+// blocks adoption rather than risking a second prompt or changing a subcommand.
+const GLOBAL_OPTIONS_WITH_VALUES_BY_COMMAND = new Map<string, ReadonlySet<string>>([
+  [
+    "claude",
+    new Set([
+      "--add-dir",
+      "--agent",
+      "--agents",
+      "--allowed-tools",
+      "--allowedTools",
+      "--append-system-prompt",
+      "--betas",
+      "--debug-file",
+      "--disallowed-tools",
+      "--disallowedTools",
+      "--effort",
+      "--fallback-model",
+      "--file",
+      "--input-format",
+      "--json-schema",
+      "--max-budget-usd",
+      "--mcp-config",
+      "--model",
+      "--name",
+      "--output-format",
+      "--permission-mode",
+      "--plugin-dir",
+      "--plugin-url",
+      "--remote-control-session-name-prefix",
+      "--settings",
+      "--system-prompt",
+      "--system-prompt-file",
+      "--tools",
+      "-n",
+    ]),
+  ],
+  [
+    "codex",
+    new Set([
+      "--add-dir",
+      "--ask-for-approval",
+      "--cd",
+      "--config",
+      "--disable",
+      "--enable",
+      "--image",
+      "--local-provider",
+      "--model",
+      "--profile",
+      "--remote",
+      "--remote-auth-token-env",
+      "--sandbox",
+      "-C",
+      "-a",
+      "-c",
+      "-i",
+      "-m",
+      "-p",
+      "-s",
+    ]),
+  ],
+  [
+    "opencode",
+    new Set([
+      "--agent",
+      "--cors",
+      "--hostname",
+      "--log-level",
+      "--mdns-domain",
+      "--model",
+      "--port",
+      "--prompt",
+      "--replay-limit",
+      "--session",
+      "-m",
+      "-s",
+    ]),
+  ],
+  [
+    "pi",
+    new Set([
+      "--api-key",
+      "--append-system-prompt",
+      "--exclude-tools",
+      "--export",
+      "--extension",
+      "--fork",
+      "--mode",
+      "--model",
+      "--models",
+      "--name",
+      "--prompt-template",
+      "--provider",
+      "--session",
+      "--session-dir",
+      "--session-id",
+      "--skill",
+      "--system-prompt",
+      "--theme",
+      "--thinking",
+      "--tools",
+      "-e",
+      "-n",
+      "-t",
+      "-xt",
+    ]),
+  ],
+]);
+
 // Profiles predating the sentinel got materialized into user config the first
 // time anyone touched the profile list (host-page.tsx patches the whole list on
 // any add, edit, or reorder). Those users would otherwise be stuck with
@@ -153,24 +265,42 @@ const PROMPT_ARGS_BY_COMMAND = new Map(
 // anywhere is left alone, and so is one pointing at any other command. Nothing
 // is written back, so this stays a read-time adoption with no version stamp and
 // no daemon-start hook.
-// A leading bare word is a subcommand, and a subcommand means the profile is
-// not the interactive launch we ship a prompt form for: `opencode run` takes a
-// positional message rather than `--prompt`, and `codex login` takes no prompt
-// at all. Only the first arg is checked, because these CLIs all take the
-// subcommand first; a bare word later is a flag's value, as in
-// `pi --thinking high`.
-function hasSubcommand(args: readonly string[]): boolean {
-  const first = args[0];
-  return first !== undefined && !first.startsWith("-");
+// Any positional means this is not the bare interactive form we can safely
+// adopt. It may be a subcommand (`codex --profile work login`) or an existing
+// prompt/project argument. Option assignments carry their value inline; known
+// split options consume the next argv entry before positional detection.
+function hasPositionalArg(command: string, args: readonly string[]): boolean {
+  const optionsWithValues = GLOBAL_OPTIONS_WITH_VALUES_BY_COMMAND.get(command) ?? new Set();
+  let expectsOptionValue = false;
+
+  for (const arg of args) {
+    if (expectsOptionValue) {
+      expectsOptionValue = false;
+      continue;
+    }
+    if (arg === "--") {
+      return true;
+    }
+    if (!arg.startsWith("-")) {
+      return true;
+    }
+
+    const separator = arg.indexOf("=");
+    const option = separator === -1 ? arg : arg.slice(0, separator);
+    expectsOptionValue = separator === -1 && optionsWithValues.has(option);
+  }
+
+  return false;
 }
 
 function adoptPromptSentinel(profile: TerminalProfile): TerminalProfile {
-  const promptArgs = PROMPT_ARGS_BY_COMMAND.get(getCommandBaseName(profile.command));
+  const command = getCommandBaseName(profile.command);
+  const promptArgs = PROMPT_ARGS_BY_COMMAND.get(command);
   if (!promptArgs || promptArgs.length === 0) {
     return profile;
   }
   const args = profile.args ?? [];
-  if (profileTakesPrompt(profile) || hasSubcommand(args)) {
+  if (profileTakesPrompt(profile) || hasPositionalArg(command, args)) {
     return profile;
   }
   return { ...profile, args: [...args, ...promptArgs] };

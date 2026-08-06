@@ -2093,7 +2093,7 @@ export function NewWorkspaceScreen({
       setPendingAction("terminal");
       await runCreateTerminalWorkspace({
         cwd: selectedSourceDirectory ?? "",
-        prompt: terminalTakesPrompt ? terminalPromptText : "",
+        prompt: terminalPromptText,
         profile: selectedTerminalProfile,
         profileName: selectedTerminalProfile?.name,
         ensureWorkspace,
@@ -2131,7 +2131,6 @@ export function NewWorkspaceScreen({
     selectedTerminalProfile,
     t,
     terminalPromptText,
-    terminalTakesPrompt,
     toast,
     updateFormPreferences,
     withConnectedClient,

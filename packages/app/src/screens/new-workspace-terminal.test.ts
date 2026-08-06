@@ -82,6 +82,40 @@ describe("runCreateTerminalWorkspace", () => {
     });
   });
 
+  it("does not seed workspace naming from a hidden draft for a launch-only profile", async () => {
+    const workspace = { id: "ws-1", workspaceDirectory: "/repo/ws-1" };
+    const ensureWorkspace = vi.fn().mockResolvedValue(workspace);
+    const createTerminal = vi.fn().mockResolvedValue({ terminalId: "term-2" });
+    const sendTerminalInput = vi.fn();
+    const { navigate } = createRecordingNavigate();
+
+    await runCreateTerminalWorkspace({
+      cwd: "/repo",
+      prompt: "hidden draft from the previous profile",
+      profile: { command: "npm", args: ["run", "dev"] },
+      profileName: "Dev server",
+      ensureWorkspace,
+      createTerminal,
+      sendTerminalInput,
+      serverId: "server-abc",
+      navigate,
+    });
+
+    expect(ensureWorkspace).toHaveBeenCalledWith({
+      cwd: "/repo",
+      prompt: "",
+      attachments: [],
+      withInitialAgent: false,
+    });
+    expect(createTerminal).toHaveBeenCalledWith({
+      workspaceDirectory: "/repo/ws-1",
+      workspaceId: "ws-1",
+      name: "Dev server",
+      command: "npm",
+      args: ["run", "dev"],
+    });
+  });
+
   it("does not type into the terminal when a profile took the prompt as argv", async () => {
     const ensureWorkspace = vi
       .fn()

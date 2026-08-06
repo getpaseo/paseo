@@ -1,7 +1,11 @@
 import type { normalizeWorkspaceDescriptor } from "@/stores/session-store";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
-import { substitutePrompt, type SubstitutableCommand } from "@getpaseo/protocol/terminal-profiles";
+import {
+  profileTakesPrompt,
+  substitutePrompt,
+  type SubstitutableCommand,
+} from "@getpaseo/protocol/terminal-profiles";
 
 export interface CreatedTerminal {
   terminalId: string;
@@ -52,9 +56,10 @@ export async function runCreateTerminalWorkspace(
   // without creating a chat agent. Worth passing even for a blank terminal,
   // where the text is a command: a branch called `npm-run-dev` beats a random
   // slug.
+  const namingPrompt = profile && !profileTakesPrompt(profile) ? "" : prompt;
   const ensuredWorkspace = await ensureWorkspace({
     cwd,
-    prompt,
+    prompt: namingPrompt,
     attachments: [],
     withInitialAgent: false,
   });
