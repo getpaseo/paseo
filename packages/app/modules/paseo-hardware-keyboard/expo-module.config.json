@@ -1,7 +1,10 @@
 {
-  "platforms": ["ios"],
+  "platforms": ["ios", "android"],
   "ios": {
     "modules": ["PaseoHardwareKeyboardModule"],
     "reactDelegateHandlers": ["PaseoHardwareKeyboardReactDelegateHandler"]
+  },
+  "android": {
+    "modules": ["expo.modules.paseohardwarekeyboard.PaseoHardwareKeyboardModule"]
   }
 }

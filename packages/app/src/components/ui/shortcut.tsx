@@ -4,7 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { normalizeDisplayChord } from "@/components/ui/normalize-display-chord";
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
-import { getShortcutOs } from "@/utils/shortcut-platform";
+import { useShortcutOs } from "@/utils/shortcut-platform";
 
 export function Shortcut({
   keys,
@@ -19,7 +19,7 @@ export function Shortcut({
 }): ReactElement | null {
   const shortcutsAvailable = useKeyboardShortcutsAvailable();
   const displayChord = normalizeDisplayChord(chord, keys);
-  const shortcutOs = getShortcutOs();
+  const shortcutOs = useShortcutOs();
 
   const badgeStyle = useMemo(() => [styles.badge, style], [style]);
   const textCombinedStyle = useMemo(() => [styles.text, textStyle], [textStyle]);

@@ -2206,9 +2206,16 @@ export const es: TranslationResources = {
       },
     },
     shortcuts: {
+      modKey: {
+        title: "Tecla modificadora",
+        hint: "Tecla usada como modificador de atajos",
+        auto: "Auto",
+        cmd: "Cmd / Super",
+        ctrl: "Ctrl",
+      },
       dialogTitle: "Atajos",
       searchPlaceholder: "Buscar atajos",
-      unavailableOnMobile: "Los atajos de teclado solo están disponibles en el escritorio",
+      unavailableOnMobile: "La personalización de atajos solo está disponible en escritorio",
       capturePrompt: "Presione el acceso directo...",
       unassigned: "Sin asignar",
       actions: {

@@ -88,6 +88,19 @@ for (const [humanKey, mapping] of Object.entries(KEY_MAP)) {
   }
 }
 
+/**
+ * Synthesize a DOM-style `event.key` from a physical key code, for event
+ * sources (native hardware keyboards) that only report codes. Assumes a
+ * US-physical layout, which is also what the registry's combos are written in.
+ */
+export function shortcutKeyFromCode(code: string, shift: boolean): string | undefined {
+  const humanKey = CODE_TO_KEY[code];
+  if (!humanKey) return undefined;
+  const mapping = KEY_MAP[humanKey];
+  if (shift && mapping.shiftedKey !== undefined) return mapping.shiftedKey;
+  return mapping.key;
+}
+
 export function parseShortcutString(s: string): KeyCombo {
   const parts = s.split("+");
   if (parts.length === 0 || parts.some((p) => p === "")) {

@@ -30,7 +30,8 @@ import {
 } from "@/keyboard/shortcut-string";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
-import { getShortcutOs } from "@/utils/shortcut-platform";
+import { type ShortcutModPreference, useShortcutModStore } from "@/stores/shortcut-mod-store";
+import { useShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import { getDesktopHost } from "@/desktop/host";
@@ -323,6 +324,52 @@ function ShortcutRow({
   );
 }
 
+const MOD_PREFERENCES: ShortcutModPreference[] = ["auto", "cmd", "ctrl"];
+
+function ModKeyOption({
+  option,
+  isSelected,
+  onSelect,
+}: {
+  option: ShortcutModPreference;
+  isSelected: boolean;
+  onSelect: (option: ShortcutModPreference) => void;
+}) {
+  const { t } = useTranslation();
+  const handlePress = useCallback(() => onSelect(option), [onSelect, option]);
+  return (
+    <Button variant={isSelected ? "secondary" : "ghost"} size="sm" onPress={handlePress}>
+      {t(`settings.shortcuts.modKey.${option}`)}
+    </Button>
+  );
+}
+
+function ModKeySection() {
+  const { t } = useTranslation();
+  const preference = useShortcutModStore((s) => s.preference);
+  const setPreference = useShortcutModStore((s) => s.setPreference);
+
+  return (
+    <SettingsSection title={t("settings.shortcuts.modKey.title")}>
+      <View style={settingsStyles.card}>
+        <View style={styles.row}>
+          <Text style={styles.rowLabel}>{t("settings.shortcuts.modKey.hint")}</Text>
+          <View style={styles.rowActions}>
+            {MOD_PREFERENCES.map((option) => (
+              <ModKeyOption
+                key={option}
+                option={option}
+                isSelected={preference === option}
+                onSelect={setPreference}
+              />
+            ))}
+          </View>
+        </View>
+      </View>
+    </SettingsSection>
+  );
+}
+
 export function KeyboardShortcutsSection() {
   const { t } = useTranslation();
   const [capturingBindingId, setCapturingBindingId] = useState<string | null>(null);
@@ -334,7 +381,7 @@ export function KeyboardShortcutsSection() {
   const capturing = useKeyboardShortcutsStore((s) => s.capturingShortcut);
 
   const isFocused = useIsFocused();
-  const isMac = getShortcutOs() === "mac";
+  const isMac = useShortcutOs() === "mac";
   const isDesktopApp = getIsElectronRuntime();
   const sections = buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp });
 
@@ -428,11 +475,14 @@ export function KeyboardShortcutsSection() {
 
   if (isNative) {
     return (
-      <SettingsSection title={t("settings.sections.shortcuts")}>
-        <View style={[settingsStyles.card, styles.mobileCard]}>
-          <Text style={styles.mobileText}>{t("settings.shortcuts.unavailableOnMobile")}</Text>
-        </View>
-      </SettingsSection>
+      <>
+        <ModKeySection />
+        <SettingsSection title={t("settings.sections.shortcuts")}>
+          <View style={[settingsStyles.card, styles.mobileCard]}>
+            <Text style={styles.mobileText}>{t("settings.shortcuts.unavailableOnMobile")}</Text>
+          </View>
+        </SettingsSection>
+      </>
     );
   }
 
@@ -444,6 +494,7 @@ export function KeyboardShortcutsSection() {
 
   return (
     <>
+      <ModKeySection />
       {sections.map(function (section, sectionIndex) {
         return (
           <SettingsSection

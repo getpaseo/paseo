@@ -2128,9 +2128,16 @@ export const zhCN: TranslationResources = {
       },
     },
     shortcuts: {
+      modKey: {
+        title: "修饰键",
+        hint: "用作快捷键修饰键的按键",
+        auto: "自动",
+        cmd: "Cmd / Super",
+        ctrl: "Ctrl",
+      },
       dialogTitle: "快捷键",
       searchPlaceholder: "搜索快捷键",
-      unavailableOnMobile: "键盘快捷键仅在桌面端可用",
+      unavailableOnMobile: "快捷键自定义仅在桌面端可用",
       capturePrompt: "按下快捷键...",
       unassigned: "未设置",
       actions: {
