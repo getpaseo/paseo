@@ -6,8 +6,10 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import * as executableUtils from "../../../../executable-resolution/executable-resolution.js";
+import { buildAgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
 import {
   ClaudeAgentClient,
+  buildClaudeQuestionPermissionSummary,
   convertClaudeHistoryEntry,
   normalizeClaudeAskUserQuestionRequestInput,
   normalizeClaudeAskUserQuestionUpdatedInput,
@@ -2570,5 +2572,84 @@ describe("toClaudeSdkMcpConfig", () => {
     });
     expect(result.type).toBe("stdio");
     expect(result.alwaysLoad).toBeUndefined();
+  });
+});
+
+describe("buildClaudeQuestionPermissionSummary", () => {
+  // Regression for #2612: the attention notification serialized the raw
+  // AskUserQuestion input, so both the iOS push and the desktop app showed
+  // JSON instead of the question.
+  test("renders an AskUserQuestion notification as the question and its options", async () => {
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      const internal = session as unknown as {
+        handlePermissionRequest: (
+          toolName: string,
+          input: Record<string, unknown>,
+          options: Record<string, unknown>,
+        ) => Promise<unknown>;
+      };
+
+      void internal
+        .handlePermissionRequest(
+          "AskUserQuestion",
+          {
+            questions: [
+              {
+                question: "Which library should we use?",
+                header: "Library",
+                options: [{ label: "date-fns" }, { label: "Luxon" }],
+                multiSelect: false,
+              },
+            ],
+          },
+          {},
+        )
+        .catch(() => undefined);
+
+      const requestEvent = events.find(
+        (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+          event.type === "permission_requested" && event.request.kind === "question",
+      );
+      expect(requestEvent).toBeDefined();
+
+      const payload = buildAgentAttentionNotificationPayload({
+        reason: "permission",
+        serverId: "srv-2612",
+        workspaceId: "workspace-2612",
+        agentId: "agent-2612",
+        permissionRequest: requestEvent?.request,
+      });
+
+      expect(payload.body).toBe("Which library should we use? - date-fns / Luxon");
+      expect(payload.body).not.toContain('"questions"');
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("titles a question that has no options", () => {
+    expect(
+      buildClaudeQuestionPermissionSummary("AskUserQuestion", {
+        questions: [{ question: "Ready to deploy?", header: "Deploy", options: [] }],
+      }),
+    ).toEqual({ title: "Ready to deploy?" });
+  });
+
+  test("leaves other tools and unusable question payloads untouched", () => {
+    expect(buildClaudeQuestionPermissionSummary("Bash", { command: "ls" })).toEqual({});
+    expect(buildClaudeQuestionPermissionSummary("AskUserQuestion", { questions: [] })).toEqual({});
+    expect(
+      buildClaudeQuestionPermissionSummary("AskUserQuestion", {
+        questions: [{ header: "No text" }],
+      }),
+    ).toEqual({});
   });
 });
