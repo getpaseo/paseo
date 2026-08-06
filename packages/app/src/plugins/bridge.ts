@@ -178,6 +178,14 @@ export const PLUGIN_NEUTERED_GLOBALS = [
  * subtree, which is nothing for the one-shot markup path and quadratic for a
  * plugin that appends in a loop — the plugin pays it, and only if it does that.
  *
+ * `webview` is Electron's, and it is the worst of them: the desktop renderer runs
+ * with `webviewTag: true`, and a `<webview>` guest is a separate `WebContents`
+ * with its own session. The plugin document's CSP does not describe it, the
+ * iframe's `sandbox` flags are not inherited by it, and the neuter script never
+ * runs in it — a fresh realm with a full network stack. Electron's
+ * `will-attach-webview` gate is a companion control, not a substitute: it checks
+ * the destination, and the partition name it requires is published source.
+ *
  * `link` is in the selector for a different reason: `rel="dns-prefetch"` and
  * `rel="preconnect"` resolve a hostname without ever making a request, so no CSP
  * directive is consulted and the payload rides in the subdomain labels — the
@@ -191,13 +199,25 @@ export const PLUGIN_NEUTERED_GLOBALS = [
  */
 const KILL_CHILD_REALMS = `
 var A = Reflect.apply;
+var ObjectRef = Object;
 var own = Object.getOwnPropertyDescriptor;
 var create = Object.create;
 var defineProp = Object.defineProperty;
+var ErrorRef = Error;
+var fail = function () { throw new ErrorRef("denied in the Paseo plugin sandbox"); };
+var bare = function () { return A(create, ObjectRef, [null]); };
 var lock = function (target, name, value) {
-  try { A(defineProp, Object, [target, name, { value: value, writable: false, configurable: false }]); } catch (e) {}
+  // The descriptor is bare for the same reason \`WATCH\` is: \`ToPropertyDescriptor\`
+  // does a \`HasProperty\` for \`get\` and \`set\`, which walks the prototype chain, so
+  // an object literal here lets \`Object.prototype.get = 1\` make every \`lock()\`
+  // throw. Every call site is at init today, which is not a reason to leave it.
+  var descriptor = bare();
+  descriptor.value = value;
+  descriptor.writable = false;
+  descriptor.configurable = false;
+  try { A(defineProp, ObjectRef, [target, name, descriptor]); } catch (e) {}
 };
-var deny = function () { throw new Error("denied in the Paseo plugin sandbox"); };
+var deny = function () { fail(); };
 var matches = Element.prototype.matches;
 var findAll = Element.prototype.querySelectorAll;
 var findAllIn = DocumentFragment.prototype.querySelectorAll;
@@ -209,13 +229,12 @@ var addedOf = own(MutationRecord.prototype, "addedNodes").get;
 var countOf = own(NodeList.prototype, "length").get;
 var at = NodeList.prototype.item;
 var startWatching = MutationObserver.prototype.observe;
-var SELECTOR = "iframe,frame,object,embed,link";
-// Null-prototype, because a dictionary argument is a lookup surface. Converting
-// this to a \`MutationObserverInit\` is one Get per member, and every member it
-// does not own would be read off \`Object.prototype\` — which the plugin owns.
-// \`Object.prototype.attributeFilter = 1\` makes the sequence conversion throw, and
-// \`observe\` then never runs.
-var bare = function () { return A(create, Object, [null]); };
+var SELECTOR = "iframe,frame,object,embed,link,webview";
+// \`WATCH\` is null-prototype, because a dictionary argument is a lookup surface.
+// Converting this to a \`MutationObserverInit\` is one Get per member, and every
+// member it does not own would be read off \`Object.prototype\` — which the plugin
+// owns. \`Object.prototype.attributeFilter = 1\` makes the sequence conversion
+// throw, and \`observe\` then never runs.
 var WATCH = bare();
 WATCH.childList = true;
 WATCH.subtree = true;
@@ -296,7 +315,7 @@ if (attach) {
     // has to fail closed: the host goes, and with it anything under the root.
     if (A(shadowOf, this, []) !== root) {
       drop(this);
-      throw new Error("denied in the Paseo plugin sandbox");
+      fail();
     }
     // Guarded so a throw cannot leave the element holding a root that was never
     // watched: nothing sweeps an already-connected host again on its own.
@@ -337,9 +356,11 @@ export const PLUGIN_NEUTER_SCRIPT = `(function(){${JSON.stringify(
  * and plugins read `id` and `data-*` off `document.currentScript`.
  *
  * Everything is captured before the first plugin script runs, for the reason
- * `KILL_CHILD_REALMS` gives — but with an extra edge here, because plugin code
- * runs *between iterations of this loop*. A poisoned `document.createElement`
- * would otherwise choose what we insert next, with attributes the plugin wrote.
+ * `KILL_CHILD_REALMS` gives. No plugin code runs during this script — `holder` is
+ * detached, so the re-created scripts execute only at the single `append` on the
+ * last line — but the shell script that installed `KILL_CHILD_REALMS` ran before
+ * this one, and a plugin's markup is not the only thing that can have poisoned a
+ * global by then.
  */
 const INSERT_PLUGIN_HTML = `
 var A = Reflect.apply;
@@ -385,7 +406,7 @@ if (hostParent) { try { A(detach, hostParent, [host]); } catch (e) {} }
 // has not fired and a frame has not loaded.
 var holder = A(make, document, ["div"]);
 A(insert, holder, ["beforeend", PLUGIN_HTML]);
-var junk = A(findAll, holder, ["link,iframe,frame,object,embed"]);
+var junk = A(findAll, holder, ["link,iframe,frame,object,embed,webview"]);
 for (var j = 0, jn = A(countOf, junk, []); j < jn; j++) {
   var dead = A(at, junk, [j]);
   var deadParent = A(parentOf, dead, []);

