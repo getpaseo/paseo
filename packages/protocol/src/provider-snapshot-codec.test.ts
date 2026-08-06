@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderSnapshotEntry } from "./agent-types.js";
+import { CompactProviderSnapshotSchema } from "./messages.js";
 import { compactProviderSnapshot, expandProviderSnapshot } from "./provider-snapshot-codec.js";
 
 const sharedThinking = [
@@ -21,6 +22,8 @@ function providerEntry(): ProviderSnapshotEntry {
       {
         provider: "pi",
         id: "openai/gpt-a",
+        aliases: ["openai/gpt-a-legacy"],
+        isSelectable: false,
         label: "GPT A",
         description: "openai/gpt-a",
         metadata: { provider: "openai", modelId: "gpt-a" },
@@ -48,6 +51,9 @@ describe("provider snapshot codec", () => {
 
     expect(compact.thinkingSets).toHaveLength(1);
     expect(compact.entries[0]?.models?.map((model) => model.thinkingSet)).toEqual([0, 0]);
+    expect(CompactProviderSnapshotSchema.parse(compact)).toEqual(compact);
+    expect(compact.entries[0]?.models?.[0]?.aliases).toEqual(["openai/gpt-a-legacy"]);
+    expect(compact.entries[0]?.models?.[0]?.isSelectable).toBe(false);
     expect(expanded).toEqual(original);
     expect(expanded[0]?.models?.[0]?.thinkingOptions).toBe(
       expanded[0]?.models?.[1]?.thinkingOptions,

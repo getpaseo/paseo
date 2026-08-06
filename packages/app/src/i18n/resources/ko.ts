@@ -1415,6 +1415,19 @@ export const ko: TranslationResources = {
         show: "고급 표시",
         hide: "고급 숨기기",
       },
+      headers: {
+        title: "사용자 지정 헤더",
+        add: "헤더 추가",
+        name: "이름",
+        value: "값",
+        remove: "헤더 삭제",
+        errors: {
+          missingName: "각 헤더의 이름을 입력하세요",
+          invalidName: "{{name}}은(는) 올바른 헤더 이름이 아닙니다",
+          invalidValue: "{{name}}에 잘못된 줄바꿈이 있습니다",
+          duplicateName: "{{name}}이(가) 두 번 이상 입력되었습니다",
+        },
+      },
       passwordVisibility: {
         show: "비밀번호 표시",
         hide: "비밀번호 숨기기",

@@ -49,6 +49,25 @@ describe("create agent preferences", () => {
     });
   });
 
+  it("does not commit a failed write or leak it into the next update", async () => {
+    const storage = new FakeCreateAgentPreferenceStorage();
+    const preferences = new CreateAgentPreferencesService(storage);
+
+    const failedWrite = preferences.update({ provider: "claude" });
+    await storage.nextWrite();
+    storage.failOldestWrite(new Error("disk full"));
+    await expect(failedWrite).rejects.toThrow("disk full");
+
+    expect(await preferences.load()).toEqual({});
+
+    const successfulWrite = preferences.update({ isolation: "worktree" });
+    await storage.nextWrite();
+    storage.finishOldestWrite();
+    await successfulWrite;
+
+    expect(storage.savedPreferences()).toEqual({ isolation: "worktree" });
+  });
+
   it("flushes the full create-agent selection into provider preferences", async () => {
     const storage = new FakeCreateAgentPreferenceStorage();
     const preferences = new CreateAgentPreferencesService(storage);

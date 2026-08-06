@@ -10,6 +10,16 @@ import type {
   ProviderCatalog,
 } from "./agent-sdk-types.js";
 
+const CLAUDE_CUSTOM_THINKING_FIELDS = {
+  thinkingOptions: [
+    { id: "low", label: "Low" },
+    { id: "medium", label: "Medium" },
+    { id: "high", label: "High", isDefault: true },
+    { id: "max", label: "Max" },
+  ],
+  defaultThinkingOptionId: "high",
+} satisfies Partial<AgentModelDefinition>;
+
 const mockState = vi.hoisted(() => {
   interface ConstructorEntry {
     runtimeSettings?: unknown;
@@ -64,55 +74,62 @@ vi.mock("../../executable-resolution/executable-resolution.js", () => ({
   isCommandAvailable: mockState.isCommandAvailable,
 }));
 
-vi.mock("./providers/claude/agent.js", () => ({
-  ClaudeAgentClient: class ClaudeAgentClient {
-    readonly capabilities = {
-      supportsStreaming: true,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: true,
-      supportsMcpServers: true,
-      supportsReasoningStream: true,
-      supportsToolInvocations: true,
-    };
-    readonly provider = "claude";
-    readonly runtimeSettings?: unknown;
-
-    constructor(options: { runtimeSettings?: unknown }) {
-      this.runtimeSettings = options.runtimeSettings;
-      mockState.constructorArgs.claude.push({
-        runtimeSettings: options.runtimeSettings,
-      });
-    }
-
-    async createSession(): Promise<never> {
-      throw new Error("not implemented");
-    }
-
-    async resumeSession(): Promise<never> {
-      throw new Error("not implemented");
-    }
-
-    async fetchCatalog(): Promise<ProviderCatalog> {
-      return {
-        models: mockState.runtimeModels.get(this.provider) ?? [],
-        modes: [],
+vi.mock("./providers/claude/agent.js", async () => {
+  const { resolveConfiguredClaudeModel } = await import("./providers/claude/models.js");
+  return {
+    ClaudeAgentClient: class ClaudeAgentClient {
+      readonly capabilities = {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
       };
-    }
+      readonly provider = "claude";
+      readonly runtimeSettings?: unknown;
 
-    async isAvailable(): Promise<boolean> {
-      const command: { mode?: string; argv?: string[] } | undefined =
-        typeof this.runtimeSettings === "object" && this.runtimeSettings !== null
-          ? Reflect.get(this.runtimeSettings, "command")
-          : undefined;
-      if (command?.mode === "replace") {
-        const { isCommandAvailable } =
-          await import("../../executable-resolution/executable-resolution.js");
-        return await isCommandAvailable(command.argv?.[0] ?? "");
+      constructor(options: { runtimeSettings?: unknown }) {
+        this.runtimeSettings = options.runtimeSettings;
+        mockState.constructorArgs.claude.push({
+          runtimeSettings: options.runtimeSettings,
+        });
       }
-      return true;
-    }
-  },
-}));
+
+      async createSession(): Promise<never> {
+        throw new Error("not implemented");
+      }
+
+      async resumeSession(): Promise<never> {
+        throw new Error("not implemented");
+      }
+
+      async fetchCatalog(): Promise<ProviderCatalog> {
+        return {
+          models: mockState.runtimeModels.get(this.provider) ?? [],
+          modes: [],
+        };
+      }
+
+      resolveConfiguredModel(model: AgentModelDefinition): AgentModelDefinition {
+        return resolveConfiguredClaudeModel(model);
+      }
+
+      async isAvailable(): Promise<boolean> {
+        const command: { mode?: string; argv?: string[] } | undefined =
+          typeof this.runtimeSettings === "object" && this.runtimeSettings !== null
+            ? Reflect.get(this.runtimeSettings, "command")
+            : undefined;
+        if (command?.mode === "replace") {
+          const { isCommandAvailable } =
+            await import("../../executable-resolution/executable-resolution.js");
+          return await isCommandAvailable(command.argv?.[0] ?? "");
+        }
+        return true;
+      }
+    },
+  };
+});
 
 vi.mock("./providers/codex-app-server-agent.js", () => ({
   CodexAppServerAgentClient: class CodexAppServerAgentClient {
@@ -1114,6 +1131,7 @@ describe("model merging", () => {
         provider: "claude",
         id: "profile-fast",
         label: "Profile Fast",
+        ...CLAUDE_CUSTOM_THINKING_FIELDS,
       },
     ]);
   });
@@ -1160,11 +1178,13 @@ describe("model merging", () => {
         provider: "claude",
         id: "shared-model",
         label: "Profile Label",
+        ...CLAUDE_CUSTOM_THINKING_FIELDS,
       },
       {
         provider: "claude",
         id: "profile-model",
         label: "Profile Model",
+        ...CLAUDE_CUSTOM_THINKING_FIELDS,
       },
     ]);
   });
@@ -1249,6 +1269,7 @@ describe("model merging", () => {
         id: "shared-model",
         label: "Profile Label",
         description: "Runtime description",
+        ...CLAUDE_CUSTOM_THINKING_FIELDS,
         metadata: {
           source: "runtime",
         },
@@ -1314,6 +1335,7 @@ describe("model merging", () => {
         id: "profile-default",
         label: "Profile Default",
         isDefault: true,
+        ...CLAUDE_CUSTOM_THINKING_FIELDS,
       },
     ]);
   });
@@ -1343,6 +1365,45 @@ describe("model merging", () => {
         isDefault: true,
       },
     ]);
+  });
+
+  test("Claude configured models can override or disable inferred thinking options", async () => {
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: {
+          models: [
+            { id: "custom-defaults", label: "Defaults" },
+            { id: "claude-sonnet-5", label: "Known" },
+            { id: "claude-opus-5", label: "Disabled", thinkingOptions: [] },
+            {
+              id: "custom-explicit",
+              label: "Explicit",
+              thinkingOptions: [{ id: "bespoke", label: "Bespoke", isDefault: true }],
+            },
+          ],
+        },
+      },
+    });
+
+    const { models } = await registry.claude.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    expect(models.find((model) => model.id === "custom-defaults")).toMatchObject(
+      CLAUDE_CUSTOM_THINKING_FIELDS,
+    );
+    expect(
+      models
+        .find((model) => model.id === "claude-sonnet-5")
+        ?.thinkingOptions?.map((option) => option.id),
+    ).toEqual(["off", "low", "medium", "high", "xhigh", "max", "ultracode"]);
+    expect(models.find((model) => model.id === "claude-opus-5")?.thinkingOptions).toEqual([]);
+    expect(models.find((model) => model.id === "custom-explicit")).toMatchObject({
+      thinkingOptions: [{ id: "bespoke", label: "Bespoke", isDefault: true }],
+      defaultThinkingOptionId: "bespoke",
+    });
   });
 
   test("built-in createClient().fetchCatalog() honors profile model replacement (issue #579)", async () => {
@@ -1413,6 +1474,39 @@ describe("model merging", () => {
 
     const defaultModel = catalog.models.find((model) => model.isDefault) ?? catalog.models[0];
     expect(defaultModel?.id).toBe("profile-default");
+  });
+
+  test("explicit additional models override hidden compatibility entries", async () => {
+    mockState.runtimeModels.set("claude", [
+      {
+        provider: "claude",
+        id: "claude-fable-5[1m]",
+        label: "Fable 5",
+        isSelectable: false,
+      },
+    ]);
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: {
+          additionalModels: [{ id: "claude-fable-5[1m]", label: "Gateway Fable 5" }],
+        },
+      },
+    });
+
+    const { models } = await registry.claude.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    expect(models).toEqual([
+      expect.objectContaining({
+        id: "claude-fable-5[1m]",
+        label: "Gateway Fable 5",
+        isSelectable: true,
+        defaultThinkingOptionId: "high",
+      }),
+    ]);
   });
 
   test("built-in Claude models override replaces hardcoded first-party models (issue #1299)", async () => {
