@@ -148,6 +148,10 @@ The EAS `production-apk` profile uses the large Android resource class. Release 
 
 Keep `react` and `react-dom` pinned to the React version embedded by the current `react-native` release. React Native `0.81.x` embeds `react-native-renderer` `19.1.0`, so `packages/app` must use React `19.1.0`. Bumping React to a newer patch can build successfully but crash at JS startup on Android with `Incompatible React versions`, leaving the app on the native splash screen.
 
+### Expo native module SDK alignment
+
+Pin Expo modules to the versions in `expo/bundledNativeModules.json` for the current SDK (today: Expo 54). Major version numbers on Expo packages track the Expo SDK, not "newest is best." Installing an SDK 57 package such as `expo-local-authentication@57` on an SDK 54 app can still typecheck and produce a release APK, then crash at native module registration with `NoClassDefFoundError` / `ClassNotFoundException` for symbols that only exist in newer `expo-modules-core` (for example `expo.modules.kotlin.types.AnyTypeCache`). The interaction lock depends on `expo-local-authentication`; keep it at `~17.0.8` while the app is on Expo 54.
+
 ## Screenshots
 
 ```bash

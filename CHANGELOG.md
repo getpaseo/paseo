@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.922 - 2026-08-06
+
+### Fixed
+
+- Android release APK no longer crashes on startup after the interaction lock landed: pin `expo-local-authentication` to Expo SDK 54 (`~17.0.8`) instead of the SDK 57 package, which failed native module registration with `ClassNotFoundException: expo.modules.kotlin.types.AnyTypeCache`
+
 ## 0.2.921 - 2026-08-05
 
 ### Features
