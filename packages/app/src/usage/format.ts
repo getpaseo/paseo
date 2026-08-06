@@ -1,4 +1,3 @@
-import { formatTokenCount } from "@/components/context-window-meter.utils";
 import { i18n } from "@/i18n/i18next";
 import type { UsageDisplayAs } from "./preferences";
 import type { UsageBalanceUnit } from "./types";
