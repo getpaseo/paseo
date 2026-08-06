@@ -30,12 +30,16 @@ const problemSchema = z.object({
 
 export type HubInstallResult = z.infer<typeof installResponseSchema>;
 
-export async function installHubConfiguration(input: {
+interface InstallHubConfigurationInput {
   origin: string;
   apiKey: string;
   projectSlug: string;
   yaml: string;
-}): Promise<HubInstallResult> {
+}
+
+export async function installHubConfiguration(
+  input: InstallHubConfigurationInput,
+): Promise<HubInstallResult> {
   let response: Response;
   try {
     response = await fetch(`${input.origin}/api/v1/configurations/install`, {

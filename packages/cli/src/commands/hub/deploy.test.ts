@@ -250,6 +250,19 @@ interface HubResponse {
   body: unknown;
 }
 
+interface ReceivedRequest {
+  method: string | undefined;
+  url: string | undefined;
+  authorization: string | undefined;
+  body: string;
+}
+
+interface TestHub {
+  origin: string;
+  received: Promise<ReceivedRequest>;
+  close(): Promise<void>;
+}
+
 async function startHub(
   configuredResponse: HubResponse = {
     status: 201,
@@ -260,28 +273,9 @@ async function startHub(
       active: true,
     },
   },
-): Promise<{
-  origin: string;
-  received: Promise<{
-    method: string | undefined;
-    url: string | undefined;
-    authorization: string | undefined;
-    body: string;
-  }>;
-  close(): Promise<void>;
-}> {
-  let resolveRequest: (request: {
-    method: string | undefined;
-    url: string | undefined;
-    authorization: string | undefined;
-    body: string;
-  }) => void;
-  const received = new Promise<{
-    method: string | undefined;
-    url: string | undefined;
-    authorization: string | undefined;
-    body: string;
-  }>((resolve) => {
+): Promise<TestHub> {
+  let resolveRequest: (request: ReceivedRequest) => void;
+  const received = new Promise<ReceivedRequest>((resolve) => {
     resolveRequest = resolve;
   });
   const server = createServer((request, response) => {

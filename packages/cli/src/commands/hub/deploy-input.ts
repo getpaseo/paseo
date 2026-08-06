@@ -11,11 +11,13 @@ export interface HubDeployInput {
   yaml: string;
 }
 
-export async function resolveHubDeployInput(input: {
+interface ResolveHubDeployInput {
   cwd: string;
   file?: string;
   project?: string;
-}): Promise<HubDeployInput> {
+}
+
+export async function resolveHubDeployInput(input: ResolveHubDeployInput): Promise<HubDeployInput> {
   const file = input.file ?? DEFAULT_CONFIGURATION_PATH;
   let yaml: string;
   try {
