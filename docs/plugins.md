@@ -82,6 +82,8 @@ Four rounds of review found a door that observer does not watch, so it is now th
 
   Round 10 was the third instance: the helper that built those null-prototype objects read `Object.create` when it was **called**, and the wrapper calls it on every `attachShadow` — long after the plugin's script has run. Replace `Object.create` with one returning an accessor pair and `options.mode = "open"` goes nowhere, so the plugin gets the `closed`, `clonable` root the wrapper exists to deny. Hence the invariant in `bridge.ts`, which the three rounds widened one clause at a time: capture the callee, build the argument bare, and resolve nothing global at call time. The wrapper also re-reads `shadowRoot` after the fact and drops the host if it does not match, so a future miss fails closed rather than silently.
 
+  Round 14 was the fourth, and it is why the invariant now has a fourth clause: **convert a dictionary member the way the platform will before you compare it.** `mode` is an enum, so the platform runs `ToString` on it. `new String("closed")` and `{ toString() { return "closed" } }` are not `=== "closed"`, so the wrapper forwarded them under "anything the platform would reject is handed straight to it" — and the platform accepted them and built a real closed root. The fail-closed check then fired and threw, but the root already existed, and a root `attachShadow` made has "available to element internals" set, so `attachInternals().shadowRoot` handed it back and the host went straight back into the document with a frame inside a root no sweep can see. Measured with ICE gathering from the child realm. The wrapper stringifies `mode` itself now and hands the platform only primitives; an invalid one still throws where the author expects.
+
 And two things the observer itself has to get right, each found by breaking an earlier version:
 
 - **Observe `document`, not `document.documentElement`.** A post-load `document.write()` implies `document.open()`, which throws away the tree and builds a fresh `documentElement`. An observer bound to the old node is left watching something detached and never fires again, while the `<iframe>` written in that same call parses and runs.
@@ -171,7 +173,7 @@ The bridge is intentionally this small. A plugin gets the content it was opened 
 
 ## Contribution points
 
-**File preview.** The file pane resolves a preview by extension. A plugin preview wins over the built-in syntax-highlighted view for extensions it claims, and the user can switch back from the file pane toolbar. Two plugins claiming the same extension resolve alphabetically by plugin id; the loser is reported in Settings.
+**File preview.** The file pane resolves a preview by extension. A plugin preview wins over the built-in syntax-highlighted view for extensions it claims, and the user can switch back from the file pane toolbar. Two plugins claiming the same extension resolve alphabetically by plugin id; the loser is reported in Settings. Matching is by suffix, so `.csv` also claims `report.data.csv` and a plugin claiming the longer form loses to it — Settings reports that under the longer extension.
 
 **Sidebar panel.** One extra tab in the explorer sidebar next to Changes, Files, and PR. Every plugin tab renders the same generic icon; the manifest's `icon` is parsed but not honoured, because honouring it means bundling the whole icon set to satisfy a name only known at runtime.
 
@@ -247,7 +249,7 @@ Treat any change to the sandbox as security-relevant, and prove the denial in a 
 
 The daemon serves an entry only when its plugin is enabled and the entry is declared in the manifest's `contributes`, and it re-checks containment after resolving symlinks. A disabled plugin's code does not leave the daemon.
 
-The registry operator is a trust boundary — the index says which bytes are the plugin. SHA-256 verification protects the download, not the publisher's intent. The installed manifest is the one embedded in the index rather than a separately hashed file, so it carries exactly the same trust as the hashes sitting next to it. Downloads are capped while streaming, not after buffering, so a host that declares a small size and streams gigabytes cannot exhaust daemon memory. See [SECURITY.md](../SECURITY.md).
+The registry operator is a trust boundary — the index says which bytes are the plugin. SHA-256 verification protects the download, not the publisher's intent. The installed manifest is the one embedded in the index rather than a separately hashed file, so it carries exactly the same trust as the hashes sitting next to it. HTTP downloads are capped while streaming, not after buffering, so a host that declares a small size and streams gigabytes cannot exhaust daemon memory. A `file:` registry reads whole and checks after — that is the developer case, on a file the daemon user already owns. See [SECURITY.md](../SECURITY.md).
 
 The index is parsed one entry at a time and bad entries are dropped. Parsing it all-or-nothing means a single over-long description published to the registry takes the registry offline for every daemon already in the wild.
 

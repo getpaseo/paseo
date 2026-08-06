@@ -210,13 +210,13 @@ export class PluginStore {
       // list/read/install until the daemon restarts. Dropping it lets the next
       // caller retry.
       //
-      // Only if it is still the failed one. Two callers awaiting the same
-      // rejection both land here, and clearing unconditionally lets the second
-      // discard a retry the first already started — two scans then run at once,
-      // which is what the sequential trash loop above exists to avoid.
-      if (this.ready === pending) {
-        this.ready = null;
-      }
+      // Unconditional, and `pending` is deliberately not compared against
+      // `this.ready` first: every caller awaiting the same rejection resumes in
+      // one microtask batch, so nothing can install a newer promise in between
+      // and there is no in-flight retry to discard. A guard here would be
+      // unreachable, which is exactly how it read — a test could not make it
+      // fail.
+      this.ready = null;
       throw error;
     }
   }

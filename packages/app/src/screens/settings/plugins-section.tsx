@@ -394,38 +394,14 @@ function BrowsePluginList({
   const { t } = useTranslation();
   const registry = usePluginRegistry(serverId);
 
-  if (registry.isLoading) {
-    return <Text style={styles.stateText}>{t("plugins.loadingRegistry")}</Text>;
-  }
-  if (registry.error) {
-    return (
-      <Alert
-        variant="error"
-        title={t("plugins.errors.registryFailed")}
-        description={registry.error.message}
-        testID="plugins-registry-error"
-      >
-        <Button
-          variant="outline"
-          size="sm"
-          onPress={registry.refresh}
-          loading={registry.isFetching}
-        >
-          {t("common.actions.retry")}
-        </Button>
-      </Alert>
-    );
-  }
-  if (registry.entries.length === 0) {
-    return <Text style={styles.stateText}>{t("plugins.emptyRegistry")}</Text>;
-  }
-
   return (
     <>
       {/*
-        The daemon caches the index for five minutes, so without this a plugin
-        published a minute ago is invisible with nothing the user can do about
-        it. `refetchOnMount` re-asks the daemon and gets the same cached answer.
+        Above the state branches, not inside the loaded one: the daemon caches
+        the index for five minutes, and an empty or failed registry is exactly
+        when the user wants to re-ask. `refetchOnMount` gets the same cached
+        answer, so this button is the only way to reach a plugin published a
+        minute ago.
       */}
       <View style={styles.registryToolbar}>
         <Button
@@ -438,21 +414,67 @@ function BrowsePluginList({
           {t("plugins.refreshRegistry")}
         </Button>
       </View>
-      <View style={settingsStyles.card}>
-        {registry.entries.map((entry, index) => (
-          <RegistryPluginRow
-            key={entry.manifest.id}
-            entry={entry}
-            withBorder={index > 0}
-            installed={installedIds.has(entry.manifest.id)}
-            pending={pendingByPlugin[entry.manifest.id] === "install"}
-            error={errorByPlugin[entry.manifest.id] ?? null}
-            onInstall={onInstall}
-            onDismissError={onDismissError}
-          />
-        ))}
-      </View>
+      <BrowsePluginListBody
+        registry={registry}
+        installedIds={installedIds}
+        errorByPlugin={errorByPlugin}
+        pendingByPlugin={pendingByPlugin}
+        onInstall={onInstall}
+        onDismissError={onDismissError}
+      />
     </>
+  );
+}
+
+function BrowsePluginListBody({
+  registry,
+  installedIds,
+  errorByPlugin,
+  pendingByPlugin,
+  onInstall,
+  onDismissError,
+}: {
+  registry: ReturnType<typeof usePluginRegistry>;
+  installedIds: ReadonlySet<string>;
+  errorByPlugin: Record<string, string>;
+  pendingByPlugin: Record<string, PluginActionKind>;
+  onInstall: (pluginId: string) => void;
+  onDismissError: (pluginId: string) => void;
+}) {
+  const { t } = useTranslation();
+
+  if (registry.isLoading) {
+    return <Text style={styles.stateText}>{t("plugins.loadingRegistry")}</Text>;
+  }
+  if (registry.error) {
+    return (
+      <Alert
+        variant="error"
+        title={t("plugins.errors.registryFailed")}
+        description={registry.error.message}
+        testID="plugins-registry-error"
+      />
+    );
+  }
+  if (registry.entries.length === 0) {
+    return <Text style={styles.stateText}>{t("plugins.emptyRegistry")}</Text>;
+  }
+
+  return (
+    <View style={settingsStyles.card}>
+      {registry.entries.map((entry, index) => (
+        <RegistryPluginRow
+          key={entry.manifest.id}
+          entry={entry}
+          withBorder={index > 0}
+          installed={installedIds.has(entry.manifest.id)}
+          pending={pendingByPlugin[entry.manifest.id] === "install"}
+          error={errorByPlugin[entry.manifest.id] ?? null}
+          onInstall={onInstall}
+          onDismissError={onDismissError}
+        />
+      ))}
+    </View>
   );
 }
 

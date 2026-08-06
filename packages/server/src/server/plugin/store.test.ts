@@ -387,9 +387,8 @@ describe("PluginStore", () => {
     expect(await blockedStore.list()).toEqual([]);
   });
 
-  // The concurrent case is the one the guard is actually for: both callers await
-  // the same rejection, and clearing unconditionally let the second discard a
-  // retry the first had already started.
+  // The concurrent case: both callers await the same rejection, and both must
+  // still get a working store afterwards.
   test("two callers failing on the same startup scan both recover", async () => {
     const blocked = join(tempDir, "blocked");
     await writeFile(blocked, "not a directory");

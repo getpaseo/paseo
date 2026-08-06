@@ -19,6 +19,8 @@ export const PLUGIN_INSTALL_MAX_TOTAL_BYTES = 8 * 1024 * 1024;
  */
 export const PLUGIN_REGISTRY_MAX_RESPONSE_BYTES = PLUGIN_INSTALL_MAX_TOTAL_BYTES;
 const DEFAULT_INDEX_CACHE_TTL_MS = 5 * 60_000;
+/** Per-request ceiling, well inside the client's own 120s RPC timeout. */
+const REGISTRY_REQUEST_TIMEOUT_MS = 30_000;
 
 /**
  * The registry's transport, injected so tests drive install and browse against
@@ -106,14 +108,22 @@ export interface PluginRegistryClientOptions {
 export function createFetchPluginRegistryHttp(): PluginRegistryHttp {
   async function read(url: string, maxBytes: number): Promise<Uint8Array> {
     const cap = Math.min(maxBytes, PLUGIN_REGISTRY_MAX_RESPONSE_BYTES);
-    if (url.startsWith("file://")) {
+    // Off the parsed URL, the same way the config and the per-file allowlist
+    // decide. A `startsWith("file://")` here disagreed with both about
+    // `file:/tmp/index.json`, which is a valid file URL they accept — it fell
+    // through to `fetch`, which does not implement the scheme, so a config that
+    // validated failed at Browse time with "fetch failed".
+    if (protocolOf(url) === "file:") {
       const bytes = new Uint8Array(await readFile(fileURLToPath(url)));
       if (bytes.byteLength > cap) {
         throw new Error(`${url} is larger than the ${cap} byte limit`);
       }
       return bytes;
     }
-    const response = await fetch(url);
+    // Bounded, because a registry host that accepts the connection and then
+    // says nothing otherwise leaves this promise pending forever: the RPC never
+    // answers and the client sits there until its own 120s timeout.
+    const response = await fetch(url, { signal: AbortSignal.timeout(REGISTRY_REQUEST_TIMEOUT_MS) });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} for ${url}`);
     }

@@ -202,6 +202,26 @@ describe("pluginFilePreviewConflicts", () => {
     ]);
   });
 
+  // The pane matches on suffix, so `.csv` also claims every `report.data.csv`.
+  // Keyed on the literal strings, the report would call these two unrelated and
+  // leave the narrower plugin silently overridden with nothing to show for it.
+  it("reports a plugin whose extension is a suffix of another's", () => {
+    const plugins = [
+      installedPlugin({ id: "zeta-view", extensions: [".data.csv"] }),
+      installedPlugin({ id: "alpha-view", extensions: [".csv"] }),
+    ];
+
+    expect(pluginFilePreviewConflicts(plugins)).toEqual([
+      { extension: ".data.csv", winnerPluginId: "alpha-view", losingPluginIds: ["zeta-view"] },
+    ]);
+  });
+
+  it("does not report a plugin whose two extensions are suffixes of each other", () => {
+    const plugins = [installedPlugin({ id: "csv-table", extensions: [".csv", ".data.csv"] })];
+
+    expect(pluginFilePreviewConflicts(plugins)).toEqual([]);
+  });
+
   it("does not report a plugin as conflicting with itself", () => {
     const plugins: InstalledPlugin[] = [
       {

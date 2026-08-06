@@ -323,13 +323,14 @@ function ExplorerSidebarContent({
   });
   const hasPullRequest = prPane.prNumber !== null;
   const showPrTab = hasPullRequest || (activeTab === "pr" && prPane.isLoading);
-  const { plugins } = usePlugins(serverId);
+  const { plugins, isLoading: pluginsLoading } = usePlugins(serverId);
   const pluginTabs = useMemo(() => resolvePluginSidebarTabs(plugins), [plugins]);
   const { resolvedTab, activePluginTab } = resolveExplorerTab({
     activeTab,
     isGit,
     showPrTab,
     pluginTabs,
+    pluginsLoading,
   });
   const prTabLabel = formatPrTabLabel(prPane.prNumber);
   const refreshGitActions = useCheckoutGitActionsStore((s) => s.refresh);
@@ -551,6 +552,7 @@ function resolveExplorerTab(input: {
   isGit: boolean;
   showPrTab: boolean;
   pluginTabs: readonly PluginSidebarTab[];
+  pluginsLoading: boolean;
 }): { resolvedTab: ExplorerTab; activePluginTab: PluginSidebarTab | null } {
   const requestedTab: ExplorerTab =
     !input.isGit && (input.activeTab === "changes" || input.activeTab === "pr")
@@ -562,6 +564,13 @@ function resolveExplorerTab(input: {
   const activePluginTab = input.pluginTabs.find((panel) => panel.tab === requestedTab) ?? null;
   if (requestedTab === "pr" && !input.showPrTab) {
     return { resolvedTab: "changes", activePluginTab: null };
+  }
+  // Before the plugin list lands, every plugin tab looks uninstalled. Falling
+  // back here would mount Changes and fire its git RPCs for the split second
+  // until the list arrives, then swap. Hold the requested tab with an empty
+  // content area instead.
+  if (input.pluginsLoading && isPluginExplorerTab(requestedTab) && !activePluginTab) {
+    return { resolvedTab: requestedTab, activePluginTab: null };
   }
   if (isPluginExplorerTab(requestedTab) && !activePluginTab) {
     return { resolvedTab: fallback, activePluginTab: null };
