@@ -193,12 +193,24 @@ function sha256Hex(bytes: Uint8Array): string {
  * This reason travels to every connected client, and a `file://` registry fails
  * with `ENOENT: no such file or directory, open '/home/<user>/…'` — the daemon
  * user's name and directory layout, handed to whoever is on the other end of
- * the relay. Absolute paths are cut back to a basename; the daemon log still
- * has the whole error.
+ * the relay. Directories are cut, the filename survives, and the daemon log
+ * still has the whole error.
+ *
+ * `error.path` first, because it is exact: every `fs` error carries the path it
+ * failed on, so nothing has to be guessed out of prose. The regex is for the
+ * rest, and its segments allow spaces — `C:\Users\John Doe\…` is the ordinary
+ * Windows case, and a class that stopped at the space left the user's name
+ * standing, which is the one token this exists to remove. The cost is that a
+ * message naming two paths has the words between them swallowed as one long
+ * segment. That direction is the safe one.
  */
 function describeFetchFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/(?:[A-Za-z]:)?[/\\](?:[^\s'"/\\]+[/\\])+/g, "…/");
+  const path = error instanceof Error ? (error as NodeJS.ErrnoException).path : undefined;
+  if (typeof path === "string" && path.length > 0) {
+    return message.split(path).join(`…/${path.split(/[/\\]/).pop() ?? ""}`);
+  }
+  return message.replace(/(?:[A-Za-z]:)?(?:[/\\][^/\\'"\n]+)+[/\\]/g, "…/");
 }
 
 function protocolOf(url: string): string | null {
@@ -281,6 +293,10 @@ export class PluginRegistryClient {
    * them matched, so a partial install cannot land.
    */
   async download(pluginId: string, options?: { refresh?: boolean }): Promise<PluginDownload> {
+    // Before `browse`, not after: a cold index fetch is its own 30s request, and
+    // the ceiling this is documented to stay inside is the client's, which
+    // started counting when it sent the install.
+    const deadline = this.now() + PLUGIN_DOWNLOAD_DEADLINE_MS;
     const index = await this.browse(options);
     const entry = index.plugins.find((candidate) => candidate.manifest.id === pluginId);
     if (!entry) {
@@ -317,7 +333,6 @@ export class PluginRegistryClient {
 
     const allowFileUrls = protocolOf(this.registryUrl) === "file:";
     const files: Array<{ name: string; bytes: Uint8Array }> = [];
-    const deadline = this.now() + PLUGIN_DOWNLOAD_DEADLINE_MS;
     for (const file of entry.files) {
       if (this.now() >= deadline) {
         throw new PluginDownloadRejectedError(
@@ -342,7 +357,7 @@ export class PluginRegistryClient {
       } catch (error) {
         throw new PluginDownloadRejectedError(
           pluginId,
-          `failed to download "${file.name}": ${error instanceof Error ? error.message : String(error)}`,
+          `failed to download "${file.name}": ${describeFetchFailure(error)}`,
         );
       }
 

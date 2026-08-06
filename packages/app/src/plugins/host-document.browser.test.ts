@@ -66,7 +66,7 @@ interface MountedHost {
  * does. The plugin frame inside it is still `sandbox="allow-scripts"`, which is
  * the boundary under test.
  */
-async function mountHost(html: string): Promise<MountedHost> {
+async function mountHost(html: string, documentId = 0): Promise<MountedHost> {
   const bridged: string[] = [];
   const received: Array<{ received: string; fromParent: boolean }> = [];
   const onMessage = (event: MessageEvent) => {
@@ -78,7 +78,7 @@ async function mountHost(html: string): Promise<MountedHost> {
   window.addEventListener("message", onMessage);
 
   const frame = document.createElement("iframe");
-  frame.srcdoc = wrapPluginHostDocument(html);
+  frame.srcdoc = wrapPluginHostDocument(html, documentId);
   document.body.appendChild(frame);
   cleanups.push(() => {
     window.removeEventListener("message", onMessage);
@@ -97,10 +97,12 @@ async function mountHost(html: string): Promise<MountedHost> {
 
 describe("the native host document", () => {
   it("carries ready out to the bridge and init back down to the plugin", async () => {
-    const host = await mountHost(PLUGIN_HTML);
+    const host = await mountHost(PLUGIN_HTML, 4);
 
     await waitFor(() => (host.bridged.length > 0 ? host.bridged : null), "the plugin's ready");
-    expect(JSON.parse(host.bridged[0] ?? "null")).toEqual({ paseo: 1, type: "ready" });
+    // Stamped with the document it came from, so the host can tell it from a
+    // `ready` the outgoing plugin posts after a swap.
+    expect(JSON.parse(host.bridged[0] ?? "null")).toEqual({ document: 4, paseo: 1, type: "ready" });
 
     const post = (host.frame.contentWindow as unknown as { __paseoPost(message: unknown): void })
       .__paseoPost;

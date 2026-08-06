@@ -585,13 +585,16 @@ function toScriptString(value: string): string {
  * is what denies the plugin frame navigating itself out, and the plugin sees the
  * identical contract: post to `window.parent`, listen on `window`.
  */
-export function wrapPluginHostDocument(html: string): string {
+export function wrapPluginHostDocument(html: string, documentId = 0): string {
   const guest = wrapPluginHtml(html)
     .replace(/&/g, "&amp;")
     .replace(/"/g, "&quot;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-  return `<!doctype html><html><head>${CSP_META_TAG}${DNS_PREFETCH_META_TAG}<meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;padding:0;height:100%;overflow:hidden}iframe{display:block;border:0;width:100%;height:100%}</style><script>${PLUGIN_HOST_RELAY}</script></head><body><iframe id="paseo-plugin" sandbox="allow-scripts" srcdoc="${guest}"></iframe></body></html>`;
+  // Floored, because the value is interpolated into the shell script below and
+  // the only safe thing to put there is a bare integer.
+  const stamp = Number.isFinite(documentId) ? Math.floor(documentId) : 0;
+  return `<!doctype html><html><head>${CSP_META_TAG}${DNS_PREFETCH_META_TAG}<meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;padding:0;height:100%;overflow:hidden}iframe{display:block;border:0;width:100%;height:100%}</style><script>${pluginHostRelay(stamp)}</script></head><body><iframe id="paseo-plugin" sandbox="allow-scripts" srcdoc="${guest}"></iframe></body></html>`;
 }
 
 /**
@@ -607,8 +610,18 @@ export function wrapPluginHostDocument(html: string): string {
  * plugin can possibly post, which matches what `frame.web.ts` does — and a lost
  * `ready` is unrecoverable, since the plugin only sends it once and the host
  * shows the timeout UI ten seconds later.
+ *
+ * Every message it sends up carries the id of the document it came from. A
+ * WebView swaps documents asynchronously, so a plugin that keeps posting
+ * `ready` can have one land after the host has already moved to the next
+ * plugin — which settles the incoming plugin's handshake and, worse, answers
+ * with an `init` carrying the new file's contents, delivered into the outgoing
+ * plugin's realm. Web is immune by construction: `frame.web.ts` compares
+ * `event.source` against a fresh iframe object per plugin. This is that
+ * identity check, for a transport that has no source to compare.
  */
-const PLUGIN_HOST_RELAY = `(function(){
+const pluginHostRelay = (documentId: number): string => `(function(){
+  var DOCUMENT_ID = ${documentId};
   function pluginWindow() {
     var frame = document.getElementById("paseo-plugin");
     return frame ? frame.contentWindow : null;
@@ -622,7 +635,12 @@ const PLUGIN_HOST_RELAY = `(function(){
     // document head. A throw here loses \`ready\` for good: the plugin sends it once,
     // and ten seconds later the user gets the timeout screen.
     if (!window.ReactNativeWebView) return;
-    window.ReactNativeWebView.postMessage(JSON.stringify(data));
+    // Rebuilt field by field rather than forwarded, so the stamp is this
+    // document's and not one the plugin put in its own message.
+    var out = { document: DOCUMENT_ID, paseo: 1, type: data.type };
+    if (typeof data.path === "string") out.path = data.path;
+    if (typeof data.lineStart === "number") out.lineStart = data.lineStart;
+    window.ReactNativeWebView.postMessage(JSON.stringify(out));
   });
   window.__paseoPost = function (message) {
     var target = pluginWindow();
@@ -740,9 +758,23 @@ export function parsePluginGuestMessage(data: unknown): PluginGuestMessage | nul
   return null;
 }
 
-/** Dispatch one raw inbound message. Returns true when it was a guest message. */
-export function handlePluginGuestMessage(data: unknown, handlers: PluginGuestHandlers): boolean {
-  const message = parsePluginGuestMessage(data);
+/**
+ * Dispatch one raw inbound message. Returns true when it was a guest message.
+ *
+ * `documentId` is the native transport's identity check: pass the id of the
+ * document currently loaded and anything from a previous one is dropped. Web
+ * does not pass it — there, the frame object itself is the identity.
+ */
+export function handlePluginGuestMessage(
+  data: unknown,
+  handlers: PluginGuestHandlers,
+  options?: { documentId: number },
+): boolean {
+  const raw = typeof data === "string" ? safeParseJson(data) : data;
+  if (options && (!isRecord(raw) || raw.document !== options.documentId)) {
+    return false;
+  }
+  const message = parsePluginGuestMessage(raw);
   if (!message) {
     return false;
   }

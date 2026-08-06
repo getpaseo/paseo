@@ -154,6 +154,41 @@ describe("handlePluginGuestMessage", () => {
 
     expect(sent).toEqual([{ paseo: 1, type: "init", context, theme: THEME }]);
   });
+
+  // The native transport has no `event.source` to compare, so a WebView still
+  // holding the outgoing plugin's document can deliver its `ready` after the
+  // host has moved on. Answering it settles the incoming plugin's handshake and
+  // posts an `init` — carrying the new file's contents — into the old realm.
+  it("drops a message stamped with a document the host has already left", () => {
+    const { calls, handlers } = recordingHandlers();
+
+    expect(
+      handlePluginGuestMessage({ document: 1, paseo: 1, type: "ready" }, handlers, {
+        documentId: 2,
+      }),
+    ).toBe(false);
+    expect(
+      handlePluginGuestMessage({ document: 2, paseo: 1, type: "ready" }, handlers, {
+        documentId: 2,
+      }),
+    ).toBe(true);
+
+    expect(calls).toEqual(["ready"]);
+  });
+
+  // An unstamped message is not "from the current document by default": before
+  // the stamp existed every message looked like this, so accepting it would
+  // leave the hole open for anything that can post without going through the
+  // relay.
+  it("drops an unstamped message when a document is expected", () => {
+    const { calls, handlers } = recordingHandlers();
+
+    expect(handlePluginGuestMessage({ paseo: 1, type: "ready" }, handlers, { documentId: 1 })).toBe(
+      false,
+    );
+
+    expect(calls).toEqual([]);
+  });
 });
 
 describe("plugin path round trip", () => {
@@ -299,6 +334,15 @@ describe("wrapPluginHtml", () => {
         `<meta http-equiv="Content-Security-Policy" content="${PLUGIN_CONTENT_SECURITY_POLICY}">`,
       );
       expect(PLUGIN_CONTENT_SECURITY_POLICY).toContain("frame-src 'none'");
+    });
+
+    // The document id is interpolated straight into the shell script, so it is
+    // floored to an integer first. A non-integer would be the one value in that
+    // string a caller controls.
+    it("stamps the relay with an integer document id", () => {
+      expect(wrapPluginHostDocument("<p>hi</p>", 7)).toContain("var DOCUMENT_ID = 7;");
+      expect(wrapPluginHostDocument("<p>hi</p>", 2.9)).toContain("var DOCUMENT_ID = 2;");
+      expect(wrapPluginHostDocument("<p>hi</p>", Number.NaN)).toContain("var DOCUMENT_ID = 0;");
     });
 
     it("escapes the plugin so it cannot break out of the srcdoc attribute", () => {

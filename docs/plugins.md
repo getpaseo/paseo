@@ -132,6 +132,8 @@ What stops it is `frame-src 'none'` on the **host** document, because a child fr
 
 Native's host document uses the same `PLUGIN_CONTENT_SECURITY_POLICY` constant, not a copy trimmed to what the host needs. A `srcdoc` frame inherits its parent's policy and the effective one is the intersection, so anything the host omits it also takes away from the plugin — an earlier hand-written copy dropped `img-src`, and every data-URL image died on iOS and Android and nowhere else.
 
+Every message the native relay sends up carries the id of the document it came from, and the host drops anything stamped with a document it has already left. Web gets this for free — `frame.web.ts` compares `event.source` against a fresh iframe object per plugin — but a WebView swaps documents asynchronously and gives the host no source to compare, so a plugin still alive after a swap could otherwise settle the incoming plugin's handshake and have the host answer with an `init` carrying the new file's contents.
+
 A blocked navigation does not leave the plugin running: Chromium replaces the frame with an empty document. The plugin stops working and later host `postMessage`s go nowhere. That is the intended failure — fail closed, not fail quiet.
 
 In-page anchors are the exception, and getting there took a fix. `<a href="#section">` is a same-document navigation, which is not a load and never consults `frame-src`. Native's own deny-by-default check used to compare the whole URL against `about:srcdoc` and so denied `about:srcdoc#section` — the plugin blanked on iOS and Android and worked on web. The check now strips the fragment before comparing. `scrollIntoView()` is still the fewer-moving-parts option.

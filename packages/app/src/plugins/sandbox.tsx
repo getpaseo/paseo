@@ -47,17 +47,28 @@ function PluginSandboxView({
     latest.current = { context, onOpenFile, themeTokens };
   }, [context, onOpenFile, themeTokens]);
 
-  const source = useMemo(() => ({ html: wrapPluginHostDocument(html) }), [html]);
-
   // Reset during render, not in an effect: an effect resets one commit late, so
   // a plugin swapped in while a panel is open would show the previous plugin's
-  // outcome for a frame.
-  const [renderedSource, setRenderedSource] = useState(source);
-  if (renderedSource !== source) {
-    setRenderedSource(source);
+  // outcome for a frame. Keyed on the html string rather than the memoized
+  // source object — React may throw a `useMemo` cache away and hand back a new
+  // object for unchanged html, and a reset on that flips a settled `ready` back
+  // to waiting with nothing left to re-send it.
+  const [renderedHtml, setRenderedHtml] = useState(html);
+  // Which document the messages arriving now belong to. A WebView swaps
+  // documents asynchronously, so this is the only way to tell the outgoing
+  // plugin's late `ready` from the incoming plugin's.
+  const [documentId, setDocumentId] = useState(1);
+  if (renderedHtml !== html) {
+    setRenderedHtml(html);
+    setDocumentId((current) => current + 1);
     readyRef.current = false;
     setHandshake("waiting");
   }
+
+  const source = useMemo(
+    () => ({ html: wrapPluginHostDocument(html, documentId) }),
+    [html, documentId],
+  );
 
   useEffect(() => {
     if (handshake !== "waiting") {
@@ -65,7 +76,7 @@ function PluginSandboxView({
     }
     const timer = setTimeout(() => setHandshake("timeout"), PLUGIN_READY_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [handshake, attempt, source]);
+  }, [handshake, attempt, html]);
 
   const handleRetry = useCallback(() => {
     readyRef.current = false;
@@ -86,16 +97,20 @@ function PluginSandboxView({
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
-      handlePluginGuestMessage(event.nativeEvent.data, {
-        onReady: () => {
-          readyRef.current = true;
-          setHandshake("ready");
-          post(createInitMessage(latest.current.context, latest.current.themeTokens));
+      handlePluginGuestMessage(
+        event.nativeEvent.data,
+        {
+          onReady: () => {
+            readyRef.current = true;
+            setHandshake("ready");
+            post(createInitMessage(latest.current.context, latest.current.themeTokens));
+          },
+          onOpenFile: (input) => latest.current.onOpenFile?.(input),
         },
-        onOpenFile: (input) => latest.current.onOpenFile?.(input),
-      });
+        { documentId },
+      );
     },
-    [post],
+    [post, documentId],
   );
 
   useEffect(() => {

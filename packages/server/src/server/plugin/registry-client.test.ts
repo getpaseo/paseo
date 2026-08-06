@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { randomUUID } from "node:crypto";
-import { rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
+import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
 import type { PluginRegistryIndex } from "@getpaseo/protocol/plugin/types";
 import {
@@ -207,6 +208,76 @@ describe("PluginRegistryClient", () => {
     );
 
     expect(reason).toBe("ENOENT: no such file or directory, open '…/index.json'");
+  });
+
+  // The scrub stops at the first path segment containing a space, and the
+  // segment it then leaves behind is the one it exists to remove: `C:\Users\` is
+  // cut, `John Doe\` is not. A Windows daemon hands the user's full name to
+  // every connected client; the same holds for any home directory with a space
+  // in it.
+  test("keeps a spaced-out home directory out of the reason too", async () => {
+    const http = createFakeHttp({
+      failIndexWith: new Error(
+        "ENOENT: no such file or directory, open 'C:\\Users\\John Doe\\AppData\\Roaming\\paseo\\index.json'",
+      ),
+    });
+    const client = new PluginRegistryClient({ registryUrl: REGISTRY_URL, http });
+
+    const reason = await client.browse().then(
+      () => "resolved",
+      (error: PluginRegistryUnavailableError) => error.reason,
+    );
+
+    expect(reason).not.toContain("John Doe");
+  });
+
+  // Allowing spaces inside a segment is what keeps `John Doe` out, and the
+  // price is that a run between two paths could be swallowed as one segment.
+  // The quotes `fs` puts around a path are what stop it — worth pinning, since
+  // the alternative reading is that this scrub eats whole sentences.
+  test("scrubs two paths in one message without eating the words between them", async () => {
+    const http = createFakeHttp({
+      failIndexWith: new Error(
+        "EEXIST: '/home/someone/paseo/index.json' shadows '/etc/paseo/index.json'",
+      ),
+    });
+    const client = new PluginRegistryClient({ registryUrl: REGISTRY_URL, http });
+
+    const reason = await client.browse().then(
+      () => "resolved",
+      (error: PluginRegistryUnavailableError) => error.reason,
+    );
+
+    expect(reason).toBe("EEXIST: '…/index.json' shadows '…/index.json'");
+  });
+
+  // `browse` scrubs the reason; `download` builds its own out of the same class
+  // of error one function down, and `PluginDownloadRejectedError` is on the
+  // allowlist in `plugin-session.ts` that puts a message on the wire verbatim.
+  // Driven through the real transport so the message is whatever the filesystem
+  // actually says, not a hand-written one.
+  test("keeps the daemon's filesystem layout out of a failed download's reason", async () => {
+    const dir = join(tmpdir(), `paseo-registry-${randomUUID()}`);
+    await mkdir(dir, { recursive: true });
+    const indexPath = join(dir, "index.json");
+    try {
+      const index = buildIndex({ url: pathToFileURL(join(dir, "preview.html")).href });
+      await writeFile(indexPath, JSON.stringify(index));
+      const client = new PluginRegistryClient({
+        registryUrl: pathToFileURL(indexPath).href,
+        http: createFetchPluginRegistryHttp(),
+      });
+
+      const reason = await client.download("csv-table").then(
+        () => "resolved",
+        (error: PluginDownloadRejectedError) => error.reason,
+      );
+
+      expect(reason).not.toContain(dir);
+      expect(reason).not.toContain(tmpdir());
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
   });
 
   test("downloads and verifies every file", async () => {
@@ -412,5 +483,32 @@ describe("PluginRegistryClient", () => {
     await expect(client.download("csv-table")).rejects.toThrow(/within 60000ms/);
     // The first file was fetched; the deadline stopped the second.
     expect(slow.byteRequests).toEqual(["https://plugins.paseo.sh/csv-table/preview.html"]);
+  });
+
+  // The index fetch is its own 30s request and it is part of what the calling
+  // client is waiting through, so starting the clock after it puts the real
+  // ceiling past the 120s RPC timeout this budget is documented to stay inside.
+  test("counts the index fetch against the download deadline", async () => {
+    let clock = 1_000;
+    const slow = createFakeHttp({
+      index: buildIndex(),
+      files: { "https://plugins.paseo.sh/csv-table/preview.html": PREVIEW_HTML },
+    });
+    const stalling: PluginRegistryHttp = {
+      getJson: (url) => {
+        clock += PLUGIN_DOWNLOAD_DEADLINE_MS;
+        return slow.getJson(url);
+      },
+      getBytes: (url, options) => slow.getBytes(url, options),
+    };
+    const client = new PluginRegistryClient({
+      registryUrl: REGISTRY_URL,
+      http: stalling,
+      now: () => clock,
+    });
+
+    await expect(client.download("csv-table")).rejects.toThrow(/within 60000ms/);
+    // Not one file was even attempted: the index alone spent the budget.
+    expect(slow.byteRequests).toEqual([]);
   });
 });

@@ -3,6 +3,11 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
+      // Tests only. `@/plugins/sandbox` resolves to `sandbox.web.tsx` in every
+      // resolver that has no platform to go on, which leaves the native
+      // sandbox with no name a test can ask for. Vitest aliases this to the
+      // same file (packages/app/vitest.config.ts).
+      "@/plugins/sandbox-native": ["./src/plugins/sandbox.tsx"],
       "@/*": ["./src/*"]
     }
   },
