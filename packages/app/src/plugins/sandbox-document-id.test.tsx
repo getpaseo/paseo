@@ -121,9 +121,12 @@ function documentIdOf(view: CapturedWebView): number {
   return Number(match[1]);
 }
 
-// Distinct is not enough on Android, where the guest can post to the host
-// directly and the stamp is all that marks a message as the relay's. A counter
-// would pass the test below and still be guessable on the first try.
+// Distinct is not enough on either native platform, where the guest can post to
+// the host directly and the stamp is all that marks a message as the relay's. A
+// counter would pass every other test in this file and still be guessable on the
+// first try. This asserts only that the sandbox draws from the generator rather
+// than counting — the width of what the generator returns is pinned in
+// `bridge.test.ts`, where one draw per assertion would be a coin flip.
 it("stamps the first document with an id the plugin cannot guess", () => {
   render("<p>one</p>");
 
@@ -227,6 +230,35 @@ it("ignores an open-file from the document it has already left", () => {
   });
 
   expect(onOpenFile).not.toHaveBeenCalled();
+});
+
+// react-native-webview types `nativeEvent.data` as a string, and on iOS it is
+// not one: `WKScriptMessage.body` is any JSON value, so a guest that posts an
+// object delivers an object. The stamp has to be read off it either way — a
+// check that only understands strings would let every iOS message through
+// unstamped, or drop every one of them.
+it("reads the stamp off an object the way iOS delivers it", () => {
+  render("<p>one</p>");
+  const current = documentIdOf(latest());
+  const view = latest();
+
+  act(() => {
+    view.onMessage({
+      nativeEvent: {
+        data: { document: current + 1, paseo: 1, type: "ready" },
+      } as unknown as { data: string },
+    });
+  });
+  expect(injected).toEqual([]);
+
+  act(() => {
+    view.onMessage({
+      nativeEvent: { data: { document: current, paseo: 1, type: "ready" } } as unknown as {
+        data: string;
+      },
+    });
+  });
+  expect(injected).toHaveLength(1);
 });
 
 it("answers a ready from the document it is showing", () => {
