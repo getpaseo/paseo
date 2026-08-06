@@ -27,6 +27,7 @@ import * as pty from "node-pty";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
+import { stripVTControlCharacters } from "node:util";
 
 const hasZsh = existsSync("/bin/zsh");
 
@@ -1309,7 +1310,7 @@ describe.runIf(isPlatform("win32"))(".cmd shim argv round-trip on Windows", () =
       throw new Error(`expected a cmd.exe command line, got ${JSON.stringify(resolved.args)}`);
     }
     const output = await runCommandLine(resolved.command, resolved.args, dir);
-    const argv: unknown = JSON.parse(output.trim());
+    const argv: unknown = JSON.parse(stripVTControlCharacters(output).trim());
     if (!Array.isArray(argv) || !argv.every((arg) => typeof arg === "string")) {
       throw new Error(`expected string argv, got ${output}`);
     }
