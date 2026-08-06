@@ -113,6 +113,7 @@ import { useAppSettings } from "@/hooks/use-settings";
 import { RenderProfile } from "@/utils/render-profiler";
 import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { isWeb, isNative } from "@/constants/platform";
+import { consumeComposerAutoFocus } from "@/keyboard/composer-auto-focus";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type {
   AttachmentMetadata,
@@ -582,11 +583,26 @@ function ComposerKeyboardRegistration({
   focusMessageInputForKeyboardAction,
   isMessageInputFocused,
   handlerId,
+  autoFocusKey,
 }: Omit<DispatchComposerKeyboardActionArgs, "action" | "isPaneFocused"> & {
   isMessageInputFocused: boolean;
   handlerId: string;
+  autoFocusKey: string;
 }) {
   const { isActiveComposer } = useComposerKeyboardScope();
+
+  // Keyboard-driven workspace switches on native request composer focus before
+  // this composer is mounted or repointed, so consume the request once the
+  // active agent settles. rAF lets the navigation transition commit first.
+  useEffect(() => {
+    if (!isNative || !isActiveComposer) return;
+    if (!consumeComposerAutoFocus()) return;
+    const frame = requestAnimationFrame(() => {
+      focusMessageInputForKeyboardAction();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [autoFocusKey, isActiveComposer, focusMessageInputForKeyboardAction]);
+
   const handleKeyboardAction = useCallback(
     (action: KeyboardActionDefinition): boolean =>
       dispatchComposerKeyboardAction({
@@ -2322,6 +2338,7 @@ function ComposerContentImpl({
         handleCancelAgent={handleCancelAgent}
         focusMessageInputForKeyboardAction={focusMessageInputForKeyboardAction}
         isMessageInputFocused={isMessageInputFocused}
+        autoFocusKey={`${serverId}:${agentId}`}
       />
       <KeyboardTranslateView
         style={animatedStaticStyles.container}
