@@ -4,4 +4,6 @@ export interface HardwareKeyDownEvent {
   ctrlKey: boolean;
   altKey: boolean;
   shiftKey: boolean;
+  /** Hardware auto-repeat (Android reports it; iOS pressesBegan never repeats). */
+  repeat?: boolean;
 }
