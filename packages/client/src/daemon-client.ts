@@ -1460,6 +1460,38 @@ export class DaemonClient {
     return this.connectionState;
   }
 
+  /**
+   * Reconnect immediately if the current connection is suspect. Intended
+   * for foreground recovery: OS suspension freezes the heartbeat and can
+   * kill the socket without delivering a close frame, leaving a zombie
+   * "connected" state that requests then hang against. A "connected"
+   * client gets one bounded liveness probe — on failure it reconnects now,
+   * bypassing the steady-state failure threshold; a "disconnected" client
+   * skips any pending reconnect backoff and connects now; other states are
+   * already recovering (or terminally closed) and are left alone.
+   */
+  reconnectIfStale(params?: { probeTimeoutMs?: number }): void {
+    if (this.connectionState.status === "connected") {
+      const timeoutMs = Math.max(1, params?.probeTimeoutMs ?? DEFAULT_LIVENESS_TIMEOUT_MS);
+      this.livenessPing({ timeoutMs }).catch((error: unknown) => {
+        if (this.connectionState.status !== "connected") {
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        this.scheduleReconnect({ reason: message, event: "STALE_PROBE_FAILED" });
+      });
+      return;
+    }
+    if (this.connectionState.status !== "disconnected" || !this.shouldReconnect) {
+      return;
+    }
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    void this.connect().catch(() => undefined);
+  }
+
   subscribeConnectionStatus(listener: (status: ConnectionState) => void): () => void {
     this.connectionListeners.add(listener);
     listener(this.connectionState);

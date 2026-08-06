@@ -97,6 +97,7 @@ import { queryClient } from "@/data/query-client";
 import {
   getHostRuntimeStore,
   hasConfiguredLocalDaemonOverride,
+  reconnectStaleHostConnections,
   useHostRegistryLoaded,
   useHostMutations,
   useHostRuntimeClient,
@@ -990,7 +991,12 @@ export default function RootLayout() {
     const subscription = AppState.addEventListener("change", (nextState) => {
       if (nextState !== "active") {
         void flushDraftPersistStorage();
+        return;
       }
+      // OS suspension freezes client heartbeats and can kill sockets without
+      // a close frame; reconnect anything stale now rather than waiting out
+      // the heartbeat backoff.
+      reconnectStaleHostConnections();
     });
     return () => subscription.remove();
   }, []);

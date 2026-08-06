@@ -3046,6 +3046,139 @@ test("reconnects after relay close with replaced-by-new-connection reason", asyn
   }
 });
 
+test("reconnectIfStale probes a healthy connection without reconnecting", async () => {
+  const mock = createMockTransport();
+  const transportFactory = vi.fn(() => mock.transport);
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_stale_healthy",
+    reconnect: { enabled: false },
+    transportFactory,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  client.reconnectIfStale();
+
+  // The probe ping went out; the healthy pong keeps the connection as-is.
+  expect(mock.sent.map(assertStr)).toContain(JSON.stringify({ type: "ping" }));
+  await vi.waitFor(() => {
+    expect(client.getConnectionState().status).toBe("connected");
+  });
+  expect(transportFactory).toHaveBeenCalledTimes(1);
+});
+
+test("reconnectIfStale reconnects immediately when the probe fails", async () => {
+  useHeartbeatClock();
+  try {
+    const first = createMockTransport();
+    const second = createMockTransport();
+    const transports = [first, second];
+    let transportIndex = 0;
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_stale_zombie",
+      reconnect: { enabled: true, baseDelayMs: 5, maxDelayMs: 5 },
+      transportFactory: () => {
+        const next = transports[Math.min(transportIndex, transports.length - 1)];
+        transportIndex += 1;
+        return next.transport;
+      },
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    first.triggerOpen();
+    await connectPromise;
+
+    // Zombie socket: writes are accepted but pings never get a pong.
+    const healthySend = first.transport.send;
+    first.transport.send = (data) => {
+      if (typeof data === "string" && JSON.parse(data).type === "ping") {
+        first.sent.push(data);
+        return;
+      }
+      healthySend(data);
+    };
+
+    client.reconnectIfStale({ probeTimeoutMs: 50 });
+    await vi.advanceTimersByTimeAsync(60);
+
+    // The failed probe bypassed the heartbeat threshold and reconnected.
+    expect(client.getConnectionState().status).not.toBe("connected");
+    await vi.advanceTimersByTimeAsync(10);
+    second.triggerOpen();
+    expect(client.getConnectionState().status).toBe("connected");
+    expect(transportIndex).toBe(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("reconnectIfStale connects immediately instead of waiting out reconnect backoff", async () => {
+  useHeartbeatClock();
+  try {
+    const first = createMockTransport();
+    const second = createMockTransport();
+    const transports = [first, second];
+    let transportIndex = 0;
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_stale_backoff",
+      reconnect: { enabled: true, baseDelayMs: 60_000, maxDelayMs: 60_000 },
+      transportFactory: () => {
+        const next = transports[Math.min(transportIndex, transports.length - 1)];
+        transportIndex += 1;
+        return next.transport;
+      },
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    first.triggerOpen();
+    await connectPromise;
+
+    first.triggerClose({ code: 1006, reason: "abnormal" });
+    expect(client.getConnectionState().status).toBe("disconnected");
+
+    // 60s of backoff is armed; the poke skips it without advancing timers.
+    client.reconnectIfStale();
+    expect(client.getConnectionState().status).toBe("connecting");
+
+    second.triggerOpen();
+    expect(client.getConnectionState().status).toBe("connected");
+    expect(transportIndex).toBe(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("reconnectIfStale is a no-op after close", async () => {
+  const mock = createMockTransport();
+  const transportFactory = vi.fn(() => mock.transport);
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_stale_closed",
+    reconnect: { enabled: false },
+    transportFactory,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+  await client.close();
+
+  client.reconnectIfStale();
+
+  expect(transportFactory).toHaveBeenCalledTimes(1);
+});
+
 test("requires non-empty clientId", () => {
   expect(() => {
     const _client = new DaemonClient({

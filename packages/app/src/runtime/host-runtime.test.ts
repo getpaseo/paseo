@@ -31,6 +31,7 @@ class FakeDaemonClient {
   private latencyMeasurementFailure: Error | null = null;
   private latencyMeasurementsRequested: Array<{ timeoutMs?: number }> = [];
   public connectCalls = 0;
+  public reconnectIfStaleCalls = 0;
   public fetchAgentsCalls: FetchAgentsOptions[] = [];
   public fetchAgentsResponses: Array<
     Awaited<ReturnType<DaemonClient["fetchAgents"]>> | ReturnType<DaemonClient["fetchAgents"]>
@@ -75,6 +76,10 @@ class FakeDaemonClient {
   async connect(): Promise<void> {
     this.connectCalls += 1;
     this.setConnectionState({ status: "connected" });
+  }
+
+  reconnectIfStale(): void {
+    this.reconnectIfStaleCalls += 1;
   }
 
   async close(): Promise<void> {
@@ -2960,6 +2965,63 @@ describe("HostRuntimeStore", () => {
     const renamed = store.getHosts().find((h) => h.serverId === "srv_rename");
     expect(renamed?.label).toBe("new name");
 
+    store.syncHosts([]);
+  });
+
+  it("reconnectStaleConnections pokes every live client", async () => {
+    const clientsByServerId: Record<string, FakeDaemonClient> = {
+      srv_stale_a: new FakeDaemonClient(),
+      srv_stale_b: new FakeDaemonClient(),
+    };
+    const clientFor = (serverId: string) => {
+      const fake = clientsByServerId[serverId];
+      if (!fake) throw new Error(`no fake client for ${serverId}`);
+      return fake as unknown as DaemonClient;
+    };
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: ({ host }) => clientFor(host.serverId),
+        connectToDaemon: async ({ host }) => ({
+          client: clientFor(host.serverId),
+          serverId: host.serverId,
+          hostname: host.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await store.upsertDirectConnection({
+      serverId: "srv_stale_a",
+      endpoint: "lan:6767",
+      label: "stale host a",
+    });
+    await store.upsertDirectConnection({
+      serverId: "srv_stale_b",
+      endpoint: "lan:6768",
+      label: "stale host b",
+    });
+    const clientAdopted = (serverId: string) =>
+      store.getSnapshot(serverId)?.client === clientFor(serverId);
+    await new Promise<void>((resolve) => {
+      if (clientAdopted("srv_stale_a") && clientAdopted("srv_stale_b")) return resolve();
+      const unsubA = store.subscribe("srv_stale_a", () => {
+        if (clientAdopted("srv_stale_a") && clientAdopted("srv_stale_b")) {
+          unsubA();
+          resolve();
+        }
+      });
+      const unsubB = store.subscribe("srv_stale_b", () => {
+        if (clientAdopted("srv_stale_a") && clientAdopted("srv_stale_b")) {
+          unsubB();
+          resolve();
+        }
+      });
+    });
+
+    store.reconnectStaleConnections();
+
+    expect(clientsByServerId.srv_stale_a.reconnectIfStaleCalls).toBe(1);
+    expect(clientsByServerId.srv_stale_b.reconnectIfStaleCalls).toBe(1);
     store.syncHosts([]);
   });
 

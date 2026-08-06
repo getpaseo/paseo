@@ -2152,6 +2152,17 @@ export class HostRuntimeStore {
     return this.controllers.get(serverId)?.getSnapshot() ?? null;
   }
 
+  /**
+   * Reconnect every live client whose connection is stale. Called when the
+   * app regains foreground: OS suspension can kill sockets without a close
+   * frame, leaving zombie "connected" clients that requests hang against.
+   */
+  reconnectStaleConnections(): void {
+    for (const controller of this.controllers.values()) {
+      controller.getSnapshot().client?.reconnectIfStale();
+    }
+  }
+
   getVersion(): number {
     return this.version;
   }
@@ -2318,6 +2329,13 @@ export function useHostRuntimeSnapshot(serverId: string): HostRuntimeSnapshot | 
     () => store.getSnapshot(serverId),
     () => store.getSnapshot(serverId),
   );
+}
+
+/**
+ * Reconnect any stale host connections (app foreground recovery).
+ */
+export function reconnectStaleHostConnections(): void {
+  getHostRuntimeStore().reconnectStaleConnections();
 }
 
 export function useHostRuntimeClient(serverId: string): DaemonClient | null {

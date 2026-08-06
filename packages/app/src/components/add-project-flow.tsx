@@ -416,7 +416,9 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     },
     enabled: Boolean(client && searchesDirectories),
     dataShape: "value",
-    retry: false,
+    // Retry: the first attempt can race connection recovery (e.g. right
+    // after the app regains foreground) and fail into an empty list.
+    retry: 2,
     staleTimeMs: 15_000,
   });
   const githubQuery = useFetchQuery({
