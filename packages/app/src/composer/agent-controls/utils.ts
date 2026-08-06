@@ -55,7 +55,11 @@ function findModelById(
   if (!models || !modelId) {
     return null;
   }
-  return models.find((model) => model.id === modelId) ?? null;
+  return (
+    models.find((model) => model.id === modelId) ??
+    models.find((model) => model.aliases?.includes(modelId)) ??
+    null
+  );
 }
 
 function getFallbackModel(models: AgentModelDefinition[] | null): AgentModelDefinition | null {

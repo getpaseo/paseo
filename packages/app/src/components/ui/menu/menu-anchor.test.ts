@@ -68,8 +68,8 @@ describe("computePosition", () => {
 
 describe("getTransformOrigin", () => {
   it.each([
-    ["bottom", "start", "top left"],
-    ["top", "end", "bottom right"],
+    ["bottom", "start", "left top"],
+    ["top", "end", "right bottom"],
     ["right", "center", "center center"],
   ] as const)("maps %s/%s to %s", (placement, alignment, expected) => {
     expect(getTransformOrigin(placement, alignment)).toBe(expected);

@@ -33,6 +33,7 @@ import {
   findClaudeModel,
   getClaudeModelsWithSettings,
   normalizeClaudeRuntimeModelId,
+  resolveConfiguredClaudeModel,
 } from "./models.js";
 import {
   CLAUDE_DISABLED_THINKING_OPTION_ID,
@@ -85,6 +86,7 @@ import {
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
+  type AgentModelDefinition,
   type AgentPermissionRequest,
   type AgentPermissionRequestKind,
   type AgentPermissionResponse,
@@ -1467,6 +1469,10 @@ export class ClaudeAgentClient implements AgentClient {
     this.configDir = options.configDir;
   }
 
+  resolveConfiguredModel(model: AgentModelDefinition): AgentModelDefinition {
+    return resolveConfiguredClaudeModel(model);
+  }
+
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
@@ -1629,7 +1635,12 @@ export class ClaudeAgentClient implements AgentClient {
     if (config.provider !== "claude") {
       throw new Error(`ClaudeAgentClient received config for provider '${config.provider}'`);
     }
-    return { ...config, provider: "claude" } as ClaudeAgentConfig;
+    const model = config.model?.trim();
+    return {
+      ...config,
+      provider: "claude",
+      model: model || undefined,
+    } as ClaudeAgentConfig;
   }
 }
 
@@ -2287,7 +2298,7 @@ class ClaudeAgentSession implements AgentSession {
 
   async setModel(modelId: string | null): Promise<void> {
     const normalizedModelId =
-      typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+      typeof modelId === "string" && modelId.trim().length > 0 ? modelId.trim() : null;
     const activeQuery = await this.ensureQuery();
     await activeQuery.setModel(normalizedModelId ?? undefined);
     this.config.model = normalizedModelId ?? undefined;
@@ -2904,6 +2915,10 @@ class ClaudeAgentSession implements AgentSession {
       this.input = null;
       this.queryPumpPromise = null;
       this.queryRestartNeeded = false;
+      // Ending the input retires the process on purpose. Detach first so its
+      // exit is not reported as a crash.
+      const retiredChild = this.childProcess;
+      this.childProcess = null;
       oldInput?.end();
       oldQuery.close?.();
       try {
@@ -2914,14 +2929,13 @@ class ClaudeAgentSession implements AgentSession {
       // Tree-kill the old process tree now that the SDK has cleaned up.
       // If we skip this, MCP children of the previous claude process can
       // survive as orphans when the session spawns a replacement query.
-      if (this.childProcess) {
-        await terminateWithTreeKill(this.childProcess, {
+      if (retiredChild) {
+        await terminateWithTreeKill(retiredChild, {
           gracefulTimeoutMs: 2_000,
           forceTimeoutMs: 2_000,
         }).catch(() => {
           /* process may already be dead */
         });
-        this.childProcess = null;
       }
     }
 
@@ -2941,6 +2955,7 @@ class ClaudeAgentSession implements AgentSession {
         queryFactory: this.queryFactory,
         onChildProcess: (child) => {
           this.childProcess = child;
+          child.once("exit", (code, signal) => this.handleRuntimeExit(child, code, signal));
         },
       },
     );
@@ -3429,6 +3444,41 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
+  // Background Bash shells, Monitor watches and workflows live inside the Claude
+  // Code process, so they die with it. When the process exits mid-turn the query
+  // pump reports it, but when it exits between turns nothing observes the death:
+  // the agent stays "idle" and the wake-back that would have continued the work
+  // never arrives.
+  private handleRuntimeExit(
+    child: ChildProcess,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): void {
+    if (this.closed || this.childProcess !== child) {
+      return;
+    }
+    this.childProcess = null;
+    this.logger.warn(
+      { agentId: this.agentId, pid: child.pid, code, signal },
+      "Claude runtime exited unexpectedly",
+    );
+    if (this.activeForegroundTurnId || this.autonomousTurn) {
+      // The pump is about to throw. It waits for stderr to flush and reports the
+      // real cause; reporting here first would replace that with a bare exit code
+      // and detach this.query, which is how the pump recognizes its own stream.
+      return;
+    }
+    // Drop the dead handles so the next write spawns a fresh process instead of
+    // failing against a dead transport forever.
+    this.query = null;
+    this.input = null;
+    this.dispatchEvents([
+      this.buildTurnFailedEvent(
+        `Claude stopped unexpectedly (${signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`}). Any background shells, monitors or other work it had running were terminated with it.`,
+      ),
+    ]);
+  }
+
   private startQueryPump(): void {
     if (this.closed || this.queryPumpPromise) {
       return;
@@ -3683,11 +3733,25 @@ class ClaudeAgentSession implements AgentSession {
     );
 
     this.failActiveTurns(staleResumeError);
+    // Ending the input retires the process on purpose. Detach first so its exit
+    // is not reported as a crash.
+    const retiredChild = this.childProcess;
+    this.childProcess = null;
     this.input?.end();
     await this.awaitWithTimeout(
       activeQuery.return?.(),
       "query pump return on missing resumed conversation",
     );
+    // Tree-kill for the same reason the restart path does: MCP children of the
+    // retired claude process outlive it otherwise.
+    if (retiredChild) {
+      await terminateWithTreeKill(retiredChild, {
+        gracefulTimeoutMs: 2_000,
+        forceTimeoutMs: 2_000,
+      }).catch(() => {
+        /* process may already be dead */
+      });
+    }
     if (this.query === activeQuery) {
       this.query = null;
       this.input = null;

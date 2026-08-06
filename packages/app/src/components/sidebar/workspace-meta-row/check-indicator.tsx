@@ -85,16 +85,10 @@ function Pie({ fraction, color }: { fraction: number; color: string }) {
 
 const ThemedCheckIndicatorSvg = withUnistyles(CheckIndicatorSvg);
 
-/**
- * Passing CI is the uneventful case and asks nothing of the reader, so it gets the quiet
- * tier — green enough to name the state, close enough to the subtitle's weight that a
- * sidebar full of them doesn't bury the one red row. Failure and a run still deciding keep
- * real colour, because those are the two that want something from you.
- */
 const COLOR_MAPPINGS: Record<CheckSummary["state"], (theme: Theme) => { color: string }> = {
-  passed: (theme) => ({ color: theme.colors.statusMutedSuccess }),
-  failed: (theme) => ({ color: theme.colors.statusMutedDanger }),
-  running: (theme) => ({ color: theme.colors.statusMutedWarning }),
+  passed: (theme) => ({ color: theme.colors.statusSuccess }),
+  failed: (theme) => ({ color: theme.colors.statusDanger }),
+  running: (theme) => ({ color: theme.colors.statusWarning }),
 };
 
 export function CheckIndicator({ summary, size }: { summary: CheckSummary; size: number }) {

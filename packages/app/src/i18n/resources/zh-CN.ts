@@ -900,9 +900,14 @@ export const zhCN: TranslationResources = {
         host: "主机",
         changeRequest: "拉取请求",
         checks: "检查",
-        scripts: "脚本",
+        services: "服务",
         diff: "差异统计",
         timestamp: "最近活动",
+      },
+      checks: {
+        iconAndText: "图标和文字",
+        icon: "仅图标",
+        none: "隐藏",
       },
       hostFilter: {
         label: "主机",
@@ -974,7 +979,8 @@ export const zhCN: TranslationResources = {
     },
     workspace: {
       status: {
-        scriptsAvailable: "有可用 scripts",
+        serviceRunning: "服务 {{name}} 运行中",
+        serviceUnhealthy: "服务 {{name}} 异常",
         creating: "正在创建...",
       },
       actions: {
@@ -1382,6 +1388,19 @@ export const zhCN: TranslationResources = {
         show: "显示高级选项",
         hide: "隐藏高级选项",
       },
+      headers: {
+        title: "自定义请求头",
+        add: "添加请求头",
+        name: "名称",
+        value: "值",
+        remove: "删除请求头",
+        errors: {
+          missingName: "请为每个请求头输入名称",
+          invalidName: "{{name}} 不是有效的请求头名称",
+          invalidValue: "{{name}} 包含无效换行符",
+          duplicateName: "{{name}} 输入了多次",
+        },
+      },
       passwordVisibility: {
         show: "显示密码",
         hide: "隐藏密码",
@@ -1723,6 +1742,7 @@ export const zhCN: TranslationResources = {
           es: "Español",
           fr: "Français",
           ja: "日本語",
+          ko: "한국어",
           ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "简体中文",

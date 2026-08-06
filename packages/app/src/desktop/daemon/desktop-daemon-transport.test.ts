@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDesktopLocalDaemonTransportFactory } from "./desktop-daemon-transport";
+import {
+  createDesktopLocalDaemonTransportFactory,
+  createDesktopWebSocketTransportFactory,
+} from "./desktop-daemon-transport";
 import { createFakeLocalDaemonTransportRpc } from "./test-local-daemon-transport-rpc";
 
 const LOCAL_URL = "paseo+local://socket?path=%2Ftmp%2Fpaseo.sock";
@@ -42,5 +45,26 @@ describe("desktop-daemon-transport", () => {
 
     expect(rpc.closedSessions).toEqual(["local-session-2"]);
     expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards remote WebSocket headers and protocols through the desktop bridge", () => {
+    const rpc = createFakeLocalDaemonTransportRpc();
+    const transportFactory = createDesktopWebSocketTransportFactory(rpc);
+    expect(transportFactory).not.toBeNull();
+
+    transportFactory!({
+      url: "wss://daemon.example/ws",
+      headers: { "X-Tenant": "acme", Authorization: "Bearer secret" },
+      protocols: ["paseo.bearer.secret"],
+    });
+
+    expect(rpc.openCalls).toEqual([
+      {
+        transportType: "websocket",
+        url: "wss://daemon.example/ws",
+        headers: { "X-Tenant": "acme", Authorization: "Bearer secret" },
+        protocols: ["paseo.bearer.secret"],
+      },
+    ]);
   });
 });

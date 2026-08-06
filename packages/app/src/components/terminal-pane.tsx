@@ -7,6 +7,7 @@ import Animated, { runOnJS, useAnimatedReaction } from "react-native-reanimated"
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Keyboard as KeyboardIcon, KeyboardOff as KeyboardOffIcon } from "lucide-react-native";
 import type { TerminalKeyInput } from "@getpaseo/protocol/terminal-key-input";
+import type { TerminalState } from "@getpaseo/protocol/messages";
 import {
   DEFAULT_TERMINAL_INPUT_MODE_STATE,
   type TerminalInputModeState,
@@ -484,6 +485,66 @@ export function TerminalPane({
     setStreamError(status.error);
   }, []);
 
+  const getPreferredStreamSize = useStableEvent(() => {
+    if (
+      !canRequestFocusClaim({
+        isWorkspaceFocused: terminalActiveRef.current,
+        isPaneFocused,
+        isAppActivelyVisible,
+        isClientReady: client !== null,
+        isConnected,
+        isRendererReady: rendererReadyStreamKey === terminalStreamKey,
+      })
+    ) {
+      return null;
+    }
+    return measuredTerminalSizeRef.current;
+  });
+
+  const handleStreamOutput = useStableEvent(
+    ({ terminalId: outputTerminalId, data }: { terminalId: string; data: Uint8Array }) => {
+      if (!terminalActiveRef.current || terminalIdRef.current !== outputTerminalId) {
+        return;
+      }
+      emulatorRef.current?.writeOutput(data);
+    },
+  );
+
+  const handleStreamRestore = useStableEvent(
+    ({ terminalId: restoreTerminalId, data }: { terminalId: string; data: Uint8Array }) => {
+      workspaceTerminalSession.snapshots.clear({ terminalId: restoreTerminalId });
+      if (!terminalActiveRef.current || terminalIdRef.current !== restoreTerminalId) {
+        return;
+      }
+      emulatorRef.current?.restoreOutput(data);
+    },
+  );
+
+  const handleStreamSnapshot = useStableEvent(
+    ({ terminalId: snapshotTerminalId, state }: { terminalId: string; state: TerminalState }) => {
+      workspaceTerminalSession.snapshots.set({ terminalId: snapshotTerminalId, state });
+      if (!terminalActiveRef.current || terminalIdRef.current !== snapshotTerminalId) {
+        return;
+      }
+      emulatorRef.current?.renderSnapshot(state);
+    },
+  );
+
+  const getStreamRestoreOptions = useStableEvent(() =>
+    resolveTerminalRestoreOptions({
+      supportsTerminalRestoreModes,
+      canClaimSize: canRequestFocusClaim({
+        isWorkspaceFocused: terminalActiveRef.current,
+        isPaneFocused,
+        isAppActivelyVisible,
+        isClientReady: client !== null,
+        isConnected,
+        isRendererReady: rendererReadyStreamKey === terminalStreamKey,
+      }),
+      size: measuredTerminalSizeRef.current,
+    }),
+  );
+
   useEffect(() => {
     streamControllerRef.current?.dispose();
     streamControllerRef.current = null;
@@ -496,55 +557,11 @@ export function TerminalPane({
 
     const controller = new TerminalStreamController({
       client,
-      getPreferredSize: () => {
-        if (
-          !canRequestFocusClaim({
-            isWorkspaceFocused: terminalActiveRef.current,
-            isPaneFocused,
-            isAppActivelyVisible,
-            isClientReady: client !== null,
-            isConnected,
-            isRendererReady: rendererReadyStreamKey === terminalStreamKey,
-          })
-        ) {
-          return null;
-        }
-        return measuredTerminalSizeRef.current;
-      },
-      onOutput: ({ terminalId: outputTerminalId, data }) => {
-        if (!terminalActiveRef.current || terminalIdRef.current !== outputTerminalId) {
-          return;
-        }
-        emulatorRef.current?.writeOutput(data);
-      },
-      onRestore: ({ terminalId: restoreTerminalId, data }) => {
-        workspaceTerminalSession.snapshots.clear({ terminalId: restoreTerminalId });
-        if (!terminalActiveRef.current || terminalIdRef.current !== restoreTerminalId) {
-          return;
-        }
-        emulatorRef.current?.restoreOutput(data);
-      },
-      onSnapshot: ({ terminalId: snapshotTerminalId, state }) => {
-        workspaceTerminalSession.snapshots.set({ terminalId: snapshotTerminalId, state });
-        if (!terminalActiveRef.current || terminalIdRef.current !== snapshotTerminalId) {
-          return;
-        }
-        emulatorRef.current?.renderSnapshot(state);
-      },
-      getRestoreOptions: () => {
-        return resolveTerminalRestoreOptions({
-          supportsTerminalRestoreModes,
-          canClaimSize: canRequestFocusClaim({
-            isWorkspaceFocused: terminalActiveRef.current,
-            isPaneFocused,
-            isAppActivelyVisible,
-            isClientReady: client !== null,
-            isConnected,
-            isRendererReady: rendererReadyStreamKey === terminalStreamKey,
-          }),
-          size: measuredTerminalSizeRef.current,
-        });
-      },
+      getPreferredSize: getPreferredStreamSize,
+      onOutput: handleStreamOutput,
+      onRestore: handleStreamRestore,
+      onSnapshot: handleStreamSnapshot,
+      getRestoreOptions: getStreamRestoreOptions,
       onStatusChange: handleStreamControllerStatus,
     });
 
@@ -558,14 +575,13 @@ export function TerminalPane({
     };
   }, [
     client,
+    getPreferredStreamSize,
+    getStreamRestoreOptions,
     handleStreamControllerStatus,
+    handleStreamOutput,
+    handleStreamRestore,
+    handleStreamSnapshot,
     isConnected,
-    isAppActivelyVisible,
-    isPaneFocused,
-    rendererReadyStreamKey,
-    supportsTerminalRestoreModes,
-    terminalStreamKey,
-    workspaceTerminalSession.snapshots,
   ]);
 
   useEffect(() => {

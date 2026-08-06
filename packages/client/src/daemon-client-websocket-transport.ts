@@ -11,13 +11,17 @@ export function defaultWebSocketFactory(
 ): WebSocketLike {
   const globalWs = (
     globalThis as {
-      WebSocket?: new (url: string, protocols?: string | string[]) => WebSocketLike;
+      WebSocket?: new (
+        url: string,
+        protocols?: string | string[],
+        options?: { headers?: Record<string, string> },
+      ) => WebSocketLike;
     }
   ).WebSocket;
   if (!globalWs) {
     throw new Error("WebSocket is not available in this runtime");
   }
-  return new globalWs(url, options?.protocols);
+  return new globalWs(url, options?.protocols, { headers: options?.headers });
 }
 
 export function createWebSocketTransportFactory(factory: WebSocketFactory): DaemonTransportFactory {
