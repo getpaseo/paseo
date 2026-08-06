@@ -5,7 +5,6 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "reac
 import { CircleAlert, Folder, FolderGit2, Monitor } from "lucide-react-native";
 import { ProjectStatusIndicator } from "@/components/sidebar/project-leading-visual";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
-import { PulsingStatusDot } from "@/components/sidebar/pulsing-status-dot";
 import {
   WorkspaceMetaRow,
   type WorkspaceServiceSummary,
@@ -217,14 +216,14 @@ function WorkspaceStatusIndicator({
   loading?: boolean;
   reserveIdleSpace?: boolean;
 }) {
-  // Busy is a pulsing dot here for the same reason it is on a project icon: every status in
-  // the sidebar is a dot, and a row with a project icon simply moves that dot onto the icon.
+  // Busy is a dot here for the same reason it is on a project icon: every status in the
+  // sidebar is a dot, and a row with a project icon simply moves that dot onto the icon.
   // A row starting up and a row working are both busy, so they share the dot and differ only
   // in testID.
   if (loading) {
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-loading">
-        <PulsingStatusDot style={styles.standaloneRunningDot} />
+        <View style={styles.standaloneRunningDot} />
       </View>
     );
   }
@@ -232,7 +231,7 @@ function WorkspaceStatusIndicator({
   if (shouldRenderSyncedStatusLoader({ bucket })) {
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-running">
-        <PulsingStatusDot style={styles.standaloneRunningDot} />
+        <View style={styles.standaloneRunningDot} />
       </View>
     );
   }

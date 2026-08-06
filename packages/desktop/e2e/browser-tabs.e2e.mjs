@@ -272,11 +272,68 @@ async function readGuest(page, browserId) {
     return {
       webContentsId: webview.getWebContentsId(),
       parentId: webview.parentElement?.id ?? null,
+      width: Math.round(webview.getBoundingClientRect().width),
+      height: Math.round(webview.getBoundingClientRect().height),
     };
   }, browserId);
 }
 
-async function runRegression({ page, client, serverId, targetUrl }) {
+async function readPresentation(page, browserId) {
+  return await page.evaluate((id) => {
+    const surface = document.querySelector(`[data-paseo-browser-surface="${id}"]`);
+    const clip = document.querySelector(`[data-testid="browser-webview-clip-${id}"]`);
+    if (!(surface instanceof HTMLElement) || !(clip instanceof HTMLElement)) return null;
+    const surfaceRect = surface.getBoundingClientRect();
+    const clipRect = clip.getBoundingClientRect();
+    const webview = surface.querySelector(`[data-paseo-browser-id="${id}"]`);
+    if (!(webview instanceof HTMLElement)) return null;
+    const webviewRect = webview.getBoundingClientRect();
+    const outsidePoint = {
+      x: Math.max(0, Math.round(clipRect.left - 1)),
+      y: Math.round(clipRect.top + clipRect.height / 2),
+    };
+    const outsideTarget = document.elementFromPoint(outsidePoint.x, outsidePoint.y);
+    return {
+      surface: {
+        left: Math.round(surfaceRect.left),
+        top: Math.round(surfaceRect.top),
+        right: Math.round(surfaceRect.right),
+        bottom: Math.round(surfaceRect.bottom),
+      },
+      clip: {
+        left: Math.round(clipRect.left),
+        top: Math.round(clipRect.top),
+        right: Math.round(clipRect.right),
+        bottom: Math.round(clipRect.bottom),
+      },
+      webview: {
+        left: Math.round(webviewRect.left),
+        top: Math.round(webviewRect.top),
+      },
+      capturesOutsideInput: surface.contains(outsideTarget),
+    };
+  }, browserId);
+}
+
+async function readViewport(client, browserId) {
+  const evaluated = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: "() => ({ width: window.innerWidth, height: window.innerHeight })",
+  });
+  return JSON.parse(evaluated.resultJson);
+}
+
+function recordViewportMismatch(failures, label, actual, expected) {
+  if (actual.width === expected.width && actual.height === expected.height) {
+    return;
+  }
+  failures.push(
+    `${label}: expected ${expected.width}x${expected.height}, received ${actual.width}x${actual.height}`,
+  );
+}
+
+async function runRegression({ page, client, serverId, targetUrl, callerAgentId }) {
+  const failures = [];
   const originalWorkspaceId = workspaceIds[0];
   const originalWorkspaceRow = page.getByTestId(
     `sidebar-workspace-row-${serverId}:${originalWorkspaceId}`,
@@ -300,6 +357,117 @@ async function runRegression({ page, client, serverId, targetUrl }) {
   );
   const firstGuest = await readGuest(page, browserId);
   assert(firstGuest, "Original browser guest was not attached to its workspace pane");
+  recordViewportMismatch(
+    failures,
+    "Responsive viewport follows the visible browser pane",
+    await readViewport(client, browserId),
+    { width: firstGuest.width, height: firstGuest.height },
+  );
+
+  await callBrowserTool(client, "browser_wait", {
+    browserId,
+    text: "Bridge target",
+    timeoutMs: 5_000,
+  });
+  const requestedViewport = { width: 640, height: 480 };
+  await callBrowserTool(client, "browser_resize", { browserId, ...requestedViewport });
+  recordViewportMismatch(
+    failures,
+    "browser_resize updates the visible shared viewport",
+    await readViewport(client, browserId),
+    requestedViewport,
+  );
+
+  const oversizedViewport = { width: 2560, height: 1440 };
+  await callBrowserTool(client, "browser_resize", { browserId, ...oversizedViewport });
+  recordViewportMismatch(
+    failures,
+    "oversized preset preserves the requested guest viewport",
+    await readViewport(client, browserId),
+    oversizedViewport,
+  );
+  await page.waitForFunction(
+    ({ id, width, height }) => {
+      const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
+      return (
+        webview instanceof HTMLElement &&
+        Math.round(webview.getBoundingClientRect().width) === width &&
+        Math.round(webview.getBoundingClientRect().height) === height
+      );
+    },
+    { id: browserId, ...oversizedViewport },
+    { timeout: timeoutMs },
+  );
+  const presentation = await readPresentation(page, browserId);
+  assert(presentation, "Oversized browser presentation geometry was unavailable");
+  if (
+    presentation.surface.left < presentation.clip.left ||
+    presentation.surface.top < presentation.clip.top ||
+    presentation.surface.right > presentation.clip.right ||
+    presentation.surface.bottom > presentation.clip.bottom
+  ) {
+    failures.push(
+      `oversized browser surface stays inside its pane: ${JSON.stringify(presentation)}`,
+    );
+  }
+  if (presentation.capturesOutsideInput) {
+    failures.push("oversized browser surface captures input outside its pane");
+  }
+  await callBrowserTool(client, "browser_resize", { browserId, ...oversizedViewport });
+  const repeatedResizePresentation = await readPresentation(page, browserId);
+  assert(repeatedResizePresentation, "Repeated resize presentation geometry was unavailable");
+  if (
+    repeatedResizePresentation.webview.left !== presentation.webview.left ||
+    repeatedResizePresentation.webview.top !== presentation.webview.top
+  ) {
+    failures.push(
+      `repeating an oversized resize preserves the guest offset: before ${JSON.stringify(presentation.webview)}, after ${JSON.stringify(repeatedResizePresentation.webview)}`,
+    );
+  }
+  await callBrowserTool(client, "browser_resize", { browserId, ...requestedViewport });
+
+  await originalDeck.getByTestId(`workspace-tab-agent_${callerAgentId}`).click();
+  await page.waitForTimeout(500);
+  try {
+    await callBrowserTool(client, "browser_screenshot", { browserId });
+  } catch (error) {
+    failures.push(`inactive browser remains captureable: ${String(error)}`);
+  }
+  recordViewportMismatch(
+    failures,
+    "inactive browser preserves the shared viewport",
+    await readViewport(client, browserId),
+    requestedViewport,
+  );
+  const focusContinuitySentinel = "preserve-browser-document-across-focus";
+  await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: `() => { globalThis.__paseoFocusContinuity = ${JSON.stringify(focusContinuitySentinel)}; return globalThis.__paseoFocusContinuity; }`,
+  });
+
+  await originalDeck.getByTestId(`workspace-tab-browser_${browserId}`).click();
+  await page.waitForFunction(
+    ({ id, webContentsId }) => {
+      const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
+      return (
+        webview?.parentElement?.getAttribute("data-paseo-browser-surface") === id &&
+        webview.parentElement.style.pointerEvents === "auto" &&
+        webview.getWebContentsId() === webContentsId
+      );
+    },
+    { id: browserId, webContentsId: firstGuest.webContentsId },
+    { timeout: timeoutMs },
+  );
+  const continuityResult = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: "() => globalThis.__paseoFocusContinuity ?? null",
+  });
+  const continuityValue = JSON.parse(continuityResult.resultJson);
+  if (continuityValue !== focusContinuitySentinel) {
+    failures.push(
+      `focusing the browser tab preserves the current document: expected ${JSON.stringify(focusContinuitySentinel)}, received ${JSON.stringify(continuityValue)}`,
+    );
+  }
 
   for (const workspaceId of workspaceIds.slice(1)) {
     await page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceId}`).click();
@@ -312,21 +480,22 @@ async function runRegression({ page, client, serverId, targetUrl }) {
     ({ id, previousWebContentsId }) => {
       const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
       return (
-        webview?.parentElement?.id === "paseo-browser-resident-webviews" &&
+        webview?.parentElement?.getAttribute("data-paseo-browser-surface") === id &&
+        webview.parentElement.style.width === "1px" &&
         typeof webview.getWebContentsId === "function" &&
-        webview.getWebContentsId() !== previousWebContentsId
+        webview.getWebContentsId() === previousWebContentsId
       );
     },
     { id: browserId, previousWebContentsId: firstGuest.webContentsId },
     { timeout: timeoutMs },
   );
-  const replacementGuest = await readGuest(page, browserId);
-  assert(replacementGuest, "Replacement browser guest was not parked after workspace eviction");
+  const parkedGuest = await readGuest(page, browserId);
+  assert(parkedGuest, "Browser guest was not parked after workspace eviction");
 
   const listed = await callBrowserTool(client, "browser_list_tabs");
   assert(
     listed.tabs.some((tab) => tab.browserId === browserId),
-    "browser_list_tabs lost the original tab after guest replacement",
+    "browser_list_tabs lost the original tab after workspace eviction",
   );
 
   const snapshot = await callBrowserTool(client, "browser_snapshot", { browserId });
@@ -344,10 +513,47 @@ async function runRegression({ page, client, serverId, targetUrl }) {
     timeoutMs: 5_000,
   });
 
+  await originalWorkspaceRow.click();
+  await originalDeck.getByTestId(`workspace-tab-browser_${browserId}`).click();
+  await page.waitForFunction(
+    ({ id, webContentsId }) => {
+      const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
+      return (
+        webview?.parentElement?.getAttribute("data-paseo-browser-surface") === id &&
+        webview.parentElement.style.pointerEvents === "auto" &&
+        webview.getWebContentsId() === webContentsId
+      );
+    },
+    { id: browserId, webContentsId: firstGuest.webContentsId },
+    { timeout: timeoutMs },
+  );
+  recordViewportMismatch(
+    failures,
+    "browser viewport survives workspace eviction and reattachment",
+    await readViewport(client, browserId),
+    requestedViewport,
+  );
+
+  await originalDeck.getByRole("button", { name: "Annotate element" }).click();
+  await page.waitForTimeout(250);
+  const selectorResult = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: "() => Boolean(globalThis.__paseoSelector)",
+  });
+  if (JSON.parse(selectorResult.resultJson) !== true) {
+    failures.push("reused loaded browser remains ready for element annotation after remount");
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Browser viewport regressions:\n- ${failures.join("\n- ")}`);
+  }
+
   return {
     browserId,
     originalWebContentsId: firstGuest.webContentsId,
-    replacementWebContentsId: replacementGuest.webContentsId,
+    finalWebContentsId: parkedGuest.webContentsId,
+    viewport: "passed",
+    inactiveCapture: "passed",
     list: "passed",
     snapshot: "passed",
     click: "passed",
@@ -446,10 +652,11 @@ async function main() {
       client,
       serverId: status.serverId,
       targetUrl: target.url,
+      callerAgentId,
     });
     writeJson(path.join(artifactDir, "result.json"), report);
     console.log(
-      `Browser desktop browser E2E passed: WebContents ${report.originalWebContentsId} -> ${report.replacementWebContentsId}; list, snapshot, click passed.`,
+      `Browser desktop browser E2E passed: WebContents ${report.originalWebContentsId} remained ${report.finalWebContentsId}; viewport, inactive capture, focus continuity, list, snapshot, click passed.`,
     );
   } catch (error) {
     console.error(`Browser desktop browser E2E failed. Artifacts: ${artifactDir}`);

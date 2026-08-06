@@ -2,7 +2,6 @@ import { ActivityIndicator, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
-import { PulsingStatusDot } from "@/components/sidebar/pulsing-status-dot";
 import { STATUS_BUCKET_LABELS } from "@/hooks/sidebar-status-view-model";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
@@ -195,10 +194,7 @@ function getStatusBadgeBackdropStyle(backdrop: SurfaceBackdrop): ViewStyle {
 }
 
 function ProjectStatusDot({ bucket }: { bucket: ProjectStatusBadgeDotBucket }) {
-  if (bucket !== "running") {
-    return <View testID="project-status-dot" style={getStatusDotColorStyle(bucket)} />;
-  }
-  return <PulsingStatusDot testID="project-status-dot" style={styles.statusDotRunning} />;
+  return <View testID="project-status-dot" style={getStatusDotColorStyle(bucket)} />;
 }
 
 function ProjectIcon({
@@ -231,10 +227,10 @@ function ProjectInlineChevron({ chevron }: { chevron: "expand" | "collapse" | nu
   return <ChevronRight size={14} color="#9ca3af" />;
 }
 
-function getStatusDotColorStyle(
-  bucket: Exclude<ProjectStatusBadgeDotBucket, "running">,
-): ViewStyle {
-  return bucket === "failed" ? styles.statusDotFailed : styles.statusDotAttention;
+function getStatusDotColorStyle(bucket: ProjectStatusBadgeDotBucket): ViewStyle {
+  if (bucket === "failed") return styles.statusDotFailed;
+  if (bucket === "running") return styles.statusDotRunning;
+  return styles.statusDotAttention;
 }
 
 const styles = StyleSheet.create((theme) => {

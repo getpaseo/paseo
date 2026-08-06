@@ -7,18 +7,26 @@ import {
   type BrowserIndexState,
   type BrowserRecord,
   type BrowserRecordPatch,
+  type BrowserViewport,
   createBrowserRecord,
+  normalizeBrowserIndexState,
   normalizeBrowserUrl,
   removeBrowserFromIndex,
   sanitizeBrowsersForPersist,
   trimNonEmpty,
 } from "./state";
 
-export type { BrowserRecord } from "./state";
+export {
+  createFixedBrowserViewport,
+  RESPONSIVE_BROWSER_VIEWPORT,
+  type BrowserRecord,
+  type BrowserViewport,
+} from "./state";
 
 interface BrowserStoreState extends BrowserIndexState {
   createBrowser: (input?: { initialUrl?: string }) => string;
   updateBrowser: (browserId: string, patch: BrowserRecordPatch) => void;
+  setBrowserViewport: (browserId: string, viewport: BrowserViewport) => void;
   removeBrowser: (browserId: string) => void;
 }
 
@@ -57,6 +65,9 @@ export const useBrowserStore = create<BrowserStoreState>()(
       updateBrowser: (browserId, patch) => {
         set((state) => applyBrowserPatch(state, browserId, patch));
       },
+      setBrowserViewport: (browserId, viewport) => {
+        set((state) => applyBrowserPatch(state, browserId, { viewport }));
+      },
       removeBrowser: (browserId) => {
         set((state) => removeBrowserFromIndex(state, browserId));
       },
@@ -65,6 +76,10 @@ export const useBrowserStore = create<BrowserStoreState>()(
       name: "workspace-browser-store",
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => sanitizeBrowsersForPersist(state),
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...normalizeBrowserIndexState(persistedState),
+      }),
     },
   ),
 );

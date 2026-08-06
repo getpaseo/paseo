@@ -165,12 +165,11 @@ const darkStatusColors = {
 // for them. Same four hues and the same generation rule as the status colors above, but its
 // own band, because a dot is doing a different job than a check icon or a host badge.
 //
-// A dot is 6-8pt of solid color with no shape to read and no label attached, and the running
-// one pulses down to PULSE_MIN_OPACITY for half of every cycle. At the status band's lightness
-// the dots read dimmer than the static text and icons beside them on the same row, which is
-// backwards — the dot is the row's state. So the band is pushed away from the surface rather
-// than toward it (darker in light, lighter in dark) and carries more chroma: 90% of gamut max
-// against the status family's 55-60%.
+// A dot is 6-8pt of solid color with no shape to read and no label attached. At the status
+// band's lightness the dots read dimmer than the static text and icons beside them on the same
+// row, which is backwards — the dot is the row's state. So the band is pushed away from the
+// surface rather than toward it (darker in light, lighter in dark) and carries more chroma:
+// 90% of gamut max against the status family's 55-60%.
 //
 // All four move together. A dot matching its siblings in lightness and chroma says only which
 // state the row is in; one that does not says "this row matters more", which is a claim the
