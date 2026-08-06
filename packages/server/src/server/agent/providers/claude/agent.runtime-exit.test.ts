@@ -86,6 +86,38 @@ const COMPLETED_TURN_EVENTS = [
   },
 ];
 
+const RUNNING_WORKFLOW_TURN_EVENTS = [
+  COMPLETED_TURN_EVENTS[0],
+  {
+    type: "assistant",
+    message: {
+      content: [
+        {
+          type: "tool_use",
+          id: "toolu_workflow",
+          name: "Workflow",
+          input: { workflow: "spec" },
+        },
+      ],
+    },
+  },
+  {
+    type: "system",
+    subtype: "task_started",
+    task_id: "wf-1",
+    tool_use_id: "toolu_workflow",
+    task_type: "local_workflow",
+    description: "Run the spec workflow",
+  },
+  {
+    type: "system",
+    subtype: "task_updated",
+    task_id: "wf-1",
+    patch: { status: "running", is_backgrounded: true },
+  },
+  COMPLETED_TURN_EVENTS[2],
+];
+
 const MISSING_RESUMED_CONVERSATION_RESULT = {
   type: "result",
   subtype: "error_during_execution",
@@ -141,37 +173,7 @@ describe("Claude runtime exit", () => {
     let capturedOptions: Options | undefined;
     const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
       capturedOptions = options;
-      return createQueryMock([
-        COMPLETED_TURN_EVENTS[0],
-        {
-          type: "assistant",
-          message: {
-            content: [
-              {
-                type: "tool_use",
-                id: "toolu_workflow",
-                name: "Workflow",
-                input: { workflow: "spec" },
-              },
-            ],
-          },
-        },
-        {
-          type: "system",
-          subtype: "task_started",
-          task_id: "wf-1",
-          tool_use_id: "toolu_workflow",
-          task_type: "local_workflow",
-          description: "Run the spec workflow",
-        },
-        {
-          type: "system",
-          subtype: "task_updated",
-          task_id: "wf-1",
-          patch: { status: "running", is_backgrounded: true },
-        },
-        COMPLETED_TURN_EVENTS[2],
-      ]);
+      return createQueryMock(RUNNING_WORKFLOW_TURN_EVENTS);
     });
     const child = createChildProcessStub();
     vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
@@ -234,7 +236,7 @@ describe("Claude runtime exit", () => {
       capturedOptions = options;
       // A real query stays open between turns, so hold it open; the process
       // dies when the session retires it, as ending its stdin does in practice.
-      return createQueryMock(COMPLETED_TURN_EVENTS, {
+      return createQueryMock(RUNNING_WORKFLOW_TURN_EVENTS, {
         tail: new Promise<never>(() => undefined),
         onReturn: () => child.emit("exit", 0, null),
       });
@@ -260,6 +262,11 @@ describe("Claude runtime exit", () => {
       await session.listCommands();
 
       expect(events.some((event) => event.type === "turn_failed")).toBe(false);
+      expect(events).toContainEqual({
+        type: "provider_subagent",
+        provider: "claude",
+        event: { type: "upsert", id: "toolu_workflow", status: "failed" },
+      });
     } finally {
       await session.close();
     }

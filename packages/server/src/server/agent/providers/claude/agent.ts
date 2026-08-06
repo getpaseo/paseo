@@ -2914,6 +2914,7 @@ class ClaudeAgentSession implements AgentSession {
       // exit is not reported as a crash.
       const retiredChild = this.childProcess;
       this.childProcess = null;
+      if (retiredChild) this.failRunningRuntimeTasks();
       oldInput?.end();
       oldQuery.close?.();
       try {
@@ -3457,11 +3458,7 @@ class ClaudeAgentSession implements AgentSession {
       { agentId: this.agentId, pid: child.pid, code, signal },
       "Claude runtime exited unexpectedly",
     );
-    this.dispatchEvents(
-      foldSubagentObservations(this.taskProtocolSource.failRunningTasks()).map(
-        (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }),
-      ),
-    );
+    this.failRunningRuntimeTasks();
     if (this.activeForegroundTurnId || this.autonomousTurn) {
       // The pump is about to throw. It waits for stderr to flush and reports the
       // real cause; reporting here first would replace that with a bare exit code
@@ -3477,6 +3474,14 @@ class ClaudeAgentSession implements AgentSession {
         `Claude stopped unexpectedly (${signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`}). Any background shells, monitors or other work it had running were terminated with it.`,
       ),
     ]);
+  }
+
+  private failRunningRuntimeTasks(): void {
+    this.dispatchEvents(
+      foldSubagentObservations(this.taskProtocolSource.failRunningTasks()).map(
+        (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }),
+      ),
+    );
   }
 
   private startQueryPump(): void {
