@@ -1265,12 +1265,17 @@ describe("terminal activity interruption", () => {
 // the prompt instead of executing part of it, which is the failure the
 // escaping exists to prevent (the CVE-2024-27980 class).
 describe.runIf(isPlatform("win32"))(".cmd shim argv round-trip on Windows", () => {
+  const argvMarker = "__PASEO_ARGV__";
+
   function writeArgvEchoShim(): { dir: string; cmdPath: string } {
     const dir = mkdtempSync(join(tmpdir(), "paseo-cmd-shim-"));
     temporaryDirs.push(dir);
     const cmdPath = join(dir, "echoargv.cmd");
     const scriptPath = join(dir, "echoargv.js");
-    writeFileSync(scriptPath, "process.stdout.write(JSON.stringify(process.argv.slice(2)));\n");
+    writeFileSync(
+      scriptPath,
+      `process.stdout.write(${JSON.stringify(argvMarker)} + JSON.stringify(process.argv.slice(2)) + "\\n");\n`,
+    );
     writeFileSync(cmdPath, `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`);
     return { dir, cmdPath };
   }
@@ -1310,7 +1315,13 @@ describe.runIf(isPlatform("win32"))(".cmd shim argv round-trip on Windows", () =
       throw new Error(`expected a cmd.exe command line, got ${JSON.stringify(resolved.args)}`);
     }
     const output = await runCommandLine(resolved.command, resolved.args, dir);
-    const argv: unknown = JSON.parse(stripVTControlCharacters(output).trim());
+    const cleanOutput = stripVTControlCharacters(output);
+    const markerIndex = cleanOutput.lastIndexOf(argvMarker);
+    if (markerIndex === -1) {
+      throw new Error(`expected argv marker, got ${output}`);
+    }
+    const argvJson = cleanOutput.slice(markerIndex + argvMarker.length).split(/\r?\n/, 1)[0];
+    const argv: unknown = JSON.parse(argvJson);
     if (!Array.isArray(argv) || !argv.every((arg) => typeof arg === "string")) {
       throw new Error(`expected string argv, got ${output}`);
     }
