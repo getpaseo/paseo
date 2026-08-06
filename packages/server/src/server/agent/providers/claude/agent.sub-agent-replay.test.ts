@@ -179,6 +179,17 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
         meta: JSON.stringify({ agentType: "workflow-subagent", spawnDepth: 1 }),
         sidechainLines: [
           JSON.stringify({
+            type: "user",
+            isSidechain: true,
+            agentId: child.agentId,
+            sessionId: "replay-session",
+            timestamp: child.timestamp,
+            message: {
+              role: "user",
+              content: `Internal workflow prompt for ${child.agentId}`,
+            },
+          }),
+          JSON.stringify({
             type: "assistant",
             isSidechain: true,
             agentId: child.agentId,
@@ -406,6 +417,12 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       "earlier workflow child result",
       "later workflow child result",
     ]);
+    expect(
+      descriptors
+        .map((event) => event.event)
+        .filter((event) => event.type === "timeline" && event.item.type === "user_message")
+        .map((event) => (event.item.type === "user_message" ? event.item.text : "")),
+    ).toEqual(["Verify the workflow row lifecycle"]);
     expect(
       replayed
         .filter((event) => event.type === "timeline")

@@ -4590,7 +4590,9 @@ class ClaudeAgentSession implements AgentSession {
         entriesByRunId: new Map(
           [...sidechains.workflowSidechainContentsByRunId].map(([runId, contents]) => [
             runId,
-            contents.flatMap(parseClaudeHistoryRecords),
+            contents
+              .flatMap(parseClaudeHistoryRecords)
+              .filter((entry) => entry.type !== "user" || isToolResultUserEntry(entry)),
           ]),
         ),
         convertEntry: (entry) => this.convertHistoryEntry(entry as ClaudeHistoryEntry),
