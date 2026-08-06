@@ -31,10 +31,13 @@ import {
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { type ShortcutModPreference, useShortcutModStore } from "@/stores/shortcut-mod-store";
-import { useShortcutOs } from "@/utils/shortcut-platform";
-import { getIsElectronRuntime } from "@/constants/layout";
+import { usesDesktopShortcutBindings, useShortcutOs } from "@/utils/shortcut-platform";
 import { isNative } from "@/constants/platform";
 import { getDesktopHost } from "@/desktop/host";
+import {
+  addHardwareKeyDownListener,
+  addHardwareModifierListener,
+} from "@/native/hardware-keyboard-events";
 
 const EMPTY_CAPTURED_COMBOS: string[] = [];
 
@@ -382,7 +385,7 @@ export function KeyboardShortcutsSection() {
 
   const isFocused = useIsFocused();
   const isMac = useShortcutOs() === "mac";
-  const isDesktopApp = getIsElectronRuntime();
+  const isDesktopApp = usesDesktopShortcutBindings();
   const sections = buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp });
 
   const cancelCapture = useCallback(() => {
@@ -446,6 +449,38 @@ export function KeyboardShortcutsSection() {
     };
   }, [capturingBindingId]);
 
+  // Native capture: the hardware-keyboard module only emits modifier combos
+  // (plus Escape and F-keys), which is exactly the set worth binding. Held
+  // modifiers come from the dedicated modifier stream.
+  useEffect(() => {
+    if (!isNative) return;
+    if (capturingBindingId === null) return;
+
+    const heldModifierLabels = new Set<string>();
+    const keySubscription = addHardwareKeyDownListener((event) => {
+      if (event.repeat) return;
+      const comboString = keyboardEventToComboString(event);
+      if (comboString === null) return;
+      setHeldModifiers(null);
+      setCapturedCombos((current) => [...current, comboString]);
+    });
+    const modifierSubscription = addHardwareModifierListener((event) => {
+      const MODIFIER_LABELS = { Meta: "Cmd", Control: "Ctrl", Alt: "Alt", Shift: "Shift" } as const;
+      const label = MODIFIER_LABELS[event.key];
+      if (event.down) {
+        heldModifierLabels.add(label);
+      } else {
+        heldModifierLabels.delete(label);
+      }
+      const ordered = ["Ctrl", "Alt", "Shift", "Cmd"].filter((l) => heldModifierLabels.has(l));
+      setHeldModifiers(ordered.length > 0 ? ordered.join("+") : null);
+    });
+    return () => {
+      keySubscription.remove();
+      modifierSubscription.remove();
+    };
+  }, [capturingBindingId]);
+
   useEffect(() => {
     return () => {
       setCapturingShortcut(false);
@@ -472,19 +507,6 @@ export function KeyboardShortcutsSection() {
     (bindingId: string) => void removeOverride(bindingId),
     [removeOverride],
   );
-
-  if (isNative) {
-    return (
-      <>
-        <ModKeySection />
-        <SettingsSection title={t("settings.sections.shortcuts")}>
-          <View style={[settingsStyles.card, styles.mobileCard]}>
-            <Text style={styles.mobileText}>{t("settings.shortcuts.unavailableOnMobile")}</Text>
-          </View>
-        </SettingsSection>
-      </>
-    );
-  }
 
   const resetAllButton = hasOverrides ? (
     <Button variant="ghost" size="sm" onPress={handleResetAll}>
@@ -596,12 +618,5 @@ const styles = StyleSheet.create((theme) => ({
   separator: {
     height: 1,
     backgroundColor: theme.colors.border,
-  },
-  mobileCard: {
-    padding: theme.spacing[4],
-  },
-  mobileText: {
-    fontSize: theme.fontSize.base,
-    color: theme.colors.foregroundMuted,
   },
 }));

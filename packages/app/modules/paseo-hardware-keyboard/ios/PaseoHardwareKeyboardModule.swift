@@ -1,8 +1,11 @@
 import ExpoModulesCore
+import GameController
 import UIKit
 
 private let hardwareSubmitEventName = "onHardwareKeyboardSubmit"
 private let hardwareKeyDownEventName = "onHardwareKeyDown"
+private let hardwareModifierEventName = "onHardwareModifier"
+private let hardwareConnectionEventName = "onHardwareKeyboardConnectionChange"
 
 private weak var activeModule: PaseoHardwareKeyboardModule?
 private var isHardwareSubmitEnabled = false
@@ -19,10 +22,33 @@ public class PaseoHardwareKeyboardModule: Module {
   public func definition() -> ModuleDefinition {
     Name("PaseoHardwareKeyboard")
 
-    Events(hardwareSubmitEventName, hardwareKeyDownEventName)
+    Events(
+      hardwareSubmitEventName,
+      hardwareKeyDownEventName,
+      hardwareModifierEventName,
+      hardwareConnectionEventName
+    )
 
     OnCreate {
       activeModule = self
+      NotificationCenter.default.addObserver(
+        forName: .GCKeyboardDidConnect,
+        object: nil,
+        queue: .main
+      ) { _ in
+        activeModule?.emitHardwareKeyboardConnectionChange(connected: true)
+      }
+      NotificationCenter.default.addObserver(
+        forName: .GCKeyboardDidDisconnect,
+        object: nil,
+        queue: .main
+      ) { _ in
+        activeModule?.emitHardwareKeyboardConnectionChange(connected: GCKeyboard.coalesced != nil)
+      }
+    }
+
+    Function("getHardwareKeyboardConnected") { () -> Bool in
+      return GCKeyboard.coalesced != nil
     }
 
     Function("setHardwareKeyboardSubmitEnabled") { (enabled: Bool) in
@@ -52,6 +78,14 @@ public class PaseoHardwareKeyboardModule: Module {
 
   fileprivate func emitHardwareKeyDown(_ payload: [String: Any]) {
     sendEvent(hardwareKeyDownEventName, payload)
+  }
+
+  fileprivate func emitHardwareModifier(key: String, down: Bool) {
+    sendEvent(hardwareModifierEventName, ["key": key, "down": down])
+  }
+
+  fileprivate func emitHardwareKeyboardConnectionChange(connected: Bool) {
+    sendEvent(hardwareConnectionEventName, ["connected": connected])
   }
 }
 
@@ -83,13 +117,48 @@ private final class PaseoHardwareKeyboardRootViewController: UIViewController {
   override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
     if isHardwareKeyEventsEnabled, #available(iOS 13.4, *) {
       for press in presses {
-        guard let key = press.key, let payload = shortcutKeyDownPayload(for: key) else {
+        guard let key = press.key else { continue }
+        if let modifier = modifierName(for: key.keyCode) {
+          activeModule?.emitHardwareModifier(key: modifier, down: true)
           continue
         }
-        activeModule?.emitHardwareKeyDown(payload)
+        if let payload = shortcutKeyDownPayload(for: key) {
+          activeModule?.emitHardwareKeyDown(payload)
+        }
       }
     }
     super.pressesBegan(presses, with: event)
+  }
+
+  override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+    if isHardwareKeyEventsEnabled, #available(iOS 13.4, *) {
+      for press in presses {
+        guard let key = press.key, let modifier = modifierName(for: key.keyCode) else { continue }
+        activeModule?.emitHardwareModifier(key: modifier, down: false)
+      }
+    }
+    super.pressesEnded(presses, with: event)
+  }
+
+  override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+    if isHardwareKeyEventsEnabled, #available(iOS 13.4, *) {
+      for press in presses {
+        guard let key = press.key, let modifier = modifierName(for: key.keyCode) else { continue }
+        activeModule?.emitHardwareModifier(key: modifier, down: false)
+      }
+    }
+    super.pressesCancelled(presses, with: event)
+  }
+
+  @available(iOS 13.4, *)
+  private func modifierName(for keyCode: UIKeyboardHIDUsage) -> String? {
+    switch keyCode {
+    case .keyboardLeftAlt, .keyboardRightAlt: return "Alt"
+    case .keyboardLeftGUI, .keyboardRightGUI: return "Meta"
+    case .keyboardLeftControl, .keyboardRightControl: return "Control"
+    case .keyboardLeftShift, .keyboardRightShift: return "Shift"
+    default: return nil
+    }
   }
 
   @available(iOS 13.4, *)
