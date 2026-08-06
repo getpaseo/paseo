@@ -205,7 +205,7 @@ export const ar: TranslationResources = {
     states: {
       notFound: "لم يتم العثور على Agent",
       failedToLoad: "فشل تحميل الوكيل",
-      reconnecting: "جارٍ إعادة الاتصال...",
+      reconnecting: "جارٍ إعادة الاتصال",
       timelineSyncFailed: "تعذر تحديث سجل الوكيل. جارٍ إعادة المحاولة…",
       archivingTitle: "وكيل الارشيف...",
       archivingSubtitle: "الرجاء الانتظار بينما نقوم بأرشفة هذا الوكيل.",

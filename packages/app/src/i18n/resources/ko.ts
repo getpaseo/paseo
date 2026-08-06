@@ -205,7 +205,7 @@ export const ko: TranslationResources = {
     states: {
       notFound: "에이전트를 찾을 수 없습니다",
       failedToLoad: "에이전트를 불러오지 못했습니다",
-      reconnecting: "다시 연결하는 중...",
+      reconnecting: "다시 연결하는 중",
       timelineSyncFailed: "에이전트 기록을 새로고침할 수 없습니다. 재시도 중…",
       archivingTitle: "에이전트 보관 중...",
       archivingSubtitle: "이 에이전트를 보관하는 동안 잠시 기다려 주세요.",

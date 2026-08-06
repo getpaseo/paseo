@@ -205,7 +205,7 @@ export const ru: TranslationResources = {
     states: {
       notFound: "Agent не найден",
       failedToLoad: "Не удалось загрузить агент",
-      reconnecting: "Повторное подключение...",
+      reconnecting: "Повторное подключение",
       timelineSyncFailed: "Не удалось обновить историю агента. Повторная попытка…",
       archivingTitle: "Архивный агент...",
       archivingSubtitle: "Пожалуйста, подождите, пока мы архивируем этого агента.",

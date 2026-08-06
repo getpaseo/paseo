@@ -114,6 +114,8 @@ interface ChatAgentStateShape {
   lastError?: Agent["lastError"] | null;
 }
 
+const RECONNECT_TOAST_DELAY_MS = 1_000;
+
 interface ChatAgentSelectedState extends ChatAgentStateShape {
   archivedAt: Date | null;
   requiresAttention: boolean;
@@ -768,7 +770,7 @@ function ChatAgentContent({
   const streamViewRef = useRef<AgentStreamViewHandle>(null);
   const clearOnAgentBlurRef = useRef<() => void>(() => {});
   const wasPaneFocusedRef = useRef(isPaneFocused);
-  const reconnectToastArmedRef = useRef(false);
+  const reconnectToastPresentedRef = useRef(false);
   const initAttemptTokenRef = useRef(0);
   const routeBottomAnchorRequestRef = useRef<{
     routeKey: string;
@@ -857,26 +859,39 @@ function ChatAgentContent({
   const { style: animatedKeyboardStyle } = useKeyboardShiftStyle({
     mode: "translate",
   });
+  const shouldPresentReconnectToast =
+    isPaneVisible && connectionStatus !== "online" && connectionStatus !== "idle";
 
   useEffect(() => {
-    if (connectionStatus === "online") {
-      if (reconnectToastArmedRef.current) {
-        reconnectToastArmedRef.current = false;
+    if (!shouldPresentReconnectToast) {
+      if (reconnectToastPresentedRef.current) {
+        reconnectToastPresentedRef.current = false;
         dismissToast();
       }
       return;
     }
-    if (connectionStatus === "idle") {
+
+    if (reconnectToastPresentedRef.current) {
       return;
     }
-    if (!reconnectToastArmedRef.current) {
-      reconnectToastArmedRef.current = true;
+
+    const timer = setTimeout(() => {
+      reconnectToastPresentedRef.current = true;
       toastApi.show(t("agentPanel.states.reconnecting"), {
         durationMs: null,
+        icon: (
+          <View
+            accessible={false}
+            testID="agent-reconnecting-status-dot"
+            style={styles.reconnectingStatusDot}
+          />
+        ),
         testID: "agent-reconnecting-toast",
       });
-    }
-  }, [connectionStatus, dismissToast, toastApi, t]);
+    }, RECONNECT_TOAST_DELAY_MS);
+
+    return () => clearTimeout(timer);
+  }, [dismissToast, shouldPresentReconnectToast, toastApi, t]);
 
   const isArchivingCurrentAgent = Boolean(agentId && isArchivingAgent({ serverId, agentId }));
 
@@ -1725,6 +1740,12 @@ const styles = StyleSheet.create((theme) => ({
   loadingText: {
     fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
+  },
+  reconnectingStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: theme.colors.palette.amber[500],
   },
   centerState: {
     flex: 1,
