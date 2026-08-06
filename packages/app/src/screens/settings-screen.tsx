@@ -145,7 +145,12 @@ interface SidebarSectionItem {
   icon: ComponentType<{ size: number; color: string }>;
   desktopOnly?: boolean;
   webOnly?: boolean;
+  isAvailable?: (isDesktopApp: boolean) => boolean;
 }
+
+// Native shortcuts are delivered by the hardware-keyboard module, so the
+// section is useful there even though it never applies to mobile web.
+const shortcutsSectionAvailable = (isDesktopApp: boolean) => isDesktopApp || isNative;
 
 const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "general", labelKey: "settings.sections.general", icon: Settings },
@@ -157,12 +162,17 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     desktopOnly: true,
   },
   { id: "editor", labelKey: "settings.sections.editor", icon: Code2, webOnly: true },
-  { id: "shortcuts", labelKey: "settings.sections.shortcuts", icon: Keyboard, desktopOnly: true },
+  {
+    id: "shortcuts",
+    labelKey: "settings.sections.shortcuts",
+    icon: Keyboard,
+    isAvailable: shortcutsSectionAvailable,
+  },
   {
     id: "integrations",
     labelKey: "settings.sections.integrations",
     icon: Puzzle,
-    desktopOnly: true,
+    isAvailable: (isDesktopApp) => isDesktopApp,
   },
   {
     id: "notifications",
@@ -174,7 +184,7 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     id: "permissions",
     labelKey: "settings.sections.permissions",
     icon: Shield,
-    desktopOnly: true,
+    isAvailable: (isDesktopApp) => isDesktopApp,
   },
   { id: "diagnostics", labelKey: "settings.sections.diagnostics", icon: Stethoscope },
   { id: "about", labelKey: "settings.sections.about", icon: Info },
@@ -1053,7 +1063,10 @@ function SettingsSidebar({
   const enableBuiltInDaemonOption = useEnableBuiltInDaemonOption();
   const isDesktopApp = isElectronRuntime();
   const items = SIDEBAR_SECTION_ITEMS.filter(
-    (item) => (!item.desktopOnly || isDesktopApp) && (!item.webOnly || isWeb),
+    (item) =>
+      (!item.desktopOnly || isDesktopApp) &&
+      (!item.webOnly || isWeb) &&
+      (item.isAvailable?.(isDesktopApp) ?? true),
   );
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
@@ -1510,7 +1523,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
           case "editor":
             return isWeb ? <EditorSection /> : null;
           case "shortcuts":
-            return isDesktopApp ? <KeyboardShortcutsSection /> : null;
+            return shortcutsSectionAvailable(isDesktopApp) ? <KeyboardShortcutsSection /> : null;
           case "integrations":
             return isDesktopApp ? <IntegrationsSection /> : null;
           case "notifications":
