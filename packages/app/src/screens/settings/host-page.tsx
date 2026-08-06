@@ -1799,6 +1799,10 @@ function parseEnvironmentCommand(raw: string): string[] {
     .filter((part) => part.length > 0);
 }
 
+function withoutEntryId(entries: AgentEnvironmentEntry[], id: string): AgentEnvironmentEntry[] {
+  return entries.filter((entry) => entry.id !== id);
+}
+
 interface AgentEnvironmentRowProps {
   entry: AgentEnvironmentEntry;
   isFirst: boolean;
@@ -1907,13 +1911,6 @@ function AgentEnvironmentSection({ serverId }: { serverId: string }) {
 
   const entries = useMemo(() => config?.agentEnvironment?.entries ?? null, [config]);
 
-  const saveEntries = useCallback(
-    async (next: AgentEnvironmentEntry[]) => {
-      await patchConfig({ agentEnvironment: { entries: next } });
-    },
-    [patchConfig],
-  );
-
   const reportSaveError = useCallback(
     (error: unknown) => {
       Alert.alert(
@@ -1924,15 +1921,48 @@ function AgentEnvironmentSection({ serverId }: { serverId: string }) {
     [t],
   );
 
+  // Every mutation rewrites the whole list, so two of them started before the
+  // first round-trip lands would both compute from the same render's snapshot
+  // and the later write would drop the earlier edit. Queue them and hand each
+  // one the freshest list instead of whatever the closure captured.
+  const latestEntries = useRef<AgentEnvironmentEntry[] | null>(null);
+  const mutationQueue = useRef<Promise<unknown>>(Promise.resolve());
+
+  useEffect(() => {
+    latestEntries.current = entries;
+  }, [entries]);
+
+  const mutateEntries = useCallback(
+    (update: (current: AgentEnvironmentEntry[]) => AgentEnvironmentEntry[] | null) => {
+      const previous = mutationQueue.current;
+      const run = (async () => {
+        await previous;
+        const current = latestEntries.current;
+        if (!current) {
+          return;
+        }
+        const next = update(current);
+        if (!next) {
+          return;
+        }
+        const updated = await patchConfig({ agentEnvironment: { entries: next } });
+        // Stay ahead of the next render so a queued edit sees this one.
+        latestEntries.current = updated?.agentEnvironment?.entries ?? next;
+      })();
+      mutationQueue.current = run.catch(() => undefined);
+      return run;
+    },
+    [patchConfig],
+  );
+
   const handleAddPreset = useCallback(
     (presetId: string) => {
-      const next: AgentEnvironmentEntry[] = [
-        ...(entries ?? []),
+      mutateEntries((current) => [
+        ...current,
         { kind: "preset", id: generateEnvironmentEntryId(), preset: presetId },
-      ];
-      saveEntries(next).catch(reportSaveError);
+      ]).catch(reportSaveError);
     },
-    [entries, reportSaveError, saveEntries],
+    [mutateEntries, reportSaveError],
   );
 
   const handleAddCustomOpen = useCallback(() => setIsAdding(true), []);
@@ -1940,8 +1970,8 @@ function AgentEnvironmentSection({ serverId }: { serverId: string }) {
 
   const handleAddCustomSave = useCallback(
     async (draft: AgentEnvironmentCommandDraft) => {
-      const next: AgentEnvironmentEntry[] = [
-        ...(entries ?? []),
+      await mutateEntries((current) => [
+        ...current,
         {
           kind: "command",
           id: generateEnvironmentEntryId(),
@@ -1949,11 +1979,10 @@ function AgentEnvironmentSection({ serverId }: { serverId: string }) {
           format: draft.format,
           ...(draft.timeoutMs ? { timeoutMs: Number(draft.timeoutMs) } : {}),
         },
-      ];
-      await saveEntries(next);
+      ]);
       setIsAdding(false);
     },
-    [entries, saveEntries],
+    [mutateEntries],
   );
 
   const handleEditOpen = useCallback(
@@ -1976,23 +2005,24 @@ function AgentEnvironmentSection({ serverId }: { serverId: string }) {
 
   const handleEditSave = useCallback(
     async (draft: AgentEnvironmentCommandDraft) => {
-      if (!editingEntry || !entries) return;
-      const next: AgentEnvironmentEntry[] = entries.map((entry) =>
-        entry.id === editingEntry.id && entry.kind === "command"
-          ? {
-              ...entry,
-              command: parseEnvironmentCommand(draft.command),
-              format: draft.format,
-              ...(draft.timeoutMs
-                ? { timeoutMs: Number(draft.timeoutMs) }
-                : { timeoutMs: undefined }),
-            }
-          : entry,
+      if (!editingEntry) return;
+      await mutateEntries((current) =>
+        current.map((entry) =>
+          entry.id === editingEntry.id && entry.kind === "command"
+            ? {
+                ...entry,
+                command: parseEnvironmentCommand(draft.command),
+                format: draft.format,
+                ...(draft.timeoutMs
+                  ? { timeoutMs: Number(draft.timeoutMs) }
+                  : { timeoutMs: undefined }),
+              }
+            : entry,
+        ),
       );
-      await saveEntries(next);
       setEditingEntry(null);
     },
-    [editingEntry, entries, saveEntries],
+    [editingEntry, mutateEntries],
   );
 
   const handleRemove = useCallback(
@@ -2010,51 +2040,37 @@ function AgentEnvironmentSection({ serverId }: { serverId: string }) {
         cancelLabel: t("common.actions.cancel"),
         destructive: true,
       }).then(async (confirmed) => {
-        if (!confirmed || !entries) return;
+        if (!confirmed) return;
         try {
-          await saveEntries(entries.filter((item) => item.id !== id));
+          await mutateEntries((current) => withoutEntryId(current, id));
         } catch (error) {
           reportSaveError(error);
         }
         return;
       });
     },
-    [entries, reportSaveError, saveEntries, t],
+    [entries, mutateEntries, reportSaveError, t],
   );
 
-  const handleMoveUp = useCallback(
-    async (id: string) => {
-      if (!entries) return;
-      const index = entries.findIndex((item) => item.id === id);
-      if (index <= 0) return;
-      const next = [...entries];
-      const [item] = next.splice(index, 1);
-      next.splice(index - 1, 0, item);
-      try {
-        await saveEntries(next);
-      } catch (error) {
-        reportSaveError(error);
-      }
+  const moveEntry = useCallback(
+    (id: string, offset: -1 | 1) => {
+      mutateEntries((current) => {
+        const index = current.findIndex((item) => item.id === id);
+        const target = index + offset;
+        if (index < 0 || target < 0 || target >= current.length) {
+          return null;
+        }
+        const next = [...current];
+        const [item] = next.splice(index, 1);
+        next.splice(target, 0, item);
+        return next;
+      }).catch(reportSaveError);
     },
-    [entries, reportSaveError, saveEntries],
+    [mutateEntries, reportSaveError],
   );
 
-  const handleMoveDown = useCallback(
-    async (id: string) => {
-      if (!entries) return;
-      const index = entries.findIndex((item) => item.id === id);
-      if (index < 0 || index >= entries.length - 1) return;
-      const next = [...entries];
-      const [item] = next.splice(index, 1);
-      next.splice(index + 1, 0, item);
-      try {
-        await saveEntries(next);
-      } catch (error) {
-        reportSaveError(error);
-      }
-    },
-    [entries, reportSaveError, saveEntries],
-  );
+  const handleMoveUp = useCallback((id: string) => moveEntry(id, -1), [moveEntry]);
+  const handleMoveDown = useCallback((id: string) => moveEntry(id, 1), [moveEntry]);
 
   const addMenu = useMemo(
     () => (

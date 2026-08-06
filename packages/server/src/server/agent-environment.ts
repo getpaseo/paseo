@@ -193,13 +193,22 @@ export function createAgentEnvironmentResolver(
   const binaryLookups = new Map<string, Promise<string | null>>();
   const announced = new Set<string>();
 
-  async function presetApplies(preset: AgentEnvironmentPreset, cwd: string): Promise<boolean> {
-    let lookup = binaryLookups.get(preset.binary);
+  async function lookupBinary(name: string): Promise<string | null> {
+    let lookup = binaryLookups.get(name);
     if (!lookup) {
-      lookup = resolveBinary(preset.binary);
-      binaryLookups.set(preset.binary, lookup);
+      // Evict a failed lookup rather than caching it: a cached rejection would
+      // make one transient PATH error skip this preset for the daemon's life.
+      lookup = resolveBinary(name).catch((error) => {
+        binaryLookups.delete(name);
+        throw error;
+      });
+      binaryLookups.set(name, lookup);
     }
-    if (!(await lookup)) {
+    return await lookup;
+  }
+
+  async function presetApplies(preset: AgentEnvironmentPreset, cwd: string): Promise<boolean> {
+    if (!(await lookupBinary(preset.binary))) {
       return false;
     }
     return hasMarkerAtOrAbove(cwd, preset.markers, fileExists);
@@ -238,46 +247,53 @@ export function createAgentEnvironmentResolver(
     let overlay: ProcessEnvRecord = {};
 
     for (const entry of entries) {
-      const step = await resolveStep(entry, cwd, defaultTimeoutMs);
-      if (!step) {
-        continue;
-      }
-
-      const [command, ...args] = step.command;
-      let result: AgentEnvironmentCommandResult;
+      // Detection and execution share one recovery boundary. A PATH lookup or a
+      // stat that throws must skip the entry like any other failure, never
+      // reject: this runs on create, resume, restart, and reload, so an escaping
+      // error would stop the agent from launching at all.
+      let command = entry.kind === "command" ? entry.command[0] : entry.preset;
       try {
-        result = await run({
-          command,
+        const step = await resolveStep(entry, cwd, defaultTimeoutMs);
+        if (!step) {
+          continue;
+        }
+
+        const [stepCommand, ...args] = step.command;
+        command = stepCommand;
+        const result = await run({
+          command: stepCommand,
           args,
           cwd,
           env: createExternalProcessEnv(baseEnv, overlay),
           timeoutMs: step.timeoutMs,
         });
+
+        if (step.format === "json") {
+          const diff = parseEnvDiff(result.stdout);
+          if (!diff) {
+            logger.warn(
+              { cwd, command: stepCommand },
+              "Agent environment command did not print a JSON env diff",
+            );
+            continue;
+          }
+          Object.assign(overlay, diff);
+        } else {
+          const snapshot = parseEnvSnapshot(result.stdout);
+          if (!snapshot) {
+            logger.warn(
+              { cwd, command: stepCommand },
+              "Agent environment command did not print NUL-separated KEY=VALUE records",
+            );
+            continue;
+          }
+          overlay = diffEnvSnapshot(baseEnv, snapshot);
+        }
       } catch (error) {
         logger.warn(
           { cwd, command, stderr: firstMessageLine(readStderr(error)) || undefined, err: error },
-          "Agent environment command failed; skipping it",
+          "Agent environment entry failed; skipping it",
         );
-        continue;
-      }
-
-      if (step.format === "json") {
-        const diff = parseEnvDiff(result.stdout);
-        if (!diff) {
-          logger.warn({ cwd, command }, "Agent environment command did not print a JSON env diff");
-          continue;
-        }
-        Object.assign(overlay, diff);
-      } else {
-        const snapshot = parseEnvSnapshot(result.stdout);
-        if (!snapshot) {
-          logger.warn(
-            { cwd, command },
-            "Agent environment command did not print NUL-separated KEY=VALUE records",
-          );
-          continue;
-        }
-        overlay = diffEnvSnapshot(baseEnv, snapshot);
       }
     }
 

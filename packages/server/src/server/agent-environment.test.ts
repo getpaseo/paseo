@@ -129,6 +129,63 @@ test("skips an entry naming a preset this daemon does not know", async () => {
   expect(runner.calls).toEqual([]);
 });
 
+test("keeps launching when preset detection throws", async () => {
+  const runner = stubRunner([{ stdout: JSON.stringify({ AFTER: "ran" }), stderr: "" }]);
+  const resolve = createAgentEnvironmentResolver({
+    getConfig: () => ({
+      entries: [...DEFAULT_AGENT_ENVIRONMENT_ENTRIES, commandEntry(["second"])],
+      timeoutMs: 30_000,
+    }),
+    logger,
+    baseEnv: { PATH: "/usr/bin" },
+    run: runner.run,
+    resolveBinary: async () => {
+      throw new Error("PATH scan blew up");
+    },
+  });
+
+  await expect(resolve("/project")).resolves.toEqual({ AFTER: "ran" });
+});
+
+test("keeps launching when marker detection throws", async () => {
+  const runner = stubRunner([]);
+  const resolve = createAgentEnvironmentResolver({
+    getConfig: () => ({ entries: [...DEFAULT_AGENT_ENVIRONMENT_ENTRIES], timeoutMs: 30_000 }),
+    logger,
+    baseEnv: { PATH: "/usr/bin" },
+    run: runner.run,
+    resolveBinary: async () => "/usr/bin/direnv",
+    fileExists: () => {
+      throw new Error("stat blew up");
+    },
+  });
+
+  await expect(resolve("/project")).resolves.toEqual({});
+});
+
+test("retries a binary lookup that failed instead of caching the failure", async () => {
+  const runner = stubRunner([{ stdout: JSON.stringify({ PROBE: "ok" }), stderr: "" }]);
+  let attempts = 0;
+  const resolve = createAgentEnvironmentResolver({
+    getConfig: () => ({ entries: [...DEFAULT_AGENT_ENVIRONMENT_ENTRIES], timeoutMs: 30_000 }),
+    logger,
+    baseEnv: { PATH: "/usr/bin" },
+    run: runner.run,
+    resolveBinary: async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error("transient PATH error");
+      }
+      return "/usr/bin/direnv";
+    },
+    fileExists: (path) => path === join("/project", ".envrc"),
+  });
+
+  await expect(resolve("/project")).resolves.toEqual({});
+  await expect(resolve("/project")).resolves.toEqual({ PROBE: "ok" });
+  expect(attempts).toBe(2);
+});
+
 test("runs a custom command with no detection gate", async () => {
   const runner = stubRunner([{ stdout: JSON.stringify({ FROM_SCRIPT: "1" }), stderr: "" }]);
   const resolve = resolverFor([commandEntry(["setup-env"])], runner, {
