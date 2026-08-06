@@ -497,4 +497,10 @@ describe("claudeManifestModelSupportsFastMode", () => {
     expect(claudeManifestModelSupportsFastMode("openrouter/anthropic/claude-opus-4-8")).toBe(false);
     expect(claudeManifestModelSupportsFastMode("claude-opus-4-8-20260101")).toBe(true);
   });
+
+  it("supports fast mode on Opus 5 but not on other Claude 5 models", () => {
+    expect(claudeManifestModelSupportsFastMode("claude-opus-5")).toBe(true);
+    expect(claudeManifestModelSupportsFastMode("claude-sonnet-5")).toBe(false);
+    expect(claudeManifestModelSupportsFastMode("claude-fable-5")).toBe(false);
+  });
 });
