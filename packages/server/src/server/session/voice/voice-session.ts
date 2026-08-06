@@ -14,6 +14,7 @@ import {
   type DictationStreamOutboundMessage,
 } from "../../dictation/dictation-stream-manager.js";
 import { createVoiceTurnController, type VoiceTurnController } from "./voice-turn-controller.js";
+import { ReadAloudController } from "./read-aloud-controller.js";
 import { buildVoiceModeSystemPrompt, stripVoiceModeSystemPrompt } from "../../voice-config.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
@@ -191,6 +192,7 @@ export class VoiceSession {
 
   private readonly ttsManager: TTSManager;
   private readonly sttManager: STTManager;
+  private readonly readAloudController: ReadAloudController;
 
   private readonly registerVoiceSpeakHandler?: (
     agentId: string,
@@ -224,6 +226,12 @@ export class VoiceSession {
     this.getSpeechReadiness = dictation?.getSpeechReadiness;
 
     this.ttsManager = new TTSManager(this.sessionId, this.sessionLogger, tts);
+    this.readAloudController = new ReadAloudController({
+      sessionId: this.sessionId,
+      logger: this.sessionLogger,
+      tts,
+      emit: (msg) => this.emit(msg),
+    });
     this.sttManager = new STTManager(this.sessionId, this.sessionLogger, stt, {
       language: sttLanguage,
     });
@@ -256,6 +264,18 @@ export class VoiceSession {
 
   handleDictationCancel(dictationId: string): void {
     this.dictationStreamManager.handleCancel(dictationId);
+  }
+
+  handleReadAloudRequest(
+    msg: Extract<SessionInboundMessage, { type: "speech.tts.read_aloud.request" }>,
+  ): Promise<void> {
+    return this.readAloudController.handleRequest({ requestId: msg.requestId, text: msg.text });
+  }
+
+  handleReadAloudCancel(
+    msg: Extract<SessionInboundMessage, { type: "speech.tts.cancel_read_aloud.request" }>,
+  ): void {
+    this.readAloudController.cancel(msg.requestId);
   }
 
   async handleDictationStreamStart(
@@ -1302,6 +1322,7 @@ export class VoiceSession {
     this.ttsManager.cleanup();
     this.sttManager.cleanup();
     this.dictationStreamManager.cleanupAll();
+    this.readAloudController.dispose();
 
     await this.disableVoiceModeForActiveAgent(true);
     this.isVoiceMode = false;

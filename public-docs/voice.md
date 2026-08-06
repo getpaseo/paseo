@@ -111,6 +111,20 @@ Paseo uses these paths under the configured OpenAI base URL:
 - voice mode STT: `/v1/audio/transcriptions`
 - voice mode TTS: `/v1/audio/speech`
 
+## Read Aloud
+
+Every completed agent turn gets a speaker button in its footer, next to the copy button. Pressing it speaks the turn's closing message — the part the agent wrote after its last tool call, not the narration in between. The icon becomes a stop square while it plays, and pressing it again stops. Starting a read on another turn supersedes the first: one voice at a time.
+
+Read aloud uses the same text-to-speech provider as voice mode (`features.voiceMode.tts`), so local Kokoro and OpenAI both work with no extra configuration. Audio is synthesized sentence by sentence and streamed to the client, so a long message starts speaking on the first sentence. Messages above 4000 characters are rejected rather than queued. Markdown and Paseo's own wrapper tags are stripped before synthesis, so fences and `<spoken-input>` are not read out.
+
+Three limits:
+
+- **Web and desktop only.** Native has no audio playback engine for this yet, so the button is hidden on iOS and Android rather than shown doing nothing.
+- **Turns that end on a tool call have no button.** There is nothing to say after the last tool.
+- **A turn is spoken by the host it came from.** Read aloud never sends text to another paired host, so a route with no host — settings, history — gets no button.
+
+Hosts older than v0.2.5 do not have the read-aloud RPC; against those the button never appears.
+
 ## Environment Variables
 
 - `PASEO_VOICE_LLM_PROVIDER`, voice agent provider override

@@ -1544,6 +1544,17 @@ export const es: TranslationResources = {
       copied: "Copiado",
     },
   },
+  readAloud: {
+    action: "Leer en voz alta",
+    stop: "Detener",
+    errors: {
+      ttsUnavailable: "La conversión de texto a voz no está configurada en este host",
+      tooLong: "El mensaje es demasiado largo para leerlo en voz alta",
+      empty: "No hay nada que leer en voz alta",
+      unsupported: "Leer en voz alta no está disponible aquí",
+      failed: "No se pudo leer eso en voz alta",
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "Silenciar voz en tiempo real",

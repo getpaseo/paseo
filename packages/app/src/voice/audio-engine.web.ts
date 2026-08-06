@@ -106,6 +106,13 @@ export function createAudioEngine(
       reject: (error: Error) => void;
       settled: boolean;
     } | null;
+    /**
+     * Bumped by every `stop()`/`clearQueue()`. A segment decodes across two
+     * awaits before it registers as `activePlayback`, so a stop landing in that
+     * window has nothing to cancel — without this the segment would start
+     * playing after the user asked for silence.
+     */
+    playbackGeneration: number;
   } = {
     playbackContext: null,
     captureContext: null,
@@ -118,6 +125,7 @@ export function createAudioEngine(
     queue: [],
     processingQueue: false,
     activePlayback: null,
+    playbackGeneration: 0,
   };
 
   async function ensurePlaybackContext(): Promise<AudioContext> {
@@ -163,6 +171,7 @@ export function createAudioEngine(
   }
 
   async function playAudio(audio: AudioPlaybackSource): Promise<number> {
+    const generation = refs.playbackGeneration;
     const context = await ensurePlaybackContext();
     const arrayBuffer = await audio.arrayBuffer();
     const type = (audio.type || "").toLowerCase();
@@ -174,10 +183,16 @@ export function createAudioEngine(
         )
       : await decodeAudioData(context, arrayBuffer);
 
-    const durationSec = audioBuffer.duration;
+    // Re-check after the awaits above: a stop during context init or decode
+    // could not reach this segment, so it has to bow out on its own.
+    if (generation !== refs.playbackGeneration) {
+      throw new Error("Playback stopped");
+    }
+
     const source = context.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(context.destination);
+    const durationSec = audioBuffer.duration;
 
     return await new Promise<number>((resolve, reject) => {
       refs.activePlayback = { source, resolve, reject, settled: false };
@@ -380,6 +395,7 @@ export function createAudioEngine(
     },
 
     stop() {
+      refs.playbackGeneration += 1;
       if (refs.activePlayback) {
         const active = refs.activePlayback;
         refs.activePlayback = null;
@@ -396,6 +412,7 @@ export function createAudioEngine(
     },
 
     clearQueue() {
+      refs.playbackGeneration += 1;
       while (refs.queue.length > 0) {
         refs.queue.shift()!.reject(new Error("Playback stopped"));
       }

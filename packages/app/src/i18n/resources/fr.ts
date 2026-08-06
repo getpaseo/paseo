@@ -1548,6 +1548,17 @@ export const fr: TranslationResources = {
       copied: "Copié",
     },
   },
+  readAloud: {
+    action: "Lire à voix haute",
+    stop: "Arrêter",
+    errors: {
+      ttsUnavailable: "La synthèse vocale n'est pas configurée sur cet hôte",
+      tooLong: "Le message est trop long pour être lu à voix haute",
+      empty: "Rien à lire à voix haute",
+      unsupported: "La lecture à voix haute n'est pas disponible ici",
+      failed: "Impossible de lire ce texte à voix haute",
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "Couper la voix en temps réel",

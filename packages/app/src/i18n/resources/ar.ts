@@ -1501,6 +1501,17 @@ export const ar: TranslationResources = {
       copied: "منقول",
     },
   },
+  readAloud: {
+    action: "القراءة بصوت عالٍ",
+    stop: "إيقاف",
+    errors: {
+      ttsUnavailable: "لم يتم إعداد تحويل النص إلى كلام على هذا المضيف",
+      tooLong: "الرسالة أطول من أن تُقرأ بصوت عالٍ",
+      empty: "لا يوجد شيء لقراءته بصوت عالٍ",
+      unsupported: "القراءة بصوت عالٍ غير متوفرة هنا",
+      failed: "تعذّرت قراءة ذلك بصوت عالٍ",
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "كتم صوت الوقت الحقيقي",

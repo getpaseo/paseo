@@ -1274,6 +1274,24 @@ export const DictationStreamCancelMessageSchema = z.object({
   dictationId: z.string(),
 });
 
+// ============================================================================
+// Read aloud (on-demand TTS for arbitrary client-selected text)
+// ============================================================================
+
+export const ReadAloudRequestMessageSchema = z.object({
+  type: z.literal("speech.tts.read_aloud.request"),
+  requestId: z.string(),
+  text: z.string(),
+});
+
+// Fire-and-forget: cancelling read-aloud has no `.response`. The daemon stops
+// synthesizing and stops emitting `speech.tts.read_aloud.response` segments for
+// this requestId; the client has already torn down its own playback.
+export const ReadAloudCancelRequestMessageSchema = z.object({
+  type: z.literal("speech.tts.cancel_read_aloud.request"),
+  requestId: z.string(),
+});
+
 const GitSetupOptionsSchema = z.object({
   baseBranch: z.string().optional(),
   createNewBranch: z.boolean().optional(),
@@ -2533,6 +2551,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionControlRequestSchema,
   BrowserAutomationExecuteResponseSchema,
   VoiceAudioChunkMessageSchema,
+  ReadAloudRequestMessageSchema,
+  ReadAloudCancelRequestMessageSchema,
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
   FetchAgentsRequestMessageSchema,
@@ -2797,6 +2817,29 @@ export const DictationStreamErrorMessageSchema = z.object({
   }),
 });
 
+// One request fans out to N of these, in segment order. Audio is segmented so a
+// long message starts playing after the first sentence instead of after the
+// whole synthesis, and so no single message carries minutes of raw PCM.
+export const ReadAloudResponseMessageSchema = z.object({
+  type: z.literal("speech.tts.read_aloud.response"),
+  payload: z.object({
+    requestId: z.string(),
+    segmentIndex: z.number().int().nonnegative(),
+    segmentCount: z.number().int().nonnegative(),
+    isLast: z.boolean(),
+    // Base64 audio for this segment. Absent on the terminal error message.
+    audio: z.string().optional(),
+    // Provider-reported audio format, e.g. "pcm;rate=24000" or "mp3".
+    format: z.string().optional(),
+    error: z
+      .object({
+        code: z.string(),
+        message: z.string(),
+      })
+      .optional(),
+  }),
+});
+
 export const ServerCapabilityStateSchema = z.object({
   enabled: z.boolean(),
   reason: z.string(),
@@ -2900,6 +2943,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentDetach: z.boolean().optional(),
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
         agentThinkingUpdate: z.boolean().optional(),
+        // COMPAT(readAloud): added in v0.2.5, drop the gate when floor >= v0.2.5.
+        readAloud: z.boolean().optional(),
         // COMPAT(daemonDiagnostics): added in v0.1.100, remove gate after 2026-12-25 once daemon floor >= v0.1.100.
         daemonDiagnostics: z.boolean().optional(),
         // COMPAT(daemonSelfUpdate): added in v0.1.93, remove gate after 2026-12-13.
@@ -5348,6 +5393,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
   AudioOutputMessageSchema,
+  ReadAloudResponseMessageSchema,
   TranscriptionResultMessageSchema,
   VoiceInputStateMessageSchema,
   DictationStreamAckMessageSchema,
@@ -5703,6 +5749,10 @@ export type DictationStreamStartMessage = z.infer<typeof DictationStreamStartMes
 export type DictationStreamChunkMessage = z.infer<typeof DictationStreamChunkMessageSchema>;
 export type DictationStreamFinishMessage = z.infer<typeof DictationStreamFinishMessageSchema>;
 export type DictationStreamCancelMessage = z.infer<typeof DictationStreamCancelMessageSchema>;
+export type ReadAloudRequestMessage = z.infer<typeof ReadAloudRequestMessageSchema>;
+export type ReadAloudCancelRequestMessage = z.infer<typeof ReadAloudCancelRequestMessageSchema>;
+export type ReadAloudResponseMessage = z.infer<typeof ReadAloudResponseMessageSchema>;
+export type ReadAloudResponsePayload = ReadAloudResponseMessage["payload"];
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
 export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
 export type ForgeChangeRequestAttachment = z.infer<typeof ForgeChangeRequestAttachmentSchema>;

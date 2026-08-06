@@ -123,6 +123,7 @@ import {
 } from "@/utils/host-routes";
 import { buildNotificationRoute, resolveNotificationTarget } from "@/utils/notification-routing";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
+import { useReadAloudRouteGuard } from "@/read-aloud/use-read-aloud-route-guard";
 import {
   ensureOsNotificationPermission,
   WEB_NOTIFICATION_CLICK_EVENT,
@@ -668,6 +669,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
       <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
       <HostSessionManager />
       <FaviconStatusSync />
+      <ReadAloudRouteGuard />
       {children}
     </VoiceProvider>
   );
@@ -878,6 +880,11 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
 
 function FaviconStatusSync() {
   useFaviconStatus();
+  return null;
+}
+
+function ReadAloudRouteGuard() {
+  useReadAloudRouteGuard();
   return null;
 }
 

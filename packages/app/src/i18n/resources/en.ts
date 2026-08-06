@@ -1512,6 +1512,17 @@ export const en = {
       copied: "Copied",
     },
   },
+  readAloud: {
+    action: "Read aloud",
+    stop: "Stop",
+    errors: {
+      ttsUnavailable: "Text-to-speech isn't set up on this host",
+      tooLong: "Message is too long to read aloud",
+      empty: "Nothing to read aloud",
+      unsupported: "Read aloud isn't available here",
+      failed: "Couldn't read that aloud",
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "Mute realtime voice",

@@ -32,6 +32,9 @@ export type {
   DaemonEvent,
   BrowserAutomationExecuteRequestMessage,
   BrowserAutomationExecuteResponseMessage,
+  ReadAloudError,
+  ReadAloudHandle,
+  ReadAloudSegment,
   WebSocketFactory,
   WebSocketLike,
 } from "./daemon-client.js";

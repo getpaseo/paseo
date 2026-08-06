@@ -438,6 +438,24 @@ export interface FileUploadInput {
   requestId?: string;
   chunkSize?: number;
 }
+
+export interface ReadAloudSegment {
+  segmentIndex: number;
+  segmentCount: number;
+  audioBase64: string;
+  /** Provider-reported format, e.g. `pcm;rate=24000` or `mp3`. */
+  format: string;
+}
+
+export interface ReadAloudError {
+  code: string;
+  message: string;
+}
+
+export interface ReadAloudHandle {
+  requestId: string;
+  cancel(): void;
+}
 export type FileUploadResult = FileUploadResponse["payload"];
 type FileDownloadTokenPayload = FileDownloadTokenResponse["payload"];
 type ListProviderFeaturesPayload = ListProviderFeaturesResponseMessage["payload"];
@@ -3544,6 +3562,81 @@ export class DaemonClient {
 
   async audioPlayed(id: string): Promise<void> {
     this.sendSessionMessage({ type: "audio_played", id });
+  }
+
+  /**
+   * Synthesize `text` on the daemon and stream the audio back segment by
+   * segment, in order. Segments arrive as they finish synthesizing so playback
+   * can start on the first sentence; the caller is responsible for queueing
+   * them. Returns a handle whose `cancel()` stops synthesis and detaches the
+   * listener.
+   */
+  startReadAloud(params: {
+    text: string;
+    onSegment: (segment: ReadAloudSegment) => void;
+    onError: (error: ReadAloudError) => void;
+    onEnd: () => void;
+  }): ReadAloudHandle {
+    const requestId = this.createRequestId();
+    let settled = false;
+
+    const unsubscribe = this.on("speech.tts.read_aloud.response", (message) => {
+      const payload = message.payload;
+      if (payload.requestId !== requestId || settled) {
+        return;
+      }
+
+      if (payload.error) {
+        settled = true;
+        unsubscribe();
+        params.onError(payload.error);
+        params.onEnd();
+        return;
+      }
+
+      if (payload.audio !== undefined && payload.format !== undefined) {
+        params.onSegment({
+          segmentIndex: payload.segmentIndex,
+          segmentCount: payload.segmentCount,
+          audioBase64: payload.audio,
+          format: payload.format,
+        });
+      }
+
+      if (payload.isLast) {
+        settled = true;
+        unsubscribe();
+        params.onEnd();
+      }
+    });
+
+    try {
+      this.sendSessionMessageStrict({
+        type: "speech.tts.read_aloud.request",
+        requestId,
+        text: params.text,
+      });
+    } catch (error) {
+      settled = true;
+      unsubscribe();
+      params.onError({
+        code: "transport_unavailable",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      params.onEnd();
+    }
+
+    return {
+      requestId,
+      cancel: () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        unsubscribe();
+        this.sendSessionMessage({ type: "speech.tts.cancel_read_aloud.request", requestId });
+      },
+    };
   }
 
   // ============================================================================

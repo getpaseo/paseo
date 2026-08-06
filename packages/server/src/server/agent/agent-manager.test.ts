@@ -553,7 +553,12 @@ async function createControlledInterruptFixture(options: {
       })();
       await manager.waitForAgentRunStart(agent.id);
     },
-    cleanup: () => rmSync(workdir, { recursive: true, force: true }),
+    // Retry the teardown: AgentManager can flush an agent snapshot into
+    // `agents/` while this runs, and on Windows an open handle makes rmdir
+    // fail with ENOTEMPTY, which `force` does not cover. Same options as
+    // spawn.launch-regression.test.ts and run-git-command.windows-shell.test.ts.
+    cleanup: () =>
+      rmSync(workdir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
   };
 }
 
