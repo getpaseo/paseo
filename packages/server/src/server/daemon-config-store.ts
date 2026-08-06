@@ -31,6 +31,7 @@ interface SupportedMutableConfigPatch {
   skills?: MutableDaemonConfig["skills"];
   pluginsEnabled?: boolean;
   plugins?: MutableDaemonConfig["plugins"];
+  agentEnvironment?: MutableDaemonConfigPatch["agentEnvironment"];
 }
 
 interface LoggerLike {
@@ -276,6 +277,7 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
     ...(patch.agentProfiles !== undefined ? { agentProfiles: patch.agentProfiles } : {}),
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
     ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
+    ...(patch.agentEnvironment !== undefined ? { agentEnvironment: patch.agentEnvironment } : {}),
   };
 }
 
@@ -602,6 +604,7 @@ function mergeMutableAgentPatch(
     patch.providers === undefined &&
     patch.metadataGeneration === undefined &&
     patch.skills === undefined &&
+    patch.agentEnvironment === undefined &&
     removeProviders.length === 0
   ) {
     return persistedAgents;
@@ -632,6 +635,15 @@ function mergeMutableAgentPatch(
 
   if (patch.skills?.selection !== undefined) {
     next["skills"] = { selection: patch.skills.selection };
+  }
+
+  if (patch.agentEnvironment) {
+    next["environment"] = {
+      entries: patch.agentEnvironment.entries,
+      ...(patch.agentEnvironment.timeoutMs !== undefined
+        ? { timeoutMs: patch.agentEnvironment.timeoutMs }
+        : {}),
+    };
   }
 
   return Object.keys(next).length > 0 ? (next as PersistedConfig["agents"]) : undefined;

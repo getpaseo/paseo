@@ -18,6 +18,11 @@ import { Alert, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import {
+  AGENT_ENVIRONMENT_PRESETS,
+  findAgentEnvironmentPreset,
+  type AgentEnvironmentEntry,
+} from "@getpaseo/protocol/agent-environment";
+import {
   getTerminalProfileIcon,
   DEFAULT_TERMINAL_PROFILES,
 } from "@getpaseo/protocol/terminal-profiles";
@@ -33,6 +38,13 @@ import {
   ProfileDraft,
   TerminalProfileEditModal,
 } from "@/screens/settings/terminal-profile-edit-modal";
+import {
+  AgentEnvironmentEditModal,
+  EMPTY_AGENT_ENVIRONMENT_DRAFT,
+  type AgentEnvironmentCommandDraft,
+} from "@/screens/settings/agent-environment-edit-modal";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { getIsElectron } from "@/constants/platform";
 import {
   getDesktopDaemonStatus,
@@ -274,11 +286,14 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
   return (
     <View>
       {isConnected ? (
-        <SettingsSection title={t("settings.hostSections.agents")}>
-          <InjectPaseoToolsCard serverId={serverId} />
-          <BrowserToolsOptInCard serverId={serverId} />
-          <AppendSystemPromptCard serverId={serverId} />
-        </SettingsSection>
+        <>
+          <SettingsSection title={t("settings.hostSections.agents")}>
+            <InjectPaseoToolsCard serverId={serverId} />
+            <BrowserToolsOptInCard serverId={serverId} />
+            <AppendSystemPromptCard serverId={serverId} />
+          </SettingsSection>
+          <AgentEnvironmentSection serverId={serverId} />
+        </>
       ) : (
         <View style={[settingsStyles.card, styles.emptyCard]}>
           <Text style={styles.emptyText}>{t("settings.host.agents.unavailable")}</Text>
@@ -1763,6 +1778,386 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
       ) : null}
     </>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Agent Environment
+// ---------------------------------------------------------------------------
+
+function generateEnvironmentEntryId(): string {
+  return `env_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+}
+
+function formatEnvironmentCommand(argv: readonly string[]): string {
+  return argv.join(" ");
+}
+
+function parseEnvironmentCommand(raw: string): string[] {
+  return raw
+    .trim()
+    .split(/\s+/)
+    .filter((part) => part.length > 0);
+}
+
+interface AgentEnvironmentRowProps {
+  entry: AgentEnvironmentEntry;
+  isFirst: boolean;
+  isLast: boolean;
+  onEdit: (id: string) => void;
+  onRemove: (id: string) => void;
+  onMoveUp: (id: string) => void;
+  onMoveDown: (id: string) => void;
+}
+
+function AgentEnvironmentRow({
+  entry,
+  isFirst,
+  isLast,
+  onEdit,
+  onRemove,
+  onMoveUp,
+  onMoveDown,
+}: AgentEnvironmentRowProps) {
+  const { t } = useTranslation();
+
+  const handleEdit = useCallback(() => onEdit(entry.id), [onEdit, entry.id]);
+  const handleRemove = useCallback(() => onRemove(entry.id), [onRemove, entry.id]);
+  const handleMoveUp = useCallback(() => onMoveUp(entry.id), [onMoveUp, entry.id]);
+  const handleMoveDown = useCallback(() => onMoveDown(entry.id), [onMoveDown, entry.id]);
+
+  const preset = entry.kind === "preset" ? findAgentEnvironmentPreset(entry.preset) : undefined;
+  const title =
+    entry.kind === "preset"
+      ? (preset?.label ?? entry.preset)
+      : formatEnvironmentCommand(entry.command);
+  const hint =
+    entry.kind === "preset"
+      ? (preset?.description ?? t("settings.host.agentEnvironment.unknownPreset"))
+      : t("settings.host.agentEnvironment.rowFormat", { format: entry.format ?? "json" });
+
+  const rowStyle = useMemo(
+    () => [settingsStyles.row, !isFirst && settingsStyles.rowBorder, terminalProfileStyles.row],
+    [isFirst],
+  );
+
+  return (
+    <View style={rowStyle} testID={`agent-environment-row-${entry.id}`}>
+      <View style={terminalProfileStyles.iconWrapper}>
+        <ThemedProfileSquareTerminal size={ICON_SIZE.md} uniProps={mutedColorMapping} />
+      </View>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+          {title}
+        </Text>
+        <Text style={settingsStyles.rowHint} numberOfLines={1}>
+          {hint}
+        </Text>
+      </View>
+      <View style={terminalProfileStyles.rowActions}>
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={moveUpIcon}
+          onPress={handleMoveUp}
+          disabled={isFirst}
+          accessibilityLabel={t("settings.host.agentEnvironment.moveUp")}
+          testID={`agent-environment-move-up-${entry.id}`}
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={moveDownIcon}
+          onPress={handleMoveDown}
+          disabled={isLast}
+          accessibilityLabel={t("settings.host.agentEnvironment.moveDown")}
+          testID={`agent-environment-move-down-${entry.id}`}
+        />
+        {entry.kind === "command" ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            leftIcon={editProfileIcon}
+            onPress={handleEdit}
+            accessibilityLabel={t("settings.host.agentEnvironment.editCommand")}
+            testID={`agent-environment-edit-${entry.id}`}
+          />
+        ) : null}
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={removeProfileIcon}
+          onPress={handleRemove}
+          accessibilityLabel={t("settings.host.agentEnvironment.remove")}
+          testID={`agent-environment-remove-${entry.id}`}
+        />
+      </View>
+    </View>
+  );
+}
+
+function AgentEnvironmentSection({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const { config, patchConfig } = useDaemonConfig(serverId);
+  const [editingEntry, setEditingEntry] = useState<{
+    id: string;
+    draft: AgentEnvironmentCommandDraft;
+  } | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
+
+  const entries = useMemo(() => config?.agentEnvironment?.entries ?? null, [config]);
+
+  const saveEntries = useCallback(
+    async (next: AgentEnvironmentEntry[]) => {
+      await patchConfig({ agentEnvironment: { entries: next } });
+    },
+    [patchConfig],
+  );
+
+  const reportSaveError = useCallback(
+    (error: unknown) => {
+      Alert.alert(
+        t("common.errors.unableToSave"),
+        error instanceof Error ? error.message : String(error),
+      );
+    },
+    [t],
+  );
+
+  const handleAddPreset = useCallback(
+    (presetId: string) => {
+      const next: AgentEnvironmentEntry[] = [
+        ...(entries ?? []),
+        { kind: "preset", id: generateEnvironmentEntryId(), preset: presetId },
+      ];
+      saveEntries(next).catch(reportSaveError);
+    },
+    [entries, reportSaveError, saveEntries],
+  );
+
+  const handleAddCustomOpen = useCallback(() => setIsAdding(true), []);
+  const handleAddCustomClose = useCallback(() => setIsAdding(false), []);
+
+  const handleAddCustomSave = useCallback(
+    async (draft: AgentEnvironmentCommandDraft) => {
+      const next: AgentEnvironmentEntry[] = [
+        ...(entries ?? []),
+        {
+          kind: "command",
+          id: generateEnvironmentEntryId(),
+          command: parseEnvironmentCommand(draft.command),
+          format: draft.format,
+          ...(draft.timeoutMs ? { timeoutMs: Number(draft.timeoutMs) } : {}),
+        },
+      ];
+      await saveEntries(next);
+      setIsAdding(false);
+    },
+    [entries, saveEntries],
+  );
+
+  const handleEditOpen = useCallback(
+    (id: string) => {
+      const entry = entries?.find((item) => item.id === id);
+      if (!entry || entry.kind !== "command") return;
+      setEditingEntry({
+        id,
+        draft: {
+          command: formatEnvironmentCommand(entry.command),
+          format: entry.format ?? "json",
+          timeoutMs: entry.timeoutMs !== undefined ? String(entry.timeoutMs) : "",
+        },
+      });
+    },
+    [entries],
+  );
+
+  const handleEditClose = useCallback(() => setEditingEntry(null), []);
+
+  const handleEditSave = useCallback(
+    async (draft: AgentEnvironmentCommandDraft) => {
+      if (!editingEntry || !entries) return;
+      const next: AgentEnvironmentEntry[] = entries.map((entry) =>
+        entry.id === editingEntry.id && entry.kind === "command"
+          ? {
+              ...entry,
+              command: parseEnvironmentCommand(draft.command),
+              format: draft.format,
+              ...(draft.timeoutMs
+                ? { timeoutMs: Number(draft.timeoutMs) }
+                : { timeoutMs: undefined }),
+            }
+          : entry,
+      );
+      await saveEntries(next);
+      setEditingEntry(null);
+    },
+    [editingEntry, entries, saveEntries],
+  );
+
+  const handleRemove = useCallback(
+    (id: string) => {
+      const entry = entries?.find((item) => item.id === id);
+      if (!entry) return;
+      const name =
+        entry.kind === "preset"
+          ? (findAgentEnvironmentPreset(entry.preset)?.label ?? entry.preset)
+          : formatEnvironmentCommand(entry.command);
+      void confirmDialog({
+        title: t("settings.host.agentEnvironment.removeConfirmTitle"),
+        message: t("settings.host.agentEnvironment.removeConfirmMessage", { name }),
+        confirmLabel: t("settings.host.agentEnvironment.remove"),
+        cancelLabel: t("common.actions.cancel"),
+        destructive: true,
+      }).then(async (confirmed) => {
+        if (!confirmed || !entries) return;
+        try {
+          await saveEntries(entries.filter((item) => item.id !== id));
+        } catch (error) {
+          reportSaveError(error);
+        }
+        return;
+      });
+    },
+    [entries, reportSaveError, saveEntries, t],
+  );
+
+  const handleMoveUp = useCallback(
+    async (id: string) => {
+      if (!entries) return;
+      const index = entries.findIndex((item) => item.id === id);
+      if (index <= 0) return;
+      const next = [...entries];
+      const [item] = next.splice(index, 1);
+      next.splice(index - 1, 0, item);
+      try {
+        await saveEntries(next);
+      } catch (error) {
+        reportSaveError(error);
+      }
+    },
+    [entries, reportSaveError, saveEntries],
+  );
+
+  const handleMoveDown = useCallback(
+    async (id: string) => {
+      if (!entries) return;
+      const index = entries.findIndex((item) => item.id === id);
+      if (index < 0 || index >= entries.length - 1) return;
+      const next = [...entries];
+      const [item] = next.splice(index, 1);
+      next.splice(index + 1, 0, item);
+      try {
+        await saveEntries(next);
+      } catch (error) {
+        reportSaveError(error);
+      }
+    },
+    [entries, reportSaveError, saveEntries],
+  );
+
+  const addMenu = useMemo(
+    () => (
+      <DropdownMenu>
+        <DropdownTrigger
+          accessibilityRole="button"
+          accessibilityLabel={t("settings.host.agentEnvironment.add")}
+          disabled={!isConnected || !entries}
+          testID="agent-environment-add-button"
+        >
+          {addProfileIcon}
+        </DropdownTrigger>
+        <DropdownMenuContent side="bottom" align="end" width={280}>
+          {AGENT_ENVIRONMENT_PRESETS.map((preset) => (
+            <AgentEnvironmentPresetMenuItem
+              key={preset.id}
+              presetId={preset.id}
+              label={preset.label}
+              onSelect={handleAddPreset}
+            />
+          ))}
+          <DropdownMenuItem onSelect={handleAddCustomOpen}>
+            {t("settings.host.agentEnvironment.addCustom")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    ),
+    [entries, handleAddCustomOpen, handleAddPreset, isConnected, t],
+  );
+
+  if (!isConnected) {
+    return null;
+  }
+
+  return (
+    <>
+      <SettingsSection
+        title={t("settings.host.agentEnvironment.sectionTitle")}
+        trailing={addMenu}
+        testID="agent-environment-section"
+      >
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.host.agentEnvironment.sectionDescription")}
+        </Text>
+        <View style={settingsStyles.card} testID="agent-environment-card">
+          {entries && entries.length > 0 ? (
+            entries.map((entry, index) => (
+              <AgentEnvironmentRow
+                key={entry.id}
+                entry={entry}
+                isFirst={index === 0}
+                isLast={index === entries.length - 1}
+                onEdit={handleEditOpen}
+                onRemove={handleRemove}
+                onMoveUp={handleMoveUp}
+                onMoveDown={handleMoveDown}
+              />
+            ))
+          ) : (
+            <View style={terminalProfileStyles.emptyCard}>
+              <Text style={terminalProfileStyles.emptyText}>
+                {t("settings.host.agentEnvironment.emptyState")}
+              </Text>
+            </View>
+          )}
+        </View>
+      </SettingsSection>
+
+      <AgentEnvironmentEditModal
+        visible={isAdding}
+        title={t("settings.host.agentEnvironment.addCustomTitle")}
+        initialDraft={EMPTY_AGENT_ENVIRONMENT_DRAFT}
+        onClose={handleAddCustomClose}
+        onSave={handleAddCustomSave}
+        testID="agent-environment-edit-modal"
+      />
+
+      {editingEntry ? (
+        <AgentEnvironmentEditModal
+          visible
+          title={t("settings.host.agentEnvironment.editCommandTitle")}
+          initialDraft={editingEntry.draft}
+          onClose={handleEditClose}
+          onSave={handleEditSave}
+        />
+      ) : null}
+    </>
+  );
+}
+
+interface AgentEnvironmentPresetMenuItemProps {
+  presetId: string;
+  label: string;
+  onSelect: (presetId: string) => void;
+}
+
+function AgentEnvironmentPresetMenuItem({
+  presetId,
+  label,
+  onSelect,
+}: AgentEnvironmentPresetMenuItemProps) {
+  const handleSelect = useCallback(() => onSelect(presetId), [onSelect, presetId]);
+  return <DropdownMenuItem onSelect={handleSelect}>{label}</DropdownMenuItem>;
 }
 
 export function HostTerminalsPage({ serverId }: { serverId: string }) {

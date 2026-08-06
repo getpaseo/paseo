@@ -318,6 +318,7 @@
 - Add custom HTTP headers to direct host connections ([#2922](https://github.com/getpaseo/paseo/pull/2922))
 - Pick a local branch or its origin counterpart as the base for a new worktree ([#2328](https://github.com/getpaseo/paseo/pull/2328) by [@mcowger](https://github.com/mcowger))
 - Paste images from the clipboard on mobile ([#2793](https://github.com/getpaseo/paseo/pull/2793))
+- Run agents with their project's environment already applied ([#2954](https://github.com/getpaseo/paseo/pull/2954))
 
 ### Improved
 

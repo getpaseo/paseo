@@ -1477,6 +1477,43 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
 
 const logger = createTestLogger();
 
+test("launches agents with the resolved directory environment, behind the caller's env", async () => {
+  const launchContexts: Array<AgentLaunchContext | undefined> = [];
+  const client = new (class extends TestAgentClient {
+    override async createSession(
+      config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      launchContexts.push(launchContext);
+      return new TestAgentSession(config);
+    }
+  })();
+  const resolvedCwds: string[] = [];
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000700",
+    resolveLaunchEnv: async (cwd) => {
+      resolvedCwds.push(cwd);
+      return { PROJECT_TOOL: "/project/bin/tool", SHARED: "from-direnv", INHERITED: undefined };
+    },
+  });
+
+  await manager.createAgent({ provider: "codex", cwd: process.cwd() }, undefined, {
+    workspaceId: undefined,
+    env: { SHARED: "from-caller" },
+  });
+
+  expect(resolvedCwds).toEqual([process.cwd()]);
+  expect(launchContexts[0]?.env).toEqual({
+    PROJECT_TOOL: "/project/bin/tool",
+    SHARED: "from-caller",
+    INHERITED: undefined,
+    PASEO_AGENT_ID: "00000000-0000-4000-8000-000000000700",
+    PASEO_AGENT_CWD: process.cwd(),
+  });
+});
+
 test("does not register a session that finishes starting after shutdown begins", async () => {
   const client = new HeldAgentCreationClient();
   const manager = new AgentManager({

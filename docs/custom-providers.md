@@ -691,6 +691,8 @@ Every entry under `agents.providers` accepts these fields:
 | `enabled`          | `boolean`                 | No                | Set to `false` to hide the provider (default: `true`)              |
 | `order`            | `number`                  | No                | Sort order in the provider list                                    |
 
+`env` is applied under whatever `agents.environment` produces for the agent's directory — see [data-model.md](data-model.md#agent-environment-setup).
+
 ### Model definition
 
 Each entry in the `models` array:

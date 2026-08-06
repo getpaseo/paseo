@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 
 import { spawnProcess } from "../../../utils/spawn.js";
 import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
+import type { ProcessEnvRecord } from "../../paseo-env.js";
 import { JsonlFrameDecoder } from "./jsonl-frame-decoder.js";
 export { supportsJsonlRpcProtocolV2 } from "./jsonl-frame-decoder.js";
 
@@ -22,7 +23,7 @@ export interface JsonlRpcLaunch {
   command: string;
   args: string[];
   cwd: string;
-  env?: Record<string, string>;
+  env?: ProcessEnvRecord;
 }
 
 interface JsonlRpcResponse {

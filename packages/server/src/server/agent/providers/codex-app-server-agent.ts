@@ -109,6 +109,7 @@ import {
   CodexProviderOptionsSchema,
   type CodexProviderOptions,
 } from "./codex/options.js";
+import type { ProcessEnvRecord } from "../../paseo-env.js";
 
 function assertChildWithPipes(
   child: ChildProcess,
@@ -3191,7 +3192,7 @@ function toCodexTextInput(text: string): Extract<CodexAppServerUserInput, { type
 
 export function buildCodexAppServerEnv(
   runtimeSettings?: ProviderRuntimeSettings,
-  launchEnv?: Record<string, string>,
+  launchEnv?: ProcessEnvRecord,
 ): NodeJS.ProcessEnv {
   return createProviderEnv({
     runtimeSettings,
@@ -6932,7 +6933,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   private async spawnAppServer(
-    launchEnv?: Record<string, string>,
+    launchEnv?: ProcessEnvRecord,
     options?: { goalsEnabled?: boolean; agentId?: string },
   ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);

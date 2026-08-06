@@ -6,7 +6,7 @@ import {
   createProviderEnvSpec,
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
-import { buildSelfNodeCommand } from "../../../paseo-env.js";
+import { type ProcessEnvRecord, buildSelfNodeCommand } from "../../../paseo-env.js";
 import { spawnProcess } from "../../../../utils/spawn.js";
 
 // Keep the raw SDK query import in this module only. Claude process launch behavior
@@ -19,7 +19,7 @@ export type ClaudeQueryFactory = (input: ClaudeQueryInput) => Query;
 
 export interface ClaudeQueryContext {
   runtimeSettings?: ProviderRuntimeSettings;
-  launchEnv?: Record<string, string>;
+  launchEnv?: ProcessEnvRecord;
   queryFactory?: ClaudeQueryFactory;
   /** Called with the spawned child process so the caller can tree-kill it on close. */
   onChildProcess?: (child: ChildProcess) => void;
