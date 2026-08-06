@@ -1582,6 +1582,7 @@ export const zhCN: TranslationResources = {
     loadingRegistry: "正在加载插件仓库…",
     emptyInstalled: "尚未安装插件。",
     emptyRegistry: "仓库中还没有插件。",
+    refreshRegistry: "刷新",
     panelLoading: "正在加载面板…",
     unknownAuthor: "作者未知",
     versionLine: "v{{version}} · {{author}}",

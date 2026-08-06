@@ -1602,6 +1602,7 @@ export const ar: TranslationResources = {
     loadingRegistry: "جارٍ تحميل سجل الإضافات…",
     emptyInstalled: "لا توجد إضافات مثبتة.",
     emptyRegistry: "لا توجد إضافات في السجل بعد.",
+    refreshRegistry: "تحديث",
     panelLoading: "جارٍ تحميل اللوحة…",
     unknownAuthor: "مؤلف غير معروف",
     versionLine: "الإصدار {{version}} · {{author}}",

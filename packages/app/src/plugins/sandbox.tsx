@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
@@ -110,30 +111,36 @@ function PluginSandboxView({
     [],
   );
 
-  if (handshake === "timeout") {
-    return <PluginReadyTimeout onRetry={handleRetry} testID={testID} />;
-  }
-
+  // Hidden rather than unmounted, for the same reason the web sandbox keeps its
+  // container: unmounting destroys the guest and every byte of load progress
+  // with it. A plugin that is merely slow — a large inline bundle on a cold
+  // WebView, which is a low-end Android away — would then time out, be killed,
+  // be retried from zero, and time out again, with no state it can ever finish
+  // in. Kept alive, a late `ready` dismisses the card on its own.
   return (
-    <WebView
-      key={attempt}
-      ref={webViewRef}
-      testID={testID}
-      style={styles.webView}
-      source={source}
-      originWhitelist={ORIGIN_WHITELIST}
-      onShouldStartLoadWithRequest={allowPluginDocumentOnly}
-      onMessage={handleMessage}
-      javaScriptEnabled
-      incognito
-      domStorageEnabled={false}
-      allowFileAccess={false}
-      allowsLinkPreview={false}
-      cacheEnabled={false}
-      mediaPlaybackRequiresUserAction
-      setSupportMultipleWindows={false}
-      thirdPartyCookiesEnabled={false}
-    />
+    <View style={styles.container} testID={testID}>
+      <View style={handshake === "timeout" ? styles.hidden : styles.fill}>
+        <WebView
+          key={attempt}
+          ref={webViewRef}
+          style={styles.webView}
+          source={source}
+          originWhitelist={ORIGIN_WHITELIST}
+          onShouldStartLoadWithRequest={allowPluginDocumentOnly}
+          onMessage={handleMessage}
+          javaScriptEnabled
+          incognito
+          domStorageEnabled={false}
+          allowFileAccess={false}
+          allowsLinkPreview={false}
+          cacheEnabled={false}
+          mediaPlaybackRequiresUserAction
+          setSupportMultipleWindows={false}
+          thirdPartyCookiesEnabled={false}
+        />
+      </View>
+      {handshake === "timeout" ? <PluginReadyTimeout onRetry={handleRetry} /> : null}
+    </View>
   );
 }
 
@@ -147,6 +154,17 @@ export const PluginSandbox = withUnistyles(PluginSandboxView, (theme) => ({
 })) as (props: PluginSandboxProps) => React.ReactElement;
 
 const styles = StyleSheet.create((theme) => ({
+  container: {
+    flex: 1,
+    minHeight: 0,
+  },
+  fill: {
+    flex: 1,
+    minHeight: 0,
+  },
+  hidden: {
+    display: "none",
+  },
   webView: {
     flex: 1,
     minHeight: 0,

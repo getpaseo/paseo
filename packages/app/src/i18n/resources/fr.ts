@@ -1649,6 +1649,7 @@ export const fr: TranslationResources = {
     loadingRegistry: "Chargement du registre des extensions…",
     emptyInstalled: "Aucune extension installée.",
     emptyRegistry: "Le registre ne contient pas encore d'extensions.",
+    refreshRegistry: "Actualiser",
     panelLoading: "Chargement du panneau…",
     unknownAuthor: "Auteur inconnu",
     versionLine: "v{{version}} · {{author}}",

@@ -1631,6 +1631,7 @@ export const ptBR: TranslationResources = {
     loadingRegistry: "Carregando o registro de plugins…",
     emptyInstalled: "Nenhum plugin instalado.",
     emptyRegistry: "O registro ainda não tem plugins.",
+    refreshRegistry: "Atualizar",
     panelLoading: "Carregando painel…",
     unknownAuthor: "Autor desconhecido",
     versionLine: "v{{version}} · {{author}}",

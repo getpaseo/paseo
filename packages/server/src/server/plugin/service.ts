@@ -80,7 +80,7 @@ export class PluginService {
       source,
     });
     this.logger.info({ pluginId, files: download.files.length }, "Installed plugin");
-    return this.emitChanged(pluginId);
+    return this.emitChanged(pluginId, "install");
   }
 
   async uninstall(pluginId: string): Promise<void> {
@@ -91,7 +91,7 @@ export class PluginService {
 
   async setEnabled(pluginId: string, enabled: boolean): Promise<InstalledPlugin> {
     await this.store.setEnabled(pluginId, enabled);
-    return this.emitChanged(pluginId);
+    return this.emitChanged(pluginId, enabled ? "enable" : "disable");
   }
 
   onChanged(listener: PluginsChangedListener): () => void {
@@ -106,11 +106,14 @@ export class PluginService {
     this.registry.clearCache();
   }
 
-  private async emitChanged(pluginId: string): Promise<InstalledPlugin> {
+  private async emitChanged(pluginId: string, action: string): Promise<InstalledPlugin> {
     const plugins = await this.notify();
     const plugin = plugins.find((candidate) => candidate.manifest.id === pluginId);
     if (!plugin) {
-      throw new PluginNotInstalledError(pluginId);
+      throw new PluginNotInstalledError(
+        pluginId,
+        `Plugin "${pluginId}" was removed while the ${action} was completing`,
+      );
     }
     return plugin;
   }

@@ -1636,6 +1636,7 @@ export const ru: TranslationResources = {
     loadingRegistry: "Загрузка реестра плагинов…",
     emptyInstalled: "Плагины не установлены.",
     emptyRegistry: "В реестре пока нет плагинов.",
+    refreshRegistry: "Обновить",
     panelLoading: "Загрузка панели…",
     unknownAuthor: "Автор неизвестен",
     versionLine: "v{{version}} · {{author}}",

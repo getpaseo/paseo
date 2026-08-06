@@ -124,13 +124,27 @@ export function pluginFilePreviewConflicts(
     }
   }
 
-  return [...claimsByExtension.entries()]
-    .filter(([, claims]) => claims.size > 1)
-    .map(([extension, claims]) => {
+  // Widened by the same suffix rule the pane resolves with: a file is matched
+  // when its path ends with a declared extension, so a plugin claiming `.csv`
+  // also claims every `report.data.csv`. Keying the report on the literal
+  // strings would call `.csv` and `.data.csv` unrelated and leave the losing
+  // plugin silently overridden with nothing in the conflicts list.
+  return [...claimsByExtension.keys()]
+    .map((extension) => {
+      const claims = new Set<string>();
+      for (const [other, pluginIds] of claimsByExtension) {
+        if (!extension.endsWith(other)) {
+          continue;
+        }
+        for (const pluginId of pluginIds) {
+          claims.add(pluginId);
+        }
+      }
       const [winnerPluginId, ...losingPluginIds] = [...claims].sort((left, right) =>
         left.localeCompare(right),
       );
       return { extension, winnerPluginId: winnerPluginId ?? "", losingPluginIds };
     })
+    .filter((conflict) => conflict.losingPluginIds.length > 0)
     .sort((left, right) => left.extension.localeCompare(right.extension));
 }

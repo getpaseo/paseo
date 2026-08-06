@@ -15,6 +15,8 @@ import { PaseoServicePortAllocationSchema } from "@getpaseo/protocol/paseo-confi
 export const LogLevelSchema = z.enum(["trace", "debug", "info", "warn", "error", "fatal"]);
 export const LogFormatSchema = z.enum(["pretty", "json"]);
 
+const ALLOWED_REGISTRY_PROTOCOLS = new Set(["https:", "file:"]);
+
 const LogConfigSchema = z
   .object({
     // Legacy global log settings (kept for backwards compatibility).
@@ -294,7 +296,11 @@ export const PersistedConfigSchema = z
             registryUrl: z
               .url()
               .refine(
-                (value) => value.startsWith("https://") || value.startsWith("file://"),
+                // Read off the parsed URL, the same way `registry-client.ts`
+                // checks each file's scheme. A string prefix test would reject
+                // `HTTPS://host/i.json` and `file:/tmp/i.json`, both of which
+                // `z.url()` accepts and `new URL` normalises.
+                (value) => ALLOWED_REGISTRY_PROTOCOLS.has(new URL(value).protocol),
                 "must be an https: or file: URL",
               )
               .optional(),

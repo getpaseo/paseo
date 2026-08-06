@@ -1618,6 +1618,7 @@ export const ja: TranslationResources = {
     loadingRegistry: "プラグインレジストリを読み込んでいます…",
     emptyInstalled: "インストール済みのプラグインはありません。",
     emptyRegistry: "レジストリにはまだプラグインがありません。",
+    refreshRegistry: "更新",
     panelLoading: "パネルを読み込んでいます…",
     unknownAuthor: "作者不明",
     versionLine: "v{{version}} · {{author}}",

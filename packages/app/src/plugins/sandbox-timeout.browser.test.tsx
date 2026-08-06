@@ -8,15 +8,6 @@
  * In a real browser rather than a DOM stub, because the thing under test is
  * whether a real `<iframe>` ends up in a real container.
  */
-const testGlobals = globalThis as typeof globalThis & {
-  __DEV__?: boolean;
-  IS_REACT_ACT_ENVIRONMENT?: boolean;
-};
-testGlobals.__DEV__ = false;
-testGlobals.IS_REACT_ACT_ENVIRONMENT = true;
-
-// Imported by name because the browser project transforms JSX with the classic
-// runtime, so `React` has to be in scope here.
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -56,6 +47,11 @@ let host: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  // Set here rather than at module scope: imports hoist, so an assignment above
+  // them runs after every module has already evaluated.
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
   expect(i18n.isInitialized).toBe(true);
   vi.useFakeTimers();
   host = document.createElement("div");

@@ -55,7 +55,14 @@ export function usePlugins(serverId: string | null): UsePluginsResult {
   return {
     plugins: query.data ?? EMPTY_PLUGINS,
     support,
-    isLoading: query.isLoading,
+    // `unknown` counts as loading: the query is disabled until `server_info`
+    // lands, so react-query reports pending-but-idle and `isLoading` is false.
+    // A caller that waits on this — the file pane does, to avoid mounting the
+    // built-in renderer over a plugin that is about to claim the file — would
+    // otherwise sail through that window and render code, then swap to the
+    // plugin a moment later. `unsupported` stays non-loading so an old daemon
+    // renders immediately instead of waiting for a list that never comes.
+    isLoading: query.isLoading || support === "unknown",
     error: query.error ?? null,
   };
 }

@@ -32,8 +32,16 @@ const PluginStateEntrySchema = PluginStateFileSchema.shape.plugins.element;
 
 /** The requested plugin has no directory under `$PASEO_HOME/plugins/`. */
 export class PluginNotInstalledError extends Error {
-  constructor(public readonly pluginId: string) {
-    super(`Plugin "${pluginId}" is not installed`);
+  /**
+   * `reason` covers the case where the operation itself succeeded and the
+   * plugin was gone by the time it was listed back — a concurrent uninstall.
+   * "is not installed" reads as if the install failed, which it did not.
+   */
+  constructor(
+    public readonly pluginId: string,
+    reason?: string,
+  ) {
+    super(reason ?? `Plugin "${pluginId}" is not installed`);
     this.name = "PluginNotInstalledError";
   }
 }

@@ -421,20 +421,38 @@ function BrowsePluginList({
   }
 
   return (
-    <View style={settingsStyles.card}>
-      {registry.entries.map((entry, index) => (
-        <RegistryPluginRow
-          key={entry.manifest.id}
-          entry={entry}
-          withBorder={index > 0}
-          installed={installedIds.has(entry.manifest.id)}
-          pending={pendingByPlugin[entry.manifest.id] === "install"}
-          error={errorByPlugin[entry.manifest.id] ?? null}
-          onInstall={onInstall}
-          onDismissError={onDismissError}
-        />
-      ))}
-    </View>
+    <>
+      {/*
+        The daemon caches the index for five minutes, so without this a plugin
+        published a minute ago is invisible with nothing the user can do about
+        it. `refetchOnMount` re-asks the daemon and gets the same cached answer.
+      */}
+      <View style={styles.registryToolbar}>
+        <Button
+          variant="outline"
+          size="sm"
+          onPress={registry.refresh}
+          loading={registry.isFetching}
+          testID="plugins-registry-refresh"
+        >
+          {t("plugins.refreshRegistry")}
+        </Button>
+      </View>
+      <View style={settingsStyles.card}>
+        {registry.entries.map((entry, index) => (
+          <RegistryPluginRow
+            key={entry.manifest.id}
+            entry={entry}
+            withBorder={index > 0}
+            installed={installedIds.has(entry.manifest.id)}
+            pending={pendingByPlugin[entry.manifest.id] === "install"}
+            error={errorByPlugin[entry.manifest.id] ?? null}
+            onInstall={onInstall}
+            onDismissError={onDismissError}
+          />
+        ))}
+      </View>
+    </>
   );
 }
 
@@ -545,5 +563,9 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     paddingVertical: theme.spacing[2],
+  },
+  registryToolbar: {
+    alignItems: "flex-end",
+    paddingBottom: theme.spacing[2],
   },
 }));

@@ -387,6 +387,25 @@ describe("PluginStore", () => {
     expect(await blockedStore.list()).toEqual([]);
   });
 
+  // The concurrent case is the one the guard is actually for: both callers await
+  // the same rejection, and clearing unconditionally let the second discard a
+  // retry the first had already started.
+  test("two callers failing on the same startup scan both recover", async () => {
+    const blocked = join(tempDir, "blocked");
+    await writeFile(blocked, "not a directory");
+    const blockedStore = new PluginStore({
+      dir: join(blocked, "plugins"),
+      daemonVersion: DAEMON_VERSION,
+    });
+
+    const results = await Promise.allSettled([blockedStore.list(), blockedStore.list()]);
+    expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+
+    await rm(blocked);
+
+    expect(await Promise.all([blockedStore.list(), blockedStore.list()])).toEqual([[], []]);
+  });
+
   // `list()` reconciles installed.json against what is on disk. Reconciling
   // against a directory listing it took before an uninstall ran would write the
   // removed plugin straight back into the state file.

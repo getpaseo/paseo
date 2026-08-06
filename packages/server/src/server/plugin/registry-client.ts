@@ -12,8 +12,10 @@ import {
 export const PLUGIN_INSTALL_MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 /**
  * Hard ceiling on any single body the daemon reads from the registry. The
- * registry operator is a trust boundary (SECURITY.md), so a response is aborted
- * mid-stream rather than buffered and measured afterwards.
+ * registry operator is a trust boundary (SECURITY.md), so an HTTP response is
+ * aborted mid-stream rather than buffered and measured afterwards. The `file://`
+ * path reads whole and checks after, which is the developer case and a local
+ * file the daemon user already owns.
  */
 export const PLUGIN_REGISTRY_MAX_RESPONSE_BYTES = PLUGIN_INSTALL_MAX_TOTAL_BYTES;
 const DEFAULT_INDEX_CACHE_TTL_MS = 5 * 60_000;

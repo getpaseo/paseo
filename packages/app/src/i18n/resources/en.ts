@@ -1613,6 +1613,7 @@ export const en = {
     loadingRegistry: "Loading the plugin registry…",
     emptyInstalled: "No plugins installed.",
     emptyRegistry: "The registry has no plugins yet.",
+    refreshRegistry: "Refresh",
     panelLoading: "Loading panel…",
     unknownAuthor: "Unknown author",
     versionLine: "v{{version}} · {{author}}",

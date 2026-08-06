@@ -1645,6 +1645,7 @@ export const es: TranslationResources = {
     loadingRegistry: "Cargando el registro de complementos…",
     emptyInstalled: "No hay complementos instalados.",
     emptyRegistry: "El registro aún no tiene complementos.",
+    refreshRegistry: "Actualizar",
     panelLoading: "Cargando panel…",
     unknownAuthor: "Autor desconocido",
     versionLine: "v{{version}} · {{author}}",
