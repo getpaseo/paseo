@@ -431,6 +431,56 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     ).toEqual([]);
   });
 
+  test("keeps the terminal notification when the workflow summary cannot be restored", async () => {
+    writeParentSession([
+      parentEntry([
+        {
+          type: "tool_use",
+          id: WORKFLOW_TOOL_USE_ID,
+          name: "Workflow",
+          input: { scriptPath: "/tmp/one-child.js", args: "{}" },
+        },
+      ]),
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: WORKFLOW_TOOL_USE_ID,
+              content: `Workflow launched in background.\nRun ID: ${WORKFLOW_RUN_ID}`,
+            },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "system",
+        subtype: "task_notification",
+        uuid: "workflow-notification",
+        task_id: WORKFLOW_RUN_ID,
+        tool_use_id: WORKFLOW_TOOL_USE_ID,
+        status: "completed",
+        summary: "Workflow completed",
+        output_file: "/tmp/workflow.output",
+      }),
+    ]);
+
+    const replayed = await replayEvents();
+    expect(replayed.filter((event) => event.type === "provider_subagent")).toEqual([]);
+    expect(
+      replayed
+        .filter((event) => event.type === "timeline")
+        .map((event) => event.item)
+        .filter((item) => item.type === "tool_call" && item.name === "task_notification"),
+    ).toEqual([
+      expect.objectContaining({
+        callId: "task_notification_workflow-notification",
+        status: "completed",
+      }),
+    ]);
+  });
+
   test("does not replay a subagent whose toolUseId names no Task call in this transcript", async () => {
     // A grandchild recorded before spawnDepth existed: the Task call it names was made inside a
     // sibling's session, so no tool_result for it can ever reach this parent.

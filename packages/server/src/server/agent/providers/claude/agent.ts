@@ -4539,26 +4539,27 @@ class ClaudeAgentSession implements AgentSession {
         return;
       }
       const content = fs.readFileSync(historyPath, "utf8");
-      this.ingestPersistedHistory(content);
-      this.ingestPersistedSidechains(content, readClaudeSidechainHistory(historyPath));
+      const restoredProviderSubagentIds = this.ingestPersistedSidechains(
+        content,
+        readClaudeSidechainHistory(historyPath),
+      );
+      this.ingestPersistedHistory(content, restoredProviderSubagentIds);
     } catch {
       // ignore history load failures
     }
   }
 
-  private ingestPersistedHistory(content: string): void {
+  private ingestPersistedHistory(
+    content: string,
+    restoredProviderSubagentIds: ReadonlySet<string>,
+  ): void {
     if (!content) {
       return;
     }
 
-    const parentEntries = parseClaudeHistoryRecords(content).filter(
-      (entry) => entry.isSidechain !== true,
-    );
-    const providerSubagentToolCallIds =
-      readClaudeHistoricalProviderSubagentToolCallIds(parentEntries);
     const timeline: PersistedTimelineEntry[] = [];
     for (const line of content.split(/\r?\n/)) {
-      this.ingestPersistedHistoryLine(line, timeline, providerSubagentToolCallIds);
+      this.ingestPersistedHistoryLine(line, timeline, restoredProviderSubagentIds);
     }
 
     if (timeline.length > 0) {
@@ -4570,7 +4571,7 @@ class ClaudeAgentSession implements AgentSession {
   private ingestPersistedSidechains(
     parentContent: string,
     sidechains: ClaudeSidechainHistory,
-  ): void {
+  ): Set<string> {
     const parentEntries = parseClaudeHistoryRecords(parentContent).filter(
       (entry) => entry.isSidechain !== true,
     );
@@ -4606,7 +4607,12 @@ class ClaudeAgentSession implements AgentSession {
         convertEntry: (entry) => this.convertHistoryEntry(entry as ClaudeHistoryEntry),
       }),
     ];
-    if (observations.length === 0) return;
+    const restoredProviderSubagentIds = new Set(
+      observations
+        .filter((observation) => observation.kind === "declared")
+        .map((observation) => observation.id),
+    );
+    if (observations.length === 0) return restoredProviderSubagentIds;
 
     this.persistedProviderSubagentEvents.push(
       ...foldSubagentObservations(observations).map(
@@ -4618,12 +4624,13 @@ class ClaudeAgentSession implements AgentSession {
       ),
     );
     this.historyPending = true;
+    return restoredProviderSubagentIds;
   }
 
   private ingestPersistedHistoryLine(
     line: string,
     timeline: PersistedTimelineEntry[],
-    providerSubagentToolCallIds: ReadonlySet<string>,
+    restoredProviderSubagentIds: ReadonlySet<string>,
   ): void {
     const trimmed = line.trim();
     if (!trimmed) {
@@ -4649,7 +4656,7 @@ class ClaudeAgentSession implements AgentSession {
       entry.type === "system" &&
       entry.subtype === "task_notification" &&
       typeof entry.tool_use_id === "string" &&
-      providerSubagentToolCallIds.has(entry.tool_use_id)
+      restoredProviderSubagentIds.has(entry.tool_use_id)
     ) {
       return;
     }
@@ -5560,28 +5567,6 @@ function readClaudeHistoricalSubagentToolCalls(
     }
   }
   return toolCalls;
-}
-
-function readClaudeHistoricalProviderSubagentToolCallIds(
-  entries: ClaudeHistoryEntry[],
-): Set<string> {
-  const toolCallIds = new Set<string>();
-  for (const entry of entries) {
-    const content = toObjectRecord(entry.message)?.content;
-    if (!Array.isArray(content)) continue;
-    for (const value of content) {
-      const block = toObjectRecord(value);
-      if (
-        block?.type === "tool_use" &&
-        typeof block.name === "string" &&
-        isClaudeSubagentToolName(block.name) &&
-        typeof block.id === "string"
-      ) {
-        toolCallIds.add(block.id);
-      }
-    }
-  }
-  return toolCallIds;
 }
 
 function readClaudeHistoricalSubagentToolResults(
