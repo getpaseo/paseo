@@ -165,6 +165,15 @@ describe("background Claude subagents", () => {
           task_id: "wf-1",
           patch: { status: "completed" },
         },
+        {
+          type: "system",
+          subtype: "task_notification",
+          task_id: "wf-1",
+          tool_use_id: "toolu_workflow",
+          status: "completed",
+          summary: "Workflow completed",
+          output_file: "/tmp/workflow.output",
+        },
         { type: "result", subtype: "success", usage: {}, total_cost_usd: 0 },
       ]),
     );
@@ -210,6 +219,12 @@ describe("background Claude subagents", () => {
       callId: "toolu_workflow",
     });
     expect(parentCards[0]).not.toMatchObject({ detail: { type: "sub_agent" } });
+    expect(
+      events
+        .filter((event) => event.type === "timeline")
+        .map((event) => event.item)
+        .find((item) => item.type === "tool_call" && item.name === "task_notification"),
+    ).toBeUndefined();
   });
 
   test("labels the parent's Task card with the type and task", async () => {

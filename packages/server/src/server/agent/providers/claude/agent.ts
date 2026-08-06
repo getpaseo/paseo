@@ -1822,7 +1822,7 @@ function readLegacyResultUsageTokens(usage: unknown): number | undefined {
 }
 
 function isClaudeSubagentToolName(name: string | undefined): boolean {
-  return name === "Task" || name === "Agent";
+  return name === "Task" || name === "Agent" || name === "Workflow";
 }
 
 function readClaudeParentToolUseId(message: SDKMessage): string | null {
