@@ -216,6 +216,33 @@ describe("createTerminal", () => {
     expect(resolveExecutable).not.toHaveBeenCalled();
   });
 
+  it.runIf(isPlatform("linux", "darwin"))(
+    "passes an unescaped multi-line prompt through byte-for-byte on POSIX",
+    async () => {
+      // node-pty spawns directly via execve on POSIX (no shell), so a prompt
+      // substituted into `args` is never re-parsed by anything -- it must
+      // reach the target process exactly as typed, including raw newlines,
+      // quotes, and shell metacharacters that would be dangerous under a
+      // shell but are inert here.
+      const nastyPrompt =
+        'fix the bug\nwhere `git commit -m "wip"` fails\nif $HOME contains a & or | char';
+      const resolveExecutable = vi.fn(async () => "/usr/local/bin/claude");
+
+      const resolvedLinux = await resolveTerminalSpawnCommand("claude", [nastyPrompt], {
+        platform: "linux",
+        resolveExecutable,
+      });
+      const resolvedDarwin = await resolveTerminalSpawnCommand("claude", [nastyPrompt], {
+        platform: "darwin",
+        resolveExecutable,
+      });
+
+      expect(resolvedLinux).toEqual({ command: "claude", args: [nastyPrompt] });
+      expect(resolvedDarwin).toEqual({ command: "claude", args: [nastyPrompt] });
+      expect(resolveExecutable).not.toHaveBeenCalled();
+    },
+  );
+
   it("keeps the original command when it cannot be resolved on Windows", async () => {
     const resolved = await resolveTerminalSpawnCommand("claude", [], {
       platform: "win32",
@@ -233,9 +260,70 @@ describe("createTerminal", () => {
       resolveExecutable: async () => "C:\\npm\\claude.cmd",
     });
 
+    // The `.cmd` branch now hands node-pty a single pre-escaped command line
+    // (string) instead of an argv array, so that node-pty's own
+    // MSVCRT-style array quoting never runs a second time over an already
+    // cmd.exe-escaped argument. See escapeCmdExeArgument in terminal.ts.
     expect(resolved).toEqual({
       command: "C:\\Windows\\System32\\cmd.exe",
-      args: ["/c", "C:\\npm\\claude.cmd", "--foo"],
+      args: '/d /s /c "C:\\npm\\claude.cmd ^"--foo^""',
+    });
+  });
+
+  describe(".cmd shim argument escaping on Windows", () => {
+    async function resolveCmdShimArgs(promptArg: string): Promise<string> {
+      const resolved = await resolveTerminalSpawnCommand("claude", [promptArg], {
+        platform: "win32",
+        env: { ComSpec: "C:\\Windows\\System32\\cmd.exe" },
+        resolveExecutable: async () => "C:\\npm\\claude.cmd",
+      });
+      expect(typeof resolved.args).toBe("string");
+      return resolved.args as string;
+    }
+
+    // Each expected string is the exact cmd.exe command line the escaping
+    // must produce so a real `cmd.exe /c` invocation reconstructs the
+    // original prompt as a single argv element for the target process
+    // (modulo the documented newline-to-space normalization below).
+    it("neutralizes cmd.exe's own metacharacters instead of letting them execute", async () => {
+      expect(await resolveCmdShimArgs("a & b | c")).toBe(
+        '/d /s /c "C:\\npm\\claude.cmd ^"a^ ^&^ b^ ^|^ c^""',
+      );
+      expect(await resolveCmdShimArgs("100% done %PATH%")).toBe(
+        '/d /s /c "C:\\npm\\claude.cmd ^"100^%^ done^ ^%PATH^%^""',
+      );
+      expect(await resolveCmdShimArgs("a^b")).toBe('/d /s /c "C:\\npm\\claude.cmd ^"a^^b^""');
+    });
+
+    it("escapes embedded double quotes and backslash runs preceding them", async () => {
+      expect(await resolveCmdShimArgs('say "hello" now')).toBe(
+        '/d /s /c "C:\\npm\\claude.cmd ^"say^ \\^"hello\\^"^ now^""',
+      );
+      expect(await resolveCmdShimArgs('C:\\path\\ "quoted"')).toBe(
+        '/d /s /c "C:\\npm\\claude.cmd ^"C:\\path\\^ \\^"quoted\\^"^""',
+      );
+    });
+
+    // cmd.exe has no way to escape a literal CR/LF inside one command line
+    // -- its parser treats newlines as command separators regardless of
+    // quoting -- so a raw newline is normalized to a space before escaping.
+    // This is a deliberate choice, not an oversight: it avoids the prompt
+    // ever splitting into a second, attacker-controlled cmd.exe command, at
+    // the cost of losing the original line breaks.
+    it("normalizes embedded newlines to spaces instead of letting them split the command", async () => {
+      expect(await resolveCmdShimArgs("line one\nline two")).toBe(
+        '/d /s /c "C:\\npm\\claude.cmd ^"line^ one^ line^ two^""',
+      );
+      expect(await resolveCmdShimArgs("line one\r\nline two")).toBe(
+        '/d /s /c "C:\\npm\\claude.cmd ^"line^ one^ line^ two^""',
+      );
+    });
+
+    it("handles a multi-line prompt combining quotes, backslashes, and every cmd.exe metacharacter", async () => {
+      const prompt = 'multi\nline "quoted \\path\\" & piped | percent %VAR% ^caret';
+      expect(await resolveCmdShimArgs(prompt)).toBe(
+        '/d /s /c "C:\\npm\\claude.cmd ^"multi^ line^ \\^"quoted^ \\path\\\\\\^"^ ^&^ piped^ ^|^ percent^ ^%VAR^%^ ^^caret^""',
+      );
     });
   });
 
@@ -247,6 +335,35 @@ describe("createTerminal", () => {
 
     expect(resolved).toEqual({ command: "C:\\tools\\claude.exe", args: ["--foo"] });
   });
+
+  it.runIf(isPlatform("linux", "darwin"))(
+    "spawns without shell interpretation on POSIX, so argv reaches the child byte-for-byte",
+    async () => {
+      // The composer substitutes {{{prompt}}} directly into `args` before this
+      // ever reaches the daemon, so a raw multi-line prompt containing quotes,
+      // backslashes, and shell metacharacters must arrive at the spawned
+      // process exactly as typed. node-pty's POSIX backend spawns via execve
+      // with no shell, so per-arg escaping is unnecessary there -- this test
+      // proves that end-to-end through createTerminal (not just at the
+      // resolveTerminalSpawnCommand unit level) by reading the argv the
+      // spawned process actually received back out of the pty.
+      const nastyPrompt =
+        'line one\nline two: git commit -m "wip" && echo $HOME | grep ^x > out.txt';
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: realpathSync(tmpdir()),
+          cols: 500,
+          command: process.execPath,
+          args: ["-e", "process.stdout.write(JSON.stringify(process.argv.slice(1)))", nastyPrompt],
+        }),
+      );
+
+      const state = await waitForState(session, (s) => getRowText(s, 0).startsWith("["));
+
+      expect(JSON.parse(getRowText(state, 0))).toEqual([nastyPrompt]);
+    },
+  );
 
   it("creates a terminal session with an id, name, and cwd", async () => {
     const session = trackSession(
