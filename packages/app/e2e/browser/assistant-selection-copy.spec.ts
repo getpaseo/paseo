@@ -199,12 +199,14 @@ test("copying an assistant selection preserves Markdown structure and links", as
 
     const clipboard = await readRichClipboard(page);
     expect(clipboard.plainText).toBe(EXPECTED_WHOLE_SELECTION_MARKDOWN);
-    expect(clipboard.html).toContain("<ul>");
+    expect(clipboard.html).not.toContain("<ul>");
+    expect(clipboard.html).not.toContain("<li>");
+    expect(clipboard.html).toContain("<div>- ");
     expect(clipboard.html).toContain(
       '<strong><a href="https://example.com/issues/1">First issue</a></strong>',
     );
     expect(clipboard.html).toContain("<code>apply_patch</code>");
-    expect(clipboard.html).toContain('<ol start="5">');
+    expect(clipboard.html).toContain("<div>5. Fifth item</div>");
     expect(clipboard.html).toContain("A hard break<br>");
     expect(clipboard.html).toContain(
       '<a href="http://www.example.com/">www.example.com</a> stays plain Markdown text.',
@@ -238,9 +240,27 @@ test("copying an assistant selection preserves Markdown structure and links", as
     await copySelection(page);
 
     const partialClipboard = await readRichClipboard(page);
-    expect(partialClipboard.plainText).toBe("- **[First](https://example.com/issues/1)**");
-    expect(partialClipboard.html).toContain(
-      '<li><strong><a href="https://example.com/issues/1">First</a></strong></li>',
+    expect(partialClipboard.plainText).toBe("First");
+    expect(partialClipboard.html).toContain("<p>First</p>");
+
+    await selectAssistantTextRange(page, "Direct matches:", "repeated sandbox setup.");
+    await copySelection(page);
+
+    const paragraphAndListClipboard = await readRichClipboard(page);
+    expect(paragraphAndListClipboard.plainText).toBe(
+      [
+        "Direct matches:",
+        "",
+        "Formatted **strong prose**, _emphasized prose_, and ~~struck prose~~.",
+        "",
+        "- **[First issue](https://example.com/issues/1)**: exact `apply_patch` failure.",
+        "- [Second issue](https://example.com/issues/2): repeated sandbox setup.",
+      ].join("\n"),
+    );
+    expect(paragraphAndListClipboard.html).not.toContain("<ul>");
+    expect(paragraphAndListClipboard.html).not.toContain("<li>");
+    expect(paragraphAndListClipboard.html).toContain(
+      '<div>- <strong><a href="https://example.com/issues/1">First issue</a></strong>',
     );
 
     await selectAssistantText(page, "docs");
@@ -276,22 +296,22 @@ test("copying an assistant selection preserves Markdown structure and links", as
     await copySelection(page);
 
     const midListClipboard = await readRichClipboard(page);
-    expect(midListClipboard.plainText).toBe("7. Seventh item\n8. Eighth item");
-    expect(midListClipboard.html).toContain('<ol start="7">');
+    expect(midListClipboard.plainText).toBe("Seventh item\n\n8. Eighth item");
+    expect(midListClipboard.html).toContain("<div>8. Eighth item</div>");
 
     await selectAssistantTextRange(page, "Inner eight", "Inner nine");
     await copySelection(page);
 
     const nestedListClipboard = await readRichClipboard(page);
-    expect(nestedListClipboard.plainText).toBe("3. 8. Inner eight\n    9. Inner nine");
-    expect(nestedListClipboard.html).toContain('<ol start="8">');
+    expect(nestedListClipboard.plainText).toBe("Inner eight\n\n9. Inner nine");
+    expect(nestedListClipboard.html).toContain("<div>9. Inner nine</div>");
 
     await selectAssistantTextRange(page, "Seventh item", "Nested list:");
     await copySelection(page);
 
     const crossBlockClipboard = await readRichClipboard(page);
-    expect(crossBlockClipboard.plainText).toBe("7. Seventh item\n8. Eighth item\n\nNested list:");
-    expect(crossBlockClipboard.html).toContain('<ol start="7">');
+    expect(crossBlockClipboard.plainText).toBe("Seventh item\n\n8. Eighth item\n\nNested list:");
+    expect(crossBlockClipboard.html).toContain("<div>8. Eighth item</div>");
 
     await selectAssistantText(page, "Current");
     await copySelection(page);
