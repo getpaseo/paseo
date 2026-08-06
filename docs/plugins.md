@@ -48,14 +48,18 @@ Bundle with whatever you like; `esbuild --bundle --minify` into an inline `<scri
 
 Plugin HTML never runs in the app's own context. The client renders it in a sandboxed frame with no network and no storage:
 
-| Platform      | Host                                                                    |
-| ------------- | ----------------------------------------------------------------------- |
-| Web, Electron | `<iframe sandbox="allow-scripts" srcDoc=...>` — opaque origin           |
-| iOS, Android  | `react-native-webview`, navigation denied for anything but the document |
+| Platform      | Host                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------- |
+| Web, Electron | `<iframe sandbox="allow-scripts" srcDoc=...>` — opaque origin                                     |
+| iOS, Android  | the same iframe, inside a host document in `react-native-webview`; navigation denied on top of it |
 
-Both get the same injected CSP: `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; form-action 'none'; base-uri 'none'; frame-src 'none'; object-src 'none'`. That stops `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, images, fonts, and forms, and a plugin cannot read cookies or reach the daemon except through the bridge below. `frame-src 'none'` does not stop nested frames — `about:srcdoc` is exempt from it — which is why they are removed at runtime instead.
+One sandbox model, not two. The WebView used to load the plugin as its own top document, and that made native the odd one out in a way that took four review rounds to see: with no `sandbox` attribute anywhere, a frame the plugin creates _inherits_ the parent's origin instead of getting a fresh opaque one. Parent and child are then same-origin, so `frames[0].RTCPeerConnection` is readable synchronously — in the same task as the insertion, before any runtime cleanup gets a turn. On web that line throws, and only because `sandbox="allow-scripts"` mints an opaque origin for the child.
 
-`form-action` and `base-uri` are listed explicitly because neither falls back to `default-src`. Without them a form POST is an open exfiltration path on native, where there is no iframe `sandbox` attribute to fall back on.
+So native now loads a trivial host document that embeds the identical sandboxed iframe and relays `postMessage` to the native bridge. Everything below applies to every platform.
+
+All platforms get the same injected CSP: `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; form-action 'none'; base-uri 'none'; frame-src 'none'; object-src 'none'`. That stops `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, images, fonts, and forms, and a plugin cannot read cookies or reach the daemon except through the bridge below. `frame-src 'none'` does not stop nested frames — `about:srcdoc` is exempt from it — which is why they are removed at runtime instead.
+
+`form-action` and `base-uri` are listed explicitly because neither falls back to `default-src`, so a form POST would otherwise be an open exfiltration path.
 
 ### WebRTC has no CSP directive, so the shell deletes it
 
@@ -65,9 +69,14 @@ Both get the same injected CSP: `default-src 'none'; script-src 'unsafe-inline';
 
 A deletion only covers the realm it ran in, and that is the trap. A plugin that appends an `<iframe srcdoc="...">` gets a brand new realm with `RTCPeerConnection` intact, and there is no way to inject into it: `about:srcdoc` is exempt from `frame-src`, and without `allow-same-origin` the child is cross-origin so its `contentWindow` is unreachable. Reading `child.contentWindow.RTCPeerConnection` from the parent throws either way, which is why an assertion written that way looked like a denial and was not one — the attack runs _inside_ the child, and the child reports for itself.
 
-So the plugin does not get child browsing contexts at all. The same script installs a `MutationObserver` that removes any `iframe`/`frame`/`object`/`embed` as it is inserted, which lands before the child document starts parsing and therefore before its inline script runs. Native's `injectedJavaScriptBeforeContentLoadedForMainFrameOnly={false}` is a second layer on iOS only — the prop is `@platform ios` and Android's own typing calls main-frame-only "mandatory" — so the observer is what carries this on Android.
+So the plugin does not get child browsing contexts at all. The same script installs a `MutationObserver` that removes any `iframe`/`frame`/`object`/`embed` as it is inserted, which lands before the child document starts parsing and therefore before its inline script runs.
 
-The observer is the fragile piece: it is a runtime removal racing a parser, not a policy. `sandbox-denial.browser.test.ts` has the child report `typeof RTCPeerConnection` from its own realm, and asserts the report never arrives.
+Two things that observer has to get right, both of which were found by breaking earlier versions of it:
+
+- **Observe `document`, not `document.documentElement`.** A post-load `document.write()` implies `document.open()`, which throws away the tree and builds a fresh `documentElement`. An observer bound to the old node is left watching something detached and never fires again, while the `<iframe>` written in that same call parses and runs.
+- **Capture every method and accessor up front.** The plugin's script runs after ours, so anything resolved at mutation time is something it can replace: with `Element.prototype.remove = function(){}` the observer still fires and quietly does nothing. Non-configurable constructors buy little if the machinery enforcing the removal stays writable.
+
+The observer is the fragile piece — a runtime removal racing a parser, not a policy. `sandbox-denial.browser.test.ts` has the child report `typeof RTCPeerConnection` from its own realm and asserts the report never arrives, for the plain append, for the poisoned prototypes, and for `document.write`. A denial test written from the host's point of view proves nothing here: reading `child.contentWindow.RTCPeerConnection` throws on the opaque origin either way.
 
 The CSP is injected by wrapping the plugin's HTML in our own document shell, never by locating the plugin's own `<head>`. Searching attacker-controlled markup for an injection point is defeated by putting `<head>` in a comment or an attribute, which ships the document with no policy at all.
 
@@ -84,6 +93,8 @@ What stops it is `frame-src 'none'` on the **host** document, because a child fr
 A blocked navigation does not leave the plugin running: Chromium replaces the frame with an empty document. The plugin stops working and later host `postMessage`s go nowhere. That is the intended failure — fail closed, not fail quiet.
 
 That includes in-page anchors. `<a href="#section">` is a frame navigation, so clicking one blanks the plugin. Scroll with `scrollIntoView()` instead; do not put `href="#..."` in plugin HTML.
+
+No `iframe`, `frame`, `object`, or `embed` either — they are removed as they are inserted. Use inline `<svg>` or `<img src="data:…">`.
 
 Electron's in-app browser `<webview>` is unaffected; it is not a frame navigation and never reaches either gate.
 
@@ -145,14 +156,16 @@ Six mechanisms keep that content on the machine, and all six have to hold:
 2. the document shell deletes `RTCPeerConnection`, which the CSP cannot express,
 3. the document shell removes nested frames, because a fresh realm gets its own `RTCPeerConnection` back,
 4. `frame-src 'none'` on the host document denies the frame navigating itself,
-5. the iframe has no `allow-forms`/`allow-popups`/`allow-top-navigation`/`allow-same-origin` on web,
-6. navigation is denied on native.
+5. the iframe has no `allow-forms`/`allow-popups`/`allow-top-navigation`/`allow-same-origin`, on every platform,
+6. the native WebView denies every navigation off the plugin document.
 
-Five of the six were found broken during review, across four rounds: a regex-placed CSP, an `originWhitelist` that bypassed our own navigation check, the self-navigation hole that survived the first round of fixes, WebRTC — reproduced against a real TURN server that received the file content verbatim — and then WebRTC again one frame deeper, in a `srcdoc` child the deletion never reached. Every one passed typecheck, lint, and the full test suite.
+All six were found broken during review, across five rounds: a regex-placed CSP; an `originWhitelist` that bypassed our own navigation check; the self-navigation hole that survived the first round of fixes; WebRTC — reproduced against a real TURN server that received the file content verbatim; WebRTC again one frame deeper, in a `srcdoc` child the deletion never reached; and then the frame remover itself, both by poisoning the prototypes it looked things up on and by `document.write()` detaching it from the tree. Every one passed typecheck, lint, and the full test suite.
 
-Note the shape of the last two: the fix for round three was itself incomplete, and the test written to prove it asserted the wrong thing. A denial test has to be driven from where the attacker's code runs.
+Note the shape of those: the round-three fix was itself incomplete, the test written to prove it asserted the wrong thing, and the round-four fix could be disabled by the plugin from inside. A denial test has to be driven from where the attacker's code runs, and a runtime mitigation has to assume the attacker will attack the mitigation.
 
-Treat any change to the sandbox as security-relevant, and prove the denial in a real browser rather than reasoning about the policy. `packages/app/src/plugins/sandbox-denial.browser.test.ts` reads the shipped CSP out of `public/index.html` and mounts a plugin that actually tries each escape. When you add a capability, add its escape attempt there first — the enumeration being incomplete is how all four shipped.
+The native rework belongs on that list too, as a design fault rather than a bug: native ran the plugin as its own top document, so a frame it created inherited the parent's origin and could be read synchronously, in the same task as the insertion. Nothing racing a parser can cover that — hence the host document native now loads.
+
+Treat any change to the sandbox as security-relevant, and prove the denial in a real browser rather than reasoning about the policy. `packages/app/src/plugins/sandbox-denial.browser.test.ts` reads the shipped CSP out of `public/index.html` and mounts a plugin that actually tries each escape. When you add a capability, add its escape attempt there first — the enumeration being incomplete is how all six shipped.
 
 The daemon serves an entry only when its plugin is enabled and the entry is declared in the manifest's `contributes`, and it re-checks containment after resolving symlinks. A disabled plugin's code does not leave the daemon.
 

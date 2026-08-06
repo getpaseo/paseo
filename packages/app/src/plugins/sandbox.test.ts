@@ -10,6 +10,10 @@ describe("isPluginDocumentUrl", () => {
   it("allows only the plugin document itself", () => {
     expect(isPluginDocumentUrl("about:blank")).toBe(true);
     expect(isPluginDocumentUrl("data:text/html,<h1>plugin</h1>")).toBe(true);
+    // The plugin frame inside the host document. Denying this renders nothing
+    // at all on native, which is a failure mode a unit test should own rather
+    // than a device.
+    expect(isPluginDocumentUrl("about:srcdoc")).toBe(true);
   });
 
   it("denies every navigation away from it", () => {

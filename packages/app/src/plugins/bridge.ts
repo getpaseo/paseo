@@ -112,8 +112,51 @@ export const PLUGIN_NEUTERED_GLOBALS = [
  * `object`/`embed` are already denied by `object-src 'none'`; they are here so
  * the list is the set of elements that can become a browsing context, not a
  * subset that happens to be reachable today.
+ *
+ * Two things this has to get right, both found by breaking earlier versions:
+ *
+ * Observe `document`, not `document.documentElement`. A post-load
+ * `document.write()` implies `document.open()`, which throws away the whole tree
+ * and builds a fresh `documentElement` — an observer bound to the old node is
+ * left watching something detached and never fires again, while the `<iframe>`
+ * written in that same call parses and runs. The `Document` survives that, so a
+ * subtree observer on it does too.
+ *
+ * Capture every method and accessor up front. The plugin's script runs *after*
+ * this one, so anything looked up at mutation time is something it can replace:
+ * with `Element.prototype.remove = function(){}` the observer still fires and
+ * quietly does nothing. Non-configurable constructors are worth little if the
+ * machinery that enforces the removal is left writable.
  */
-const KILL_CHILD_REALMS = `var s='iframe,frame,object,embed';var k=function(n){if(!n||n.nodeType!==1)return;if(n.matches&&n.matches(s)){n.remove();return;}if(n.querySelectorAll){var f=n.querySelectorAll(s);for(var i=0;i<f.length;i++)f[i].remove();}};new MutationObserver(function(rs){for(var i=0;i<rs.length;i++){var a=rs[i].addedNodes;for(var j=0;j<a.length;j++)k(a[j]);}}).observe(document.documentElement,{childList:true,subtree:true});`;
+const KILL_CHILD_REALMS = `
+var A = Reflect.apply;
+var own = Object.getOwnPropertyDescriptor;
+var matches = Element.prototype.matches;
+var findAll = Element.prototype.querySelectorAll;
+var detach = Node.prototype.removeChild;
+var parentOf = own(Node.prototype, "parentNode").get;
+var typeOf = own(Node.prototype, "nodeType").get;
+var addedOf = own(MutationRecord.prototype, "addedNodes").get;
+var countOf = own(NodeList.prototype, "length").get;
+var at = NodeList.prototype.item;
+var SELECTOR = "iframe,frame,object,embed";
+function drop(node) {
+  var parent = A(parentOf, node, []);
+  if (parent) { try { A(detach, parent, [node]); } catch (e) {} }
+}
+function sweep(node) {
+  if (!node || A(typeOf, node, []) !== 1) return;
+  if (A(matches, node, [SELECTOR])) { drop(node); return; }
+  var found = A(findAll, node, [SELECTOR]);
+  for (var i = 0, n = A(countOf, found, []); i < n; i++) drop(A(at, found, [i]));
+}
+new MutationObserver(function (records) {
+  for (var i = 0; i < records.length; i++) {
+    var added = A(addedOf, records[i], []);
+    for (var j = 0, n = A(countOf, added, []); j < n; j++) sweep(A(at, added, [j]));
+  }
+}).observe(document, { childList: true, subtree: true });
+`;
 
 export const PLUGIN_NEUTER_SCRIPT = `(function(){${JSON.stringify(
   PLUGIN_NEUTERED_GLOBALS,
@@ -133,6 +176,55 @@ export const PLUGIN_NEUTER_SCRIPT = `(function(){${JSON.stringify(
 export function wrapPluginHtml(html: string): string {
   return `<!doctype html><html><head>${CSP_META_TAG}<script>${PLUGIN_NEUTER_SCRIPT}</script></head><body>${html}</body></html>`;
 }
+
+/**
+ * The document a WebView loads, which then renders the plugin in a sandboxed
+ * iframe exactly as the web sandbox does.
+ *
+ * The WebView used to load the plugin as its own top document, and that is what
+ * made native the odd one out. With no `sandbox` attribute anywhere, a frame the
+ * plugin creates *inherits* the parent's origin instead of getting a fresh
+ * opaque one, so parent and child are same-origin: the plugin reads
+ * `frames[0].RTCPeerConnection` synchronously, in the same task as the
+ * insertion, and no `MutationObserver` gets a turn in between. On web the same
+ * line throws, and only because `sandbox="allow-scripts"` mints an opaque origin
+ * for the child.
+ *
+ * So native stops being a second sandbox model. `allow-same-origin` is withheld
+ * here for the same reason as on web, `frame-src 'none'` on this host document
+ * is what denies the plugin frame navigating itself out, and the plugin sees the
+ * identical contract: post to `window.parent`, listen on `window`.
+ */
+export function wrapPluginHostDocument(html: string): string {
+  const guest = wrapPluginHtml(html)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'"><meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;padding:0;height:100%;overflow:hidden}iframe{display:block;border:0;width:100%;height:100%}</style></head><body><iframe id="paseo-plugin" sandbox="allow-scripts" srcdoc="${guest}"></iframe><script>${PLUGIN_HOST_RELAY}</script></body></html>`;
+}
+
+/**
+ * Relays between the plugin frame and the native bridge. Guest messages go up to
+ * `ReactNativeWebView`; host messages come back down through `postMessage` on
+ * the frame, so the plugin receives them the same way it does on web.
+ *
+ * Only the plugin frame is listened to, and only guest message types are
+ * forwarded, so nothing the host sends can be echoed back to it.
+ */
+const PLUGIN_HOST_RELAY = `(function(){
+  var frame = document.getElementById("paseo-plugin");
+  window.addEventListener("message", function (event) {
+    if (event.source !== frame.contentWindow) return;
+    var data = event.data;
+    if (!data || data.paseo !== 1) return;
+    if (data.type === "init" || data.type === "update") return;
+    window.ReactNativeWebView.postMessage(JSON.stringify(data));
+  });
+  window.__paseoPost = function (message) {
+    frame.contentWindow.postMessage(message, "*");
+  };
+})();`;
 
 function isHomeRelative(value: string): boolean {
   return value === "~" || value.startsWith("~/") || value.startsWith("~\\");

