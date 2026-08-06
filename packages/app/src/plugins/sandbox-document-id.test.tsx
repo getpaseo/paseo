@@ -44,6 +44,17 @@ vi.mock("react-native-webview", () => ({
   ),
 }));
 
+// Stubbed down to the retry callback: the real card pulls in the button and
+// i18n, and what this file is about is which document id the retry hands out.
+let retry: (() => void) | null = null;
+vi.mock("./sandbox-error", () => ({
+  PLUGIN_READY_TIMEOUT_MS: 10_000,
+  PluginReadyTimeout: (props: { onRetry: () => void }) => {
+    retry = props.onRetry;
+    return null;
+  },
+}));
+
 // Not `./sandbox`: that resolves to `sandbox.web.tsx` in any resolver with no
 // platform to go on, and the native file is the subject here.
 const { PluginSandbox } = await import("@/plugins/sandbox-native");
@@ -75,6 +86,8 @@ beforeEach(() => {
   ).IS_REACT_ACT_ENVIRONMENT = true;
   mounted.length = 0;
   injected.length = 0;
+  retry = null;
+  vi.useFakeTimers();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -83,6 +96,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
+  vi.useRealTimers();
 });
 
 function render(html: string) {
@@ -132,6 +146,78 @@ it("ignores a ready from the document it has already left", () => {
   });
 
   expect(injected).toEqual([]);
+});
+
+// Retry loads a second document of the same plugin, so `html` never changes and
+// the swap-driven bump never fires. The timed-out document is still alive — the
+// sandbox hides it rather than unmounting, precisely so a late `ready` can still
+// land — so sharing an id means that `ready` settles the retry's handshake and
+// the `init` answering it goes to a WebView that has no listener installed.
+it("gives the retried document an id of its own", () => {
+  render("<p>one</p>");
+  const timedOut = documentIdOf(latest());
+  act(() => {
+    vi.advanceTimersByTime(10_000);
+  });
+
+  act(() => retry?.());
+
+  expect(documentIdOf(latest())).not.toBe(timedOut);
+});
+
+it("ignores a ready from a document the retry has replaced", () => {
+  render("<p>one</p>");
+  const timedOut = documentIdOf(latest());
+  act(() => {
+    vi.advanceTimersByTime(10_000);
+  });
+  act(() => retry?.());
+
+  act(() => {
+    latest().onMessage({
+      nativeEvent: { data: JSON.stringify({ document: timedOut, paseo: 1, type: "ready" }) },
+    });
+  });
+
+  expect(injected).toEqual([]);
+});
+
+// `ready` is the message the guard was written for, but `open-file` is the one
+// that drives host navigation: a stale plugin steering the file pane is the
+// worse of the two.
+it("ignores an open-file from the document it has already left", () => {
+  const onOpenFile = vi.fn();
+  act(() => {
+    root.render(
+      <Sandbox
+        html="<p>one</p>"
+        context={CONTEXT}
+        themeTokens={THEME_TOKENS}
+        onOpenFile={onOpenFile}
+      />,
+    );
+  });
+  const stale = documentIdOf(latest());
+
+  act(() => {
+    root.render(
+      <Sandbox
+        html="<p>two</p>"
+        context={CONTEXT}
+        themeTokens={THEME_TOKENS}
+        onOpenFile={onOpenFile}
+      />,
+    );
+  });
+  act(() => {
+    latest().onMessage({
+      nativeEvent: {
+        data: JSON.stringify({ document: stale, paseo: 1, type: "open-file", path: "b.ts" }),
+      },
+    });
+  });
+
+  expect(onOpenFile).not.toHaveBeenCalled();
 });
 
 it("answers a ready from the document it is showing", () => {

@@ -78,9 +78,15 @@ function PluginSandboxView({
     return () => clearTimeout(timer);
   }, [handshake, attempt, html]);
 
+  // Retry loads a new document too, so it gets a new id. Without one, the
+  // timed-out document — which is still alive, because timeout hides the
+  // WebView rather than unmounting it — keeps the id the host is accepting: its
+  // late `ready` settles the retry's handshake, and the `init` answering it is
+  // injected into the new WebView, which never asked for it and has no listener.
   const handleRetry = useCallback(() => {
     readyRef.current = false;
     setHandshake("waiting");
+    setDocumentId((current) => current + 1);
     setAttempt((current) => current + 1);
   }, []);
 

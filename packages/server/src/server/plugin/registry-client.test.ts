@@ -280,6 +280,56 @@ describe("PluginRegistryClient", () => {
     }
   });
 
+  // The regex half cannot do this one: its segment class has to exclude the
+  // quotes `fs` wraps a path in, so it stops dead at the apostrophe and leaves
+  // `o'brien` — a real surname, on the wire, from the scrub that exists to
+  // remove it. Only the exact `error.path` branch removes it, so this is that
+  // branch's proof. Driven through the real transport: a hand-written Error
+  // carries no `.path`, and would take the regex route instead.
+  test("keeps an apostrophe in the daemon's home out of the reason", async () => {
+    const dir = join(tmpdir(), `paseo-o'brien-${randomUUID()}`);
+    await mkdir(dir, { recursive: true });
+    const indexPath = join(dir, "index.json");
+    try {
+      const index = buildIndex({ url: pathToFileURL(join(dir, "preview.html")).href });
+      await writeFile(indexPath, JSON.stringify(index));
+      const client = new PluginRegistryClient({
+        registryUrl: pathToFileURL(indexPath).href,
+        http: createFetchPluginRegistryHttp(),
+      });
+
+      const reason = await client.download("csv-table").then(
+        () => "resolved",
+        (error: PluginDownloadRejectedError) => error.reason,
+      );
+
+      expect(reason).not.toContain("o'brien");
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  // `rename`/`copyFile` errors name two paths and set `.path` to one of them.
+  // The exact branch takes that one and has nothing to say about `.dest`, so
+  // the regex has to run afterwards rather than instead.
+  test("scrubs the second path in a message whose error names only the first", async () => {
+    const failure: NodeJS.ErrnoException = new Error(
+      "EXDEV: cross-device link not permitted, rename '/home/someone/paseo/index.json' -> '/mnt/other/paseo/index.json'",
+    );
+    failure.path = "/home/someone/paseo/index.json";
+    const http = createFakeHttp({ failIndexWith: failure });
+    const client = new PluginRegistryClient({ registryUrl: REGISTRY_URL, http });
+
+    const reason = await client.browse().then(
+      () => "resolved",
+      (error: PluginRegistryUnavailableError) => error.reason,
+    );
+
+    expect(reason).toBe(
+      "EXDEV: cross-device link not permitted, rename '…/index.json' -> '…/index.json'",
+    );
+  });
+
   test("downloads and verifies every file", async () => {
     const index = buildIndex();
     const http = createFakeHttp({

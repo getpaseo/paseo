@@ -203,14 +203,22 @@ function sha256Hex(bytes: Uint8Array): string {
  * standing, which is the one token this exists to remove. The cost is that a
  * message naming two paths has the words between them swallowed as one long
  * segment. That direction is the safe one.
+ *
+ * Both run, in that order, rather than one or the other: the segment class has
+ * to exclude the quotes `fs` puts around a path or it would swallow the run
+ * between two of them, and that exclusion is exactly what leaves a directory
+ * named `o'brien` standing. The exact branch removes it; the regex then still
+ * gets its turn at any second path in the same message, which `rename` and
+ * `copyFile` errors carry in `.dest`.
  */
 function describeFetchFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   const path = error instanceof Error ? (error as NodeJS.ErrnoException).path : undefined;
-  if (typeof path === "string" && path.length > 0) {
-    return message.split(path).join(`…/${path.split(/[/\\]/).pop() ?? ""}`);
-  }
-  return message.replace(/(?:[A-Za-z]:)?(?:[/\\][^/\\'"\n]+)+[/\\]/g, "…/");
+  const named =
+    typeof path === "string" && path.length > 0
+      ? message.split(path).join(`…/${path.split(/[/\\]/).pop() ?? ""}`)
+      : message;
+  return named.replace(/(?:[A-Za-z]:)?(?:[/\\][^/\\'"\n]+)+[/\\]/g, "…/");
 }
 
 function protocolOf(url: string): string | null {
