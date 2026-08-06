@@ -76,13 +76,13 @@ function useTerminalPanelDescriptor(
 }
 
 function TerminalPanel() {
-  const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
+  const { serverId, workspaceId, target, cwdOverride, openFileInWorkspace } = usePaneContext();
   const { isWorkspaceFocused, isPaneFocused } = usePaneFocus();
   const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
     workspaceDirectory: w.workspaceDirectory,
     isGitCheckout: w.projectKind === "git",
   }));
-  const workspaceDirectory = workspaceFields?.workspaceDirectory || null;
+  const workspaceDirectory = workspaceFields?.workspaceDirectory || cwdOverride || null;
   const isGitCheckout = workspaceFields?.isGitCheckout ?? false;
   const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
   const handleOpenFileExplorer = useCallback(() => {

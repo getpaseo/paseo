@@ -23,6 +23,7 @@ export interface BuildWorkspacePaneContentModelInput {
   tab: WorkspaceTabDescriptor;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
+  cwdOverride?: string;
   fileNavigationRevision?: number;
   onOpenTab: (target: WorkspaceTabDescriptor["target"]) => void;
   onCloseCurrentTab: () => void;
@@ -35,6 +36,7 @@ export function buildWorkspacePaneContentModel({
   tab,
   normalizedServerId,
   normalizedWorkspaceId,
+  cwdOverride,
   fileNavigationRevision,
   onOpenTab,
   onCloseCurrentTab,
@@ -53,6 +55,7 @@ export function buildWorkspacePaneContentModel({
       workspaceId: normalizedWorkspaceId,
       tabId: tab.tabId,
       target: tab.target,
+      cwdOverride,
       fileNavigationRevision,
       openTab: onOpenTab,
       closeCurrentTab: onCloseCurrentTab,
@@ -88,6 +91,7 @@ export function WorkspacePaneContent({
       workspaceId: paneContextValue.workspaceId,
       tabId: paneContextValue.tabId,
       target: paneContextValue.target,
+      cwdOverride: paneContextValue.cwdOverride,
       fileNavigationRevision: paneContextValue.fileNavigationRevision,
       openTab,
       closeCurrentTab,
@@ -101,6 +105,7 @@ export function WorkspacePaneContent({
       openImportSheet,
       openTab,
       paneContextValue.serverId,
+      paneContextValue.cwdOverride,
       paneContextValue.fileNavigationRevision,
       paneContextValue.tabId,
       paneContextValue.target,
