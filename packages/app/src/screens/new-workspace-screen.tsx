@@ -1973,6 +1973,7 @@ export function NewWorkspaceScreen({
             navigate: (targetServerId, workspaceId) =>
               navigateToWorkspace({ serverId: targetServerId, workspaceId }),
           });
+          committedRef.current = true;
           return;
         }
 
@@ -1991,6 +1992,7 @@ export function NewWorkspaceScreen({
             selectModel: t("newWorkspace.errors.selectModel"),
           },
         });
+        committedRef.current = true;
       } catch (error) {
         const message = toErrorMessage(error);
         setPendingAction(null);
@@ -2017,6 +2019,34 @@ export function NewWorkspaceScreen({
     hasClient: Boolean(client),
     hasSourceDirectory: selectedSourceDirectory !== null,
   });
+
+  // Route-driven unmount must not orphan the daemon terminals and persisted
+  // browser records this screen creates. A submit hands terminals off to the
+  // created workspace (the workspace screen lists them), so only browsers are
+  // cleaned up then; abandoning the screen without submitting releases both.
+  const committedRef = useRef(false);
+  const panelsRef = useRef<NewWorkspacePanel[]>([]);
+  const clientRef = useRef(client);
+  useEffect(() => {
+    panelsRef.current = panelsState.panels;
+  }, [panelsState.panels]);
+  useEffect(() => {
+    clientRef.current = client;
+  }, [client]);
+  useEffect(() => {
+    return () => {
+      const committed = committedRef.current;
+      const liveClient = clientRef.current;
+      for (const panel of panelsRef.current) {
+        if (panel.kind === "browser" && panel.browserId) {
+          useBrowserStore.getState().removeBrowser(panel.browserId);
+          removeResidentBrowserWebview(panel.browserId);
+        } else if (panel.kind === "terminal" && panel.terminalId && !committed && liveClient) {
+          liveClient.killTerminal(panel.terminalId).catch(() => {});
+        }
+      }
+    };
+  }, []);
 
   const handleCreateTerminal = useCallback(async () => {
     if (!client || !isConnected || !selectedSourceDirectory) {
