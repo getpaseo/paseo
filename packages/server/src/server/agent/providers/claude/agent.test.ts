@@ -9,7 +9,6 @@ import * as executableUtils from "../../../../executable-resolution/executable-r
 import { buildAgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
 import {
   ClaudeAgentClient,
-  buildClaudeQuestionPermissionSummary,
   convertClaudeHistoryEntry,
   normalizeClaudeAskUserQuestionRequestInput,
   normalizeClaudeAskUserQuestionUpdatedInput,
@@ -2575,11 +2574,14 @@ describe("toClaudeSdkMcpConfig", () => {
   });
 });
 
-describe("buildClaudeQuestionPermissionSummary", () => {
+describe("Claude question permission notifications", () => {
   // Regression for #2612: the attention notification serialized the raw
   // AskUserQuestion input, so both the iOS push and the desktop app showed
   // JSON instead of the question.
-  test("renders an AskUserQuestion notification as the question and its options", async () => {
+  async function requestPermission(
+    toolName: string,
+    input: Record<string, unknown>,
+  ): Promise<Extract<AgentStreamEvent, { type: "permission_requested" }>["request"]> {
     const client = new ClaudeAgentClient({
       logger: createTestLogger(),
       resolveBinary: async () => "/test/claude/bin",
@@ -2596,60 +2598,91 @@ describe("buildClaudeQuestionPermissionSummary", () => {
           options: Record<string, unknown>,
         ) => Promise<unknown>;
       };
+      void internal.handlePermissionRequest(toolName, input, {}).catch(() => undefined);
 
-      void internal
-        .handlePermissionRequest(
-          "AskUserQuestion",
-          {
-            questions: [
-              {
-                question: "Which library should we use?",
-                header: "Library",
-                options: [{ label: "date-fns" }, { label: "Luxon" }],
-                multiSelect: false,
-              },
-            ],
-          },
-          {},
-        )
-        .catch(() => undefined);
-
-      const requestEvent = events.find(
+      const requested = events.find(
         (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
-          event.type === "permission_requested" && event.request.kind === "question",
+          event.type === "permission_requested",
       );
-      expect(requestEvent).toBeDefined();
-
-      const payload = buildAgentAttentionNotificationPayload({
-        reason: "permission",
-        serverId: "srv-2612",
-        workspaceId: "workspace-2612",
-        agentId: "agent-2612",
-        permissionRequest: requestEvent?.request,
-      });
-
-      expect(payload.body).toBe("Which library should we use? - date-fns / Luxon");
-      expect(payload.body).not.toContain('"questions"');
+      if (!requested) {
+        throw new Error(`no permission was requested for ${toolName}`);
+      }
+      return requested.request;
     } finally {
       await session.close();
     }
+  }
+
+  test("renders the notification as the question and its options", async () => {
+    const request = await requestPermission("AskUserQuestion", {
+      questions: [
+        {
+          question: "Which library should we use?",
+          header: "Library",
+          options: [{ label: "date-fns" }, { label: "Luxon" }],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    const payload = buildAgentAttentionNotificationPayload({
+      reason: "permission",
+      serverId: "srv-2612",
+      workspaceId: "workspace-2612",
+      agentId: "agent-2612",
+      permissionRequest: request,
+    });
+
+    expect(payload.body).toBe("Which library should we use? - date-fns / Luxon");
+    expect(payload.body).not.toContain('"questions"');
   });
 
-  test("titles a question that has no options", () => {
-    expect(
-      buildClaudeQuestionPermissionSummary("AskUserQuestion", {
-        questions: [{ question: "Ready to deploy?", header: "Deploy", options: [] }],
+  test("keeps the full question payload for the permission UI", async () => {
+    const request = await requestPermission("AskUserQuestion", {
+      questions: [
+        {
+          question: "Which library should we use?",
+          header: "Library",
+          options: [{ label: "date-fns" }, { label: "Luxon" }],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    expect(request.input).toEqual(
+      normalizeClaudeAskUserQuestionRequestInput("AskUserQuestion", {
+        questions: [
+          {
+            question: "Which library should we use?",
+            header: "Library",
+            options: [{ label: "date-fns" }, { label: "Luxon" }],
+            multiSelect: false,
+          },
+        ],
       }),
-    ).toEqual({ title: "Ready to deploy?" });
+    );
   });
 
-  test("leaves other tools and unusable question payloads untouched", () => {
-    expect(buildClaudeQuestionPermissionSummary("Bash", { command: "ls" })).toEqual({});
-    expect(buildClaudeQuestionPermissionSummary("AskUserQuestion", { questions: [] })).toEqual({});
-    expect(
-      buildClaudeQuestionPermissionSummary("AskUserQuestion", {
-        questions: [{ header: "No text" }],
-      }),
-    ).toEqual({});
+  test("falls back to the question alone when it has no options", async () => {
+    const request = await requestPermission("AskUserQuestion", {
+      questions: [{ question: "Ready to deploy?", header: "Deploy", options: [] }],
+    });
+
+    const payload = buildAgentAttentionNotificationPayload({
+      reason: "permission",
+      serverId: "srv-2612",
+      workspaceId: "workspace-2612",
+      agentId: "agent-2612",
+      permissionRequest: request,
+    });
+
+    expect(payload.body).toBe("Ready to deploy?");
+  });
+
+  test("leaves other tools unsummarised", async () => {
+    const request = await requestPermission("Bash", { command: "ls" });
+
+    expect(request.title).toBeUndefined();
+    expect(request.description).toBeUndefined();
   });
 });

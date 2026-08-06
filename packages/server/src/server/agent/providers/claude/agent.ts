@@ -1038,7 +1038,7 @@ function resolvePermissionKind(
 // whole question object, so the notification reads as JSON. Summarize the first
 // question the same way the OMP and Pi providers do for their ask_user
 // permissions.
-export function buildClaudeQuestionPermissionSummary(
+function buildClaudeQuestionPermissionSummary(
   toolName: string,
   input: AgentMetadata,
 ): { title?: string; description?: string } {
