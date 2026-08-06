@@ -32,7 +32,7 @@ Gate green at HEAD: `npm run typecheck` clean, `npm run lint` 0/0, `npm run form
 
 ## Review status
 
-Ten rounds, all rejected so far. **Eleven exfiltration holes and eight silent regressions have now shipped past a fully green typecheck/lint/test gate.** Do not treat the gate as evidence for this feature.
+Eleven rounds, all rejected so far. **Twelve exfiltration holes and eight silent regressions have now shipped past a fully green typecheck/lint/test gate.** Do not treat the gate as evidence for this feature.
 
 - Round 1 (2 holes): regex-placed CSP defeated by `<!-- <head> -->` in guest HTML; `originWhitelist: ["about:blank"]` on native, which react-native-webview consults _before_ the navigation callback, handing the URL to `Linking.openURL` and the user's real browser.
 - Round 2 (1 hole, survived the round-1 fixes): the plugin iframe navigating **itself**. The guest CSP cannot stop that — `navigate-to` was dropped from the spec and `default-src` does not cover a document's own navigation. Fixed with `frame-src 'none'` on the **host** document (a child frame's navigation is checked against the parent's policy; `about:srcdoc` is exempt so the plugin still renders). Reproduced and closed in real Electron with a local HTTP server counting hits.
@@ -51,6 +51,14 @@ Ten rounds, all rejected so far. **Eleven exfiltration holes and eight silent re
 
   Each round found the previous round's fix broken. So the rule is now written into `bridge.ts` above `KILL_CHILD_REALMS` as a three-clause invariant — capture the callee, build the argument bare, resolve nothing global at call time — and the wrapper re-reads `shadowRoot` afterwards and drops the host on a mismatch, so a fourth instance fails closed instead of silently. The round-9 correctness pass also caught the round-8/9 fixes dropping `slotAssignment`/`clonable`/`serializable` and making invalid `attachShadow` calls quietly succeed, and a react-query refresh flag cleared before its await so the retry lost it.
 
+- Round 11 (1 hole + 9 correctness findings). The hole: **Electron's `<webview>`**, in neither denial selector. The desktop renderer runs with `webviewTag: true`, and a guest is a separate `WebContents` with its own session — the plugin CSP does not describe it, the iframe `sandbox` flags are not inherited, the neuter script never runs in it. Not late binding this time; an incomplete enumeration, which is the failure mode the round-6 policy shift was supposed to retire. Fixed in `65f2f3401`, red without it through both the markup and script paths.
+
+  **Its severity rests on one unverified link.** A Chromium browser test cannot attach a guest, so the reviewer's test proves only that the element reaches the live plugin document with `src`/`partition` intact. Whether Electron actually registers `<webview>` inside a sandboxed opaque-origin `srcdoc` subframe was never confirmed — it needs `npm run capture-harness --workspace=@getpaseo/desktop`. Round 12 was asked to settle it and died before starting. **Do this before the PR**; if the element is not registered there, the finding downgrades and the PR text has to say so.
+
+  The reviewer also wanted `isPaseoBrowserWebviewAttach` to reject an attach whose initiating frame is not the app's own. **Not done, deliberately:** Electron's `will-attach-webview` carries no `WebFrameMain` (checked against `electron@41.2.0` typings — the event is the bare `Event` type), and the IPC-announcement alternative is async while the attach is synchronous on connection, so it means restructuring the shipped browser pane's mount path for depth behind a control that already holds. Written up in `docs/plugins.md`.
+
+  The correctness findings and their fixes are in `f743d428d`; the two that reached a user were markdown outside the workspace rendering as source, and the whole file pane blocking on `plugins.list`.
+
 **The lesson that keeps repeating:** a denial test has to be driven from where the attacker's code runs. Two rounds in a row, a test written from the host's point of view passed against a live hole. And a fix is not evidence — four consecutive rounds broke the fix in front of them.
 
 ## What round 2 fixed, in 53cac5843
@@ -65,12 +73,13 @@ Ten rounds, all rejected so far. **Eleven exfiltration holes and eight silent re
 
 ## Still to do
 
-1. Round 11 verdicts (security on the frontier tier, correctness on the workhorse; both running as of this writing). **The PR does not open until reviewers approve** — that is the user's explicit instruction, not a guideline. A REJECT-then-fix is not an approval.
-2. Push, open PR, babysit comments.
+1. **Round 12, which never ran.** Both agents (security on the frontier tier, correctness on the workhorse) died immediately with `You've hit your session limit · resets 1:30pm America/Sao_Paulo`. Per DELEGATION.md's circuit-breaker they were NOT re-spawned. Re-run them when quota is back — the briefs are in the transcript; the security one must settle the `<webview>` harness question above, and the correctness one targets `f743d428d` and `65f2f3401`, neither of which has been reviewed.
+2. **The PR does not open until reviewers approve** — the user's explicit instruction, not a guideline. A REJECT-then-fix is not an approval, and five of eleven rounds found the previous round's fix broken.
+3. Push, open PR, babysit comments.
 
 QA evidence is **done**: `.qa/plugins/qa-report.md` plus 4 screenshots (gitignored), e2e 6/6 including a new test that a user-selected theme change (Dark → Zinc, same colour scheme, OS pinned dark) reaches the plugin — proven to fail against the pre-fix code. Platform matrix in the report says plainly that iOS and Android have zero runtime evidence.
 
-CONTRIBUTING.md is **done** — it already had the Plugins section (write a plugin instead of a PR, publish to the registry not the monorepo, new contribution points need a discussion first).
+CONTRIBUTING.md is **done**, and round 11 fixed the hole in it: it told contributors to publish to the registry without ever saying how, and there is no registry and no submission process. It now says that plainly and links the new `### Self-hosting an index` section in `docs/plugins.md`, which documents the index format and the rules the daemon enforces (https-only file URLs, sha256 + bytes both checked, 1–64 files, 8 MiB, flat `*.html`, a malformed entry loses only its own listing).
 
 ## Must be disclosed in the PR
 
@@ -80,6 +89,7 @@ CONTRIBUTING.md is **done** — it already had the Plugins section (write a plug
 - The frame-removal control is a runtime removal racing a parser, not a policy. It holds in Chromium; that is an empirical result, not a guarantee.
 - A plugin cannot embed an `<iframe>`, `<object>` or `<embed>` at all — no YouTube frames, no external SVG. They are removed silently. As of round 7 the same is true of `<link>`, for any `rel`; CSP already denied every resource one could fetch.
 - **The `preconnect` residual** described under Review status: a plugin script can still cause one DNS lookup to a host of its choosing. This weakens the "your content stays on your machine" claim for installed plugins specifically, and the honest framing is the VS Code one — an installed plugin is code you trust with the files you open in it.
+- **A plugin cannot embed Electron's `<webview>` either**, and the reason it is denied is stronger than for the others — see the round-11 note above, including the `will-attach-webview` gate that was deliberately not tightened and the harness check still owed.
 - **`attachShadow` always returns an open root.** `mode: "closed"` is accepted and ignored, so `element.shadowRoot` is readable. Everything else about the call is forwarded unchanged.
 - `<script type="speculationrules">` is inferred to be blocked by the shell's MIME allowlist but was never demonstrated either way.
 - `plugins.paseo.sh` does not resolve (NXDOMAIN), so nobody can exercise Browse/Install against the real index. Local `file://` index installs are covered end to end by a real-daemon test; the untested gap is browse-and-install _through the Settings UI_.
