@@ -58,6 +58,7 @@ import { RenderProfile } from "@/utils/render-profiler";
 import { buildDraftPanelDescriptor } from "@/panels/draft-panel-descriptor";
 import {
   type HostRuntimeConnectionStatus,
+  getHostRuntimeConnectionStatusSince,
   useHostRuntimeClient,
   useHostRuntimeConnectionStatus,
   useHostRuntimeIsConnected,
@@ -117,7 +118,6 @@ interface ChatAgentStateShape {
 const RECONNECT_TOAST_DELAY_MS = 1_000;
 
 interface ReconnectToastState {
-  startedAt: number;
   presented: boolean;
 }
 
@@ -885,7 +885,6 @@ function ChatAgentContent({
     let reconnectToastState = reconnectToastStateByServerId.get(serverId);
     if (!reconnectToastState) {
       reconnectToastState = {
-        startedAt: Date.now(),
         presented: false,
       };
       reconnectToastStateByServerId.set(serverId, reconnectToastState);
@@ -909,10 +908,8 @@ function ChatAgentContent({
       return;
     }
 
-    const delayMs = Math.max(
-      0,
-      reconnectToastState.startedAt + RECONNECT_TOAST_DELAY_MS - Date.now(),
-    );
+    const startedAt = getHostRuntimeConnectionStatusSince(serverId) ?? Date.now();
+    const delayMs = Math.max(0, startedAt + RECONNECT_TOAST_DELAY_MS - Date.now());
     const timer = setTimeout(() => {
       if (reconnectToastStateByServerId.get(serverId) !== reconnectToastState) {
         return;
