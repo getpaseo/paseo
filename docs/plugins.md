@@ -250,5 +250,6 @@ The shell hands your markup to `insertAdjacentHTML` and then re-creates your inl
 - **No `<head>` semantics.** Your `<html>`/`<head>` tags are dropped. `<style>` works fine in the body; `<meta>` and `<base>` do nothing.
 - **`<link>`, `<iframe>`, `<frame>`, `<object>` and `<embed>` are removed**, silently and whatever the attributes say. Nothing they could load is reachable — the CSP denies external stylesheets, scripts and frames, and even a `data:` stylesheet, so a `<link>` never worked here. Inline your CSS in a `<style>`. The reasons are under [Resource hints](#resource-hints-leak-a-hostname-and-one-of-them-is-not-closed) and above it.
 - **Non-script `<script>` blocks are left alone**, so `type="application/json"` data blocks survive and are not executed. Every `type` the parser treats as JavaScript still runs, including the legacy ones (`text/jscript`, `application/x-javascript`).
+- **A `<script>` inside inline SVG does not run.** The re-creation builds an `HTMLScriptElement` and puts it back in the SVG subtree, where it is inert; a document parse would have built an `SVGScriptElement` and run it. Put the script outside the `<svg>` and reach into it with `querySelector`.
 
 `shell.browser.test.ts` is the contract, in real Chromium.
