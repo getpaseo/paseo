@@ -166,6 +166,15 @@ export const PLUGIN_NEUTERED_GLOBALS = [
  *    sweep can ever see into. `Object.create` and `Object.defineProperty` are
  *    captured for this reason; `lock()` was safe only by the accident that every
  *    call site is at init.
+ * 4. **Nothing here may compare a dictionary member without converting it the way
+ *    the platform will.** `attachShadow`'s `mode` is an enum, so the platform runs
+ *    `ToString` on it. `new String("closed")` and `{toString(){return "closed"}}`
+ *    are not `=== "closed"` for a strict comparison, so the wrapper forwarded them
+ *    as "the platform's to reject" — and the platform accepted them and minted a
+ *    real closed root. The verification after the call fired and threw, but the
+ *    root already existed by then, and a root `attachShadow` made has "available
+ *    to element internals" set, so `attachInternals().shadowRoot` handed it
+ *    straight back. Convert first, compare second, hand the platform primitives.
  *
  * Follow shadow roots. A `MutationObserver` on `document` is never notified of
  * mutations inside a shadow root and `querySelectorAll` does not cross the
@@ -206,6 +215,7 @@ var own = Object.getOwnPropertyDescriptor;
 var create = Object.create;
 var defineProp = Object.defineProperty;
 var ErrorRef = Error;
+var StringRef = String;
 var fail = function () { throw new ErrorRef("denied in the Paseo plugin sandbox"); };
 var bare = function () { return A(create, ObjectRef, [null]); };
 var lock = function (target, name, value) {
@@ -236,8 +246,15 @@ var startWatching = MutationObserver.prototype.observe;
 // The detached sanitiser drops it out of plugin markup; without it here, a
 // plugin script could just append one at runtime and the two paths would
 // disagree. Everything else stays out of \`script\`, which plugins need.
+//
+// Substring, not equality, because the platform strips leading and trailing
+// ASCII whitespace off \`type\` before it compares — \`type=" speculationrules "\`
+// is acted on and \`[type="speculationrules" i]\` does not match it. CSS has no
+// way to trim, and the detached sanitiser (which does trim) is the path that
+// stays exact. The cost is that a \`type\` merely *containing* the word is dropped
+// too; nothing the platform treats as data is named that.
 var SELECTOR =
-  'iframe,frame,object,embed,link,webview,fencedframe,script[type="speculationrules" i]';
+  'iframe,frame,object,embed,link,webview,fencedframe,script[type*="speculationrules" i]';
 // \`WATCH\` is null-prototype, because a dictionary argument is a lookup surface.
 // Converting this to a \`MutationObserverInit\` is one Get per member, and every
 // member it does not own would be read off \`Object.prototype\` — which the plugin
@@ -303,11 +320,17 @@ if (attach) {
     // Anything the platform would reject is handed straight to it, so a missing
     // argument or a typo'd \`mode\` still throws where the author expects rather
     // than quietly succeeding with a root they did not ask for.
+    // \`mode\` is stringified here rather than compared raw: see clause 4 above.
     var mode = init && init.mode;
     var options = init;
-    if (mode === "open" || mode === "closed") {
+    if (init !== null && (typeof init === "object" || typeof init === "function")) {
+      if (mode !== undefined && mode !== null) {
+        try { mode = A(StringRef, undefined, [mode]); } catch (e) { mode = ""; }
+      }
       options = bare();
-      options.mode = "open";
+      // "open" stays "open", "closed" is forced open, and anything else goes to
+      // the platform as the primitive it converts to, so a typo still throws.
+      options.mode = mode === "closed" ? "open" : mode;
       // Forwarded, not dropped: \`slotAssignment: "manual"\` is what makes
       // \`HTMLSlotElement.assign()\` work, and \`clonable\`/\`serializable\` are what
       // carry the root through \`cloneNode\` and \`getHTML\`. A bad value here is

