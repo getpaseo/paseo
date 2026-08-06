@@ -28,6 +28,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useHardwareKeyboardStore } from "@/stores/hardware-keyboard-store";
 import {
   BottomSheetScrollView,
   BottomSheetBackdrop,
@@ -204,14 +205,19 @@ export function SearchInput({
   const { theme } = useUnistyles();
   const inputRef = useRef<EditingTextInputHandle>(null);
 
+  // Web honors the explicit autoFocus contract. On native, focus whenever a
+  // hardware keyboard is attached so typing filters immediately — without one,
+  // focusing would pop the soft keyboard on every picker open.
+  const hardwareKeyboardConnected = useHardwareKeyboardStore((s) => s.connected);
   useEffect(() => {
-    if (autoFocus && IS_WEB && inputRef.current) {
+    const shouldFocus = IS_WEB ? autoFocus : hardwareKeyboardConnected;
+    if (shouldFocus && inputRef.current) {
       const timer = setTimeout(() => {
         inputRef.current?.focus();
       }, 50);
       return () => clearTimeout(timer);
     }
-  }, [autoFocus]);
+  }, [autoFocus, hardwareKeyboardConnected]);
 
   return (
     <View style={styles.searchInputContainer}>
@@ -1589,7 +1595,11 @@ export function Combobox({
     hasChildren: Boolean(children),
   });
 
-  useDismissKeyboardOnOpen(isOpen, isMobile);
+  // With a hardware keyboard attached, SearchInput focuses on open — the
+  // dismiss-on-open pass would blur it again (Keyboard.dismiss blurs the
+  // focused input), so it only runs for touch use.
+  const hardwareKeyboardConnected = useHardwareKeyboardStore((s) => s.connected);
+  useDismissKeyboardOnOpen(isOpen, isMobile && !hardwareKeyboardConnected);
 
   const handleIndicatorStyle = useMemo(
     () => ({ backgroundColor: theme.colors.palette.zinc[600] }),
