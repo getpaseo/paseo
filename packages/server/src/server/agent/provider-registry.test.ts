@@ -1476,6 +1476,39 @@ describe("model merging", () => {
     expect(defaultModel?.id).toBe("profile-default");
   });
 
+  test("explicit additional models override hidden compatibility entries", async () => {
+    mockState.runtimeModels.set("claude", [
+      {
+        provider: "claude",
+        id: "claude-fable-5[1m]",
+        label: "Fable 5",
+        isSelectable: false,
+      },
+    ]);
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: {
+          additionalModels: [{ id: "claude-fable-5[1m]", label: "Gateway Fable 5" }],
+        },
+      },
+    });
+
+    const { models } = await registry.claude.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    expect(models).toEqual([
+      expect.objectContaining({
+        id: "claude-fable-5[1m]",
+        label: "Gateway Fable 5",
+        isSelectable: true,
+        defaultThinkingOptionId: "high",
+      }),
+    ]);
+  });
+
   test("built-in Claude models override replaces hardcoded first-party models (issue #1299)", async () => {
     mockState.runtimeModels.set("claude", [
       { provider: "claude", id: "claude-opus-4-8", label: "Opus 4.8", isDefault: true },

@@ -171,6 +171,30 @@ describe("model aliases", () => {
     expect(resolved.model).toBe("gpt-5.3-codex");
     expect(resolved.thinkingOptionId).toBe("xhigh");
   });
+
+  it("prefers an exact configured model id over another model's alias", () => {
+    const configuredAlias: AgentModelDefinition = {
+      provider: "codex",
+      id: "gpt-5.3-codex-legacy",
+      label: "Gateway legacy model",
+      defaultThinkingOptionId: "medium",
+      thinkingOptions: [{ id: "medium", label: "medium", isDefault: true }],
+    };
+    const resolved = resolveFormState(
+      undefined,
+      {
+        provider: "codex",
+        providerPreferences: { codex: { model: configuredAlias.id } },
+      },
+      [...ALIASED_CODEX_MODELS, configuredAlias],
+      INITIAL_USER_MODIFIED,
+      makeState().form,
+      codexProviderMap,
+    );
+
+    expect(resolved.model).toBe("gpt-5.3-codex-legacy");
+    expect(resolved.thinkingOptionId).toBe("medium");
+  });
 });
 
 describe("resolveThinkingOptionId", () => {

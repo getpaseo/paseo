@@ -339,9 +339,13 @@ function mergeModelAdditions(
       continue;
     }
 
+    const existingModel = mergedModels[existingIndex];
+    const explicitlyEnablesCompatibilityModel =
+      existingModel?.isSelectable === false && additionalModel.isSelectable === undefined;
     mergedModels[existingIndex] = {
-      ...mergedModels[existingIndex],
+      ...existingModel,
       ...additionalModel,
+      ...(explicitlyEnablesCompatibilityModel ? { isSelectable: true } : {}),
     };
   }
 

@@ -59,14 +59,17 @@ export async function getClaudeModelsWithSettings(
     return hardcodedModels;
   }
 
-  const seenModelIds = new Set(hardcodedModels.map((model) => model.id));
   const models = [...hardcodedModels];
 
   for (const model of settingsModels) {
-    if (seenModelIds.has(model.id)) {
+    const existingIndex = models.findIndex((candidate) => candidate.id === model.id);
+    if (existingIndex !== -1) {
+      const existing = models[existingIndex];
+      if (existing?.isSelectable === false) {
+        models[existingIndex] = { ...existing, ...model, isSelectable: true };
+      }
       continue;
     }
-    seenModelIds.add(model.id);
     models.push(model);
   }
 

@@ -627,7 +627,7 @@ describe("ClaudeAgentSession features", () => {
     return { queryFactory, queryMock, launches };
   }
 
-  test("canonicalizes retired Fable 5 IDs inside the Claude provider", async () => {
+  test("passes exact configured Fable 5 IDs through to Claude Code", async () => {
     const { queryFactory, queryMock } = createQueryMock();
     const client = new ClaudeAgentClient({
       logger,
@@ -645,10 +645,10 @@ describe("ClaudeAgentSession features", () => {
         ensureQuery(): Promise<unknown>;
       }
     ).ensureQuery();
-    expect(queryFactory.mock.calls[0]?.[0].options.model).toBe("claude-fable-5");
+    expect(queryFactory.mock.calls[0]?.[0].options.model).toBe("claude-fable-5[1m]");
 
     await session.setModel?.("claude-fable-5[1m]");
-    expect(queryMock.setModel).toHaveBeenCalledWith("claude-fable-5");
+    expect(queryMock.setModel).toHaveBeenCalledWith("claude-fable-5[1m]");
     await session.close();
   });
 

@@ -322,6 +322,26 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     ]);
   });
 
+  it("lets an exact settings model override the hidden Fable compatibility entry", async () => {
+    const configDir = await createClaudeConfigDir({ model: "claude-fable-5[1m]" });
+    vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
+    const client = createCatalogClient();
+
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
+
+    const configured = models.filter((model) => model.id === "claude-fable-5[1m]");
+    expect(configured).toHaveLength(1);
+    expect(configured[0]).toMatchObject({
+      id: "claude-fable-5[1m]",
+      isSelectable: true,
+      defaultThinkingOptionId: "high",
+    });
+  });
+
   it("omits models that require a newer Claude Code version", async () => {
     const client = createCatalogClient("2.1.218");
 
