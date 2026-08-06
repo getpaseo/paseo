@@ -1234,6 +1234,10 @@ export class HostRuntimeController {
     }
 
     this.activeClient = client;
+    // A client established while the app is backgrounded (e.g. a host that
+    // comes online mid-background) must inherit the background state — the
+    // store only fans setBackgrounded out to controllers that already exist.
+    if (this.backgrounded) client.setBackgrounded(true);
     this.unsubscribeClientHandlers =
       this.deps.mountClientHandlers?.({ client, host: this.host, connection }) ?? null;
     this.applyConnectionEvent({
@@ -1395,6 +1399,7 @@ export class HostRuntimeStore {
   private bootPromise: Promise<void> | null = null;
   private storage: HostRuntimeStorage;
   private replicaCache: ReplicaCache;
+  private backgrounded = false;
 
   constructor(input?: { deps?: HostRuntimeControllerDeps; storage?: HostRuntimeStorage }) {
     this.deps = input?.deps ?? createDefaultDeps();
@@ -2008,6 +2013,10 @@ export class HostRuntimeStore {
         onReconcileServerId: (oldId, newId) => this.reconcileServerId(oldId, newId),
       });
       this.controllers.set(host.serverId, controller);
+      // A controller created after the app went to the background must inherit
+      // the current background state — setBackgrounded only fans out to
+      // controllers that already exist.
+      if (this.backgrounded) controller.setBackgrounded(true);
       this.directorySyncByServer.set(
         host.serverId,
         new DirectorySync(host.serverId, {
@@ -2238,6 +2247,7 @@ export class HostRuntimeStore {
   }
 
   setBackgrounded(backgrounded: boolean): void {
+    this.backgrounded = backgrounded;
     for (const controller of this.controllers.values()) {
       controller.setBackgrounded(backgrounded);
     }

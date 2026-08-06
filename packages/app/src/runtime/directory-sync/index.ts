@@ -40,6 +40,7 @@ interface AgentSnapshot {
   entries: FetchAgentsEntry[];
   subscriptionId: string | null;
   legacy: boolean;
+  directoryCursor: { generation: string; sequence: number } | null;
 }
 
 export interface DirectoryConnection {
@@ -187,6 +188,7 @@ export class DirectorySync {
       entries: [],
       subscriptionId: null,
       legacy: false,
+      directoryCursor: null,
     }));
     this.callbacks.markAgentLoading();
     try {
@@ -236,6 +238,13 @@ export class DirectorySync {
           )
         : completion.deltas;
       const agents = this.agents.commitSnapshot(completion.snapshot.entries, deltas);
+      // Advance the cursor only after the whole paginated snapshot committed. A
+      // mid-pagination failure leaves the cursor at its previous value, so the
+      // next sync resumes incrementally from a state the client actually
+      // applied — not from a sequence whose entries were discarded.
+      if (completion.snapshot.directoryCursor) {
+        this.agentDirectoryCursor = completion.snapshot.directoryCursor;
+      }
       this.callbacks.markAgentReady();
       return { agents, subscriptionId: completion.snapshot.subscriptionId };
     } catch (error) {
@@ -350,7 +359,7 @@ export class DirectorySync {
       transaction.snapshot.entries.push(...payload.entries);
       transaction.snapshot.subscriptionId ??= payload.subscriptionId ?? null;
       if (payload.sequence !== undefined && payload.directoryGeneration !== undefined) {
-        this.agentDirectoryCursor = {
+        transaction.snapshot.directoryCursor = {
           generation: payload.directoryGeneration,
           sequence: payload.sequence,
         };
