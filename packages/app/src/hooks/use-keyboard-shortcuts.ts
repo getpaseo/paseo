@@ -275,6 +275,21 @@ export function useKeyboardShortcuts({
       if (handled && isWorkspaceFocusModeEnabled && input.action.startsWith("sidebar.")) {
         exitFocusMode();
       }
+      // If no mounted composer handled a focus request (terminal tab active,
+      // screen mid-transition), leave a pending request so the next composer
+      // to settle picks it up — Cmd/Ctrl+L should always land in the prompt.
+      if (
+        !handled &&
+        isNative &&
+        input.action === "message-input.action" &&
+        input.payload &&
+        typeof input.payload === "object" &&
+        "kind" in input.payload &&
+        input.payload.kind === "focus"
+      ) {
+        requestComposerAutoFocus();
+        return true;
+      }
       return handled;
     };
 
