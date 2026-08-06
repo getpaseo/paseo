@@ -100,6 +100,17 @@ test.describe("Workspace draft thinking preferences", () => {
       );
       await chooseDraftControl(page, "medium", "Thinking › Medium");
       await expectThinkingSelected(page, "Medium");
+      await chooseDraftControl(
+        page,
+        "ten second stream",
+        "Model › Mock Load Test › Ten second stream",
+      );
+      await chooseDraftControl(
+        page,
+        "five minute stream",
+        "Model › Mock Load Test › Five minute stream",
+      );
+      await expectThinkingSelected(page, "Medium");
       await submitDraftAgent(page, "Remember medium thinking for this model");
 
       await openNewAgentTab(page);
