@@ -194,7 +194,10 @@ describe("plugin path round trip", () => {
 
 describe("wrapPluginHtml", () => {
   const CSP_META = `<meta http-equiv="Content-Security-Policy" content="${PLUGIN_CONTENT_SECURITY_POLICY}">`;
-  const SHELL_PREFIX = `<!doctype html><html><head>${CSP_META}<script>${PLUGIN_NEUTER_SCRIPT}</script></head><body><script>`;
+  // CSP has no directive for DNS prefetching, so this meta is the only thing
+  // that turns it off — including for hints a plugin script adds later.
+  const DNS_META = `<meta http-equiv="x-dns-prefetch-control" content="off">`;
+  const SHELL_PREFIX = `<!doctype html><html><head>${CSP_META}${DNS_META}<script>${PLUGIN_NEUTER_SCRIPT}</script></head><body><script>`;
 
   // Every one of these defeats a regex that hunts for the plugin's own <head>:
   // the match is inside a comment, inside an attribute value, or absent, and the
@@ -220,18 +223,28 @@ describe("wrapPluginHtml", () => {
   // The plugin is carried as a JS string and inserted, so the document parser
   // never sees its markup — that is what takes `<template shadowrootmode>` away,
   // and it also means no plugin byte can appear as markup in our own shell.
+  //
+  // Asserted as a property rather than by re-running the escaper: an assertion
+  // built from the implementation's own expression passes for any escaper,
+  // including one that only handles `</`.
   it("carries the plugin as data, not as markup", () => {
-    for (const html of HOSTILE.filter((entry) => entry.length > 0)) {
-      const wrapped = wrapPluginHtml(html);
-      expect(wrapped, html).toContain(JSON.stringify(html).slice(1, -1).replace(/<\//g, "<\\/"));
-      expect(wrapped, html).not.toContain(`<body>${html}`);
+    for (const html of [...HOSTILE, "<!-- x", "<!--", "<script", "</script >", "<\\/x"]) {
+      const shell = wrapPluginHtml(html);
+      const body = shell.slice(shell.indexOf("<body>"));
+      const CLOSE = "</script>";
+      const script = body.slice(body.indexOf("<script>") + "<script>".length, body.indexOf(CLOSE));
+      // Three tokenizer exits, not one: `<!--` moves script data to "escaped"
+      // and a later `<script` to "double escaped", where our own `</script>`
+      // stops ending the element and the rest of the document is script text.
+      expect(script, html).not.toMatch(/<\/script|<!--|<script/i);
+      // Nothing of the plugin's follows the shell script: the body is that one
+      // element and then the document ends.
+      expect(body.slice(body.indexOf(CLOSE)), html).toBe(`${CLOSE}</body></html>`);
     }
   });
 
-  it("never emits a closing script tag from plugin content", () => {
+  it("emits exactly the two script elements it wrote itself", () => {
     const wrapped = wrapPluginHtml("<script>fetch('https://evil.tld')</script><p>x</p>");
-    // One unescaped `</script>` ends our shell script early and the rest of the
-    // plugin lands as markup in a document that has run none of the neutering.
     expect(wrapped.match(/<\/script>/g)).toHaveLength(2);
   });
 

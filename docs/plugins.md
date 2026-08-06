@@ -73,7 +73,7 @@ So the plugin does not get child browsing contexts at all. The same script insta
 
 Three rounds of review found a door that observer does not watch, so it is now the last line rather than the only one. What sits above it:
 
-- **The plugin's markup is inserted, never parsed as the document.** `wrapPluginHtml` carries the HTML as a JS string and hands it to `insertAdjacentHTML`, then re-creates the inline `<script>` elements in order so they run as they normally would. This is the one that is not negotiable: `<template shadowrootmode="closed">` is honoured by the HTML parser and by nothing else, and a closed shadow root built that way is unreachable from script forever — no `shadowRoot` to read, no `attachShadow` call to wrap, an `<iframe>` inside it that nothing can find. Fragment parsing leaves the same markup an inert `<template>`.
+- **The plugin's markup is inserted, never parsed as the document.** `wrapPluginHtml` carries the HTML as a JS string and hands it to `insertAdjacentHTML`, then re-creates the inline `<script>` elements in order. What that changes for a plugin author is under [Your HTML is inserted, not parsed as a document](#your-html-is-inserted-not-parsed-as-a-document). This is the one that is not negotiable: `<template shadowrootmode="closed">` is honoured by the HTML parser and by nothing else, and a closed shadow root built that way is unreachable from script forever — no `shadowRoot` to read, no `attachShadow` call to wrap, an `<iframe>` inside it that nothing can find. Fragment parsing leaves the same markup an inert `<template>`.
 - **`document.write`, `document.writeln`, `setHTMLUnsafe`, and `Document.parseHTMLUnsafe` throw.** They are the remaining ways to reach the HTML parser, and therefore the remaining ways to a closed shadow root. Denying an API is a policy; removing an element afterwards is a race.
 - **`attachShadow` is wrapped** so every root it hands out is observed and swept. That call is the only moment a `closed` root is reachable.
 
@@ -85,6 +85,17 @@ And two things the observer itself has to get right, each found by breaking an e
 `sandbox-denial.browser.test.ts` has the child report `typeof RTCPeerConnection` from its own realm and asserts the report never arrives — for the plain append, the poisoned prototypes, `document.write`, an imperative shadow root in all three attachment orders, and a declarative closed one. A denial test written from the host's point of view proves nothing here: reading `child.contentWindow.RTCPeerConnection` throws on the opaque origin either way.
 
 There is no CSP or Permissions Policy answer to any of this. WebRTC is not a policy-controlled feature in any browser, so it cannot be withheld from a frame tree the way `camera` or `microphone` can — the realm has to not exist.
+
+### Resource hints leak a hostname, and one of them is not closed
+
+`<link rel="dns-prefetch">` and `<link rel="preconnect">` resolve a hostname without making a request, so no CSP directive is ever consulted — the payload rides in the subdomain labels. It is the same DNS channel `RTCPeerConnection` is deleted to close, reached with a `<link>` and no script. The other hint rels are fetches and `default-src 'none'` already refuses them.
+
+A hint fires when the element is connected, synchronously, before any observer's microtask. Removing it afterwards is too late, so the shell never connects one:
+
+- **Plugin markup is sanitised while it is still detached.** `insertAdjacentHTML` goes into a `<div>` that is not in the document, where nothing loads and no hint fires; every `link`, `iframe`, `frame`, `object` and `embed` is removed there, and only then is the subtree connected — as one fragment, so scripts still see their own siblings. Nothing legitimate is lost: CSP denies every resource a `<link>` could fetch anyway.
+- **`x-dns-prefetch-control: off`** is on both shells, which disables `dns-prefetch` for the whole document including hints a plugin script adds later. There is no CSP equivalent.
+
+**Residual:** a plugin _script_ can still append `<link rel="preconnect">` and cause one DNS lookup and TCP/TLS connection to a host of its choosing. No web platform primitive denies it — CSP has no directive, `x-dns-prefetch-control` is a separate Blink setting that does not cover preconnect, and the hint fires before any interception we can install universally. Wrapping the dozen DOM insertion APIs would be incomplete by construction, which is the failure mode the rest of this section exists to avoid. Treat an installed plugin as code you trust with the files you open in it, the same as a VS Code extension; the sandbox stops a _careless_ plugin, not a determined one with a covert channel.
 
 The CSP is injected by wrapping the plugin's HTML in our own document shell, never by locating the plugin's own `<head>`. Searching attacker-controlled markup for an injection point is defeated by putting `<head>` in a comment or an attribute, which ships the document with no policy at all.
 
@@ -190,3 +201,16 @@ The index is parsed one entry at a time and bad entries are dropped. Parsing it 
 ## Writing one
 
 `examples/plugins/hello-paseo/` is a working plugin with both contribution kinds. Copy it, change the id, and point `daemon.plugins.registryUrl` at a local index to test the install path end to end.
+
+### Your HTML is inserted, not parsed as a document
+
+The shell hands your markup to `insertAdjacentHTML` and then re-creates your inline `<script>` elements in order, so the HTML parser never runs over it. Inline scripts still run in order and still run before `DOMContentLoaded`, with their attributes intact and `document.currentScript` pointing where you expect. What differs:
+
+- **`<script type="module">` runs after the classic scripts**, not in document order. That is module semantics, not a quirk, but the ordering is new if you were relying on a document parse.
+- **A script sees the whole document**, not only the markup above it. `getElementById` for an element further down now returns it.
+- **`<script src="...">` does nothing.** `script-src 'unsafe-inline'` denies external scripts anyway; inline your code.
+- **Declarative shadow DOM does nothing.** `<template shadowrootmode>` stays an inert `<template>`. `attachShadow()` works.
+- **No `<head>` semantics.** Your `<html>`/`<head>` tags are dropped. `<style>` works fine in the body; `<meta>` and `<base>` do nothing.
+- **Non-script `<script>` blocks are left alone**, so `type="application/json"` data blocks survive and are not executed.
+
+`shell.browser.test.ts` is the contract, in real Chromium.

@@ -78,6 +78,14 @@ export const PLUGIN_CONTENT_SECURITY_POLICY =
 const CSP_META_TAG = `<meta http-equiv="Content-Security-Policy" content="${PLUGIN_CONTENT_SECURITY_POLICY}">`;
 
 /**
+ * Turns off DNS prefetching for the whole document, including hints a plugin
+ * script adds later. CSP has no directive for it: a `dns-prefetch` hint makes no
+ * request, so nothing is ever checked against a policy, and the payload rides in
+ * the subdomain labels of the hostname.
+ */
+const DNS_PREFETCH_META_TAG = `<meta http-equiv="x-dns-prefetch-control" content="off">`;
+
+/**
  * The one exfiltration channel CSP cannot express.
  *
  * `RTCPeerConnection` lets a plugin choose the ICE server's host, port,
@@ -135,6 +143,22 @@ export const PLUGIN_NEUTERED_GLOBALS = [
  * boundary, so a frame hidden in one is invisible to both — a `closed` root is
  * invisible to everything afterwards. `attachShadow` is wrapped to observe each
  * root it hands out, which is the only moment a closed one is reachable.
+ *
+ * The sweep's own scan for open roots is belt and braces, not the mechanism:
+ * every root that can exist here comes from that wrapper, since the plugin's
+ * markup never reaches the HTML parser. It costs nothing measurable and it is
+ * what would still catch a frame if that ever stopped being true.
+ *
+ * `link` is in the selector for a different reason: `rel="dns-prefetch"` and
+ * `rel="preconnect"` resolve a hostname without ever making a request, so no CSP
+ * directive is consulted and the payload rides in the subdomain labels — the
+ * same DNS exfiltration `RTCPeerConnection` is deleted to close. A hint fires
+ * when the element is connected, before this observer's microtask, so removal is
+ * cleanup rather than prevention; the prevention is that plugin markup is
+ * sanitised while it is still detached, plus `x-dns-prefetch-control`. Nothing
+ * legitimate is lost: CSP denies every resource a `<link>` could fetch anyway.
+ * See the residual note in docs/plugins.md — a plugin *script* can still open one
+ * `preconnect`, and no web platform primitive denies it.
  */
 const KILL_CHILD_REALMS = `
 var A = Reflect.apply;
@@ -153,7 +177,7 @@ var shadowOf = own(Element.prototype, "shadowRoot").get;
 var addedOf = own(MutationRecord.prototype, "addedNodes").get;
 var countOf = own(NodeList.prototype, "length").get;
 var at = NodeList.prototype.item;
-var SELECTOR = "iframe,frame,object,embed";
+var SELECTOR = "iframe,frame,object,embed,link";
 var WATCH = { childList: true, subtree: true };
 function drop(node) {
   var parent = A(parentOf, node, []);
@@ -218,21 +242,87 @@ export const PLUGIN_NEUTER_SCRIPT = `(function(){${JSON.stringify(
  * and it is the only door to a closed root that is not a method call we can deny.
  *
  * Inserted markup does not run its `<script>` elements, so they are re-created
- * in document order afterwards. That is the plugin's own contract restored, not
- * a workaround: inline scripts still run before `DOMContentLoaded`, in order,
- * because this shell script sits at the end of `<body>`.
+ * in document order afterwards: inline scripts still run before
+ * `DOMContentLoaded`, in order, because this shell script sits at the end of
+ * `<body>`. What differs from a document parse is written down under "Writing
+ * one" in docs/plugins.md — `type="module"` runs after the classic scripts, and
+ * a script sees the whole document rather than only the markup above it.
+ *
+ * Attributes are copied because they are load-bearing: `type` decides whether an
+ * element is script at all (`application/json` is data and must be left alone),
+ * and plugins read `id` and `data-*` off `document.currentScript`.
+ *
+ * Everything is captured before the first plugin script runs, for the reason
+ * `KILL_CHILD_REALMS` gives — but with an extra edge here, because plugin code
+ * runs *between iterations of this loop*. A poisoned `document.createElement`
+ * would otherwise choose what we insert next, with attributes the plugin wrote.
  */
 const INSERT_PLUGIN_HTML = `
+var A = Reflect.apply;
+var own = Object.getOwnPropertyDescriptor;
+var insert = Element.prototype.insertAdjacentHTML;
+var findAll = Element.prototype.querySelectorAll;
+var make = Document.prototype.createElement;
+var swap = Node.prototype.replaceChild;
+var detach = Node.prototype.removeChild;
+var readAttr = Element.prototype.getAttribute;
+var writeAttr = Element.prototype.setAttribute;
+var attrsOf = own(Element.prototype, "attributes").get;
+var parentOf = own(Node.prototype, "parentNode").get;
+var textOf = own(Node.prototype, "textContent").get;
+var setText = own(HTMLScriptElement.prototype, "text").set;
+var countOf = own(NodeList.prototype, "length").get;
+var at = NodeList.prototype.item;
+var attrCountOf = own(NamedNodeMap.prototype, "length").get;
+var attrAt = NamedNodeMap.prototype.item;
+var nameOf = own(Attr.prototype, "name").get;
+var valueOf = own(Attr.prototype, "value").get;
+var test = RegExp.prototype.test;
+var JS = /^(module|(text|application)\\/(java|ecma)script)$/i;
+var append = Node.prototype.appendChild;
+var makeFragment = Document.prototype.createDocumentFragment;
+var firstOf = own(Node.prototype, "firstChild").get;
 var host = document.currentScript;
-document.body.insertAdjacentHTML("beforeend", PLUGIN_HTML);
-var scripts = document.body.querySelectorAll("script");
-for (var i = 0; i < scripts.length; i++) {
-  var old = scripts[i];
-  if (old === host) continue;
-  var next = document.createElement("script");
-  next.text = old.textContent;
-  old.parentNode.replaceChild(next, old);
+var body = document.body;
+// Out of the tree first, so \`body > :first-child\` is the plugin's own first
+// element, and so the plugin cannot read this script's source back out.
+var hostParent = A(parentOf, host, []);
+if (hostParent) { try { A(detach, hostParent, [host]); } catch (e) {} }
+// Detached: nothing in here is browsing-context connected, so a resource hint
+// has not fired and a frame has not loaded.
+var holder = A(make, document, ["div"]);
+A(insert, holder, ["beforeend", PLUGIN_HTML]);
+var junk = A(findAll, holder, ["link,iframe,frame,object,embed"]);
+for (var j = 0, jn = A(countOf, junk, []); j < jn; j++) {
+  var dead = A(at, junk, [j]);
+  var deadParent = A(parentOf, dead, []);
+  if (deadParent) { try { A(detach, deadParent, [dead]); } catch (e) {} }
 }
+var scripts = A(findAll, holder, ["script"]);
+for (var i = 0, n = A(countOf, scripts, []); i < n; i++) {
+  var old = A(at, scripts, [i]);
+  if (old === host) continue;
+  var type = A(readAttr, old, ["type"]);
+  if (type && !A(test, JS, [type])) continue;
+  var parent = A(parentOf, old, []);
+  if (!parent) continue;
+  var next = A(make, document, ["script"]);
+  var attrs = A(attrsOf, old, []);
+  for (var a = 0, m = A(attrCountOf, attrs, []); a < m; a++) {
+    var attr = A(attrAt, attrs, [a]);
+    try { A(writeAttr, next, [A(nameOf, attr, []), A(valueOf, attr, [])]); } catch (e) {}
+  }
+  A(setText, next, [A(textOf, old, [])]);
+  try { A(swap, parent, [next, old]); } catch (e) {}
+}
+// Connecting the markup is what runs its scripts, so it is the last step — and
+// it is one step. Moving the nodes over individually would connect each script
+// while its own siblings were still detached, so \`getElementById\` would not find
+// them; a fragment connects the whole subtree before the first script runs.
+var frag = A(makeFragment, document, []);
+var kid;
+while ((kid = A(firstOf, holder, []))) { A(append, frag, [kid]); }
+A(append, body, [frag]);
 `;
 
 /**
@@ -248,12 +338,20 @@ for (var i = 0; i < scripts.length; i++) {
  */
 export function wrapPluginHtml(html: string): string {
   const insert = INSERT_PLUGIN_HTML.replace("PLUGIN_HTML", () => toScriptString(html));
-  return `<!doctype html><html><head>${CSP_META_TAG}<script>${PLUGIN_NEUTER_SCRIPT}</script></head><body><script>(function(){${insert}})();</script></body></html>`;
+  return `<!doctype html><html><head>${CSP_META_TAG}${DNS_PREFETCH_META_TAG}<script>${PLUGIN_NEUTER_SCRIPT}</script></head><body><script>(function(){${insert}})();</script></body></html>`;
 }
 
-/** A JS string literal safe to sit inside a `<script>` element. */
+/**
+ * A JS string literal safe to sit inside a `<script>` element.
+ *
+ * Every `<` goes, not just `</script`. The script-data tokenizer has three
+ * states, and an unterminated `<!--` moves it into "escaped" where a later
+ * `<script` moves it into "double escaped" — in which our own real `</script>`
+ * no longer ends the element. The whole shell is then one unterminated script,
+ * a SyntaxError, and a blank plugin with nothing reported anywhere.
+ */
 function toScriptString(value: string): string {
-  return JSON.stringify(value).replace(/<\//g, "<\\/");
+  return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
 /**
@@ -280,7 +378,7 @@ export function wrapPluginHostDocument(html: string): string {
     .replace(/"/g, "&quot;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-  return `<!doctype html><html><head>${CSP_META_TAG}<meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;padding:0;height:100%;overflow:hidden}iframe{display:block;border:0;width:100%;height:100%}</style><script>${PLUGIN_HOST_RELAY}</script></head><body><iframe id="paseo-plugin" sandbox="allow-scripts" srcdoc="${guest}"></iframe></body></html>`;
+  return `<!doctype html><html><head>${CSP_META_TAG}${DNS_PREFETCH_META_TAG}<meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;padding:0;height:100%;overflow:hidden}iframe{display:block;border:0;width:100%;height:100%}</style><script>${PLUGIN_HOST_RELAY}</script></head><body><iframe id="paseo-plugin" sandbox="allow-scripts" srcdoc="${guest}"></iframe></body></html>`;
 }
 
 /**
@@ -307,6 +405,10 @@ const PLUGIN_HOST_RELAY = `(function(){
     var data = event.data;
     if (!data || data.paseo !== 1) return;
     if (data.type === "init" || data.type === "update") return;
+    // The bridge is injected by the WebView, and this script now runs in
+    // <head>. A throw here loses \`ready\` for good: the plugin sends it once,
+    // and ten seconds later the user gets the timeout screen.
+    if (!window.ReactNativeWebView) return;
     window.ReactNativeWebView.postMessage(JSON.stringify(data));
   });
   window.__paseoPost = function (message) {

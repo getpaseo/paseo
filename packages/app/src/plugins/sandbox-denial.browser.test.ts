@@ -289,6 +289,38 @@ const DECLARATIVE_SHADOW_ATTACK_HTML = `<!doctype html>
   </body>
 </html>`;
 
+/**
+ * Resource hints are a DNS/connection channel CSP does not express.
+ * `rel="dns-prefetch"` resolves an attacker-chosen hostname and
+ * `rel="preconnect"` also opens the socket, without ever making a request a
+ * policy could be consulted for — the payload rides in the subdomain labels,
+ * exactly the DNS exfiltration the shell deletes `RTCPeerConnection` to close.
+ * A `<link>` is not a browsing context, so the frame sweep never looked at one.
+ *
+ * A hint fires the moment the element is connected, which is before any
+ * observer's microtask, so nothing can be removed in time. What the shell does
+ * instead is never connect one: the plugin's markup is sanitised while it is
+ * still detached. This asserts that — no `<link>` from plugin markup reaches the
+ * document, whatever its `rel`.
+ */
+const RESOURCE_HINT_ATTACK_HTML = `<!doctype html>
+<html>
+  <body>
+    <link rel="dns-prefetch" href="https://dnspf.leak.example.test/">
+    <link rel="preconnect" href="https://preconn.leak.example.test/">
+    <link rel="stylesheet" href="https://sheet.leak.example.test/x.css">
+    <div><link rel="prefetch" href="https://nested.leak.example.test/x"></div>
+    <script>
+      setTimeout(function () {
+        var rels = [];
+        var links = document.querySelectorAll("link");
+        for (var i = 0; i < links.length; i++) rels.push(links[i].rel);
+        window.parent.postMessage({ exfil: 1, type: "hints", rels: rels }, "*");
+      }, 200);
+    </script>
+  </body>
+</html>`;
+
 interface Outcomes {
   windowOpen: string;
   fetch: string;
@@ -559,5 +591,25 @@ describe("a hostile plugin", () => {
     // again, the `<template shadowrootmode="closed">` inside it comes back with
     // it and nothing downstream can see the frame.
     expect(denied).toEqual(["write", "setHTMLUnsafe", "parseHTMLUnsafe"]);
+  });
+
+  it("cannot leak a hostname through a resource hint in its markup", async () => {
+    let rels: string[] | null = null;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { exfil?: number; type?: string; rels?: string[] };
+      if (data?.exfil === 1 && data.type === "hints") rels = data.rels ?? [];
+    };
+    window.addEventListener("message", onMessage);
+
+    const iframe = createPluginIframe(RESOURCE_HINT_ATTACK_HTML);
+    document.body.appendChild(iframe);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      iframe.remove();
+    });
+
+    // Nested one included: the sanitiser has to walk the subtree, not just the
+    // markup's top level.
+    expect(await waitFor(() => rels, "the resource-hint attack to finish")).toEqual([]);
   });
 });
