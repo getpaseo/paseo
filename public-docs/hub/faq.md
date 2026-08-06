@@ -44,7 +44,7 @@ Dispatch fails and the event is recorded as failed. Nothing is queued, so trigge
 
 ## Can an agent reply back to Slack or Discord?
 
-Yes, with `allow_outputs`. Set `max` to limit reply emissions, and set `required: true` when the step must emit at least one actual reply before it can finish; ordinary assistant text does not count. On GitHub, agents reply through the scoped `GH_TOKEN` they already have, so `gh issue comment` works.
+Yes, with `allow_outputs`. See the [`hub.yml` output capability reference](/docs/hub/configuration/hub-yml#output-capabilities) for reply limits and required outputs. On GitHub, agents reply through the scoped `GH_TOKEN` they already have, so `gh issue comment` works.
 
 ## Can I use it without GitHub?
 
