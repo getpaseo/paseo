@@ -9,6 +9,7 @@ import {
   ProviderUsageMobileSession,
   ProviderUsageTooltipSection,
 } from "@/provider-usage/tooltip-section";
+import type { ProviderUsageView } from "@/provider-usage/types";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { formatTokenCount } from "./context-window-meter.utils";
 
@@ -100,6 +101,67 @@ function getMeterGeometry(showPercentage: boolean, glyphSize?: number) {
   };
 }
 
+function renderContextWindowFallback({
+  geometry,
+  pending,
+  provider,
+  providerUsageView,
+  showPercentage,
+  trackColor,
+}: {
+  geometry: ReturnType<typeof getMeterGeometry>;
+  pending: boolean;
+  provider: string | null | undefined;
+  providerUsageView: ProviderUsageView;
+  showPercentage: boolean;
+  trackColor: string;
+}) {
+  if (!pending) {
+    if (!showPercentage || provider == null) {
+      return null;
+    }
+    return (
+      <View style={styles.mobileUsage}>
+        <ProviderUsageMobileSession view={providerUsageView} activeProviderId={provider} />
+      </View>
+    );
+  }
+
+  const meterPlaceholder = (
+    <View style={geometry.containerStyle}>
+      <Svg
+        width={geometry.svgSize}
+        height={geometry.svgSize}
+        viewBox={`0 0 ${geometry.svgSize} ${geometry.svgSize}`}
+        style={styles.svg}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      >
+        <Circle
+          cx={geometry.center}
+          cy={geometry.center}
+          r={geometry.radius}
+          fill="none"
+          stroke={trackColor}
+          strokeWidth={geometry.strokeWidth}
+        />
+      </Svg>
+      {showPercentage ? <View style={styles.skeletonLabel} /> : null}
+    </View>
+  );
+  if (!showPercentage) {
+    return meterPlaceholder;
+  }
+  return (
+    <View style={styles.mobileUsage} testID="context-window-meter-mobile-placeholder">
+      {meterPlaceholder}
+      {provider != null ? (
+        <ProviderUsageMobileSession view={providerUsageView} activeProviderId={provider} />
+      ) : null}
+    </View>
+  );
+}
+
 export function ContextWindowMeter({
   maxTokens,
   usedTokens,
@@ -135,44 +197,18 @@ export function ContextWindowMeter({
 
   const geometry = getMeterGeometry(showPercentage, glyphSize);
 
-  // No usage yet: reserve the footprint with a track-only ring while a session is
-  // active so the real ring fades in without shifting siblings. Render nothing when
-  // no usage is expected.
+  // No context usage yet: compact layouts can still show provider-plan usage because
+  // it is independent of context telemetry. While context usage is pending, reserve
+  // the meter footprint so the real ring fades in without shifting siblings.
   if (percentage === null || maxTokens === null || usedTokens === null) {
-    if (!pending) {
-      return null;
-    }
-    const meterPlaceholder = (
-      <View style={geometry.containerStyle}>
-        <Svg
-          width={geometry.svgSize}
-          height={geometry.svgSize}
-          viewBox={`0 0 ${geometry.svgSize} ${geometry.svgSize}`}
-          style={styles.svg}
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-        >
-          <Circle
-            cx={geometry.center}
-            cy={geometry.center}
-            r={geometry.radius}
-            fill="none"
-            stroke={theme.colors.surface3}
-            strokeWidth={geometry.strokeWidth}
-          />
-        </Svg>
-        {showPercentage ? <View style={styles.skeletonLabel} /> : null}
-      </View>
-    );
-    if (!showPercentage) {
-      return meterPlaceholder;
-    }
-    return (
-      <View style={styles.mobileUsage} testID="context-window-meter-mobile-placeholder">
-        {meterPlaceholder}
-        <ProviderUsageMobileSession view={providerUsageView} activeProviderId={provider} />
-      </View>
-    );
+    return renderContextWindowFallback({
+      geometry,
+      pending,
+      provider,
+      providerUsageView,
+      showPercentage,
+      trackColor: theme.colors.surface3,
+    });
   }
 
   const clampedPercentage = clampPercentage(percentage);
@@ -236,7 +272,7 @@ export function ContextWindowMeter({
             ) : null}
           </Pressable>
         </TooltipTrigger>
-        {showPercentage ? (
+        {showPercentage && provider != null ? (
           <ProviderUsageMobileSession view={providerUsageView} activeProviderId={provider} />
         ) : null}
       </View>
