@@ -217,6 +217,38 @@ describe("ProviderCatalogSession", () => {
     expect(res?.payload.error).toBe("Provider codex is disabled");
   });
 
+  it("hides compatibility-only entries from list_provider_models", async () => {
+    const { subsystem, emitted } = makeSubsystem({
+      snapshot: {
+        getSnapshot: () => [
+          {
+            provider: "codex",
+            status: "ready",
+            enabled: true,
+            models: [
+              { provider: "codex", id: "gpt-5.4", label: "GPT 5.4" },
+              {
+                provider: "codex",
+                id: "gpt-5.4-legacy",
+                label: "GPT 5.4 legacy",
+                isSelectable: false,
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    await subsystem.handleListProviderModelsRequest({
+      type: "list_provider_models_request",
+      provider: "codex",
+      requestId: "m-selectable",
+    });
+
+    const response = findByType(emitted, "list_provider_models_response");
+    expect(response?.payload.models?.map((model) => model.id)).toEqual(["gpt-5.4"]);
+  });
+
   it("preserves missing cwd as the semantic global snapshot for model list reads", async () => {
     const getSnapshot = vi.fn(() => [{ provider: "codex", status: "loading", enabled: true }]);
     const warmUpSnapshotForCwd = vi.fn(async () => {});

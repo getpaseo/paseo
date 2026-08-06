@@ -1437,6 +1437,19 @@ export const ru: TranslationResources = {
         show: "Показать расширенные",
         hide: "Скрыть расширенные",
       },
+      headers: {
+        title: "Пользовательские заголовки",
+        add: "Добавить заголовок",
+        name: "Имя",
+        value: "Значение",
+        remove: "Удалить заголовок",
+        errors: {
+          missingName: "Введите имя для каждого заголовка",
+          invalidName: "{{name}} — недопустимое имя заголовка",
+          invalidValue: "{{name}} содержит недопустимый перенос строки",
+          duplicateName: "{{name}} введён несколько раз",
+        },
+      },
       passwordVisibility: {
         show: "Показать пароль",
         hide: "Скрыть пароль",

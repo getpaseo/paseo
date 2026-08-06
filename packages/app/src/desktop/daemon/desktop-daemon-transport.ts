@@ -2,11 +2,13 @@ import type {
   DaemonTransport,
   DaemonTransportFactory,
 } from "@getpaseo/client/internal/daemon-client";
-import type { LocalTransportTarget } from "./desktop-daemon";
+import type { DesktopDaemonTransportTarget, LocalTransportTarget } from "./desktop-daemon";
 import {
   defaultLocalDaemonTransportRpc,
+  defaultWebSocketDaemonTransportRpc,
   type LocalDaemonTransportRpc,
 } from "./local-daemon-transport-rpc";
+import { isElectronRuntime } from "@/desktop/host";
 
 const LOCAL_TRANSPORT_SCHEME = "paseo+local:";
 
@@ -50,11 +52,12 @@ function parseLocalDaemonTransportUrl(url: string): LocalTransportTarget {
   };
 }
 
-export function createDesktopLocalDaemonTransportFactory(
-  rpc: LocalDaemonTransportRpc = defaultLocalDaemonTransportRpc,
-): DaemonTransportFactory | null {
-  return ({ url }) => {
-    const target = parseLocalDaemonTransportUrl(url);
+function createDesktopDaemonTransportFactory(
+  resolveTarget: (options: Parameters<DaemonTransportFactory>[0]) => DesktopDaemonTransportTarget,
+  rpc: LocalDaemonTransportRpc,
+): DaemonTransportFactory {
+  return (options) => {
+    const target = resolveTarget(options);
     let sessionId: string | null = null;
     let unlisten: (() => void) | null = null;
     let disposed = false;
@@ -186,4 +189,27 @@ export function createDesktopLocalDaemonTransportFactory(
 
     return transport;
   };
+}
+
+export function createDesktopLocalDaemonTransportFactory(
+  rpc: LocalDaemonTransportRpc = defaultLocalDaemonTransportRpc,
+): DaemonTransportFactory | null {
+  return createDesktopDaemonTransportFactory(({ url }) => parseLocalDaemonTransportUrl(url), rpc);
+}
+
+export function createDesktopWebSocketTransportFactory(
+  rpc?: LocalDaemonTransportRpc,
+): DaemonTransportFactory | null {
+  if (!rpc && !isElectronRuntime()) {
+    return null;
+  }
+  return createDesktopDaemonTransportFactory(
+    ({ url, headers, protocols }) => ({
+      transportType: "websocket" as const,
+      url,
+      ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
+      ...(protocols && protocols.length > 0 ? { protocols } : {}),
+    }),
+    rpc ?? defaultWebSocketDaemonTransportRpc,
+  );
 }
