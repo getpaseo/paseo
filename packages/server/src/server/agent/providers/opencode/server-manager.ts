@@ -426,9 +426,13 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       ...(this.currentServer ? [this.currentServer] : []),
       ...Array.from(this.retiredServers),
     ];
-    await Promise.all(servers.map((server) => this.killServer(server)));
+    // Detach before killing: an acquire that arrives while the kills are in
+    // flight must start a fresh server instead of receiving a dying one, and
+    // the deferred cleanup below must not clear a server that such an acquire
+    // installed in the meantime.
     this.currentServer = null;
     this.retiredServers.clear();
+    await Promise.all(servers.map((server) => this.killServer(server)));
   }
 
   private async cleanupRetiredServers(): Promise<void> {
