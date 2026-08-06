@@ -11,7 +11,9 @@ import {
 const TOOL_CALL_ID = "toolu_01XskpjeASyuFyXC5qsLHYps";
 const RUN_ID = "wf_4a0af4f7-f56";
 
-function parentEntries(): ClaudeWorkflowParentEntry[] {
+function parentEntries(
+  resultContent: unknown = `Workflow launched in background.\nRun ID: ${RUN_ID}`,
+): ClaudeWorkflowParentEntry[] {
   return [
     {
       message: {
@@ -24,7 +26,7 @@ function parentEntries(): ClaudeWorkflowParentEntry[] {
           {
             type: "tool_result",
             tool_use_id: TOOL_CALL_ID,
-            content: `Workflow launched in background.\nRun ID: ${RUN_ID}`,
+            content: resultContent,
           },
         ],
       },
@@ -86,6 +88,29 @@ describe("Claude workflow replay", () => {
       subtitle: "Workflow · Sonnet 5 · 20.4k tokens",
       status: "completed",
       toolCallId: TOOL_CALL_ID,
+    });
+  });
+
+  it("rebuilds a workflow when Claude persists its result as structured text blocks", () => {
+    const observations = observeReplayWorkflows({
+      workflows: [{ runId: RUN_ID, summary: "Structured result workflow", status: "completed" }],
+      parentEntries: parentEntries([
+        {
+          type: "text",
+          text: `Workflow launched in background.\nRun ID: ${RUN_ID}`,
+        },
+      ]),
+    });
+    const store = new ProviderSubagentStore();
+    for (const event of foldSubagentObservations(observations)) {
+      store.apply("parent", "claude", event);
+    }
+
+    expect(store.get("parent", TOOL_CALL_ID)).toMatchObject({
+      id: TOOL_CALL_ID,
+      title: "Workflow",
+      description: "Structured result workflow",
+      status: "completed",
     });
   });
 

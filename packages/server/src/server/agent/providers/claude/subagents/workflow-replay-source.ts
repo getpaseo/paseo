@@ -129,8 +129,23 @@ function readWorkflowLinks(entries: readonly ClaudeWorkflowParentEntry[]): Map<s
 }
 
 function readRunId(content: unknown): string | undefined {
-  const text = typeof content === "string" ? content : JSON.stringify(content);
+  const text = readResultText(content);
+  if (!text) return undefined;
   return /(?:^|\n)Run ID:\s*(wf_[A-Za-z0-9-]+)/u.exec(text)?.[1];
+}
+
+function readResultText(content: unknown): string | undefined {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return undefined;
+
+  const text = content
+    .map((value) => {
+      const block = toRecord(value);
+      return block?.type === "text" && typeof block.text === "string" ? block.text : undefined;
+    })
+    .filter((value): value is string => value !== undefined)
+    .join("\n");
+  return text || undefined;
 }
 
 function replayWorkflowStatus(status: string | undefined): ProviderSubagentStatus {

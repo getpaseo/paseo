@@ -132,6 +132,20 @@ describe("background Claude subagents", () => {
       buildQueryMock([
         { type: "system", subtype: "init", session_id: "bg-session", permissionMode: "default" },
         {
+          type: "assistant",
+          message: {
+            model: "claude-opus-5",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu_workflow",
+                name: "Workflow",
+                input: { workflow: "spec" },
+              },
+            ],
+          },
+        },
+        {
           type: "system",
           subtype: "task_started",
           task_id: "wf-1",
@@ -184,6 +198,18 @@ describe("background Claude subagents", () => {
     expect(providerEvents.at(-1)).toMatchObject({
       event: { type: "upsert", id: "toolu_workflow", status: "completed" },
     });
+
+    const parentCards = events
+      .filter((event) => event.type === "timeline")
+      .map((event) => event.item)
+      .filter((item) => item.type === "tool_call" && item.callId === "toolu_workflow");
+    expect(parentCards).toHaveLength(1);
+    expect(parentCards[0]).toMatchObject({
+      type: "tool_call",
+      name: "Workflow",
+      callId: "toolu_workflow",
+    });
+    expect(parentCards[0]).not.toMatchObject({ detail: { type: "sub_agent" } });
   });
 
   test("labels the parent's Task card with the type and task", async () => {

@@ -153,6 +153,8 @@ export class ClaudeTaskProtocolSource {
    * nothing to say about it.
    */
   private readonly declaredIds = new Set<string>();
+  /** Workflow invocations already own a real Workflow card in the parent timeline. */
+  private readonly idsWithExistingParentToolCard = new Set<string>();
   /**
    * Declared subagents that were moved to the background. They outlive the turn that spawned
    * them, so a turn ending is not evidence that they stopped.
@@ -202,6 +204,10 @@ export class ClaudeTaskProtocolSource {
     return this.declaredIds.has(subagentId);
   }
 
+  needsSyntheticParentToolCard(subagentId: string): boolean {
+    return !this.idsWithExistingParentToolCard.has(subagentId);
+  }
+
   observe(message: SDKMessage): SubagentObservation[] {
     if (message.type !== "system") return [];
     switch (message.subtype) {
@@ -228,6 +234,7 @@ export class ClaudeTaskProtocolSource {
   reset(): void {
     this.subagentIdByTaskId.clear();
     this.declaredIds.clear();
+    this.idsWithExistingParentToolCard.clear();
     this.backgroundedIds.clear();
     this.lastStatusById.clear();
     this.presentationById.clear();
@@ -275,6 +282,7 @@ export class ClaudeTaskProtocolSource {
     // An explicit `name` on the Task call wins over the agent type, matching how replay titles the
     // same subagent. Without it a fan-out of five Explores reads as five identical rows.
     const isWorkflow = message.task_type === CLAUDE_WORKFLOW_TASK_TYPE;
+    if (isWorkflow) this.idsWithExistingParentToolCard.add(id);
     const title = isWorkflow
       ? "Workflow"
       : (readString(this.getToolInput(id)?.name) ?? readString(message.subagent_type));

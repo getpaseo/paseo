@@ -2008,6 +2008,8 @@ class ClaudeAgentSession implements AgentSession {
     // identity and status from frames for them. Detecting the capability beats comparing version
     // strings: it reacts to what this session actually does.
     isDescriptorOwnedElsewhere: () => this.taskProtocolSource.isActive,
+    needsSyntheticParentToolCard: (toolUseId) =>
+      this.taskProtocolSource.needsSyntheticParentToolCard(toolUseId),
   });
   private persistedHistory: PersistedTimelineEntry[] = [];
   private persistedProviderSubagentEvents: Extract<
@@ -3809,6 +3811,7 @@ class ClaudeAgentSession implements AgentSession {
     }
     for (const observation of subagentObservations) {
       if (observation.kind !== "declared") continue;
+      if (!this.taskProtocolSource.needsSyntheticParentToolCard(observation.id)) continue;
       const card = this.buildSubagentToolCallCard(observation);
       if (card) events.push(card);
     }
