@@ -46,6 +46,16 @@ export interface LocalTransportTarget {
   transportPath: string;
 }
 
+export interface WebSocketTransportTarget {
+  [key: string]: unknown;
+  transportType: "websocket";
+  url: string;
+  headers?: Record<string, string>;
+  protocols?: string[];
+}
+
+export type DesktopDaemonTransportTarget = LocalTransportTarget | WebSocketTransportTarget;
+
 interface LocalTransportEventPayload {
   sessionId: string;
   kind: "open" | "message" | "close" | "error";
@@ -189,6 +199,16 @@ export async function openLocalTransportSession(target: LocalTransportTarget): P
   const raw = await invokeDesktopCommand<unknown>("open_local_daemon_transport", target);
   if (typeof raw !== "string" || raw.trim().length === 0) {
     throw new Error("Unexpected local transport session response.");
+  }
+  return raw;
+}
+
+export async function openWebSocketTransportSession(
+  target: WebSocketTransportTarget,
+): Promise<string> {
+  const raw = await invokeDesktopCommand<unknown>("open_websocket_daemon_transport", target);
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    throw new Error("Unexpected WebSocket transport session response.");
   }
   return raw;
 }

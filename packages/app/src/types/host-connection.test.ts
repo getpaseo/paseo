@@ -75,6 +75,28 @@ describe("normalizeStoredHostProfile", () => {
     expect(profile?.connections[0]).not.toHaveProperty("password");
   });
 
+  it("preserves custom headers on stored direct TCP connections", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_headers",
+      connections: [
+        {
+          id: "direct:example.test:6767",
+          type: "directTcp",
+          endpoint: "example.test:6767",
+          headers: { "X-Tenant": "acme" },
+        },
+      ],
+    });
+
+    expect(profile?.connections[0]).toEqual({
+      id: "direct:example.test:6767",
+      type: "directTcp",
+      endpoint: "example.test:6767",
+      useTls: false,
+      headers: { "X-Tenant": "acme" },
+    });
+  });
+
   it("preserves legacy relay ids when TLS is absent", () => {
     const profile = normalizeStoredHostProfile({
       serverId: "srv_relay",
@@ -174,6 +196,30 @@ describe("upsertHostConnectionInProfiles", () => {
     });
 
     expect(profile.appearance).toEqual({ color: "amber", badgeDisplay: "hidden" });
+  });
+
+  it("deduplicates matching custom headers regardless of key order", () => {
+    const firstConnection: HostConnection = {
+      id: "direct:example.test:6767",
+      type: "directTcp",
+      endpoint: "example.test:6767",
+      headers: { "X-One": "1", "X-Two": "2" },
+    };
+    const existing = {
+      ...makeHost("srv_known"),
+      connections: [firstConnection],
+    };
+
+    const [profile] = upsertHostConnectionInProfiles({
+      profiles: [existing],
+      serverId: "srv_known",
+      connection: {
+        ...firstConnection,
+        headers: { "X-Two": "2", "X-One": "1" },
+      },
+    });
+
+    expect(profile.connections).toHaveLength(1);
   });
 });
 

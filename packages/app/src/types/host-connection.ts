@@ -104,6 +104,18 @@ export function resolveActiveHostServerId(params: {
   );
 }
 
+function stringRecordEquals(
+  left: Record<string, string> | undefined,
+  right: Record<string, string> | undefined,
+): boolean {
+  const leftEntries = Object.entries(left ?? {});
+  const rightRecord = right ?? {};
+  return (
+    leftEntries.length === Object.keys(rightRecord).length &&
+    leftEntries.every(([key, value]) => rightRecord[key] === value)
+  );
+}
+
 function hostConnectionEquals(left: HostConnection, right: HostConnection): boolean {
   if (left.type !== right.type || left.id !== right.id) {
     return false;
@@ -113,7 +125,8 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
     return (
       left.endpoint === right.endpoint &&
       (left.useTls ?? false) === (right.useTls ?? false) &&
-      left.password === right.password
+      left.password === right.password &&
+      stringRecordEquals(left.headers, right.headers)
     );
   }
   if (left.type === "directSocket" && right.type === "directSocket") {
@@ -292,6 +305,11 @@ function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
   return isPlainRecord(value) ? value : undefined;
 }
 
+function normalizeStoredHeaders(value: unknown): { headers?: Record<string, string> } {
+  const headers = toObjectRecord(value);
+  return headers ? { headers: headers as Record<string, string> } : {};
+}
+
 function normalizeStoredConnection(connection: unknown): HostConnection | null {
   const record = toObjectRecord(connection);
   if (!record) {
@@ -309,6 +327,7 @@ function normalizeStoredConnection(connection: unknown): HostConnection | null {
         endpoint,
         useTls: record.useTls,
         ...(typeof record.password === "string" ? { password: record.password } : {}),
+        ...normalizeStoredHeaders(record.headers),
       });
     } catch {
       return null;

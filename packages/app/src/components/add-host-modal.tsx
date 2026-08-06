@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useReducer, useState } from "react";
+import { useCallback, useMemo, useReducer, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Pressable, Text, View } from "react-native";
+import { Alert, Platform, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { Check, ChevronDown, ChevronRight, Eye, EyeOff, Link2 } from "lucide-react-native";
+import { isElectronRuntime } from "@/desktop/host";
+import { Check, ChevronDown, ChevronRight, Eye, EyeOff, Link2, Plus, X } from "lucide-react-native";
 import type { HostProfile } from "@/types/host-connection";
 import { useHosts, useHostMutations } from "@/runtime/host-runtime";
 import {
@@ -12,6 +13,11 @@ import {
   serializeConnectionUriForStorage,
 } from "@/utils/daemon-endpoints";
 import { DaemonConnectionTestError } from "@/utils/test-daemon-connection";
+import {
+  prepareConnectionHeaders,
+  type ConnectionHeaderDraft,
+  type ConnectionHeaderValidationIssue,
+} from "@/utils/connection-headers";
 import { AdaptiveModalSheet, AdaptiveTextInput, type SheetHeader } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 
@@ -123,6 +129,30 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
   },
+  advancedContent: {
+    gap: theme.spacing[4],
+  },
+  headerSection: {
+    gap: theme.spacing[2],
+  },
+  headerTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[3],
+  },
+  headerList: {
+    gap: theme.spacing[2],
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  headerInput: {
+    flex: 1,
+    minWidth: 0,
+  },
   actions: {
     flexDirection: "row",
     gap: theme.spacing[3],
@@ -179,6 +209,94 @@ function prepareDirectConnection(
     useTls: parsed.useTls,
     ...(parsed.password ? { password: parsed.password } : {}),
   };
+}
+
+function headerIssueMessage(
+  issue: ConnectionHeaderValidationIssue,
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
+  if (issue.type === "missingName") return t("pairing.direct.headers.errors.missingName");
+  if (issue.type === "invalidName") {
+    return t("pairing.direct.headers.errors.invalidName", { name: issue.name });
+  }
+  if (issue.type === "invalidValue") {
+    return t("pairing.direct.headers.errors.invalidValue", { name: issue.name });
+  }
+  return t("pairing.direct.headers.errors.duplicateName", { name: issue.name });
+}
+
+interface ConnectionHeaderRowProps {
+  draft: ConnectionHeaderDraft;
+  index: number;
+  disabled: boolean;
+  placeholderTextColor: string;
+  iconColor: string;
+  onUpdate: (id: number, field: "name" | "value", value: string) => void;
+  onRemove: (id: number) => void;
+}
+
+function ConnectionHeaderRow({
+  draft,
+  index,
+  disabled,
+  placeholderTextColor,
+  iconColor,
+  onUpdate,
+  onRemove,
+}: ConnectionHeaderRowProps) {
+  const { t } = useTranslation();
+  const handleNameChange = useCallback(
+    (value: string) => onUpdate(draft.id, "name", value),
+    [draft.id, onUpdate],
+  );
+  const handleValueChange = useCallback(
+    (value: string) => onUpdate(draft.id, "value", value),
+    [draft.id, onUpdate],
+  );
+  const handleRemove = useCallback(() => onRemove(draft.id), [draft.id, onRemove]);
+
+  return (
+    <View style={styles.headerRow}>
+      <AdaptiveTextInput
+        testID={`direct-header-name-${index}`}
+        nativeID={`direct-header-name-${draft.id}`}
+        accessibilityLabel={t("pairing.direct.headers.name")}
+        initialValue={draft.name}
+        value={draft.name}
+        onChangeText={handleNameChange}
+        placeholder={t("pairing.direct.headers.name")}
+        placeholderTextColor={placeholderTextColor}
+        style={[styles.input, styles.headerInput]}
+        autoCapitalize="none"
+        autoCorrect={false}
+        editable={!disabled}
+      />
+      <AdaptiveTextInput
+        testID={`direct-header-value-${index}`}
+        nativeID={`direct-header-value-${draft.id}`}
+        accessibilityLabel={t("pairing.direct.headers.value")}
+        initialValue={draft.value}
+        value={draft.value}
+        onChangeText={handleValueChange}
+        placeholder={t("pairing.direct.headers.value")}
+        placeholderTextColor={placeholderTextColor}
+        style={[styles.input, styles.headerInput]}
+        autoCapitalize="none"
+        autoCorrect={false}
+        editable={!disabled}
+      />
+      <Pressable
+        style={styles.iconButton}
+        onPress={handleRemove}
+        disabled={disabled}
+        accessibilityRole="button"
+        accessibilityLabel={t("pairing.direct.headers.remove")}
+        testID={`direct-header-remove-${index}`}
+      >
+        <X size={18} color={iconColor} />
+      </Pressable>
+    </View>
+  );
 }
 
 function draftFromConnectionUri(uri: string): DirectConnectionDraft {
@@ -305,6 +423,8 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const [advancedUri, setAdvancedUri] = useState("");
+  const [headerDrafts, setHeaderDrafts] = useState<ConnectionHeaderDraft[]>([]);
+  const nextHeaderId = useRef(1);
   const [inputResetKey, bumpInputResetKey] = useReducer((key: number) => key + 1, 0);
 
   const clearInput = useCallback(() => {
@@ -315,6 +435,8 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
     setIsPasswordVisible(false);
     setIsAdvancedOpen(false);
     setAdvancedUri("");
+    setHeaderDrafts([]);
+    nextHeaderId.current = 1;
     bumpInputResetKey();
   }, []);
 
@@ -369,11 +491,18 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
     if (isSaving) return;
 
     let connection: PreparedDirectConnection;
+    let headers: Record<string, string> | undefined;
     try {
       connection = prepareDirectConnection(
         { host, port, useTls, password },
         directConnectionLabels,
       );
+      const preparedHeaders = prepareConnectionHeaders(headerDrafts);
+      if (preparedHeaders.issue) {
+        setErrorMessage(headerIssueMessage(preparedHeaders.issue, t));
+        return;
+      }
+      headers = preparedHeaders.headers;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : directConnectionLabels.invalidConnection;
@@ -389,6 +518,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
         endpoint: connection.endpoint,
         useTls: connection.useTls,
         ...(connection.password ? { password: connection.password } : {}),
+        ...(headers ? { headers } : {}),
       });
       const isNewHost = !daemons.some((daemon) => daemon.serverId === serverId);
 
@@ -425,6 +555,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
     daemons,
     directConnectionLabels,
     handleClose,
+    headerDrafts,
     host,
     isMobile,
     isSaving,
@@ -451,6 +582,22 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
 
   const handleTogglePasswordVisibility = useCallback(() => {
     setIsPasswordVisible((current) => !current);
+  }, []);
+
+  const handleAddHeader = useCallback(() => {
+    const id = nextHeaderId.current;
+    nextHeaderId.current += 1;
+    setHeaderDrafts((current) => [...current, { id, name: "", value: "" }]);
+  }, []);
+
+  const handleUpdateHeader = useCallback((id: number, field: "name" | "value", value: string) => {
+    setHeaderDrafts((current) =>
+      current.map((draft) => (draft.id === id ? { ...draft, [field]: value } : draft)),
+    );
+  }, []);
+
+  const handleRemoveHeader = useCallback((id: number) => {
+    setHeaderDrafts((current) => current.filter((draft) => draft.id !== id));
   }, []);
 
   const handleToggleAdvanced = useCallback(() => {
@@ -609,24 +756,58 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
           <Text style={styles.advancedText}>{t("pairing.direct.advanced.label")}</Text>
         </Pressable>
         {isAdvancedOpen ? (
-          <AdaptiveTextInput
-            testID="direct-host-uri-input"
-            nativeID="direct-host-uri-input"
-            accessibilityLabel={t("pairing.direct.fields.connectionUri")}
-            initialValue={advancedUri}
-            resetKey={`direct-host-uri-${inputResetKey}`}
-            value={advancedUri}
-            onChangeText={setAdvancedUri}
-            placeholder="tcp://localhost:6767?ssl=true"
-            placeholderTextColor={theme.colors.foregroundMuted}
-            style={styles.input}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            editable={!isSaving}
-            returnKeyType="done"
-            onSubmitEditing={handleToggleAdvanced}
-          />
+          <View style={styles.advancedContent}>
+            <AdaptiveTextInput
+              testID="direct-host-uri-input"
+              nativeID="direct-host-uri-input"
+              accessibilityLabel={t("pairing.direct.fields.connectionUri")}
+              initialValue={advancedUri}
+              resetKey={`direct-host-uri-${inputResetKey}`}
+              value={advancedUri}
+              onChangeText={setAdvancedUri}
+              placeholder="tcp://localhost:6767?ssl=true"
+              placeholderTextColor={theme.colors.foregroundMuted}
+              style={styles.input}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              editable={!isSaving}
+              returnKeyType="done"
+              onSubmitEditing={handleToggleAdvanced}
+            />
+
+            {Platform.OS !== "web" || isElectronRuntime() ? (
+              <View style={styles.headerSection}>
+                <View style={styles.headerTitleRow}>
+                  <Text style={styles.label}>{t("pairing.direct.headers.title")}</Text>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    leftIcon={Plus}
+                    onPress={handleAddHeader}
+                    disabled={isSaving}
+                    testID="direct-header-add"
+                  >
+                    {t("pairing.direct.headers.add")}
+                  </Button>
+                </View>
+                <View style={styles.headerList}>
+                  {headerDrafts.map((draft, index) => (
+                    <ConnectionHeaderRow
+                      key={draft.id}
+                      draft={draft}
+                      index={index}
+                      disabled={isSaving}
+                      placeholderTextColor={theme.colors.foregroundMuted}
+                      iconColor={theme.colors.foregroundMuted}
+                      onUpdate={handleUpdateHeader}
+                      onRemove={handleRemoveHeader}
+                    />
+                  ))}
+                </View>
+              </View>
+            ) : null}
+          </View>
         ) : null}
         {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
       </View>

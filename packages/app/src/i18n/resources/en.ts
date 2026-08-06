@@ -1416,6 +1416,19 @@ export const en = {
         show: "Show advanced",
         hide: "Hide advanced",
       },
+      headers: {
+        title: "Custom headers",
+        add: "Add header",
+        name: "Name",
+        value: "Value",
+        remove: "Remove header",
+        errors: {
+          missingName: "Enter a name for each header",
+          invalidName: "{{name}} is not a valid header name",
+          invalidValue: "{{name}} contains an invalid line break",
+          duplicateName: "{{name}} is entered more than once",
+        },
+      },
       passwordVisibility: {
         show: "Show password",
         hide: "Hide password",
