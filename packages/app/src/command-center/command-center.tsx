@@ -808,6 +808,8 @@ export function CommandCenter() {
                 ref={state.inputRef}
                 initialValue={state.query}
                 onChangeText={state.setQuery}
+                onKeyPress={isWeb ? undefined : keyPress}
+                onSubmitEditing={isWeb ? undefined : submit}
                 placeholder={
                   state.scope === "files"
                     ? t("shell.commandCenter.filePlaceholder")
