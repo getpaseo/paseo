@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import { TextInput } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
@@ -26,11 +27,16 @@ import {
   type ShortcutAction,
   type ShortcutCallbackName,
 } from "@/keyboard/route-shortcut";
-import { getShortcutOs } from "@/utils/shortcut-platform";
+import { useShortcutOs } from "@/utils/shortcut-platform";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { isNative } from "@/constants/platform";
 import { keyboardShortcutsAvailable } from "@/keyboard/availability";
+import { shortcutKeyFromCode } from "@/keyboard/shortcut-string";
+import {
+  addHardwareKeyDownListener,
+  setHardwareKeyEventsEnabled,
+} from "@/native/hardware-keyboard-events";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
@@ -67,7 +73,7 @@ export function useKeyboardShortcuts({
   const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
   const shortcutsAvailable = keyboardShortcutsAvailable({ isNative, isCompact: isMobile });
   const isDesktopApp = getIsElectronRuntime();
-  const isMac = getShortcutOs() === "mac";
+  const isMac = useShortcutOs() === "mac";
   const chordStateRef = useRef<ChordState>({
     candidateIndices: [],
     step: 0,
@@ -110,7 +116,10 @@ export function useKeyboardShortcuts({
 
   useEffect(() => {
     if (!enabled) return;
-    if (!shortcutsAvailable) return;
+    // On native, hardware-keyboard shortcuts flow through the Expo module
+    // instead of DOM listeners; the compact-layout gate doesn't apply because
+    // events only ever arrive from a connected hardware keyboard.
+    if (!isNative && !shortcutsAvailable) return;
 
     // Only the modifier that actually performs the workspace-index jump on this
     // runtime should reveal the sidebar number badges (Alt on web, Cmd on
@@ -315,6 +324,46 @@ export function useKeyboardShortcuts({
         input.domEvent.stopPropagation();
       }
     };
+
+    if (isNative) {
+      setHardwareKeyEventsEnabled(true);
+      const subscription = addHardwareKeyDownListener((nativeEvent) => {
+        const store = useKeyboardShortcutsStore.getState();
+        if (store.capturingShortcut) {
+          return;
+        }
+        // Native can't resolve DOM focus scopes; a focused TextInput is the
+        // only text-editing surface, so it maps to "editable".
+        const focusScope: KeyboardFocusScope = TextInput.State.currentlyFocusedInput()
+          ? "editable"
+          : "other";
+        resolveAndPerformShortcut({
+          event: {
+            key: shortcutKeyFromCode(nativeEvent.code, nativeEvent.shiftKey) ?? nativeEvent.code,
+            code: nativeEvent.code,
+            altKey: nativeEvent.altKey,
+            ctrlKey: nativeEvent.ctrlKey,
+            metaKey: nativeEvent.metaKey,
+            shiftKey: nativeEvent.shiftKey,
+            repeat: false,
+          },
+          focusScope,
+          domEvent: null,
+        });
+      });
+      return () => {
+        setHardwareKeyEventsEnabled(false);
+        subscription.remove();
+        if (chordStateRef.current.timeoutId !== null) {
+          clearTimeout(chordStateRef.current.timeoutId);
+          chordStateRef.current = {
+            candidateIndices: [],
+            step: 0,
+            timeoutId: null,
+          };
+        }
+      };
+    }
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!shouldHandle()) {
