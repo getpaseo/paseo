@@ -3,6 +3,7 @@ import {
   PLUGIN_CONTENT_SECURITY_POLICY,
   PLUGIN_NEUTER_SCRIPT,
   createInitMessage,
+  createPluginDocumentId,
   createUpdateMessage,
   fromPluginRelativePath,
   handlePluginGuestMessage,
@@ -343,6 +344,43 @@ describe("wrapPluginHtml", () => {
       expect(wrapPluginHostDocument("<p>hi</p>", 7)).toContain("var DOCUMENT_ID = 7;");
       expect(wrapPluginHostDocument("<p>hi</p>", 2.9)).toContain("var DOCUMENT_ID = 2;");
       expect(wrapPluginHostDocument("<p>hi</p>", Number.NaN)).toContain("var DOCUMENT_ID = 0;");
+    });
+
+    // On Android the guest can reach `window.ReactNativeWebView` itself and post
+    // without going through the relay that stamps messages, so the stamp is the
+    // whole of what separates a relayed message from a fabricated one. A
+    // counter hands that to the guest for free.
+    it("mints document ids the plugin cannot guess", () => {
+      const ids = new Set<number>();
+      for (let i = 0; i < 200; i++) {
+        const id = createPluginDocumentId();
+        // Safe and integral, because it is interpolated into the relay's script
+        // as a bare literal and compared after a JSON round trip.
+        expect(Number.isSafeInteger(id)).toBe(true);
+        expect(id).toBeGreaterThan(0x100000);
+        ids.add(id);
+      }
+
+      expect(ids.size).toBe(200);
+    });
+
+    // The fallback is the branch that runs on a Hermes build without the
+    // `crypto` global — the one platform this stamp exists to defend.
+    it("still mints unguessable ids without a crypto global", () => {
+      const { crypto } = globalThis;
+      Reflect.deleteProperty(globalThis, "crypto");
+      try {
+        const ids = new Set<number>();
+        for (let i = 0; i < 200; i++) {
+          const id = createPluginDocumentId();
+          expect(Number.isSafeInteger(id)).toBe(true);
+          expect(id).toBeGreaterThan(0x100000);
+          ids.add(id);
+        }
+        expect(ids.size).toBe(200);
+      } finally {
+        Object.defineProperty(globalThis, "crypto", { value: crypto, configurable: true });
+      }
     });
 
     it("escapes the plugin so it cannot break out of the srcdoc attribute", () => {

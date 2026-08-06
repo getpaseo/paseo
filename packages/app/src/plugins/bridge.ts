@@ -585,6 +585,31 @@ function toScriptString(value: string): string {
  * is what denies the plugin frame navigating itself out, and the plugin sees the
  * identical contract: post to `window.parent`, listen on `window`.
  */
+/**
+ * A document id the plugin cannot guess.
+ *
+ * Counting was enough against an accident and is not enough against the plugin.
+ * On Android, react-native-webview registers its bridge with
+ * `addWebMessageListener(view, "ReactNativeWebView", Set.of("*"), …)` and its
+ * callback discards the `isMainFrame` argument
+ * (`RNCWebView.java:250`) — `"*"` injects the object into *every* frame, the
+ * sandboxed guest included. So the guest can post straight to the host, past
+ * the relay that does the stamping, and the id is the only thing left telling
+ * a relayed message from a fabricated one. 1, 2, 3 does not tell them apart.
+ *
+ * An integer, because the value is interpolated into the relay's script as a
+ * bare literal, and inside 2^52 so it survives JSON intact. `getRandomValues`
+ * where the runtime has it; a Hermes build without that global falls back to
+ * `Math.random`, whose stream the guest still cannot observe — it runs in the
+ * WebView's engine, a separate runtime seeded separately.
+ */
+export function createPluginDocumentId(): number {
+  const values = globalThis.crypto?.getRandomValues?.(new Uint32Array(2));
+  const high = values ? values[0] : Math.floor(Math.random() * 0x100000000);
+  const low = values ? values[1] : Math.floor(Math.random() * 0x100000000);
+  return (high % 0x80000000) * 0x200000 + (low % 0x200000);
+}
+
 export function wrapPluginHostDocument(html: string, documentId = 0): string {
   const guest = wrapPluginHtml(html)
     .replace(/&/g, "&amp;")

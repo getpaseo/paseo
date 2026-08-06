@@ -121,6 +121,15 @@ function documentIdOf(view: CapturedWebView): number {
   return Number(match[1]);
 }
 
+// Distinct is not enough on Android, where the guest can post to the host
+// directly and the stamp is all that marks a message as the relay's. A counter
+// would pass the test below and still be guessable on the first try.
+it("stamps the first document with an id the plugin cannot guess", () => {
+  render("<p>one</p>");
+
+  expect(documentIdOf(latest())).toBeGreaterThan(0x100000);
+});
+
 it("stamps each plugin document with its own id", () => {
   render("<p>one</p>");
   const first = documentIdOf(latest());

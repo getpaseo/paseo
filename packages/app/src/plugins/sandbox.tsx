@@ -4,6 +4,7 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   createInitMessage,
+  createPluginDocumentId,
   createUpdateMessage,
   handlePluginGuestMessage,
   wrapPluginHostDocument,
@@ -57,10 +58,10 @@ function PluginSandboxView({
   // Which document the messages arriving now belong to. A WebView swaps
   // documents asynchronously, so this is the only way to tell the outgoing
   // plugin's late `ready` from the incoming plugin's.
-  const [documentId, setDocumentId] = useState(1);
+  const [documentId, setDocumentId] = useState(createPluginDocumentId);
   if (renderedHtml !== html) {
     setRenderedHtml(html);
-    setDocumentId((current) => current + 1);
+    setDocumentId(createPluginDocumentId());
     readyRef.current = false;
     setHandshake("waiting");
   }
@@ -86,7 +87,7 @@ function PluginSandboxView({
   const handleRetry = useCallback(() => {
     readyRef.current = false;
     setHandshake("waiting");
-    setDocumentId((current) => current + 1);
+    setDocumentId(createPluginDocumentId());
     setAttempt((current) => current + 1);
   }, []);
 
