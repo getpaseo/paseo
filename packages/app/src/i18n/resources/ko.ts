@@ -1349,6 +1349,8 @@ export const ko: TranslationResources = {
     retrying: "다시 시도 중...",
     noMatches: "검색과 일치하는 모델이 없습니다",
     searchPlaceholder: "모델 검색...",
+    allModels: "모든 모델",
+    searchAllModelsPlaceholder: "모든 제공자 검색...",
     openProviderSettings: "{{provider}} 설정 열기",
   },
   providerCatalog: {
@@ -1741,6 +1743,11 @@ export const ko: TranslationResources = {
       autoExpandReasoning: {
         label: "추론 항상 펼치기",
         description: "에이전트의 사고 및 추론 블록을 기본적으로 모두 펼쳐 표시합니다.",
+      },
+      modelPickerAllModels: {
+        label: "모델 선택기를 모든 모델로 열기",
+        description:
+          "제공자 목록 대신 모든 제공자의 모든 모델을 하나의 검색 가능한 목록으로 모델 선택기를 시작합니다",
       },
       toolCallDetail: {
         label: "도구 호출 표시",
