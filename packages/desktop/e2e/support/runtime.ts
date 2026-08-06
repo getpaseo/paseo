@@ -347,6 +347,7 @@ export async function installDesktopRuntime(
         open: (options?: Record<string, unknown>) => Promise<string | string[] | null>;
       };
       getPendingOpenProject: () => Promise<string | null>;
+      opener: { openUrl: (url: string) => Promise<void> };
       events: {
         on: (event: string, handler: (payload: unknown) => void) => Promise<() => void>;
       };
@@ -439,6 +440,11 @@ export async function installDesktopRuntime(
         },
       },
       getPendingOpenProject: async () => null,
+      opener: {
+        openUrl: async (url) => {
+          localStorage.setItem("@paseo:e2e-opened-url", url);
+        },
+      },
       events: {
         on: async (event, handler) => {
           const handlers = desktopEventHandlers.get(event) ?? new Set();
