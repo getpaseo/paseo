@@ -37,7 +37,7 @@ triggers:
           - text: ${{ paseo.prompt }}
 ```
 
-`project` is an optional bare project slug. The deploy CLI uses it to choose the target project when `--project` is absent. It is not available to triggers, expressions, or agents, and `--project` does not rewrite the YAML.
+`project` is an optional bare project slug. The deploy CLI uses it to choose the target project when `-p, --project` is absent. The flag takes precedence over this metadata without rewriting the YAML. `project` is not available to triggers, expressions, or agents.
 
 ## Environments
 

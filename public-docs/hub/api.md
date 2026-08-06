@@ -94,6 +94,8 @@ curl --fail-with-body -sS -X POST "$PASEO_HUB_URL/api/v1/configurations/install"
   --data @configuration-install.json
 ```
 
+For a local YAML file, `paseo hub deploy [file]` calls this endpoint and preserves the file contents. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli) for project precedence, flags, environment variables, and the current authentication limits.
+
 ## Manual run dispatch
 
 `runs:dispatch` dispatches a configured `manual.run` trigger for a project.

@@ -38,9 +38,11 @@ PASEO_HUB_API_KEY=paseo_pk_... \
 paseo hub deploy
 ```
 
-The default path is exactly `.paseo/hub.yml` relative to the current directory. The CLI does not search parent directories or alternate filenames. Use `paseo hub deploy path/to/config.yml` for another file, or `--project <slug>` to override the file's `project` value without changing the YAML sent to Hub.
+The default path is exactly `.paseo/hub.yml` relative to the current directory. The CLI does not search parent directories or alternate filenames. Use `paseo hub deploy path/to/config.yml` for another file. `-p, --project <slug>` overrides the file's `project` value without changing the YAML sent to Hub.
 
-The API key supplies organization scope and needs `configuration:install`. `project` only selects the deployment target; workflows cannot reference it. The CLI currently stores no login or profile.
+Use `--hub <origin>` or `PASEO_HUB_URL` for the Hub origin, and `--api-key <secret>` or `PASEO_HUB_API_KEY` for the organization API key. A flag takes precedence over its environment variable. The key supplies organization scope and needs `configuration:install`. `project` only selects the deployment target; workflows cannot reference it.
+
+Durable Hub login and credential persistence are not implemented. Supply the origin and API key for each deployment through flags or the current process environment.
 
 ## Sync
 

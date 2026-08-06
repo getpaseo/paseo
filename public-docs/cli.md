@@ -199,12 +199,14 @@ Use `PASEO_HOME` to run multiple isolated daemon instances.
 paseo hub connect <url>        # Enroll this daemon with a Paseo Hub
 paseo hub status               # Show the current Hub relationship
 paseo hub disconnect           # End it
-paseo hub deploy               # Deploy .paseo/hub.yml from the current directory
+paseo hub deploy [file]        # Install and activate a Hub configuration
 ```
 
-`hub deploy [file]` sends the file unchanged to Hub and activates it for a project. Pass `-p, --project <slug>` to select the project, or add optional top-level `project` metadata to the YAML. The flag wins when both are present. Project is deployment metadata, not workflow configuration.
+`file` defaults exactly to `.paseo/hub.yml` relative to the current directory. Pass a file to use another path. The CLI does not search parent directories or alternate filenames.
 
-Deployment currently requires an explicit organization API key and Hub origin. Use `--api-key` and `--hub`, or set `PASEO_HUB_API_KEY` and `PASEO_HUB_URL`. The key's organization supplies organization scope; there is no organization selector or durable CLI login.
+Pass `-p, --project <slug>` to select the project, or add optional top-level `project` metadata to the YAML. The flag wins when both are present. Project is deployment metadata, not workflow configuration, and the YAML is sent unchanged.
+
+Deployment requires an explicit Hub origin and organization API key. `--hub <origin>` overrides `PASEO_HUB_URL`; `--api-key <secret>` overrides `PASEO_HUB_API_KEY`. The key's organization supplies organization scope. Durable Hub login and credential persistence are not implemented.
 
 See [Daemons in Hub](/docs/hub/daemons) and [Hub configuration](/docs/hub/configuration).
 

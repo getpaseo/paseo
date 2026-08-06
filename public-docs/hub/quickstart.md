@@ -85,7 +85,7 @@ export PASEO_HUB_API_KEY=paseo_pk_...
 paseo hub deploy
 ```
 
-The command reads exactly `.paseo/hub.yml` from the current directory. It does not search parent directories. Pass another file explicitly or override its `project` metadata with `--project <slug>`.
+The command reads exactly `.paseo/hub.yml` from the current directory. It does not search parent directories. Use `paseo hub deploy path/to/config.yml` for another file. `-p, --project <slug>` overrides the file's `project` metadata. See [Hub configuration](/docs/hub/configuration#deploy-from-the-cli) for every deploy option and the current authentication limits.
 
 ## 7. Trigger it
 
