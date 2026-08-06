@@ -155,6 +155,15 @@ export const PLUGIN_NEUTERED_GLOBALS = [
  *    `observe` never runs, and with `Object.prototype.clonable = true` a
  *    `cloneNode` mints a shadow root the `attachShadow` wrapper never sees.
  *    Build them with `bare()`.
+ * 3. **Nothing here may resolve a global at call time.** `bare()` satisfied both
+ *    clauses above and still handed the plugin the object: it read
+ *    `Object.create` when called, and the wrapper calls it on every
+ *    `attachShadow`. A replaced `Object.create` returning an accessor pair
+ *    swallows `options.mode = "open"`, so the plugin gets the `closed` root the
+ *    wrapper exists to deny — and a `clonable` one, whose `cloneNode` copy no
+ *    sweep can ever see into. `Object.create` and `Object.defineProperty` are
+ *    captured for this reason; `lock()` was safe only by the accident that every
+ *    call site is at init.
  *
  * Follow shadow roots. A `MutationObserver` on `document` is never notified of
  * mutations inside a shadow root and `querySelectorAll` does not cross the
@@ -183,8 +192,10 @@ export const PLUGIN_NEUTERED_GLOBALS = [
 const KILL_CHILD_REALMS = `
 var A = Reflect.apply;
 var own = Object.getOwnPropertyDescriptor;
+var create = Object.create;
+var defineProp = Object.defineProperty;
 var lock = function (target, name, value) {
-  try { Object.defineProperty(target, name, { value: value, writable: false, configurable: false }); } catch (e) {}
+  try { A(defineProp, Object, [target, name, { value: value, writable: false, configurable: false }]); } catch (e) {}
 };
 var deny = function () { throw new Error("denied in the Paseo plugin sandbox"); };
 var matches = Element.prototype.matches;
@@ -204,7 +215,7 @@ var SELECTOR = "iframe,frame,object,embed,link";
 // does not own would be read off \`Object.prototype\` — which the plugin owns.
 // \`Object.prototype.attributeFilter = 1\` makes the sequence conversion throw, and
 // \`observe\` then never runs.
-var bare = function () { return Object.create(null); };
+var bare = function () { return A(create, Object, [null]); };
 var WATCH = bare();
 WATCH.childList = true;
 WATCH.subtree = true;
@@ -280,6 +291,13 @@ if (attach) {
       options.serializable = init.serializable;
     }
     var root = A(attach, this, [options]);
+    // Verified, not assumed. Forcing \`open\` is what leaves every later sweep a
+    // way into this root, so a wrapper that cannot confirm it got an open one
+    // has to fail closed: the host goes, and with it anything under the root.
+    if (A(shadowOf, this, []) !== root) {
+      drop(this);
+      throw new Error("denied in the Paseo plugin sandbox");
+    }
     // Guarded so a throw cannot leave the element holding a root that was never
     // watched: nothing sweeps an already-connected host again on its own.
     try { watch(root); } catch (e) {}

