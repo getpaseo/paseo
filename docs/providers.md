@@ -10,6 +10,8 @@ Extend `ACPAgentClient` from `packages/server/src/server/agent/providers/acp-age
 
 The only built-in ACP provider today is `copilot` (`copilot-acp-agent.ts`). `GenericACPAgentClient` (`generic-acp-agent.ts`) is also ACP-based but is used for user-defined custom providers configured via `extends: "acp"` overrides — see [docs/custom-providers.md](custom-providers.md).
 
+Gajae Code is an ACP catalog provider with a thin specialization over the generic adapter. Its commands arrive asynchronously after session creation, its model and thinking selectors omit ACP categories, and its SDK-backed ACP host advertises a plan mode that it cannot activate. It also persists broker sessions after the ACP process exits, so temporary catalog and diagnostic sessions must be closed and deleted explicitly. Keep the wait, category normalization, unusable-mode filtering, and probe cleanup in `gajae-code-acp-agent.ts`; do not spread those details into registry callers.
+
 Copilot custom agents are exposed through ACP session config, not the slash-command list. When custom agents are available, Copilot returns a select config option with `id: "agent"` and `category: "_agent"`; Paseo maps that to the `agent` provider feature. Copilot uses the agent display name as the option value, and the blank value means the default Copilot agent.
 
 ACP permission options are rendered as ordered actions and Paseo returns the selected option's exact `optionId`. Agents can therefore encode a single-choice question as multiple options of the same allow kind. Auto-accept does not resolve those chooser requests; they always wait for the user.

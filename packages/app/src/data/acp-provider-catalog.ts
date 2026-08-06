@@ -179,6 +179,16 @@ const CATALOG_DATA = [
     command: ["uvx", "--from", "fast-agent-acp==0.9.22", "fast-agent-acp", "-x"],
   },
   {
+    id: "gajae-code",
+    title: "Gajae Code",
+    description:
+      "Open-source multi-provider coding agent with structured workflows, persistent evidence, and ACP session support",
+    version: "0.12.12",
+    iconId: null,
+    installLink: "https://github.com/Yeachan-Heo/gajae-code",
+    command: ["gjc", "acp"],
+  },
+  {
     id: "gemini",
     title: "Gemini CLI",
     description: "Google's official CLI for Gemini",

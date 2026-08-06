@@ -43,6 +43,11 @@ describe("ACP provider catalog", () => {
     expect(findProvider("cursor").command).toEqual(["cursor-agent", "acp"]);
     expect(findProvider("codewhale").command).toEqual(["codewhale", "serve", "--acp"]);
     expect(findProvider("devin").command).toEqual(["devin", "acp"]);
+    expect(findProvider("gajae-code")).toMatchObject({
+      title: "Gajae Code",
+      version: "0.12.12",
+      command: ["gjc", "acp"],
+    });
     expect(findProvider("goose").command).toEqual(["goose", "acp"]);
     expect(findProvider("junie").command).toEqual(["junie", "--acp", "true"]);
     expect(findProvider("kiro").command).toEqual(["kiro-cli", "acp"]);
