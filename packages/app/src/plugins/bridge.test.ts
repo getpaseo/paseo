@@ -194,7 +194,7 @@ describe("plugin path round trip", () => {
 
 describe("wrapPluginHtml", () => {
   const CSP_META = `<meta http-equiv="Content-Security-Policy" content="${PLUGIN_CONTENT_SECURITY_POLICY}">`;
-  const SHELL_PREFIX = `<!doctype html><html><head>${CSP_META}<script>${PLUGIN_NEUTER_SCRIPT}</script></head><body>`;
+  const SHELL_PREFIX = `<!doctype html><html><head>${CSP_META}<script>${PLUGIN_NEUTER_SCRIPT}</script></head><body><script>`;
 
   // Every one of these defeats a regex that hunts for the plugin's own <head>:
   // the match is inside a comment, inside an attribute value, or absent, and the
@@ -212,18 +212,27 @@ describe("wrapPluginHtml", () => {
 
   it("always emits its own shell with the CSP first in head", () => {
     for (const html of HOSTILE) {
-      expect(wrapPluginHtml(html)).toBe(`${SHELL_PREFIX}${html}</body></html>`);
+      expect(wrapPluginHtml(html).startsWith(SHELL_PREFIX), html).toBe(true);
+      expect(wrapPluginHtml(html).indexOf(CSP_META)).toBe("<!doctype html><html><head>".length);
     }
   });
 
-  it("never lets guest markup precede the CSP meta", () => {
-    for (const html of HOSTILE) {
+  // The plugin is carried as a JS string and inserted, so the document parser
+  // never sees its markup — that is what takes `<template shadowrootmode>` away,
+  // and it also means no plugin byte can appear as markup in our own shell.
+  it("carries the plugin as data, not as markup", () => {
+    for (const html of HOSTILE.filter((entry) => entry.length > 0)) {
       const wrapped = wrapPluginHtml(html);
-      expect(wrapped.indexOf(CSP_META)).toBe("<!doctype html><html><head>".length);
-      // The guest starts only after the head is closed, so the parser has
-      // committed to the policy before it sees a byte of plugin markup.
-      expect(wrapped.slice(SHELL_PREFIX.length)).toBe(`${html}</body></html>`);
+      expect(wrapped, html).toContain(JSON.stringify(html).slice(1, -1).replace(/<\//g, "<\\/"));
+      expect(wrapped, html).not.toContain(`<body>${html}`);
     }
+  });
+
+  it("never emits a closing script tag from plugin content", () => {
+    const wrapped = wrapPluginHtml("<script>fetch('https://evil.tld')</script><p>x</p>");
+    // One unescaped `</script>` ends our shell script early and the rest of the
+    // plugin lands as markup in a document that has run none of the neutering.
+    expect(wrapped.match(/<\/script>/g)).toHaveLength(2);
   });
 
   // Native used to load the plugin as the WebView's top document, which is what
@@ -232,8 +241,19 @@ describe("wrapPluginHtml", () => {
   // opaque one, so `frames[0].RTCPeerConnection` is readable synchronously and
   // no observer gets a turn in between.
   describe("wrapPluginHostDocument", () => {
+    // Assert on the host document with the guest cut out of it. The escaper
+    // leaves `'` and every unquoted word alone, so `toContain` against the whole
+    // string matches the guest's own copy of whatever you are looking for: an
+    // earlier version of these tests passed with the host `<meta>` deleted.
+    function hostOnly(html: string): string {
+      const host = wrapPluginHostDocument(html);
+      const start = host.indexOf('srcdoc="');
+      const end = host.indexOf('"', start + 'srcdoc="'.length);
+      return host.slice(0, start) + host.slice(end);
+    }
+
     it("renders the plugin in a sandboxed frame with no same-origin escape", () => {
-      const host = wrapPluginHostDocument("<p>hi</p>");
+      const host = hostOnly("<p>hi</p>");
       expect(host).toContain('<iframe id="paseo-plugin" sandbox="allow-scripts"');
       expect(host).not.toContain("allow-same-origin");
       expect(host).not.toContain("allow-popups");
@@ -241,8 +261,14 @@ describe("wrapPluginHtml", () => {
       expect(host).not.toContain("allow-top-navigation");
     });
 
-    it("denies the frame navigating itself out, which the guest policy cannot", () => {
-      expect(wrapPluginHostDocument("")).toContain("frame-src 'none'");
+    // The guest inherits this document's policy, so a narrower hand-written copy
+    // silently subtracts from the plugin's: an earlier one omitted `img-src`,
+    // which killed every data-URL image on native and nowhere else.
+    it("carries the same policy as the guest, not a copy of it", () => {
+      expect(hostOnly("")).toContain(
+        `<meta http-equiv="Content-Security-Policy" content="${PLUGIN_CONTENT_SECURITY_POLICY}">`,
+      );
+      expect(PLUGIN_CONTENT_SECURITY_POLICY).toContain("frame-src 'none'");
     });
 
     it("escapes the plugin so it cannot break out of the srcdoc attribute", () => {
@@ -257,7 +283,7 @@ describe("wrapPluginHtml", () => {
     it("still puts the CSP and the neutering script in front of the plugin", () => {
       const host = wrapPluginHostDocument("<p>hi</p>");
       expect(host).toContain(
-        `&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;${PLUGIN_CONTENT_SECURITY_POLICY.replace(/'/g, "'")}&quot;&gt;`,
+        `&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;${PLUGIN_CONTENT_SECURITY_POLICY}&quot;&gt;`,
       );
       expect(host).toContain("RTCPeerConnection");
     });

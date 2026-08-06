@@ -9,7 +9,6 @@ import { isPluginDocumentUrl } from "./sandbox-url";
 describe("isPluginDocumentUrl", () => {
   it("allows only the plugin document itself", () => {
     expect(isPluginDocumentUrl("about:blank")).toBe(true);
-    expect(isPluginDocumentUrl("data:text/html,<h1>plugin</h1>")).toBe(true);
     // The plugin frame inside the host document. Denying this renders nothing
     // at all on native, which is a failure mode a unit test should own rather
     // than a device.
@@ -22,6 +21,8 @@ describe("isPluginDocumentUrl", () => {
       "http://evil.tld/?d=secret",
       "intent://evil.tld#Intent;scheme=https;end",
       "javascript:fetch('https://evil.tld')",
+      // A realm with no shell in it, if the plugin can navigate itself there.
+      "data:text/html,<script>new RTCPeerConnection()</script>",
       "file:///etc/passwd",
       "blob:https://evil.tld/1234",
       " HTTPS://EVIL.TLD/?d=secret ",

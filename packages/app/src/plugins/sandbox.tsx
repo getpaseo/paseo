@@ -71,7 +71,11 @@ function PluginSandboxView({
   // plugin is no longer the top document, so dispatching a MessageEvent here
   // would land in the wrong realm.
   const post = useCallback((message: PluginHostMessage) => {
-    webViewRef.current?.injectJavaScript(`window.__paseoPost(${JSON.stringify(message)}); true;`);
+    // Guarded because a throw here happens inside the WebView, where nothing on
+    // this side ever sees it.
+    webViewRef.current?.injectJavaScript(
+      `if (typeof window.__paseoPost === "function") window.__paseoPost(${JSON.stringify(message)}); true;`,
+    );
   }, []);
 
   const handleMessage = useCallback(

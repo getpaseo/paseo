@@ -88,10 +88,9 @@ const CSP_META_TAG = `<meta http-equiv="Content-Security-Policy" content="${PLUG
  * irrelevant (nothing navigates), and `sandbox="allow-scripts"` does not
  * withhold the API. Deleting the constructors from the realm does.
  *
- * Non-configurable so the plugin cannot restore them. Recovering a fresh realm
- * fails on web because a nested frame under `sandbox` without
- * `allow-same-origin` gets its own opaque origin and reading its `contentWindow`
- * throws; on native the sandboxes inject this into subframes as well.
+ * Non-configurable so the plugin cannot restore them. A fresh realm gets them
+ * back untouched and we cannot inject into it, so the rest of this shell is
+ * about denying the plugin a fresh realm in the first place.
  */
 export const PLUGIN_NEUTERED_GLOBALS = [
   "RTCPeerConnection",
@@ -102,65 +101,139 @@ export const PLUGIN_NEUTERED_GLOBALS = [
 
 /**
  * Deleting the constructors only covers the realm the script runs in. A plugin
- * that appends a `srcdoc` iframe gets a brand new realm with `RTCPeerConnection`
- * intact, and we cannot inject into it: `about:srcdoc` is exempt from
- * `frame-src`, and without `allow-same-origin` the child is cross-origin so its
- * `contentWindow` is unreachable. So the plugin does not get to have child
- * browsing contexts at all — this rips out any frame-ish element as it is
- * inserted, before the child document begins parsing.
+ * that gets a fresh browsing context gets `RTCPeerConnection` back intact, and
+ * we cannot inject into it: `about:srcdoc` is exempt from `frame-src`, and
+ * without `allow-same-origin` the child is cross-origin so its `contentWindow`
+ * is unreachable. So the plugin does not get to have one at all.
  *
- * `object`/`embed` are already denied by `object-src 'none'`; they are here so
- * the list is the set of elements that can become a browsing context, not a
- * subset that happens to be reachable today.
+ * Removing frames as they are inserted is the part that keeps losing. Three
+ * rounds of review have found a door it does not watch, so it is now the last
+ * line rather than the only one, and every API that can mint a browsing context
+ * out of markup is denied outright above it. Denying an API is a policy;
+ * removing an element is a race.
  *
- * Two things this has to get right, both found by breaking earlier versions:
+ * `object`/`embed` are already denied by `object-src 'none'`; they are in the
+ * selector so it is the set of elements that can become a browsing context, not
+ * a subset that happens to be reachable today.
+ *
+ * Three things this has to get right, each found by breaking an earlier version:
  *
  * Observe `document`, not `document.documentElement`. A post-load
  * `document.write()` implies `document.open()`, which throws away the whole tree
  * and builds a fresh `documentElement` — an observer bound to the old node is
- * left watching something detached and never fires again, while the `<iframe>`
- * written in that same call parses and runs. The `Document` survives that, so a
- * subtree observer on it does too.
+ * left watching something detached and never fires again. (`document.write` is
+ * denied outright now, but the observer target still has to survive one.)
  *
  * Capture every method and accessor up front. The plugin's script runs *after*
  * this one, so anything looked up at mutation time is something it can replace:
  * with `Element.prototype.remove = function(){}` the observer still fires and
  * quietly does nothing. Non-configurable constructors are worth little if the
  * machinery that enforces the removal is left writable.
+ *
+ * Follow shadow roots. A `MutationObserver` on `document` is never notified of
+ * mutations inside a shadow root and `querySelectorAll` does not cross the
+ * boundary, so a frame hidden in one is invisible to both — a `closed` root is
+ * invisible to everything afterwards. `attachShadow` is wrapped to observe each
+ * root it hands out, which is the only moment a closed one is reachable.
  */
 const KILL_CHILD_REALMS = `
 var A = Reflect.apply;
 var own = Object.getOwnPropertyDescriptor;
+var lock = function (target, name, value) {
+  try { Object.defineProperty(target, name, { value: value, writable: false, configurable: false }); } catch (e) {}
+};
+var deny = function () { throw new Error("denied in the Paseo plugin sandbox"); };
 var matches = Element.prototype.matches;
 var findAll = Element.prototype.querySelectorAll;
+var findAllIn = DocumentFragment.prototype.querySelectorAll;
 var detach = Node.prototype.removeChild;
 var parentOf = own(Node.prototype, "parentNode").get;
 var typeOf = own(Node.prototype, "nodeType").get;
+var shadowOf = own(Element.prototype, "shadowRoot").get;
 var addedOf = own(MutationRecord.prototype, "addedNodes").get;
 var countOf = own(NodeList.prototype, "length").get;
 var at = NodeList.prototype.item;
 var SELECTOR = "iframe,frame,object,embed";
+var WATCH = { childList: true, subtree: true };
 function drop(node) {
   var parent = A(parentOf, node, []);
   if (parent) { try { A(detach, parent, [node]); } catch (e) {} }
 }
 function sweep(node) {
-  if (!node || A(typeOf, node, []) !== 1) return;
-  if (A(matches, node, [SELECTOR])) { drop(node); return; }
-  var found = A(findAll, node, [SELECTOR]);
+  if (!node) return;
+  var type = A(typeOf, node, []);
+  if (type === 1) {
+    if (A(matches, node, [SELECTOR])) { drop(node); return; }
+  } else if (type !== 11) {
+    return;
+  }
+  var found = A(type === 1 ? findAll : findAllIn, node, [SELECTOR]);
   for (var i = 0, n = A(countOf, found, []); i < n; i++) drop(A(at, found, [i]));
+  if (type === 1) follow(node);
+  var hosts = A(type === 1 ? findAll : findAllIn, node, ["*"]);
+  for (var j = 0, m = A(countOf, hosts, []); j < m; j++) follow(A(at, hosts, [j]));
 }
-new MutationObserver(function (records) {
+function follow(element) {
+  var root = A(shadowOf, element, []);
+  if (root) watch(root);
+}
+function watch(root) {
+  observer.observe(root, WATCH);
+  sweep(root);
+}
+var observer = new MutationObserver(function (records) {
   for (var i = 0; i < records.length; i++) {
     var added = A(addedOf, records[i], []);
     for (var j = 0, n = A(countOf, added, []); j < n; j++) sweep(A(at, added, [j]));
   }
-}).observe(document, { childList: true, subtree: true });
+});
+observer.observe(document, WATCH);
+var attach = Element.prototype.attachShadow;
+if (attach) {
+  lock(Element.prototype, "attachShadow", function (init) {
+    var root = A(attach, this, [init]);
+    watch(root);
+    return root;
+  });
+}
+lock(Document.prototype, "write", deny);
+lock(Document.prototype, "writeln", deny);
+lock(Document, "parseHTMLUnsafe", deny);
+if (Element.prototype.setHTMLUnsafe) lock(Element.prototype, "setHTMLUnsafe", deny);
+if (ShadowRoot.prototype.setHTMLUnsafe) lock(ShadowRoot.prototype, "setHTMLUnsafe", deny);
 `;
 
 export const PLUGIN_NEUTER_SCRIPT = `(function(){${JSON.stringify(
   PLUGIN_NEUTERED_GLOBALS,
 )}.forEach(function(name){try{delete window[name];}catch(e){}try{Object.defineProperty(window,name,{value:undefined,writable:false,configurable:false});}catch(e){}});${KILL_CHILD_REALMS}})();`;
+
+/**
+ * The plugin's markup is inserted, never parsed as the document.
+ *
+ * Declarative shadow DOM (`<template shadowrootmode="closed">`) is honoured by
+ * the HTML parser and by nothing else — fragment parsing leaves it an inert
+ * `<template>`. Parsed as the document, a plugin gets a shadow root no script
+ * can ever see into, and an `<iframe>` inside it is a browsing context nothing
+ * can find. Inserting the same string with `insertAdjacentHTML` takes that away,
+ * and it is the only door to a closed root that is not a method call we can deny.
+ *
+ * Inserted markup does not run its `<script>` elements, so they are re-created
+ * in document order afterwards. That is the plugin's own contract restored, not
+ * a workaround: inline scripts still run before `DOMContentLoaded`, in order,
+ * because this shell script sits at the end of `<body>`.
+ */
+const INSERT_PLUGIN_HTML = `
+var host = document.currentScript;
+document.body.insertAdjacentHTML("beforeend", PLUGIN_HTML);
+var scripts = document.body.querySelectorAll("script");
+for (var i = 0; i < scripts.length; i++) {
+  var old = scripts[i];
+  if (old === host) continue;
+  var next = document.createElement("script");
+  next.text = old.textContent;
+  old.parentNode.replaceChild(next, old);
+}
+`;
 
 /**
  * Wrap the plugin's HTML in our own document shell. A CSP meta only governs what
@@ -174,7 +247,13 @@ export const PLUGIN_NEUTER_SCRIPT = `(function(){${JSON.stringify(
  * first; a nested html/head from the plugin is ignored by the parser.
  */
 export function wrapPluginHtml(html: string): string {
-  return `<!doctype html><html><head>${CSP_META_TAG}<script>${PLUGIN_NEUTER_SCRIPT}</script></head><body>${html}</body></html>`;
+  const insert = INSERT_PLUGIN_HTML.replace("PLUGIN_HTML", () => toScriptString(html));
+  return `<!doctype html><html><head>${CSP_META_TAG}<script>${PLUGIN_NEUTER_SCRIPT}</script></head><body><script>(function(){${insert}})();</script></body></html>`;
+}
+
+/** A JS string literal safe to sit inside a `<script>` element. */
+function toScriptString(value: string): string {
+  return JSON.stringify(value).replace(/<\//g, "<\\/");
 }
 
 /**
@@ -201,7 +280,7 @@ export function wrapPluginHostDocument(html: string): string {
     .replace(/"/g, "&quot;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-  return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'"><meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;padding:0;height:100%;overflow:hidden}iframe{display:block;border:0;width:100%;height:100%}</style></head><body><iframe id="paseo-plugin" sandbox="allow-scripts" srcdoc="${guest}"></iframe><script>${PLUGIN_HOST_RELAY}</script></body></html>`;
+  return `<!doctype html><html><head>${CSP_META_TAG}<meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;padding:0;height:100%;overflow:hidden}iframe{display:block;border:0;width:100%;height:100%}</style><script>${PLUGIN_HOST_RELAY}</script></head><body><iframe id="paseo-plugin" sandbox="allow-scripts" srcdoc="${guest}"></iframe></body></html>`;
 }
 
 /**
@@ -211,18 +290,28 @@ export function wrapPluginHostDocument(html: string): string {
  *
  * Only the plugin frame is listened to, and only guest message types are
  * forwarded, so nothing the host sends can be echoed back to it.
+ *
+ * It runs in `<head>`, before the frame exists, and looks the frame up per
+ * message rather than capturing it. The listener is then attached before the
+ * plugin can possibly post, which matches what `frame.web.ts` does — and a lost
+ * `ready` is unrecoverable, since the plugin only sends it once and the host
+ * shows the timeout UI ten seconds later.
  */
 const PLUGIN_HOST_RELAY = `(function(){
-  var frame = document.getElementById("paseo-plugin");
+  function pluginWindow() {
+    var frame = document.getElementById("paseo-plugin");
+    return frame ? frame.contentWindow : null;
+  }
   window.addEventListener("message", function (event) {
-    if (event.source !== frame.contentWindow) return;
+    if (!event.source || event.source !== pluginWindow()) return;
     var data = event.data;
     if (!data || data.paseo !== 1) return;
     if (data.type === "init" || data.type === "update") return;
     window.ReactNativeWebView.postMessage(JSON.stringify(data));
   });
   window.__paseoPost = function (message) {
-    frame.contentWindow.postMessage(message, "*");
+    var target = pluginWindow();
+    if (target) target.postMessage(message, "*");
   };
 })();`;
 
