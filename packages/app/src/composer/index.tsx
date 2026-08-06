@@ -117,6 +117,7 @@ import {
   consumeComposerAutoFocus,
   useComposerAutoFocusVersion,
 } from "@/keyboard/composer-auto-focus";
+import { useHardwareKeyboardStore } from "@/stores/hardware-keyboard-store";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type {
   AttachmentMetadata,
@@ -594,14 +595,17 @@ function ComposerKeyboardRegistration({
 }) {
   const { isActiveComposer } = useComposerKeyboardScope();
 
-  // Keyboard-driven workspace switches (and unhandled focus shortcuts) on
-  // native request composer focus before this composer is mounted or
-  // repointed, so consume the request once the active agent settles. rAF lets
-  // the navigation transition commit first.
+  // With a hardware keyboard attached, focus lands in the prompt whenever this
+  // composer becomes the active one — tap navigation, command center, or
+  // keyboard shortcuts alike. Without one, only explicit requests (keyboard
+  // workspace switches, unhandled Cmd/Ctrl+L) focus, so touch navigation never
+  // pops the soft keyboard. rAF lets the navigation transition commit first.
   const composerAutoFocusVersion = useComposerAutoFocusVersion();
+  const hardwareKeyboardConnected = useHardwareKeyboardStore((s) => s.connected);
   useEffect(() => {
     if (!isNative || !isActiveComposer) return;
-    if (!consumeComposerAutoFocus()) return;
+    const requested = consumeComposerAutoFocus();
+    if (!requested && !hardwareKeyboardConnected) return;
     const frame = requestAnimationFrame(() => {
       focusMessageInputForKeyboardAction();
     });
@@ -610,6 +614,7 @@ function ComposerKeyboardRegistration({
     autoFocusKey,
     isActiveComposer,
     composerAutoFocusVersion,
+    hardwareKeyboardConnected,
     focusMessageInputForKeyboardAction,
   ]);
 
