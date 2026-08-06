@@ -1069,7 +1069,6 @@ describe("terminal activity interruption", () => {
       await createTerminal({
         workspaceId: "ws-test",
         cwd: realpathSync(tmpdir()),
-        shell: "/bin/sh",
       }),
     );
     session.setActivity("working");
@@ -1088,7 +1087,6 @@ describe("terminal activity interruption", () => {
       await createTerminal({
         workspaceId: "ws-test",
         cwd: realpathSync(tmpdir()),
-        shell: "/bin/sh",
       }),
     );
     session.setActivity("working");
