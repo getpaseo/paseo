@@ -53,6 +53,14 @@ export async function expectWorkflowCompleted(page: Page): Promise<void> {
   ).toBeVisible({ timeout: 120_000 });
 }
 
+export async function expectSingleWorkflowParentCard(page: Page): Promise<void> {
+  const parentToolCards = page.getByTestId("tool-call-badge");
+  await expect(
+    parentToolCards.filter({ has: page.getByText("Workflow", { exact: true }) }),
+  ).toHaveCount(1);
+  await expect(parentToolCards.filter({ hasText: "Task Notification" })).toHaveCount(0);
+}
+
 export async function openWorkflowTimeline(page: Page): Promise<void> {
   await workflowRow(page).click();
   const panel = page.getByTestId("provider-subagent-panel");

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
+import type { AgentTimelineRow } from "../../agent-manager.js";
+import { projectTimelineRows } from "../../timeline-projection.js";
 import { ClaudeAgentClient } from "./agent.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 
@@ -155,6 +157,20 @@ describe("background Claude subagents", () => {
           description: "Run the spec workflow",
         },
         {
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "toolu_workflow",
+                content:
+                  "Workflow launched in background.\nTask ID: wf-1\nRun ID: wf-run-1\n\nYou will be notified when it completes.",
+              },
+            ],
+          },
+        },
+        {
           type: "assistant",
           parent_tool_use_id: "toolu_workflow",
           message: { model: "claude-opus-5", content: [{ type: "text", text: "working" }] },
@@ -208,17 +224,25 @@ describe("background Claude subagents", () => {
       event: { type: "upsert", id: "toolu_workflow", status: "completed" },
     });
 
-    const parentCards = events
+    const parentCardUpdates = events
       .filter((event) => event.type === "timeline")
       .map((event) => event.item)
       .filter((item) => item.type === "tool_call" && item.callId === "toolu_workflow");
-    expect(parentCards).toHaveLength(1);
-    expect(parentCards[0]).toMatchObject({
+    const rows: AgentTimelineRow[] = parentCardUpdates.map((item, index) => ({
+      seq: index + 1,
+      timestamp: `2026-08-06T11:06:0${index}.000Z`,
+      item,
+    }));
+    const projectedWorkflowCards = projectTimelineRows({ rows, mode: "projected" }).filter(
+      (entry) => entry.item.type === "tool_call" && entry.item.callId === "toolu_workflow",
+    );
+    expect(projectedWorkflowCards).toHaveLength(1);
+    expect(projectedWorkflowCards[0]?.item).toMatchObject({
       type: "tool_call",
       name: "Workflow",
       callId: "toolu_workflow",
     });
-    expect(parentCards[0]).not.toMatchObject({ detail: { type: "sub_agent" } });
+    expect(projectedWorkflowCards[0]?.item).not.toMatchObject({ detail: { type: "sub_agent" } });
     expect(
       events
         .filter((event) => event.type === "timeline")

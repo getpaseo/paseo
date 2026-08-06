@@ -4,6 +4,7 @@ import path from "node:path";
 import { test } from "../support/fixtures";
 import {
   askClaudeToRunWorkflow,
+  expectSingleWorkflowParentCard,
   expectWorkflowCompleted,
   expectWorkflowRunning,
   openWorkflowTimeline,
@@ -39,6 +40,7 @@ test.describe("real Claude workflow subagent row", () => {
 
       await test.step("see the workflow finish without leaving a running row", async () => {
         await expectWorkflowCompleted(page);
+        await expectSingleWorkflowParentCard(page);
         await page.screenshot({ path: testInfo.outputPath("workflow-completed.png") });
       });
 

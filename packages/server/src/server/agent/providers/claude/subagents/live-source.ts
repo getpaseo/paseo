@@ -204,6 +204,12 @@ export class ClaudeTaskProtocolSource {
     return this.declaredIds.has(subagentId);
   }
 
+  /** Whether Claude's task protocol declared this task as a provider subagent. */
+  isDeclaredTask(taskId: string): boolean {
+    const subagentId = this.subagentIdByTaskId.get(taskId);
+    return subagentId !== undefined && this.declaredIds.has(subagentId);
+  }
+
   needsSyntheticParentToolCard(subagentId: string): boolean {
     return !this.idsWithExistingParentToolCard.has(subagentId);
   }
