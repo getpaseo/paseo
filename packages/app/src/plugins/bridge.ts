@@ -238,6 +238,7 @@ var parentOf = own(Node.prototype, "parentNode").get;
 var typeOf = own(Node.prototype, "nodeType").get;
 var shadowOf = own(Element.prototype, "shadowRoot").get;
 var addedOf = own(MutationRecord.prototype, "addedNodes").get;
+var targetOf = own(MutationRecord.prototype, "target").get;
 var countOf = own(NodeList.prototype, "length").get;
 var at = NodeList.prototype.item;
 var startWatching = MutationObserver.prototype.observe;
@@ -263,6 +264,17 @@ var SELECTOR =
 var WATCH = bare();
 WATCH.childList = true;
 WATCH.subtree = true;
+// Attributes too, and unfiltered. \`SELECTOR\` is not a list of tag names: whether
+// a \`script\` is speculation rules is decided by an attribute, and a sweep only
+// ever runs when a node is *inserted*. A script appended as \`application/json\`
+// is swept, kept as data, and retyped a tick later — after which nothing looks
+// at it again, which is the whole selector defeated by one \`setAttribute\`.
+// \`attributeFilter\` would narrow this, and cannot be used: it is a
+// \`sequence<DOMString>\`, so converting it walks the array's iterator, which the
+// plugin owns. One poisoned \`Symbol.iterator\` and \`observe\` throws instead of
+// running — clause 2, from the other side. One \`matches\` per mutation is the
+// cheaper risk.
+WATCH.attributes = true;
 function drop(node) {
   var parent = A(parentOf, node, []);
   if (parent) { try { A(detach, parent, [node]); } catch (e) {} }
@@ -302,6 +314,15 @@ var observer = new MutationObserver(function (records) {
     for (var j = 0, n = A(countOf, added, []); j < n; j++) {
       try { sweep(A(at, added, [j])); } catch (e) {}
     }
+    // Then the record's own target, for the edits that turn an already-swept
+    // element into one of these without inserting anything: a \`type\` change, and
+    // a \`textContent\` write (which is a childList record whose target is the
+    // script, and which is the other trigger the platform re-reads rules on).
+    // Its subtree did not change, so this is one \`matches\`, not a sweep.
+    try {
+      var target = A(targetOf, records[i], []);
+      if (A(typeOf, target, []) === 1 && A(matches, target, [SELECTOR])) drop(target);
+    } catch (e) {}
   }
 });
 A(startWatching, observer, [document, WATCH]);
