@@ -375,6 +375,12 @@ if (attach) {
     return root;
   });
 }
+// \`Document.prototype.open\` is deliberately NOT denied, and the invariant is
+// therefore more precisely "the document parser is reachable but starved" than
+// "unreachable": \`open()\` does instantiate a script-created parser and wipe the
+// tree, but the two calls below are the only way to feed it, and the observer
+// survives the wipe (measured: a frame appended into the rebuilt tree is still
+// dropped). If either of these denials is ever relaxed, that is the door.
 lock(Document.prototype, "write", deny);
 lock(Document.prototype, "writeln", deny);
 lock(Document, "parseHTMLUnsafe", deny);
