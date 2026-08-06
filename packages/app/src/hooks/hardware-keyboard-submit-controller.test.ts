@@ -3,15 +3,18 @@ import {
   createHardwareKeyboardSubmitController,
   type HardwareKeyboardSubmitListenerPort,
 } from "./hardware-keyboard-submit-controller";
+import type { HardwareKeyboardSubmitEvent } from "@/native/hardware-keyboard-submit.types";
+
+type FakeHandler = (event: HardwareKeyboardSubmitEvent) => void;
 
 interface FakeKeyboard extends HardwareKeyboardSubmitListenerPort {
-  emit(): void;
+  emit(event?: HardwareKeyboardSubmitEvent): void;
   readonly isEnabled: boolean;
   readonly listenerCount: number;
 }
 
 function createFakeKeyboard(): FakeKeyboard {
-  const handlers = new Set<() => void>();
+  const handlers = new Set<FakeHandler>();
   let enabled = false;
   return {
     addListener(handler) {
@@ -21,8 +24,8 @@ function createFakeKeyboard(): FakeKeyboard {
     setEnabled(value) {
       enabled = value;
     },
-    emit() {
-      handlers.forEach((handler) => handler());
+    emit(event = { alternate: false }) {
+      handlers.forEach((handler) => handler(event));
     },
     get isEnabled() {
       return enabled;
@@ -47,6 +50,19 @@ describe("hardware-keyboard-submit-controller", () => {
 
     expect(calls).toBe(1);
     expect(keyboard.isEnabled).toBe(true);
+  });
+
+  it("forwards the alternate flag from the emitted event", () => {
+    const keyboard = createFakeKeyboard();
+    const controller = createHardwareKeyboardSubmitController(keyboard);
+    const received: boolean[] = [];
+    controller.setOnSubmit((event) => received.push(event.alternate));
+
+    controller.enable();
+    keyboard.emit({ alternate: true });
+    keyboard.emit({ alternate: false });
+
+    expect(received).toEqual([true, false]);
   });
 
   it("does not subscribe or enable when never enabled", () => {

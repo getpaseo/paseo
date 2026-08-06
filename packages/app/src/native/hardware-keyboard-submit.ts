@@ -1,6 +1,8 @@
 import type { EventSubscription } from "expo-modules-core";
 
-type HardwareKeyboardSubmitHandler = () => void;
+import type { HardwareKeyboardSubmitEvent } from "@/native/hardware-keyboard-submit.types";
+
+type HardwareKeyboardSubmitHandler = (event: HardwareKeyboardSubmitEvent) => void;
 
 export function setHardwareKeyboardSubmitEnabled(_enabled: boolean) {}
 

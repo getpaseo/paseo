@@ -1,19 +1,23 @@
+import type { HardwareKeyboardSubmitEvent } from "@/native/hardware-keyboard-submit.types";
+
 export interface HardwareKeyboardSubmitListenerPort {
-  addListener(handler: () => void): { remove: () => void };
+  addListener(handler: (event: HardwareKeyboardSubmitEvent) => void): { remove: () => void };
   setEnabled(enabled: boolean): void;
 }
 
 export interface HardwareKeyboardSubmitController {
-  setOnSubmit(handler: () => void): void;
+  setOnSubmit(handler: (event: HardwareKeyboardSubmitEvent) => void): void;
   enable(): void;
   disable(): void;
 }
+
+const DEFAULT_EVENT: HardwareKeyboardSubmitEvent = { alternate: false };
 
 export function createHardwareKeyboardSubmitController(
   port: HardwareKeyboardSubmitListenerPort,
 ): HardwareKeyboardSubmitController {
   let subscription: { remove: () => void } | null = null;
-  let onSubmit: () => void = () => {};
+  let onSubmit: (event: HardwareKeyboardSubmitEvent) => void = () => {};
 
   return {
     setOnSubmit(handler) {
@@ -21,7 +25,7 @@ export function createHardwareKeyboardSubmitController(
     },
     enable() {
       if (subscription) return;
-      subscription = port.addListener(() => onSubmit());
+      subscription = port.addListener((event) => onSubmit(event ?? DEFAULT_EVENT));
       port.setEnabled(true);
     },
     disable() {

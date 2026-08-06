@@ -72,8 +72,8 @@ public class PaseoHardwareKeyboardModule: Module {
     }
   }
 
-  fileprivate func emitHardwareKeyboardSubmit() {
-    sendEvent(hardwareSubmitEventName, [:])
+  fileprivate func emitHardwareKeyboardSubmit(alternate: Bool) {
+    sendEvent(hardwareSubmitEventName, ["alternate": alternate])
   }
 
   fileprivate func emitHardwareKeyDown(_ payload: [String: Any]) {
@@ -95,18 +95,26 @@ private final class PaseoHardwareKeyboardRootViewController: UIViewController {
       return super.keyCommands
     }
 
-    // iPad convention: Enter sends, Shift+Enter inserts a newline. On iPhone
-    // Enter keeps inserting a newline, so Shift+Enter sends instead.
-    let isPad = UIDevice.current.userInterfaceIdiom == .pad
-    let command = UIKeyCommand(
+    // Matches desktop on every idiom: Enter sends, Cmd+Enter takes the
+    // alternate send (queue while the agent runs). Shift+Enter is deliberately
+    // unregistered so it falls through to the text view as a newline.
+    // UIKeyCommand only fires for hardware keyboards, so the on-screen return
+    // key keeps inserting newlines.
+    let submit = UIKeyCommand(
       input: "\r",
-      modifierFlags: isPad ? [] : [.shift],
+      modifierFlags: [],
       action: #selector(handleHardwareKeyboardSubmit(_:))
     )
+    let alternateSubmit = UIKeyCommand(
+      input: "\r",
+      modifierFlags: [.command],
+      action: #selector(handleHardwareKeyboardAlternateSubmit(_:))
+    )
     if #available(iOS 15.0, *) {
-      command.wantsPriorityOverSystemBehavior = true
+      submit.wantsPriorityOverSystemBehavior = true
+      alternateSubmit.wantsPriorityOverSystemBehavior = true
     }
-    return (super.keyCommands ?? []) + [command]
+    return (super.keyCommands ?? []) + [submit, alternateSubmit]
   }
 
   // Hardware key presses that no descendant responder consumes bubble up here.
@@ -272,7 +280,15 @@ private final class PaseoHardwareKeyboardRootViewController: UIViewController {
     guard canSubmitCurrentTextInput() else {
       return
     }
-    activeModule?.emitHardwareKeyboardSubmit()
+    activeModule?.emitHardwareKeyboardSubmit(alternate: false)
+  }
+
+  @objc
+  private func handleHardwareKeyboardAlternateSubmit(_ sender: UIKeyCommand) {
+    guard canSubmitCurrentTextInput() else {
+      return
+    }
+    activeModule?.emitHardwareKeyboardSubmit(alternate: true)
   }
 
   private func canSubmitCurrentTextInput() -> Bool {
