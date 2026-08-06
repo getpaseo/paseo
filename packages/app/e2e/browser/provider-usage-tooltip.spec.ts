@@ -23,31 +23,41 @@ test.describe("provider usage tooltip", () => {
     page,
   }) => {
     test.setTimeout(180_000);
-    const usageFixture = await installProviderUsageFixture(page, [
-      {
-        fetchedAt: "2026-06-19T00:00:00.000Z",
-        providers: [
-          {
-            providerId: "mock",
-            displayName: "Mock provider",
-            status: "available",
-            planLabel: "Test plan",
-            windows: [
-              {
-                id: "session",
-                label: "Session",
-                usedPct: 42,
-                remainingPct: 58,
-                resetsAt: "2026-06-19T05:00:00.000Z",
-              },
-            ],
-          },
-        ],
-      },
-    ]);
+    const usageFixture = await installProviderUsageFixture(
+      page,
+      [
+        {
+          fetchedAt: "2026-06-19T00:00:00.000Z",
+          providers: [
+            {
+              providerId: "mock",
+              displayName: "Mock provider",
+              status: "available",
+              planLabel: "Test plan",
+              windows: [
+                {
+                  id: "session",
+                  label: "Session",
+                  usedPct: 42,
+                  remainingPct: 58,
+                  resetsAt: "2026-06-19T05:00:00.000Z",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      { deferResponses: true },
+    );
     const session = await openMockAgent(page);
     try {
       await usageFixture.waitForRequestCount(1);
+
+      const placeholder = page.getByTestId("provider-usage-mobile-session-placeholder");
+      await expect(placeholder).toBeVisible();
+      const placeholderBox = await placeholder.boundingBox();
+      expect(placeholderBox?.width).toBeGreaterThan(200);
+      usageFixture.releaseNextResponse();
 
       const sessionUsage = page.getByTestId("provider-usage-mobile-session");
       await expect(sessionUsage).toBeVisible({
@@ -55,6 +65,9 @@ test.describe("provider usage tooltip", () => {
       });
       await expect(sessionUsage.getByText("Session", { exact: true })).toBeVisible();
       await expect(sessionUsage).toContainText("42% used");
+      const sessionUsageBox = await sessionUsage.boundingBox();
+      expect(sessionUsageBox?.width).toBeGreaterThan(200);
+      expect(sessionUsageBox?.height).toBeCloseTo(placeholderBox?.height ?? 0, 1);
     } finally {
       await session.cleanup();
     }

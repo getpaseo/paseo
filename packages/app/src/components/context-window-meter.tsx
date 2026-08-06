@@ -280,6 +280,7 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
   },
   mobileUsage: {
+    width: "100%",
     alignItems: "stretch",
     gap: theme.spacing[1],
   },
