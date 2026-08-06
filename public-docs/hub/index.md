@@ -46,7 +46,8 @@ A project is one set of environments and triggers. Split your work into projects
 1. [How it works](/docs/hub/concepts)
 2. [Daemons](/docs/hub/daemons)
 3. [Triggers](/docs/hub/triggers)
-4. [Configuration](/docs/hub/configuration)
+4. [Workflows](/docs/hub/workflows)
+5. [Configuration](/docs/hub/configuration)
 
 [Quickstart](/docs/hub/quickstart) goes end to end if you would rather start by doing.
 
