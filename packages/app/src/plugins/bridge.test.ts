@@ -310,6 +310,23 @@ describe("wrapPluginHtml", () => {
       expect(host).toContain("&quot;&gt;&lt;script&gt;");
     });
 
+    // The host document carries a third inlined shell script — the relay — and
+    // it is the only one on the native path. The guest's two are asserted above;
+    // this one never was, so a `<!--` typed into a comment in
+    // `PLUGIN_HOST_RELAY` turns the whole host document into one unterminated
+    // script: `__paseoPost` is never defined, the message listener never
+    // attaches, and the `<iframe srcdoc>` in the body below is swallowed as
+    // script text. A blank plugin on every phone, and measured green on 85 of
+    // 85 tests without this assertion.
+    it("keeps the native relay script out of the script-data escape states", () => {
+      const host = hostOnly("<p>x</p>");
+      const open = host.indexOf("<script>") + "<script>".length;
+      const relay = host.slice(open, host.indexOf("</script>", open));
+      // Pins that this is the relay and not some later script element.
+      expect(relay).toContain("__paseoPost");
+      expect(relay).not.toMatch(/<\/script|<!--|<script/i);
+    });
+
     it("still puts the CSP and the neutering script in front of the plugin", () => {
       const host = wrapPluginHostDocument("<p>hi</p>");
       expect(host).toContain(

@@ -618,8 +618,8 @@ const PLUGIN_HOST_RELAY = `(function(){
     var data = event.data;
     if (!data || data.paseo !== 1) return;
     if (data.type === "init" || data.type === "update") return;
-    // The bridge is injected by the WebView, and this script now runs in
-    // <head>. A throw here loses \`ready\` for good: the plugin sends it once,
+    // The bridge is injected by the WebView, and this script now runs in the
+    // document head. A throw here loses \`ready\` for good: the plugin sends it once,
     // and ten seconds later the user gets the timeout screen.
     if (!window.ReactNativeWebView) return;
     window.ReactNativeWebView.postMessage(JSON.stringify(data));

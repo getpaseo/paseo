@@ -1131,6 +1131,126 @@ const DOCUMENT_OPEN_ATTACK_HTML = `<!doctype html>
   </body>
 </html>`;
 
+/**
+ * `event.source === window.parent` is only the whole answer if `postMessage` is
+ * the only channel between two plugin frames, and if a worker is not a way to
+ * get the fresh realm every other route is denied.
+ *
+ * Two frames, each a plugin. The pair report what a sibling can construct, what
+ * it can reach, and what actually arrives.
+ *
+ * What this pins, all measured rather than reasoned:
+ *
+ * - `new Worker` and `new SharedWorker` are a fresh realm with no neuter script
+ *   in it. `worker-src` is not written in the policy at all — it falls back to
+ *   `default-src 'none'`, and that fallback is the only thing denying them.
+ *   Adding `blob:` to `script-src` for a bundler would not obviously touch
+ *   workers, and would.
+ * - `BroadcastChannel` *constructs* in both frames. It is not denied, it is
+ *   partitioned: two sandboxed frames get two different opaque origins, so the
+ *   message is never delivered. A single `allow-same-origin` collapses that.
+ * - The rest of the shared-state surface (`localStorage`, `sessionStorage`,
+ *   `indexedDB`, `caches`, `document.cookie`, `navigator.serviceWorker`) throws
+ *   `SecurityError`, and so does every attempt to find a sibling by name or to
+ *   set its `opener`.
+ * - A plugin can append its own CSP `<meta>`, and a policy delivered that way
+ *   has its `report-uri`/`report-to` ignored — otherwise a violation report is
+ *   an outbound POST that `connect-src` does not gate.
+ */
+const CHANNEL_VICTIM_HTML = `<!doctype html>
+<html>
+  <body>
+    <script>
+      var log = [];
+      try {
+        var bc = new BroadcastChannel("paseo");
+        bc.onmessage = function (e) { log.push("bc-arrived:" + e.data); };
+        log.push("bc-constructed");
+      } catch (e) { log.push("bc-threw:" + e.name); }
+      try { window.name = "paseo-victim"; log.push("named"); } catch (e) {}
+      window.addEventListener("message", function (e) {
+        if (!e.data || e.data.exfil !== 1 || e.data.type !== "collect") return;
+        window.parent.postMessage({ exfil: 1, type: "victim-log", log: log }, "*");
+      });
+      window.parent.postMessage({ exfil: 1, type: "victim-ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
+const CHANNEL_ATTACKER_HTML = `<!doctype html>
+<html>
+  <body>
+    <script>
+      var out = {};
+      var vio = [];
+      var reports = [];
+      document.addEventListener("securitypolicyviolation", function (e) {
+        vio.push(e.effectiveDirective || e.violatedDirective);
+      });
+      function t(name, fn) {
+        try { out[name] = String(fn()); } catch (e) { out[name] = "threw:" + (e.name || e); }
+      }
+      window.addEventListener("message", function (ev) {
+        if (!ev.data || ev.data.exfil !== 1 || ev.data.type !== "attack") return;
+        var IMG = ev.data.imageUrl;
+        // A fresh realm reports from inside itself, for the same reason every
+        // other child in this file does: the parent's view is decided by the
+        // opaque origin, not by what the child got.
+        var SRC = "self.postMessage('alive:' + typeof RTCPeerConnection + ':' + typeof fetch);";
+        t("dataWorker", function () {
+          new Worker("data:text/javascript," + encodeURIComponent(SRC)).onmessage =
+            function (e) { out.workerSaid = String(e.data); };
+          return "constructed";
+        });
+        t("blobWorker", function () {
+          var u = URL.createObjectURL(new Blob([SRC], { type: "text/javascript" }));
+          new Worker(u).onmessage = function (e) { out.workerSaid = String(e.data); };
+          return "constructed";
+        });
+        t("sharedWorker", function () { new SharedWorker("data:text/javascript,0"); return "constructed"; });
+
+        t("bcPost", function () { new BroadcastChannel("paseo").postMessage("FORGED"); return "sent"; });
+        t("localStorage", function () { localStorage.setItem("a", "1"); return "ok"; });
+        t("sessionStorage", function () { sessionStorage.setItem("a", "1"); return "ok"; });
+        t("indexedDB", function () { indexedDB.open("a"); return "ok"; });
+        t("caches", function () { return typeof caches; });
+        t("cookie", function () { document.cookie = "a=1"; return "ok"; });
+        t("serviceWorker", function () { return typeof navigator.serviceWorker; });
+        t("openNamed", function () {
+          return window.open("about:blank", "paseo-victim") === null ? "null" : "WINDOW";
+        });
+        t("siblingName", function () { return window.parent[0].name; });
+        t("namedLookup", function () { return typeof window.parent["paseo-victim"]; });
+        t("framesNamed", function () { return typeof window.parent.frames["paseo-victim"]; });
+        t("setOpener", function () { window.parent[0].opener = window; return "ok"; });
+
+        // The reporting endpoint a plugin would install for itself.
+        t("reportingObserver", function () {
+          new ReportingObserver(function (list) {
+            var rs = list.getReports();
+            for (var i = 0; i < rs.length; i++) reports.push(rs[i].type);
+          }, { types: ["csp-violation"], buffered: true }).observe();
+          var m = document.createElement("meta");
+          m.httpEquiv = "Content-Security-Policy";
+          m.content = "img-src 'none'; report-uri " + ev.data.base + "/r; report-to plug";
+          document.head.appendChild(m);
+          var i2 = new Image();
+          i2.src = IMG;
+          document.body.appendChild(i2);
+          return "installed";
+        });
+
+        setTimeout(function () {
+          out.violations = vio.join(",");
+          out.reports = reports.join(",") || "none";
+          window.parent.postMessage({ exfil: 1, type: "attacker-out", out: out }, "*");
+        }, 1200);
+      });
+      window.parent.postMessage({ exfil: 1, type: "attacker-ready" }, "*");
+    </script>
+  </body>
+</html>`;
+
 interface Outcomes {
   windowOpen: string;
   fetch: string;
@@ -1881,5 +2001,88 @@ describe("a hostile plugin", () => {
     // to make and nothing in the host can make it for them.
     expect(pluginsDoc).toContain("event.source === window.parent");
     expect(pluginsDoc).not.toContain("Do not check `event.origin` or `event.source`");
+  });
+
+  it("has no second channel to a sibling, and no worker realm", async () => {
+    let out: Record<string, string> | null = null;
+    let victimLog: string[] | null = null;
+    let ready = 0;
+
+    const victimFrame = createPluginIframe(CHANNEL_VICTIM_HTML);
+    const attackerFrame = createPluginIframe(CHANNEL_ATTACKER_HTML);
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as {
+        exfil?: number;
+        type?: string;
+        out?: Record<string, string>;
+        log?: string[];
+      };
+      if (data?.exfil !== 1) return;
+      if (data.type === "victim-ready" || data.type === "attacker-ready") {
+        ready += 1;
+        if (ready === 2) {
+          attackerFrame.contentWindow?.postMessage(
+            {
+              exfil: 1,
+              type: "attack",
+              base: `${location.origin}/${EXFIL_MARKER}`,
+              imageUrl: `${location.origin}/pwa-icon-192.png?${EXFIL_MARKER}=1`,
+            },
+            "*",
+          );
+        }
+      }
+      if (data.type === "attacker-out") {
+        out = data.out ?? {};
+        // Asked last, so the sibling has had every chance to reach it.
+        victimFrame.contentWindow?.postMessage({ exfil: 1, type: "collect" }, "*");
+      }
+      if (data.type === "victim-log") victimLog = data.log ?? [];
+    };
+    window.addEventListener("message", onMessage);
+    document.body.appendChild(victimFrame);
+    document.body.appendChild(attackerFrame);
+    cleanups.push(() => {
+      window.removeEventListener("message", onMessage);
+      victimFrame.remove();
+      attackerFrame.remove();
+    });
+
+    const seen = await waitFor<Record<string, string>>(() => out, "the sibling channel sweep");
+    const log = await waitFor<string[]>(() => victimLog, "the victim's channel log");
+
+    // No fresh realm. The constructors do not throw — a worker fails
+    // asynchronously — so the proof is that nothing ever reported from inside
+    // one, and that the policy is what refused it.
+    expect(seen.workerSaid).toBeUndefined();
+    expect(seen.violations).toContain("worker-src");
+    expect(seen.sharedWorker).toMatch(/^threw:/);
+
+    // Constructed in both frames and still not a channel: two sandboxed frames
+    // are two opaque origins.
+    expect(log).toContain("bc-constructed");
+    expect(seen.bcPost).toBe("sent");
+    expect(log.some((entry) => entry.startsWith("bc-arrived"))).toBe(false);
+
+    for (const key of [
+      "localStorage",
+      "sessionStorage",
+      "indexedDB",
+      "caches",
+      "cookie",
+      "serviceWorker",
+      "siblingName",
+      "namedLookup",
+      "framesNamed",
+      "setOpener",
+    ]) {
+      expect(seen[key], key).toMatch(/^threw:SecurityError/);
+    }
+    expect(seen.openNamed).toBe("null");
+
+    // A plugin can add a policy; it cannot add an endpoint to send it to. A
+    // report is a POST that `connect-src` never sees.
+    expect(seen.violations).toContain("img-src");
+    expect(seen.reports).toBe("none");
   });
 });

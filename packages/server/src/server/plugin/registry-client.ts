@@ -19,8 +19,16 @@ export const PLUGIN_INSTALL_MAX_TOTAL_BYTES = 8 * 1024 * 1024;
  */
 export const PLUGIN_REGISTRY_MAX_RESPONSE_BYTES = PLUGIN_INSTALL_MAX_TOTAL_BYTES;
 const DEFAULT_INDEX_CACHE_TTL_MS = 5 * 60_000;
-/** Per-request ceiling, well inside the client's own 120s RPC timeout. */
+/** Per-request ceiling. On its own this bounds nothing an installer waits on. */
 const REGISTRY_REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * Wall-clock ceiling on a whole download, because the per-request timeout is
+ * per request: a manifest may list 64 files, and 64 requests that each stall
+ * for 30s is half an hour against a client that gave up after 120s. Checked
+ * between files rather than as an abort signal, so the real ceiling is this
+ * plus one request — still inside the RPC timeout.
+ */
+export const PLUGIN_DOWNLOAD_DEADLINE_MS = 60_000;
 
 /**
  * The registry's transport, injected so tests drive install and browse against
@@ -181,6 +189,18 @@ function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+/**
+ * This reason travels to every connected client, and a `file://` registry fails
+ * with `ENOENT: no such file or directory, open '/home/<user>/…'` — the daemon
+ * user's name and directory layout, handed to whoever is on the other end of
+ * the relay. Absolute paths are cut back to a basename; the daemon log still
+ * has the whole error.
+ */
+function describeFetchFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/(?:[A-Za-z]:)?[/\\](?:[^\s'"/\\]+[/\\])+/g, "…/");
+}
+
 function protocolOf(url: string): string | null {
   try {
     return new URL(url).protocol;
@@ -222,10 +242,7 @@ export class PluginRegistryClient {
     try {
       raw = await this.http.getJson(this.registryUrl);
     } catch (error) {
-      throw new PluginRegistryUnavailableError(
-        this.registryUrl,
-        error instanceof Error ? error.message : String(error),
-      );
+      throw new PluginRegistryUnavailableError(this.registryUrl, describeFetchFailure(error));
     }
 
     const envelope = PluginRegistryIndexEnvelopeSchema.safeParse(raw);
@@ -300,7 +317,14 @@ export class PluginRegistryClient {
 
     const allowFileUrls = protocolOf(this.registryUrl) === "file:";
     const files: Array<{ name: string; bytes: Uint8Array }> = [];
+    const deadline = this.now() + PLUGIN_DOWNLOAD_DEADLINE_MS;
     for (const file of entry.files) {
+      if (this.now() >= deadline) {
+        throw new PluginDownloadRejectedError(
+          pluginId,
+          `the registry did not serve all ${entry.files.length} files within ${PLUGIN_DOWNLOAD_DEADLINE_MS}ms`,
+        );
+      }
       const protocol = protocolOf(file.url);
       if (protocol !== "https:" && !(allowFileUrls && protocol === "file:")) {
         throw new PluginDownloadRejectedError(

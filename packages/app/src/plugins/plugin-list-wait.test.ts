@@ -57,6 +57,26 @@ describe("useBoundedPluginListWait", () => {
     expect(result.current).toBe(false);
   });
 
+  // The test above spends the whole deadline before switching, so the first
+  // key's timer has already fired and a leaked one would never be noticed.
+  // Switch while it is still pending and the leak shows: without the effect's
+  // `clearTimeout`, host a's timer lands 100ms into host b's wait and ends it
+  // 1.9s early — the same "the new host's remembered tab skipped the hold"
+  // defect that keying on `serverId` was added to fix.
+  it("does not let the previous key's pending timer end the new key's wait", () => {
+    const { result, rerender } = render({ waiting: true, key: "a" });
+
+    act(() => vi.advanceTimersByTime(PLUGIN_LIST_WAIT_MS - 100));
+    act(() => rerender({ waiting: true, key: "b" }));
+    expect(result.current).toBe(true);
+
+    act(() => vi.advanceTimersByTime(200));
+    expect(result.current).toBe(true);
+
+    act(() => vi.advanceTimersByTime(PLUGIN_LIST_WAIT_MS - 200));
+    expect(result.current).toBe(false);
+  });
+
   // A host that reconnects keeps its id: `support` drops back to unknown, so
   // `waiting` goes true again under the same key and has to get a fresh
   // deadline rather than the spent one.

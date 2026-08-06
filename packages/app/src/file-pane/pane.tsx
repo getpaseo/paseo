@@ -20,19 +20,11 @@ import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
-import {
-  resolveFilePreviewRendererGated,
-  type FilePreviewRenderer,
-} from "@/components/file-pane-render-mode";
+import type { FilePreviewRenderer } from "@/components/file-pane-render-mode";
 import { PluginSandbox } from "@/plugins/sandbox";
-import { usePluginEntry, usePlugins } from "@/plugins/queries";
-import { useBoundedPluginListWait } from "@/plugins/plugin-list-wait";
-import {
-  fromPluginRelativePath,
-  isPluginPreviewablePath,
-  toPluginRelativePath,
-  type PluginContext,
-} from "@/plugins/bridge";
+import { usePluginEntry } from "@/plugins/queries";
+import { useFilePreviewRenderer } from "@/file-pane/use-file-preview-renderer";
+import { fromPluginRelativePath, toPluginRelativePath, type PluginContext } from "@/plugins/bridge";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes } from "@/attachments/service";
@@ -482,49 +474,6 @@ function PluginFilePreview({
       testID="plugin-file-preview"
     />
   );
-}
-
-/**
- * Which viewer renders this file, and whether that answer is still settling.
- *
- * `pending` is not the same as "code": resolving to the code view before the
- * plugin list lands mounts CodeMirror and tears it straight back down when a
- * plugin turns out to claim the extension.
- */
-function useFilePreviewRenderer(input: {
-  serverId: string | null;
-  workspaceRoot: string;
-  filePath: string;
-  lineStart: number | undefined;
-  isTextPreview: boolean;
-}): { renderer: FilePreviewRenderer; rendererPending: boolean } {
-  const { serverId, workspaceRoot, filePath, lineStart, isTextPreview } = input;
-  const { plugins, isLoading } = usePlugins(serverId);
-  const previewable = isTextPreview && !lineStart;
-  const pluggable = previewable && isPluginPreviewablePath(workspaceRoot, filePath);
-  const renderer = useMemo<FilePreviewRenderer>(
-    () =>
-      resolveFilePreviewRendererGated({
-        filePath,
-        plugins,
-        previewable,
-        pluginEligible: pluggable,
-      }),
-    [filePath, plugins, previewable, pluggable],
-  );
-
-  // Bounded, because the file pane is a core path and the plugin list is a
-  // separate RPC: a daemon that is slow or never answers must not hold the
-  // whole pane on a spinner. Past the deadline the built-in renderer wins, and
-  // a plugin answer that lands later just re-renders into it. Keyed on the file
-  // so one slow file does not spend the budget for every file after it, and on
-  // the host so switching hosts does not either.
-  const rendererPending = useBoundedPluginListWait({
-    waiting: isLoading && pluggable,
-    key: `${serverId ?? ""}\u0000${filePath}`,
-  });
-
-  return { renderer, rendererPending };
 }
 
 export function FilePane({

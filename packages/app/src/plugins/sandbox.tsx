@@ -49,10 +49,15 @@ function PluginSandboxView({
 
   const source = useMemo(() => ({ html: wrapPluginHostDocument(html) }), [html]);
 
-  useEffect(() => {
+  // Reset during render, not in an effect: an effect resets one commit late, so
+  // a plugin swapped in while a panel is open would show the previous plugin's
+  // outcome for a frame.
+  const [renderedSource, setRenderedSource] = useState(source);
+  if (renderedSource !== source) {
+    setRenderedSource(source);
     readyRef.current = false;
     setHandshake("waiting");
-  }, [source]);
+  }
 
   useEffect(() => {
     if (handshake !== "waiting") {
@@ -60,7 +65,7 @@ function PluginSandboxView({
     }
     const timer = setTimeout(() => setHandshake("timeout"), PLUGIN_READY_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [handshake, attempt]);
+  }, [handshake, attempt, source]);
 
   const handleRetry = useCallback(() => {
     readyRef.current = false;

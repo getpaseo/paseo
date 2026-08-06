@@ -9,6 +9,7 @@ import { describe, expect, test } from "vitest";
 import type { PluginRegistryIndex } from "@getpaseo/protocol/plugin/types";
 import {
   createFetchPluginRegistryHttp,
+  PLUGIN_DOWNLOAD_DEADLINE_MS,
   PluginDownloadRejectedError,
   PluginDownloadVerificationError,
   PluginNotInRegistryError,
@@ -190,6 +191,24 @@ describe("PluginRegistryClient", () => {
     await expect(client.browse()).rejects.toBeInstanceOf(PluginRegistryUnavailableError);
   });
 
+  // The reason reaches every connected client, so a `file://` registry must not
+  // hand the daemon user's name and directory layout down the relay.
+  test("keeps the daemon's filesystem layout out of the reason", async () => {
+    const http = createFakeHttp({
+      failIndexWith: new Error(
+        "ENOENT: no such file or directory, open '/home/someone/projects/registry/index.json'",
+      ),
+    });
+    const client = new PluginRegistryClient({ registryUrl: REGISTRY_URL, http });
+
+    const reason = await client.browse().then(
+      () => "resolved",
+      (error: PluginRegistryUnavailableError) => error.reason,
+    );
+
+    expect(reason).toBe("ENOENT: no such file or directory, open '…/index.json'");
+  });
+
   test("downloads and verifies every file", async () => {
     const index = buildIndex();
     const http = createFakeHttp({
@@ -359,5 +378,39 @@ describe("PluginRegistryClient", () => {
     const client = new PluginRegistryClient({ registryUrl: REGISTRY_URL, http });
 
     await expect(client.download("csv-table")).rejects.toBeInstanceOf(PluginDownloadRejectedError);
+  });
+
+  // The per-request timeout is per request, so a registry that stalls every one
+  // of a manifest's 64 files keeps the install running long past the 120s the
+  // calling client waits. Only a wall clock over the whole loop bounds it.
+  test("gives up when the files together run past the download deadline", async () => {
+    const index = buildIndex();
+    const second = structuredClone(index.plugins[0]!.files[0]!);
+    second.name = "second.html";
+    second.url = "https://plugins.paseo.sh/csv-table/second.html";
+    index.plugins[0]!.files.push(second);
+    const files = {
+      "https://plugins.paseo.sh/csv-table/preview.html": PREVIEW_HTML,
+      "https://plugins.paseo.sh/csv-table/second.html": PREVIEW_HTML,
+    };
+
+    let clock = 1_000;
+    const slow = createFakeHttp({ index, files });
+    const stalling: PluginRegistryHttp = {
+      getJson: (url) => slow.getJson(url),
+      getBytes: (url, options) => {
+        clock += PLUGIN_DOWNLOAD_DEADLINE_MS;
+        return slow.getBytes(url, options);
+      },
+    };
+    const client = new PluginRegistryClient({
+      registryUrl: REGISTRY_URL,
+      http: stalling,
+      now: () => clock,
+    });
+
+    await expect(client.download("csv-table")).rejects.toThrow(/within 60000ms/);
+    // The first file was fetched; the deadline stopped the second.
+    expect(slow.byteRequests).toEqual(["https://plugins.paseo.sh/csv-table/preview.html"]);
   });
 });

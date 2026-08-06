@@ -90,3 +90,20 @@ test("a plugin that times out and then changes its html gets a frame again", () 
   // effect found a null ref and returned.
   expect(host.querySelectorAll("iframe")).toHaveLength(1);
 });
+
+// The timer keyed on `handshake` alone, and swapping the plugin left it
+// "waiting", so the new plugin inherited whatever was left of the old one's
+// budget and was declared timed out early — with almost none of it if the swap
+// landed late.
+test("a plugin swapped in mid-wait gets the whole timeout, not the remainder", () => {
+  render(SILENT_PLUGIN);
+
+  act(() => void vi.advanceTimersByTime(PLUGIN_READY_TIMEOUT_MS - 100));
+  render("<p>a different plugin</p>");
+
+  act(() => void vi.advanceTimersByTime(PLUGIN_READY_TIMEOUT_MS - 100));
+  expect(host.textContent).not.toContain("did not finish loading");
+
+  act(() => void vi.advanceTimersByTime(100));
+  expect(host.textContent).toContain("did not finish loading");
+});

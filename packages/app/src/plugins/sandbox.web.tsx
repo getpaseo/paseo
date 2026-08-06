@@ -22,6 +22,14 @@ function PluginSandboxView({
   const readyRef = useRef(false);
   const [handshake, setHandshake] = useState<"waiting" | "ready" | "timeout">("waiting");
   const [attempt, setAttempt] = useState(0);
+  // Reset during render, not in an effect: an effect resets one commit late, so
+  // a plugin swapped in while a panel is open would show the previous plugin's
+  // outcome for a frame.
+  const [renderedHtml, setRenderedHtml] = useState(html);
+  if (renderedHtml !== html) {
+    setRenderedHtml(html);
+    setHandshake("waiting");
+  }
   const latest = useRef({ context, onOpenFile, themeTokens });
 
   useEffect(() => {
@@ -62,11 +70,7 @@ function PluginSandboxView({
     }
     const timer = setTimeout(() => setHandshake("timeout"), PLUGIN_READY_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [handshake, attempt]);
-
-  useEffect(() => {
-    setHandshake("waiting");
-  }, [html]);
+  }, [handshake, attempt, html]);
 
   useEffect(() => {
     const iframe = frameRef.current;
