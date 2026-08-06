@@ -86,6 +86,25 @@ export function formatResolvedCommand(resolved: ResolvedCommand): string {
   return [resolved.command, ...resolved.args].join(" ");
 }
 
+export interface TerminalProfileLaunch {
+  name: string;
+  command: string;
+  args: string[];
+}
+
+/**
+ * What to spawn for a profile. Every launcher goes through here, so no caller
+ * can forward a raw `profile.args` still carrying the sentinel: launchers with
+ * nowhere to type (pinned targets, the workspace terminal menu) pass an empty
+ * prompt and get the bare command back.
+ */
+export function resolveTerminalProfileLaunch(
+  profile: TerminalProfile,
+  prompt: string,
+): TerminalProfileLaunch {
+  return { name: profile.name, ...substitutePrompt(profile, prompt) };
+}
+
 const WELL_KNOWN_COMMAND_ICONS = new Map(KNOWN_PROVIDER_ICON_NAMES.map((name) => [name, name]));
 
 function getCommandBaseName(command: string): string {
@@ -134,15 +153,27 @@ const PROMPT_ARGS_BY_COMMAND = new Map(
 // anywhere is left alone, and so is one pointing at any other command. Nothing
 // is written back, so this stays a read-time adoption with no version stamp and
 // no daemon-start hook.
+// A leading bare word is a subcommand, and a subcommand means the profile is
+// not the interactive launch we ship a prompt form for: `opencode run` takes a
+// positional message rather than `--prompt`, and `codex login` takes no prompt
+// at all. Only the first arg is checked, because these CLIs all take the
+// subcommand first; a bare word later is a flag's value, as in
+// `pi --thinking high`.
+function hasSubcommand(args: readonly string[]): boolean {
+  const first = args[0];
+  return first !== undefined && !first.startsWith("-");
+}
+
 function adoptPromptSentinel(profile: TerminalProfile): TerminalProfile {
   const promptArgs = PROMPT_ARGS_BY_COMMAND.get(getCommandBaseName(profile.command));
   if (!promptArgs || promptArgs.length === 0) {
     return profile;
   }
-  if (profileTakesPrompt(profile)) {
+  const args = profile.args ?? [];
+  if (profileTakesPrompt(profile) || hasSubcommand(args)) {
     return profile;
   }
-  return { ...profile, args: [...(profile.args ?? []), ...promptArgs] };
+  return { ...profile, args: [...args, ...promptArgs] };
 }
 
 export function resolveTerminalProfiles(

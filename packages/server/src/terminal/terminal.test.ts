@@ -25,7 +25,7 @@ import {
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { setImmediate as waitForImmediate } from "node:timers/promises";
+import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
 
 const hasZsh = existsSync("/bin/zsh");
 
@@ -116,11 +116,28 @@ if (isPlatform("win32") && !process.env.ComSpec && !process.env.COMSPEC) {
 const sessions: TerminalSession[] = [];
 const temporaryDirs: string[] = [];
 
+/**
+ * `kill()` only signals; the shell exits asynchronously and keeps writing on
+ * the way out (zsh drops a history file and a compdump into `$ZDOTDIR`).
+ * Deleting its directory before then loses the race as `ENOTEMPTY`: the
+ * recursive walk empties the directory, the dying shell recreates a file in it,
+ * and the final rmdir fails. Waiting for the exit removes the race instead of
+ * retrying through it.
+ */
+async function waitForSessionExit(session: TerminalSession): Promise<void> {
+  const exited = new Promise<void>((resolve) => {
+    const dispose = session.onExit(() => {
+      dispose();
+      resolve();
+    });
+    session.kill();
+  });
+  await Promise.race([exited, delay(2_000)]);
+}
+
 afterEach(async () => {
   vi.useRealTimers();
-  for (const session of sessions) {
-    session.kill();
-  }
+  await Promise.all(sessions.map(waitForSessionExit));
   sessions.length = 0;
   while (temporaryDirs.length > 0) {
     const dir = temporaryDirs.pop();
@@ -1211,5 +1228,62 @@ describe("terminal activity interruption", () => {
     session.send({ type: "input", data });
 
     expect(session.getActivity()).toMatchObject({ state: "working" });
+  });
+});
+
+// The escaping tests above assert the command line we generate. This one runs
+// it: a real cmd.exe launches a real .cmd shim, which echoes the argv it was
+// handed. It is the only check that proves cmd.exe's tokenizer reconstructs
+// the prompt instead of executing part of it, which is the failure the
+// escaping exists to prevent (the CVE-2024-27980 class).
+describe.runIf(isPlatform("win32"))(".cmd shim argv round-trip on Windows", () => {
+  function writeArgvEchoShim(): { dir: string; cmdPath: string } {
+    const dir = mkdtempSync(join(tmpdir(), "paseo-cmd-shim-"));
+    const cmdPath = join(dir, "echoargv.cmd");
+    // `%*` would re-expand; echo each positional verbatim, one per line.
+    writeFileSync(
+      cmdPath,
+      '@echo off\r\n:loop\r\nif "%~1"=="" goto :eof\r\necho %~1\r\nshift\r\ngoto loop\r\n',
+    );
+    return { dir, cmdPath };
+  }
+
+  async function roundTrip(promptArg: string): Promise<string> {
+    const { dir, cmdPath } = writeArgvEchoShim();
+    try {
+      const resolved = await resolveTerminalSpawnCommand("echoargv", [promptArg], {
+        platform: "win32",
+        env: process.env,
+        resolveExecutable: async () => cmdPath,
+      });
+      const result = spawnSync(resolved.command, resolved.args as string, {
+        encoding: "utf8",
+        windowsVerbatimArguments: true,
+      });
+      expect(result.error).toBeUndefined();
+      return result.stdout.replace(/\r\n/g, "\n").trim();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("passes cmd.exe metacharacters through as literal text", async () => {
+    expect(await roundTrip("a & b | c")).toBe("a & b | c");
+    expect(await roundTrip("100% done %PATH%")).toBe("100% done %PATH%");
+    expect(await roundTrip("a^b")).toBe("a^b");
+    expect(await roundTrip('say "hi"')).toBe('say "hi"');
+    expect(await roundTrip("c:\\path\\to\\thing")).toBe("c:\\path\\to\\thing");
+  });
+
+  it("does not let a metacharacter start a second command", async () => {
+    // If escaping failed, cmd.exe would run `echo pwned` and it would appear
+    // in stdout as its own line.
+    const output = await roundTrip("safe & echo pwned");
+    expect(output).toBe("safe & echo pwned");
+    expect(output).not.toMatch(/^pwned$/m);
+  });
+
+  it("normalizes newlines to spaces rather than splitting the command", async () => {
+    expect(await roundTrip("first\nsecond")).toBe("first second");
   });
 });
