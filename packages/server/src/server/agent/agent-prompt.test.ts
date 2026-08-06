@@ -1,5 +1,6 @@
 import { expect, it, test, vi } from "vitest";
 import pino, { type Logger } from "pino";
+import { EXTERNAL_WAIT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
@@ -46,6 +47,7 @@ interface FinishNotificationScenarioOptions {
 
 interface FinishNotificationScenario {
   startWatchingChild(): void;
+  setExternalWaitId(waitId: string | null): void;
   finishChild(): void;
   finishChildAndReadParentPrompt(): Promise<string>;
   wasParentPrompted(): boolean;
@@ -62,6 +64,7 @@ function createFinishNotificationScenario(
   Reflect.set(childAgent, "id", "child-agent");
   Reflect.set(childAgent, "lifecycle", "idle");
   Reflect.set(childAgent, "config", { title: "Child Agent" });
+  Reflect.set(childAgent, "labels", {});
 
   const callerAgent: ManagedAgent = Object.create(null);
   Reflect.set(callerAgent, "id", "caller-agent");
@@ -121,6 +124,13 @@ function createFinishNotificationScenario(
         callerAgentId: "caller-agent",
         requireParentOwnership: options?.requireParentOwnership,
         logger: options?.logger ?? createTestLogger(),
+      });
+    },
+    setExternalWaitId(waitId) {
+      childAgent.labels = waitId ? { [EXTERNAL_WAIT_ID_LABEL]: waitId } : {};
+      subscriber?.({
+        type: "agent_state",
+        agent: childAgent,
       });
     },
     finishChild() {
@@ -207,6 +217,23 @@ test("finish notifications tell the parent the child's last assistant message", 
       "Agent child-agent (Child Agent) finished.\n\n<agent-response>\nImplemented the cleanup and all checks pass.\n</agent-response>",
     ),
   );
+});
+
+test("finish notifications stay deferred across an external wait and resumed turn", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  scenario.setExternalWaitId("slurm-1160646");
+  scenario.finishChild();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(scenario.wasParentPrompted()).toBe(false);
+
+  scenario.setExternalWaitId(null);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(scenario.wasParentPrompted()).toBe(false);
+
+  const parentPrompt = await scenario.finishChildAndReadParentPrompt();
+  expect(parentPrompt).toContain("Agent child-agent (Child Agent) finished.");
 });
 
 test("detaching a child ends its parent-owned finish notification", async () => {

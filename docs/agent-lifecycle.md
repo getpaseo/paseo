@@ -50,6 +50,18 @@ Users can also detach an existing subagent from the subagents track. Detach is d
 
 `notifyOnFinish` defaults to `true` for agent-scoped creation and background prompt follow-ups because most delegated work needs to report back to the creating agent. Set it to `false` only for truly fire-and-forget agents or prompts.
 
+### External waits
+
+A child can defer its existing finish notification while work continues outside its provider runtime.
+Set the reserved `paseo.external-wait-id` label to a non-empty wait identifier before the turn
+becomes idle. The caller's finish subscription stays active, but that idle edge does not notify the
+caller. Clear the label before sending the external completion prompt. The resumed turn's next idle
+edge notifies the original caller unless the child registered another external wait.
+
+The label marks an external controller's ownership; Paseo does not interpret the identifier or poll
+the external system. Errors and permission requests still notify the caller immediately. Clearing
+the label while the child is idle does not itself complete the delegated task.
+
 ## Provider-managed child agents
 
 Some providers can create their own child sessions inside one provider runtime. OMP's task tool reports these with `child_session` events; `AgentManager` imports the live provider handle, stamps `paseo.parent-agent-id`, and surfaces the result as a normal subagent in the parent's subagents track.
