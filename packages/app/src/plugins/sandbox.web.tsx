@@ -82,11 +82,20 @@ function PluginSandboxView({
     setAttempt((current) => current + 1);
   }, []);
 
-  if (handshake === "timeout") {
-    return <PluginReadyTimeout onRetry={handleRetry} testID={testID} />;
-  }
-
-  return <div ref={containerRef} data-testid={testID} style={CONTAINER_STYLE} />;
+  return (
+    <div data-testid={testID} style={CONTAINER_STYLE}>
+      {/*
+        The frame's container stays mounted through a timeout instead of being
+        swapped for the card. The frame is appended imperatively, so unmounting
+        the container nulls the ref — and then a plugin that times out and whose
+        `html` later changes gets a mount effect that finds no container, bails,
+        and never runs again, because `html` is the dep it would have re-fired
+        on. Permanently blank pane, nothing to retry.
+      */}
+      <div ref={containerRef} style={handshake === "timeout" ? HIDDEN_STYLE : CONTAINER_STYLE} />
+      {handshake === "timeout" ? <PluginReadyTimeout onRetry={handleRetry} /> : null}
+    </div>
+  );
 }
 
 /**
@@ -104,3 +113,5 @@ const CONTAINER_STYLE = {
   minHeight: 0,
   overflow: "hidden",
 } as const;
+
+const HIDDEN_STYLE = { display: "none" } as const;

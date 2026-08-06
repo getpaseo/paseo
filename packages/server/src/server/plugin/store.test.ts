@@ -369,6 +369,42 @@ describe("PluginStore", () => {
     expect(await readdir(tempDir)).toEqual(["csv-table", "installed.json"]);
   });
 
+  // The startup scan is memoised so it runs once. Memoising its *rejection*
+  // would turn one transient failure — a home directory not mounted yet — into
+  // a store that fails every call until the daemon restarts.
+  test("a failed startup scan is retried rather than remembered", async () => {
+    const blocked = join(tempDir, "blocked");
+    await writeFile(blocked, "not a directory");
+    const blockedStore = new PluginStore({
+      dir: join(blocked, "plugins"),
+      daemonVersion: DAEMON_VERSION,
+    });
+
+    await expect(blockedStore.list()).rejects.toThrow();
+
+    await rm(blocked);
+
+    expect(await blockedStore.list()).toEqual([]);
+  });
+
+  // `list()` reconciles installed.json against what is on disk. Reconciling
+  // against a directory listing it took before an uninstall ran would write the
+  // removed plugin straight back into the state file.
+  test("a listing racing an uninstall does not put the plugin back", async () => {
+    await writePlugin("csv-table");
+    await store.list();
+
+    const listing = store.list();
+    const removal = store.uninstall("csv-table");
+    await Promise.all([listing, removal]);
+
+    expect(await store.list()).toEqual([]);
+    const state = PluginStateFileSchema.parse(
+      JSON.parse(await readFile(join(tempDir, "installed.json"), "utf8")),
+    );
+    expect(state.plugins).toEqual([]);
+  });
+
   test("listing again does not rewrite installed.json", async () => {
     await writePlugin("csv-table");
     await store.list();

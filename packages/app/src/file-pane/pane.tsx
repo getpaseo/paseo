@@ -521,14 +521,17 @@ function useFilePreviewRenderer(input: {
   // a plugin answer that lands later just re-renders into it.
   const waiting = isLoading && pluggable;
   const [waitedTooLong, setWaitedTooLong] = useState(false);
+  // `filePath` is a dep so the deadline restarts per file. Without it, one slow
+  // file spends the budget and every file opened after it while the list is
+  // still in flight skips the wait entirely and renders as source.
   useEffect(() => {
+    setWaitedTooLong(false);
     if (!waiting) {
-      setWaitedTooLong(false);
       return;
     }
     const timer = setTimeout(() => setWaitedTooLong(true), PLUGIN_RENDERER_WAIT_MS);
     return () => clearTimeout(timer);
-  }, [waiting]);
+  }, [waiting, filePath]);
 
   return { renderer, rendererPending: waiting && !waitedTooLong };
 }

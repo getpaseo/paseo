@@ -436,10 +436,12 @@ for (var i = 0, n = A(countOf, scripts, []); i < n; i++) {
     // spanning two adjacent entries would match the join rather than a member.
     var kind = A(lower, A(trim, type, []), []);
     if (kind && (A(indexOf, kind, [" "]) >= 0 || A(indexOf, JS, [" " + kind + " "]) < 0)) {
-      // Left in place, because a non-JS \`<script>\` is data: \`application/json\`
+      // Left in place, because a non-JS script element is data: \`application/json\`
       // blocks are what plugins read back out. \`speculationrules\` is the
       // exception — it is not data, the platform acts on it when it is inserted,
       // and it names URLs to fetch. Dropped rather than carried over.
+      // (No literal tag names in here: this whole string is inlined into a
+      // script element, and \`wrapPluginHtml\`'s own test enforces it.)
       if (kind === "speculationrules") {
         var rulesParent = A(parentOf, old, []);
         if (rulesParent) { try { A(detach, rulesParent, [old]); } catch (e) {} }

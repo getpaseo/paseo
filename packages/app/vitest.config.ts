@@ -13,6 +13,11 @@ const resolvePackageEntry = (packageName: string) => {
 };
 
 export default defineConfig({
+  // Metro compiles the app with the automatic runtime, so no component file
+  // imports `React` for JSX alone. esbuild does not pick that up from the
+  // extended tsconfig and defaults to the classic runtime, which makes every
+  // rendered component throw `React is not defined` here and nowhere else.
+  esbuild: { jsx: "automatic" },
   test: {
     environment: "node",
     exclude: [...configDefaults.exclude, "e2e/**"],

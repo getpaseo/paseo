@@ -160,7 +160,7 @@ export class PluginStore {
    * it rather than deleting the plugin the user installed.
    */
   private async initialize(): Promise<void> {
-    this.ready ??= (async () => {
+    const pending = (this.ready ??= (async () => {
       await mkdir(this.dir, { recursive: true });
       const entries = await readdir(this.dir, { withFileTypes: true });
       const names = new Set(entries.map((entry) => entry.name));
@@ -192,16 +192,23 @@ export class PluginStore {
         }
         await rm(source, { recursive: true, force: true });
       }
-    })();
+    })());
     try {
-      await this.ready;
+      await pending;
     } catch (error) {
       // Uncached on failure. The promise is memoised so the scan runs once, but
       // memoising a rejection makes a transient `mkdir`/`readdir` failure — a
       // full disk, a home directory not mounted yet — reject every later
       // list/read/install until the daemon restarts. Dropping it lets the next
       // caller retry.
-      this.ready = null;
+      //
+      // Only if it is still the failed one. Two callers awaiting the same
+      // rejection both land here, and clearing unconditionally lets the second
+      // discard a retry the first already started — two scans then run at once,
+      // which is what the sequential trash loop above exists to avoid.
+      if (this.ready === pending) {
+        this.ready = null;
+      }
       throw error;
     }
   }
@@ -521,6 +528,11 @@ export class PluginStore {
     await writeJsonFileAtomic(this.statePath(), file);
   }
 
+  /**
+   * The callback must not call `mutateState` itself, directly or through
+   * anything that does. It runs inside the link it is appending to, so a nested
+   * call waits on a promise that cannot settle until it returns.
+   */
   private async mutateState(
     mutate: (
       state: readonly PluginStateEntry[],

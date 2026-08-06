@@ -281,8 +281,23 @@ export const PersistedConfigSchema = z
           .optional(),
         plugins: z
           .object({
-            /** Registry index. Point at a `file://` URL to develop against a local index. */
-            registryUrl: z.url().optional(),
+            /**
+             * Registry index. Point at a `file://` URL to develop against a
+             * local index.
+             *
+             * `https:` or `file:` only. The index is the trust root — it names
+             * both the download URL and the sha256 it has to match — so serving
+             * it over plaintext hands whoever is on the path the ability to
+             * name both, and the per-file https check below it verifies bytes
+             * against a hash an attacker chose.
+             */
+            registryUrl: z
+              .url()
+              .refine(
+                (value) => value.startsWith("https://") || value.startsWith("file://"),
+                "must be an https: or file: URL",
+              )
+              .optional(),
           })
           .strict()
           .optional(),
