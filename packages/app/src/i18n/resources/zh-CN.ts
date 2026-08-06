@@ -1792,6 +1792,10 @@ export const zhCN: TranslationResources = {
       },
       updates: {
         label: "应用更新",
+        autoInstall: {
+          title: "自动安装更新",
+          hint: "关闭后，Paseo 仍会在后台检查更新，但在您选择「更新」之前不会下载或安装任何更新。",
+        },
         readyToInstall: "可安装：{{version}}",
         installTitle: "安装桌面版更新",
         installMessage: "这会更新此电脑上的 Paseo",

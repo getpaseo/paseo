@@ -1813,6 +1813,10 @@ export const ar: TranslationResources = {
       },
       updates: {
         label: "تحديثات التطبيق",
+        autoInstall: {
+          title: "تثبيت التحديثات تلقائيًا",
+          hint: "عند الإيقاف، يستمر Paseo في التحقق من التحديثات في الخلفية، لكنه لا يقوم أبدًا بتنزيل أو تثبيت أي تحديث حتى تختار التحديث.",
+        },
         readyToInstall: "جاهز للتثبيت:{{version}}",
         installTitle: "تثبيت تحديث سطح المكتب",
         installMessage: "يؤدي هذا إلى تحديث Paseo على هذا الكمبيوتر",

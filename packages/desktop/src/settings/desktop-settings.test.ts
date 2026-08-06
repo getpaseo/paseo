@@ -81,6 +81,7 @@ describe("desktop-settings", () => {
 
     expect(settings).toEqual({
       releaseChannel: "stable",
+      autoInstallUpdates: true,
       daemon: {
         manageBuiltInDaemon: true,
         keepRunningAfterQuit: false,
@@ -102,6 +103,7 @@ describe("desktop-settings", () => {
 
     expect(next).toEqual({
       releaseChannel: "beta",
+      autoInstallUpdates: true,
       daemon: {
         manageBuiltInDaemon: true,
         keepRunningAfterQuit: false,
@@ -229,6 +231,7 @@ describe("desktop-settings", () => {
 
     expect(migrated).toEqual({
       releaseChannel: "beta",
+      autoInstallUpdates: true,
       daemon: {
         manageBuiltInDaemon: false,
         keepRunningAfterQuit: false,

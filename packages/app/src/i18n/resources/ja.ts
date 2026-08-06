@@ -1828,6 +1828,10 @@ export const ja: TranslationResources = {
       },
       updates: {
         label: "アプリの更新",
+        autoInstall: {
+          title: "更新を自動的にインストール",
+          hint: "オフにすると、Paseoはバックグラウンドで更新の確認を続けますが、「更新」を選択するまでダウンロードやインストールは行いません。",
+        },
         readyToInstall: "インストール準備完了: {{version}}",
         installTitle: "デスクトップの更新をインストール",
         installMessage: "このコンピューターのPaseoを更新します",

@@ -45,7 +45,9 @@ describe("desktop app updater — check", () => {
 
     await updater.checkForUpdates({ releaseChannel: "beta" });
 
-    expect(port.recordedChecks).toEqual([{ releaseChannel: "beta", intent: "manual" }]);
+    expect(port.recordedChecks).toEqual([
+      { releaseChannel: "beta", autoInstallUpdates: true, intent: "manual" },
+    ]);
   });
 
   it("forwards automatic check intent independently from silent UI state", async () => {
@@ -54,7 +56,25 @@ describe("desktop app updater — check", () => {
 
     await updater.checkForUpdates({ releaseChannel: "stable", intent: "automatic", silent: true });
 
-    expect(port.recordedChecks).toEqual([{ releaseChannel: "stable", intent: "automatic" }]);
+    expect(port.recordedChecks).toEqual([
+      { releaseChannel: "stable", autoInstallUpdates: true, intent: "automatic" },
+    ]);
+  });
+
+  it("forwards a disabled automatic-update setting to the port", async () => {
+    const { updater, port } = createUpdater();
+    port.nextCheckResult(buildFakeCheckResult());
+
+    await updater.checkForUpdates({
+      releaseChannel: "stable",
+      autoInstallUpdates: false,
+      intent: "automatic",
+      silent: true,
+    });
+
+    expect(port.recordedChecks).toEqual([
+      { releaseChannel: "stable", autoInstallUpdates: false, intent: "automatic" },
+    ]);
   });
 
   it("does not add manual last-checked feedback for automatic checks", async () => {
@@ -210,7 +230,9 @@ describe("desktop app updater — check", () => {
     deferred.resolve(buildFakeCheckResult({ hasUpdate: false, readyToInstall: false }));
     await manualCheck;
 
-    expect(port.recordedChecks).toEqual([{ releaseChannel: "stable", intent: "manual" }]);
+    expect(port.recordedChecks).toEqual([
+      { releaseChannel: "stable", autoInstallUpdates: true, intent: "manual" },
+    ]);
     expect(updater.getSnapshot().status).toBe("up-to-date");
   });
 
@@ -313,7 +335,16 @@ describe("desktop app updater — install", () => {
 
     await updater.installUpdate({ releaseChannel: "beta" });
 
-    expect(port.recordedInstalls).toEqual([{ releaseChannel: "beta" }]);
+    expect(port.recordedInstalls).toEqual([{ releaseChannel: "beta", autoInstallUpdates: true }]);
+  });
+
+  it("forwards a disabled automatic-update setting to the port", async () => {
+    const { updater, port } = createUpdater();
+    port.nextInstallResult(buildFakeInstallResult({ installed: true }));
+
+    await updater.installUpdate({ releaseChannel: "beta", autoInstallUpdates: false });
+
+    expect(port.recordedInstalls).toEqual([{ releaseChannel: "beta", autoInstallUpdates: false }]);
   });
 
   it("moves to 'installed' when the install reports installation succeeded", async () => {

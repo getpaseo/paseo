@@ -40,6 +40,7 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
   const isDesktopApp = shouldShowDesktopUpdateSection();
   const { settings: desktopSettings } = useDesktopSettings();
   const releaseChannel = desktopSettings.releaseChannel;
+  const autoInstallUpdates = desktopSettings.autoInstallUpdates;
   const reportError = useDesktopIpcErrorReporter();
 
   const updater = useMemo(
@@ -68,19 +69,20 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
       }
       return updater.checkForUpdates({
         releaseChannel,
+        autoInstallUpdates,
         intent: options.intent ?? "manual",
         silent: options.silent,
       });
     },
-    [isDesktopApp, releaseChannel, updater],
+    [isDesktopApp, releaseChannel, autoInstallUpdates, updater],
   );
 
   const installUpdate = useCallback(async () => {
     if (!isDesktopApp) {
       return null;
     }
-    return updater.installUpdate({ releaseChannel });
-  }, [isDesktopApp, releaseChannel, updater]);
+    return updater.installUpdate({ releaseChannel, autoInstallUpdates });
+  }, [isDesktopApp, releaseChannel, autoInstallUpdates, updater]);
 
   useEffect(() => {
     if (!isDesktopApp) {

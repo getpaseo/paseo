@@ -13,6 +13,7 @@ const DESKTOP_SETTINGS_QUERY_KEY = ["desktop-settings"] as const;
 
 export interface DesktopSettings {
   releaseChannel: ReleaseChannel;
+  autoInstallUpdates: boolean;
   daemon: {
     manageBuiltInDaemon: boolean;
     keepRunningAfterQuit: boolean;
@@ -21,11 +22,13 @@ export interface DesktopSettings {
 
 export interface DesktopSettingsPatch {
   releaseChannel?: ReleaseChannel;
+  autoInstallUpdates?: boolean;
   daemon?: Partial<DesktopSettings["daemon"]>;
 }
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   releaseChannel: "stable",
+  autoInstallUpdates: true,
   daemon: {
     manageBuiltInDaemon: true,
     keepRunningAfterQuit: false,
@@ -148,6 +151,10 @@ function parseDesktopSettings(raw: unknown): DesktopSettings {
 
   return {
     releaseChannel: record.releaseChannel === "beta" ? "beta" : "stable",
+    autoInstallUpdates:
+      typeof record.autoInstallUpdates === "boolean"
+        ? record.autoInstallUpdates
+        : DEFAULT_DESKTOP_SETTINGS.autoInstallUpdates,
     daemon: {
       manageBuiltInDaemon:
         typeof daemon.manageBuiltInDaemon === "boolean"
@@ -167,6 +174,7 @@ function mergeDesktopSettings(
 ): DesktopSettings {
   return {
     releaseChannel: updates.releaseChannel ?? current.releaseChannel,
+    autoInstallUpdates: updates.autoInstallUpdates ?? current.autoInstallUpdates,
     daemon: {
       ...current.daemon,
       ...updates.daemon,
@@ -177,6 +185,9 @@ function mergeDesktopSettings(
 function normalizePatch(updates: DesktopSettingsPatch): Record<string, unknown> {
   return {
     ...(updates.releaseChannel ? { releaseChannel: updates.releaseChannel } : {}),
+    ...(updates.autoInstallUpdates !== undefined
+      ? { autoInstallUpdates: updates.autoInstallUpdates }
+      : {}),
     ...(updates.daemon ? { daemon: updates.daemon } : {}),
   };
 }

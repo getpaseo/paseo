@@ -35,6 +35,7 @@ export interface RuntimeUpdateCheckResult {
 
 export interface AppUpdateRuntimeConfiguration {
   releaseChannel: AppReleaseChannel;
+  autoInstallUpdates: boolean;
   shouldAdmitUpdate(info: RuntimeUpdateInfo): boolean | Promise<boolean>;
   onUpdateAvailable(info: RuntimeUpdateInfo): void;
   onUpdateDownloaded(info: RuntimeUpdateInfo): void;
@@ -53,18 +54,22 @@ export interface AppUpdateService {
   checkForAppUpdate(input: {
     currentVersion: string;
     releaseChannel: AppReleaseChannel;
+    // Optional, defaults to true (matches the pre-existing hardcoded behavior). See issue #998.
+    autoInstallUpdates?: boolean;
     intent: AppUpdateCheckIntent;
   }): Promise<AppUpdateCheckResult>;
   downloadAndInstallUpdate(
     input: {
       currentVersion: string;
       releaseChannel: AppReleaseChannel;
+      autoInstallUpdates?: boolean;
     },
     onBeforeQuit?: () => Promise<void>,
   ): Promise<AppUpdateInstallResult>;
   installUpdateOnQuit(input: {
     currentVersion: string;
     releaseChannel: AppReleaseChannel;
+    autoInstallUpdates?: boolean;
     signal: AbortSignal;
   }): Promise<boolean>;
 }
@@ -147,7 +152,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     preparingUpdateVersion = null;
   }
 
-  function configureRuntime(releaseChannel: AppReleaseChannel, intent: AppUpdateCheckIntent): void {
+  function configureRuntime(
+    releaseChannel: AppReleaseChannel,
+    intent: AppUpdateCheckIntent,
+    autoInstallUpdates: boolean,
+  ): void {
     if (configuredReleaseChannel !== releaseChannel) {
       clearUpdateState();
       configuredReleaseChannel = releaseChannel;
@@ -155,6 +164,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
 
     deps.runtime.configure({
       releaseChannel,
+      autoInstallUpdates,
       shouldAdmitUpdate: async (info) => {
         const parsed = rolloutManifestSchema.parse(info);
         return shouldAdmitAppUpdate({
@@ -214,10 +224,12 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   async function checkForAppUpdate({
     currentVersion,
     releaseChannel,
+    autoInstallUpdates = true,
     intent,
   }: {
     currentVersion: string;
     releaseChannel: AppReleaseChannel;
+    autoInstallUpdates?: boolean;
     intent: AppUpdateCheckIntent;
   }): Promise<AppUpdateCheckResult> {
     if (!deps.isPackaged()) {
@@ -229,7 +241,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     return runCheckExclusively(async () => {
-      configureRuntime(releaseChannel, intent);
+      configureRuntime(releaseChannel, intent, autoInstallUpdates);
 
       try {
         const result = await deps.runtime.checkForUpdates();
@@ -284,9 +296,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     {
       currentVersion,
       releaseChannel,
+      autoInstallUpdates = true,
     }: {
       currentVersion: string;
       releaseChannel: AppReleaseChannel;
+      autoInstallUpdates?: boolean;
     },
     onBeforeQuit?: () => Promise<void>,
   ): Promise<AppUpdateInstallResult> {
@@ -298,9 +312,13 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       };
     }
 
+    // An explicit install request always checks and downloads regardless of the
+    // autoInstallUpdates setting — that setting only gates the *unattended* paths
+    // (background download, install-on-quit). A user pressing "Install" is attended.
     const check = await checkForAppUpdate({
       currentVersion,
       releaseChannel,
+      autoInstallUpdates,
       intent: "manual",
     });
     if (!check.hasUpdate) {
@@ -416,19 +434,25 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   async function installUpdateOnQuit({
     currentVersion,
     releaseChannel,
+    autoInstallUpdates = true,
     signal,
   }: {
     currentVersion: string;
     releaseChannel: AppReleaseChannel;
+    autoInstallUpdates?: boolean;
     signal: AbortSignal;
   }): Promise<boolean> {
-    if (!deps.isPackaged() || !downloadedUpdateVersion) {
+    // Unattended install-on-quit is exactly the behavior autoInstallUpdates gates.
+    // With it off, a quit never silently installs — the user's next explicit
+    // "Install" click is required, even if a download somehow already completed.
+    if (!deps.isPackaged() || !downloadedUpdateVersion || !autoInstallUpdates) {
       return false;
     }
 
     const check = await checkForAppUpdate({
       currentVersion,
       releaseChannel,
+      autoInstallUpdates,
       intent: "automatic",
     });
     if (signal.aborted || !check.hasUpdate) {

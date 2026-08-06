@@ -1860,6 +1860,10 @@ export const es: TranslationResources = {
       },
       updates: {
         label: "Actualizaciones de aplicaciones",
+        autoInstall: {
+          title: "Instalar actualizaciones automáticamente",
+          hint: "Cuando está desactivado, Paseo sigue buscando actualizaciones en segundo plano, pero nunca descarga ni instala ninguna hasta que elijas Actualizar.",
+        },
         readyToInstall: "Listo para instalar:{{version}}",
         installTitle: "Instalar actualización de escritorio",
         installMessage: "Esto actualizaPaseoen esta computadora.",

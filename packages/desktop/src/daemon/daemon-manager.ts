@@ -98,6 +98,10 @@ function parseAppUpdateCheckIntent(
   return args?.intent === "manual" ? "manual" : "automatic";
 }
 
+function parseAutoInstallUpdates(args: Record<string, unknown> | undefined): boolean | undefined {
+  return typeof args?.autoInstallUpdates === "boolean" ? args.autoInstallUpdates : undefined;
+}
+
 function parseDesktopDaemonStopReason(
   args: Record<string, unknown> | undefined,
 ): DesktopDaemonStopReason {
@@ -510,6 +514,14 @@ async function resolveRequestedReleaseChannel(
   return parseReleaseChannel(args) ?? (await getDesktopSettingsStore().get()).releaseChannel;
 }
 
+async function resolveRequestedAutoInstallUpdates(
+  args: Record<string, unknown> | undefined,
+): Promise<boolean> {
+  return (
+    parseAutoInstallUpdates(args) ?? (await getDesktopSettingsStore().get()).autoInstallUpdates
+  );
+}
+
 // ---------------------------------------------------------------------------
 // IPC registration
 // ---------------------------------------------------------------------------
@@ -559,13 +571,18 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       return checkForAppUpdate({
         currentVersion,
         releaseChannel: await resolveRequestedReleaseChannel(args),
+        autoInstallUpdates: await resolveRequestedAutoInstallUpdates(args),
         intent: parseAppUpdateCheckIntent(args),
       });
     },
     install_app_update: async (args) => {
       const currentVersion = resolveDesktopAppVersion();
       return downloadAndInstallUpdate(
-        { currentVersion, releaseChannel: await resolveRequestedReleaseChannel(args) },
+        {
+          currentVersion,
+          releaseChannel: await resolveRequestedReleaseChannel(args),
+          autoInstallUpdates: await resolveRequestedAutoInstallUpdates(args),
+        },
         async () => {
           await stopDesktopDaemon("app_update");
         },

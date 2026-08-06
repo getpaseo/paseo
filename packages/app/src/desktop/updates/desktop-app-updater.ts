@@ -28,13 +28,21 @@ export interface DesktopAppUpdaterSnapshot {
   isInstalling: boolean;
 }
 
+// `autoInstallUpdates` is required on the port. The public updater API keeps it
+// optional and resolves it to a concrete boolean (defaulting to `true`) before
+// crossing this boundary, and both implementations in ./desktop-updates declare
+// it required. Leaving it optional here would let a future caller pass
+// `undefined` into a `boolean` parameter without a type error — method
+// bivariance hides the mismatch.
 export interface DesktopAppUpdaterPort {
   checkDesktopAppUpdate(input: {
     releaseChannel: DesktopReleaseChannel;
+    autoInstallUpdates: boolean;
     intent: DesktopAppUpdateCheckIntent;
   }): Promise<DesktopAppUpdateCheckResult>;
   installDesktopAppUpdate(input: {
     releaseChannel: DesktopReleaseChannel;
+    autoInstallUpdates: boolean;
   }): Promise<DesktopAppUpdateInstallResult>;
 }
 
@@ -55,11 +63,13 @@ export interface DesktopAppUpdater {
   subscribe(listener: () => void): () => void;
   checkForUpdates(options?: {
     releaseChannel: DesktopReleaseChannel;
+    autoInstallUpdates?: boolean;
     intent?: DesktopAppUpdateCheckIntent;
     silent?: boolean;
   }): Promise<DesktopAppUpdateCheckResult | null>;
   installUpdate(options: {
     releaseChannel: DesktopReleaseChannel;
+    autoInstallUpdates?: boolean;
   }): Promise<DesktopAppUpdateInstallResult | null>;
 }
 
@@ -204,13 +214,19 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
 
   async function checkForUpdates(options?: {
     releaseChannel: DesktopReleaseChannel;
+    autoInstallUpdates?: boolean;
     intent?: DesktopAppUpdateCheckIntent;
     silent?: boolean;
   }): Promise<DesktopAppUpdateCheckResult | null> {
     if (!options) {
       return null;
     }
-    const { releaseChannel, intent = "manual", silent = false } = options;
+    const {
+      releaseChannel,
+      autoInstallUpdates = true,
+      intent = "manual",
+      silent = false,
+    } = options;
     if (silent && state.status === "checking") {
       return null;
     }
@@ -225,7 +241,11 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
     });
 
     try {
-      const result = await deps.port.checkDesktopAppUpdate({ releaseChannel, intent });
+      const result = await deps.port.checkDesktopAppUpdate({
+        releaseChannel,
+        autoInstallUpdates,
+        intent,
+      });
       if (requestVersion !== state.requestVersion) {
         return result;
       }
@@ -294,6 +314,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
 
   async function installUpdate(options: {
     releaseChannel: DesktopReleaseChannel;
+    autoInstallUpdates?: boolean;
   }): Promise<DesktopAppUpdateInstallResult | null> {
     commit({
       ...state,
@@ -305,6 +326,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
     try {
       const result = await deps.port.installDesktopAppUpdate({
         releaseChannel: options.releaseChannel,
+        autoInstallUpdates: options.autoInstallUpdates ?? true,
       });
       const nextLastCheckedAt = deps.now();
       commit({
