@@ -68,7 +68,7 @@ function parseModelEntries(entries: string[]): ProviderProfileModel[] {
     if (label.trim().length === 0) {
       throw new Error(`Invalid --model "${entry}": label must not be empty`);
     }
-    return { id, label, ...(index === 0 ? { isDefault: true } : {}) };
+    return { id: id.trim(), label: label.trim(), ...(index === 0 ? { isDefault: true } : {}) };
   });
 }
 

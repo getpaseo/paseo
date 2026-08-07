@@ -87,4 +87,14 @@ describe("provider add override", () => {
       buildProviderOverride("mine", { extends: "claude", model: ["model-id=   "] }),
     ).toThrow(/label must not be empty/);
   });
+
+  it("trims model ids and labels before saving them", () => {
+    expect(
+      buildProviderOverride("mine", { extends: "claude", model: [" model-id = Model label "] }),
+    ).toMatchObject({
+      override: {
+        models: [{ id: "model-id", label: "Model label", isDefault: true }],
+      },
+    });
+  });
 });
