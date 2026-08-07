@@ -6,6 +6,19 @@ function cells(text: string): TerminalState["grid"][number] {
   return [...text].map((char) => ({ char }));
 }
 
+function wideCells(): TerminalState["grid"][number] {
+  // The daemon serialises a double-width cell as the character plus the trailing
+  // spacer cell that xterm reports as an empty string, which it writes as " ".
+  return [
+    { char: "한" },
+    { char: " " },
+    { char: "글" },
+    { char: " " },
+    { char: " " },
+    { char: "A" },
+  ];
+}
+
 describe("renderTerminalSnapshotToAnsi", () => {
   it("renders soft-wrapped rows as one contiguous logical line when wrap flags are present", () => {
     // The server soft-wrapped one logical line "ABCDEFGHIJKLMNOP" at 10 cols into
@@ -45,5 +58,25 @@ describe("renderTerminalSnapshotToAnsi", () => {
 
     expect(ansi).toContain("[?7l");
     expect(ansi).toContain("ABCDEFGHIJ\r\nKLMNOP");
+  });
+
+  it("does not replay the spacer cell that follows a double-width character", () => {
+    // Re-emitting the spacer turns every wide character into three columns when
+    // the client writes the snapshot back into its terminal, so the restored row
+    // drifts one column per CJK character.
+    const state: TerminalState = {
+      rows: 1,
+      cols: 6,
+      scrollback: [],
+      scrollbackWrapped: [],
+      grid: [wideCells()],
+      gridWrapped: [false],
+      cursor: { row: 0, col: 6 },
+    };
+
+    const ansi = renderTerminalSnapshotToAnsi(state);
+
+    expect(ansi).toContain("한글 A");
+    expect(ansi).not.toContain("한 글");
   });
 });

@@ -41,6 +41,27 @@ describe("terminal row model", () => {
     ]);
   });
 
+  test("treats a spacer cell as proof that a wide character owns two columns", () => {
+    const resolver = createTerminalCellStyleResolver(DEFAULT_TERMINAL_THEME);
+
+    const rows = buildRows({
+      grid: [
+        [
+          cell("한", { width: 1 }),
+          cell(" ", { width: 1 }),
+          cell("글", { width: 1 }),
+          cell(" ", { width: 1 }),
+          cell("|", { width: 1 }),
+        ],
+      ],
+      resolver,
+    });
+
+    expect(rows[0].runs.map((run) => ({ text: run.text, cellCount: run.cellCount }))).toEqual([
+      { text: "한글|", cellCount: 5 },
+    ]);
+  });
+
   test("redraws selected cells with the terminal selection colors", () => {
     const resolver = createTerminalCellStyleResolver(DEFAULT_TERMINAL_THEME);
     const grid = [[cell("a", { fg: 1, fgMode: 1 }), cell("b", { dim: true }), cell("c")]];

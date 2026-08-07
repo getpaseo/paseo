@@ -1,4 +1,5 @@
 import type { TerminalCell, TerminalState } from "./messages.js";
+import { isWideTerminalChar } from "./terminal-char-width.js";
 
 interface TerminalStyle {
   fg: number | undefined;
@@ -92,7 +93,14 @@ function renderTerminalRow(row: TerminalCell[], padToCols?: number): string {
       output.push(styleToAnsi(nextStyle));
       previousStyle = nextStyle;
     }
-    output.push(cell.char || " ");
+    const char = cell.char || " ";
+    output.push(char);
+    // The daemon writes a wide character's trailing spacer cell as a space. The
+    // terminal we replay into allocates that column itself, so replaying the
+    // spacer would push the rest of the row one column right per wide character.
+    if (isWideTerminalChar(char) && isWideCharSpacer(row[index + 1])) {
+      index += 1;
+    }
   }
 
   if (!terminalStylesEqual(previousStyle, DEFAULT_STYLE)) {
@@ -100,6 +108,13 @@ function renderTerminalRow(row: TerminalCell[], padToCols?: number): string {
   }
 
   return output.join("");
+}
+
+function isWideCharSpacer(cell: TerminalCell | undefined): boolean {
+  if (!cell) {
+    return false;
+  }
+  return cell.char === "" || cell.char === " ";
 }
 
 function getTerminalRowLength(row: TerminalCell[]): number {
