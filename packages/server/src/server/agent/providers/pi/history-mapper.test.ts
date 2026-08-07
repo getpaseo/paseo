@@ -140,6 +140,60 @@ describe("Pi history mapper", () => {
     ]);
   });
 
+  test("replays failed todo results as failed tool calls (isError forwarded)", async () => {
+    await expect(
+      collectHistory([
+        {
+          role: "assistant",
+          responseId: "response-1",
+          content: [
+            { type: "toolCall", id: "todo-1", name: "todo", arguments: { action: "update" } },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "todo-1",
+          toolName: "todo",
+          content: [{ type: "text", text: "Error: task #99 not found" }],
+          isError: true,
+          details: {
+            action: "update",
+            params: { action: "update", id: 99 },
+            tasks: [],
+            nextId: 1,
+            error: "task #99 not found",
+          },
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "tool_call",
+          callId: "todo-1",
+          name: "todo",
+          status: "failed",
+          detail: {
+            type: "unknown",
+            input: { action: "update" },
+            output: {
+              content: [{ type: "text", text: "Error: task #99 not found" }],
+              details: {
+                action: "update",
+                params: { action: "update", id: 99 },
+                tasks: [],
+                nextId: 1,
+                error: "task #99 not found",
+              },
+            },
+          },
+          error: "Error: task #99 not found",
+        },
+      },
+    ]);
+  });
+
   test("uses Pi tree entry ids for replayed user messages", async () => {
     await expect(
       collectHistory(

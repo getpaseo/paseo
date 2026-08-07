@@ -187,7 +187,7 @@ export class PiHistoryMapper {
       this.pendingToolCalls.get(message.toolCallId) ?? parseToolArgs(message.toolName, null);
     this.pendingToolCalls.delete(message.toolCallId);
     const result = parseToolResult({ content: message.content, details: message.details });
-    const detail = this.mapToolDetail(message.toolCallId, tracked, result);
+    const detail = this.mapToolDetail(message.toolCallId, tracked, result, message.isError);
     if (!detail) {
       return null;
     }
@@ -235,9 +235,10 @@ export class PiHistoryMapper {
     toolCallId: string,
     toolCall: PiTrackedToolCall,
     result: PiToolResult,
+    isError?: boolean,
   ): ToolCallDetail | null {
     const hook = this.hooks.mapToolDetail;
-    return hook ? hook(toolCall, result, { toolCallId }) : mapToolDetail(toolCall, result);
+    return hook ? hook(toolCall, result, { toolCallId }) : mapToolDetail(toolCall, result, isError);
   }
 }
 
