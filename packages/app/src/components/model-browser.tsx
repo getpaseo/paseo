@@ -59,6 +59,7 @@ import {
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
+import { useHardwareKeyboardStore } from "@/stores/hardware-keyboard-store";
 import { useCurrentOverlayLayer } from "@/lib/overlay-root";
 import { moveModelHighlight, resolveModelSubmitRow } from "@/components/model-browser-keyboard";
 import { useListSearchHandler } from "@/keyboard/list-search-dispatcher";
@@ -296,6 +297,7 @@ export function useModelBrowser({
   const [highlightedKey, setHighlightedKey] = useState<string | null>(null);
   const [searchResetKey, bumpSearchResetKey] = useReducer((key: number) => key + 1, 0);
   const hasProfiles = (profiles?.rows.length ?? 0) > 0;
+  const hardwareKeyboardConnected = useHardwareKeyboardStore((state) => state.connected);
 
   const initialView = useMemo(
     () =>
@@ -408,7 +410,7 @@ export function useModelBrowser({
           onBlur: () => setIsSearchFocused(false),
           resetKey: `all:${searchResetKey}`,
           placeholder: t("modelSelector.searchAllPlaceholder"),
-          autoFocus: autoFocusSearch,
+          autoFocus: autoFocusSearch || hardwareKeyboardConnected,
           testID: "model-search-all-input",
           onKeyPress: handleSearchKeyPress,
           onSubmit: handleSearchSubmit,
@@ -439,7 +441,7 @@ export function useModelBrowser({
         onBlur: () => setIsSearchFocused(false),
         resetKey: `${view.providerId}:${searchResetKey}`,
         placeholder: t("modelSelector.searchPlaceholder"),
-        autoFocus: autoFocusSearch,
+        autoFocus: autoFocusSearch || hardwareKeyboardConnected,
         testID: "model-search-input",
         onKeyPress: handleSearchKeyPress,
         onSubmit: handleSearchSubmit,
@@ -451,6 +453,7 @@ export function useModelBrowser({
     handleSearchQueryChange,
     handleSearchKeyPress,
     handleSearchSubmit,
+    hardwareKeyboardConnected,
     searchResetKey,
     serverId,
     singleProviderView,

@@ -57,7 +57,7 @@ import type { ImageAttachment, MessagePayload, TextReplacement } from "./types";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
-import { focusWithRetries } from "@/utils/web-focus";
+import { focusWithRetries } from "@/utils/focus-with-retries";
 import {
   cancelComposerAgent,
   dispatchComposerAgentMessage,

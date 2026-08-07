@@ -57,7 +57,7 @@ import {
   clearCommandCenterFocusRestoreElement,
   takeCommandCenterFocusRestoreElement,
 } from "@/utils/command-center-focus-restore";
-import { focusWithRetries } from "@/utils/web-focus";
+import { focusWithRetries } from "@/utils/focus-with-retries";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { formatTimeAgo } from "@/utils/time";
 import { shortenPath } from "@/utils/shorten-path";
@@ -644,8 +644,10 @@ export function CommandCenter() {
   }, []);
   useEffect(() => {
     if (!showBottomSheet || !state.open) return;
-    const timer = setTimeout(() => bottomSheetInputRef.current?.focus(), 300);
-    return () => clearTimeout(timer);
+    return focusWithRetries({
+      focus: () => bottomSheetInputRef.current?.focus(),
+      isFocused: () => bottomSheetInputRef.current?.isFocused() ?? false,
+    });
   }, [showBottomSheet, state.open]);
 
   const renderItem = useCallback(
