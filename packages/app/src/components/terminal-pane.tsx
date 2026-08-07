@@ -221,12 +221,16 @@ export function TerminalPane({
     return trimmed.length > 0 ? trimmed : undefined;
   }, [settings.monoFontFamily]);
   const isMobile = useIsCompactFormFactor();
+  const showVirtualKeyboard = shouldShowTerminalVirtualKeyboard({
+    isCompactFormFactor: isMobile,
+    isNative,
+  });
   const mobileView = usePanelStore((state) => state.mobilePanel.target);
   const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
   const swipeGesturesEnabled = isMobile;
   const { shift: keyboardShift, style: keyboardPaddingStyle } = useKeyboardShiftStyle({
     mode: "padding",
-    enabled: isMobile,
+    enabled: showVirtualKeyboard,
   });
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
@@ -285,7 +289,7 @@ export function TerminalPane({
   }, [terminalId]);
 
   const refreshClipboardAvailability = useCallback(async () => {
-    if (!isMobile) {
+    if (!showVirtualKeyboard) {
       setHasClipboardText(false);
       return;
     }
@@ -295,7 +299,7 @@ export function TerminalPane({
     } catch {
       setHasClipboardText(false);
     }
-  }, [isMobile]);
+  }, [showVirtualKeyboard]);
 
   useEffect(() => {
     void refreshClipboardAvailability();
@@ -341,7 +345,7 @@ export function TerminalPane({
   );
 
   useEffect(() => {
-    if (isMobile || !isPaneFocused || !terminalId) {
+    if (showVirtualKeyboard || !isPaneFocused || !terminalId) {
       lastAutoFocusKeyRef.current = null;
       return;
     }
@@ -353,7 +357,14 @@ export function TerminalPane({
       lastAutoFocusKeyRef.current = focusKey;
       requestTerminalFocus();
     }
-  }, [isMobile, isPaneFocused, isWorkspaceFocused, requestTerminalFocus, scopeKey, terminalId]);
+  }, [
+    showVirtualKeyboard,
+    isPaneFocused,
+    isWorkspaceFocused,
+    requestTerminalFocus,
+    scopeKey,
+    terminalId,
+  ]);
 
   useEffect(() => {
     const canRequest = canRequestFocusClaim({
@@ -428,11 +439,11 @@ export function TerminalPane({
 
   const handleKeyboardChange = useCallback(
     (nextShift: number) => {
-      setKeyboardInset(isMobile ? nextShift : 0);
+      setKeyboardInset(showVirtualKeyboard ? nextShift : 0);
       setIsKeyboardVisible(nextShift > 0);
       pulseKeyboardRefits();
     },
-    [isMobile, pulseKeyboardRefits],
+    [showVirtualKeyboard, pulseKeyboardRefits],
   );
 
   useEffect(() => {
@@ -979,10 +990,6 @@ export function TerminalPane({
   const showPasteAction = shouldShowTerminalPasteAction({ isNative });
   const showFloatingCopyAction = shouldShowTerminalFloatingCopyAction({
     hasSelection,
-    isNative,
-  });
-  const showVirtualKeyboard = shouldShowTerminalVirtualKeyboard({
-    isCompactFormFactor: isMobile,
     isNative,
   });
   const keyboardToggleIconColor = theme.colors.foregroundMuted;
