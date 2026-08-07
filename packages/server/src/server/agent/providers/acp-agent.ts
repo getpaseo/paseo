@@ -1582,6 +1582,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           code: summary.code,
           diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
           turnId,
+          // The prompt request itself failed, so this turn never ran.
+          rejected: true,
         });
       });
 

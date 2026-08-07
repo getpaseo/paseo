@@ -408,6 +408,15 @@ export type AgentStreamEvent =
       code?: string;
       diagnostic?: string;
       turnId?: string;
+      /**
+       * The provider refused to start this turn, so no turn ran. A rejection describes the
+       * request, not the agent: it is reported in the timeline but never recorded as agent
+       * health. Providers that reject a prompt while another turn is still in flight would
+       * otherwise strand the agent at `error`, because the turn that is actually running
+       * emits its terminal under a different identity — or, for turns the daemon never
+       * started, emits none at all.
+       */
+      rejected?: boolean;
     }
   | { type: "turn_canceled"; provider: AgentProvider; reason: string; turnId?: string }
   | {

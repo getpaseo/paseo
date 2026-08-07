@@ -3800,10 +3800,15 @@ export class AgentManager {
       "handleStreamEvent: turn_failed",
     );
     if (terminalDisposition === "stale") return;
-    if (!isForegroundEvent && !agent.activeForegroundTurnId) {
-      agent.lifecycle = "error";
+    // A rejected turn never ran. It is reported in the timeline, but recording it as agent
+    // health strands the agent at `error`: the turn that is actually running settles under a
+    // different identity, so nothing that follows ever clears it.
+    if (!event.rejected) {
+      if (!isForegroundEvent && !agent.activeForegroundTurnId) {
+        agent.lifecycle = "error";
+      }
+      agent.lastError = event.error;
     }
-    agent.lastError = event.error;
     await this.appendSystemErrorTimelineMessage(
       agent,
       event.provider,
