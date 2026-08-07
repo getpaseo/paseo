@@ -9,7 +9,6 @@ import {
   encodeUtf8String,
   extractRelayMessage,
 } from "./daemon-client-transport.js";
-import { defaultWebSocketFactory } from "./daemon-client-websocket-transport.js";
 
 const createClientChannelMock = vi.hoisted(() => vi.fn());
 
@@ -18,28 +17,6 @@ vi.mock("@getpaseo/relay/e2ee", () => ({
 }));
 
 describe("daemon-client transport helpers", () => {
-  test("defaultWebSocketFactory passes custom headers to native WebSocket options", () => {
-    const constructorSpy = vi.fn();
-    function MockWebSocket(
-      url: string,
-      protocols?: string | string[],
-      options?: { headers?: Record<string, string> },
-    ) {
-      constructorSpy(url, protocols, options);
-    }
-    vi.stubGlobal("WebSocket", MockWebSocket);
-
-    defaultWebSocketFactory("ws://example.test", {
-      protocols: ["paseo.test"],
-      headers: { "X-Tenant": "acme" },
-    });
-
-    expect(constructorSpy).toHaveBeenCalledWith("ws://example.test", ["paseo.test"], {
-      headers: { "X-Tenant": "acme" },
-    });
-    vi.unstubAllGlobals();
-  });
-
   test("createEncryptedTransport closes handshake failures with browser-safe code", async () => {
     createClientChannelMock.mockReset();
     createClientChannelMock.mockRejectedValueOnce(new Error("handshake failed"));

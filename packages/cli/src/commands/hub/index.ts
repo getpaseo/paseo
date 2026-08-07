@@ -4,6 +4,7 @@ import { withOutput, type ListResult, type OutputSchema } from "../../output/ind
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
 import { connectToDaemon } from "../../utils/client.js";
 import { createDeviceAuthorizationWorkflow } from "./device-authorization.js";
+import { addHubDeployCommand } from "./deploy.js";
 
 interface HubCommandClient {
   connectHub(url: string, token: string): Promise<{ status: HubStatus }>;
@@ -100,7 +101,7 @@ async function withClient<T>(
 export function createHubCommand(
   environment: HubCommandEnvironment = productionEnvironment,
 ): Command {
-  const hub = new Command("hub").description("Manage this daemon's Paseo Hub relationship");
+  const hub = new Command("hub").description("Manage Paseo Hub");
   addJsonAndDaemonHostOptions(
     hub.command("connect").argument("<url>").option("--token <token>"),
   ).action(
@@ -144,6 +145,7 @@ export function createHubCommand(
       });
     }),
   );
+  addHubDeployCommand(hub);
   return hub;
 }
 

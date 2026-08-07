@@ -16,10 +16,35 @@ A configuration comes from exactly one source:
 
 - **GitHub source**: one repository, the file `.paseo/hub.yml`, on the repository's current default branch.
 - **Manual source**: edited in the dashboard and saved with **Save and activate**.
+- **CLI/API install**: YAML sent explicitly with an organization API key.
 
 Pick a GitHub source by choosing a repository and clicking **Use for configuration**. That syncs immediately and enables automatic deployment.
 
 The path and the branch are fixed. There is no setting for either.
+
+## Deploy from the CLI
+
+From a project checkout, add the target project slug as optional deployment metadata:
+
+```yaml
+project: my-project
+```
+
+Then deploy:
+
+```sh
+PASEO_HUB_URL=https://hub.example.com \
+PASEO_HUB_API_KEY=paseo_pk_... \
+paseo hub deploy
+```
+
+The default path is exactly `.paseo/hub.yml` relative to the current directory. The CLI does not search parent directories or alternate filenames. Use `paseo hub deploy path/to/config.yml` for another file. The bundle root remains the current directory, so partials are always read from `.paseo/partials/` under that directory. `-p, --project <slug>` overrides the file's `project` value without changing the YAML sent to Hub.
+
+For each prompt `include`, the CLI sends one `{ path, content }` entry whose path is relative to `.paseo/partials/`. It sends only files referenced by the main YAML; nested include-looking text inside a partial is not scanned. Missing, unsafe, duplicate, unreadable, non-file, or oversized inputs fail locally before the Hub request. A configuration with only inline prompt blocks sends no `partials` field.
+
+Use `--hub <origin>` or `PASEO_HUB_URL` for the Hub origin, and `--api-key <secret>` or `PASEO_HUB_API_KEY` for the organization API key. A flag takes precedence over its environment variable. The key supplies organization scope and needs `configuration:install`. `project` only selects the deployment target; workflows cannot reference it.
+
+Durable Hub login and credential persistence are not implemented. Supply the origin and API key for each deployment through flags or the current process environment.
 
 ## Sync
 

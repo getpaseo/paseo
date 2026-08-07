@@ -2,7 +2,22 @@ import type { BrowserContext } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
+const CROSS_STRUCTURE_MARKDOWN = [
+  "# P1 — High-value UI behavior",
+  "",
+  "5. Claude model and thinking preferences",
+  "",
+  "   - Switch Claude models and confirm each model retains its own thinking choice.",
+  "   - Cover new-workspace drafts, queued launches, schedules, and editing existing schedules.",
+  "   - Confirm Opus 5 exposes the Fast toggle.",
+  "   - Smoke with an older saved Fabel/model alias and with daemon/client version drift.",
+  "",
+  "6. Chat, composer, and timeline stability",
+].join("\n");
+
 const ASSISTANT_MARKDOWN = [
+  CROSS_STRUCTURE_MARKDOWN,
+  "",
   "Direct matches:",
   "",
   "Formatted **strong prose**, _emphasized prose_, and ~~struck prose~~.",
@@ -58,9 +73,13 @@ const ASSISTANT_MARKDOWN = [
 ].join("\n");
 
 const EXPECTED_WHOLE_SELECTION_MARKDOWN = ASSISTANT_MARKDOWN.replace(
-  "<https://autolink.example.com>",
-  "[https://autolink.example.com](https://autolink.example.com)",
+  `${CROSS_STRUCTURE_MARKDOWN}\n\n`,
+  "",
 )
+  .replace(
+    "<https://autolink.example.com>",
+    "[https://autolink.example.com](https://autolink.example.com)",
+  )
   .replace(
     "3. Outer three\n\n   7. Inner seven\n   8. Inner eight\n   9. Inner nine",
     "3. Outer three\n    7. Inner seven\n    8. Inner eight\n    9. Inner nine",
@@ -78,18 +97,8 @@ async function allowRichClipboard(context: BrowserContext): Promise<void> {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 }
 
-async function selectAssistantMessage(page: Page): Promise<void> {
-  const assistantMessage = page.getByTestId("assistant-message").filter({
-    hasText: "Direct matches:",
-  });
-  await expect(assistantMessage).toBeVisible();
-  await assistantMessage.evaluate((element) => {
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-  });
+async function selectStructuredClipboardFixture(page: Page): Promise<void> {
+  await selectAssistantTextRange(page, "Direct matches:", "ready");
 }
 
 async function selectAssistantElement(page: Page, selector: string): Promise<void> {
@@ -107,6 +116,20 @@ async function selectAssistantElement(page: Page, selector: string): Promise<voi
 
 async function selectAssistantText(page: Page, text: string): Promise<void> {
   await selectAssistantTextRange(page, text, text);
+}
+
+async function doubleClickAssistantMarkdownText(
+  page: Page,
+  tag: "code" | "strong",
+  text: string,
+): Promise<void> {
+  const assistantMessage = page.getByTestId("assistant-message").filter({
+    hasText: "Direct matches:",
+  });
+  await assistantMessage
+    .locator(`[data-paseo-markdown-tag="${tag}"]`)
+    .filter({ hasText: text })
+    .dblclick({ position: { x: 5, y: 5 } });
 }
 
 async function selectAssistantTextRange(
@@ -275,7 +298,7 @@ test("copying an assistant selection preserves Markdown structure and links", as
       .filter({ hasText: "apply_patch" });
     await expect(inlineCode).toHaveAttribute("data-pmono", "");
 
-    await selectAssistantMessage(page);
+    await selectStructuredClipboardFixture(page);
     await copySelection(page);
 
     const clipboard = await readRichClipboard(page);
@@ -317,6 +340,44 @@ test("copying an assistant selection preserves Markdown structure and links", as
     expect(clipboard.html).toContain('<th style="text-align:right">Right</th>');
     expect(clipboard.html).toContain('<th style="text-align:center">Center</th>');
 
+    await doubleClickAssistantMarkdownText(page, "code", "apply_patch");
+    await copySelection(page);
+
+    const doubleClickedCodeClipboard = await readRichClipboard(page);
+    expect(doubleClickedCodeClipboard.plainText).toBe("apply_patch");
+    expect(doubleClickedCodeClipboard.html).not.toContain("<code>");
+
+    await doubleClickAssistantMarkdownText(page, "strong", "strong prose");
+    await copySelection(page);
+
+    const doubleClickedBoldClipboard = await readRichClipboard(page);
+    expect(doubleClickedBoldClipboard.plainText).toBe("strong");
+    expect(doubleClickedBoldClipboard.html).not.toContain("<strong>");
+
+    await selectAssistantTextRange(
+      page,
+      "P1 — High-value UI behavior",
+      "Smoke with an older saved Fabel/model alias and with daemon/client version drift.",
+    );
+    await copySelection(page);
+
+    const headingAndListClipboard = await readRichClipboard(page);
+    expect(headingAndListClipboard.plainText).toBe(
+      [
+        "P1 — High-value UI behavior",
+        "===========================",
+        "",
+        "5. Claude model and thinking preferences",
+        "    - Switch Claude models and confirm each model retains its own thinking choice.",
+        "    - Cover new-workspace drafts, queued launches, schedules, and editing existing schedules.",
+        "    - Confirm Opus 5 exposes the Fast toggle.",
+        "    - Smoke with an older saved Fabel/model alias and with daemon/client version drift.",
+      ].join("\n"),
+    );
+    expect(headingAndListClipboard.html).toMatch(
+      /<h1>P1 — High-value UI behavior<\/h1>\s*<div>5\. Claude model and thinking preferences\s*<\/div><div>- Switch Claude models/,
+    );
+
     await selectAssistantText(page, "First");
     await copySelection(page);
 
@@ -348,30 +409,21 @@ test("copying an assistant selection preserves Markdown structure and links", as
     await copySelection(page);
 
     const titledLinkClipboard = await readRichClipboard(page);
-    expect(titledLinkClipboard.plainText).toBe('[docs](https://docs.example.com "Reference")');
-    expect(titledLinkClipboard.html).toContain(
-      '<a href="https://docs.example.com/" title="Reference">docs</a>',
-    );
+    expect(titledLinkClipboard.plainText).toBe("docs");
+    expect(titledLinkClipboard.html).not.toContain("<a ");
 
     await selectAssistantText(page, "https://autolink.example.com");
     await copySelection(page);
 
     const autolinkClipboard = await readRichClipboard(page);
-    expect(autolinkClipboard.plainText).toBe(
-      "[https://autolink.example.com](https://autolink.example.com)",
-    );
-    expect(autolinkClipboard.html).toContain(
-      '<a href="https://autolink.example.com/">https://autolink.example.com</a>',
-    );
+    expect(autolinkClipboard.plainText).toBe("https://autolink.example.com");
 
     await selectAssistantText(page, "workspace file");
     await copySelection(page);
 
     const fileLinkClipboard = await readRichClipboard(page);
-    expect(fileLinkClipboard.plainText).toBe("[workspace file](file:///tmp/paseo%20notes.md#L4)");
-    expect(fileLinkClipboard.html).toContain(
-      '<a href="file:///tmp/paseo%20notes.md#L4">workspace file</a>',
-    );
+    expect(fileLinkClipboard.plainText).toBe("workspace file");
+    expect(fileLinkClipboard.html).not.toContain("<a ");
 
     await selectAssistantTextRange(page, "Seventh item", "Eighth item");
     await copySelection(page);

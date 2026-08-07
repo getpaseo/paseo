@@ -9,8 +9,15 @@ category: Hub
 # Hub public API
 
 The Hub public API lets automation operate on projects and daemons in one
-organization. Set the Hub origin in `HUB_URL` below, for example
+organization. Set the Hub origin in `PASEO_HUB_URL` below, for example
 `https://hub.example.com`.
+
+## API reference
+
+- [Interactive API reference](https://hub.paseo.sh/api/reference)
+- [OpenAPI 3.1 document](https://hub.paseo.sh/api/openapi.json)
+
+These are the canonical reference endpoints for the hosted Paseo Hub. A self-hosted Hub exposes the same `/api/reference` and `/api/openapi.json` paths on its own origin.
 
 ## Authentication
 
@@ -38,17 +45,18 @@ Each key has one or more selectable scopes:
 API keys do not grant dashboard access. They cannot manage connections,
 projects, or organization members.
 
-Missing, invalid, or revoked credentials return `401`:
+API failures use RFC 9457 problem details. Missing, invalid, or revoked credentials return `401` with `application/problem+json`:
 
 ```json
-{ "error": "unauthorized" }
+{
+  "type": "https://hub.example.com/problems/unauthorized",
+  "title": "Unauthorized",
+  "status": 401,
+  "detail": "Provide a valid organization API key."
+}
 ```
 
-A valid key without the scope required by an endpoint returns `403`:
-
-```json
-{ "error": "forbidden" }
-```
+A valid key without the scope required by an endpoint returns `403` in the same format.
 
 ## Configuration install
 
@@ -57,7 +65,7 @@ supplied YAML after Hub validates and compiles it, then activates the new
 revision.
 
 ```http
-POST /api/configurations/install
+POST /api/v1/configurations/install
 ```
 
 Request body:
@@ -65,12 +73,17 @@ Request body:
 ```json
 {
   "projectSlug": "my-project",
-  "yaml": "environments:\n  - name: production\n    kind: daemon\n    daemon: build-server\n    cwd: /workspace\ntriggers:\n  - name: deploy\n    on: manual.run\n    max_runtime: 2h\n    filters:\n      from_users: [automation]\n    steps:\n      - id: deploy\n        environment: production\n        max_runtime: 90m\n        idle_timeout: 10m\n        agent:\n          provider: opencode\n          mode: full-access\n        prompt:\n          - text: Deploy the project"
+  "yaml": "environments:\n  - name: production\n    kind: daemon\n    daemon: build-server\n    cwd: /workspace\ntriggers:\n  - name: deploy\n    on: manual.run\n    max_runtime: 2h\n    filters:\n      from_users: [automation]\n    steps:\n      - id: deploy\n        environment: production\n        max_runtime: 90m\n        idle_timeout: 10m\n        agent:\n          provider: opencode\n          mode: full-access\n        prompt:\n          - text: Deploy the project",
+  "partials": [
+    {
+      "path": "docs/safety.md",
+      "content": "Follow the safety checklist."
+    }
+  ]
 }
 ```
 
-The YAML must describe a valid Hub configuration. Replace the example daemon,
-working directory, and trigger values with resources in your organization.
+The YAML must describe a valid Hub configuration and its string value is limited to 1,000,000 characters. `projectSlug` is deployment metadata and determines the target project; the API key determines its organization. `partials` is optional for inline-only configurations. When the YAML uses prompt `include` blocks, send exactly one entry for each referenced file, with a path relative to `.paseo/partials/` and the file's UTF-8 content. The bundle accepts at most 100 files, each with a canonical path no longer than 512 characters and content no larger than 1,000,000 bytes; combined partial content may not exceed 5,000,000 bytes. Hub rejects missing, extra, duplicate, unsafe, or oversized entries. Replace the example daemon, working directory, and trigger values with resources in your organization.
 
 On success, Hub returns `201`:
 
@@ -83,20 +96,18 @@ On success, Hub returns `201`:
 }
 ```
 
-Common responses are `400 {"error":"invalid_request"}` for a missing or
-malformed body, `404 {"error":"project_not_found"}` for an inactive or
-unknown project in the key's organization, and `422` for invalid YAML or an
-invalid configuration. An invalid configuration includes the provisional
-`versionId` in its response.
+Common responses are `400` for a missing or malformed body, `404` for an inactive or unknown project in the key's organization, and `422` for invalid YAML or an invalid configuration. Validation problem details include field issues. A failed install does not replace the active revision.
 
 Example:
 
 ```bash
-curl --fail-with-body -sS -X POST "$HUB_URL/api/configurations/install" \
-  -H "Authorization: Bearer $PASEO_API_KEY" \
+curl --fail-with-body -sS -X POST "$PASEO_HUB_URL/api/v1/configurations/install" \
+  -H "Authorization: Bearer $PASEO_HUB_API_KEY" \
   -H "Content-Type: application/json" \
   --data @configuration-install.json
 ```
+
+For a local YAML file, `paseo hub deploy [file]` calls this endpoint and preserves the file contents. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli) for project precedence, flags, environment variables, and the current authentication limits.
 
 ## Manual run dispatch
 
