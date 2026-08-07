@@ -1,12 +1,14 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
 import { View } from "react-native";
 import { GestureDetector } from "react-native-gesture-handler";
+import { useWorkspaceBrowserAvailability } from "@/browser/workspace-browser-availability";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { CompactExplorerSidebar } from "@/components/explorer-sidebar";
 import { useOpenFileExplorerGesture } from "@/mobile-panels/gestures";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
+import { createWorkspaceBrowser } from "@/stores/browser-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-checkout-status";
 import { openWorkspaceFileFromExplorer } from "@/screens/workspace/workspace-file-open-command";
@@ -103,6 +105,7 @@ export function CompactExplorerSidebarHost({ children, enabled }: CompactExplore
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const openWorkspaceTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
   const focusWorkspaceTab = useWorkspaceLayoutStore((state) => state.focusTab);
+  const hasWorkspaceBrowser = useWorkspaceBrowserAvailability(model?.serverId ?? "");
 
   const handleOpenExplorer = useCallback(() => {
     if (!model?.workspaceRoot) {
@@ -134,6 +137,19 @@ export function CompactExplorerSidebarHost({ children, enabled }: CompactExplore
     [focusWorkspaceTab, model, openWorkspaceTabFocused, showMobileAgent],
   );
 
+  const handleOpenUrlInBrowserTab = useCallback(
+    (url: string) => {
+      if (!model?.persistenceKey || !hasWorkspaceBrowser) {
+        return false;
+      }
+      const { browserId } = createWorkspaceBrowser({ initialUrl: url });
+      openWorkspaceTabFocused(model.persistenceKey, { kind: "browser", browserId });
+      showMobileAgent();
+      return true;
+    },
+    [hasWorkspaceBrowser, model, openWorkspaceTabFocused, showMobileAgent],
+  );
+
   return (
     <>
       <CompactExplorerOpenGestureSurface
@@ -149,6 +165,7 @@ export function CompactExplorerSidebarHost({ children, enabled }: CompactExplore
           workspaceRoot={model.workspaceRoot}
           isGit={model.isGit}
           onOpenFile={handleOpenFile}
+          onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
         />
       ) : null}
     </>

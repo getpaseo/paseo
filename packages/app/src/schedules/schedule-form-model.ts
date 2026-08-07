@@ -42,6 +42,8 @@ export interface ScheduleFormHost {
 export interface ScheduleFormSnapshot {
   mode: "create" | "edit";
   schedule?: ScheduleSummary & { serverId?: string; serverName?: string };
+  /** When set, the form targets an existing agent (heartbeat create/edit). */
+  agentTarget?: { agentId: string };
   hosts: readonly ScheduleFormHost[];
   defaults: {
     serverId?: string | null;
@@ -376,6 +378,9 @@ function makeProviderResolutionRecord(
 }
 
 function resolveTargetKind(snapshot: ScheduleFormSnapshot): ScheduleFormTargetKind {
+  if (snapshot.agentTarget) {
+    return "agent";
+  }
   if (snapshot.mode === "edit" && snapshot.schedule?.target.type === "agent") {
     return "agent";
   }
@@ -546,7 +551,7 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
 
 function resolveCanSubmit(state: ScheduleFormState): boolean {
   if (state.targetKind === "agent") {
-    return state.submitCadence !== undefined;
+    return state.prompt.trim().length > 0 && state.submitCadence !== undefined;
   }
   if (state.prompt.trim().length === 0) {
     return false;

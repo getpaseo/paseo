@@ -491,7 +491,11 @@ describe("schedule form model", () => {
       },
     });
 
-    expect(form.getState()).toMatchObject({ targetKind: "agent", canSubmit: false });
+    expect(form.getState()).toMatchObject({
+      targetKind: "agent",
+      prompt: "Check status",
+      canSubmit: false,
+    });
 
     form.setCadence({ type: "cron", expression: "0 9 * * *", timezone: "Europe/Madrid" });
 
@@ -499,6 +503,61 @@ describe("schedule form model", () => {
       submitCadence: { type: "cron", expression: "0 9 * * *", timezone: "Europe/Madrid" },
       canSubmit: true,
     });
+  });
+
+  it("requires a prompt before creating a heartbeat for an existing agent", () => {
+    const form = open({
+      mode: "create",
+      agentTarget: { agentId: "agent-1" },
+      defaults: {
+        serverId: "host-a",
+        projectTargets: PROJECT_TARGETS,
+        preferences: {},
+        timezone: "Europe/Madrid",
+      },
+    });
+
+    expect(form.getState()).toMatchObject({
+      targetKind: "agent",
+      prompt: "",
+      canSubmit: false,
+    });
+
+    form.setCadence({ type: "cron", expression: "0 9 * * *", timezone: "Europe/Madrid" });
+    expect(form.getState().canSubmit).toBe(false);
+
+    form.setPrompt("Ping me every morning");
+    expect(form.getState()).toMatchObject({
+      prompt: "Ping me every morning",
+      submitCadence: { type: "cron", expression: "0 9 * * *", timezone: "Europe/Madrid" },
+      canSubmit: true,
+    });
+  });
+
+  it("requires a non-empty prompt when editing a heartbeat", () => {
+    const form = open({
+      mode: "edit",
+      schedule: heartbeatOnHost({ type: "cron", expression: "0 9 * * *", timezone: "UTC" }),
+      defaults: {
+        serverId: "host-a",
+        projectTargets: PROJECT_TARGETS,
+        preferences: {},
+        timezone: "UTC",
+      },
+    });
+
+    form.setCadence({ type: "cron", expression: "0 9 * * *", timezone: "UTC" });
+    expect(form.getState()).toMatchObject({
+      targetKind: "agent",
+      prompt: "Check status",
+      canSubmit: true,
+    });
+
+    form.setPrompt("   ");
+    expect(form.getState().canSubmit).toBe(false);
+
+    form.setPrompt("Still watching");
+    expect(form.getState().canSubmit).toBe(true);
   });
 
   it("clears provider selection while resolving a different project", () => {

@@ -30,6 +30,7 @@ import {
   CircleDot,
   FileText,
   GitPullRequest,
+  HeartPulse,
   Image as ImageIcon,
   Paperclip,
 } from "lucide-react-native";
@@ -600,7 +601,7 @@ function QueuedMessageRow({
   const handleSteer = useCallback(() => {
     onSteer?.(item.id);
   }, [onSteer, item.id]);
-  const primaryIsSteer = typeof onSteer === "function";
+  const canSteer = typeof onSteer === "function";
   return (
     <View style={styles.queueItem}>
       <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
@@ -615,7 +616,7 @@ function QueuedMessageRow({
         >
           <ThemedPencil size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
         </Pressable>
-        {primaryIsSteer ? (
+        {canSteer ? (
           <Pressable
             onPress={handleSteer}
             style={[styles.queueActionButton, styles.queueSteerButton]}
@@ -626,16 +627,16 @@ function QueuedMessageRow({
             <ThemedCornerDownLeft size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
             <Text style={styles.queueSteerLabel}>{steerLabel}</Text>
           </Pressable>
-        ) : (
-          <Pressable
-            onPress={handleSendNow}
-            style={[styles.queueActionButton, styles.queueSendButton]}
-            accessibilityLabel={sendNowLabel}
-            accessibilityRole="button"
-          >
-            <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
-          </Pressable>
-        )}
+        ) : null}
+        <Pressable
+          onPress={handleSendNow}
+          style={[styles.queueActionButton, styles.queueSendButton]}
+          accessibilityLabel={sendNowLabel}
+          accessibilityRole="button"
+          testID="composer-queue-send-now-button"
+        >
+          <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
+        </Pressable>
       </View>
     </View>
   );
@@ -855,6 +856,8 @@ interface ComposerProps {
   isPaneFocused: boolean;
   onSubmitMessage?: (payload: MessagePayload) => Promise<void>;
   onClientSlashCommand?: (command: ClientSlashCommand) => Promise<void>;
+  /** Opens the heartbeat create form for this agent (composer + menu). */
+  onCreateHeartbeat?: () => void;
   /** When true, the submit button is enabled even without text or images (e.g. external attachment selected). */
   hasExternalContent?: boolean;
   /** When true, the composer can submit even with no text or attachments. */
@@ -1078,6 +1081,7 @@ export function Composer({
   isPaneFocused,
   onSubmitMessage,
   onClientSlashCommand,
+  onCreateHeartbeat,
   hasExternalContent = false,
   allowEmptySubmit = false,
   submitButtonAccessibilityLabel,
@@ -1994,8 +1998,8 @@ export function Composer({
     [githubSearchItems, githubSearchQueryTrimmed],
   );
 
-  const attachmentMenuItems = useMemo<AttachmentMenuItem[]>(
-    () => [
+  const attachmentMenuItems = useMemo<AttachmentMenuItem[]>(() => {
+    const items: AttachmentMenuItem[] = [
       {
         id: "image",
         label: t("composer.attachments.addImage"),
@@ -2022,9 +2026,19 @@ export function Composer({
           void handlePickFile();
         },
       },
-    ],
-    [handlePickImage, handlePickFile, t, forgePresentation],
-  );
+    ];
+    if (onCreateHeartbeat) {
+      items.push({
+        id: "heartbeat",
+        label: t("composer.attachments.addHeartbeat"),
+        icon: <ThemedHeartPulse size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+        onSelect: () => {
+          onCreateHeartbeat();
+        },
+      });
+    }
+    return items;
+  }, [forgePresentation, handlePickFile, handlePickImage, onCreateHeartbeat, t]);
 
   const handleToggleGithubItem = useCallback(
     (item: ForgeSearchItem) => {
@@ -2455,6 +2469,7 @@ const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedAudioLines = withUnistyles(AudioLines);
 const ThemedPaperclip = withUnistyles(Paperclip);
 const ThemedImageIcon = withUnistyles(ImageIcon);
+const ThemedHeartPulse = withUnistyles(HeartPulse);
 const ThemedFileText = withUnistyles(FileText);
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });

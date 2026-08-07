@@ -64,6 +64,8 @@ export interface ScheduleFormSheetProps {
   onClose: () => void;
   mode: "create" | "edit";
   schedule?: ScheduleSummary;
+  /** Create a heartbeat against an existing agent (composer + menu). */
+  agentTarget?: { agentId: string; label?: string };
 }
 
 function parseMaxRuns(raw: string): number | null {
@@ -109,6 +111,9 @@ function openKey(props: ScheduleFormSheetProps): string {
   if (props.mode === "edit") {
     return `edit:${props.serverId ?? ""}:${props.schedule?.id ?? ""}`;
   }
+  if (props.agentTarget) {
+    return `create-agent:${props.serverId ?? ""}:${props.agentTarget.agentId}`;
+  }
   return `create:${props.serverId ?? ""}`;
 }
 
@@ -128,6 +133,7 @@ function buildSnapshot(input: {
   mode: "create" | "edit";
   serverId: string | undefined;
   schedule: ScheduleSummary | undefined;
+  agentTarget: { agentId: string; label?: string } | undefined;
   hosts: readonly ScheduleFormHost[];
   projectTargets: ReturnType<typeof buildScheduleProjectTargets>;
   preferences: FormPreferences;
@@ -139,6 +145,7 @@ function buildSnapshot(input: {
   return {
     mode: input.mode,
     schedule,
+    agentTarget: input.agentTarget ? { agentId: input.agentTarget.agentId } : undefined,
     hosts: input.hosts,
     defaults: {
       serverId: resolveCreateServerId({
@@ -238,6 +245,7 @@ function OpenScheduleFormSheet({
   onDismiss,
   mode,
   schedule,
+  agentTarget,
 }: ScheduleFormSheetProps & { onDismiss: () => void }): ReactElement {
   const controlSize: FieldControlSize = useIsCompactFormFactor() ? "md" : "sm";
   const { projects } = useProjects();
@@ -256,12 +264,13 @@ function OpenScheduleFormSheet({
         mode,
         serverId,
         schedule,
+        agentTarget,
         hosts,
         projectTargets,
         preferences,
         timezone,
       }),
-    [hosts, mode, preferences, projectTargets, schedule, serverId, timezone],
+    [agentTarget, hosts, mode, preferences, projectTargets, schedule, serverId, timezone],
   );
   const model = useScheduleFormModel(snapshot);
   const state = useSyncExternalStore(model.subscribe, model.getState, model.getState);
@@ -277,18 +286,23 @@ function OpenScheduleFormSheet({
     state.cadence.type === "cron" ? validateCron(state.cadence.expression) : null;
   const canSubmit = state.canSubmit && cadenceError === null && !isSubmitting;
   const agentTargetLabel = useMemo(() => {
-    if (!schedule || schedule.target.type !== "agent") {
+    const targetAgentId =
+      agentTarget?.agentId ?? (schedule?.target.type === "agent" ? schedule.target.agentId : null);
+    if (!targetAgentId) {
       return null;
     }
-    const { agentId } = schedule.target;
+    if (agentTarget?.label?.trim()) {
+      return agentTarget.label.trim();
+    }
     const agent = agents.find(
-      (entry) => entry.serverId === (state.selectedServerId ?? serverId) && entry.id === agentId,
+      (entry) =>
+        entry.serverId === (state.selectedServerId ?? serverId) && entry.id === targetAgentId,
     );
     if (!agent) {
       return "Agent unavailable";
     }
     return agent.title?.trim() || "Untitled agent";
-  }, [agents, schedule, serverId, state.selectedServerId]);
+  }, [agentTarget, agents, schedule, serverId, state.selectedServerId]);
 
   const persistPreferences = useCallback(async () => {
     const provider = state.selectedProvider;
@@ -315,15 +329,37 @@ function OpenScheduleFormSheet({
   ]);
 
   const submitAgentTarget = useCallback(async (): Promise<boolean> => {
-    if (!schedule || !state.submitCadence) {
+    const prompt = state.prompt.trim();
+    if (!state.submitCadence || prompt.length === 0) {
       return false;
     }
-    await updateSchedule({
-      id: schedule.id,
-      cadence: state.submitCadence,
+    if (mode === "edit" && schedule) {
+      await updateSchedule({
+        id: schedule.id,
+        prompt,
+        cadence: state.submitCadence,
+      });
+      return true;
+    }
+    const agentId = agentTarget?.agentId;
+    if (!agentId) {
+      return false;
+    }
+    await createSchedule({
+      prompt,
+      cadence: requireCronCadence(state.submitCadence),
+      target: { type: "agent", agentId },
     });
     return true;
-  }, [schedule, state.submitCadence, updateSchedule]);
+  }, [
+    agentTarget?.agentId,
+    createSchedule,
+    mode,
+    schedule,
+    state.prompt,
+    state.submitCadence,
+    updateSchedule,
+  ]);
 
   const submitNewAgent = useCallback(async (): Promise<boolean> => {
     const provider = state.selectedProvider;
@@ -400,12 +436,28 @@ function OpenScheduleFormSheet({
     void handleSubmit();
   }, [handleSubmit]);
 
+  const isAgentTargetForm = state.targetKind === "agent";
   const header = useMemo<SheetHeader>(() => {
-    if (mode !== "edit") {
-      return { title: "New schedule" };
+    if (mode === "edit") {
+      return {
+        title:
+          schedule?.target.type === "agent" || isAgentTargetForm
+            ? "Edit heartbeat"
+            : "Edit schedule",
+      };
     }
-    return { title: schedule?.target.type === "agent" ? "Edit heartbeat" : "Edit schedule" };
-  }, [mode, schedule?.target.type]);
+    return { title: isAgentTargetForm ? "New heartbeat" : "New schedule" };
+  }, [isAgentTargetForm, mode, schedule?.target.type]);
+
+  const submitLabel = useMemo(() => {
+    if (mode === "edit") {
+      return "Save changes";
+    }
+    if (isAgentTargetForm) {
+      return "Create heartbeat";
+    }
+    return "Create schedule";
+  }, [isAgentTargetForm, mode]);
 
   const footer = useMemo(
     () => (
@@ -426,11 +478,11 @@ function OpenScheduleFormSheet({
           loading={isSubmitting}
           testID="schedule-form-submit"
         >
-          {mode === "edit" ? "Save changes" : "Create schedule"}
+          {submitLabel}
         </Button>
       </View>
     ),
-    [canSubmit, handleSubmitPress, isSubmitting, mode, onClose],
+    [canSubmit, handleSubmitPress, isSubmitting, onClose, submitLabel],
   );
 
   return (
@@ -478,6 +530,21 @@ function ScheduleFormFields({
     return (
       <>
         <ScheduleAgentTargetField label={agentTargetLabel} size={controlSize} />
+        <Field label="Prompt">
+          <FormTextInput
+            size={controlSize}
+            testID="schedule-prompt-input"
+            accessibilityLabel="Prompt"
+            initialValue={state.prompt}
+            value={state.prompt}
+            onChangeText={model.setPrompt}
+            placeholder="What should this agent do on each heartbeat?"
+            style={styles.multilineInput}
+            multiline
+            numberOfLines={4}
+            textAlignVertical="top"
+          />
+        </Field>
         <CadenceEditor
           value={state.cadence}
           onChange={model.setCadence}

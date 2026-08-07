@@ -107,6 +107,7 @@ export const zhCN: TranslationResources = {
       addFile: "Upload file",
       addIssueOrPr: "添加 issue 或 PR",
       addIssueOrPr_mr: "添加 issue 或 MR",
+      addHeartbeat: "创建心跳",
       dropImagesHere: "将图片拖放到这里",
       dropFilesHere: "Drop files here",
       editQueuedMessage: "编辑排队消息",
@@ -551,6 +552,10 @@ export const zhCN: TranslationResources = {
         toggle: "切换 explorer",
         changes: "变更",
         files: "文件",
+        ports: "端口",
+        portsEmpty: "工作区脚本暂无端口。",
+        portMeta: ":{{port}} · {{status}}",
+        portRowA11y: "{{name}}，{{protocol}}，端口 {{port}}",
       },
       toasts: {
         copyFailed: "复制失败",
@@ -1472,6 +1477,7 @@ export const zhCN: TranslationResources = {
   loops: {
     header: "循环",
     headerCount: "循环 ({{count}})",
+    headerCountRunning: "循环 ({{count}}) · {{running}} 运行中",
     stopAction: "停止 {{label}}",
     stopTooltip: "停止",
     stopFailed: "停止循环失败",
@@ -1513,6 +1519,7 @@ export const zhCN: TranslationResources = {
   backgroundTasks: {
     header: "Background Tasks",
     headerCount: "Background Tasks ({{count}})",
+    headerCountRunning: "Background Tasks ({{count}}) · {{running}} running",
     stopAction: "Stop {{label}}",
     stopTooltip: "Stop",
     stopFailed: "Failed to stop background task",
@@ -1534,6 +1541,13 @@ export const zhCN: TranslationResources = {
     archiveTooltip: "归档 subagent",
     archiveFinishedAction: "归档已完成的 subagent",
     archiveFinishedTooltip: "归档已完成项",
+  },
+  todos: {
+    header: "待办",
+    headerCountRemaining: "待办 ({{count}}) · {{remaining}} 未完成",
+    headerCountDone: "待办 ({{count}}) · 已完成",
+    itemOpenA11y: "未完成：{{text}}",
+    itemDoneA11y: "已完成：{{text}}",
   },
   panels: {
     draft: {

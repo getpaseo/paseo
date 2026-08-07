@@ -4026,6 +4026,7 @@ function WorkspaceScreenContent({
               workspaceRoot={workspaceDirectory}
               isGit={isGitCheckout}
               onOpenFile={handleOpenFileFromExplorer}
+              onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
             >
               {workspaceCenterColumn}
             </WorkspaceChromeRow>

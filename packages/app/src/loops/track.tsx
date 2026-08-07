@@ -49,17 +49,6 @@ function statusLabel(status: LoopTrackRow["status"], t: (key: string) => string)
   }
 }
 
-function rowMeta(
-  row: LoopTrackRow,
-  t: (key: string, options?: { count: number }) => string,
-): string {
-  const parts = [roleLabel(row.role, t), statusLabel(row.status, t)];
-  if (row.activeIteration != null) {
-    parts.push(t("loops.iteration", { count: row.activeIteration }));
-  }
-  return parts.join(" · ");
-}
-
 export function LoopsTrack({
   rows,
   onOpenLoop,
@@ -93,8 +82,19 @@ export function LoopsTrack({
     return null;
   }
 
-  const headerLabel =
-    rows.length > 0 ? t("loops.headerCount", { count: rows.length }) : t("loops.header");
+  const runningCount = rows.reduce(
+    (count, row) => (row.status === "running" ? count + 1 : count),
+    0,
+  );
+  let headerLabel = t("loops.headerCount", { count: rows.length });
+  if (rows.length === 0) {
+    headerLabel = t("loops.header");
+  } else if (runningCount > 0) {
+    headerLabel = t("loops.headerCountRunning", {
+      count: rows.length,
+      running: runningCount,
+    });
+  }
 
   return (
     <View style={styles.outer} testID="loops-track">
@@ -158,6 +158,10 @@ function LoopsTrackRow({
   const [hovered, setHovered] = useState(false);
   const label = rowLabel(row);
   const role = roleLabel(row.role, t);
+  const status = statusLabel(row.status, t);
+  const iteration =
+    row.activeIteration != null ? t("loops.iteration", { count: row.activeIteration }) : null;
+  const a11yLabel = [role, label, status, iteration].filter(Boolean).join(" · ");
   const handlePress = useCallback(() => {
     onOpenLoop(row.loopId);
   }, [onOpenLoop, row.loopId]);
@@ -174,23 +178,21 @@ function LoopsTrackRow({
     <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${role} ${label}`}
+        accessibilityLabel={a11yLabel}
         testID={`loops-track-row-${row.loopId}`}
         onPress={handlePress}
       >
         {({ pressed }) => (
           <View style={hovered || pressed ? styles.rowActive : styles.row}>
-            <View style={styles.rowText}>
-              <View style={styles.rowTitle}>
-                <StatusBadge label={role} variant="muted" />
-                <Text style={styles.rowLabel} numberOfLines={1}>
-                  {label}
-                </Text>
-              </View>
-              <Text style={styles.rowMeta} numberOfLines={1}>
-                {rowMeta(row, t)}
+            <StatusBadge label={role} variant="muted" />
+            <Text style={styles.rowLabel} numberOfLines={1}>
+              {label}
+            </Text>
+            {iteration ? (
+              <Text style={styles.rowInlineMeta} numberOfLines={1}>
+                {iteration}
               </Text>
-            </View>
+            ) : null}
             {canStop ? (
               <LoopStopButton
                 label={label}
@@ -332,24 +334,15 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     backgroundColor: theme.colors.surface2,
   },
-  rowText: {
-    flex: 1,
-    minWidth: 0,
-    gap: 2,
-  },
-  rowTitle: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    minWidth: 0,
-  },
   rowLabel: {
+    flex: 1,
     flexShrink: 1,
     minWidth: 0,
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
   },
-  rowMeta: {
+  rowInlineMeta: {
+    flexShrink: 0,
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
   },

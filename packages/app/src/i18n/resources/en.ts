@@ -105,6 +105,7 @@ export const en = {
       addFile: "Upload file",
       addIssueOrPr: "Add issue or PR",
       addIssueOrPr_mr: "Add issue or MR",
+      addHeartbeat: "Create heartbeat",
       dropImagesHere: "Drop images here",
       dropFilesHere: "Drop files here",
       editQueuedMessage: "Edit queued message",
@@ -550,6 +551,10 @@ export const en = {
         toggle: "Toggle explorer",
         changes: "Changes",
         files: "Files",
+        ports: "Ports",
+        portsEmpty: "No ports from workspace scripts yet.",
+        portMeta: ":{{port}} · {{status}}",
+        portRowA11y: "{{name}}, {{protocol}}, port {{port}}",
       },
       toasts: {
         copyFailed: "Copy failed",
@@ -1510,6 +1515,7 @@ export const en = {
   loops: {
     header: "Loops",
     headerCount: "Loops ({{count}})",
+    headerCountRunning: "Loops ({{count}}) · {{running}} running",
     stopAction: "Stop {{label}}",
     stopTooltip: "Stop",
     stopFailed: "Failed to stop loop",
@@ -1551,6 +1557,7 @@ export const en = {
   backgroundTasks: {
     header: "Background Tasks",
     headerCount: "Background Tasks ({{count}})",
+    headerCountRunning: "Background Tasks ({{count}}) · {{running}} running",
     stopAction: "Stop {{label}}",
     stopTooltip: "Stop",
     stopFailed: "Failed to stop background task",
@@ -1564,6 +1571,13 @@ export const en = {
     typeMonitor: "Monitor",
     typeWorkflow: "Workflow",
     typeOther: "Other",
+  },
+  todos: {
+    header: "Todos",
+    headerCountRemaining: "Todos ({{count}}) · {{remaining}} open",
+    headerCountDone: "Todos ({{count}}) · done",
+    itemOpenA11y: "Open: {{text}}",
+    itemDoneA11y: "Done: {{text}}",
   },
   panels: {
     draft: {

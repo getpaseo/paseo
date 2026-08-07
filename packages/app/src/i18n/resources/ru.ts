@@ -107,6 +107,7 @@ export const ru: TranslationResources = {
       addFile: "Upload file",
       addIssueOrPr: "Добавить проблему или PR",
       addIssueOrPr_mr: "Добавить проблему или MR",
+      addHeartbeat: "Создать heartbeat",
       dropImagesHere: "Скиньте изображения сюда",
       dropFilesHere: "Drop files here",
       editQueuedMessage: "Изменить сообщение в очереди",
@@ -555,6 +556,10 @@ export const ru: TranslationResources = {
         toggle: "Переключить проводник",
         changes: "Изменения",
         files: "Файлы",
+        ports: "Порты",
+        portsEmpty: "Пока нет портов из скриптов workspace.",
+        portMeta: ":{{port}} · {{status}}",
+        portRowA11y: "{{name}}, {{protocol}}, порт {{port}}",
       },
       toasts: {
         copyFailed: "Не удалось скопировать",
@@ -1525,6 +1530,7 @@ export const ru: TranslationResources = {
   loops: {
     header: "Циклы",
     headerCount: "Циклы ({{count}})",
+    headerCountRunning: "Циклы ({{count}}) · {{running}} выполняется",
     stopAction: "Остановить {{label}}",
     stopTooltip: "Остановить",
     stopFailed: "Не удалось остановить цикл",
@@ -1566,6 +1572,7 @@ export const ru: TranslationResources = {
   backgroundTasks: {
     header: "Background Tasks",
     headerCount: "Background Tasks ({{count}})",
+    headerCountRunning: "Background Tasks ({{count}}) · {{running}} running",
     stopAction: "Stop {{label}}",
     stopTooltip: "Stop",
     stopFailed: "Failed to stop background task",
@@ -1587,6 +1594,13 @@ export const ru: TranslationResources = {
     archiveTooltip: "Архивный субагент",
     archiveFinishedAction: "Архивировать завершенные субагенты",
     archiveFinishedTooltip: "Архивировать завершенные",
+  },
+  todos: {
+    header: "Todos",
+    headerCountRemaining: "Todos ({{count}}) · {{remaining}} открыто",
+    headerCountDone: "Todos ({{count}}) · готово",
+    itemOpenA11y: "Открыто: {{text}}",
+    itemDoneA11y: "Готово: {{text}}",
   },
   panels: {
     draft: {

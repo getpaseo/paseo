@@ -107,6 +107,7 @@ export const ptBR: TranslationResources = {
       addFile: "Enviar arquivo",
       addIssueOrPr: "Adicionar issue ou PR",
       addIssueOrPr_mr: "Adicionar issue ou MR",
+      addHeartbeat: "Criar heartbeat",
       dropImagesHere: "Solte imagens aqui",
       dropFilesHere: "Solte arquivos aqui",
       editQueuedMessage: "Editar mensagem na fila",
@@ -555,6 +556,10 @@ export const ptBR: TranslationResources = {
         toggle: "Alternar explorador",
         changes: "Alterações",
         files: "Arquivos",
+        ports: "Portas",
+        portsEmpty: "Ainda não há portas dos scripts do workspace.",
+        portMeta: ":{{port}} · {{status}}",
+        portRowA11y: "{{name}}, {{protocol}}, porta {{port}}",
       },
       toasts: {
         copyFailed: "Falha ao copiar",
@@ -1520,6 +1525,7 @@ export const ptBR: TranslationResources = {
   loops: {
     header: "Loops",
     headerCount: "Loops ({{count}})",
+    headerCountRunning: "Loops ({{count}}) · {{running}} em execução",
     stopAction: "Parar {{label}}",
     stopTooltip: "Parar",
     stopFailed: "Falha ao parar o loop",
@@ -1561,6 +1567,7 @@ export const ptBR: TranslationResources = {
   backgroundTasks: {
     header: "Background Tasks",
     headerCount: "Background Tasks ({{count}})",
+    headerCountRunning: "Background Tasks ({{count}}) · {{running}} running",
     stopAction: "Stop {{label}}",
     stopTooltip: "Stop",
     stopFailed: "Failed to stop background task",
@@ -1582,6 +1589,13 @@ export const ptBR: TranslationResources = {
     archiveTooltip: "Arquivar subagente",
     archiveFinishedAction: "Arquivar subagentes concluídos",
     archiveFinishedTooltip: "Arquivar concluídos",
+  },
+  todos: {
+    header: "Todos",
+    headerCountRemaining: "Todos ({{count}}) · {{remaining}} abertos",
+    headerCountDone: "Todos ({{count}}) · concluídos",
+    itemOpenA11y: "Aberto: {{text}}",
+    itemDoneA11y: "Concluído: {{text}}",
   },
   panels: {
     draft: {

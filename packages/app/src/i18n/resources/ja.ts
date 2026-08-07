@@ -107,6 +107,7 @@ export const ja: TranslationResources = {
       addFile: "ファイルをアップロード",
       addIssueOrPr: "イシューまたはPRを追加",
       addIssueOrPr_mr: "イシューまたはMRを追加",
+      addHeartbeat: "ハートビートを作成",
       dropImagesHere: "ここに画像をドロップ",
       dropFilesHere: "ここにファイルをドロップ",
       editQueuedMessage: "キューに入れたメッセージを編集",
@@ -557,6 +558,10 @@ export const ja: TranslationResources = {
         toggle: "エクスプローラーを切り替え",
         changes: "変更",
         files: "ファイル",
+        ports: "ポート",
+        portsEmpty: "ワークスペーススクリプトのポートはまだありません。",
+        portMeta: ":{{port}} · {{status}}",
+        portRowA11y: "{{name}}、{{protocol}}、ポート {{port}}",
       },
       toasts: {
         copyFailed: "コピーに失敗しました",
@@ -1508,6 +1513,7 @@ export const ja: TranslationResources = {
   loops: {
     header: "ループ",
     headerCount: "ループ ({{count}})",
+    headerCountRunning: "ループ ({{count}}) · {{running}} 実行中",
     stopAction: "{{label}} を停止",
     stopTooltip: "停止",
     stopFailed: "ループの停止に失敗しました",
@@ -1549,6 +1555,7 @@ export const ja: TranslationResources = {
   backgroundTasks: {
     header: "Background Tasks",
     headerCount: "Background Tasks ({{count}})",
+    headerCountRunning: "Background Tasks ({{count}}) · {{running}} running",
     stopAction: "Stop {{label}}",
     stopTooltip: "Stop",
     stopFailed: "Failed to stop background task",
@@ -1570,6 +1577,13 @@ export const ja: TranslationResources = {
     archiveTooltip: "サブエージェントをアーカイブ",
     archiveFinishedAction: "完了したサブエージェントをアーカイブ",
     archiveFinishedTooltip: "完了した項目をアーカイブ",
+  },
+  todos: {
+    header: "Todos",
+    headerCountRemaining: "Todos ({{count}}) · {{remaining}} 未完了",
+    headerCountDone: "Todos ({{count}}) · 完了",
+    itemOpenA11y: "未完了: {{text}}",
+    itemDoneA11y: "完了: {{text}}",
   },
   panels: {
     draft: {
