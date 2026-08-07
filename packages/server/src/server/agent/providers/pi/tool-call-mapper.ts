@@ -337,8 +337,18 @@ export function resolveToolCallName(toolCall: PiTrackedToolCall, result?: PiTool
   return toolCall.toolName;
 }
 
-export function mapToolDetail(toolCall: PiTrackedToolCall, result?: PiToolResult): ToolCallDetail {
+export function mapToolDetail(
+  toolCall: PiTrackedToolCall,
+  result?: PiToolResult,
+  isError?: boolean,
+): ToolCallDetail | null {
   const parsedResult = result ?? null;
+
+  if (toolCall.toolName === "todo" && !isError) {
+    // Successful todo calls are rendered as TodoListCard timeline items by
+    // the agent layer (see agent.ts), not as tool-call cards.
+    return null;
+  }
 
   if (isTaskToolCall(toolCall)) {
     return mapTaskToolDetail(toolCall.args, parsedResult);

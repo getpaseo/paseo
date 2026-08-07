@@ -84,6 +84,7 @@ import {
   type PiToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
+import { mapPiTodoToolResult } from "./todo-mapper.js";
 
 const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
@@ -2153,7 +2154,18 @@ export class PiRpcAgentSession implements AgentSession {
     const result = parseToolResult(event.result);
     const error = event.isError ? event.result : null;
     const status = event.isError ? "failed" : "completed";
-    this.emitToolCallEvent(event.toolCallId, toolCall, status, result, error);
+    const emitted = this.emitToolCallEvent(event.toolCallId, toolCall, status, result, error);
+    if (!emitted && event.toolName === "todo" && !event.isError) {
+      const item = mapPiTodoToolResult(result);
+      if (item) {
+        this.emit({
+          type: "timeline",
+          provider: this.provider,
+          turnId: this.currentTurnIdForEvent(),
+          item,
+        });
+      }
+    }
   }
 
   private emitCompactionTimeline(input: {
@@ -2259,7 +2271,7 @@ export class PiRpcAgentSession implements AgentSession {
     error: unknown,
   ): boolean {
     const turnId = this.currentTurnIdForEvent();
-    const detail = this.mapToolDetail(toolCallId, toolCall, result);
+    const detail = this.mapToolDetail(toolCallId, toolCall, result, status === "failed");
     if (!detail) {
       return false;
     }
@@ -2284,8 +2296,9 @@ export class PiRpcAgentSession implements AgentSession {
     _toolCallId: string,
     toolCall: PiTrackedToolCall,
     result: PiToolResult,
+    isError?: boolean,
   ): ToolCallDetail | null {
-    return mapToolDetail(toolCall, result);
+    return mapToolDetail(toolCall, result, isError);
   }
 
   private completeTurn(turnId: string | undefined, messages: PiAgentMessage[]): void {

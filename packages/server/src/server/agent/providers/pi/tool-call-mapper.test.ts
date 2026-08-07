@@ -167,6 +167,48 @@ describe("Pi tool call mapper", () => {
     });
   });
 
+  test("suppresses successful todo calls (handled by agent layer)", () => {
+    const toolCall = parseToolArgs("todo", {
+      action: "create",
+      subject: "泡一杯咖啡",
+    });
+    const result = parseToolResult({
+      content: [{ type: "text", text: "Created #1: 泡一杯咖啡 (pending)" }],
+      details: {
+        action: "create",
+        params: { action: "create", subject: "泡一杯咖啡" },
+        tasks: [{ id: 1, subject: "泡一杯咖啡", status: "pending" }],
+        nextId: 2,
+      },
+    });
+
+    expect(mapToolDetail(toolCall, result)).toBeNull();
+  });
+
+  test("maps failed todo calls to unknown detail so the error surfaces", () => {
+    const toolCall = parseToolArgs("todo", {
+      action: "update",
+      id: 99,
+      status: "completed",
+    });
+    const result = parseToolResult({
+      content: [{ type: "text", text: "Error: task #99 not found" }],
+      details: {
+        action: "update",
+        params: { action: "update", id: 99, status: "completed" },
+        tasks: [],
+        nextId: 1,
+        error: "task #99 not found",
+      },
+    });
+
+    expect(mapToolDetail(toolCall, result, true)).toEqual({
+      type: "unknown",
+      input: { action: "update", id: 99, status: "completed" },
+      output: result,
+    });
+  });
+
   test("normalizes Pi MCP proxy calls from requested tool args while running", () => {
     const toolCall = parseToolArgs("mcp", {
       tool: "paseo_list_models",
