@@ -294,7 +294,7 @@ Example: two different Anthropic accounts as separate profiles:
 }
 ```
 
-Each account appears immediately after its built-in provider in provider lists and usage. You can select it when launching an agent.
+Each account appears immediately after its built-in provider in provider lists and usage. You can select it when launching an agent. The shared agent tools return the account as its own provider ID and include `baseProviderId` in `list_providers` and `inspect_provider` so agents can recognize the relationship.
 
 Usage reads credentials from the account's environment without falling back to the built-in provider's credentials:
 
