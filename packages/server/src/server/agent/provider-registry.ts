@@ -126,16 +126,18 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       workspaceGitService: options?.workspaceGitService,
       customProvider: options?.customProvider,
     }),
-  copilot: (logger, runtimeSettings) =>
+  copilot: (logger, runtimeSettings, options) =>
     new CopilotACPAgentClient({
       logger,
       runtimeSettings,
+      managedProcesses: options?.managedProcesses,
     }),
-  cursor: (logger, runtimeSettings) =>
+  cursor: (logger, runtimeSettings, options) =>
     new CursorACPAgentClient({
       logger,
       command: getCursorACPCommand(runtimeSettings),
       env: runtimeSettings?.env,
+      managedProcesses: options?.managedProcesses,
     }),
   opencode: (logger, runtimeSettings, options) =>
     new OpenCodeAgentClient(logger, runtimeSettings, {
@@ -689,6 +691,7 @@ function addDerivedProviders(
             providerId,
             label: override.label ?? providerId,
             providerParams: override.params,
+            managedProcesses: options.managedProcesses,
           };
           if (providerId === "cursor") {
             return new CursorACPAgentClient(acpOptions);

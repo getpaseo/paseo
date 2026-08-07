@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 
 import type { ACPConfigFeatureOption } from "./acp-agent.js";
+import type { ManagedProcessRegistry } from "../../managed-processes/managed-processes.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
 interface CursorACPAgentClientOptions {
@@ -10,6 +11,7 @@ interface CursorACPAgentClientOptions {
   providerId?: string;
   label?: string;
   providerParams?: unknown;
+  managedProcesses?: ManagedProcessRegistry;
 }
 
 const CURSOR_INITIAL_COMMANDS_WAIT_TIMEOUT_MS = 10_000;
@@ -40,6 +42,7 @@ export class CursorACPAgentClient extends GenericACPAgentClient {
       initialCommandsWaitTimeoutMs: CURSOR_INITIAL_COMMANDS_WAIT_TIMEOUT_MS,
       clientCapabilityMeta: CURSOR_CLIENT_CAPABILITY_META,
       configFeatureOptions: [CURSOR_FAST_FEATURE_OPTION],
+      managedProcesses: options.managedProcesses,
     });
   }
 }

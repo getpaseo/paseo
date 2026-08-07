@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 import type { SessionConfigOption } from "@agentclientprotocol/sdk";
 
 import type { AgentCapabilityFlags, AgentMode } from "../agent-sdk-types.js";
+import type { ManagedProcessRegistry } from "../../managed-processes/managed-processes.js";
 import {
   checkProviderLaunchAvailable,
   resolveProviderLaunch,
@@ -76,6 +77,7 @@ export const COPILOT_MODES: AgentMode[] = [
 interface CopilotACPAgentClientOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
+  managedProcesses?: ManagedProcessRegistry;
 }
 
 export class CopilotACPAgentClient extends ACPAgentClient {
@@ -93,6 +95,7 @@ export class CopilotACPAgentClient extends ACPAgentClient {
       providerModeWriter: writeCopilotProviderMode,
       beforeModeWriter: beforeCopilotModeWriter,
       capabilities: COPILOT_CAPABILITIES,
+      managedProcesses: options.managedProcesses,
     });
   }
 

@@ -106,6 +106,7 @@ const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
 
 const OPENCODE_BUILD_MODE_ID = "build";
 const OPENCODE_LEGACY_FULL_ACCESS_MODE_ID = "full-access";
+const OPENCODE_BYPASS_PERMISSIONS_MODE_ID = "bypassPermissions";
 const OPENCODE_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
@@ -169,6 +170,7 @@ function resolveOpenCodeCreateConfig(
   input: ResolveAgentCreateConfigInput,
 ): ResolveAgentCreateConfigResult {
   const legacyFullAccess = input.requestedMode === OPENCODE_LEGACY_FULL_ACCESS_MODE_ID;
+  const bypassPermissions = input.requestedMode === OPENCODE_BYPASS_PERMISSIONS_MODE_ID;
   const parent = input.parent;
   const isUnattendedCreate = input.unattended || parent?.isUnattended === true;
   const inheritsUnattended = input.requestedMode === undefined && isUnattendedCreate;
@@ -176,11 +178,13 @@ function resolveOpenCodeCreateConfig(
     inheritsUnattended && parent?.provider === input.provider
       ? (parent.modeId ?? undefined)
       : undefined;
-  const requestedMode = legacyFullAccess
-    ? OPENCODE_BUILD_MODE_ID
-    : (input.requestedMode ?? inheritedOpenCodeMode);
+  const requestedMode =
+    legacyFullAccess || bypassPermissions
+      ? OPENCODE_BUILD_MODE_ID
+      : (input.requestedMode ?? inheritedOpenCodeMode);
   const featureValues =
     legacyFullAccess ||
+    bypassPermissions ||
     (isUnattendedCreate && input.featureValues?.[OPENCODE_AUTO_ACCEPT_FEATURE_ID] === undefined)
       ? withOpenCodeAutoAcceptFeature(input.featureValues, true)
       : input.featureValues;
@@ -577,13 +581,18 @@ function resolveOpenCodeRuntimeAgentId(modeId: string | null | undefined): strin
   if (normalizedModeId === null) {
     return undefined;
   }
-  return normalizedModeId === OPENCODE_LEGACY_FULL_ACCESS_MODE_ID
+  return normalizedModeId === OPENCODE_LEGACY_FULL_ACCESS_MODE_ID ||
+    normalizedModeId === OPENCODE_BYPASS_PERMISSIONS_MODE_ID
     ? OPENCODE_BUILD_MODE_ID
     : normalizedModeId;
 }
 
 function normalizeOpenCodeConfig(config: OpenCodeAgentConfig): OpenCodeAgentConfig {
-  if (normalizeOpenCodeModeId(config.modeId) !== OPENCODE_LEGACY_FULL_ACCESS_MODE_ID) {
+  const normalizedModeId = normalizeOpenCodeModeId(config.modeId);
+  if (
+    normalizedModeId !== OPENCODE_LEGACY_FULL_ACCESS_MODE_ID &&
+    normalizedModeId !== OPENCODE_BYPASS_PERMISSIONS_MODE_ID
+  ) {
     return { ...config };
   }
 
@@ -595,6 +604,23 @@ function normalizeOpenCodeConfig(config: OpenCodeAgentConfig): OpenCodeAgentConf
       [OPENCODE_AUTO_ACCEPT_FEATURE_ID]: true,
     },
   };
+}
+
+const OPENCODE_DEVIN_SWE_MODEL_PATTERN = /devin-swe/i;
+
+function buildDevinSweSystemPrompt(
+  model: string | undefined,
+  modeId: string | null,
+): string | undefined {
+  if (!model || !OPENCODE_DEVIN_SWE_MODEL_PATTERN.test(model)) {
+    return undefined;
+  }
+  const normalizedModeId = normalizeOpenCodeModeId(modeId);
+  if (normalizedModeId !== OPENCODE_BUILD_MODE_ID) {
+    return undefined;
+  }
+
+  return "You are in SWE mode. You have full access to tools and may edit files, run commands, and use the network as needed. Do not ask the user for approval; proceed autonomously.";
 }
 
 function isSelectableOpenCodeAgent(agent: { mode?: string; hidden?: boolean }): boolean {
@@ -3501,6 +3527,7 @@ class OpenCodeAgentSession implements AgentSession {
           const systemPrompt = composeSystemPromptParts(
             this.config.systemPrompt,
             this.config.daemonAppendSystemPrompt,
+            buildDevinSweSystemPrompt(this.config.model, this.currentMode),
           );
           const promptResponse = await this.client.session.promptAsync({
             sessionID: this.sessionId,
@@ -4251,7 +4278,10 @@ class OpenCodeAgentSession implements AgentSession {
 
   async setMode(modeId: string): Promise<void> {
     const normalizedModeId = normalizeOpenCodeModeId(modeId);
-    if (normalizedModeId === OPENCODE_LEGACY_FULL_ACCESS_MODE_ID) {
+    if (
+      normalizedModeId === OPENCODE_LEGACY_FULL_ACCESS_MODE_ID ||
+      normalizedModeId === OPENCODE_BYPASS_PERMISSIONS_MODE_ID
+    ) {
       this.currentMode = OPENCODE_BUILD_MODE_ID;
       await this.setFeature(OPENCODE_AUTO_ACCEPT_FEATURE_ID, true);
       return;

@@ -1,5 +1,6 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { PassThrough, Readable, Writable } from "node:stream";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   AgentSideConnection,
@@ -18,6 +19,7 @@ import {
 import {
   ACPAgentClient,
   ACPAgentSession,
+  type ACPConfigFeatureOption,
   type SpawnedACPProcess,
   type SessionStateResponse,
   buildACPClientCapabilities,
@@ -45,6 +47,7 @@ import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import { getAgentStreamEventTurnId } from "../agent-sdk-types.js";
 import type { AgentCapabilityFlags, AgentPersistenceHandle } from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
@@ -118,6 +121,7 @@ interface ACPConfiguredOverrideInternals {
   };
   configOptions: SessionConfigOption[];
   availableModes: Array<{ id: string; label: string; description?: string }>;
+  modeSource: "legacy" | "config" | "fallback";
   availableModels: Array<{ modelId: string; name: string; description?: string | null }> | null;
   currentMode: string | null;
   currentModel: string | null;
@@ -386,6 +390,7 @@ function prepareConfiguredOverrideSession(
   options: {
     currentMode?: string | null;
     availableModes?: Array<{ id: string; label: string; description?: string }>;
+    modeSource?: "legacy" | "config" | "fallback";
     currentModel?: string | null;
     availableModels?: Array<{ modelId: string; name: string; description?: string | null }> | null;
     configOptions?: SessionConfigOption[];
@@ -411,6 +416,11 @@ function prepareConfiguredOverrideSession(
     ...options.connection,
   };
   internals.availableModes = options.availableModes ?? [];
+  // Tests that inject availableModes without an explicit source are modeling legacy
+  // ACP session modes (session/set_mode), not config-mirrored lists.
+  internals.modeSource =
+    options.modeSource ??
+    (options.availableModes && options.availableModes.length > 0 ? "legacy" : "fallback");
   internals.availableModels = options.availableModels ?? null;
   internals.configOptions = options.configOptions ?? [];
   internals.currentMode = options.currentMode ?? null;
@@ -722,6 +732,7 @@ describe("deriveModesFromACP", () => {
         { id: "plan", label: "Plan", description: "Read only" },
       ],
       currentModeId: "plan",
+      source: "legacy",
     });
   });
 
@@ -746,6 +757,7 @@ describe("deriveModesFromACP", () => {
         { id: "acceptEdits", label: "Accept File Edits", description: undefined },
       ],
       currentModeId: "acceptEdits",
+      source: "config",
     });
   });
 
@@ -768,6 +780,7 @@ describe("deriveModesFromACP", () => {
     expect(result).toEqual({
       modes: [],
       currentModeId: null,
+      source: "fallback",
     });
   });
 });
@@ -790,14 +803,51 @@ describe("ACP selection validity helpers", () => {
           options: [{ value: "default", name: "Always Ask" }],
         },
       ],
+      modeSource: "legacy",
     });
 
     expect(result).toMatchObject({
       availableMode: { id: "plan", label: "Plan" },
       configChoice: null,
       hasAvailableModes: true,
+      modeSource: "legacy",
+      usesLegacySessionMode: true,
     });
     expect(result.configOption?.id).toBe("mode");
+  });
+
+  test("does not treat config-mirrored mode lists as legacy session modes", () => {
+    const result = resolveACPModeSelection({
+      modeId: "bypassPermissions",
+      availableModes: [
+        { id: "default", label: "Standard" },
+        { id: "plan", label: "Plan Mode" },
+        { id: "bypassPermissions", label: "Skip Permissions" },
+      ],
+      configOptions: [
+        {
+          id: "mode",
+          name: "Mode",
+          category: "mode",
+          type: "select",
+          currentValue: "default",
+          options: [
+            { value: "default", name: "Standard" },
+            { value: "plan", name: "Plan Mode" },
+            { value: "bypassPermissions", name: "Skip Permissions" },
+          ],
+        },
+      ],
+      modeSource: "config",
+    });
+
+    expect(result).toMatchObject({
+      availableMode: { id: "bypassPermissions", label: "Skip Permissions" },
+      configChoice: { value: "bypassPermissions", name: "Skip Permissions" },
+      hasAvailableModes: true,
+      modeSource: "config",
+      usesLegacySessionMode: false,
+    });
   });
 
   test("classifies model select config option choices separately from advertised models", () => {
@@ -1047,6 +1097,14 @@ describe("ACPAgentSession Zed parity", () => {
     const unsubscribe = session.subscribe((event) => events.push(event));
     internals.sessionId = "session-1";
     internals.configOptions = [selectConfigOption("mode", ["ask", "default"], "ask")];
+    asInternals<{ modeSource: string; availableModes: Array<{ id: string; label: string }> }>(
+      session,
+    ).modeSource = "config";
+    asInternals<{ availableModes: Array<{ id: string; label: string }> }>(session).availableModes =
+      [
+        { id: "ask", label: "ask" },
+        { id: "default", label: "default" },
+      ];
     internals.connection = {
       setSessionConfigOption: vi.fn(async () => ({
         configOptions: [selectConfigOption("mode", ["ask", "default"], "default")],
@@ -1068,6 +1126,77 @@ describe("ACPAgentSession Zed parity", () => {
         ],
       },
     ]);
+  });
+
+  test("routes legacy session modes through session/set_mode", async () => {
+    const session = createSessionWithConfig({ modeId: "plan" });
+    const { internals, setSessionMode, setSessionConfigOption } = prepareConfiguredOverrideSession(
+      session,
+      {
+        currentMode: "default",
+        modeSource: "legacy",
+        availableModes: [
+          { id: "default", label: "Always Ask" },
+          { id: "plan", label: "Plan" },
+        ],
+        configOptions: [selectConfigOption("mode", ["default", "plan"], "default")],
+      },
+    );
+
+    await internals.applyConfiguredOverrides();
+
+    expect(setSessionMode).toHaveBeenCalledWith({ sessionId: "session-1", modeId: "plan" });
+    expect(setSessionConfigOption).not.toHaveBeenCalled();
+  });
+
+  test("routes config-option modes through session/set_config_option (antigravity bypassPermissions)", async () => {
+    const antigravityModes = [
+      { id: "default", label: "Standard" },
+      { id: "plan", label: "Plan Mode" },
+      { id: "bypassPermissions", label: "Skip Permissions" },
+    ];
+    const modeConfig = {
+      id: "mode",
+      name: "Mode",
+      category: "mode" as const,
+      type: "select" as const,
+      currentValue: "default",
+      options: [
+        { value: "default", name: "Standard" },
+        { value: "plan", name: "Plan Mode" },
+        { value: "bypassPermissions", name: "Skip Permissions" },
+      ],
+    };
+    const session = createSessionWithConfig({
+      provider: "antigravity-acp",
+      modeId: "bypassPermissions",
+    });
+    const setSessionConfigOption = vi.fn(async () => ({
+      configOptions: [{ ...modeConfig, currentValue: "bypassPermissions" }],
+    }));
+    const setSessionMode = vi.fn(async () => {
+      throw Object.assign(new Error('"Method not found": session/set_mode'), {
+        code: -32601,
+        data: { method: "session/set_mode" },
+      });
+    });
+    const { internals } = prepareConfiguredOverrideSession(session, {
+      currentMode: "default",
+      modeSource: "config",
+      availableModes: antigravityModes,
+      configOptions: [modeConfig],
+      connection: { setSessionConfigOption, setSessionMode },
+    });
+
+    await internals.applyConfiguredOverrides();
+
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      configId: "mode",
+      value: "bypassPermissions",
+    });
+    expect(setSessionMode).not.toHaveBeenCalled();
+    await expect(session.getCurrentMode()).resolves.toBe("bypassPermissions");
   });
 
   test("uses canonical model returned by setSessionConfigOption response", async () => {
@@ -3329,8 +3458,9 @@ describe("ACPAgentSession initialization cleanup", () => {
           child,
           connection: {
             newSession: vi.fn().mockRejectedValue(new Error("session/new failed")),
+            closed: new Promise<void>(() => {}),
           } as unknown as ClientSideConnection,
-          initialize: { agentCapabilities: {} },
+          initialize: { protocolVersion: PROTOCOL_VERSION, agentCapabilities: {} },
         };
       }
     }
@@ -3345,6 +3475,10 @@ describe("ACPAgentSession initialization cleanup", () => {
         capabilities: {
           supportsStreaming: true,
           supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
         },
         terminateProcess: terminator.terminate,
       },
@@ -3365,8 +3499,12 @@ describe("ACPAgentSession initialization cleanup", () => {
           child,
           connection: {
             loadSession: vi.fn().mockRejectedValue(new Error("session/load failed")),
+            closed: new Promise<void>(() => {}),
           } as unknown as ClientSideConnection,
-          initialize: { agentCapabilities: { loadSession: true } },
+          initialize: {
+            protocolVersion: PROTOCOL_VERSION,
+            agentCapabilities: { loadSession: true },
+          },
         };
       }
     }
@@ -3381,6 +3519,10 @@ describe("ACPAgentSession initialization cleanup", () => {
         capabilities: {
           supportsStreaming: true,
           supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
         },
         handle: { provider: "cursor", sessionId: "session-1" },
         terminateProcess: terminator.terminate,
@@ -3472,6 +3614,9 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
             prompt: vi.fn(),
             loadSession,
             unstable_resumeSession: unstableResumeSession,
+            // Mirrors the SDK ClientSideConnection: a never-settling closed
+            // promise, since this stubbed transport stays open.
+            closed: new Promise<void>(() => {}),
           } as unknown as ClientSideConnection,
           initialize: { agentCapabilities: args.capabilities ?? {} },
         } as SpawnedACPProcess;
@@ -3705,5 +3850,1464 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       cwd: "/tmp/paseo-acp-test",
       mcpServers: [],
     });
+  });
+});
+
+interface ACPCrashRecoveryInternals {
+  sessionId: string | null;
+  connection: unknown;
+  child: unknown;
+  activeForegroundTurnId: string | null;
+  processState?: string;
+  pendingSpawnChild?: unknown;
+  respawnPromise?: Promise<void> | null;
+}
+
+interface FakeACPAgentBehavior {
+  agentCapabilities?: Record<string, unknown>;
+  sessionId?: string;
+  /** Extra fields merged into new/load/resume session responses (modes, models, configOptions). */
+  sessionState?: Record<string, unknown>;
+  prompt?: (params: { sessionId: string }) => Promise<PromptResponse>;
+  loadSession?: ReturnType<typeof vi.fn>;
+  resumeSession?: ReturnType<typeof vi.fn>;
+  failInitialize?: Error;
+  /** Initialize never responds, simulating an ACP host hung during handshake. */
+  hangInitialize?: boolean;
+  /** When set, initialize responds only after this promise resolves. */
+  initializeGate?: Promise<void>;
+  /** session/load never responds. */
+  hangLoadSession?: boolean;
+  /** unstable_resumeSession never responds. */
+  hangResumeSession?: boolean;
+  /** session/new never responds. */
+  hangNewSession?: boolean;
+  /** session/set_mode never responds. */
+  hangSetSessionMode?: boolean;
+}
+
+function applyConfigValue(
+  configOptions: unknown,
+  params: { configId: string; value: string },
+): unknown {
+  return (configOptions as Array<Record<string, unknown>>).map((option) =>
+    option.id === params.configId
+      ? Object.assign({}, option, { currentValue: params.value })
+      : option,
+  );
+}
+
+/**
+ * In-memory stand-in for an ACP host process. PassThrough pipes connect the
+ * session's real ClientSideConnection to an in-process AgentSideConnection, so
+ * tests exercise the production spawn/exit-handler path end to end. crash()
+ * simulates SIGKILL: the pipes die first, then the exit event fires.
+ */
+class FakeACPAgentProcess extends EventEmitter {
+  readonly stdin = new PassThrough();
+  readonly stdout = new PassThrough();
+  readonly stderr = new PassThrough();
+  readonly pid: number;
+  readonly kill = vi.fn(() => true);
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
+  readonly agent: Agent;
+  readonly agentConnection: AgentSideConnection;
+
+  constructor(pid: number, behavior: FakeACPAgentBehavior = {}) {
+    super();
+    this.pid = pid;
+    const sessionId = behavior.sessionId ?? "session-1";
+    const sessionState = { modes: null, models: null, configOptions: [], ...behavior.sessionState };
+    this.agent = {
+      initialize: vi.fn(async () => {
+        if (behavior.hangInitialize) {
+          await new Promise<void>(() => {});
+        }
+        if (behavior.initializeGate) {
+          await behavior.initializeGate;
+        }
+        if (behavior.failInitialize) {
+          throw behavior.failInitialize;
+        }
+        return {
+          protocolVersion: PROTOCOL_VERSION,
+          agentCapabilities: behavior.agentCapabilities ?? { loadSession: true },
+          authMethods: [],
+        };
+      }),
+      newSession: vi.fn(async () => {
+        if (behavior.hangNewSession) {
+          await new Promise<void>(() => {});
+        }
+        return { sessionId, ...sessionState };
+      }),
+      loadSession:
+        behavior.loadSession ??
+        vi.fn(async () => {
+          if (behavior.hangLoadSession) {
+            await new Promise<void>(() => {});
+          }
+          return { sessionId, ...sessionState };
+        }),
+      unstable_resumeSession:
+        behavior.resumeSession ??
+        vi.fn(async () => {
+          if (behavior.hangResumeSession) {
+            await new Promise<void>(() => {});
+          }
+          return { sessionId, ...sessionState };
+        }),
+      setSessionMode: vi.fn(async () => {
+        if (behavior.hangSetSessionMode) {
+          await new Promise<void>(() => {});
+        }
+      }),
+      setSessionConfigOption: vi.fn(async (params: { configId: string; value: string }) => ({
+        // Mirror the provider contract: the response reports the applied value.
+        configOptions: applyConfigValue(sessionState.configOptions, params),
+      })),
+      unstable_setSessionModel: vi.fn(async () => {}),
+      prompt: vi.fn(
+        behavior.prompt ?? (async () => ({ stopReason: "end_turn" }) as PromptResponse),
+      ),
+      cancel: vi.fn(async () => {}),
+      authenticate: vi.fn(async () => {}),
+    } as unknown as Agent;
+    this.agentConnection = new AgentSideConnection(
+      () => this.agent,
+      ndJsonStream(Writable.toWeb(this.stdout), Readable.toWeb(this.stdin)),
+    );
+  }
+
+  crash(code: number | null, signal: NodeJS.Signals | null): void {
+    this.exitCode = code;
+    this.signalCode = signal;
+    this.stdin.destroy();
+    this.stdout.destroy();
+    this.stderr.destroy();
+    this.emit("exit", code, signal);
+  }
+
+  /** Kills the NDJSON transport while the process itself stays alive. */
+  killTransport(): void {
+    this.stdout.destroy();
+  }
+
+  emitSpawnError(error: Error): void {
+    this.stdin.destroy();
+    this.stdout.destroy();
+    this.stderr.destroy();
+    this.emit("error", error);
+  }
+}
+
+function createFakeManagedProcessRegistry() {
+  let nextId = 0;
+  return {
+    record: vi.fn(async (input: Record<string, unknown>) => ({
+      ...input,
+      id: `record-${++nextId}`,
+      identity: { commandLine: null, startedAt: null },
+      createdAt: new Date().toISOString(),
+    })),
+    remove: vi.fn(async () => {}),
+    updateMetadata: vi.fn(async () => {}),
+    list: vi.fn(async () => []),
+    reapStale: vi.fn(async () => ({
+      checked: 0,
+      dead: 0,
+      mismatched: 0,
+      removed: 0,
+      terminated: 0,
+      errors: [],
+    })),
+  };
+}
+
+function createCrashTestHarness(
+  options: {
+    behaviors?: FakeACPAgentBehavior[] | ((spawnIndex: number) => FakeACPAgentBehavior);
+    managedProcesses?: ReturnType<typeof createFakeManagedProcessRegistry>;
+    terminateProcess?: ProcessTerminator;
+    configFeatureOptions?: ACPConfigFeatureOption[];
+    initializeTimeoutMs?: number;
+    sessionLoadTimeoutMs?: number;
+  } = {},
+) {
+  const children: FakeACPAgentProcess[] = [];
+  let nextPid = 41000;
+  const spawnSpy = vi.spyOn(spawnUtils, "spawnProcess").mockImplementation(() => {
+    const index = children.length;
+    const behavior =
+      typeof options.behaviors === "function"
+        ? options.behaviors(index)
+        : (options.behaviors?.[index] ?? {});
+    const child = new FakeACPAgentProcess(nextPid++, behavior);
+    children.push(child);
+    return child as unknown as ChildProcessWithoutNullStreams;
+  });
+
+  const session = new ACPAgentSession({ provider: "claude-acp", cwd: "/tmp/paseo-acp-test" }, {
+    provider: "claude-acp",
+    logger: createTestLogger(),
+    // An absolute, always-resolvable binary path: the spawn itself is
+    // mocked, but launch resolution still checks the command exists.
+    defaultCommand: [process.execPath, "--fake-acp"],
+    defaultModes: [],
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    },
+    ...(options.managedProcesses ? { managedProcesses: options.managedProcesses } : {}),
+    ...(options.terminateProcess ? { terminateProcess: options.terminateProcess } : {}),
+    ...(options.configFeatureOptions ? { configFeatureOptions: options.configFeatureOptions } : {}),
+    ...(options.initializeTimeoutMs ? { initializeTimeoutMs: options.initializeTimeoutMs } : {}),
+    ...(options.sessionLoadTimeoutMs ? { sessionLoadTimeoutMs: options.sessionLoadTimeoutMs } : {}),
+  } as ConstructorParameters<typeof ACPAgentSession>[1]);
+
+  return { session, children, spawnSpy };
+}
+
+function internalsOf(session: ACPAgentSession): ACPCrashRecoveryInternals {
+  return asInternals<ACPCrashRecoveryInternals>(session);
+}
+
+type ACPTurnFinishType = "turn_completed" | "turn_failed" | "turn_canceled";
+
+function countTurnEvents(
+  events: AgentStreamEvent[],
+  type: ACPTurnFinishType,
+  turnId?: string,
+): number {
+  return events.filter(
+    (event) =>
+      event.type === type && (turnId === undefined || getAgentStreamEventTurnId(event) === turnId),
+  ).length;
+}
+
+function turnFailedEvents(
+  events: AgentStreamEvent[],
+): Array<Extract<AgentStreamEvent, { type: "turn_failed" }>> {
+  return events.filter(
+    (event): event is Extract<AgentStreamEvent, { type: "turn_failed" }> =>
+      event.type === "turn_failed",
+  );
+}
+
+function waitForTurnEvent(
+  events: AgentStreamEvent[],
+  type: ACPTurnFinishType,
+  turnId?: string,
+): Promise<void> {
+  return vi.waitFor(() => {
+    expect(countTurnEvents(events, type, turnId)).toBeGreaterThan(0);
+  });
+}
+
+function waitForAssertion(assertion: () => void): Promise<void> {
+  return vi.waitFor(assertion);
+}
+
+function deferredPromise<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+describe("ACPAgentSession process crash recovery", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("detects an idle process exit and respawns with session/load on the next prompt", async () => {
+    const { session, children, spawnSpy } = createCrashTestHarness();
+    await session.initializeNewSession();
+    expect(children).toHaveLength(1);
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    children[0].crash(null, "SIGKILL");
+
+    const internals = internalsOf(session);
+    expect(internals.processState).toBe("dead");
+    expect(internals.child).toBeNull();
+    expect(internals.connection).toBeNull();
+    expect(internals.activeForegroundTurnId).toBeNull();
+    expect(events.filter((event) => event.type === "turn_failed")).toHaveLength(0);
+
+    const { turnId } = await session.startTurn("hello after crash");
+
+    expect(spawnSpy).toHaveBeenCalledTimes(2);
+    expect(children).toHaveLength(2);
+    const resumedAgent = children[1].agent;
+    expect(resumedAgent.loadSession).toHaveBeenCalledTimes(1);
+    expect(resumedAgent.loadSession).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      cwd: "/tmp/paseo-acp-test",
+      mcpServers: [],
+    });
+    expect(resumedAgent.newSession).not.toHaveBeenCalled();
+    expect(internalsOf(session).processState).toBe("running");
+
+    await waitForAssertion(() => {
+      expect(resumedAgent.prompt).toHaveBeenCalled();
+    });
+    await waitForTurnEvent(events, "turn_completed", turnId);
+  });
+
+  test("fails the active turn with process_exit on crash and unblocks the next prompt", async () => {
+    const { session, children } = createCrashTestHarness({
+      behaviors: [{ prompt: () => new Promise<PromptResponse>(() => {}) }],
+    });
+    await session.initializeNewSession();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("work");
+    children[0].crash(137, "SIGKILL");
+
+    await waitForTurnEvent(events, "turn_failed", turnId);
+
+    const failed = turnFailedEvents(events);
+    expect(failed).toHaveLength(1);
+    expect(failed[0]).toMatchObject({
+      turnId,
+      code: "process_exit",
+      error: expect.stringContaining("exited unexpectedly"),
+    });
+    expect(internalsOf(session).activeForegroundTurnId).toBeNull();
+
+    // The next prompt respawns instead of failing with "foreground turn is already active".
+    const next = await session.startTurn("again");
+    expect(children).toHaveLength(2);
+    await waitForTurnEvent(events, "turn_completed", next.turnId);
+    // The prompt-stream rejection after the crash must not double-finish the turn.
+    expect(turnFailedEvents(events)).toHaveLength(1);
+  });
+
+  test("coalesces concurrent prompts after a crash into a single respawn", async () => {
+    const { session, children } = createCrashTestHarness();
+    await session.initializeNewSession();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    children[0].crash(1, null);
+
+    const [first, second] = await Promise.allSettled([
+      session.startTurn("one"),
+      session.startTurn("two"),
+    ]);
+
+    // Exactly one process respawn, one initialize, one session/load.
+    expect(children).toHaveLength(2);
+    const resumedAgent = children[1].agent;
+    expect(resumedAgent.initialize).toHaveBeenCalledTimes(1);
+    expect(resumedAgent.loadSession).toHaveBeenCalledTimes(1);
+
+    // One prompt wins the foreground turn; the other keeps the existing
+    // contract error, and the session state stays consistent.
+    const outcomes = [first, second];
+    const fulfilled = outcomes.find(
+      (outcome): outcome is PromiseFulfilledResult<{ turnId: string }> =>
+        outcome.status === "fulfilled",
+    );
+    const rejected = outcomes.find(
+      (outcome): outcome is PromiseRejectedResult => outcome.status === "rejected",
+    );
+    expect(fulfilled).toBeDefined();
+    expect(rejected).toBeDefined();
+    expect(rejected?.reason.message).toContain("foreground turn");
+    expect(internalsOf(session).processState).toBe("running");
+
+    await waitForTurnEvent(events, "turn_completed", fulfilled?.value.turnId);
+    await expect(session.startTurn("three")).resolves.toBeDefined();
+  });
+
+  test("close() does not respawn, removes the ledger record, and emits no crash failure", async () => {
+    const terminator = new FakeTerminator();
+    const managedProcesses = createFakeManagedProcessRegistry();
+    const { session, children } = createCrashTestHarness({
+      terminateProcess: terminator.terminate,
+      managedProcesses,
+    });
+    await session.initializeNewSession();
+    expect(managedProcesses.record).toHaveBeenCalledTimes(1);
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.close();
+
+    expect(terminator.terminated).toContain(children[0]);
+    expect(children).toHaveLength(1);
+    await vi.waitFor(() => {
+      expect(managedProcesses.remove).toHaveBeenCalledWith("record-1");
+    });
+    expect(internalsOf(session).processState).toBe("dead");
+    expect(events.filter((event) => event.type === "turn_failed")).toHaveLength(0);
+    await expect(session.startTurn("after close")).rejects.toThrow("session is closed");
+  });
+
+  test("records spawned PIDs in the managed process ledger and removes them on exit", async () => {
+    const managedProcesses = createFakeManagedProcessRegistry();
+    const { session, children } = createCrashTestHarness({ managedProcesses });
+    await session.initializeNewSession();
+
+    expect(managedProcesses.record).toHaveBeenCalledTimes(1);
+    expect(managedProcesses.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: { provider: "claude-acp", kind: "acp-agent" },
+        pid: children[0].pid,
+        command: process.execPath,
+        args: ["--fake-acp"],
+        metadata: expect.objectContaining({ cwd: "/tmp/paseo-acp-test" }),
+      }),
+    );
+
+    children[0].crash(null, "SIGKILL");
+    await vi.waitFor(() => {
+      expect(managedProcesses.remove).toHaveBeenCalledWith("record-1");
+    });
+
+    await session.startTurn("revive");
+    expect(managedProcesses.record).toHaveBeenCalledTimes(2);
+    expect(managedProcesses.record.mock.calls[1][0]).toMatchObject({
+      pid: children[1].pid,
+      metadata: expect.objectContaining({ sessionId: "session-1" }),
+    });
+  });
+
+  test("terminates the fresh process and rethrows when session/load fails during respawn", async () => {
+    const terminator = new FakeTerminator();
+    const { session, children } = createCrashTestHarness({
+      terminateProcess: terminator.terminate,
+      behaviors: (spawnIndex) =>
+        spawnIndex === 1
+          ? { loadSession: vi.fn().mockRejectedValue(new Error("session gone")) }
+          : {},
+    });
+    await session.initializeNewSession();
+    children[0].crash(1, null);
+
+    await expect(session.startTurn("revive")).rejects.toThrow("session gone");
+
+    // No fallback to session/new; the half-initialized process is torn down.
+    expect(children[1].agent.newSession).not.toHaveBeenCalled();
+    expect(terminator.terminated).toContain(children[1]);
+    expect(internalsOf(session).processState).toBe("dead");
+
+    // A later prompt retries with a fresh process.
+    await session.startTurn("retry");
+    expect(children).toHaveLength(3);
+  });
+
+  test("resumes via unstable_resumeSession on respawn when loadSession is unsupported", async () => {
+    const { session, children } = createCrashTestHarness({
+      behaviors: () => ({ agentCapabilities: { sessionCapabilities: { resume: {} } } }),
+    });
+    await session.initializeNewSession();
+    children[0].crash(1, null);
+
+    await session.startTurn("revive");
+
+    expect(children).toHaveLength(2);
+    const resumedAgent = children[1].agent as unknown as {
+      unstable_resumeSession: ReturnType<typeof vi.fn>;
+      loadSession: ReturnType<typeof vi.fn>;
+    };
+    expect(resumedAgent.unstable_resumeSession).toHaveBeenCalledTimes(1);
+    expect(resumedAgent.unstable_resumeSession).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      cwd: "/tmp/paseo-acp-test",
+      mcpServers: [],
+    });
+    expect(resumedAgent.loadSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("ACPAgentSession runtime state across crash respawn", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function modeSessionState(currentModeId: string): Record<string, unknown> {
+    return {
+      modes: {
+        availableModes: [
+          { id: "yolo", name: "Yolo" },
+          { id: "plan", name: "Plan" },
+        ],
+        currentModeId,
+      },
+    };
+  }
+
+  test("runtime mode survives crash respawn in both directions", async () => {
+    const { session, children } = createCrashTestHarness({
+      behaviors: () => ({ sessionState: modeSessionState("yolo") }),
+    });
+    await session.initializeNewSession();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    // yolo (create-time) -> plan (runtime) -> crash -> the new process gets plan.
+    await session.setMode("plan");
+    children[0].crash(1, null);
+    const first = await session.startTurn("after first crash");
+
+    const firstRespawn = children[1].agent;
+    expect(firstRespawn.setSessionMode).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      modeId: "plan",
+    });
+    // The runtime state is re-applied before the queued prompt goes out.
+    await waitForAssertion(() => {
+      expect(firstRespawn.prompt).toHaveBeenCalled();
+    });
+    const modeCallOrder = (firstRespawn.setSessionMode as ReturnType<typeof vi.fn>).mock
+      .invocationCallOrder[0];
+    const promptCallOrder = (firstRespawn.prompt as ReturnType<typeof vi.fn>).mock
+      .invocationCallOrder[0];
+    expect(modeCallOrder).toBeLessThan(promptCallOrder);
+    await waitForTurnEvent(events, "turn_completed", first.turnId);
+    expect(await session.getCurrentMode()).toBe("plan");
+
+    // plan -> yolo (runtime) -> crash -> the new process must NOT be dragged back to plan.
+    await session.setMode("yolo");
+    children[1].crash(1, null);
+    await session.startTurn("after second crash");
+
+    expect(children[2].agent.setSessionMode).not.toHaveBeenCalled();
+    expect(await session.getCurrentMode()).toBe("yolo");
+  });
+
+  test("runtime model survives crash respawn", async () => {
+    const { session, children } = createCrashTestHarness({
+      behaviors: () => ({
+        sessionState: {
+          models: {
+            availableModels: [
+              { modelId: "m-fast", name: "Fast" },
+              { modelId: "m-smart", name: "Smart" },
+            ],
+            currentModelId: "m-fast",
+          },
+        },
+      }),
+    });
+    await session.initializeNewSession();
+
+    await session.setModel("m-smart");
+    children[0].crash(1, null);
+    await session.startTurn("after crash");
+
+    expect(children[1].agent.unstable_setSessionModel).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      modelId: "m-smart",
+    });
+    const runtimeInfo = await session.getRuntimeInfo();
+    expect(runtimeInfo.model).toBe("m-smart");
+  });
+
+  test("thinking option and feature values survive crash respawn", async () => {
+    const configOptions = [
+      {
+        id: "thought",
+        name: "Thinking",
+        category: "thought_level",
+        type: "select",
+        currentValue: "low",
+        options: [
+          { value: "low", name: "Low" },
+          { value: "high", name: "High" },
+        ],
+      },
+      {
+        id: "agent",
+        name: "Agent",
+        category: "_agent",
+        type: "select",
+        currentValue: "",
+        options: [
+          { value: "", name: "Default" },
+          { value: "probe", name: "Probe" },
+        ],
+      },
+    ];
+    const { session, children } = createCrashTestHarness({
+      behaviors: () => ({ sessionState: { configOptions } }),
+      configFeatureOptions: [
+        {
+          id: "agent",
+          configId: "agent",
+          category: "_agent",
+          label: "Agent",
+        },
+      ],
+    });
+    await session.initializeNewSession();
+
+    await session.setThinkingOption("high");
+    await session.setFeature("agent", "probe");
+    children[0].crash(1, null);
+    await session.startTurn("after crash");
+
+    const resumedConfigCalls = (
+      children[1].agent.setSessionConfigOption as ReturnType<typeof vi.fn>
+    ).mock.calls.map((call) => call[0]);
+    expect(resumedConfigCalls).toContainEqual({
+      sessionId: "session-1",
+      configId: "thought",
+      value: "high",
+    });
+    expect(resumedConfigCalls).toContainEqual({
+      sessionId: "session-1",
+      configId: "agent",
+      value: "probe",
+    });
+
+    const runtimeInfo = await session.getRuntimeInfo();
+    expect(runtimeInfo.thinkingOptionId).toBe("high");
+    expect(session.features).toEqual([expect.objectContaining({ id: "agent", value: "probe" })]);
+  });
+});
+
+describe("ACPAgentSession transport failure without process exit", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("transport dies without child exit → current turn fails and next prompt respawns", async () => {
+    const terminator = new FakeTerminator();
+    const { session, children } = createCrashTestHarness({
+      terminateProcess: terminator.terminate,
+      behaviors: [{ prompt: () => new Promise<PromptResponse>(() => {}) }],
+    });
+    await session.initializeNewSession();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("work");
+    children[0].killTransport();
+
+    await waitForTurnEvent(events, "turn_failed", turnId);
+    const failed = turnFailedEvents(events);
+    expect(failed).toHaveLength(1);
+    expect(failed[0].code).toBe("transport_closed");
+    expect(failed[0].error).not.toContain("ERR_STREAM_PREMATURE_CLOSE");
+    expect(internalsOf(session).activeForegroundTurnId).toBeNull();
+    expect(internalsOf(session).processState).toBe("dead");
+
+    // The process outlived its transport, so its tree is killed explicitly.
+    await waitForAssertion(() => {
+      expect(terminator.terminated).toContain(children[0]);
+    });
+
+    const next = await session.startTurn("again");
+    expect(children).toHaveLength(2);
+    expect(children[1].agent.loadSession).toHaveBeenCalledTimes(1);
+    await waitForTurnEvent(events, "turn_completed", next.turnId);
+    expect(turnFailedEvents(events)).toHaveLength(1);
+  });
+
+  test("stale events from a replaced process do not affect the new generation", async () => {
+    const oldPrompt = deferredPromise<PromptResponse>();
+    const newPrompt = deferredPromise<PromptResponse>();
+    const { session, children } = createCrashTestHarness({
+      behaviors: [{ prompt: () => oldPrompt.promise }, { prompt: () => newPrompt.promise }],
+    });
+    await session.initializeNewSession();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const turn1 = await session.startTurn("one");
+    children[0].killTransport();
+    children[0].crash(9, null);
+    await waitForTurnEvent(events, "turn_failed", turn1.turnId);
+
+    const turn2 = await session.startTurn("two");
+    expect(children).toHaveLength(2);
+
+    // Late events from the dead generation: exit re-emission, transport close
+    // settling, and the old prompt promise resolving must all be ignored.
+    children[0].emit("exit", 9, null);
+    oldPrompt.resolve({ stopReason: "end_turn" } as PromptResponse);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(internalsOf(session).processState).toBe("running");
+    expect(internalsOf(session).activeForegroundTurnId).toBe(turn2.turnId);
+    expect(countTurnEvents(events, "turn_completed", turn2.turnId)).toBe(0);
+    expect(countTurnEvents(events, "turn_completed", turn1.turnId)).toBe(0);
+    expect(children).toHaveLength(2);
+
+    newPrompt.resolve({ stopReason: "end_turn" } as PromptResponse);
+    await waitForTurnEvent(events, "turn_completed", turn2.turnId);
+    expect(countTurnEvents(events, "turn_completed")).toBe(1);
+    expect(turnFailedEvents(events)).toHaveLength(1);
+  });
+});
+
+describe("ACPAgentSession cancel and close races", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("cancel during respawn prevents the queued prompt from being dispatched", async () => {
+    const loadGate = deferredPromise<void>();
+    const { session, children } = createCrashTestHarness({
+      behaviors: (spawnIndex) =>
+        spawnIndex === 1
+          ? {
+              loadSession: vi.fn(async () => {
+                await loadGate.promise;
+                return { sessionId: "session-1", modes: null, models: null, configOptions: [] };
+              }),
+            }
+          : {},
+    });
+    await session.initializeNewSession();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    children[0].crash(1, null);
+    const startPromise = session.startTurn("queued");
+    await waitForAssertion(() => {
+      expect(children).toHaveLength(2);
+    });
+
+    await session.interrupt();
+    loadGate.resolve();
+
+    const { turnId } = await startPromise;
+    await waitForTurnEvent(events, "turn_canceled", turnId);
+    expect(children[1].agent.prompt).not.toHaveBeenCalled();
+    // The prompt never reached the provider, so no session/cancel may go out.
+    expect(children[1].agent.cancel).not.toHaveBeenCalled();
+    expect(turnFailedEvents(events)).toHaveLength(0);
+    expect(internalsOf(session).activeForegroundTurnId).toBeNull();
+  });
+
+  test("cancel after prompt dispatch invokes provider cancel", async () => {
+    const { session, children } = createCrashTestHarness({
+      behaviors: [{ prompt: () => new Promise<PromptResponse>(() => {}) }],
+    });
+    await session.initializeNewSession();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("work");
+    await session.interrupt();
+
+    expect(children[0].agent.cancel).toHaveBeenCalledWith({ sessionId: "session-1" });
+  });
+
+  test("cancel racing with process exit finishes the turn exactly once", async () => {
+    const { session, children } = createCrashTestHarness({
+      behaviors: [{ prompt: () => new Promise<PromptResponse>(() => {}) }],
+    });
+    await session.initializeNewSession();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("work");
+    const interruptPromise = session.interrupt();
+    children[0].crash(9, null);
+    await interruptPromise;
+
+    await waitForTurnEvent(events, "turn_failed", turnId);
+    const finishes =
+      countTurnEvents(events, "turn_failed", turnId) +
+      countTurnEvents(events, "turn_canceled", turnId) +
+      countTurnEvents(events, "turn_completed", turnId);
+    expect(finishes).toBe(1);
+  });
+
+  test("cancel followed by a new prompt works normally", async () => {
+    const cancelledPrompt = deferredPromise<PromptResponse>();
+    let promptCall = 0;
+    const { session, children } = createCrashTestHarness({
+      behaviors: [
+        {
+          prompt: () =>
+            promptCall++ === 0
+              ? cancelledPrompt.promise
+              : Promise.resolve({ stopReason: "end_turn" } as PromptResponse),
+        },
+      ],
+    });
+    await session.initializeNewSession();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const first = await session.startTurn("first");
+    await session.interrupt();
+    cancelledPrompt.resolve({ stopReason: "cancelled" } as PromptResponse);
+    await waitForTurnEvent(events, "turn_canceled", first.turnId);
+
+    const second = await session.startTurn("second");
+    await waitForTurnEvent(events, "turn_completed", second.turnId);
+    expect(children).toHaveLength(1);
+  });
+
+  test("cancel from an old turn cannot cancel a newer turn", async () => {
+    const oldPrompt = deferredPromise<PromptResponse>();
+    let promptCall = 0;
+    const { session, children } = createCrashTestHarness({
+      behaviors: [
+        {
+          prompt: () =>
+            promptCall++ === 0
+              ? oldPrompt.promise
+              : Promise.resolve({ stopReason: "end_turn" } as PromptResponse),
+        },
+      ],
+    });
+    await session.initializeNewSession();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const first = await session.startTurn("first");
+    await session.interrupt();
+    oldPrompt.resolve({ stopReason: "cancelled" } as PromptResponse);
+    await waitForTurnEvent(events, "turn_canceled", first.turnId);
+
+    const second = await session.startTurn("second");
+    await waitForTurnEvent(events, "turn_completed", second.turnId);
+    expect(children[0].agent.cancel).toHaveBeenCalledTimes(1);
+    expect(countTurnEvents(events, "turn_canceled", second.turnId)).toBe(0);
+  });
+
+  test("close during respawn leaves no process and no ledger record", async () => {
+    const terminator = new FakeTerminator();
+    const managedProcesses = createFakeManagedProcessRegistry();
+    const loadGate = deferredPromise<void>();
+    const { session, children } = createCrashTestHarness({
+      terminateProcess: terminator.terminate,
+      managedProcesses,
+      behaviors: (spawnIndex) =>
+        spawnIndex === 1
+          ? {
+              loadSession: vi.fn(async () => {
+                await loadGate.promise;
+                return { sessionId: "session-1", modes: null, models: null, configOptions: [] };
+              }),
+            }
+          : {},
+    });
+    await session.initializeNewSession();
+
+    children[0].crash(1, null);
+    const startPromise = session.startTurn("revive");
+    await waitForAssertion(() => {
+      expect(children).toHaveLength(2);
+    });
+
+    const closePromise = session.close();
+    loadGate.resolve();
+    await closePromise;
+
+    await expect(startPromise).rejects.toThrow("session is closed");
+    expect(internalsOf(session).processState).toBe("dead");
+    expect(internalsOf(session).child).toBeNull();
+    expect(terminator.terminated).toContain(children[1]);
+    expect(managedProcesses.record).toHaveBeenCalledTimes(2);
+    await waitForAssertion(() => {
+      expect(managedProcesses.remove).toHaveBeenCalledTimes(2);
+    });
+    await expect(session.startTurn("after close")).rejects.toThrow("session is closed");
+  });
+});
+
+describe("ACPAgentSession respawn robustness", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("initialize failure during respawn surfaces a controlled error and allows retry", async () => {
+    const terminator = new FakeTerminator();
+    const { session, children } = createCrashTestHarness({
+      terminateProcess: terminator.terminate,
+      behaviors: (spawnIndex) =>
+        spawnIndex === 1 ? { failInitialize: new Error("init boom") } : {},
+    });
+    await session.initializeNewSession();
+    children[0].crash(1, null);
+
+    await expect(session.startTurn("revive")).rejects.toThrow("init boom");
+    expect(children).toHaveLength(2);
+    expect(terminator.terminated).toContain(children[1]);
+    expect(internalsOf(session).processState).toBe("dead");
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { turnId } = await session.startTurn("retry");
+    expect(children).toHaveLength(3);
+    await waitForTurnEvent(events, "turn_completed", turnId);
+  });
+
+  test("several successive crashes respawn cleanly each time", async () => {
+    const { session, children } = createCrashTestHarness();
+    await session.initializeNewSession();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    for (let round = 0; round < 3; round += 1) {
+      children[round].crash(1, null);
+      const { turnId } = await session.startTurn(`round ${round}`);
+      await waitForTurnEvent(events, "turn_completed", turnId);
+      expect(children).toHaveLength(round + 2);
+      expect(children[round + 1].agent.loadSession).toHaveBeenCalledTimes(1);
+    }
+    expect(turnFailedEvents(events)).toHaveLength(0);
+  });
+
+  test("crash cancels a pending permission and a late response is rejected", async () => {
+    const { session, children } = createCrashTestHarness({
+      behaviors: [{ prompt: () => new Promise<PromptResponse>(() => {}) }],
+    });
+    await session.initializeNewSession();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("work");
+    const permissionPromise = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Run command",
+        kind: "execute",
+        status: "pending",
+        content: [],
+        locations: [],
+      },
+      options: [],
+    } as unknown as RequestPermissionRequest);
+
+    children[0].crash(1, null);
+
+    await expect(permissionPromise).resolves.toEqual({ outcome: { outcome: "cancelled" } });
+    expect(session.getPendingPermissions()).toEqual([]);
+
+    const requestEvent = events.find((event) => event.type === "permission_requested");
+    const requestId =
+      requestEvent && requestEvent.type === "permission_requested"
+        ? requestEvent.request.id
+        : "missing";
+    await expect(session.respondToPermission(requestId, { behavior: "allow" })).rejects.toThrow(
+      "No pending permission request",
+    );
+  });
+
+  test("setMode after an idle crash lazily resumes the session", async () => {
+    const { session, children } = createCrashTestHarness({
+      behaviors: () => ({
+        sessionState: {
+          modes: {
+            availableModes: [
+              { id: "yolo", name: "Yolo" },
+              { id: "plan", name: "Plan" },
+            ],
+            currentModeId: "yolo",
+          },
+        },
+      }),
+    });
+    await session.initializeNewSession();
+    children[0].crash(1, null);
+
+    await session.setMode("plan");
+
+    expect(children).toHaveLength(2);
+    expect(children[1].agent.loadSession).toHaveBeenCalledTimes(1);
+    expect(children[1].agent.setSessionMode).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      modeId: "plan",
+    });
+    expect(await session.getCurrentMode()).toBe("plan");
+  });
+
+  test("provider without session resume capability does not enter a spawn-kill loop", async () => {
+    const { session, children } = createCrashTestHarness({
+      behaviors: () => ({ agentCapabilities: {} }),
+    });
+    await session.initializeNewSession();
+    children[0].crash(1, null);
+
+    await expect(session.startTurn("revive")).rejects.toThrow(/resume/);
+    expect(children).toHaveLength(2);
+
+    await expect(session.startTurn("again")).rejects.toThrow(/session_resume_unsupported|resume/);
+    expect(children).toHaveLength(2);
+  });
+
+  test("managed process metadata receives sessionId after session/new and session/load", async () => {
+    const managedProcesses = createFakeManagedProcessRegistry();
+    const { session, children } = createCrashTestHarness({ managedProcesses });
+    await session.initializeNewSession();
+
+    await waitForAssertion(() => {
+      expect(managedProcesses.updateMetadata).toHaveBeenCalledWith(
+        "record-1",
+        expect.objectContaining({ sessionId: "session-1" }),
+      );
+    });
+
+    children[0].crash(1, null);
+    await session.startTurn("revive");
+
+    await waitForAssertion(() => {
+      expect(managedProcesses.updateMetadata).toHaveBeenCalledWith(
+        "record-2",
+        expect.objectContaining({ sessionId: "session-1" }),
+      );
+    });
+  });
+});
+
+describe("ACPAgentSession hung initialize recovery (NEW-1)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function hungRespawnHarness(options: {
+    terminator: FakeTerminator;
+    managedProcesses?: ReturnType<typeof createFakeManagedProcessRegistry>;
+    initializeTimeoutMs?: number;
+  }) {
+    return createCrashTestHarness({
+      terminateProcess: options.terminator.terminate,
+      ...(options.managedProcesses ? { managedProcesses: options.managedProcesses } : {}),
+      ...(options.initializeTimeoutMs ? { initializeTimeoutMs: options.initializeTimeoutMs } : {}),
+      behaviors: (spawnIndex) => (spawnIndex === 1 ? { hangInitialize: true } : {}),
+    });
+  }
+
+  test("close during a hung initialize completes within timeout and leaves no process", async () => {
+    const terminator = new FakeTerminator();
+    const managedProcesses = createFakeManagedProcessRegistry();
+    const { session, children } = hungRespawnHarness({ terminator, managedProcesses });
+    await session.initializeNewSession();
+    expect(managedProcesses.record).toHaveBeenCalledTimes(1);
+
+    children[0].crash(1, null);
+    const startPromise = session.startTurn("revive");
+    startPromise.catch(() => {});
+    await waitForAssertion(() => {
+      expect(children).toHaveLength(2);
+      expect(children[1].agent.initialize).toHaveBeenCalledTimes(1);
+    });
+
+    // initialize never answers: close() must still finish in bounded time.
+    const closeOutcome = await Promise.race([
+      session.close().then(() => "closed" as const),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 2_500)),
+    ]);
+    expect(closeOutcome).toBe("closed");
+
+    await expect(startPromise).rejects.toThrow("session is closed");
+    expect(terminator.terminated).toContain(children[1]);
+    const internals = internalsOf(session);
+    expect(internals.child).toBeNull();
+    expect(internals.pendingSpawnChild ?? null).toBeNull();
+    expect(internals.processState).toBe("dead");
+    expect(internals.respawnPromise ?? null).toBeNull();
+    await waitForAssertion(() => {
+      expect(managedProcesses.remove).toHaveBeenCalledTimes(2);
+    });
+    // No late session/load or prompt after close.
+    expect(children[1].agent.loadSession).not.toHaveBeenCalled();
+    expect(children[1].agent.newSession).not.toHaveBeenCalled();
+    expect(children[1].agent.prompt).not.toHaveBeenCalled();
+    await expect(session.startTurn("after close")).rejects.toThrow("session is closed");
+  });
+
+  test("initialize timeout kills the spawned process and clears the ledger", async () => {
+    const terminator = new FakeTerminator();
+    const managedProcesses = createFakeManagedProcessRegistry();
+    const { session, children } = hungRespawnHarness({
+      terminator,
+      managedProcesses,
+      initializeTimeoutMs: 200,
+    });
+    await session.initializeNewSession();
+    children[0].crash(1, null);
+
+    await expect(session.startTurn("revive")).rejects.toThrow("acp_initialize_timeout");
+
+    expect(terminator.terminated).toContain(children[1]);
+    // No fallback to session/new after an initialize timeout.
+    expect(children[1].agent.newSession).not.toHaveBeenCalled();
+    expect(children[1].agent.loadSession).not.toHaveBeenCalled();
+    const internals = internalsOf(session);
+    expect(internals.child).toBeNull();
+    expect(internals.pendingSpawnChild ?? null).toBeNull();
+    expect(internals.processState).toBe("dead");
+    await waitForAssertion(() => {
+      expect(managedProcesses.remove).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  test("close racing with initialize success cleans up exactly once", async () => {
+    const terminator = new FakeTerminator();
+    const gate = deferredPromise<void>();
+    const { session, children } = createCrashTestHarness({
+      terminateProcess: terminator.terminate,
+      behaviors: (spawnIndex) => (spawnIndex === 1 ? { initializeGate: gate.promise } : {}),
+    });
+    await session.initializeNewSession();
+    children[0].crash(1, null);
+    const startPromise = session.startTurn("revive");
+    startPromise.catch(() => {});
+    await waitForAssertion(() => {
+      expect(children[1]?.agent.initialize).toHaveBeenCalledTimes(1);
+    });
+
+    const closePromise = session.close();
+    // initialize succeeds while close() is in flight; exactly one teardown wins.
+    gate.resolve();
+    await closePromise;
+
+    await expect(startPromise).rejects.toThrow("session is closed");
+    expect(terminator.terminated.filter((child) => child === children[1])).toHaveLength(1);
+    const internals = internalsOf(session);
+    expect(internals.child).toBeNull();
+    expect(internals.pendingSpawnChild ?? null).toBeNull();
+    expect(internals.processState).toBe("dead");
+    expect(children[1].agent.loadSession).not.toHaveBeenCalled();
+    expect(children[1].agent.prompt).not.toHaveBeenCalled();
+  });
+
+  test("process exit during initialize does not wait for the initialize timeout", async () => {
+    const terminator = new FakeTerminator();
+    const { session, children } = hungRespawnHarness({
+      terminator,
+      initializeTimeoutMs: 30_000,
+    });
+    await session.initializeNewSession();
+    children[0].crash(1, null);
+
+    const startPromise = session.startTurn("revive");
+    await waitForAssertion(() => {
+      expect(children[1]?.agent.initialize).toHaveBeenCalledTimes(1);
+    });
+
+    const exitedAt = Date.now();
+    children[1].crash(1, null);
+    await expect(startPromise).rejects.toThrow(/exited|closed/i);
+    expect(Date.now() - exitedAt).toBeLessThan(5_000);
+    expect(internalsOf(session).processState).toBe("dead");
+  });
+
+  test("late initialize response after timeout is ignored", async () => {
+    const terminator = new FakeTerminator();
+    const managedProcesses = createFakeManagedProcessRegistry();
+    const gate = deferredPromise<void>();
+    const { session, children } = createCrashTestHarness({
+      terminateProcess: terminator.terminate,
+      managedProcesses,
+      initializeTimeoutMs: 200,
+      behaviors: (spawnIndex) => (spawnIndex === 1 ? { initializeGate: gate.promise } : {}),
+    });
+    await session.initializeNewSession();
+    children[0].crash(1, null);
+
+    await expect(session.startTurn("revive")).rejects.toThrow("acp_initialize_timeout");
+    gate.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(children[1].agent.loadSession).not.toHaveBeenCalled();
+    expect(children[1].agent.newSession).not.toHaveBeenCalled();
+    expect(children[1].agent.prompt).not.toHaveBeenCalled();
+    const internals = internalsOf(session);
+    expect(internals.child).toBeNull();
+    expect(internals.pendingSpawnChild ?? null).toBeNull();
+    expect(internals.processState).toBe("dead");
+    expect(managedProcesses.record).toHaveBeenCalledTimes(2);
+    await waitForAssertion(() => {
+      expect(managedProcesses.remove).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  test("timeout followed by a new prompt retries with a fresh process", async () => {
+    const terminator = new FakeTerminator();
+    const { session, children } = hungRespawnHarness({
+      terminator,
+      initializeTimeoutMs: 200,
+    });
+    await session.initializeNewSession();
+    children[0].crash(1, null);
+
+    await expect(session.startTurn("revive")).rejects.toThrow("acp_initialize_timeout");
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { turnId } = await session.startTurn("retry");
+    expect(children).toHaveLength(3);
+    expect(children[2].agent.loadSession).toHaveBeenCalledTimes(1);
+    await waitForTurnEvent(events, "turn_completed", turnId);
+    expect(turnFailedEvents(events)).toHaveLength(0);
+  });
+
+  test("close after an initialize timeout remains idempotent", async () => {
+    const terminator = new FakeTerminator();
+    const managedProcesses = createFakeManagedProcessRegistry();
+    const { session, children } = hungRespawnHarness({
+      terminator,
+      managedProcesses,
+      initializeTimeoutMs: 200,
+    });
+    await session.initializeNewSession();
+    children[0].crash(1, null);
+
+    await expect(session.startTurn("revive")).rejects.toThrow("acp_initialize_timeout");
+
+    await session.close();
+    await session.close();
+
+    expect(terminator.terminated.filter((child) => child === children[1])).toHaveLength(1);
+    expect(internalsOf(session).processState).toBe("dead");
+    await waitForAssertion(() => {
+      expect(managedProcesses.remove).toHaveBeenCalledTimes(2);
+    });
+    await expect(session.startTurn("after close")).rejects.toThrow("session is closed");
+  });
+});
+
+describe("ACPAgentSession session-attach hang recovery (Finding 1)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** Settles to the resolution value, the rejection error, or "timeout". */
+  function settleOutcome(promise: Promise<unknown>, ms = 2_500): Promise<unknown> {
+    return Promise.race([
+      promise.then(
+        () => "resolved",
+        (error: unknown) => error,
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve("timeout"), ms)),
+    ]);
+  }
+
+  test("process crash during session/load rejects the respawn and allows a fresh retry", async () => {
+    const terminator = new FakeTerminator();
+    const managedProcesses = createFakeManagedProcessRegistry();
+    const { session, children } = createCrashTestHarness({
+      terminateProcess: terminator.terminate,
+      managedProcesses,
+      // Large: the exit path must not wait for the attach timeout.
+      sessionLoadTimeoutMs: 30_000,
+      behaviors: (spawnIndex) => (spawnIndex === 1 ? { hangLoadSession: true } : {}),
+    });
+    await session.initializeNewSession();
+    children[0].crash(1, null);
+
+    const startPromise = session.startTurn("revive");
+    await waitForAssertion(() => {
+      expect(children[1]?.agent.loadSession).toHaveBeenCalledTimes(1);
+    });
+    // The worker dies mid-load; the pending loadSession RPC must not hang.
+    children[1].crash(1, null);
+
+    const outcome = await settleOutcome(startPromise);
+    expect(outcome).toBeInstanceOf(Error);
+    expect((outcome as Error).message).toMatch(/exited during session\/load/);
+    const internals = internalsOf(session);
+    expect(internals.respawnPromise ?? null).toBeNull();
+    expect(internals.processState).toBe("dead");
+    expect(internals.child).toBeNull();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { turnId } = await session.startTurn("retry");
+    expect(children).toHaveLength(3);
+    await waitForTurnEvent(events, "turn_completed", turnId);
+  });
+
+  test("live process that never answers session/load times out and recovers", async () => {
+    const terminator = new FakeTerminator();
+    const managedProcesses = createFakeManagedProcessRegistry();
+    const { session, children } = createCrashTestHarness({
+      terminateProcess: terminator.terminate,
+      managedProcesses,
+      sessionLoadTimeoutMs: 200,
+      behaviors: (spawnIndex) => (spawnIndex === 1 ? { hangLoadSession: true } : {}),
+    });
+    await session.initializeNewSession();
+    children[0].crash(1, null);
+
+    const outcome = await settleOutcome(session.startTurn("revive"));
+    expect(outcome).toBeInstanceOf(Error);
+    expect((outcome as Error).message).toContain("acp_attach_timeout");
+
+    // No fallback to session/new after a session/load timeout.
+    expect(children[1].agent.newSession).not.toHaveBeenCalled();
+    expect(terminator.terminated).toContain(children[1]);
+    const internals = internalsOf(session);
+    expect(internals.respawnPromise ?? null).toBeNull();
+    expect(internals.processState).toBe("dead");
+    expect(internals.child).toBeNull();
+    await waitForAssertion(() => {
+      expect(managedProcesses.remove).toHaveBeenCalledTimes(2);
+    });
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { turnId } = await session.startTurn("retry");
+    expect(children).toHaveLength(3);
+    await waitForTurnEvent(events, "turn_completed", turnId);
+  });
+
+  test("close during a hung session/load completes and settles respawnPromise", async () => {
+    const terminator = new FakeTerminator();
+    const managedProcesses = createFakeManagedProcessRegistry();
+    const { session, children } = createCrashTestHarness({
+      terminateProcess: terminator.terminate,
+      managedProcesses,
+      // Large: close must abort the attach, not wait for the timeout.
+      sessionLoadTimeoutMs: 30_000,
+      behaviors: (spawnIndex) => (spawnIndex === 1 ? { hangLoadSession: true } : {}),
+    });
+    await session.initializeNewSession();
+    children[0].crash(1, null);
+
+    const startPromise = session.startTurn("revive");
+    startPromise.catch(() => {});
+    await waitForAssertion(() => {
+      expect(children[1]?.agent.loadSession).toHaveBeenCalledTimes(1);
+    });
+
+    const closeOutcome = await Promise.race([
+      session.close().then(() => "closed" as const),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 2_500)),
+    ]);
+    expect(closeOutcome).toBe("closed");
+
+    await expect(startPromise).rejects.toThrow("session is closed");
+    const internals = internalsOf(session);
+    expect(internals.respawnPromise ?? null).toBeNull();
+    expect(internals.child).toBeNull();
+    expect(internals.processState).toBe("dead");
+    expect(terminator.terminated).toContain(children[1]);
+    await waitForAssertion(() => {
+      expect(managedProcesses.remove).toHaveBeenCalledTimes(2);
+    });
+    expect(children[1].agent.prompt).not.toHaveBeenCalled();
+  });
+
+  test("hung unstable_resumeSession during respawn is bounded", async () => {
+    const terminator = new FakeTerminator();
+    const { session, children } = createCrashTestHarness({
+      terminateProcess: terminator.terminate,
+      sessionLoadTimeoutMs: 200,
+      behaviors: (spawnIndex) => ({
+        agentCapabilities: { sessionCapabilities: { resume: {} } },
+        ...(spawnIndex === 1 ? { hangResumeSession: true } : {}),
+      }),
+    });
+    await session.initializeNewSession();
+    children[0].crash(1, null);
+
+    const outcome = await settleOutcome(session.startTurn("revive"));
+    expect(outcome).toBeInstanceOf(Error);
+    expect((outcome as Error).message).toContain("acp_attach_timeout");
+
+    const resumedAgent = children[1].agent as unknown as {
+      unstable_resumeSession: ReturnType<typeof vi.fn>;
+      loadSession: ReturnType<typeof vi.fn>;
+    };
+    expect(resumedAgent.unstable_resumeSession).toHaveBeenCalledTimes(1);
+    expect(resumedAgent.loadSession).not.toHaveBeenCalled();
+    expect(terminator.terminated).toContain(children[1]);
+    expect(internalsOf(session).respawnPromise ?? null).toBeNull();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { turnId } = await session.startTurn("retry");
+    expect(children).toHaveLength(3);
+    await waitForTurnEvent(events, "turn_completed", turnId);
+  });
+
+  test("hung session/new during initial setup is bounded", async () => {
+    const terminator = new FakeTerminator();
+    const { session, children } = createCrashTestHarness({
+      terminateProcess: terminator.terminate,
+      sessionLoadTimeoutMs: 200,
+      behaviors: [{ hangNewSession: true }],
+    });
+
+    const outcome = await settleOutcome(session.initializeNewSession());
+    expect(outcome).toBeInstanceOf(Error);
+    expect((outcome as Error).message).toContain("acp_attach_timeout");
+    expect(children).toHaveLength(1);
+    expect(children[0].agent.newSession).toHaveBeenCalledTimes(1);
+  });
+
+  test("hung runtime override RPC after respawn is bounded and allows retry", async () => {
+    const terminator = new FakeTerminator();
+    const { session, children } = createCrashTestHarness({
+      terminateProcess: terminator.terminate,
+      sessionLoadTimeoutMs: 200,
+      behaviors: (spawnIndex) => ({
+        sessionState: {
+          modes: {
+            availableModes: [
+              { id: "yolo", name: "Yolo" },
+              { id: "plan", name: "Plan" },
+            ],
+            currentModeId: "yolo",
+          },
+        },
+        ...(spawnIndex === 1 ? { hangSetSessionMode: true } : {}),
+      }),
+    });
+    await session.initializeNewSession();
+    await session.setMode("plan");
+    children[0].crash(1, null);
+
+    // session/load reports mode "yolo"; re-applying the effective mode "plan"
+    // hangs on the respawned worker and must hit the attach timeout.
+    const outcome = await settleOutcome(session.startTurn("revive"));
+    expect(outcome).toBeInstanceOf(Error);
+    expect((outcome as Error).message).toContain("acp_attach_timeout");
+    expect(children[1].agent.setSessionMode).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      modeId: "plan",
+    });
+    expect(terminator.terminated).toContain(children[1]);
+    expect(internalsOf(session).respawnPromise ?? null).toBeNull();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { turnId } = await session.startTurn("retry");
+    expect(children).toHaveLength(3);
+    await waitForTurnEvent(events, "turn_completed", turnId);
+    // NOTE: the failed respawn overwrote currentMode with the provider-
+    // reported value before the override hung, so the retry re-applies the
+    // state captured at that point ("yolo"). Restoring the pre-respawn
+    // effective mode after a failed override is a separate follow-up
+    // (runtime-state re-application, see NEW-3) and out of scope here.
+    expect(await session.getCurrentMode()).toBe("yolo");
   });
 });

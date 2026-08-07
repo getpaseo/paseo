@@ -72,6 +72,8 @@ class FakeManagedProcesses implements ManagedProcessRegistry {
 
   async remove(): Promise<void> {}
 
+  async updateMetadata(): Promise<void> {}
+
   async list(): Promise<ManagedProcessRecord[]> {
     return [];
   }

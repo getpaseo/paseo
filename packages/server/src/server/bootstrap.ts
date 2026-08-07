@@ -185,6 +185,7 @@ import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import {
   createManagedProcessRegistry,
   createSystemManagedProcessTable,
+  type ManagedProcessDaemonOwner,
   type ManagedProcessRegistry,
 } from "./managed-processes/managed-processes.js";
 import { terminateWithTreeKill } from "../utils/tree-kill.js";
@@ -468,6 +469,7 @@ export interface PaseoDaemonDependencies {
 function createBootstrapManagedProcessRegistry(
   config: Pick<PaseoDaemonConfig, "paseoHome" | "managedProcesses">,
   logger: Logger,
+  daemonOwner: ManagedProcessDaemonOwner,
 ): ManagedProcessRegistry {
   if (config.managedProcesses) {
     return config.managedProcesses;
@@ -478,6 +480,7 @@ function createBootstrapManagedProcessRegistry(
     processTable: createSystemManagedProcessTable(),
     terminateProcess: terminateWithTreeKill,
     logger,
+    daemonOwner,
   });
 }
 
@@ -561,7 +564,10 @@ export async function createPaseoDaemon(
 
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
-  const managedProcesses = createBootstrapManagedProcessRegistry(config, logger);
+  const managedProcesses = createBootstrapManagedProcessRegistry(config, logger, {
+    instanceId: serverId,
+    pid: process.pid,
+  });
   // Reconcile the helper-process ledger in the background so it never blocks the
   // daemon from coming up; terminating a live leftover can take a few seconds.
   // Best-effort, so a failure is logged here rather than crashing startup.

@@ -137,6 +137,50 @@ describe("OpenCode auto_accept feature", () => {
     expect(legacyFeatures).toEqual([expect.objectContaining({ id: "auto_accept", value: true })]);
   });
 
+  test("keeps bypassPermissions as an alias for build plus auto accept", async () => {
+    const { openCodeClient, runtime } = mockOpenCodeClient();
+
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      modeId: "bypassPermissions",
+    });
+
+    expect(await session.getCurrentMode()).toBe("build");
+    expect(session.features).toEqual([expect.objectContaining({ id: "auto_accept", value: true })]);
+
+    await session.run("Implement the change");
+
+    expect(openCodeClient.calls.sessionPromptAsync).toHaveLength(1);
+    expect(openCodeClient.calls.sessionPromptAsync[0]).toEqual(
+      expect.objectContaining({ agent: "build" }),
+    );
+
+    await session.close();
+  });
+
+  test("resolves bypassPermissions for provider-driven child creation", () => {
+    const client = new OpenCodeAgentClient(createTestLogger());
+
+    expect(
+      client.resolveCreateConfig({
+        provider: "opencode",
+        requestedMode: "bypassPermissions",
+        featureValues: undefined,
+        parent: null,
+        unattended: false,
+        availableModes: [
+          { id: "build", label: "Build" },
+          { id: "plan", label: "Plan" },
+        ],
+      }),
+    ).toEqual({ modeId: "build", featureValues: { auto_accept: true } });
+  });
+
   test("keeps legacy full-access as an alias for build plus auto accept", async () => {
     const { openCodeClient, runtime } = mockOpenCodeClient();
 
@@ -396,6 +440,78 @@ describe("OpenCode auto_accept feature", () => {
         answers: [["Use another answer"]],
       },
     ]);
+
+    await session.close();
+  });
+
+  test("injects Devin SWE system prompt for litellm/devin-swe-1-7 in build mode", async () => {
+    const { openCodeClient, runtime } = mockOpenCodeClient();
+
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      modeId: "bypassPermissions",
+      model: "litellm/devin-swe-1-7",
+    });
+
+    await session.run("Implement the change");
+
+    expect(openCodeClient.calls.sessionPromptAsync).toHaveLength(1);
+    expect(openCodeClient.calls.sessionPromptAsync[0]).toEqual(
+      expect.objectContaining({
+        system: expect.stringContaining("You are in SWE mode"),
+      }),
+    );
+
+    await session.close();
+  });
+
+  test("does not inject Devin SWE system prompt for non-Devin models", async () => {
+    const { openCodeClient, runtime } = mockOpenCodeClient();
+
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      modeId: "bypassPermissions",
+      model: "litellm/ag-sonnet-5",
+    });
+
+    await session.run("Implement the change");
+
+    expect(openCodeClient.calls.sessionPromptAsync).toHaveLength(1);
+    const prompt = openCodeClient.calls.sessionPromptAsync[0] as { system?: string };
+    expect(prompt.system ?? "").not.toContain("SWE mode");
+
+    await session.close();
+  });
+
+  test("does not inject Devin SWE system prompt in plan mode", async () => {
+    const { openCodeClient, runtime } = mockOpenCodeClient();
+
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      modeId: "plan",
+      model: "litellm/devin-swe-1-7",
+    });
+
+    await session.run("Plan the change");
+
+    expect(openCodeClient.calls.sessionPromptAsync).toHaveLength(1);
+    const prompt = openCodeClient.calls.sessionPromptAsync[0] as { system?: string };
+    expect(prompt.system ?? "").not.toContain("SWE mode");
 
     await session.close();
   });

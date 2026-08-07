@@ -13,6 +13,24 @@ const MANAGED_PROCESS_EXIT_POLL_INTERVAL_MS = 50;
 const MANAGED_PROCESS_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 // `ps -o lstart` emits a fixed-width 24-char ctime stamp, e.g. "Sat Jun 20 10:30:40 2026".
 const POSIX_LSTART_WIDTH = 24;
+const LINUX_BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id";
+
+const ProcessIdentitySchema = z.object({
+  commandLine: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  // Linux /proc identity: starttime ticks since boot plus the boot id, both
+  // locale-independent (unlike ps lstart).
+  startTimeTicks: z.string().nullable().default(null),
+  bootId: z.string().nullable().default(null),
+});
+
+const ManagedProcessDaemonSchema = z.object({
+  instanceId: z.string().min(1),
+  pid: z.number().int().positive(),
+  identity: ProcessIdentitySchema,
+  bootId: z.string().nullable().default(null),
+  recordedAt: z.string().min(1),
+});
 
 const ManagedProcessRecordSchema = z.object({
   id: z.string().min(1),
@@ -24,10 +42,10 @@ const ManagedProcessRecordSchema = z.object({
   command: z.string().min(1),
   args: z.array(z.string()),
   metadata: z.record(z.string(), z.unknown()).default({}),
-  identity: z.object({
-    commandLine: z.string().nullable(),
-    startedAt: z.string().nullable(),
-  }),
+  identity: ProcessIdentitySchema,
+  // Identity of the daemon instance that spawned this process. Lets a reaper
+  // on a shared PASEO_HOME leave another live daemon's processes alone.
+  daemon: ManagedProcessDaemonSchema.optional(),
   createdAt: z.string().min(1),
 });
 
@@ -41,6 +59,8 @@ export interface ManagedProcessSnapshot {
   pid: number;
   commandLine: string | null;
   startedAt: string | null;
+  startTimeTicks?: string | null;
+  bootId?: string | null;
 }
 
 export type ManagedProcessInspection =
@@ -75,6 +95,20 @@ export interface ManagedProcessRecord extends ManagedProcessRecordInput {
   identity: {
     commandLine: string | null;
     startedAt: string | null;
+    startTimeTicks?: string | null;
+    bootId?: string | null;
+  };
+  daemon?: {
+    instanceId: string;
+    pid: number;
+    identity: {
+      commandLine: string | null;
+      startedAt: string | null;
+      startTimeTicks?: string | null;
+      bootId?: string | null;
+    };
+    bootId: string | null;
+    recordedAt: string;
   };
   createdAt: string;
 }
@@ -91,8 +125,22 @@ export interface ManagedProcessReapResult {
 export interface ManagedProcessRegistry {
   record(input: ManagedProcessRecordInput): Promise<ManagedProcessRecord>;
   remove(id: string): Promise<void>;
+  updateMetadata(id: string, patch: Record<string, unknown>): Promise<void>;
   list(): Promise<ManagedProcessRecord[]>;
   reapStale(): Promise<ManagedProcessReapResult>;
+}
+
+/** Identifies the daemon instance that owns newly recorded processes. */
+export interface ManagedProcessDaemonOwner {
+  instanceId: string;
+  pid: number;
+}
+
+/** Linux /proc reads, injectable so tests need no real procfs. */
+export interface ManagedProcessProcReader {
+  readStat(pid: number): Promise<string>;
+  readCmdline(pid: number): Promise<string>;
+  readBootId(): Promise<string>;
 }
 
 interface ManagedProcessRegistryOptions {
@@ -100,6 +148,8 @@ interface ManagedProcessRegistryOptions {
   processTable: ManagedProcessTable;
   terminateProcess: ProcessTerminator;
   logger: Logger;
+  daemonOwner?: ManagedProcessDaemonOwner;
+  readBootId?: () => Promise<string | null>;
 }
 
 export function createManagedProcessRegistry(
@@ -111,22 +161,74 @@ export function createManagedProcessRegistry(
 export function createSystemManagedProcessTable(options?: {
   platform?: NodeJS.Platform;
   commandRunner?: ManagedProcessCommandRunner;
+  procReader?: ManagedProcessProcReader;
 }): ManagedProcessTable {
   return new SystemManagedProcessTable({
     platform: options?.platform ?? process.platform,
     commandRunner: options?.commandRunner ?? {
       exec: execCommand,
     },
+    procReader: options?.procReader ?? createSystemProcReader(),
   });
+}
+
+function createSystemProcReader(): ManagedProcessProcReader {
+  return {
+    async readStat(pid) {
+      return fs.readFile(`/proc/${pid}/stat`, "utf8");
+    },
+    async readCmdline(pid) {
+      return fs.readFile(`/proc/${pid}/cmdline`, "utf8");
+    },
+    async readBootId() {
+      return fs.readFile(LINUX_BOOT_ID_PATH, "utf8");
+    },
+  };
+}
+
+async function readSystemBootId(): Promise<string | null> {
+  if (process.platform !== "linux") {
+    return null;
+  }
+  try {
+    const bootId = (await fs.readFile(LINUX_BOOT_ID_PATH, "utf8")).trim();
+    return bootId || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * /proc/<pid>/stat field 22 (starttime, clock ticks since boot). The comm
+ * field may contain spaces and parentheses, so parse relative to the last ")".
+ */
+export function parseProcStatStartTime(stat: string): string | null {
+  const closeParen = stat.lastIndexOf(")");
+  if (closeParen < 0) {
+    return null;
+  }
+  const fields = stat
+    .slice(closeParen + 1)
+    .trim()
+    .split(/\s+/);
+  // fields[0] is field 3 (state); field 22 sits at index 19.
+  const startTime = fields[19];
+  return startTime && /^\d+$/.test(startTime) ? startTime : null;
 }
 
 class SystemManagedProcessTable implements ManagedProcessTable {
   private readonly platform: NodeJS.Platform;
   private readonly commandRunner: ManagedProcessCommandRunner;
+  private readonly procReader: ManagedProcessProcReader;
 
-  constructor(options: { platform: NodeJS.Platform; commandRunner: ManagedProcessCommandRunner }) {
+  constructor(options: {
+    platform: NodeJS.Platform;
+    commandRunner: ManagedProcessCommandRunner;
+    procReader: ManagedProcessProcReader;
+  }) {
     this.platform = options.platform;
     this.commandRunner = options.commandRunner;
+    this.procReader = options.procReader;
   }
 
   async inspect(pid: number): Promise<ManagedProcessInspection> {
@@ -144,9 +246,22 @@ class SystemManagedProcessTable implements ManagedProcessTable {
   }
 
   private async inspectPosix(pid: number): Promise<ManagedProcessInspection> {
+    if (this.platform === "linux") {
+      const procInspection = await this.inspectLinuxProc(pid);
+      if (procInspection) {
+        return procInspection;
+      }
+    }
+
     let stdout: string;
     try {
-      ({ stdout } = await this.commandRunner.exec("ps", [
+      // Pin the locale: `ps lstart` output is locale-dependent, and identity
+      // comparison must not break because two daemons run under different
+      // LC_TIME settings.
+      ({ stdout } = await this.commandRunner.exec("env", [
+        "LC_ALL=C",
+        "LANG=C",
+        "ps",
         "-ww",
         "-p",
         String(pid),
@@ -175,6 +290,45 @@ class SystemManagedProcessTable implements ManagedProcessTable {
         commandLine: commandLine || null,
         startedAt: startedAt || null,
       },
+    };
+  }
+
+  /**
+   * Locale-independent identity from /proc: start ticks since boot plus the
+   * boot id. Returns null when /proc data is missing or unparsable for a
+   * reason other than the process being gone, so the caller falls back to ps.
+   */
+  private async inspectLinuxProc(pid: number): Promise<ManagedProcessInspection | null> {
+    let stat: string;
+    try {
+      stat = await this.procReader.readStat(pid);
+    } catch (error) {
+      return isNodeErrorWithCode(error, "ENOENT") ? { status: "not-found" } : null;
+    }
+
+    const startTimeTicks = parseProcStatStartTime(stat);
+    if (!startTimeTicks) {
+      return null;
+    }
+
+    let commandLine: string | null = null;
+    try {
+      const raw = await this.procReader.readCmdline(pid);
+      commandLine = raw.split("\0").filter(Boolean).join(" ") || null;
+    } catch {
+      // Zombies and kernel threads have no cmdline; identity rests on ticks.
+    }
+
+    let bootId: string | null = null;
+    try {
+      bootId = (await this.procReader.readBootId()).trim() || null;
+    } catch {
+      // Without the boot id, tick comparison still guards PID reuse per boot.
+    }
+
+    return {
+      status: "alive",
+      snapshot: { pid, commandLine, startedAt: null, startTimeTicks, bootId },
     };
   }
 
@@ -211,12 +365,18 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
   private readonly processTable: ManagedProcessTable;
   private readonly terminateProcess: ProcessTerminator;
   private readonly logger: Logger;
+  private readonly daemonOwner?: ManagedProcessDaemonOwner;
+  private readonly readBootId: () => Promise<string | null>;
+  private daemonRecordInfo?: ManagedProcessRecord["daemon"] | null;
+  private bootId?: string | null;
 
   constructor(options: ManagedProcessRegistryOptions) {
     this.directory = path.join(options.paseoHome, "runtime", "managed-processes");
     this.processTable = options.processTable;
     this.terminateProcess = options.terminateProcess;
     this.logger = options.logger.child({ module: "managed-processes" });
+    this.daemonOwner = options.daemonOwner;
+    this.readBootId = options.readBootId ?? readSystemBootId;
   }
 
   async record(input: ManagedProcessRecordInput): Promise<ManagedProcessRecord> {
@@ -232,7 +392,10 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
       identity: {
         commandLine: snapshot?.commandLine ?? null,
         startedAt: snapshot?.startedAt ?? null,
+        startTimeTicks: snapshot?.startTimeTicks ?? null,
+        bootId: snapshot?.bootId ?? null,
       },
+      daemon: (await this.resolveDaemonRecordInfo()) ?? undefined,
       createdAt: new Date().toISOString(),
     };
 
@@ -242,6 +405,55 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
 
   async remove(id: string): Promise<void> {
     await fs.rm(this.recordPath(id), { force: true });
+  }
+
+  async updateMetadata(id: string, patch: Record<string, unknown>): Promise<void> {
+    let raw: string;
+    try {
+      raw = await fs.readFile(this.recordPath(id), "utf8");
+    } catch (error) {
+      // The record may already be reaped; a metadata backfill is best-effort.
+      if (isNodeErrorWithCode(error, "ENOENT")) {
+        return;
+      }
+      throw error;
+    }
+    const parsed = ManagedProcessRecordSchema.parse(JSON.parse(raw));
+    parsed.metadata = { ...parsed.metadata, ...patch };
+    await writeJsonFileAtomic(this.recordPath(id), parsed);
+  }
+
+  private async getBootId(): Promise<string | null> {
+    if (this.bootId === undefined) {
+      this.bootId = await this.readBootId();
+    }
+    return this.bootId;
+  }
+
+  private async resolveDaemonRecordInfo(): Promise<ManagedProcessRecord["daemon"] | null> {
+    if (this.daemonRecordInfo !== undefined) {
+      return this.daemonRecordInfo;
+    }
+    const owner = this.daemonOwner;
+    if (!owner) {
+      this.daemonRecordInfo = null;
+      return null;
+    }
+    const inspection = await this.processTable.inspect(owner.pid);
+    const snapshot = inspection.status === "alive" ? inspection.snapshot : null;
+    this.daemonRecordInfo = {
+      instanceId: owner.instanceId,
+      pid: owner.pid,
+      identity: {
+        commandLine: snapshot?.commandLine ?? null,
+        startedAt: snapshot?.startedAt ?? null,
+        startTimeTicks: snapshot?.startTimeTicks ?? null,
+        bootId: snapshot?.bootId ?? null,
+      },
+      bootId: await this.getBootId(),
+      recordedAt: new Date().toISOString(),
+    };
+    return this.daemonRecordInfo;
   }
 
   async list(): Promise<ManagedProcessRecord[]> {
@@ -262,6 +474,22 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
     for (const entry of await this.readEntries()) {
       result.checked += 1;
       try {
+        if (entry.record.daemon) {
+          const ownerStatus = await this.classifyDaemonOwner(entry.record.daemon);
+          if (ownerStatus === "alive") {
+            // Another live daemon on this PASEO_HOME owns the process; leave
+            // both the record and the process alone.
+            continue;
+          }
+          if (ownerStatus === "unknown") {
+            result.errors.push({
+              id: entry.record.id,
+              message: "Could not verify daemon owner identity; leaving record for next reconcile",
+            });
+            continue;
+          }
+        }
+
         const inspection = await this.processTable.inspect(entry.record.pid);
         if (inspection.status === "not-found") {
           await fs.rm(entry.path, { force: true });
@@ -327,6 +555,42 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
     return result;
   }
 
+  /**
+   * Decide whether the daemon that recorded a process is still its live
+   * owner. A child is only reaped when the owner is gone: the owner pid is
+   * dead, the pid was reused by an unrelated process, or the record predates
+   * the current boot. Any uncertainty keeps the record untouched.
+   */
+  private async classifyDaemonOwner(
+    daemon: NonNullable<ManagedProcessRecord["daemon"]>,
+  ): Promise<"alive" | "stale" | "unknown"> {
+    const currentBootId = await this.getBootId();
+    if (daemon.bootId && currentBootId && daemon.bootId !== currentBootId) {
+      return "stale";
+    }
+
+    const inspection = await this.processTable.inspect(daemon.pid);
+    if (inspection.status === "not-found") {
+      return "stale";
+    }
+    if (inspection.status === "error") {
+      return "unknown";
+    }
+
+    const identity = daemon.identity;
+    const snapshot = inspection.snapshot;
+    if (identity.startTimeTicks && snapshot.startTimeTicks) {
+      if (identity.bootId && snapshot.bootId && identity.bootId !== snapshot.bootId) {
+        return "stale";
+      }
+      return identity.startTimeTicks === snapshot.startTimeTicks ? "alive" : "stale";
+    }
+    if (identity.startedAt && snapshot.startedAt) {
+      return identity.startedAt === snapshot.startedAt ? "alive" : "stale";
+    }
+    return "unknown";
+  }
+
   private recordPath(id: string): string {
     if (!MANAGED_PROCESS_ID_PATTERN.test(id)) {
       throw new Error(`Invalid managed process record id: ${id}`);
@@ -372,9 +636,30 @@ function processIdentityMatches(
   record: ManagedProcessRecord,
   snapshot: ManagedProcessSnapshot,
 ): boolean {
+  if (record.identity.startTimeTicks && snapshot.startTimeTicks) {
+    if (record.identity.bootId && snapshot.bootId && record.identity.bootId !== snapshot.bootId) {
+      return false;
+    }
+    // Equal start ticks on the same boot identify the process even when it
+    // rewrote its command line; different ticks mean the PID was reused.
+    return record.identity.startTimeTicks === snapshot.startTimeTicks;
+  }
+
   if (record.identity.startedAt && snapshot.startedAt) {
     if (record.identity.startedAt !== snapshot.startedAt) {
       return false;
+    }
+    // Agents that rewrite their process title (e.g. kimi shows up as
+    // "kimi-cod", not "kimi acp") never match the command-signature check.
+    // A matching start timestamp plus exact equality with the command line
+    // captured at record time is still strong identity evidence.
+    if (
+      record.identity.commandLine &&
+      snapshot.commandLine &&
+      normalizeCommandLine(record.identity.commandLine) ===
+        normalizeCommandLine(snapshot.commandLine)
+    ) {
+      return true;
     }
     return snapshot.commandLine ? commandLineMatchesRecord(record, snapshot.commandLine) : true;
   }

@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 import { z } from "zod";
 
 import type { AgentCapabilityFlags } from "../agent-sdk-types.js";
+import type { ManagedProcessRegistry } from "../../managed-processes/managed-processes.js";
 import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
 import {
   ACPAgentClient,
@@ -45,10 +46,15 @@ interface GenericACPAgentClientOptions {
   providerParams?: unknown;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
+  /** Bound on the ACP initialize handshake of session worker processes. */
+  initializeTimeoutMs?: number;
+  /** Bound on session-attach RPCs (session/new, session/load, resume, overrides). */
+  sessionLoadTimeoutMs?: number;
   diagnosticPhaseTimeoutMs?: number;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  managedProcesses?: ManagedProcessRegistry;
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
@@ -72,7 +78,10 @@ export class GenericACPAgentClient extends ACPAgentClient {
       clientCapabilities: providerParams.clientCapabilities,
       clientCapabilityMeta: options.clientCapabilityMeta,
       configFeatureOptions: options.configFeatureOptions,
+      initializeTimeoutMs: options.initializeTimeoutMs,
+      sessionLoadTimeoutMs: options.sessionLoadTimeoutMs,
       extensionCommandsParser: options.extensionCommandsParser,
+      managedProcesses: options.managedProcesses,
     });
 
     this.command = options.command;
