@@ -19,6 +19,7 @@ import type {
   WorkspaceRegistry,
 } from "./workspace-registry.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
+import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 
 export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
@@ -115,6 +116,13 @@ export async function resolveWorkspaceIdAtPath(
 // (agents + terminals + record), then removes the backing directory iff it is
 // Paseo-owned AND no active workspace still references it.
 export async function archiveByScope(
+  dependencies: ArchiveDependencies,
+  request: ArchiveByScopeRequest,
+): Promise<ArchiveResult> {
+  return runWithGitCommandPriority("high", () => archiveByScopeWithPriority(dependencies, request));
+}
+
+async function archiveByScopeWithPriority(
   dependencies: ArchiveDependencies,
   request: ArchiveByScopeRequest,
 ): Promise<ArchiveResult> {

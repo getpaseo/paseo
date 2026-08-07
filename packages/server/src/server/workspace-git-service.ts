@@ -39,10 +39,15 @@ import {
   type ForgeResolver,
 } from "../services/forge-resolver.js";
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
-import { createRealpathAwarePathMatcher, isRealpathInsideRoot } from "../utils/path.js";
+import {
+  createRealpathAwarePathMatcher,
+  getRealpathAwareRelativePath,
+  isRealpathInsideRoot,
+} from "../utils/path.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { listPaseoWorktrees, type PaseoWorktreeInfo } from "../utils/worktree.js";
 import { READ_ONLY_GIT_ENV } from "./checkout-git-utils.js";
+import { classifyGitMetadataPath, getPrunedGitMetadataPaths } from "./git-metadata-event-rules.js";
 import { deriveProjectSlug } from "./workspace-git-metadata.js";
 import { checkoutLiteFromGitSnapshot } from "./workspace-registry-model.js";
 
@@ -370,6 +375,10 @@ interface RepoGitTarget {
   intervalId: NodeJS.Timeout | null;
   fetchInFlight: boolean;
   closed: boolean;
+}
+
+interface RepoMetadataWorkspaceRefresh {
+  refreshBase: boolean;
 }
 
 interface WorkingTreeWatchTarget {
@@ -1482,11 +1491,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private async startRepoMetadataObservation(target: RepoGitTarget): Promise<void> {
-    const ignore = [
-      join(target.repoGitRoot, "hooks"),
-      join(target.repoGitRoot, "logs"),
-      join(target.repoGitRoot, "objects"),
-    ];
+    const ignore = getPrunedGitMetadataPaths("common").map((path) =>
+      join(target.repoGitRoot, path),
+    );
     const matchesRepoGitRoot = createRealpathAwarePathMatcher(target.repoGitRoot);
     try {
       const subscription = await this.deps.subscribe(
@@ -1500,13 +1507,18 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
             this.degradeRepoMetadataWatch(target);
             return;
           }
-          const hasRelevantEvent = events.some(
+          const relevantEvents = events.filter(
             (event) =>
               !matchesRepoGitRoot(event.path) &&
               ignore.every((ignoredPath) => !isRealpathInsideRoot(ignoredPath, event.path)),
           );
-          if (hasRelevantEvent) {
-            this.scheduleRepoMetadataRefresh(target, "git-metadata-watch", true);
+          if (relevantEvents.length > 0) {
+            this.scheduleRepoMetadataRefresh(
+              target,
+              "git-metadata-watch",
+              true,
+              this.routeRepoMetadataEvents(target, relevantEvents),
+            );
           }
         },
         { ignore },
@@ -1543,21 +1555,174 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.startRepoMetadataFallback(target);
   }
 
+  private routeRepoMetadataEvents(
+    target: RepoGitTarget,
+    events: parcelWatcher.Event[],
+  ): Map<string, RepoMetadataWorkspaceRefresh> | null {
+    const refreshes = new Map<string, RepoMetadataWorkspaceRefresh>();
+    const matchesRepoGitRoot = createRealpathAwarePathMatcher(target.repoGitRoot);
+
+    for (const event of events) {
+      if (!this.routeRepoMetadataEvent(target, event, matchesRepoGitRoot, refreshes)) return null;
+    }
+
+    return refreshes;
+  }
+
+  private routeRepoMetadataEvent(
+    target: RepoGitTarget,
+    event: parcelWatcher.Event,
+    matchesRepoGitRoot: ReturnType<typeof createRealpathAwarePathMatcher>,
+    refreshes: Map<string, RepoMetadataWorkspaceRefresh>,
+  ): boolean {
+    if (this.routePrivateGitDirEvent(target, event, matchesRepoGitRoot, refreshes)) return true;
+
+    const commonRelativePath = getRealpathAwareRelativePath(target.repoGitRoot, event.path);
+    const effect = classifyGitMetadataPath("common", commonRelativePath ?? "");
+    switch (effect.kind) {
+      case "ignore":
+        return true;
+      case "owner":
+        this.routeMainCheckoutMetadata(target, matchesRepoGitRoot, effect.refreshBase, refreshes);
+        return true;
+      case "ref":
+        if (effect.namespace === "local") {
+          this.routeLocalBranchRef(target, effect.ref, refreshes);
+        } else {
+          this.routeRemoteBranchRef(target, effect.ref, refreshes);
+        }
+        return true;
+      case "all":
+        return false;
+    }
+  }
+
+  private routePrivateGitDirEvent(
+    target: RepoGitTarget,
+    event: parcelWatcher.Event,
+    matchesRepoGitRoot: ReturnType<typeof createRealpathAwarePathMatcher>,
+    refreshes: Map<string, RepoMetadataWorkspaceRefresh>,
+  ): boolean {
+    let matched = false;
+    for (const workspaceKey of target.workspaceKeys) {
+      const facts = this.workspaceTargets.get(workspaceKey)?.latestFacts;
+      if (!facts?.isGit || !facts.absoluteGitDir || matchesRepoGitRoot(facts.absoluteGitDir)) {
+        continue;
+      }
+      const relativePath = getRealpathAwareRelativePath(facts.absoluteGitDir, event.path);
+      if (relativePath === null) continue;
+      matched = true;
+      const effect = classifyGitMetadataPath("worktree", relativePath);
+      if (effect.kind === "owner") {
+        this.addWorkspaceMetadataRefresh(refreshes, workspaceKey, effect.refreshBase);
+      } else if (effect.kind !== "ignore") {
+        throw new Error(`Invalid ${effect.kind} effect for worktree metadata`);
+      }
+    }
+    return matched;
+  }
+
+  private routeMainCheckoutMetadata(
+    target: RepoGitTarget,
+    matchesRepoGitRoot: ReturnType<typeof createRealpathAwarePathMatcher>,
+    refreshBase: boolean,
+    refreshes: Map<string, RepoMetadataWorkspaceRefresh>,
+  ): void {
+    for (const workspaceKey of target.workspaceKeys) {
+      const facts = this.workspaceTargets.get(workspaceKey)?.latestFacts;
+      if (facts?.isGit && facts.absoluteGitDir && matchesRepoGitRoot(facts.absoluteGitDir)) {
+        this.addWorkspaceMetadataRefresh(refreshes, workspaceKey, refreshBase);
+      }
+    }
+  }
+
+  private routeLocalBranchRef(
+    target: RepoGitTarget,
+    branch: string,
+    refreshes: Map<string, RepoMetadataWorkspaceRefresh>,
+  ): void {
+    for (const workspaceKey of target.workspaceKeys) {
+      const facts = this.workspaceTargets.get(workspaceKey)?.latestFacts;
+      if (!facts?.isGit) continue;
+      const dependentRefs = [
+        facts.storedBaseRef,
+        facts.resolvedBaseRef,
+        facts.comparisonBaseRef,
+        facts.upstreamStatus?.ref,
+      ];
+      const usesBranch = dependentRefs.some(
+        (ref) => ref === branch || ref === `refs/heads/${branch}`,
+      );
+      if (facts.currentBranch === branch || usesBranch) {
+        this.addWorkspaceMetadataRefresh(refreshes, workspaceKey, true);
+      }
+    }
+  }
+
+  private routeRemoteBranchRef(
+    target: RepoGitTarget,
+    remoteRef: string,
+    refreshes: Map<string, RepoMetadataWorkspaceRefresh>,
+  ): void {
+    const qualifiedRemoteRef = `refs/remotes/${remoteRef}`;
+    for (const workspaceKey of target.workspaceKeys) {
+      const facts = this.workspaceTargets.get(workspaceKey)?.latestFacts;
+      if (!facts?.isGit) continue;
+      const trackedBranch = facts.branchMergeRef?.startsWith("refs/heads/")
+        ? facts.branchMergeRef.slice("refs/heads/".length)
+        : null;
+      const configuredRemoteRef =
+        facts.branchRemoteName && facts.branchRemoteName !== "." && trackedBranch
+          ? `${facts.branchRemoteName}/${trackedBranch}`
+          : null;
+      const refs = [
+        facts.storedBaseRef,
+        facts.resolvedBaseRef,
+        facts.comparisonBaseRef,
+        facts.upstreamStatus?.ref,
+        configuredRemoteRef,
+      ];
+      const usesRemoteRef = refs.some((ref) => ref === remoteRef || ref === qualifiedRemoteRef);
+      if (usesRemoteRef) {
+        this.addWorkspaceMetadataRefresh(refreshes, workspaceKey, true);
+      }
+    }
+  }
+
+  private addWorkspaceMetadataRefresh(
+    refreshes: Map<string, RepoMetadataWorkspaceRefresh>,
+    workspaceKey: string,
+    refreshBase: boolean,
+  ): void {
+    const previous = refreshes.get(workspaceKey);
+    refreshes.set(workspaceKey, {
+      refreshBase: previous?.refreshBase === true || refreshBase,
+    });
+  }
+
   private scheduleRepoMetadataRefresh(
     target: RepoGitTarget,
     reason: string,
     refreshWorktree: boolean,
+    routedRefreshes: Map<string, RepoMetadataWorkspaceRefresh> | null = null,
   ): void {
     if (target.closed || this.repoTargets.get(target.repoGitRoot) !== target) {
       return;
     }
     const workingTreeTargets = new Set<WorkingTreeWatchTarget>();
-    for (const workspaceKey of target.workspaceKeys) {
+    const refreshes =
+      routedRefreshes ??
+      new Map(
+        Array.from(target.workspaceKeys, (workspaceKey) => [workspaceKey, { refreshBase: true }]),
+      );
+    for (const [workspaceKey, refresh] of refreshes) {
       const workspaceTarget = this.workspaceTargets.get(workspaceKey);
       if (workspaceTarget) {
-        this.invalidateCheckoutDiffCache(workspaceTarget.cwd, "base");
-        if (workspaceTarget.latestFacts?.isGit) {
-          this.invalidateCheckoutDiffCache(workspaceTarget.latestFacts.worktreeRoot, "base");
+        if (refresh.refreshBase) {
+          this.invalidateCheckoutDiffCache(workspaceTarget.cwd, "base");
+          if (workspaceTarget.latestFacts?.isGit) {
+            this.invalidateCheckoutDiffCache(workspaceTarget.latestFacts.worktreeRoot, "base");
+          }
         }
         if (refreshWorktree) {
           const workingTreeTarget = this.getWorkingTreeWatchTargetForWorkspace(workspaceTarget);
@@ -1567,7 +1732,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         }
         this.scheduleWorkspaceRefresh(workspaceTarget, {
           scope: refreshWorktree ? undefined : "structure",
-          emitUnchanged: true,
+          emitUnchanged: refresh.refreshBase,
           reason,
         });
       }
