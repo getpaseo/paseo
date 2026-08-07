@@ -166,7 +166,10 @@ export function createWorkspaceScriptsService(deps: {
     return buildSnapshot(workspace, project);
   }
 
-  async function launchProcess(input: { workspaceId: string; scriptName: string }) {
+  async function launchProcess(
+    input: { workspaceId: string; scriptName: string },
+    hooks?: { onTerminalReady?: (terminalId: string) => void },
+  ) {
     const available = requireAvailable();
     const workspace = await getWorkspace(input.workspaceId);
     const project = await projectRegistry.get(workspace.projectId);
@@ -187,6 +190,10 @@ export function createWorkspaceScriptsService(deps: {
       logger,
       onLifecycleChanged: () => {
         void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
+      },
+      onTerminalReady: (terminalId) => {
+        void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
+        hooks?.onTerminalReady?.(terminalId);
       },
     });
     return { workspace, project, terminalId: result.terminalId };
@@ -236,9 +243,7 @@ export function createWorkspaceScriptsService(deps: {
   }
 
   async function start(request: StartWorkspaceScriptRequest): Promise<void> {
-    try {
-      const { workspace, terminalId } = await launchProcess(request);
-      void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
+    const respond = (terminalId: string | null, error: string | null): void => {
       emit({
         type: "start_workspace_script_response",
         payload: {
@@ -246,26 +251,59 @@ export function createWorkspaceScriptsService(deps: {
           workspaceId: request.workspaceId,
           scriptName: request.scriptName,
           terminalId,
-          error: null,
+          error,
         },
       });
-    } catch (error) {
+    };
+
+    // Respond as soon as the terminal exists so a client can focus its tab
+    // immediately, then let the readiness wait + command send run in the
+    // background. Awaiting the whole thing would block this connection's
+    // message loop for up to the readiness timeout, and delay the tab.
+    let responded = false;
+    const respondOnce = (terminalId: string | null, error: string | null): void => {
+      if (responded) {
+        return;
+      }
+      responded = true;
+      respond(terminalId, error);
+    };
+    const failStart = (error: unknown): void => {
       const message = error instanceof Error ? error.message : "Failed to start workspace script";
       logger.error(
         { err: error, workspaceId: request.workspaceId, scriptName: request.scriptName },
         "Failed to start workspace script",
       );
-      emit({
-        type: "start_workspace_script_response",
-        payload: {
-          requestId: request.requestId,
-          workspaceId: request.workspaceId,
-          scriptName: request.scriptName,
-          terminalId: null,
-          error: message,
+      respondOnce(null, message);
+    };
+
+    // Resolves with the response, not with the finished readiness wait, so this
+    // returns as soon as the terminal is handed over (or the start failed).
+    await new Promise<void>((resolveStart) => {
+      void launchProcess(request, {
+        onTerminalReady: (terminalId) => {
+          respondOnce(terminalId, null);
+          resolveStart();
         },
-      });
-    }
+      })
+        .catch((error: unknown) => {
+          if (responded) {
+            // The terminal was already handed over: this is a shell that stopped
+            // to ask something on its way to a prompt, not a start failure. It is
+            // on the client's screen showing what it wants. Don't respond again,
+            // and don't log it as an error — it is a normal interaction that
+            // would otherwise flood the log on every start under oh-my-zsh.
+            logger.debug(
+              { err: error, workspaceId: request.workspaceId, scriptName: request.scriptName },
+              "Script terminal handed over before its shell reached a prompt",
+            );
+            return;
+          }
+          // A failure before any terminal existed is a real start error.
+          failStart(error);
+        })
+        .finally(resolveStart);
+    });
   }
 
   return { buildSnapshot, emitStatusUpdate, list, launch, stop, start };

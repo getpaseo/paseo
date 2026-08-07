@@ -2,6 +2,7 @@ import type {
   TerminalExitInfo,
   ServerMessage,
   ClientMessage,
+  TerminalPromptState,
   TerminalStateSnapshot,
   TerminalStateSnapshotOptions,
 } from "./terminal.js";
@@ -16,6 +17,10 @@ export interface WorkerTerminalInfo {
   workspaceId?: string;
   title?: string;
   activity: TerminalActivity | null;
+  shellIntegrationExpected: boolean;
+  // Carried on creation so the parent starts from the worker's own state
+  // instead of inferring it from whichever events happen to arrive first.
+  promptState: TerminalPromptState;
 }
 
 export interface WorkerCreateTerminalOptions {
@@ -43,6 +48,22 @@ export type TerminalWorkerRequest =
       type: "createTerminal";
       requestId: string;
       options: WorkerCreateTerminalOptions;
+    }
+  // Both of these exist because prompt state cannot be trusted from the parent:
+  // the parent holds a copy that lags by one IPC hop, so "not announced yet" and
+  // "the announce is in flight" look identical there, and a check-then-send pair
+  // can straddle a state change. Answering in the worker, against the live
+  // session, removes the guesswork. See docs/terminal-readiness.md.
+  | {
+      type: "getPromptState";
+      requestId: string;
+      terminalId: string;
+    }
+  | {
+      type: "sendInputIfAtPrompt";
+      requestId: string;
+      terminalId: string;
+      data: string;
     }
   | {
       type: "registerCwdEnv";
@@ -140,6 +161,11 @@ export type TerminalWorkerEvent =
       };
     }
   | {
+      type: "terminalPromptState";
+      terminalId: string;
+      state: TerminalPromptState;
+    }
+  | {
       type: "terminalActivityChange";
       terminalId: string;
       activity: TerminalActivity | null;
@@ -149,6 +175,11 @@ export type TerminalWorkerEvent =
 export type TerminalWorkerToParentMessage = TerminalWorkerResponse | TerminalWorkerEvent;
 
 export type TerminalWorkerCaptureResult = CaptureTerminalLinesResult;
+export type TerminalWorkerPromptStateResult = TerminalPromptState | null;
+export interface TerminalWorkerSendIfAtPromptResult {
+  // false when the shell was not at its prompt at write time: nothing was sent.
+  sent: boolean;
+}
 // The worker fills TerminalStateSnapshot.replayPreamble on getTerminalState so
 // the parent can cache the input-mode preamble instead of re-deriving it.
 export type TerminalWorkerStateResult = TerminalStateSnapshot | null;

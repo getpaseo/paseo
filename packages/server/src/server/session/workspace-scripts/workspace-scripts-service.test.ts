@@ -21,6 +21,7 @@ import type {
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import { createWorkspaceScriptsService } from "./workspace-scripts-service.js";
 import { deriveProjectServiceSlug } from "../../workspace-git-metadata.js";
+import { TerminalNotReadyError } from "../../worktree-bootstrap.js";
 
 // The production module reads only WorkspaceGitService.{peekSnapshot,getProjectSlug},
 // WorkspaceRegistry.get, and forwards the launcher + opaque managers to the injected
@@ -77,6 +78,7 @@ interface BuildOptions {
   project?: PersistedProjectRecord | null;
   spawnThrows?: string;
   gitService?: Pick<WorkspaceGitService, "peekSnapshot">;
+  spawnThrowsNotReady?: { terminalId: string; reason?: "timeout" | "exited" | "raced" };
 }
 
 function buildService(options: BuildOptions = {}) {
@@ -110,9 +112,24 @@ function buildService(options: BuildOptions = {}) {
     async spawnWorkspaceScript(spawnOptions): Promise<WorktreeScriptResult> {
       spawnCalls.push(spawnOptions);
       if (options.spawnThrows) {
+        // Failure before any terminal exists (bad config, already running): the
+        // terminal is never handed over.
         throw new Error(options.spawnThrows);
       }
+      // The terminal exists and is handed to the caller now, before the command
+      // is typed — exactly what lets a client focus it immediately.
+      const readyTerminalId = options.spawnThrowsNotReady?.terminalId ?? "terminal-1";
+      spawnOptions.onTerminalReady?.(readyTerminalId);
       spawnOptions.onLifecycleChanged?.();
+      if (options.spawnThrowsNotReady) {
+        // The shell never reached its prompt: this rejects AFTER the terminal
+        // was handed over, so it must not turn into a start error.
+        throw new TerminalNotReadyError(
+          readyTerminalId,
+          options.spawnThrowsNotReady.reason ?? "timeout",
+          15_000,
+        );
+      }
       return {
         scriptName: spawnOptions.scriptName,
         hostname: null,
@@ -433,6 +450,7 @@ describe("start", () => {
   test("reports the launcher error when spawning fails", async () => {
     const { service, emitted } = buildService({ spawnThrows: "boom" });
     await service.start(request);
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(emitted).toEqual([
       {
         type: "start_workspace_script_response",
@@ -446,4 +464,56 @@ describe("start", () => {
       },
     ]);
   });
+});
+
+async function flushMicrotasks(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+function startResponse(emitted: SessionOutboundMessage[]) {
+  const response = emitted.find((message) => message.type === "start_workspace_script_response");
+  if (response?.type !== "start_workspace_script_response") {
+    throw new Error("expected a start_workspace_script_response");
+  }
+  return response.payload;
+}
+
+it("hands over the terminal immediately, before the command is sent", async () => {
+  const { service, emitted } = buildService();
+
+  await service.start({ requestId: "req-1", workspaceId: "ws-1", scriptName: "daemon" });
+
+  // The response carries the terminal as soon as it exists, so a client can
+  // focus its tab without waiting for the shell to reach a prompt.
+  const payload = startResponse(emitted);
+  expect(payload.terminalId).toBe("terminal-1");
+  expect(payload.error).toBeNull();
+});
+
+it("still hands over the terminal, without an error, when the shell never reaches a prompt", async () => {
+  const { service, emitted } = buildService({
+    spawnThrowsNotReady: { terminalId: "terminal-blocked" },
+  });
+
+  await service.start({ requestId: "req-1", workspaceId: "ws-1", scriptName: "daemon" });
+  await flushMicrotasks();
+
+  // Exactly one response: the ok one with the terminal. The later readiness
+  // failure must not emit a second, error response over it.
+  const responses = emitted.filter((message) => message.type === "start_workspace_script_response");
+  expect(responses).toHaveLength(1);
+  const payload = startResponse(emitted);
+  expect(payload.terminalId).toBe("terminal-blocked");
+  expect(payload.error).toBeNull();
+});
+
+it("reports an error, and no terminal, when a script fails before one exists", async () => {
+  const { service, emitted } = buildService({ spawnThrows: "boom" });
+
+  await service.start({ requestId: "req-2", workspaceId: "ws-1", scriptName: "daemon" });
+  await flushMicrotasks();
+
+  const payload = startResponse(emitted);
+  expect(payload.error).toBe("boom");
+  expect(payload.terminalId).toBeNull();
 });

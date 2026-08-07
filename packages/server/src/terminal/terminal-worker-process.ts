@@ -69,6 +69,8 @@ function toTerminalInfo(session: TerminalSession): WorkerTerminalInfo {
     workspaceId: session.workspaceId,
     ...(session.getTitle() ? { title: session.getTitle() } : {}),
     activity: session.getActivity(),
+    shellIntegrationExpected: session.shellIntegrationExpected,
+    promptState: session.getPromptState(),
   };
 }
 
@@ -176,6 +178,17 @@ function watchTerminal(session: TerminalSession): void {
       info,
     });
   });
+  const unsubscribePromptState = session.onPromptStateChange((state) => {
+    // Flush first: a readiness marker means "everything printed before this is
+    // already on screen", and the parent must not see the state flip ahead of
+    // the output that explains it.
+    outputCoalescer.flush();
+    sendToParent({
+      type: "terminalPromptState",
+      terminalId: session.id,
+      state,
+    });
+  });
   const unsubscribeActivity = session.onActivityChange((transition) => {
     sendToParent({
       type: "terminalActivityChange",
@@ -190,6 +203,7 @@ function watchTerminal(session: TerminalSession): void {
     unsubscribeExit,
     unsubscribeTitle,
     unsubscribeCommandFinished,
+    unsubscribePromptState,
     unsubscribeActivity,
   ]);
 }
@@ -330,7 +344,46 @@ async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
       sendToParent({ type: "response", requestId: message.requestId, ok: true });
       return;
     }
+
+    case "getPromptState":
+    case "sendInputIfAtPrompt": {
+      handlePromptStateRequest(message);
+      return;
+    }
   }
+}
+
+/**
+ * Prompt-state requests are answered here rather than from the parent's mirror
+ * because only this process sees the live session. For sendInputIfAtPrompt the
+ * check and the write also happen in the same tick: splitting them across the
+ * IPC boundary would let the shell hand stdin to a foreground command in
+ * between, and the input would land in that command instead of on the line.
+ */
+function handlePromptStateRequest(
+  message: Extract<TerminalWorkerRequest, { type: "getPromptState" | "sendInputIfAtPrompt" }>,
+): void {
+  const session = manager.getTerminal(message.terminalId);
+  if (message.type === "getPromptState") {
+    sendToParent({
+      type: "response",
+      requestId: message.requestId,
+      ok: true,
+      result: session?.getPromptState() ?? null,
+    });
+    return;
+  }
+
+  const sent = Boolean(session && session.getPromptState().atPrompt);
+  if (session && sent) {
+    session.send({ type: "input", data: message.data });
+  }
+  sendToParent({
+    type: "response",
+    requestId: message.requestId,
+    ok: true,
+    result: { sent },
+  });
 }
 
 process.on("message", (message: TerminalWorkerRequest) => {

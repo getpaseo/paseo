@@ -11,6 +11,7 @@ import type {
   TerminalActivityTransition,
   TerminalCommandFinishedInfo,
   TerminalExitInfo,
+  TerminalPromptState,
   TerminalSession,
   TerminalStateSnapshot,
 } from "./terminal.js";
@@ -30,6 +31,8 @@ import type {
   TerminalWorkerResponse,
   TerminalWorkerToParentMessage,
   WorkerCreateTerminalOptions,
+  TerminalWorkerPromptStateResult,
+  TerminalWorkerSendIfAtPromptResult,
   TerminalWorkerStateResult,
   WorkerTerminalInfo,
 } from "./terminal-worker-protocol.js";
@@ -71,9 +74,15 @@ interface WorkerTerminalRecord {
   // the snapshotReady event that precedes a live-restore replay.
   replayPreamble: string;
   exitInfo: TerminalExitInfo | null;
+  // Live prompt state, kept out of `info`: re-registering a record (the
+  // terminalCreated event and the create response both do) replaces `info`
+  // wholesale, which would roll this back to whatever the worker reported at
+  // spawn time. Once the record exists, only prompt-state events move it.
+  promptState: TerminalPromptState;
   messageListeners: Set<(msg: ServerMessage) => void>;
   exitListeners: Set<(info: TerminalExitInfo) => void>;
   commandFinishedListeners: Set<(info: TerminalCommandFinishedInfo) => void>;
+  promptStateListeners: Set<(state: TerminalPromptState) => void>;
   titleChangeListeners: Set<(title?: string) => void>;
   activityChangeListeners: Set<(transition: TerminalActivityTransition) => void>;
   session: TerminalSession;
@@ -136,6 +145,8 @@ function cloneTerminalInfo(info: RequiredWorkerTerminalInfo): RequiredWorkerTerm
     workspaceId: info.workspaceId,
     ...(info.title ? { title: info.title } : {}),
     activity: info.activity,
+    shellIntegrationExpected: info.shellIntegrationExpected,
+    promptState: info.promptState,
   };
 }
 
@@ -235,9 +246,11 @@ export function createWorkerTerminalManager(
       activity: input.info.activity,
       replayPreamble: "",
       exitInfo: null,
+      promptState: input.info.promptState,
       messageListeners: new Set(),
       exitListeners: new Set(),
       commandFinishedListeners: new Set(),
+      promptStateListeners: new Set(),
       titleChangeListeners: new Set(),
       activityChangeListeners: new Set(),
       session: undefined as unknown as TerminalSession,
@@ -297,6 +310,39 @@ export function createWorkerTerminalManager(
         return () => {
           record.commandFinishedListeners.delete(listener);
         };
+      },
+      onPromptStateChange(listener: (state: TerminalPromptState) => void): () => void {
+        record.promptStateListeners.add(listener);
+        return () => {
+          record.promptStateListeners.delete(listener);
+        };
+      },
+      getPromptState(): TerminalPromptState {
+        return record.promptState;
+      },
+      async fetchPromptState(): Promise<TerminalPromptState> {
+        // Round-trip so the answer reflects the worker's state, not this
+        // process's copy of it. IPC is ordered, so anything the worker already
+        // emitted has arrived by the time the response does.
+        const result = (await sendRequest({
+          type: "getPromptState",
+          terminalId: record.info.id,
+        })) as TerminalWorkerPromptStateResult;
+        if (result) {
+          record.promptState = result;
+        }
+        return result ?? record.promptState;
+      },
+      async sendInputIfAtPrompt(data: string): Promise<boolean> {
+        const result = (await sendRequest({
+          type: "sendInputIfAtPrompt",
+          terminalId: record.info.id,
+          data,
+        })) as TerminalWorkerSendIfAtPromptResult;
+        return result.sent;
+      },
+      get shellIntegrationExpected() {
+        return record.info.shellIntegrationExpected;
       },
       onTitleChange(listener: (title?: string) => void): () => void {
         record.titleChangeListeners.add(listener);
@@ -442,6 +488,9 @@ export function createWorkerTerminalManager(
       return;
     }
     record.exitInfo = message.info;
+    // The shell is gone; nothing is reading the line any more.
+    record.promptState = { ...record.promptState, atPrompt: false };
+    record.promptStateListeners.clear();
     for (const listener of Array.from(record.exitListeners)) {
       listener(message.info);
     }
@@ -497,6 +546,28 @@ export function createWorkerTerminalManager(
     }
     for (const listener of Array.from(record.commandFinishedListeners)) {
       listener(message.info);
+    }
+  }
+
+  function handleTerminalPromptStateEvent(
+    message: Extract<TerminalWorkerToParentMessage, { type: "terminalPromptState" }>,
+  ): void {
+    // Unknown id means the terminal already exited and its record is gone. The
+    // worker subscribes before it sends terminalCreated and IPC preserves
+    // order, so a prompt event can never arrive ahead of its record.
+    const record = recordsById.get(message.terminalId);
+    if (!record) {
+      return;
+    }
+    if (
+      record.promptState.atPrompt === message.state.atPrompt &&
+      record.promptState.shellIntegrationActive === message.state.shellIntegrationActive
+    ) {
+      return;
+    }
+    record.promptState = message.state;
+    for (const listener of Array.from(record.promptStateListeners)) {
+      listener(message.state);
     }
   }
 
@@ -570,6 +641,11 @@ export function createWorkerTerminalManager(
 
       case "terminalCommandFinished": {
         handleTerminalCommandFinishedEvent(message);
+        return;
+      }
+
+      case "terminalPromptState": {
+        handleTerminalPromptStateEvent(message);
         return;
       }
 

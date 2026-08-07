@@ -4181,9 +4181,12 @@ describe("session workspace script handling", () => {
         cwd: "/tmp/repo",
       }),
     };
-    spawnMocks.spawnWorkspaceScript.mockResolvedValue({
-      scriptName: "api",
-      terminalId: "terminal-1",
+    // The real launcher hands the terminal over via onTerminalReady the moment
+    // it is registered; the response is emitted from that, not from the resolved
+    // value, so the mock must fire it too.
+    spawnMocks.spawnWorkspaceScript.mockImplementation(async (options) => {
+      options.onTerminalReady?.("terminal-1");
+      return { scriptName: "api", hostname: null, port: null, terminalId: "terminal-1" };
     });
     const session = createSessionForTest({
       workspaceGitService,

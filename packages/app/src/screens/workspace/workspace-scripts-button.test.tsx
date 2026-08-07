@@ -50,7 +50,11 @@ const {
 
   return {
     theme: hoistedTheme,
-    startWorkspaceScriptMock: vi.fn(async () => ({ terminalId: "terminal-script-1" })),
+    startWorkspaceScriptMock: vi.fn(
+      async (): Promise<{ terminalId: string | null; error?: string | null }> => ({
+        terminalId: "terminal-script-1",
+      }),
+    ),
     killTerminalMock: vi.fn(async () => ({
       terminalId: "terminal-script-1",
       success: true,
@@ -236,6 +240,7 @@ const LIVE_TERMINAL_IDS: string[] = ["terminal-script-1"];
 interface RenderScriptsOptions {
   hideLabels?: boolean;
   presentation?: "split" | "ghost";
+  onScriptTerminalStarted?: (terminalId: string) => void;
 }
 
 function renderScripts(
@@ -265,6 +270,7 @@ function renderScripts(
           liveTerminalIds={LIVE_TERMINAL_IDS}
           hideLabels={options.hideLabels}
           presentation={options.presentation}
+          onScriptTerminalStarted={options.onScriptTerminalStarted}
         />
       </QueryClientProvider>
     );
@@ -616,5 +622,53 @@ describe("WorkspaceScriptsButton", () => {
     await act(async () => {});
 
     expect(startWorkspaceScriptMock).toHaveBeenCalledWith("workspace-1", "dev");
+  });
+
+  it("focuses the script's terminal as soon as the start responds with one", async () => {
+    const onScriptTerminalStarted = vi.fn();
+    // The daemon now responds with the terminal the moment it exists — whether
+    // the shell reached its prompt or is still sitting on one — so a click
+    // focuses the tab straight away, like opening a plain terminal.
+    startWorkspaceScriptMock.mockResolvedValueOnce({ terminalId: "terminal-1", error: null });
+    current = renderScripts([script({ scriptName: "daemon", lifecycle: "stopped" })], {
+      onScriptTerminalStarted,
+    });
+
+    const start = document.querySelector('[data-testid="workspace-scripts-start-daemon"]');
+    if (!(start instanceof HTMLElement)) {
+      throw new Error("Missing start button");
+    }
+    await act(async () => {
+      start.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(startWorkspaceScriptMock).toHaveBeenCalledWith("workspace-1", "daemon");
+    expect(onScriptTerminalStarted).toHaveBeenCalledTimes(1);
+    expect(onScriptTerminalStarted).toHaveBeenCalledWith("terminal-1");
+  });
+
+  it("does not focus a terminal when the start fails outright", async () => {
+    const onScriptTerminalStarted = vi.fn();
+    // A genuine start failure (bad config, already running): no terminal exists,
+    // so there is nothing to focus — the error surfaces as a toast instead.
+    startWorkspaceScriptMock.mockResolvedValueOnce({
+      terminalId: null,
+      error: "Script 'daemon' is already running",
+    });
+    current = renderScripts([script({ scriptName: "daemon", lifecycle: "stopped" })], {
+      onScriptTerminalStarted,
+    });
+
+    const start = document.querySelector('[data-testid="workspace-scripts-start-daemon"]');
+    if (!(start instanceof HTMLElement)) {
+      throw new Error("Missing start button");
+    }
+    await act(async () => {
+      start.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(onScriptTerminalStarted).not.toHaveBeenCalled();
   });
 });

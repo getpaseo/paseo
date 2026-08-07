@@ -118,8 +118,17 @@ const temporaryDirs: string[] = [];
 
 afterEach(async () => {
   vi.useRealTimers();
-  for (const session of sessions) {
-    session.kill();
+  // POSIX only: wait for the shells to actually die before removing their HOME
+  // below, because a zsh still writing (.zcompdump, history) into a directory
+  // being deleted makes rmSync fail with ENOTEMPTY. Awaiting the same teardown
+  // on Windows kills the vitest worker outright (conpty exits on its own
+  // schedule), and the zsh HOME this guards is POSIX-only anyway.
+  if (isPlatform("win32")) {
+    for (const session of sessions) {
+      session.kill();
+    }
+  } else {
+    await Promise.all(sessions.map((session) => session.killAndWait()));
   }
   sessions.length = 0;
   while (temporaryDirs.length > 0) {
@@ -653,6 +662,110 @@ describe.skipIf(isPlatform("win32"))("terminal title", () => {
     unsubscribeCommandFinished();
   });
 
+  it("marks the terminal at-prompt when the shell integration reports its own nonce", async () => {
+    const packageRoot = mkdtempSync(join(tmpdir(), "terminal-prompt-ready-"));
+    temporaryDirs.push(packageRoot);
+    const scriptPath = join(packageRoot, "emit-prompt-ready.sh");
+    // Mirrors the zle-line-init hook: echo back the nonce the daemon injected.
+    writeFileSync(scriptPath, '#!/bin/sh\nprintf "\\033]633;R;$PASEO_TERMINAL_NONCE\\007"\n');
+    chmodSync(scriptPath, 0o755);
+
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: packageRoot,
+        shell: "/bin/sh",
+        env: { PS1: "$ " },
+      }),
+    );
+    const promptStates: boolean[] = [];
+    const unsubscribePromptReady = session.onPromptStateChange((state) => {
+      promptStates.push(state.atPrompt);
+    });
+
+    await waitForLines(session, ["$"]);
+    expect(session.getPromptState().atPrompt).toBe(false);
+
+    session.send({ type: "input", data: "./emit-prompt-ready.sh\r" });
+    await waitForState(session, () => session.getPromptState().atPrompt);
+
+    expect(promptStates).toEqual([true]);
+    expect(getLines(session.getState()).join("\n")).not.toContain("633;R");
+
+    unsubscribePromptReady();
+  });
+
+  it("ignores prompt-ready markers carrying a foreign nonce", async () => {
+    const packageRoot = mkdtempSync(join(tmpdir(), "terminal-prompt-ready-spoof-"));
+    temporaryDirs.push(packageRoot);
+    const scriptPath = join(packageRoot, "emit-spoofed-prompt-ready.sh");
+    // Stray output from an unrelated tool must never be read as readiness.
+    writeFileSync(
+      scriptPath,
+      "#!/bin/sh\nprintf '\\033]633;R;not-the-nonce\\007\\033]633;R\\007\\033]633;D;0\\007'\n",
+    );
+    chmodSync(scriptPath, 0o755);
+
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: packageRoot,
+        shell: "/bin/sh",
+        env: { PS1: "$ " },
+      }),
+    );
+    const promptStates: boolean[] = [];
+    const unsubscribePromptReady = session.onPromptStateChange((state) => {
+      promptStates.push(state.atPrompt);
+    });
+    const commandCompletions: Array<number | null> = [];
+    const unsubscribeCommandFinished = session.onCommandFinished((info) => {
+      commandCompletions.push(info.exitCode);
+    });
+
+    await waitForLines(session, ["$"]);
+    session.send({ type: "input", data: "./emit-spoofed-prompt-ready.sh\r" });
+
+    // The trailing D;0 is the ordering barrier: once it lands, both bogus
+    // R markers have already been parsed and rejected.
+    await waitForState(session, () => commandCompletions.length === 1);
+
+    expect(promptStates).toEqual([]);
+    expect(session.getPromptState().atPrompt).toBe(false);
+
+    unsubscribePromptReady();
+    unsubscribeCommandFinished();
+  });
+
+  it("clears at-prompt when the shell reports a command started", async () => {
+    const packageRoot = mkdtempSync(join(tmpdir(), "terminal-prompt-cleared-"));
+    temporaryDirs.push(packageRoot);
+    const readyScript = join(packageRoot, "emit-prompt-ready.sh");
+    writeFileSync(readyScript, '#!/bin/sh\nprintf "\\033]633;R;$PASEO_TERMINAL_NONCE\\007"\n');
+    chmodSync(readyScript, 0o755);
+    const execScript = join(packageRoot, "emit-command-started.sh");
+    writeFileSync(execScript, '#!/bin/sh\nprintf "\\033]633;C;$PASEO_TERMINAL_NONCE\\007"\n');
+    chmodSync(execScript, 0o755);
+
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: packageRoot,
+        shell: "/bin/sh",
+        env: { PS1: "$ " },
+      }),
+    );
+
+    await waitForLines(session, ["$"]);
+    session.send({ type: "input", data: "./emit-prompt-ready.sh\r" });
+    await waitForState(session, () => session.getPromptState().atPrompt);
+
+    session.send({ type: "input", data: "./emit-command-started.sh\r" });
+    await waitForState(session, () => !session.getPromptState().atPrompt);
+
+    expect(session.getPromptState().atPrompt).toBe(false);
+  });
+
   it("debounces rapid title changes and emits only the final title", async () => {
     const session = trackSession(
       await createTerminal({
@@ -806,6 +919,65 @@ describe.skipIf(isPlatform("win32"))("terminal title", () => {
     expect(getLines(session.getState()).join("\n")).not.toContain("633;D;1");
 
     unsubscribeCommandFinished();
+  });
+
+  it.skipIf(!hasZsh)("reports at-prompt once the zsh line editor takes the line", async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), "terminal-zsh-prompt-ready-home-"));
+    temporaryDirs.push(homeDir);
+    const realZdotdir = join(homeDir, ".config", "zsh");
+    mkdirSync(realZdotdir, { recursive: true });
+    writeFileSync(join(realZdotdir, ".zshenv"), "");
+    writeFileSync(join(realZdotdir, ".zshrc"), "PS1='$ '\n");
+
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: homeDir,
+        shell: "/bin/zsh",
+        env: { HOME: homeDir, ZDOTDIR: realZdotdir },
+      }),
+    );
+
+    expect(session.shellIntegrationExpected).toBe(true);
+    await waitForState(session, () => session.getPromptState().atPrompt);
+
+    // Running a command hands stdin to it, so the editor no longer owns the line.
+    session.send({ type: "input", data: "sleep 0.4\r" });
+    await waitForState(session, () => !session.getPromptState().atPrompt);
+    await waitForState(session, () => session.getPromptState().atPrompt);
+  });
+
+  it.skipIf(!hasZsh)("stays off-prompt while zsh startup blocks on input", async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), "terminal-zsh-blocked-startup-home-"));
+    temporaryDirs.push(homeDir);
+    const realZdotdir = join(homeDir, ".config", "zsh");
+    mkdirSync(realZdotdir, { recursive: true });
+    writeFileSync(join(realZdotdir, ".zshenv"), "");
+    // Stands in for oh-my-zsh's "Would you like to update? [Y/n]" prompt: it
+    // prints, then eats a keystroke. Output alone used to mean "ready", which
+    // is how the first character of an injected command got swallowed.
+    writeFileSync(
+      join(realZdotdir, ".zshrc"),
+      "PS1='$ '\nprintf 'update? [Y/n] '\nread -k 1 _answer\nprintf '\\n'\n",
+    );
+
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: homeDir,
+        shell: "/bin/zsh",
+        env: { HOME: homeDir, ZDOTDIR: realZdotdir },
+      }),
+    );
+
+    await waitForState(session, () =>
+      getLines(session.getState()).join("\n").includes("update? [Y/n]"),
+    );
+    // The shell has printed, but `read` owns stdin — not the line editor.
+    expect(session.getPromptState().atPrompt).toBe(false);
+
+    session.send({ type: "input", data: "n" });
+    await waitForState(session, () => session.getPromptState().atPrompt);
   });
 
   it("clears already scheduled OSC title debounce timers when setting a user title", async () => {

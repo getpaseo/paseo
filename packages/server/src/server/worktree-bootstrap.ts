@@ -57,6 +57,18 @@ export interface RunAsyncWorktreeBootstrapOptions {
 const MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES = 64 * 1024;
 const WORKTREE_SETUP_TRUNCATION_MARKER = "\n...<output truncated in the middle>...\n";
 const WORKTREE_BOOTSTRAP_TERMINAL_READY_TIMEOUT_MS = 1_500;
+// How long to wait for an integrated shell to reach its line editor. Generous:
+// it covers slow rc files, and the cost of being wrong is a corrupted command.
+const TERMINAL_PROMPT_READY_TIMEOUT_MS = 15_000;
+// How long to wait for a shell to announce its integration before concluding it
+// has none. The announce is emitted from our .zshenv wrapper before any user rc
+// file runs, so this only has to cover zsh reaching its first sourced line — but
+// getting it wrong types into a possibly-blocked shell, while being slow only
+// costs latency for the rare shell that has no integration at all. So it is
+// generous: a loaded machine can take far longer than a prompt feels like it
+// should. The decision is re-checked against the worker before falling back, so
+// this bound is about the shell's own speed, not about IPC timing.
+const TERMINAL_INTEGRATION_ANNOUNCE_GRACE_MS = 5_000;
 
 interface MiddleTruncationAccumulator {
   totalBytes: number;
@@ -446,7 +458,213 @@ function buildTerminalTimelineItem(input: {
   };
 }
 
-async function waitForTerminalBootstrapReadiness(
+type ReadinessTerminal = Pick<
+  TerminalSession,
+  | "id"
+  | "getState"
+  | "subscribe"
+  | "shellIntegrationExpected"
+  | "getPromptState"
+  | "fetchPromptState"
+  | "sendInputIfAtPrompt"
+  | "onPromptStateChange"
+  | "onExit"
+  | "getExitInfo"
+  | "send"
+>;
+
+export type TerminalNotReadyReason = "timeout" | "exited" | "raced";
+
+/**
+ * The shell never reached a state where typing into it is safe. Thrown instead
+ * of injecting anyway: a command typed into a shell that is blocked on `read`
+ * gets its first characters eaten, which silently corrupts it.
+ */
+export class TerminalNotReadyError extends Error {
+  constructor(
+    public readonly terminalId: string,
+    public readonly reason: TerminalNotReadyReason,
+    public readonly waitedMs: number,
+  ) {
+    super(TerminalNotReadyError.messageFor(reason));
+    this.name = "TerminalNotReadyError";
+  }
+
+  /**
+   * Whether `terminalId` still refers to a live terminal. An exited shell has
+   * already been reaped, so pointing anyone at it would open a dead tab; every
+   * other reason leaves the terminal open holding the reason it failed.
+   */
+  get terminalStillOpen(): boolean {
+    return this.reason !== "exited";
+  }
+
+  private static messageFor(reason: TerminalNotReadyReason): string {
+    switch (reason) {
+      case "exited":
+        return "The terminal's shell exited before it reached a prompt.";
+      case "raced":
+        return "The terminal stopped being at a prompt before the command could be sent. Run it again.";
+      case "timeout":
+        return (
+          "The terminal's shell never reached a prompt. Something in your shell startup may be " +
+          "waiting for input — answer it in the terminal, then run this again."
+        );
+    }
+  }
+}
+
+/**
+ * How the readiness wait settled, and therefore what guarantee the write gets.
+ *
+ * "legacy" shells never report a prompt, so there is nothing to re-check at write
+ * time — guarding the write would mean never typing at all.
+ */
+type ReadinessOutcome = "integrated" | "legacy";
+
+/**
+ * Type the command, re-checking at write time when the shell can tell us.
+ *
+ * The readiness wait can only prove the shell WAS ready. Between that and the
+ * write a foreground command can take stdin — and for a worker-backed terminal
+ * the check and the write are two hops across a process boundary. The worker
+ * settles both together against the live session, so a lost race types nothing.
+ */
+async function sendCommandWhenAtPrompt(
+  terminal: ReadinessTerminal,
+  command: string,
+  outcome: ReadinessOutcome,
+): Promise<void> {
+  const data = `${command}\r`;
+  if (outcome === "legacy") {
+    terminal.send({ type: "input", data });
+    return;
+  }
+  const sent = await terminal.sendInputIfAtPrompt(data);
+  if (!sent) {
+    throw new TerminalNotReadyError(terminal.id, "raced", 0);
+  }
+}
+
+/**
+ * Resolves once the terminal is safe to type into.
+ *
+ * A shell that can report readiness announces itself before any user rc file
+ * runs, so silence within `announceGraceMs` means "this shell will never tell
+ * us" — not "not ready yet". Those shells (bash, fish, zsh older than 5.3, a
+ * clobbered ZDOTDIR) keep the old heuristic: first output, or a short grace.
+ * That heuristic is what let a blocking oh-my-zsh update prompt eat the first
+ * character of an injected command, so it is a fallback, never the plan.
+ *
+ * Once a shell has announced, silence means the opposite: it is loaded and
+ * something in startup is holding stdin. We wait, then fail — never type.
+ *
+ * See docs/terminal-readiness.md.
+ */
+async function waitForTerminalInputReadiness(
+  terminal: ReadinessTerminal,
+  options: { timeoutMs: number; announceGraceMs: number },
+): Promise<ReadinessOutcome> {
+  if (!terminal.shellIntegrationExpected) {
+    await waitForFirstTerminalOutput(terminal);
+    return "legacy";
+  }
+
+  if (terminal.getExitInfo()) {
+    throw new TerminalNotReadyError(terminal.id, "exited", 0);
+  }
+  if (terminal.getPromptState().atPrompt) {
+    return "integrated";
+  }
+
+  const startedAt = Date.now();
+  const integrationSilent = await new Promise<boolean>((resolve, reject) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    let announceGrace: ReturnType<typeof setTimeout> | null = null;
+    let unsubscribePromptState: (() => void) | null = null;
+    let unsubscribeExit: (() => void) | null = null;
+
+    // One-shot: prompt, exit, grace and timeout can all land in the same tick.
+    const settle = (error: TerminalNotReadyError | null, silent = false) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      if (announceGrace) {
+        clearTimeout(announceGrace);
+        announceGrace = null;
+      }
+      unsubscribePromptState?.();
+      unsubscribePromptState = null;
+      unsubscribeExit?.();
+      unsubscribeExit = null;
+      if (error) {
+        reject(error);
+      } else {
+        resolve(silent);
+      }
+    };
+
+    // Subscribe before re-reading the state: the marker can land between a
+    // check and a late subscription, and that gap is the whole bug.
+    unsubscribePromptState = terminal.onPromptStateChange((state) => {
+      if (state.atPrompt) {
+        settle(null);
+      }
+    });
+    unsubscribeExit = terminal.onExit(() => {
+      settle(new TerminalNotReadyError(terminal.id, "exited", Date.now() - startedAt));
+    });
+
+    if (terminal.getPromptState().atPrompt) {
+      settle(null);
+      return;
+    }
+    if (terminal.getExitInfo()) {
+      settle(new TerminalNotReadyError(terminal.id, "exited", Date.now() - startedAt));
+      return;
+    }
+
+    announceGrace = setTimeout(() => {
+      if (terminal.getPromptState().shellIntegrationActive) {
+        return;
+      }
+      // Do not conclude "no integration" from a local copy that lags by one IPC
+      // hop: an announce in flight would look exactly like silence, and the
+      // fallback types into the shell. Ask the worker, which owns the state.
+      const fallbackIfTrulySilent = async (): Promise<void> => {
+        const state = await terminal.fetchPromptState();
+        if (!state.shellIntegrationActive) {
+          settle(null, true);
+        }
+      };
+      void fallbackIfTrulySilent().catch(() => {
+        // The worker is unreachable; the readiness timeout below is the
+        // backstop. Failing there beats typing on a guess.
+      });
+    }, options.announceGraceMs);
+
+    timeout = setTimeout(() => {
+      settle(new TerminalNotReadyError(terminal.id, "timeout", Date.now() - startedAt));
+    }, options.timeoutMs);
+  });
+
+  if (integrationSilent) {
+    // No integration in this shell after all. Waiting out the grace already
+    // gave startup the same head start the legacy heuristic allows, so this
+    // only has to confirm the terminal has produced something.
+    await waitForFirstTerminalOutput(terminal);
+    return "legacy";
+  }
+  return "integrated";
+}
+
+async function waitForFirstTerminalOutput(
   terminal: Pick<TerminalSession, "getState" | "subscribe">,
 ): Promise<void> {
   if (terminalHasOutput(terminal.getState())) {
@@ -542,6 +760,9 @@ async function runWorktreeTerminalBootstrap(
   const terminalManager = options.terminalManager;
   const results = await Promise.all(
     terminalSpecs.map(async (spec): Promise<WorktreeBootstrapTerminalResult> => {
+      // Tracked outside the try so a readiness failure can still point at the
+      // terminal it left open — that terminal holds the reason it failed.
+      let createdTerminal: TerminalSession | null = null;
       try {
         const terminal = await terminalManager.createTerminal({
           cwd: workspaceCwd,
@@ -549,11 +770,12 @@ async function runWorktreeTerminalBootstrap(
           env: runtimeEnv,
           workspaceId: options.workspaceId,
         });
-        await waitForTerminalBootstrapReadiness(terminal);
-        terminal.send({
-          type: "input",
-          data: `${spec.command}\r`,
+        createdTerminal = terminal;
+        const outcome = await waitForTerminalInputReadiness(terminal, {
+          timeoutMs: TERMINAL_PROMPT_READY_TIMEOUT_MS,
+          announceGraceMs: TERMINAL_INTEGRATION_ANNOUNCE_GRACE_MS,
         });
+        await sendCommandWhenAtPrompt(terminal, spec.command, outcome);
         return {
           name: terminal.name ?? spec.name ?? null,
           command: spec.command,
@@ -568,10 +790,10 @@ async function runWorktreeTerminalBootstrap(
           "Failed to bootstrap worktree terminal",
         );
         return {
-          name: spec.name ?? null,
+          name: createdTerminal?.name ?? spec.name ?? null,
           command: spec.command,
           status: "failed",
-          terminalId: null,
+          terminalId: createdTerminal?.id ?? null,
           error: message,
         };
       }
@@ -714,6 +936,14 @@ export interface SpawnWorkspaceScriptOptions {
   globalServicePorts?: PaseoServicePortAllocation;
   logger?: Logger;
   onLifecycleChanged?: () => void;
+  // Overridable so tests can exercise the timeout without waiting it out.
+  promptReadyTimeoutMs?: number;
+  integrationAnnounceGraceMs?: number;
+  // Fired the moment the terminal exists and is registered, before the command
+  // is typed. Lets the caller hand the terminal to clients immediately — the
+  // same instant a plain terminal is handed over — instead of after the shell
+  // reaches its prompt, which can take the full readiness timeout.
+  onTerminalReady?: (terminalId: string) => void;
 }
 
 interface ServiceScriptSetupResult {
@@ -833,7 +1063,7 @@ async function acquireWorkspaceScriptTerminal(params: {
   workspaceId: string;
   scriptName: string;
   env: Record<string, string> | undefined;
-}): Promise<{ terminal: TerminalSession; reusableTerminal: TerminalSession | null }> {
+}): Promise<TerminalSession> {
   const {
     serviceScript,
     existingRuntimeEntry,
@@ -847,7 +1077,7 @@ async function acquireWorkspaceScriptTerminal(params: {
   if (!serviceScript && existingRuntimeEntry?.terminalId) {
     reusableTerminal = terminalManager.getTerminal(existingRuntimeEntry.terminalId) ?? null;
   }
-  const terminal =
+  return (
     reusableTerminal ??
     (await terminalManager.createTerminal({
       cwd: repoRoot,
@@ -855,8 +1085,97 @@ async function acquireWorkspaceScriptTerminal(params: {
       name: scriptName,
       title: scriptName,
       env,
-    }));
-  return { terminal, reusableTerminal };
+    }))
+  );
+}
+
+/**
+ * Undo a failed spawn's runtime bookkeeping.
+ *
+ * A shell that never reached a prompt leaves its terminal open holding the
+ * reason why — typically a startup prompt waiting to be answered. For plain
+ * scripts the runtime entry is kept pointing at that terminal so re-running
+ * reuses it: answer the prompt, run again, and the command lands in the same
+ * shell. Service scripts get a freshly planned port on the next run while their
+ * terminal's env still carries the old one, so reuse would be wrong — drop the
+ * entry and let the retry start clean.
+ */
+function releaseFailedScriptSpawn(params: {
+  error: unknown;
+  serviceScript: boolean;
+  scriptType: "script" | "service";
+  workspaceId: string;
+  scriptName: string;
+  terminalId: string | null;
+  runtimeStore: WorkspaceScriptRuntimeStore;
+  onLifecycleChanged?: () => void;
+}): void {
+  const { error, serviceScript, scriptType, workspaceId, scriptName, terminalId, runtimeStore } =
+    params;
+  const preserveTerminalForRetry =
+    error instanceof TerminalNotReadyError && error.terminalStillOpen && !serviceScript;
+
+  if (!preserveTerminalForRetry || !terminalId) {
+    runtimeStore.remove({ workspaceId, scriptName });
+    return;
+  }
+
+  runtimeStore.set({
+    workspaceId,
+    scriptName,
+    type: scriptType,
+    lifecycle: "stopped",
+    terminalId,
+    exitCode: null,
+  });
+  params.onLifecycleChanged?.();
+}
+
+// Undo whatever a failed spawn already registered: the proxy route, then the
+// runtime entry (which releaseFailedScriptSpawn keeps when the terminal is
+// still usable for a retry).
+function rollbackFailedScriptSpawn(params: {
+  error: unknown;
+  routeRegistered: boolean;
+  runtimeRegistered: boolean;
+  serviceScript: boolean;
+  scriptType: "script" | "service";
+  workspaceId: string;
+  scriptName: string;
+  hostname: string | null;
+  terminalId: string | null;
+  serviceProxy: Pick<ServiceProxySubsystem, "removeServiceRoutesByHostnames">;
+  runtimeStore: WorkspaceScriptRuntimeStore;
+  onLifecycleChanged?: () => void;
+}): void {
+  if (params.routeRegistered && params.hostname) {
+    params.serviceProxy.removeServiceRoutesByHostnames([params.hostname]);
+  }
+  if (!params.runtimeRegistered) {
+    return;
+  }
+  releaseFailedScriptSpawn({
+    error: params.error,
+    serviceScript: params.serviceScript,
+    scriptType: params.scriptType,
+    workspaceId: params.workspaceId,
+    scriptName: params.scriptName,
+    terminalId: params.terminalId,
+    runtimeStore: params.runtimeStore,
+    onLifecycleChanged: params.onLifecycleChanged,
+  });
+}
+
+// A shell that never reached its prompt is a normal interaction (usually a
+// startup prompt waiting to be answered), not a fault — the terminal is kept for
+// the user to answer in. Log it quietly; only genuine failures are errors.
+function logScriptSpawnFailure(
+  logger: Logger | undefined,
+  error: unknown,
+  context: Record<string, unknown>,
+): void {
+  const level = error instanceof TerminalNotReadyError ? "debug" : "error";
+  logger?.[level]({ err: error, ...context }, "Failed to spawn worktree script");
 }
 
 export async function spawnWorkspaceScript(
@@ -877,6 +1196,9 @@ export async function spawnWorkspaceScript(
     globalServicePorts,
     logger,
     onLifecycleChanged,
+    promptReadyTimeoutMs,
+    integrationAnnounceGraceMs,
+    onTerminalReady,
   } = options;
   const configResult = readPaseoConfig(repoRoot);
   if (!configResult.ok) {
@@ -895,6 +1217,7 @@ export async function spawnWorkspaceScript(
   let runtimeRegistered = false;
   let routeRegistered = false;
   let disposeLifecycleListeners: (() => void) | null = null;
+  let terminalIdForRetry: string | null = null;
 
   try {
     if (runtimeStore.isRunning({ workspaceId, scriptName })) {
@@ -925,7 +1248,7 @@ export async function spawnWorkspaceScript(
       routeRegistered = true;
     }
 
-    const { terminal, reusableTerminal } = await acquireWorkspaceScriptTerminal({
+    const terminal = await acquireWorkspaceScriptTerminal({
       serviceScript,
       existingRuntimeEntry,
       terminalManager,
@@ -935,6 +1258,7 @@ export async function spawnWorkspaceScript(
       env,
     });
 
+    terminalIdForRetry = terminal.id;
     runtimeStore.set({
       workspaceId,
       scriptName,
@@ -944,6 +1268,14 @@ export async function spawnWorkspaceScript(
       exitCode: null,
     });
     runtimeRegistered = true;
+    // Hand the terminal over now, not after the command is typed. Reaching a
+    // prompt can take the full readiness timeout, and the reason it is taking
+    // that long — a startup prompt waiting to be answered — is visible in this
+    // terminal the whole time. Announcing now lets a client focus the tab
+    // immediately (like a plain terminal) and see the prompt; answering it lets
+    // the still-running readiness wait finish and type the command on its own.
+    onLifecycleChanged?.();
+    onTerminalReady?.(terminal.id);
 
     const stopRuntimeIfCurrent = (input: { exitCode: number | null; removeRoute: boolean }) => {
       const current = runtimeStore.get({ workspaceId, scriptName });
@@ -995,10 +1327,14 @@ export async function spawnWorkspaceScript(
       unsubscribeCommandFinished?.();
     };
 
-    if (!reusableTerminal) {
-      await waitForTerminalBootstrapReadiness(terminal);
-    }
-    terminal.send({ type: "input", data: `${config.command}\r` });
+    // Reused terminals wait too. "It printed a prompt once" says nothing about
+    // now: the user may have a foreground command running in it, and typing
+    // into that interleaves the script command with the command's own input.
+    const readinessOutcome = await waitForTerminalInputReadiness(terminal, {
+      timeoutMs: promptReadyTimeoutMs ?? TERMINAL_PROMPT_READY_TIMEOUT_MS,
+      announceGraceMs: integrationAnnounceGraceMs ?? TERMINAL_INTEGRATION_ANNOUNCE_GRACE_MS,
+    });
+    await sendCommandWhenAtPrompt(terminal, config.command, readinessOutcome);
 
     logger?.info(
       {
@@ -1022,24 +1358,28 @@ export async function spawnWorkspaceScript(
     };
   } catch (error) {
     disposeLifecycleListeners?.();
-    if (routeRegistered && hostname) {
-      serviceProxy.removeServiceRoutesByHostnames([hostname]);
-    }
-    if (runtimeRegistered) {
-      runtimeStore.remove({ workspaceId, scriptName });
-    }
-    logger?.error(
-      {
-        err: error,
-        scriptName,
-        repoRoot,
-        branchName,
-        hostname,
-        port,
-        command: config.command,
-      },
-      "Failed to spawn worktree script",
-    );
+    rollbackFailedScriptSpawn({
+      error,
+      routeRegistered,
+      runtimeRegistered,
+      serviceScript,
+      scriptType,
+      workspaceId,
+      scriptName,
+      hostname,
+      terminalId: terminalIdForRetry,
+      serviceProxy,
+      runtimeStore,
+      onLifecycleChanged,
+    });
+    logScriptSpawnFailure(logger, error, {
+      scriptName,
+      repoRoot,
+      branchName,
+      hostname,
+      port,
+      command: config.command,
+    });
     throw error;
   }
 }

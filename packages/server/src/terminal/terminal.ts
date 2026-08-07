@@ -73,15 +73,42 @@ export interface TerminalActivityTransition {
   previous: TerminalActivity | null;
 }
 
+export interface TerminalPromptState {
+  // The shell's line editor owns stdin right now — the only safe moment to
+  // type into this terminal.
+  atPrompt: boolean;
+  // The shell integration announced itself, so this terminal *can* report
+  // readiness. Without it, `atPrompt: false` means "we will never know",
+  // not "not yet". See docs/terminal-readiness.md.
+  shellIntegrationActive: boolean;
+}
+
 export interface TerminalSession {
   id: string;
   name: string;
   cwd: string;
   workspaceId: string;
+  // True when we installed the shell integration for this terminal's shell.
+  // Only says we tried: whether the shell can actually report readiness is
+  // `getPromptState().shellIntegrationActive`, which the shell itself asserts.
+  shellIntegrationExpected: boolean;
   send(msg: ClientMessage): void;
   subscribe(listener: (msg: ServerMessage) => void, options?: TerminalSubscribeOptions): () => void;
   onExit(listener: (info: TerminalExitInfo) => void): () => void;
   onCommandFinished(listener: (info: TerminalCommandFinishedInfo) => void): () => void;
+  onPromptStateChange(listener: (state: TerminalPromptState) => void): () => void;
+  // Current state, not history. Anything typed while `atPrompt` is false can be
+  // eaten by whatever else is reading stdin (a `read` in an rc file, a
+  // foreground command).
+  getPromptState(): TerminalPromptState;
+  // Authoritative read. Same value as getPromptState() here, but the worker-backed
+  // implementation round-trips instead of reading a copy that lags by one IPC hop
+  // — the difference between "has not announced" and "the announce is in flight".
+  fetchPromptState(): Promise<TerminalPromptState>;
+  // Atomic check-and-write: sends only if the shell is at its prompt at write
+  // time, and reports whether it did. Returns false rather than typing into
+  // whatever took stdin in the meantime.
+  sendInputIfAtPrompt(data: string): Promise<boolean>;
   onTitleChange(listener: (title?: string) => void): () => void;
   onActivityChange(listener: (transition: TerminalActivityTransition) => void): () => void;
   getSize(): { rows: number; cols: number };
@@ -96,6 +123,45 @@ export interface TerminalSession {
   getExitInfo(): TerminalExitInfo | null;
   kill(): void;
   killAndWait(options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number }): Promise<void>;
+}
+
+/**
+ * Paseo's own OSC 633 markers, all nonce-tagged.
+ *
+ * The nonce is per-terminal and injected via the environment, so the shell hook
+ * can echo back something only this session knows. It is a collision guard, not
+ * a security boundary: it stops unrelated OSC 633 traffic (VS Code's own shell
+ * integration emits the same codes) and replayed scrollback from being read as
+ * terminal state. Anything that can read this terminal's env can already type
+ * into the terminal directly.
+ *
+ * - `I;<nonce>` — integration is loaded and will report readiness. Emitted from
+ *   the .zshenv wrapper before any user rc file runs, so its absence means "no
+ *   integration here", never "still starting up". That distinction is what lets
+ *   the daemon tell a shell that cannot report readiness apart from one that is
+ *   blocked waiting for input.
+ * - `R;<nonce>` — the line editor has the line: safe to type.
+ * - `C;<nonce>` — a command took the foreground: no longer safe to type.
+ *
+ * See docs/terminal-readiness.md.
+ */
+type PaseoTerminalMarker = "integration-active" | "prompt-ready" | "command-started";
+
+function parsePaseoMarkerOsc(data: string, nonce: string): PaseoTerminalMarker | null {
+  const parts = data.split(";");
+  if (parts.length !== 2 || parts[1] !== nonce) {
+    return null;
+  }
+  switch (parts[0]) {
+    case "I":
+      return "integration-active";
+    case "R":
+      return "prompt-ready";
+    case "C":
+      return "command-started";
+    default:
+      return null;
+  }
 }
 
 function parseCommandFinishedOsc(data: string): TerminalCommandFinishedInfo | null {
@@ -159,6 +225,13 @@ interface BuildTerminalEnvironmentInput {
   zshShellIntegrationDir?: string;
   paseoCliBinDir?: string | null;
   paseoHookCliPath?: string | null;
+  promptNonce?: string;
+}
+
+// Only zsh ships a Paseo shell integration today, so only zsh can report when
+// its line editor is ready. See docs/terminal-readiness.md.
+export function shellIntegrationExpectedForShell(shell: string): boolean {
+  return basename(shell) === "zsh";
 }
 
 interface EnsureNodePtySpawnHelperExecutableOptions {
@@ -422,14 +495,20 @@ export function buildTerminalEnvironment(
     envWithAgentHooks,
     input.paseoHookCliPath === undefined ? resolvePaseoCliExecutablePath() : input.paseoHookCliPath,
   );
+  // Injected for every shell, not just zsh: it is what a shell integration
+  // echoes back to prove a readiness marker came from this session, and keeping
+  // it shell-agnostic leaves the door open for a bash/fish integration later.
+  const envWithPromptNonce = input.promptNonce
+    ? { ...envWithHookCli, PASEO_TERMINAL_NONCE: input.promptNonce }
+    : envWithHookCli;
 
-  if (basename(input.shell) !== "zsh") {
-    return envWithHookCli;
+  if (!shellIntegrationExpectedForShell(input.shell)) {
+    return envWithPromptNonce;
   }
 
-  const originalZdotdir = envWithHookCli.ZDOTDIR ?? "";
+  const originalZdotdir = envWithPromptNonce.ZDOTDIR ?? "";
   return {
-    ...envWithHookCli,
+    ...envWithPromptNonce,
     PASEO_ZSH_ZDOTDIR: originalZdotdir,
     ZDOTDIR: prepareZshShellIntegrationRuntimeDir(input.zshShellIntegrationDir),
   };
@@ -820,7 +899,11 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   const listeners = new Set<(msg: ServerMessage) => void>();
   const exitListeners = new Set<(info: TerminalExitInfo) => void>();
   const commandFinishedListeners = new Set<(info: TerminalCommandFinishedInfo) => void>();
+  const promptStateListeners = new Set<(state: TerminalPromptState) => void>();
   const titleChangeListeners = new Set<(title?: string) => void>();
+  const promptNonce = randomUUID();
+  let atPrompt = false;
+  let shellIntegrationActive = false;
   let killed = false;
   let disposed = false;
   let exitEmitted = false;
@@ -866,6 +949,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     cwd,
     env: buildTerminalEnvironment({
       shell: spawnCommand,
+      promptNonce,
       env: {
         ...env,
         ...activityEnv,
@@ -987,6 +1071,16 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   }
 
   const disposeCommandLifecycleSubscription = terminal.parser.registerOscHandler(633, (data) => {
+    const marker = parsePaseoMarkerOsc(data, promptNonce);
+    if (marker) {
+      if (marker === "integration-active") {
+        setShellIntegrationActive();
+      } else {
+        setAtPrompt(marker === "prompt-ready");
+      }
+      return true;
+    }
+
     const commandFinished = parseCommandFinishedOsc(data);
     if (!commandFinished) {
       return true;
@@ -1037,12 +1131,41 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     };
   }
 
+  function emitPromptState(): void {
+    for (const listener of Array.from(promptStateListeners)) {
+      try {
+        listener({ atPrompt, shellIntegrationActive });
+      } catch {
+        // no-op
+      }
+    }
+  }
+
+  function setAtPrompt(next: boolean): void {
+    if (atPrompt === next) {
+      return;
+    }
+    atPrompt = next;
+    emitPromptState();
+  }
+
+  function setShellIntegrationActive(): void {
+    if (shellIntegrationActive) {
+      return;
+    }
+    shellIntegrationActive = true;
+    emitPromptState();
+  }
+
   function emitExit(info: TerminalExitInfo): void {
     if (exitEmitted) {
       return;
     }
     exitEmitted = true;
     exitInfo = info;
+    // A dead shell owns nothing; callers waiting to type must never see the
+    // last prompt state and inject into a corpse.
+    setAtPrompt(false);
     for (const listener of Array.from(exitListeners)) {
       try {
         listener(info);
@@ -1075,6 +1198,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     listeners.clear();
     exitListeners.clear();
     commandFinishedListeners.clear();
+    promptStateListeners.clear();
     titleChangeListeners.clear();
     activityChangeListeners.clear();
   }
@@ -1319,6 +1443,30 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     };
   }
 
+  function onPromptStateChange(listener: (state: TerminalPromptState) => void): () => void {
+    promptStateListeners.add(listener);
+    return () => {
+      promptStateListeners.delete(listener);
+    };
+  }
+
+  function getPromptState(): TerminalPromptState {
+    return { atPrompt, shellIntegrationActive };
+  }
+
+  // In-process: nothing can interleave between the read and the write.
+  async function fetchPromptState(): Promise<TerminalPromptState> {
+    return getPromptState();
+  }
+
+  async function sendInputIfAtPrompt(data: string): Promise<boolean> {
+    if (!atPrompt) {
+      return false;
+    }
+    send({ type: "input", data });
+    return true;
+  }
+
   function onTitleChange(listener: (title?: string) => void): () => void {
     titleChangeListeners.add(listener);
     if (title !== undefined) {
@@ -1456,10 +1604,15 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     name,
     cwd,
     workspaceId,
+    shellIntegrationExpected: shellIntegrationExpectedForShell(spawnCommand),
     send,
     subscribe,
     onExit,
     onCommandFinished,
+    onPromptStateChange,
+    getPromptState,
+    fetchPromptState,
+    sendInputIfAtPrompt,
     onTitleChange,
     onActivityChange,
     getSize,
