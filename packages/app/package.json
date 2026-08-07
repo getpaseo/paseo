@@ -92,6 +92,7 @@
     "i18next": "^26.3.0",
     "lucide-react-native": "^0.546.0",
     "markdown-it": "^10.0.0",
+    "mermaid": "^11.16.1",
     "mnemonic-id": "^3.2.7",
     "qrcode": "^1.5.4",
     "react": "19.1.0",
