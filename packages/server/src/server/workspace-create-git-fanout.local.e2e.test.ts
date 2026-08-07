@@ -507,6 +507,23 @@ test("records the Git command ledger for repository metadata business rules", as
     git(fixture.repoRoot, "update-ref", "refs/remotes/origin/measured-switch", head);
   });
   await trackingUpdate;
+
+  writeFileSync(join(externalWorktree, "README.md"), "local upstream change\n");
+  git(externalWorktree, "add", "README.md");
+  git(externalWorktree, "commit", "-m", "local upstream change");
+  const advancedLocalUpstream = git(externalWorktree, "rev-parse", "HEAD");
+  git(fixture.repoRoot, "branch", "local-upstream", "measured-switch");
+  git(fixture.repoRoot, "config", "branch.measured-switch.remote", ".");
+  git(fixture.repoRoot, "config", "branch.measured-switch.merge", "refs/heads/local-upstream");
+  await settleGitCommands();
+  const localUpstreamUpdate = waitForWorkspaceGitRuntime("ws-sibling-0", {
+    aheadOfOrigin: 0,
+    behindOfOrigin: 1,
+  });
+  const localUpstreamRef = await measureGitCommands(() => {
+    git(fixture.repoRoot, "update-ref", "refs/heads/local-upstream", advancedLocalUpstream);
+  });
+  await localUpstreamUpdate;
   const packedRefs = await measureGitCommands(() => {
     git(fixture.repoRoot, "pack-refs", "--all", "--prune");
   });
@@ -517,6 +534,7 @@ test("records the Git command ledger for repository metadata business rules", as
     ownCommit: ownCommit.submitted,
     ownBranchSwitch: ownBranchSwitch.submitted,
     remoteTrackingRef: remoteTrackingRef.submitted,
+    localUpstreamRef: localUpstreamRef.submitted,
     sharedConfig: sharedConfig.submitted,
     packedRefs: packedRefs.submitted,
   };
@@ -526,6 +544,7 @@ test("records the Git command ledger for repository metadata business rules", as
     ownCommit: 18,
     ownBranchSwitch: 18,
     remoteTrackingRef: 19,
+    localUpstreamRef: 19,
     sharedConfig: 36,
     packedRefs: 37,
   });
@@ -549,6 +568,14 @@ test("records the Git command ledger for repository metadata business rules", as
     ...ownerOperations,
     config: 4,
   });
+  expect(countGitOperations(localUpstreamRef.submissions)).toEqual({
+    ...ownerOperations,
+    config: 4,
+  });
+  const ownerWorktree = realpathSync(firstWorktree);
+  expect(localUpstreamRef.submissions.map((command) => realpathSync(command.cwd))).toEqual(
+    Array.from({ length: 19 }, () => ownerWorktree),
+  );
   expect(countGitOperations(sharedConfig.submissions)).toEqual(
     Object.fromEntries(
       Object.entries(ownerOperations).map(([operation, count]) => [operation, count * 2]),

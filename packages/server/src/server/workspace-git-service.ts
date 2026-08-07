@@ -1644,9 +1644,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     for (const workspaceKey of target.workspaceKeys) {
       const facts = this.workspaceTargets.get(workspaceKey)?.latestFacts;
       if (!facts?.isGit) continue;
-      const baseRefs = [facts.storedBaseRef, facts.resolvedBaseRef, facts.comparisonBaseRef];
-      const usesBranch = baseRefs.some(
-        (baseRef) => baseRef === branch || baseRef === `refs/heads/${branch}`,
+      const dependentRefs = [
+        facts.storedBaseRef,
+        facts.resolvedBaseRef,
+        facts.comparisonBaseRef,
+        facts.upstreamStatus?.ref,
+      ];
+      const usesBranch = dependentRefs.some(
+        (ref) => ref === branch || ref === `refs/heads/${branch}`,
       );
       if (facts.currentBranch === branch || usesBranch) {
         this.addWorkspaceMetadataRefresh(refreshes, workspaceKey, true);

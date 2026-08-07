@@ -353,9 +353,15 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
-  test("worktree and metadata events invalidate only their matching diff projections", async () => {
+  test("worktree events invalidate uncommitted diffs and metadata events invalidate both", async () => {
     const watcher = createWatcherHarness();
-    const getCheckoutDiff = vi.fn(async () => ({ diff: "", structured: [] }));
+    const projectionVersions = { uncommitted: 0, base: 0 };
+    const getCheckoutDiff = vi.fn(
+      async (_cwd: string, options: { mode: "uncommitted" | "base" }) => {
+        projectionVersions[options.mode] += 1;
+        return { diff: `${options.mode}-${projectionVersions[options.mode]}`, structured: [] };
+      },
+    );
     const service = createService(watcher, { getCheckoutDiff });
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
 
@@ -363,24 +369,29 @@ describe("WorkspaceGitService checkout observation", () => {
       expect(service.peekSnapshot(REPO_CWD)).not.toBeNull();
       expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
     });
-    await service.getCheckoutDiff(REPO_CWD, { mode: "uncommitted" });
-    await service.getCheckoutDiff(REPO_CWD, { mode: "base", baseRef: "main" });
-    expect(getCheckoutDiff).toHaveBeenCalledTimes(2);
+    const initialUncommitted = await service.getCheckoutDiff(REPO_CWD, { mode: "uncommitted" });
+    const initialBase = await service.getCheckoutDiff(REPO_CWD, { mode: "base", baseRef: "main" });
+    expect(initialUncommitted.diff).toBe("uncommitted-1");
+    expect(initialBase.diff).toBe("base-1");
 
     watcher.records
       .find((record) => record.directory === REPO_CWD)
       ?.callback(null, [{ path: path.join(REPO_CWD, "tracked.txt"), type: "update" }]);
-    await service.getCheckoutDiff(REPO_CWD, { mode: "uncommitted" });
-    await service.getCheckoutDiff(REPO_CWD, { mode: "base", baseRef: "main" });
-    expect(getCheckoutDiff).toHaveBeenCalledTimes(3);
-    expect(getCheckoutDiff.mock.calls[2]?.[1]).toMatchObject({ mode: "uncommitted" });
+    const changedUncommitted = await service.getCheckoutDiff(REPO_CWD, { mode: "uncommitted" });
+    const cachedBase = await service.getCheckoutDiff(REPO_CWD, { mode: "base", baseRef: "main" });
+    expect(changedUncommitted.diff).toBe("uncommitted-2");
+    expect(cachedBase.diff).toBe("base-1");
 
     watcher.records
       .find((record) => record.directory === GIT_DIR)
       ?.callback(null, [{ path: path.join(GIT_DIR, "HEAD"), type: "update" }]);
-    await service.getCheckoutDiff(REPO_CWD, { mode: "base", baseRef: "main" });
-    expect(getCheckoutDiff).toHaveBeenCalledTimes(4);
-    expect(getCheckoutDiff.mock.calls[3]?.[1]).toMatchObject({ mode: "base" });
+    const changedByMetadata = await service.getCheckoutDiff(REPO_CWD, { mode: "uncommitted" });
+    const changedBase = await service.getCheckoutDiff(REPO_CWD, {
+      mode: "base",
+      baseRef: "main",
+    });
+    expect(changedByMetadata.diff).toBe("uncommitted-3");
+    expect(changedBase.diff).toBe("base-2");
 
     subscription.unsubscribe();
     service.dispose();
