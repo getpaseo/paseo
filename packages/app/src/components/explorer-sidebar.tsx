@@ -29,6 +29,7 @@ import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import { HEADER_INNER_HEIGHT } from "@/constants/layout";
 import { GitDiffPane } from "@/git/diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
+import { ExplorerPortsPane } from "./explorer-ports-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useHasOwnedWindowChromeObstruction, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
@@ -50,6 +51,7 @@ interface ExplorerSidebarProps {
   workspaceRoot: string;
   isGit: boolean;
   onOpenFile?: (filePath: string) => void;
+  onOpenUrlInBrowserTab?: (url: string) => void;
 }
 
 interface ExplorerSidebarSharedState {
@@ -80,6 +82,7 @@ export function CompactExplorerSidebar({
   workspaceRoot,
   isGit,
   onOpenFile,
+  onOpenUrlInBrowserTab,
 }: ExplorerSidebarProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -137,6 +140,7 @@ export function CompactExplorerSidebar({
           isGit={isGit}
           isOpen={isOpen}
           onOpenFile={onOpenFile}
+          onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
         />
       </MobilePanelOverlay>
     </RetainedPanelActivity>
@@ -149,6 +153,7 @@ export function ExplorerSidebar({
   workspaceRoot,
   isGit,
   onOpenFile,
+  onOpenUrlInBrowserTab,
 }: ExplorerSidebarProps) {
   const insets = useSafeAreaInsets();
   const explorerWidth = usePanelStore((state) => state.explorerWidth);
@@ -233,6 +238,7 @@ export function ExplorerSidebar({
           isGit={isGit}
           isOpen={isOpen}
           onOpenFile={onOpenFile}
+          onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
         />
       </View>
     </Animated.View>
@@ -277,6 +283,19 @@ interface SidebarContentProps {
   isGit: boolean;
   isOpen: boolean;
   onOpenFile?: (filePath: string) => void;
+  onOpenUrlInBrowserTab?: (url: string) => void;
+}
+
+function resolveExplorerSidebarTab(params: {
+  activeTab: ExplorerTab;
+  isGit: boolean;
+  showPrTab: boolean;
+}): ExplorerTab {
+  const requestedTab: ExplorerTab =
+    !params.isGit && (params.activeTab === "changes" || params.activeTab === "pr")
+      ? "files"
+      : params.activeTab;
+  return requestedTab === "pr" && !params.showPrTab ? "changes" : requestedTab;
 }
 
 function ExplorerSidebarContent({
@@ -289,6 +308,7 @@ function ExplorerSidebarContent({
   isGit,
   isOpen,
   onOpenFile,
+  onOpenUrlInBrowserTab,
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -303,9 +323,7 @@ function ExplorerSidebarContent({
   });
   const hasPullRequest = prPane.prNumber !== null;
   const showPrTab = hasPullRequest || (activeTab === "pr" && prPane.isLoading);
-  const requestedTab: ExplorerTab =
-    !isGit && (activeTab === "changes" || activeTab === "pr") ? "files" : activeTab;
-  const resolvedTab: ExplorerTab = requestedTab === "pr" && !showPrTab ? "changes" : requestedTab;
+  const resolvedTab = resolveExplorerSidebarTab({ activeTab, isGit, showPrTab });
   const prTabLabel = formatPrTabLabel(prPane.prNumber);
   const refreshGitActions = useCheckoutGitActionsStore((s) => s.refresh);
   const handlePrRetry = useCallback(() => {
@@ -329,7 +347,7 @@ function ExplorerSidebarContent({
       >
         <TitlebarDragRegion />
         <View style={styles.tabsContainer}>
-          {isGit && (
+          {isGit ? (
             <ExplorerTabButton
               tab="changes"
               active={resolvedTab === "changes"}
@@ -337,7 +355,7 @@ function ExplorerSidebarContent({
               onTabPress={onTabPress}
               testID="explorer-tab-changes"
             />
-          )}
+          ) : null}
           <ExplorerTabButton
             tab="files"
             active={resolvedTab === "files"}
@@ -345,7 +363,14 @@ function ExplorerSidebarContent({
             onTabPress={onTabPress}
             testID="explorer-tab-files"
           />
-          {isGit && showPrTab && (
+          <ExplorerTabButton
+            tab="ports"
+            active={resolvedTab === "ports"}
+            label={t("workspace.tabs.explorer.ports")}
+            onTabPress={onTabPress}
+            testID="explorer-tab-ports"
+          />
+          {isGit && showPrTab ? (
             <ExplorerTabButton
               tab="pr"
               active={resolvedTab === "pr"}
@@ -361,10 +386,10 @@ function ExplorerSidebarContent({
                 }
               />
             </ExplorerTabButton>
-          )}
+          ) : null}
         </View>
         <View style={styles.headerRightSection}>
-          {!hasRightWindowControls && (
+          {hasRightWindowControls ? null : (
             <Pressable
               onPress={onClose}
               style={styles.closeButton}
@@ -390,35 +415,88 @@ function ExplorerSidebarContent({
 
       {/* Content based on active tab */}
       <View style={styles.contentArea} testID="explorer-content-area">
-        {resolvedTab === "changes" && (
-          <ChangedFilesPane
-            serverId={serverId}
-            workspaceId={workspaceId}
-            workspaceRoot={workspaceRoot}
-            isOpen={isOpen}
-            onOpenFile={onOpenFile}
-          />
-        )}
-        {resolvedTab === "files" && (
-          <FilesPane
-            serverId={serverId}
-            workspaceId={workspaceId}
-            workspaceRoot={workspaceRoot}
-            onOpenFile={onOpenFile}
-          />
-        )}
-        {resolvedTab === "pr" && (
-          <PrTabContent
-            serverId={serverId}
-            cwd={workspaceRoot}
-            prPane={prPane}
-            workspaceAttachmentScopeKey={workspaceAttachmentScopeKey}
-            onRetry={handlePrRetry}
-          />
-        )}
+        <ExplorerSidebarTabBody
+          resolvedTab={resolvedTab}
+          serverId={serverId}
+          workspaceId={workspaceId}
+          workspaceRoot={workspaceRoot}
+          isOpen={isOpen}
+          onOpenFile={onOpenFile}
+          onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
+          prPane={prPane}
+          workspaceAttachmentScopeKey={workspaceAttachmentScopeKey}
+          onRetry={handlePrRetry}
+        />
       </View>
     </View>
   );
+}
+
+function ExplorerSidebarTabBody({
+  resolvedTab,
+  serverId,
+  workspaceId,
+  workspaceRoot,
+  isOpen,
+  onOpenFile,
+  onOpenUrlInBrowserTab,
+  prPane,
+  workspaceAttachmentScopeKey,
+  onRetry,
+}: {
+  resolvedTab: ExplorerTab;
+  serverId: string;
+  workspaceId?: string | null;
+  workspaceRoot: string;
+  isOpen: boolean;
+  onOpenFile?: (filePath: string) => void;
+  onOpenUrlInBrowserTab?: (url: string) => void;
+  prPane: UsePrPaneDataResult;
+  workspaceAttachmentScopeKey: string;
+  onRetry: () => void;
+}) {
+  if (resolvedTab === "changes") {
+    return (
+      <ChangedFilesPane
+        serverId={serverId}
+        workspaceId={workspaceId}
+        workspaceRoot={workspaceRoot}
+        isOpen={isOpen}
+        onOpenFile={onOpenFile}
+      />
+    );
+  }
+  if (resolvedTab === "files") {
+    return (
+      <FilesPane
+        serverId={serverId}
+        workspaceId={workspaceId}
+        workspaceRoot={workspaceRoot}
+        onOpenFile={onOpenFile}
+      />
+    );
+  }
+  if (resolvedTab === "ports") {
+    return (
+      <ExplorerPortsPane
+        serverId={serverId}
+        workspaceId={workspaceId}
+        onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
+      />
+    );
+  }
+  if (resolvedTab === "pr") {
+    return (
+      <PrTabContent
+        serverId={serverId}
+        cwd={workspaceRoot}
+        prPane={prPane}
+        workspaceAttachmentScopeKey={workspaceAttachmentScopeKey}
+        onRetry={onRetry}
+      />
+    );
+  }
+  return null;
 }
 
 /**

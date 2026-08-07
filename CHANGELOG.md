@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.923 - 2026-08-07
+
+### Added
+
+- Queue row **Send now** (interrupt + send) alongside Edit and optional Steer
+- Explorer **Ports** tab: workspace service/script ports with open-in-browser
+- Per-agent read-only **Todos** track from the latest stream `todo_list`
+- Composer **+ → Heartbeat** create for the current agent (prompt required)
+- Compact track headers: `N · M running` for loops and background tasks
+
+### Changed
+
+- Interaction lock unlocks from the locked banner only (no floating Android FAB)
+- History / user prompts always render as markdown (no plain-text toggle)
+
 ## 0.2.922 - 2026-08-06
 
 ### Fixed

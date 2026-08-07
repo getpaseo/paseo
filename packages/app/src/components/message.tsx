@@ -357,11 +357,6 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 1,
   },
-  text: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    ...(isWeb ? { lineHeight: 22, overflowWrap: "anywhere" as const } : {}),
-  },
   imagePreviewContainer: {
     flexDirection: "row",
     gap: theme.spacing[2],
@@ -531,11 +526,7 @@ export const UserMessage = memo(function UserMessage({
               })}
             </View>
           ) : null}
-          {hasText ? (
-            <Text selectable style={userMessageStylesheet.text}>
-              {message}
-            </Text>
-          ) : null}
+          {hasText ? <MarkdownRenderer text={message} enableHtmlish={false} /> : null}
         </View>
         {hasText ? (
           <View style={trailingRowStyle} pointerEvents={showTrailingRow ? "auto" : "none"}>

@@ -108,6 +108,8 @@ import {
   useProviderHeartbeatRows,
   type HeartbeatRow,
 } from "@/heartbeats/select";
+import { selectLatestAgentTodos } from "@/todos/select";
+import { TodosTrack } from "@/todos/track";
 import { refreshProviderHeartbeats } from "@/heartbeats/provider-store";
 import { useHeartbeatActions } from "@/heartbeats/use-heartbeat-actions";
 import { ProviderHeartbeatDetailSheet } from "@/heartbeats/provider-detail-sheet";
@@ -1645,6 +1647,10 @@ function ActiveAgentComposer({
     () => mergeHeartbeatRows(paseoHeartbeatRows, providerHeartbeatRows),
     [paseoHeartbeatRows, providerHeartbeatRows],
   );
+  const todoStreamItems = useSessionStore((state) =>
+    state.sessions[serverId]?.agentStreamTail?.get(agentId),
+  );
+  const todoSnapshot = useMemo(() => selectLatestAgentTodos(todoStreamItems), [todoStreamItems]);
   const {
     pauseHeartbeat,
     resumeHeartbeat,
@@ -1713,12 +1719,25 @@ function ActiveAgentComposer({
     },
     [schedulesForServer],
   );
+  const handleCreateHeartbeat = useCallback(() => {
+    setHeartbeatScheduleForm({
+      mode: "create",
+      serverId,
+      agentId,
+    });
+  }, [agentId, serverId]);
   const closeHeartbeatScheduleForm = useCallback(() => {
     setHeartbeatScheduleForm({ mode: "closed" });
   }, []);
   const closeProviderHeartbeatDetail = useCallback(() => {
     setProviderHeartbeatDetail(null);
   }, []);
+  const createHeartbeatAgentTarget = useMemo(() => {
+    if (heartbeatScheduleForm.mode !== "create") {
+      return undefined;
+    }
+    return { agentId: heartbeatScheduleForm.agentId };
+  }, [heartbeatScheduleForm]);
   useEffect(() => {
     if (!sessionClient || !supportsBackgroundTasks) return;
     void refreshBackgroundTasks(sessionClient, serverId, agentId).catch(() => undefined);
@@ -1853,6 +1872,7 @@ function ActiveAgentComposer({
           stoppingTaskIds={stoppingTaskIds}
         />
       ) : null}
+      <TodosTrack snapshot={todoSnapshot} />
       <Composer
         agentId={agentId}
         serverId={serverId}
@@ -1875,18 +1895,20 @@ function ActiveAgentComposer({
         onComposerHeightChange={onComposerHeightChange}
         onMessageSent={onMessageSent}
         onClientSlashCommand={handleClientSlashCommand}
+        onCreateHeartbeat={handleCreateHeartbeat}
         isCompactLayout={isCompactComposerLayout}
       />
       <ScheduleFormSheet
         serverId={
-          heartbeatScheduleForm.mode === "edit" ? heartbeatScheduleForm.serverId : undefined
+          heartbeatScheduleForm.mode === "closed" ? undefined : heartbeatScheduleForm.serverId
         }
-        visible={heartbeatScheduleForm.mode === "edit"}
+        visible={heartbeatScheduleForm.mode !== "closed"}
         onClose={closeHeartbeatScheduleForm}
-        mode="edit"
+        mode={heartbeatScheduleForm.mode === "edit" ? "edit" : "create"}
         schedule={
           heartbeatScheduleForm.mode === "edit" ? heartbeatScheduleForm.schedule : undefined
         }
+        agentTarget={createHeartbeatAgentTarget}
       />
       <ProviderHeartbeatDetailSheet
         visible={providerHeartbeatDetail != null}
@@ -1901,6 +1923,7 @@ const EMPTY_AGGREGATED_SCHEDULES: AggregatedSchedule[] = [];
 
 type HeartbeatScheduleFormState =
   | { mode: "closed" }
+  | { mode: "create"; serverId: string; agentId: string }
   | { mode: "edit"; serverId: string; schedule: ScheduleSummary };
 
 function AgentSessionUnavailableState({

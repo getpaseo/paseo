@@ -107,6 +107,7 @@ export const es: TranslationResources = {
       addFile: "Upload file",
       addIssueOrPr: "Agregar problema oPR",
       addIssueOrPr_mr: "Agregar problema o MR",
+      addHeartbeat: "Crear heartbeat",
       dropImagesHere: "Suelta imágenes aquí",
       dropFilesHere: "Drop files here",
       editQueuedMessage: "Editar mensaje en cola",
@@ -556,6 +557,10 @@ export const es: TranslationResources = {
         toggle: "Alternar explorador",
         changes: "Cambios",
         files: "Archivos",
+        ports: "Puertos",
+        portsEmpty: "Aún no hay puertos de scripts del workspace.",
+        portMeta: ":{{port}} · {{status}}",
+        portRowA11y: "{{name}}, {{protocol}}, puerto {{port}}",
       },
       toasts: {
         copyFailed: "Copia fallida",
@@ -1534,6 +1539,7 @@ export const es: TranslationResources = {
   loops: {
     header: "Bucles",
     headerCount: "Bucles ({{count}})",
+    headerCountRunning: "Bucles ({{count}}) · {{running}} en ejecución",
     stopAction: "Detener {{label}}",
     stopTooltip: "Detener",
     stopFailed: "Error al detener el bucle",
@@ -1575,6 +1581,7 @@ export const es: TranslationResources = {
   backgroundTasks: {
     header: "Background Tasks",
     headerCount: "Background Tasks ({{count}})",
+    headerCountRunning: "Background Tasks ({{count}}) · {{running}} running",
     stopAction: "Stop {{label}}",
     stopTooltip: "Stop",
     stopFailed: "Failed to stop background task",
@@ -1596,6 +1603,13 @@ export const es: TranslationResources = {
     archiveTooltip: "Subagente de archivo",
     archiveFinishedAction: "Archivar subagentes finalizados",
     archiveFinishedTooltip: "Archivar finalizados",
+  },
+  todos: {
+    header: "Todos",
+    headerCountRemaining: "Todos ({{count}}) · {{remaining}} abiertos",
+    headerCountDone: "Todos ({{count}}) · listos",
+    itemOpenA11y: "Abierto: {{text}}",
+    itemDoneA11y: "Hecho: {{text}}",
   },
   panels: {
     draft: {

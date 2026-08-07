@@ -103,10 +103,19 @@ export function BackgroundTasksTrack({
     return null;
   }
 
-  const headerLabel =
-    rows.length > 0
-      ? t("backgroundTasks.headerCount", { count: rows.length })
-      : t("backgroundTasks.header");
+  const runningCount = rows.reduce(
+    (count, row) => (row.status === "running" ? count + 1 : count),
+    0,
+  );
+  let headerLabel = t("backgroundTasks.headerCount", { count: rows.length });
+  if (rows.length === 0) {
+    headerLabel = t("backgroundTasks.header");
+  } else if (runningCount > 0) {
+    headerLabel = t("backgroundTasks.headerCountRunning", {
+      count: rows.length,
+      running: runningCount,
+    });
+  }
 
   return (
     <View style={styles.outer} testID="background-tasks-track">
@@ -187,23 +196,16 @@ function BackgroundTasksTrackRow({
     <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${typeLabel} ${label}`}
+        accessibilityLabel={`${typeLabel} ${label} · ${statusLabel(row.status, t)}`}
         testID={`background-tasks-track-row-${row.taskId}`}
         onPress={handlePress}
       >
         {({ pressed }) => (
           <View style={hovered || pressed ? styles.rowActive : styles.row}>
-            <View style={styles.rowText}>
-              <View style={styles.rowTitle}>
-                <StatusBadge label={typeLabel} variant="muted" />
-                <Text style={styles.rowLabel} numberOfLines={1}>
-                  {label}
-                </Text>
-              </View>
-              <Text style={styles.rowMeta} numberOfLines={1}>
-                {statusLabel(row.status, t)}
-              </Text>
-            </View>
+            <StatusBadge label={typeLabel} variant="muted" />
+            <Text style={styles.rowLabel} numberOfLines={1}>
+              {label}
+            </Text>
             {canStop ? (
               <BackgroundTaskStopButton
                 label={label}
@@ -345,26 +347,12 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     backgroundColor: theme.colors.surface2,
   },
-  rowText: {
-    flex: 1,
-    minWidth: 0,
-    gap: 2,
-  },
-  rowTitle: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    minWidth: 0,
-  },
   rowLabel: {
+    flex: 1,
     flexShrink: 1,
     minWidth: 0,
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
-  },
-  rowMeta: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
   },
   actionClusterVisible: {
     flexDirection: "row",

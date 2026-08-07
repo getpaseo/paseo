@@ -107,6 +107,7 @@ export const ar: TranslationResources = {
       addFile: "Upload file",
       addIssueOrPr: "أضف مشكلة أو PR",
       addIssueOrPr_mr: "أضف مشكلة أو MR",
+      addHeartbeat: "إنشاء نبضة",
       dropImagesHere: "إسقاط الصور هنا",
       dropFilesHere: "Drop files here",
       editQueuedMessage: "تحرير الرسالة في قائمة الانتظار",
@@ -551,6 +552,10 @@ export const ar: TranslationResources = {
         toggle: "تبديل المستكشف",
         changes: "التغييرات",
         files: "ملفات",
+        ports: "المنافذ",
+        portsEmpty: "لا توجد منافذ من سكربتات مساحة العمل بعد.",
+        portMeta: ":{{port}} · {{status}}",
+        portRowA11y: "{{name}}، {{protocol}}، المنفذ {{port}}",
       },
       toasts: {
         copyFailed: "فشل النسخ",
@@ -1491,6 +1496,7 @@ export const ar: TranslationResources = {
   loops: {
     header: "الحلقات",
     headerCount: "الحلقات ({{count}})",
+    headerCountRunning: "الحلقات ({{count}}) · {{running}} قيد التشغيل",
     stopAction: "إيقاف {{label}}",
     stopTooltip: "إيقاف",
     stopFailed: "فشل إيقاف الحلقة",
@@ -1532,6 +1538,7 @@ export const ar: TranslationResources = {
   backgroundTasks: {
     header: "Background Tasks",
     headerCount: "Background Tasks ({{count}})",
+    headerCountRunning: "Background Tasks ({{count}}) · {{running}} running",
     stopAction: "Stop {{label}}",
     stopTooltip: "Stop",
     stopFailed: "Failed to stop background task",
@@ -1553,6 +1560,13 @@ export const ar: TranslationResources = {
     archiveTooltip: "أرشفة الوكيل الفرعي",
     archiveFinishedAction: "أرشفة الوكلاء الفرعيين المكتملين",
     archiveFinishedTooltip: "أرشفة المكتملين",
+  },
+  todos: {
+    header: "المهام",
+    headerCountRemaining: "المهام ({{count}}) · {{remaining}} مفتوحة",
+    headerCountDone: "المهام ({{count}}) · مكتملة",
+    itemOpenA11y: "مفتوحة: {{text}}",
+    itemDoneA11y: "مكتملة: {{text}}",
   },
   panels: {
     draft: {
