@@ -7,6 +7,8 @@ import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 
 const REPO_CWD = path.resolve("/tmp/paseo-observation-repo");
 const GIT_DIR = path.join(REPO_CWD, ".git");
+const WORKTREE_A = path.resolve("/tmp/paseo-observation-worktree-a");
+const WORKTREE_B = path.resolve("/tmp/paseo-observation-worktree-b");
 
 interface WatchEvent {
   path: string;
@@ -64,6 +66,18 @@ function createCheckoutFacts(cwd: string): CheckoutSnapshotFacts {
   };
 }
 
+function createLinkedCheckoutFacts(cwd: string): CheckoutSnapshotFacts {
+  const worktreeName = path.basename(cwd);
+  return {
+    ...createCheckoutFacts(cwd),
+    currentBranch: worktreeName,
+    absoluteGitDir: path.join(GIT_DIR, "worktrees", worktreeName),
+    gitCommonDir: GIT_DIR,
+    resolvedBaseRef: "main",
+    pullRequestLookupTarget: { headRef: worktreeName },
+  };
+}
+
 function createCheckoutStatus(
   cwd: string,
   overrides?: Partial<CheckoutStatusGit>,
@@ -102,6 +116,10 @@ function createDeferred<T>() {
     reject = rejectPromise;
   });
   return { promise, reject, resolve };
+}
+
+function getCalledCwds(mock: ReturnType<typeof vi.fn>): string[] {
+  return mock.mock.calls.map(([cwd]) => cwd as string);
 }
 
 function createService(
@@ -392,6 +410,150 @@ describe("WorkspaceGitService checkout observation", () => {
     expect(listener).toHaveBeenCalledTimes(1);
 
     subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("routes private worktree metadata to its owner and shared base refs to dependents", async () => {
+    const watcher = createWatcherHarness();
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => createLinkedCheckoutFacts(cwd));
+    const getCheckoutStatus = vi.fn(async (cwd: string) =>
+      createCheckoutStatus(cwd, { currentBranch: path.basename(cwd) }),
+    );
+    const service = createService(watcher, { getCheckoutSnapshotFacts, getCheckoutStatus });
+    const first = service.registerWorkspace({ cwd: WORKTREE_A }, vi.fn());
+    const second = service.registerWorkspace({ cwd: WORKTREE_B }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(service.getMetrics()).toMatchObject({
+        repositoryTargetCount: 1,
+        repositoryWorkspaceLinkCount: 2,
+        workspaceObservationSetupInFlightCount: 0,
+        workspaceRefreshInFlightCount: 0,
+      });
+    });
+    const repoWatcher = watcher.records.find((record) => record.directory === GIT_DIR);
+    expect(repoWatcher).toBeDefined();
+    getCheckoutStatus.mockClear();
+
+    repoWatcher?.callback(null, [{ path: path.join(GIT_DIR, "packed-refs.lock"), type: "create" }]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+    expect(getCheckoutStatus).not.toHaveBeenCalled();
+
+    repoWatcher?.callback(null, [
+      {
+        path: path.join(createLinkedCheckoutFacts(WORKTREE_A).absoluteGitDir, "COMMIT_EDITMSG"),
+        type: "update",
+      },
+    ]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+    expect(getCheckoutStatus).not.toHaveBeenCalled();
+
+    repoWatcher?.callback(null, [
+      {
+        path: path.join(createLinkedCheckoutFacts(WORKTREE_A).absoluteGitDir, "index"),
+        type: "update",
+      },
+    ]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(getCalledCwds(getCheckoutStatus)).toEqual([WORKTREE_A]);
+    });
+    getCheckoutStatus.mockClear();
+
+    repoWatcher?.callback(null, [
+      { path: path.join(GIT_DIR, "refs", "heads", "main"), type: "update" },
+    ]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(getCalledCwds(getCheckoutStatus).sort()).toEqual([WORKTREE_A, WORKTREE_B].sort());
+    });
+
+    first.unsubscribe();
+    second.unsubscribe();
+    service.dispose();
+  });
+
+  test("routes the main checkout index to the main checkout only", async () => {
+    const watcher = createWatcherHarness();
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) =>
+      cwd === REPO_CWD ? createCheckoutFacts(cwd) : createLinkedCheckoutFacts(cwd),
+    );
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+    const service = createService(watcher, { getCheckoutSnapshotFacts, getCheckoutStatus });
+    const main = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    const linked = service.registerWorkspace({ cwd: WORKTREE_A }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(service.getMetrics()).toMatchObject({
+        repositoryTargetCount: 1,
+        repositoryWorkspaceLinkCount: 2,
+        workspaceObservationSetupInFlightCount: 0,
+        workspaceRefreshInFlightCount: 0,
+      });
+    });
+    getCheckoutStatus.mockClear();
+    watcher.records
+      .find((record) => record.directory === GIT_DIR)
+      ?.callback(null, [{ path: path.join(GIT_DIR, "index"), type: "update" }]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(getCalledCwds(getCheckoutStatus)).toEqual([REPO_CWD]);
+    });
+
+    main.unsubscribe();
+    linked.unsubscribe();
+    service.dispose();
+  });
+
+  test("routes a newly created remote tracking ref to its configured workspace", async () => {
+    const watcher = createWatcherHarness();
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => {
+      const facts = createLinkedCheckoutFacts(cwd);
+      const branch = path.basename(cwd);
+      return {
+        ...facts,
+        currentBranch: branch,
+        storedBaseRef: "refs/heads/main",
+        resolvedBaseRef: "refs/heads/main",
+        comparisonBaseRef: "refs/heads/main",
+        branchRemoteName: "origin",
+        branchMergeRef: `refs/heads/${branch}`,
+        upstreamStatus: null,
+      } satisfies CheckoutSnapshotFacts;
+    });
+    const getCheckoutStatus = vi.fn(async (cwd: string) =>
+      createCheckoutStatus(cwd, { currentBranch: path.basename(cwd) }),
+    );
+    const service = createService(watcher, { getCheckoutSnapshotFacts, getCheckoutStatus });
+    const first = service.registerWorkspace({ cwd: WORKTREE_A }, vi.fn());
+    const second = service.registerWorkspace({ cwd: WORKTREE_B }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(service.getMetrics()).toMatchObject({
+        repositoryTargetCount: 1,
+        repositoryWorkspaceLinkCount: 2,
+        workspaceObservationSetupInFlightCount: 0,
+        workspaceRefreshInFlightCount: 0,
+      });
+    });
+    getCheckoutStatus.mockClear();
+    watcher.records
+      .find((record) => record.directory === GIT_DIR)
+      ?.callback(null, [
+        {
+          path: path.join(GIT_DIR, "refs", "remotes", "origin", path.basename(WORKTREE_A)),
+          type: "create",
+        },
+      ]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(getCalledCwds(getCheckoutStatus)).toEqual([WORKTREE_A]);
+    });
+
+    first.unsubscribe();
+    second.unsubscribe();
     service.dispose();
   });
 
