@@ -193,6 +193,16 @@ paseo daemon stop              # Stop the daemon
 
 Use `PASEO_HOME` to run multiple isolated daemon instances.
 
+## Hub
+
+```bash
+paseo hub connect <url>        # Enroll this daemon with a Paseo Hub
+paseo hub status               # Show the current Hub relationship
+paseo hub disconnect           # End it
+```
+
+See [Daemons in Hub](/docs/hub/daemons).
+
 ## Connecting to a remote daemon
 
 `--host` accepts either a local target (`host:port`, a unix socket, or a Windows pipe) or a pairing offer URL, the same `https://app.paseo.sh/#offer=...` link the mobile app uses for QR pairing. With an offer URL the CLI connects through the Paseo relay with end-to-end encryption, so you can drive a daemon on another machine without exposing it to the network.

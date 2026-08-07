@@ -187,6 +187,7 @@ Single file, validated with `PersistedConfigSchema`.
     hostnames: true | string[],   // legacy alias `allowedHosts` is migrated on load
     trustedProxies: true | string[], // defaults to ["loopback"]; Express proxy names/CIDRs
     mcp: { enabled: boolean, injectIntoAgents: boolean },
+    git: { maxProcessesPerSecond: number, maxProcessConcurrency: number },
     appendSystemPrompt: string,    // appended to supported provider system/developer prompts
     cors: { allowedOrigins: string[] },
     relay: { enabled: boolean, endpoint: string, publicEndpoint: string, useTls: boolean, publicUseTls: boolean }, // new homes materialize enabled: false
@@ -233,6 +234,40 @@ Single file, validated with `PersistedConfigSchema`.
 ```
 
 All fields are optional with sensible defaults.
+
+### Git process limits
+
+Git process limits are global to one daemon. The start-rate limit defaults to `64` processes per
+second, and the concurrency limit defaults to `8`:
+
+```json
+{
+  "daemon": {
+    "git": {
+      "maxProcessesPerSecond": 64,
+      "maxProcessConcurrency": 8
+    }
+  }
+}
+```
+
+`maxProcessesPerSecond` limits Git process starts in any one-second interval. The allowance can
+start as a burst; it does not wait for earlier processes to exit. `maxProcessConcurrency` limits
+the number of Git processes that have started but not exited. Every Git command uses both limits,
+including initial workspace reads, filesystem-triggered refreshes, background checks, and explicit
+requests.
+
+Environment variables override `config.json`:
+
+| Environment variable                 | Setting                  |
+| ------------------------------------ | ------------------------ |
+| `PASEO_GIT_MAX_PROCESSES_PER_SECOND` | `maxProcessesPerSecond`  |
+| `PASEO_GIT_MAX_PROCESS_CONCURRENCY`  | `maxProcessConcurrency`  |
+| `PASEO_GIT_CONCURRENCY`              | Legacy concurrency alias |
+
+`PASEO_GIT_MAX_PROCESS_CONCURRENCY` wins when it and the legacy alias are both set. Restart the
+daemon after changing the file or environment. Run `paseo daemon restart` for a standalone daemon.
+For a desktop-managed daemon, fully quit and reopen Paseo Desktop.
 
 `agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
 
@@ -490,23 +525,24 @@ workspace together with its owning project.
 
 Array of workspace records. A workspace is a specific working directory within a project.
 
-| Field                  | Type                                            | Description                                                                                                                                                                           |
-| ---------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `workspaceId`          | `string`                                        | Opaque stable identifier (`wks_<hex>`), generated independently of the directory. MUST NOT be treated as a path; compare by exact equality. Use the `cwd` field for directory access. |
-| `projectId`            | `string`                                        | FK to Project.projectId; the workspace's stable project membership                                                                                                                    |
-| `cwd`                  | `string`                                        | Exact execution directory selected for agents, files, scripts, and setup                                                                                                              |
-| `kind`                 | `"local_checkout" \| "worktree" \| "directory"` | Mutable checkout classification                                                                                                                                                       |
-| `displayName`          | `string`                                        | The human name (the generated/derived title). Decoupled from `branch` by construction.                                                                                                |
-| `title`                | `string \| null`                                | User-set name override layered over `displayName`. Null means "use `displayName`".                                                                                                    |
-| `branch`               | `string \| null`                                | The current Git branch for git-backed workspaces. Separate from `displayName`/`title`; a background branch refresh never rewrites the name.                                           |
-| `worktreeRoot`         | `string \| null`                                | Backing checkout/worktree root. May differ from `cwd` for exact subprojects and remains persisted after the worktree is deleted so restore can reproduce the placement.               |
-| `baseBranch`           | `string \| null`                                | Normalized branch the Paseo worktree was created from; null for directories, local checkouts, and checkout-branch worktrees                                                           |
-| `isPaseoOwnedWorktree` | `boolean`                                       | Whether Paseo owns and may remove/recreate the backing `worktreeRoot`                                                                                                                 |
-| `mainRepoRoot`         | `string \| null`                                | Main repository root for worktree checkouts, independent of both exact `cwd` and backing `worktreeRoot`                                                                               |
-| `createdAt`            | `string` (ISO 8601)                             |                                                                                                                                                                                       |
-| `updatedAt`            | `string` (ISO 8601)                             |                                                                                                                                                                                       |
-| `archivedAt`           | `string \| null` (ISO 8601)                     | Soft-delete; required nullable                                                                                                                                                        |
-| `pinnedAt`             | `string \| null` (ISO 8601)                     | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                           |
+| Field                          | Type                                            | Description                                                                                                                                                                                   |
+| ------------------------------ | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workspaceId`                  | `string`                                        | Opaque stable identifier (`wks_<hex>`), generated independently of the directory. MUST NOT be treated as a path; compare by exact equality. Use the `cwd` field for directory access.         |
+| `projectId`                    | `string`                                        | FK to Project.projectId; the workspace's stable project membership                                                                                                                            |
+| `cwd`                          | `string`                                        | Exact execution directory selected for agents, files, scripts, and setup                                                                                                                      |
+| `kind`                         | `"local_checkout" \| "worktree" \| "directory"` | Mutable checkout classification                                                                                                                                                               |
+| `displayName`                  | `string`                                        | The human name (the generated/derived title). Decoupled from `branch` by construction.                                                                                                        |
+| `title`                        | `string \| null`                                | User-set name override layered over `displayName`. Null means "use `displayName`".                                                                                                            |
+| `branch`                       | `string \| null`                                | The current Git branch for git-backed workspaces. Separate from `displayName`/`title`; a background branch refresh never rewrites the name.                                                   |
+| `worktreeRoot`                 | `string \| null`                                | Backing checkout/worktree root. May differ from `cwd` for exact subprojects and remains persisted after the worktree is deleted so restore can reproduce the placement.                       |
+| `baseBranch`                   | `string \| null`                                | Normalized branch the Paseo worktree was created from; null for directories, local checkouts, and checkout-branch worktrees                                                                   |
+| `isPaseoOwnedWorktree`         | `boolean`                                       | Whether Paseo owns and may remove/recreate the backing `worktreeRoot`                                                                                                                         |
+| `mainRepoRoot`                 | `string \| null`                                | Main repository root for worktree checkouts, independent of both exact `cwd` and backing `worktreeRoot`                                                                                       |
+| `createdAt`                    | `string` (ISO 8601)                             |                                                                                                                                                                                               |
+| `updatedAt`                    | `string` (ISO 8601)                             |                                                                                                                                                                                               |
+| `archivedAt`                   | `string \| null` (ISO 8601)                     | Soft-delete; required nullable                                                                                                                                                                |
+| `autoArchivedChangeRequestUrl` | `string \| null`                                | Change request whose merged state triggered auto-archive. Restore replaces it with the current merged change request, when present, so repeated snapshots cannot archive the workspace again. |
+| `pinnedAt`                     | `string \| null` (ISO 8601)                     | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                                   |
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. A compatibility-only first-materialization bootstrap still groups pre-registry agent records by path and Git remote so existing installs retain their legacy records. That grouping never runs against a live registry, and its keys are not runtime project or workspace identity.
 

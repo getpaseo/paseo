@@ -39,6 +39,7 @@ import { isWeb } from "@/constants/platform";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useLiveFile } from "./live-file/hook";
 import { FilePanelBar } from "./bar";
+import { FileHtmlPreview } from "./html-preview";
 import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } from "./editor/model";
 import { createFileObservationSource } from "./editor/observation-source";
 import { FileEditorView } from "./editor/view";
@@ -230,8 +231,9 @@ function FilePreviewBody({
   const theme = UnistylesRuntime.getTheme();
   const { t } = useTranslation();
   const filePath = location.path;
-  const isMarkdownFile = preview?.kind === "text" && renderer.kind === "markdown";
-
+  // The line-target and source-mode fallbacks that used to live here are now in
+  // `useFilePreviewRenderer`, which resolves to `code` for both before this
+  // renders — one decision, in one place, for built-ins and plugins alike.
   const previewScrollRef = useRef<RNScrollView>(null);
 
   const highlightedLines = useMemo(() => {
@@ -311,7 +313,16 @@ function FilePreviewBody({
       );
     }
 
-    if (isMarkdownFile) {
+    if (renderer.kind === "html") {
+      // The HTML document owns its own scrolling, so no ScrollView wrapper here.
+      return (
+        <View style={styles.previewScrollContainer}>
+          <FileHtmlPreview html={preview.content ?? ""} testID="file-html-preview" />
+        </View>
+      );
+    }
+
+    if (renderer.kind === "markdown") {
       return (
         <View style={styles.previewScrollContainer}>
           <RNScrollView
@@ -547,9 +558,9 @@ export function FilePane({
     };
   }, [liveFile.file, readTarget]);
 
-  useEffect(() => setPreviewMode("preview"), [readTarget?.path]);
-
   const previewKey = readTarget ? `${readTarget.cwd}:${readTarget.path}` : null;
+  useEffect(() => setPreviewMode("preview"), [previewKey]);
+
   const preview = resolvedPreview.key === previewKey ? resolvedPreview.file : null;
   const imagePreviewUri = useAttachmentPreviewUrl(
     resolvedPreview.key === previewKey ? resolvedPreview.imageAttachment : null,
@@ -565,8 +576,11 @@ export function FilePane({
     preview,
     supportsEditing,
   });
-  const canTogglePreviewMode =
-    renderer.kind === "plugin" || (renderer.kind === "markdown" && editable);
+  // A line target is already folded in: the renderer resolves to `code` for one,
+  // so there is nothing to toggle away from. The built-ins keep the toggle they
+  // shipped with, editable or not; a plugin preview always gets one, because the
+  // source view is the only way back out of a plugin's rendering.
+  const canTogglePreviewMode = renderer.kind !== "code";
   const lineCount =
     preview?.kind === "text" ? (preview.content ?? "").split("\n").length : undefined;
   const errorMessage = getFileErrorMessage(liveFile.error, t("panels.file.failedToLoad"));

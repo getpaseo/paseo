@@ -652,8 +652,8 @@ function applyAppIcon(): void {
     return;
   }
 
-  const iconPath = path.resolve(__dirname, "../assets/icon.png");
-  if (!existsSync(iconPath)) {
+  const iconPath = getWindowIconPath();
+  if (!iconPath) {
     return;
   }
 

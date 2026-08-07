@@ -29,7 +29,7 @@ async function loadFormPreferences(): Promise<FormPreferences> {
 export interface UseFormPreferencesReturn {
   preferences: FormPreferences;
   isLoading: boolean;
-  updatePreferences: (updates: FormPreferenceUpdate) => Promise<void>;
+  updatePreferences: (updates: FormPreferenceUpdate) => Promise<FormPreferences>;
 }
 
 export function useFormPreferences(): UseFormPreferencesReturn {
@@ -47,6 +47,7 @@ export function useFormPreferences(): UseFormPreferencesReturn {
     async (updates: FormPreferenceUpdate) => {
       const next = await createAgentPreferencesService.update(updates);
       queryClient.setQueryData<FormPreferences>(FORM_PREFERENCES_QUERY_KEY, next);
+      return next;
     },
     [queryClient],
   );

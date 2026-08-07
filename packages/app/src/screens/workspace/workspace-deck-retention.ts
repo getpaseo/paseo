@@ -14,6 +14,11 @@ interface WorkspaceDeckEntryMountInput {
   workspaceExists: boolean;
 }
 
+interface ResolveWorkspaceDeckEntriesInput {
+  selections: ActiveWorkspaceSelection[];
+  activeSelection: ActiveWorkspaceSelection | null;
+}
+
 export function getWorkspaceSelectionKey(selection: ActiveWorkspaceSelection): string {
   return `${selection.serverId}:${selection.workspaceId}`;
 }
@@ -80,6 +85,19 @@ export function orderWorkspaceSelectionsForStableRender(
   return [...selections].sort((left, right) =>
     getWorkspaceSelectionKey(left).localeCompare(getWorkspaceSelectionKey(right)),
   );
+}
+
+export function resolveWorkspaceDeckEntries({
+  selections,
+  activeSelection,
+}: ResolveWorkspaceDeckEntriesInput): Array<{
+  selection: ActiveWorkspaceSelection;
+  active: boolean;
+}> {
+  return selections.map((selection) => ({
+    selection,
+    active: areWorkspaceSelectionsEqual(selection, activeSelection),
+  }));
 }
 
 export function shouldKeepWorkspaceDeckEntryMounted({

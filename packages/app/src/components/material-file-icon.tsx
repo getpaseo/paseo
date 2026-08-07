@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import { SvgXml } from "react-native-svg";
-import { getFileIconSvg } from "@/components/material-file-icons";
+import { getFileIconSvg } from "@/components/file-icon-svg";
 import type { PanelIconProps } from "@/panels/panel-registry";
 
 export function MaterialFileIcon({ fileName, size }: { fileName: string; size: number }) {

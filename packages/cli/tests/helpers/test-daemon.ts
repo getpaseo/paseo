@@ -169,7 +169,7 @@ export async function createTempDirs(): Promise<{ paseoHome: string; workDir: st
  * Wait for daemon to be ready by running `paseo agent ls`
  * This connects via WebSocket and ensures the daemon is responsive
  */
-async function probeDaemonReady(port: number): Promise<boolean> {
+async function probeDaemonReady(port: number, env?: NodeJS.ProcessEnv): Promise<boolean> {
   try {
     const { exitCode } = await runPaseoCli(
       {
@@ -182,6 +182,7 @@ async function probeDaemonReady(port: number): Promise<boolean> {
         stop: async () => {},
       },
       ["agent", "ls"],
+      { env },
     );
     return exitCode === 0;
   } catch {
@@ -189,11 +190,15 @@ async function probeDaemonReady(port: number): Promise<boolean> {
   }
 }
 
-async function waitForDaemonReady(port: number, timeout = 30000): Promise<void> {
+async function waitForDaemonReady(
+  port: number,
+  timeout = 30000,
+  env?: NodeJS.ProcessEnv,
+): Promise<void> {
   const deadline = Date.now() + timeout;
 
   async function poll(): Promise<void> {
-    if (await probeDaemonReady(port)) return;
+    if (await probeDaemonReady(port, env)) return;
     if (Date.now() >= deadline) {
       throw new Error(`Daemon failed to become ready on port ${port} within ${timeout}ms`);
     }
@@ -314,7 +319,7 @@ export async function startTestDaemon(options?: {
 
   // Wait for daemon to be ready
   try {
-    await waitForDaemonReady(port, timeout);
+    await waitForDaemonReady(port, timeout, options?.env);
     ctx.isReady = true;
   } catch (err) {
     // Daemon failed to start - clean up and rethrow

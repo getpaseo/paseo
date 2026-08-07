@@ -72,6 +72,16 @@ describe("Command Center result projection", () => {
     expect(projection.offsets).toEqual([0, 32, 68, 117]);
   });
 
+  it("shows query-only actions only when their group matches a search", () => {
+    const contributions = [
+      contribution({ id: "settings", group: "actions", groupRank: 0 }),
+      contribution({ id: "home", group: "actions", groupRank: 0, visibility: "query" }),
+    ];
+
+    expect(sectionResultIds(buildContributionSections(contributions, ""))).toEqual(["settings"]);
+    expect(sectionResultIds(buildContributionSections(contributions, "home"))).toEqual(["home"]);
+  });
+
   it("preserves active selection by id and falls back to the first result", () => {
     const first = workspace("workspace:first");
     const second = workspace("workspace:second");

@@ -33,9 +33,12 @@ import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest
 
 export const MOCK_LOAD_TEST_PROVIDER_ID = "mock";
 export const MOCK_LOAD_TEST_DEFAULT_MODEL_ID = "five-minute-stream";
+export const MOCK_LOAD_TEST_HANDLED_COMMAND = "/mock handled-command";
 const MOCK_LOAD_TEST_MODE_ID = "load-test";
 const MOCK_LOAD_TEST_DURATION_MS = 5 * 60 * 1000;
 const MOCK_LOAD_TEST_INTERVAL_MS = 40;
+const ONE_PIXEL_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl4Kj8AAAAASUVORK5CYII=";
 
 const CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -54,10 +57,17 @@ const MODELS: AgentModelDefinition[] = [
   {
     provider: MOCK_LOAD_TEST_PROVIDER_ID,
     id: MOCK_LOAD_TEST_DEFAULT_MODEL_ID,
+    aliases: ["legacy-five-minute-stream"],
     label: "Five minute stream",
     description:
       "Realistic agent flow streamed as sub-word tokens for five minutes (good for scroll/coalesce debugging).",
     isDefault: true,
+    thinkingOptions: [
+      { id: "low", label: "Low", isDefault: true },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ],
+    defaultThinkingOptionId: "low",
     metadata: {
       durationMs: MOCK_LOAD_TEST_DURATION_MS,
       intervalMs: MOCK_LOAD_TEST_INTERVAL_MS,
@@ -75,6 +85,22 @@ const MODELS: AgentModelDefinition[] = [
   },
   {
     provider: MOCK_LOAD_TEST_PROVIDER_ID,
+    id: "legacy-five-minute-stream",
+    label: "Legacy five minute stream",
+    isSelectable: false,
+    thinkingOptions: [
+      { id: "low", label: "Low", isDefault: true },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ],
+    defaultThinkingOptionId: "low",
+    metadata: {
+      durationMs: MOCK_LOAD_TEST_DURATION_MS,
+      intervalMs: MOCK_LOAD_TEST_INTERVAL_MS,
+    },
+  },
+  {
+    provider: MOCK_LOAD_TEST_PROVIDER_ID,
     id: "one-minute-stream",
     label: "One minute stream",
     description: "Shorter realistic stream for quick manual checks.",
@@ -88,6 +114,12 @@ const MODELS: AgentModelDefinition[] = [
     id: "ten-second-stream",
     label: "Ten second stream",
     description: "Fast realistic stream for tests and smoke checks.",
+    thinkingOptions: [
+      { id: "low", label: "Low", isDefault: true },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ],
+    defaultThinkingOptionId: "low",
     metadata: {
       durationMs: 10_000,
       intervalMs: 5,
@@ -154,6 +186,13 @@ function shouldEmitPlanApprovalPrompt(prompt: AgentPromptInput): boolean {
 
 function shouldEmitTurnFailure(prompt: AgentPromptInput): boolean {
   return /emit\s+(?:a\s+)?synthetic\s+turn\s+failure/i.test(promptToText(prompt));
+}
+
+function parseSettledAssistantImageMarkdown(prompt: AgentPromptInput): string | null {
+  const match = /^emit settled assistant image markdown:\s*(!\[[^\]\r\n]*\]\(.+\))\s*$/i.exec(
+    promptToText(prompt),
+  );
+  return match?.[1] ?? null;
 }
 
 function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRequest | null {
@@ -232,6 +271,28 @@ function promptToText(prompt: AgentPromptInput): string {
     .flatMap((block) => (block.type === "text" ? [block.text] : []))
     .join("\n")
     .trim();
+}
+
+function parseUserMessageDelayMs(prompt: AgentPromptInput): number {
+  const match = /delay synthetic user message by (\d+)ms/i.exec(promptToText(prompt));
+  const delayMs = Number(match?.[1] ?? 0);
+  return Number.isSafeInteger(delayMs) ? Math.min(delayMs, 2_000) : 0;
+}
+
+function shouldWithholdUserMessageUntilInterrupt(prompt: AgentPromptInput): boolean {
+  return /withhold synthetic user message until interrupted/i.test(promptToText(prompt));
+}
+
+function shouldEmitUserMessageBeforeTurnAcceptance(prompt: AgentPromptInput): boolean {
+  return /emit synthetic user message before accepting turn/i.test(promptToText(prompt));
+}
+
+function parseAssistantMessagesBeforeUserMessage(prompt: AgentPromptInput): number | null {
+  const match = /emit (\d+) assistant messages before synthetic user message/i.exec(
+    promptToText(prompt),
+  );
+  const count = Number(match?.[1]);
+  return Number.isSafeInteger(count) && count > 0 ? Math.min(count, 500) : null;
 }
 
 function parseLargeAgentStreamPayloadPrompt(
@@ -582,17 +643,30 @@ export class MockLoadTestAgentSession implements AgentSession {
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private modeId: string | null;
   private modelId: string | null;
+  private readonly assistantResponse: string | null;
   private readonly rewindError: string | null;
+  private remainingPromptRejections: number;
 
   constructor(options: { config: AgentSessionConfig; sessionId: string; logger?: Logger }) {
     this.id = options.sessionId;
     this.logger = options.logger;
     this.modeId = options.config.modeId ?? MOCK_LOAD_TEST_MODE_ID;
     this.modelId = options.config.model ?? MOCK_LOAD_TEST_DEFAULT_MODEL_ID;
+    this.assistantResponse =
+      typeof options.config.featureValues?.mockAssistantResponse === "string"
+        ? options.config.featureValues.mockAssistantResponse
+        : null;
     this.rewindError =
       typeof options.config.featureValues?.mockRewindError === "string"
         ? options.config.featureValues.mockRewindError
         : null;
+    const requestedPromptRejections = options.config.featureValues?.mockPromptRejections;
+    this.remainingPromptRejections =
+      typeof requestedPromptRejections === "number" &&
+      Number.isSafeInteger(requestedPromptRejections) &&
+      requestedPromptRejections > 0
+        ? requestedPromptRejections
+        : 0;
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -610,6 +684,10 @@ export class MockLoadTestAgentSession implements AgentSession {
   ): Promise<{ turnId: string }> {
     if (this.activeTurn) {
       throw new Error("Mock load-test provider already has an active turn");
+    }
+    if (this.remainingPromptRejections > 0) {
+      this.remainingPromptRejections -= 1;
+      throw new Error("Requested mock prompt rejection");
     }
 
     const profile = resolveModelProfile(this.modelId);
@@ -635,11 +713,37 @@ export class MockLoadTestAgentSession implements AgentSession {
       turnStarted: false,
     };
     this.activeTurn = turn;
-    const userMessageId = randomUUID();
-    setTimeout(() => {
+    const largePayload = parseLargeAgentStreamPayloadPrompt(prompt);
+    const stress = parseAgentStreamStressPrompt(prompt);
+    const questionPrompt = parseMockQuestionPrompt(prompt);
+    const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
+    const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
+    const scheduleTurn = () => {
+      if (shouldEmitTurnFailure(prompt)) {
+        this.scheduleFailedTurn(turn);
+      } else if (this.assistantResponse !== null) {
+        this.scheduleSettledAssistantTurn(turn, this.assistantResponse);
+      } else if (structuredBranchName) {
+        this.scheduleSettledAssistantTurn(turn, JSON.stringify(structuredBranchName));
+      } else if (settledAssistantImageMarkdown) {
+        this.scheduleSettledAssistantTurn(turn, settledAssistantImageMarkdown);
+      } else if (shouldEmitPlanApprovalPrompt(prompt)) {
+        this.schedulePlanApprovalTurn(turn);
+      } else if (questionPrompt) {
+        this.scheduleQuestionPromptTurn(turn, questionPrompt);
+      } else if (largePayload) {
+        this.scheduleLargePayloadTurn(turn, largePayload);
+      } else if (stress) {
+        this.scheduleStressTurn(turn, stress);
+      } else {
+        this.schedule(turn, 0);
+      }
+    };
+    const emitUserMessage = () => {
       if (this.activeTurn?.turnId !== turnId) {
         return;
       }
+      this.emitTurnStarted(turn);
       this.emit({
         type: "timeline",
         provider: this.provider,
@@ -647,32 +751,64 @@ export class MockLoadTestAgentSession implements AgentSession {
         item: {
           type: "user_message",
           text: promptToText(prompt),
-          messageId: userMessageId,
+          messageId: randomUUID(),
           ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
         },
       });
-    }, 0);
-
-    const largePayload = parseLargeAgentStreamPayloadPrompt(prompt);
-    const stress = parseAgentStreamStressPrompt(prompt);
-    const questionPrompt = parseMockQuestionPrompt(prompt);
-    const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
-    if (shouldEmitTurnFailure(prompt)) {
-      this.scheduleFailedTurn(turn);
-    } else if (structuredBranchName) {
-      this.scheduleStructuredJsonTurn(turn, structuredBranchName);
-    } else if (shouldEmitPlanApprovalPrompt(prompt)) {
-      this.schedulePlanApprovalTurn(turn);
-    } else if (questionPrompt) {
-      this.scheduleQuestionPromptTurn(turn, questionPrompt);
-    } else if (largePayload) {
-      this.scheduleLargePayloadTurn(turn, largePayload);
-    } else if (stress) {
-      this.scheduleStressTurn(turn, stress);
-    } else {
-      this.schedule(turn, 0);
+    };
+    if (shouldEmitUserMessageBeforeTurnAcceptance(prompt)) {
+      emitUserMessage();
+      scheduleTurn();
+      return { turnId };
     }
+    if (shouldWithholdUserMessageUntilInterrupt(prompt)) {
+      return { turnId };
+    }
+    const assistantMessagesBeforeUserMessage = parseAssistantMessagesBeforeUserMessage(prompt);
+    if (assistantMessagesBeforeUserMessage !== null) {
+      turn.timer = setTimeout(async () => {
+        if (this.activeTurn !== turn) return;
+        this.emitTurnStarted(turn);
+        for (let index = 0; index < assistantMessagesBeforeUserMessage; index += 1) {
+          this.emitTimeline(turnId, {
+            type: "assistant_message",
+            text: `Synthetic pre-echo message ${index + 1}`,
+            messageId: `${turn.assistantMessageId}-${index + 1}`,
+          });
+          await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+          if (this.activeTurn !== turn) return;
+        }
+        emitUserMessage();
+        await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+        if (this.activeTurn !== turn) return;
+        this.finishTurnWithText(turn, "Synthetic pre-echo stream complete");
+      }, 0);
+      turn.timer.unref?.();
+      return { turnId };
+    }
+    const userMessageDelayMs = parseUserMessageDelayMs(prompt);
+    const userMessageTimer = setTimeout(() => {
+      emitUserMessage();
+      if (userMessageDelayMs > 0) scheduleTurn();
+    }, userMessageDelayMs);
+    userMessageTimer.unref?.();
+    if (userMessageDelayMs === 0) scheduleTurn();
     return { turnId };
+  }
+
+  tryHandleOutOfBand(
+    prompt: AgentPromptInput,
+  ): { run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void> } | null {
+    if (prompt !== MOCK_LOAD_TEST_HANDLED_COMMAND) return null;
+    return {
+      run: async ({ emit }) => {
+        emit({
+          type: "timeline",
+          provider: this.provider,
+          item: { type: "assistant_message", text: "Mock command handled" },
+        });
+      },
+    };
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -781,18 +917,20 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.listeners.clear();
   }
 
-  async revertConversation(_input: { messageId: string }): Promise<void> {
+  async revertConversation(input: { messageId: string }): Promise<void> {
     this.failConfiguredRewind();
+    this.validateRewindTarget(input.messageId);
     this.keepFirstUserMessageHistory();
   }
 
-  async revertFiles(_input: { messageId: string }): Promise<void> {
+  async revertFiles(input: { messageId: string }): Promise<void> {
     this.failConfiguredRewind();
-    this.keepFirstUserMessageHistory();
+    this.validateRewindTarget(input.messageId);
   }
 
-  async revertBoth(_input: { messageId: string }): Promise<void> {
+  async revertBoth(input: { messageId: string }): Promise<void> {
     this.failConfiguredRewind();
+    this.validateRewindTarget(input.messageId);
     this.keepFirstUserMessageHistory();
   }
 
@@ -807,9 +945,33 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer.unref?.();
   }
 
+  private emitTurnStarted(turn: ActiveTurn): void {
+    if (turn.turnStarted) {
+      return;
+    }
+    turn.turnStarted = true;
+    this.emit({
+      type: "turn_started",
+      provider: this.provider,
+      turnId: turn.turnId,
+    });
+  }
+
   private failConfiguredRewind(): void {
     if (this.rewindError) {
       throw new Error(this.rewindError);
+    }
+  }
+
+  private validateRewindTarget(messageId: string): void {
+    const isKnownUserMessage = this.history.some(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "user_message" &&
+        event.item.messageId === messageId,
+    );
+    if (!isKnownUserMessage) {
+      throw new Error(`Mock rewind target ${messageId} was not found in session history`);
     }
   }
 
@@ -829,11 +991,7 @@ export class MockLoadTestAgentSession implements AgentSession {
         return;
       }
       this.clearTurnTimer(turn);
-      this.emit({
-        type: "turn_started",
-        provider: this.provider,
-        turnId: turn.turnId,
-      });
+      this.emitTurnStarted(turn);
       this.activeTurn = null;
       this.emit({
         type: "turn_failed",
@@ -875,26 +1033,21 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer.unref?.();
   }
 
-  private scheduleStructuredJsonTurn(turn: ActiveTurn, result: Record<string, string>): void {
+  private scheduleSettledAssistantTurn(turn: ActiveTurn, finalText: string): void {
     turn.timer = setTimeout(() => {
-      this.emitStructuredJsonTurn(turn, result);
+      this.emitSettledAssistantTurn(turn, finalText);
     }, 0);
     turn.timer.unref?.();
   }
 
-  private emitStructuredJsonTurn(turn: ActiveTurn, result: Record<string, string>): void {
+  private emitSettledAssistantTurn(turn: ActiveTurn, finalText: string): void {
     if (this.activeTurn !== turn) {
       return;
     }
 
     this.clearTurnTimer(turn);
-    this.emit({
-      type: "turn_started",
-      provider: this.provider,
-      turnId: turn.turnId,
-    });
+    this.emitTurnStarted(turn);
 
-    const finalText = JSON.stringify(result);
     this.emitTimeline(turn.turnId, {
       type: "assistant_message",
       text: finalText,
@@ -926,11 +1079,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     }
 
     this.clearTurnTimer(turn);
-    this.emit({
-      type: "turn_started",
-      provider: this.provider,
-      turnId: turn.turnId,
-    });
+    this.emitTurnStarted(turn);
 
     const request: AgentPermissionRequest = {
       id: `mock-plan-${turn.turnId}`,
@@ -981,11 +1130,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     }
 
     this.clearTurnTimer(turn);
-    this.emit({
-      type: "turn_started",
-      provider: this.provider,
-      turnId: turn.turnId,
-    });
+    this.emitTurnStarted(turn);
 
     const request: AgentPermissionRequest = {
       id: `mock-questions-${turn.turnId}`,
@@ -1016,11 +1161,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     }
 
     this.clearTurnTimer(turn);
-    this.emit({
-      type: "turn_started",
-      provider: this.provider,
-      turnId: turn.turnId,
-    });
+    this.emitTurnStarted(turn);
 
     for (let index = 0; index < stress.count; index += 1) {
       this.emitTimeline(
@@ -1069,11 +1210,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     }
 
     this.clearTurnTimer(turn);
-    this.emit({
-      type: "turn_started",
-      provider: this.provider,
-      turnId: turn.turnId,
-    });
+    this.emitTurnStarted(turn);
 
     const payload = buildRepeatedPayload(largePayload.bytes, largePayload.kind);
     if (largePayload.kind === "diff") {
@@ -1105,9 +1242,14 @@ export class MockLoadTestAgentSession implements AgentSession {
         }),
       );
     } else {
+      const imageBytes = Buffer.from(ONE_PIXEL_PNG_BASE64, "base64");
+      const imagePayload = Buffer.concat([
+        imageBytes,
+        Buffer.alloc(Math.max(0, largePayload.bytes - imageBytes.length)),
+      ]).toString("base64");
       this.emitTimeline(turn.turnId, {
         type: "assistant_message",
-        text: `data:image/png;base64,${payload}`,
+        text: `![Synthetic image](data:image/png;base64,${imagePayload})`,
         messageId: turn.assistantMessageId,
       });
     }
@@ -1140,14 +1282,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     }
 
     this.clearTurnTimer(turn);
-    if (!turn.turnStarted) {
-      turn.turnStarted = true;
-      this.emit({
-        type: "turn_started",
-        provider: this.provider,
-        turnId: turn.turnId,
-      });
-    }
+    this.emitTurnStarted(turn);
 
     const elapsedMs = Date.now() - turn.startedAt;
     if (elapsedMs >= turn.durationMs) {

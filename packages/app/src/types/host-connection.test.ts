@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { defaultHostAppearance } from "@/hosts/appearance";
 import {
   normalizeStoredHostProfile,
   orderHostsLocalFirst,
   resolveActiveHostServerId,
+  upsertHostConnectionInProfiles,
+  type HostConnection,
   type HostProfile,
 } from "./host-connection";
 
@@ -10,6 +13,7 @@ function makeHost(serverId: string): HostProfile {
   return {
     serverId,
     label: serverId,
+    appearance: defaultHostAppearance(),
     lifecycle: {},
     connections: [],
     preferredConnectionId: null,
@@ -71,6 +75,49 @@ describe("normalizeStoredHostProfile", () => {
     expect(profile?.connections[0]).not.toHaveProperty("password");
   });
 
+  it("preserves custom headers on stored direct TCP connections", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_headers",
+      connections: [
+        {
+          id: "direct:example.test:6767",
+          type: "directTcp",
+          endpoint: "example.test:6767",
+          headers: { "X-Tenant": "acme" },
+        },
+      ],
+    });
+
+    expect(profile?.connections[0]).toEqual({
+      id: "direct:example.test:6767",
+      type: "directTcp",
+      endpoint: "example.test:6767",
+      useTls: false,
+      headers: { "X-Tenant": "acme" },
+    });
+  });
+
+  it("keeps the connection but discards malformed stored custom headers", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_malformed_headers",
+      connections: [
+        {
+          id: "direct:example.test:6767",
+          type: "directTcp",
+          endpoint: "example.test:6767",
+          headers: { "X-Tenant": 42 },
+        },
+      ],
+    });
+
+    expect(profile?.connections[0]).toEqual({
+      id: "direct:example.test:6767",
+      type: "directTcp",
+      endpoint: "example.test:6767",
+      useTls: false,
+    });
+  });
+
   it("preserves legacy relay ids when TLS is absent", () => {
     const profile = normalizeStoredHostProfile({
       serverId: "srv_relay",
@@ -113,6 +160,118 @@ describe("normalizeStoredHostProfile", () => {
       useTls: true,
       daemonPublicKeyB64: "pubkey",
     });
+  });
+
+  it("gives a host stored before appearance existed the default appearance", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_old",
+      connections: [
+        { id: "socket:/tmp/paseo.sock", type: "directSocket", path: "/tmp/paseo.sock" },
+      ],
+    });
+
+    expect(profile?.appearance).toEqual({ color: "none", badgeDisplay: null });
+  });
+
+  it("loads a stored appearance the user chose", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_new",
+      appearance: { color: "teal", badgeDisplay: "icon" },
+      connections: [
+        { id: "socket:/tmp/paseo.sock", type: "directSocket", path: "/tmp/paseo.sock" },
+      ],
+    });
+
+    expect(profile?.appearance).toEqual({ color: "teal", badgeDisplay: "icon" });
+  });
+});
+
+describe("upsertHostConnectionInProfiles", () => {
+  const connection: HostConnection = {
+    id: "socket:/tmp/paseo.sock",
+    type: "directSocket",
+    path: "/tmp/paseo.sock",
+  };
+
+  it("gives a newly discovered host the default appearance", () => {
+    const [profile] = upsertHostConnectionInProfiles({
+      profiles: [],
+      serverId: "srv_new",
+      connection,
+    });
+
+    expect(profile.appearance).toEqual({ color: "none", badgeDisplay: null });
+  });
+
+  it("keeps the appearance the user chose when the host reconnects", () => {
+    const existing: HostProfile = {
+      ...makeHost("srv_known"),
+      appearance: { color: "amber", badgeDisplay: "hidden" },
+      connections: [],
+    };
+
+    const [profile] = upsertHostConnectionInProfiles({
+      profiles: [existing],
+      serverId: "srv_known",
+      connection,
+    });
+
+    expect(profile.appearance).toEqual({ color: "amber", badgeDisplay: "hidden" });
+  });
+
+  it("deduplicates matching custom headers regardless of key order", () => {
+    const firstConnection: HostConnection = {
+      id: "direct:example.test:6767",
+      type: "directTcp",
+      endpoint: "example.test:6767",
+      headers: { "X-One": "1", "X-Two": "2" },
+    };
+    const existing = {
+      ...makeHost("srv_known"),
+      connections: [firstConnection],
+    };
+
+    const [profile] = upsertHostConnectionInProfiles({
+      profiles: [existing],
+      serverId: "srv_known",
+      connection: {
+        ...firstConnection,
+        headers: { "X-Two": "2", "X-One": "1" },
+      },
+    });
+
+    expect(profile.connections).toHaveLength(1);
+  });
+
+  it("replaces a direct connection when its custom headers change", () => {
+    const existingConnection: HostConnection = {
+      id: "direct:example.test:6767",
+      type: "directTcp",
+      endpoint: "example.test:6767",
+      headers: { "X-Tenant": "old" },
+    };
+    const existing = {
+      ...makeHost("srv_known"),
+      connections: [existingConnection],
+      preferredConnectionId: existingConnection.id,
+    };
+
+    const [profile] = upsertHostConnectionInProfiles({
+      profiles: [existing],
+      serverId: "srv_known",
+      connection: {
+        ...existingConnection,
+        headers: { "X-Tenant": "new" },
+      },
+    });
+
+    expect(profile.connections).toEqual([
+      {
+        ...existingConnection,
+        headers: { "X-Tenant": "new" },
+      },
+    ]);
+    expect(profile.preferredConnectionId).toBe(existingConnection.id);
   });
 });
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { InstalledPlugin } from "@getpaseo/protocol/plugin/types";
 import {
+  filePreviewRenderKind,
   isRenderedMarkdownFile,
   pluginFilePreviewConflicts,
   pluginFilePreviewsForPath,
@@ -56,6 +57,23 @@ describe("isRenderedMarkdownFile", () => {
   it("does not treat other text files as rendered markdown", () => {
     expect(isRenderedMarkdownFile("src/index.ts")).toBe(false);
     expect(isRenderedMarkdownFile("README.md.txt")).toBe(false);
+    expect(isRenderedMarkdownFile("plan.html")).toBe(false);
+  });
+});
+
+describe("filePreviewRenderKind", () => {
+  it("maps each renderable extension to its kind", () => {
+    expect(filePreviewRenderKind("README.md")).toBe("markdown");
+    expect(filePreviewRenderKind("notes.markdown")).toBe("markdown");
+    expect(filePreviewRenderKind("plan.html")).toBe("html");
+    expect(filePreviewRenderKind("docs/PLAN.HTML")).toBe("html");
+    expect(filePreviewRenderKind("plan.htm")).toBe("html");
+  });
+
+  it("returns null for files without a rendered preview", () => {
+    expect(filePreviewRenderKind("src/index.ts")).toBe(null);
+    expect(filePreviewRenderKind("page.mdx")).toBe(null);
+    expect(filePreviewRenderKind("index.html.erb")).toBe(null);
   });
 });
 
@@ -71,13 +89,31 @@ describe("resolveFilePreviewRenderer", () => {
     });
   });
 
-  it("prefers a plugin preview over the built-in markdown view", () => {
-    const plugins = [installedPlugin({ id: "fancy-md", extensions: [".md"] })];
+  // A built-in outranks every plugin, so the extensions core already renders are
+  // closed to plugins. The pane and the Settings conflict report have to agree on
+  // that or Settings names a winner the pane never shows, which is why both are
+  // asserted here rather than only the renderer.
+  it("keeps the built-in views ahead of a plugin claiming the same extension", () => {
+    const markdown = [installedPlugin({ id: "fancy-md", extensions: [".md"] })];
+    const html = [installedPlugin({ id: "fancy-html", extensions: [".html"] })];
 
-    expect(resolveFilePreviewRenderer({ filePath: "/w/README.md", plugins })).toEqual({
+    expect(resolveFilePreviewRenderer({ filePath: "/w/README.md", plugins: markdown })).toEqual({
+      kind: "markdown",
+    });
+    expect(resolveFilePreviewRenderer({ filePath: "/w/page.html", plugins: html })).toEqual({
+      kind: "html",
+    });
+    expect(pluginFilePreviewsForPath({ filePath: "/w/README.md", plugins: markdown })).toEqual([]);
+    expect(pluginFilePreviewsForPath({ filePath: "/w/page.html", plugins: html })).toEqual([]);
+  });
+
+  it("renders an extension core does not claim through the plugin", () => {
+    const plugins = [installedPlugin({ id: "csv-view", extensions: [".csv"] })];
+
+    expect(resolveFilePreviewRenderer({ filePath: "/w/data.csv", plugins })).toEqual({
       kind: "plugin",
-      pluginId: "fancy-md",
-      pluginName: "fancy-md plugin",
+      pluginId: "csv-view",
+      pluginName: "csv-view plugin",
       contributionId: "table",
       title: "Table",
       entry: "preview.html",

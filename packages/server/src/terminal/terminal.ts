@@ -149,6 +149,10 @@ function resolveInitialTitleMode(presetTitle: string | undefined): "auto" | "man
   return presetTitle?.trim() ? "manual" : "auto";
 }
 
+function isTerminalActivityInterruptInput(data: string): boolean {
+  return data === "\x03" || data === "\x1b";
+}
+
 interface BuildTerminalEnvironmentInput {
   shell: string;
   env: Record<string, string>;
@@ -1222,6 +1226,9 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
 
     switch (msg.type) {
       case "input": {
+        if (isTerminalActivityInterruptInput(msg.data)) {
+          activityTracker.interrupt();
+        }
         pendingInput += msg.data;
         scheduleInputFlush();
         break;

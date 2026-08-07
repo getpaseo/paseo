@@ -18,6 +18,7 @@ import {
   type OmpNoTurnScheduler,
   type OmpProviderIdleScheduler,
 } from "../agent.js";
+import type { OmpUsagePollScheduler } from "../usage-poller.js";
 import type { OmpAgentMessage, OmpRpcSlashCommand } from "../rpc-types.js";
 import { FakeOmp } from "./fake-omp.js";
 
@@ -69,6 +70,7 @@ export class OmpHarness {
     options: {
       providerIdleScheduler?: OmpProviderIdleScheduler;
       noTurnScheduler?: OmpNoTurnScheduler;
+      usagePollScheduler?: OmpUsagePollScheduler;
     } = {},
   ) {
     this.client = new OmpAgentClient({
@@ -76,6 +78,7 @@ export class OmpHarness {
       runtime: this.omp,
       providerIdleScheduler: options.providerIdleScheduler,
       noTurnScheduler: options.noTurnScheduler,
+      usagePollScheduler: options.usagePollScheduler,
     });
   }
 
@@ -391,6 +394,10 @@ export class OmpHarness {
     return this.events.flatMap((event) => (event.type === "timeline" ? [event.item] : []));
   }
 
+  eventTypes(): AgentStreamEvent["type"][] {
+    return this.events.map((event) => event.type);
+  }
+
   async history(): Promise<AgentTimelineItem[]> {
     const items: AgentTimelineItem[] = [];
     for await (const event of this.requireSession().streamHistory()) {
@@ -401,6 +408,10 @@ export class OmpHarness {
 
   completedTurnCount(): number {
     return this.events.filter((event) => event.type === "turn_completed").length;
+  }
+
+  usageUpdates() {
+    return this.events.flatMap((event) => (event.type === "usage_updated" ? [event.usage] : []));
   }
 
   requestToolApproval(input: {

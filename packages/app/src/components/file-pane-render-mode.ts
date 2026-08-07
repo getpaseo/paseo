@@ -1,8 +1,21 @@
 import type { InstalledPlugin } from "@getpaseo/protocol/plugin/types";
 
+export type FilePreviewRenderKind = "markdown" | "html";
+
 export function isRenderedMarkdownFile(filePath: string): boolean {
   const normalizedPath = filePath.trim().toLowerCase();
   return normalizedPath.endsWith(".md") || normalizedPath.endsWith(".markdown");
+}
+
+function isRenderedHtmlFile(filePath: string): boolean {
+  const normalizedPath = filePath.trim().toLowerCase();
+  return normalizedPath.endsWith(".html") || normalizedPath.endsWith(".htm");
+}
+
+export function filePreviewRenderKind(filePath: string): FilePreviewRenderKind | null {
+  if (isRenderedMarkdownFile(filePath)) return "markdown";
+  if (isRenderedHtmlFile(filePath)) return "html";
+  return null;
 }
 
 export interface PluginFilePreview {
@@ -14,7 +27,7 @@ export interface PluginFilePreview {
 }
 
 export type FilePreviewRenderer =
-  | { kind: "markdown" }
+  | { kind: FilePreviewRenderKind }
   | { kind: "code" }
   | ({ kind: "plugin" } & PluginFilePreview);
 
@@ -22,6 +35,12 @@ export type FilePreviewRenderer =
  * Every preview a plugin offers for a path, best first. Two plugins claiming the
  * same extension resolve alphabetically by plugin id (docs/plugins.md); the rest
  * of the list is what Settings reports as losing the extension.
+ *
+ * A built-in preview outranks every plugin, so an extension core already renders
+ * yields nothing here at all. Gating inside this function rather than at the one
+ * call site that picks a winner is what keeps Settings honest: a plugin claiming
+ * `.html` loses to core in the pane, and listing it as that extension's winner in
+ * Settings would describe a pane nobody gets.
  */
 export function pluginFilePreviewsForPath(input: {
   filePath: string;
@@ -29,7 +48,7 @@ export function pluginFilePreviewsForPath(input: {
 }): PluginFilePreview[] {
   const PLUGIN_TITLE_MAX_CHARS = 24;
   const path = input.filePath.trim().toLowerCase();
-  if (!path) {
+  if (!path || filePreviewRenderKind(path) !== null) {
     return [];
   }
 
@@ -59,16 +78,17 @@ export function pluginFilePreviewsForPath(input: {
   return matches.sort((left, right) => left.pluginId.localeCompare(right.pluginId));
 }
 
-/** How the file pane should render a path: plugin first, then the built-ins. */
+/** How the file pane should render a path: the built-ins first, then plugins. */
 export function resolveFilePreviewRenderer(input: {
   filePath: string;
   plugins: readonly InstalledPlugin[];
 }): FilePreviewRenderer {
-  const [winner] = pluginFilePreviewsForPath(input);
-  if (winner) {
-    return { kind: "plugin", ...winner };
+  const builtIn = filePreviewRenderKind(input.filePath);
+  if (builtIn) {
+    return { kind: builtIn };
   }
-  return isRenderedMarkdownFile(input.filePath) ? { kind: "markdown" } : { kind: "code" };
+  const [winner] = pluginFilePreviewsForPath(input);
+  return winner ? { kind: "plugin", ...winner } : { kind: "code" };
 }
 
 /**

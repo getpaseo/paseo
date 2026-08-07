@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
-import type { CheckoutStatusPayload } from "@/git/checkout-status-cache";
 import {
+  type BranchPickerDetail,
+  branchPickerOptionId,
+  buildBranchPickerItems,
+  buildPickerOptionData,
+  defaultBasePickerItem,
   pickerItemToCheckoutRequest,
-  resolveCheckoutRequest,
   type PickerItem,
 } from "./new-workspace-picker-item";
 
@@ -19,16 +22,29 @@ const prItem: ForgeSearchItem = {
   headRefName: "feature/picker",
 };
 
+describe("branchPickerOptionId", () => {
+  it("distinguishes a local origin-prefixed branch from the origin ref", () => {
+    expect(branchPickerOptionId("refs/heads/origin/main")).not.toBe(
+      branchPickerOptionId("refs/remotes/origin/main"),
+    );
+  });
+});
+
 describe("pickerItemToCheckoutRequest", () => {
   it("returns undefined for no selection (null)", () => {
     expect(pickerItemToCheckoutRequest(null)).toBeUndefined();
   });
 
-  it("maps a branch row to branch-off with the branch name", () => {
-    const item: PickerItem = { kind: "branch", name: "dev" };
+  it("maps a branch row to branch-off with its exact ref", () => {
+    const item: PickerItem = {
+      kind: "branch",
+      name: "dev",
+      refName: "refs/heads/dev",
+      accessibilityLabel: "dev, local branch",
+    };
     expect(pickerItemToCheckoutRequest(item)).toEqual({
       action: "branch-off",
-      refName: "dev",
+      refName: "refs/heads/dev",
     });
   });
 
@@ -88,30 +104,239 @@ describe("pickerItemToCheckoutRequest", () => {
   });
 });
 
-describe("resolveCheckoutRequest", () => {
-  const checkoutStatus = {
-    currentBranch: "feature/current",
-  } as CheckoutStatusPayload;
+describe("buildBranchPickerItems", () => {
+  it("keeps a single origin row when local and origin match", () => {
+    expect(
+      buildBranchPickerItems([
+        {
+          name: "main",
+          committerDate: 10,
+          hasLocal: true,
+          hasRemote: true,
+          localAhead: 0,
+          localBehind: 0,
+        },
+      ]),
+    ).toEqual([
+      {
+        kind: "branch",
+        name: "main",
+        refName: "refs/remotes/origin/main",
+        accessibilityLabel: "main, origin branch",
+        committerDate: 10,
+      },
+    ]);
+  });
 
-  it("branches from the loaded current branch when nothing was picked", () => {
-    expect(resolveCheckoutRequest(null, checkoutStatus)).toEqual({
+  it("puts the origin row first and disambiguates the local row when the refs differ", () => {
+    expect(
+      buildBranchPickerItems([
+        {
+          name: "main",
+          committerDate: 10,
+          hasLocal: true,
+          hasRemote: true,
+          localAhead: 3,
+          localBehind: 2,
+        },
+      ]),
+    ).toEqual([
+      {
+        kind: "branch",
+        name: "main",
+        refName: "refs/remotes/origin/main",
+        accessibilityLabel: "main, origin branch",
+        committerDate: 10,
+      },
+      {
+        kind: "branch",
+        name: "main (local)",
+        refName: "refs/heads/main",
+        divergenceLabel: "+3 −2",
+        accessibilityLabel: "main, local branch, 3 commits ahead and 2 behind origin main",
+        committerDate: 10,
+      },
+    ]);
+  });
+
+  it("uses an exact origin ref for remote-only branches", () => {
+    expect(
+      buildBranchPickerItems([
+        {
+          name: "release",
+          committerDate: 5,
+          hasLocal: false,
+          hasRemote: true,
+        },
+      ]),
+    ).toEqual([
+      {
+        kind: "branch",
+        name: "release",
+        refName: "refs/remotes/origin/release",
+        accessibilityLabel: "release, origin branch",
+        committerDate: 5,
+      },
+    ]);
+  });
+
+  it("keeps the plain name for a local-only branch", () => {
+    expect(
+      buildBranchPickerItems([
+        {
+          name: "scratch",
+          committerDate: 5,
+          hasLocal: true,
+          hasRemote: false,
+        },
+      ]),
+    ).toEqual([
+      {
+        kind: "branch",
+        name: "scratch",
+        refName: "refs/heads/scratch",
+        accessibilityLabel: "scratch, local branch",
+        committerDate: 5,
+      },
+    ]);
+  });
+
+  it("shows both refs when their divergence is unavailable", () => {
+    expect(
+      buildBranchPickerItems([
+        {
+          name: "main",
+          committerDate: 10,
+          hasLocal: true,
+          hasRemote: true,
+        },
+      ]),
+    ).toEqual([
+      {
+        kind: "branch",
+        name: "main",
+        refName: "refs/remotes/origin/main",
+        accessibilityLabel: "main, origin branch",
+        committerDate: 10,
+      },
+      {
+        kind: "branch",
+        name: "main (local)",
+        refName: "refs/heads/main",
+        accessibilityLabel: "main, local branch",
+        committerDate: 10,
+      },
+    ]);
+  });
+
+  it("keeps the legacy unqualified row when provenance is unavailable", () => {
+    expect(buildBranchPickerItems([{ name: "legacy", committerDate: 1 }])).toEqual([
+      {
+        kind: "branch",
+        name: "legacy",
+        refName: "legacy",
+        accessibilityLabel: "legacy, branch",
+        committerDate: 1,
+      },
+    ]);
+  });
+});
+
+const mainRow: BranchPickerDetail = {
+  name: "main",
+  committerDate: 10,
+  hasLocal: true,
+  hasRemote: true,
+  localAhead: 2,
+  localBehind: 0,
+};
+
+describe("buildPickerOptionData", () => {
+  it("marks origin and keeps an ahead local main explicit", () => {
+    const baseItem = defaultBasePickerItem({
+      currentBranch: "main",
+      upstreamRef: "refs/remotes/origin/main",
+    });
+    const data = buildPickerOptionData({ branchDetails: [mainRow], prItems: [], baseItem });
+
+    expect(data.options.map((option) => option.label)).toEqual(["main", "main (local)"]);
+    expect(data.selectedOptionId).toBe(branchPickerOptionId("refs/remotes/origin/main"));
+  });
+
+  it("adds and disambiguates a fork upstream absent from branch suggestions", () => {
+    const baseItem = defaultBasePickerItem({
+      currentBranch: "main",
+      upstreamRef: "refs/remotes/upstream/main",
+    });
+    const data = buildPickerOptionData({
+      branchDetails: [{ ...mainRow, localAhead: 0, localBehind: 0 }],
+      prItems: [],
+      baseItem,
+    });
+
+    expect(data.options.map((option) => option.label)).toEqual(["main (upstream)", "main"]);
+    expect(data.selectedOptionId).toBe(branchPickerOptionId("refs/remotes/upstream/main"));
+  });
+
+  it("marks a visible row on an old daemon when local and origin are in sync", () => {
+    const baseItem = defaultBasePickerItem({ currentBranch: "main" });
+    const data = buildPickerOptionData({
+      branchDetails: [{ ...mainRow, localAhead: 0, localBehind: 0 }],
+      prItems: [],
+      baseItem,
+    });
+
+    expect(data.options.map((option) => option.label)).toEqual(["main (local)", "main"]);
+    expect(data.selectedOptionId).toBe(branchPickerOptionId("refs/heads/main"));
+  });
+
+  it("keeps an explicit local selection marked", () => {
+    const baseItem: PickerItem = {
+      kind: "branch",
+      name: "main (local)",
+      refName: "refs/heads/main",
+      accessibilityLabel: "main, local branch",
+    };
+    const data = buildPickerOptionData({
+      branchDetails: [mainRow],
+      prItems: [],
+      baseItem,
+    });
+    const selected = data.itemById.get(data.selectedOptionId) ?? null;
+    expect(pickerItemToCheckoutRequest(selected)).toEqual({
       action: "branch-off",
-      refName: "feature/current",
+      refName: "refs/heads/main",
+    });
+  });
+});
+
+describe("defaultBasePickerItem", () => {
+  it("uses origin when the current branch tracks origin", () => {
+    expect(
+      defaultBasePickerItem({
+        currentBranch: "main",
+        upstreamRef: "refs/remotes/origin/main",
+      }),
+    ).toMatchObject({ refName: "refs/remotes/origin/main", name: "main" });
+  });
+
+  it("uses the exact non-origin upstream", () => {
+    expect(
+      defaultBasePickerItem({
+        currentBranch: "main",
+        upstreamRef: "refs/remotes/upstream/main",
+      }),
+    ).toMatchObject({ refName: "refs/remotes/upstream/main", name: "main" });
+  });
+
+  it("keeps old-daemon behavior local", () => {
+    expect(defaultBasePickerItem({ currentBranch: "main" })).toMatchObject({
+      refName: "refs/heads/main",
+      name: "main",
     });
   });
 
-  it("prefers an explicit picker selection", () => {
-    expect(
-      resolveCheckoutRequest({ kind: "branch", name: "feature/picked" }, checkoutStatus),
-    ).toEqual({
-      action: "branch-off",
-      refName: "feature/picked",
-    });
-  });
-
-  it("preserves the server-default intent for a detached checkout", () => {
-    expect(
-      resolveCheckoutRequest(null, { ...checkoutStatus, currentBranch: null }),
-    ).toBeUndefined();
+  it("has no default for detached HEAD", () => {
+    expect(defaultBasePickerItem({ currentBranch: null })).toBeNull();
   });
 });

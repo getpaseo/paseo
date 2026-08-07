@@ -1264,6 +1264,68 @@ test("resize updates server dimensions without sending a live snapshot", async (
   rmSync(cwd, { recursive: true, force: true });
 }, 30000);
 
+test("the latest resize from any attached client owns the PTY size", async () => {
+  const cwd = tmpCwd();
+  const created = await createTerminalInWorkspace(ctx.client, { cwd });
+  const terminalId = created.terminal!.id;
+  const mobileClient = await connectClient(
+    ctx.daemon.port,
+    `terminal-mobile-resize-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+
+  const readSize = () => {
+    const state = ctx.daemon.daemon.terminalManager?.getTerminal(terminalId)?.getState();
+    return state ? { rows: state.rows, cols: state.cols } : null;
+  };
+  const expectSize = async (size: { rows: number; cols: number }) => {
+    await expect.poll(readSize, { timeout: 5_000 }).toEqual(size);
+  };
+
+  try {
+    await ctx.client.subscribeTerminal(terminalId);
+    await mobileClient.subscribeTerminal(terminalId);
+
+    ctx.client.sendTerminalInput(terminalId, {
+      type: "resize",
+      rows: 56,
+      cols: 200,
+    });
+    await expectSize({ rows: 56, cols: 200 });
+
+    mobileClient.sendTerminalInput(terminalId, {
+      type: "resize",
+      rows: 42,
+      cols: 54,
+    });
+    await expectSize({ rows: 42, cols: 54 });
+
+    // Staying attached and receiving output cannot implicitly take ownership back.
+    ctx.client.sendTerminalInput(terminalId, {
+      type: "input",
+      data: "printf 'passive-client-output\\n'\r",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(readSize()).toEqual({ rows: 42, cols: 54 });
+
+    ctx.client.sendTerminalInput(terminalId, {
+      type: "resize",
+      rows: 38,
+      cols: 81,
+    });
+    await expectSize({ rows: 38, cols: 81 });
+
+    mobileClient.sendTerminalInput(terminalId, {
+      type: "resize",
+      rows: 42,
+      cols: 54,
+    });
+    await expectSize({ rows: 42, cols: 54 });
+  } finally {
+    await mobileClient.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30000);
+
 test("resize does not stall streamed output for an attached client", async () => {
   const cwd = tmpCwd();
   const created = await createTerminalInWorkspace(ctx.client, { cwd });

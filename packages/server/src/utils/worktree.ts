@@ -1271,6 +1271,7 @@ export const createWorktree = async ({
 
   writePaseoWorktreeMetadata(worktreePath, {
     baseRefName: sourcePlan.metadataBaseRefName,
+    ...(sourcePlan.metadataBaseRef ? { baseRef: sourcePlan.metadataBaseRef } : {}),
     ...(sourcePlan.changeRequestLookupTarget
       ? { changeRequestLookupTarget: sourcePlan.changeRequestLookupTarget }
       : {}),
@@ -1300,7 +1301,11 @@ interface ResolveWorktreeSourcePlanOptions {
 
 interface WorktreeSourcePlan {
   branchName: string;
+  // Display name and exact ref are two different facts. The name cannot round-trip to a
+  // commit — "main" resolves local-first even when the worktree was cut from a fork's
+  // upstream — so comparisons and actions read the ref and the UI reads the name.
   metadataBaseRefName: string;
+  metadataBaseRef?: string;
   changeRequestLookupTarget?: PaseoWorktreeChangeRequestHint;
   addArguments: string[];
   pushRemote?: {
@@ -1325,7 +1330,7 @@ async function resolveWorktreeSourcePlan({
       const branchName = source.branchName;
       validateWorktreeBranchName(branchName);
       const normalizedBaseBranch = normalizeRequiredBaseBranch(source.baseBranch);
-      const resolvedBaseBranch = await resolveBaseBranchForWorktree(cwd, normalizedBaseBranch);
+      const resolvedBaseBranch = await resolveBaseBranchForWorktree(cwd, source.baseBranch);
       const branchExists = await localBranchExists(cwd, branchName);
       const base = branchExists ? branchName : resolvedBaseBranch;
       const candidateBranch = branchExists ? desiredSlug : branchName;
@@ -1334,6 +1339,7 @@ async function resolveWorktreeSourcePlan({
       return {
         branchName: newBranchName,
         metadataBaseRefName: normalizedBaseBranch,
+        metadataBaseRef: resolvedBaseBranch,
         addArguments: ["-b", newBranchName, "--no-track", base],
       };
     }
@@ -1615,19 +1621,36 @@ function normalizeRequiredBaseBranch(baseBranch: string): string {
 
 async function resolveBaseBranchForWorktree(
   cwd: string,
-  normalizedBaseBranch: string,
+  requestedBaseBranch: string,
 ): Promise<string> {
-  try {
-    await runGitCommand(["rev-parse", "--verify", `origin/${normalizedBaseBranch}`], { cwd });
-    return `origin/${normalizedBaseBranch}`;
-  } catch {
+  const requested = requestedBaseBranch.trim();
+  const normalized = normalizeRequiredBaseBranch(requested);
+  let exactRef: string | null = null;
+  if (requested.startsWith("refs/")) {
+    exactRef = requested;
+  } else if (requested.startsWith("origin/")) {
+    exactRef = `refs/remotes/${requested}`;
+  }
+
+  if (exactRef) {
     try {
-      await runGitCommand(["rev-parse", "--verify", normalizedBaseBranch], { cwd });
-      return normalizedBaseBranch;
+      await runGitCommand(["rev-parse", "--verify", exactRef], { cwd });
+      return exactRef;
     } catch {
-      throw new Error(`Base branch not found: ${normalizedBaseBranch}`);
+      throw new Error(`Base branch not found: ${normalized}`);
     }
   }
+
+  const candidates = [`refs/heads/${requested}`, `refs/remotes/origin/${requested}`, requested];
+  for (const candidate of candidates) {
+    try {
+      await runGitCommand(["rev-parse", "--verify", candidate], { cwd });
+      return candidate;
+    } catch {
+      // Try the next unambiguous local, remote, or legacy ref candidate.
+    }
+  }
+  throw new Error(`Base branch not found: ${normalized}`);
 }
 
 async function localBranchExists(cwd: string, branchName: string): Promise<boolean> {

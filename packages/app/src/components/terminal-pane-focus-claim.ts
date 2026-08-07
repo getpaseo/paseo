@@ -8,12 +8,67 @@ export interface FocusClaimStep {
   shouldRequest: boolean;
 }
 
-interface FocusClaimReadiness {
+export interface FocusClaimReadiness {
   isWorkspaceFocused: boolean;
+  isPaneFocused: boolean;
   isAppActivelyVisible: boolean;
   isClientReady: boolean;
   isConnected: boolean;
   isRendererReady: boolean;
+}
+
+interface TerminalSize {
+  rows: number;
+  cols: number;
+}
+
+export function resolveTerminalResizeClaim(input: {
+  size: TerminalSize;
+  previousSentSize: TerminalSize | null;
+  shouldClaim: boolean;
+  forceClaim: boolean;
+  supportsTerminalSizeOwnership: boolean;
+  readiness: FocusClaimReadiness;
+}): { shouldSend: boolean; intent: "claim" | "update" } {
+  const intent = input.shouldClaim ? "claim" : "update";
+  if (intent === "claim") {
+    if (!canRequestFocusClaim(input.readiness)) {
+      return { shouldSend: false, intent };
+    }
+    if (input.supportsTerminalSizeOwnership) {
+      return { shouldSend: true, intent };
+    }
+    return {
+      shouldSend:
+        input.forceClaim ||
+        input.previousSentSize === null ||
+        input.previousSentSize.rows !== input.size.rows ||
+        input.previousSentSize.cols !== input.size.cols,
+      intent,
+    };
+  }
+
+  if (!input.supportsTerminalSizeOwnership || !canRequestOwnedSizeUpdate(input.readiness)) {
+    return { shouldSend: false, intent };
+  }
+
+  return {
+    shouldSend:
+      input.previousSentSize === null ||
+      input.previousSentSize.rows !== input.size.rows ||
+      input.previousSentSize.cols !== input.size.cols,
+    intent,
+  };
+}
+
+function canRequestOwnedSizeUpdate(input: FocusClaimReadiness): boolean {
+  return (
+    input.isWorkspaceFocused &&
+    input.isAppActivelyVisible &&
+    input.isClientReady &&
+    input.isConnected &&
+    input.isRendererReady
+  );
 }
 
 export const EMPTY_FOCUS_CLAIM_STATE: FocusClaimState = {
@@ -24,6 +79,7 @@ export const EMPTY_FOCUS_CLAIM_STATE: FocusClaimState = {
 export function canRequestFocusClaim(input: FocusClaimReadiness): boolean {
   return (
     input.isWorkspaceFocused &&
+    input.isPaneFocused &&
     input.isAppActivelyVisible &&
     input.isClientReady &&
     input.isConnected &&

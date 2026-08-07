@@ -737,27 +737,105 @@ const x = 1;
     execFileSync("git", ["push"], { cwd: cloneDir });
     execFileSync("git", ["fetch", "origin"], { cwd: repoDir });
 
-    const facts = await getCheckoutSnapshotFacts(repoDir);
     startGitCommandMetrics();
+    const facts = await getCheckoutSnapshotFacts(repoDir);
     const divergedStatus = await getCheckoutStatus(repoDir, { facts });
     const metrics = stopGitCommandMetrics();
     const upstreamCountCommands = metrics.commands.filter(
-      (command) => command.args[0] === "rev-list" && command.args.join(" ").includes("main"),
+      (command) =>
+        command.args[0] === "for-each-ref" && command.args.join(" ").includes("%(upstream)"),
     );
 
     expect(divergedStatus.isGit).toBe(true);
     if (!divergedStatus.isGit) {
       return;
     }
+    expect(divergedStatus.upstreamRef).toBe("refs/remotes/origin/main");
     expect(divergedStatus.aheadOfOrigin).toBe(3);
     expect(divergedStatus.behindOfOrigin).toBe(2);
     expect(upstreamCountCommands).toHaveLength(1);
     expect(upstreamCountCommands[0]?.args).toEqual([
-      "rev-list",
-      "--left-right",
-      "--count",
-      "main...origin/main",
+      "for-each-ref",
+      "--format=%(upstream)%00%(upstream:track,nobracket)",
+      "refs/heads/main",
     ]);
+  });
+
+  it("reports the fork remote, not origin, when the branch tracks a second remote", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    const forkDir = join(tempDir, "fork.git");
+    execFileSync("git", ["init", "--bare", "-b", "main", forkDir]);
+    execFileSync("git", ["remote", "add", "upstream", forkDir], { cwd: repoDir });
+    execFileSync("git", ["push", "-u", "upstream", "main"], { cwd: repoDir });
+
+    const status = await getCheckoutStatus(repoDir);
+    expect(status.isGit).toBe(true);
+    if (!status.isGit) {
+      return;
+    }
+    expect(status.upstreamRef).toBe("refs/remotes/upstream/main");
+  });
+
+  it("reports the upstream branch name when it differs from the local branch name", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature commit");
+    execFileSync("git", ["push", "-u", "origin", "HEAD:other-name"], { cwd: repoDir });
+
+    const status = await getCheckoutStatus(repoDir);
+    expect(status.isGit).toBe(true);
+    if (!status.isGit) {
+      return;
+    }
+    expect(status.upstreamRef).toBe("refs/remotes/origin/other-name");
+  });
+
+  it("reports the upstream when the repo's only remote is not origin", async () => {
+    const forkDir = join(tempDir, "fork.git");
+    execFileSync("git", ["init", "--bare", "-b", "main", forkDir]);
+    execFileSync("git", ["remote", "add", "upstream", forkDir], { cwd: repoDir });
+    execFileSync("git", ["push", "-u", "upstream", "main"], { cwd: repoDir });
+
+    const status = await getCheckoutStatus(repoDir);
+    expect(status.isGit).toBe(true);
+    if (!status.isGit) {
+      return;
+    }
+    expect(status.upstreamRef).toBe("refs/remotes/upstream/main");
+    expect(status.aheadOfOrigin).toBe(0);
+  });
+
+  // A legal local branch named "origin/main" shadows the short form "origin/main" in git's
+  // ref resolution. The counts and the reported ref have to describe the same commit.
+  it("is not fooled by a local branch named like the remote-tracking ref", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    commitFile(repoDir, "shadow.txt", "shadow\n", "shadow commit");
+    // Pointed at HEAD, so comparing against the shadow reports 0 ahead while the real
+    // remote-tracking ref reports 1.
+    execFileSync("git", ["branch", "origin/main", "main"], { cwd: repoDir });
+
+    const status = await getCheckoutStatus(repoDir);
+    expect(status.isGit).toBe(true);
+    if (!status.isGit) {
+      return;
+    }
+    expect(status.upstreamRef).toBe("refs/remotes/origin/main");
+    expect(status.aheadOfOrigin).toBe(1);
+    expect(status.behindOfOrigin).toBe(0);
+  });
+
+  it("reports no upstream ref for a branch that was never pushed", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["checkout", "-b", "local-only"], { cwd: repoDir });
+    commitFile(repoDir, "local-only.txt", "local\n", "local commit");
+
+    const status = await getCheckoutStatus(repoDir);
+    expect(status.isGit).toBe(true);
+    if (!status.isGit) {
+      return;
+    }
+    expect(status.upstreamRef).toBeNull();
+    expect(status.aheadOfOrigin).toBeNull();
   });
 
   it("reports a PR worktree as not ahead when its branch is pushed to the configured PR remote", async () => {
@@ -2169,6 +2247,45 @@ const x = 1;
     expect(branches.find((branch) => branch.name === "feature/shared")).toMatchObject({
       hasLocal: true,
       hasRemote: true,
+      localAhead: 0,
+      localBehind: 0,
+    });
+    await expect(listBranchSuggestions(repoDir, { query: "origin/main" })).resolves.toEqual([
+      expect.objectContaining({ name: "main", hasLocal: true, hasRemote: true }),
+    ]);
+  });
+
+  it("reports local and origin divergence for branch suggestions", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    execFileSync("git", ["init", "--bare", "-b", "main", remoteDir]);
+    execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir });
+    execFileSync("git", ["push", "-u", "origin", "main"], { cwd: repoDir });
+
+    writeFileSync(join(repoDir, "local.txt"), "local\n");
+    execFileSync("git", ["add", "local.txt"], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "local commit"], {
+      cwd: repoDir,
+    });
+
+    const otherClone = join(tempDir, "diverged-clone");
+    execFileSync("git", ["clone", remoteDir, otherClone]);
+    execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: otherClone });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: otherClone });
+    writeFileSync(join(otherClone, "remote.txt"), "remote\n");
+    execFileSync("git", ["add", "remote.txt"], { cwd: otherClone });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "remote commit"], {
+      cwd: otherClone,
+    });
+    execFileSync("git", ["push", "origin", "main"], { cwd: otherClone });
+    execFileSync("git", ["fetch", "origin"], { cwd: repoDir });
+
+    const branches = await listBranchSuggestions(repoDir, { limit: 50 });
+
+    expect(branches.find((branch) => branch.name === "main")).toMatchObject({
+      hasLocal: true,
+      hasRemote: true,
+      localAhead: 1,
+      localBehind: 1,
     });
   });
 
@@ -3357,7 +3474,7 @@ const x = 1;
 
     await expect(
       getCheckoutDiff(worktree.worktreePath, { mode: "base", baseRef: "other" }, { paseoHome }),
-    ).rejects.toThrow("Base ref mismatch: stored main, requested other");
+    ).rejects.toThrow("Base ref mismatch: stored refs/heads/main, requested other");
   });
 
   it("excludes dirty working tree changes from Paseo worktree base diffs", async () => {

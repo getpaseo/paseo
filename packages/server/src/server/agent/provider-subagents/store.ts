@@ -134,6 +134,10 @@ export class ProviderSubagentStore {
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
+  listAll(): ProviderSubagentDescriptor[] {
+    return [...this.descriptors.values()];
+  }
+
   get(parentAgentId: string, subagentId: string): ProviderSubagentDescriptor | null {
     return this.descriptors.get(storeKey(parentAgentId, subagentId)) ?? null;
   }

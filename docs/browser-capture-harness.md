@@ -5,7 +5,7 @@ It validates the compositor behavior that unit tests cannot see:
 
 - the resident automation `<webview>` starts in the production parking state;
 - the parked guest remains paintable and has a copyable viewport frame;
-- the resident webview guest is sized to 1280x800 logical pixels;
+- a never-presented resident webview guest defaults to 1280x800 logical pixels;
 - multiple resident webviews are parked as an overlapping stack without per-capture
   stacking changes;
 - a newly attached resident webview whose first useful frame is delayed can be captured
@@ -82,10 +82,11 @@ is usually saved as 2560x1600.
 
 Electron captures copy from the guest web contents' compositor surface. A resident
 webview parked with `display:none`, offscreen coordinates, or `opacity:0` can lose its
-copyable surface. The production parking state keeps the host fixed at `left:0`, `top:0`,
-`width:1px`, `height:1px`, `overflow:hidden`, `opacity:1`, and `pointer-events:none`.
-The webviews inside stay full-size at 1280x800, `display:inline-flex`, and absolutely
-overlap at `left:0`, `top:0`.
+copyable surface. Each production webview keeps one permanent body-level surface. Presenting
+or parking changes that surface's geometry without reparenting the webview. The parking state
+uses `left:0`, `top:0`, `width:1px`, `height:1px`, `overflow:hidden`, `opacity:1`, and
+`pointer-events:none`. The webview stays at its resolved logical viewport, defaulting to
+1280x800 before first presentation, with `display:inline-flex` at `left:0`, `top:0`.
 
 There is no renderer prep/restore handshake. Main disables guest background throttling
 once when the webview attaches, then screenshot capture uses the shared serialized queue,
