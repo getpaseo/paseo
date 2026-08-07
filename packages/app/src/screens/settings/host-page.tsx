@@ -1925,19 +1925,30 @@ function AgentEnvironmentSection({ serverId }: { serverId: string }) {
   // first round-trip lands would both compute from the same render's snapshot
   // and the later write would drop the earlier edit. Queue them and hand each
   // one the freshest list instead of whatever the closure captured.
-  const latestEntries = useRef<AgentEnvironmentEntry[] | null>(null);
-  const mutationQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const mutationsByHost = useRef(
+    new Map<string, { latestEntries: AgentEnvironmentEntry[] | null; queue: Promise<unknown> }>(),
+  );
 
   useEffect(() => {
-    latestEntries.current = entries;
-  }, [entries]);
+    const mutations = mutationsByHost.current.get(serverId) ?? {
+      latestEntries: null,
+      queue: Promise.resolve(),
+    };
+    mutations.latestEntries = entries;
+    mutationsByHost.current.set(serverId, mutations);
+  }, [entries, serverId]);
 
   const mutateEntries = useCallback(
     (update: (current: AgentEnvironmentEntry[]) => AgentEnvironmentEntry[] | null) => {
-      const previous = mutationQueue.current;
+      const mutations = mutationsByHost.current.get(serverId) ?? {
+        latestEntries: null,
+        queue: Promise.resolve(),
+      };
+      mutationsByHost.current.set(serverId, mutations);
+      const previous = mutations.queue;
       const run = (async () => {
         await previous;
-        const current = latestEntries.current;
+        const current = mutations.latestEntries;
         if (!current) {
           return;
         }
@@ -1947,12 +1958,12 @@ function AgentEnvironmentSection({ serverId }: { serverId: string }) {
         }
         const updated = await patchConfig({ agentEnvironment: { entries: next } });
         // Stay ahead of the next render so a queued edit sees this one.
-        latestEntries.current = updated?.agentEnvironment?.entries ?? next;
+        mutations.latestEntries = updated?.agentEnvironment?.entries ?? next;
       })();
-      mutationQueue.current = run.catch(() => undefined);
+      mutations.queue = run.catch(() => undefined);
       return run;
     },
-    [patchConfig],
+    [patchConfig, serverId],
   );
 
   const handleAddPreset = useCallback(
