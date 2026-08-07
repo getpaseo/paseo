@@ -13,6 +13,7 @@ interface TerminalRunBase {
   styleKey: string;
   style: TextStyle;
   foregroundColor: string;
+  isWide: boolean;
 }
 
 export interface TerminalTextRun extends TerminalRunBase {
@@ -102,12 +103,16 @@ function appendRun(input: {
   customGlyph: TerminalCustomGlyph | null;
   col: number;
 }): void {
+  // Wide glyphs need their own per-column padding, so they cannot share a run
+  // with single-column text even when the style matches.
+  const isWide = input.cellCount > 1;
   const renderKind = input.customGlyph ? "custom-glyph" : "text";
   const previousRun = input.runs[input.runs.length - 1];
   if (
     previousRun &&
     previousRun.styleKey === input.styleKey &&
-    previousRun.renderKind === renderKind
+    previousRun.renderKind === renderKind &&
+    previousRun.isWide === isWide
   ) {
     const offset = previousRun.cellCount;
     previousRun.text += input.text;
@@ -129,6 +134,7 @@ function appendRun(input: {
     styleKey: input.styleKey,
     style: input.style,
     foregroundColor: input.foregroundColor,
+    isWide,
   };
   if (input.customGlyph) {
     input.runs.push({

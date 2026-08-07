@@ -5,6 +5,7 @@ import {
   resolveTerminalGridMetricsMeasurement,
   resolveMeasuredTerminalCellMetrics,
   resolveTerminalCursorOffset,
+  resolveTerminalWideRunLetterSpacing,
 } from "./terminal-grid-metrics";
 
 describe("native terminal grid metrics", () => {
@@ -74,5 +75,23 @@ describe("native terminal grid metrics", () => {
         cellHeight: 16,
       }),
     ).toEqual({ cellWidth: 7.3, cellHeight: 16 });
+  });
+});
+
+describe("wide run letter spacing", () => {
+  it("stretches a narrow wide-glyph advance up to two terminal columns", () => {
+    expect(resolveTerminalWideRunLetterSpacing({ cellWidth: 20, wideAdvance: 27.5 })).toBe(12.5);
+  });
+
+  it("adds nothing when the glyph already advances two columns", () => {
+    expect(resolveTerminalWideRunLetterSpacing({ cellWidth: 20, wideAdvance: 40 })).toBe(0);
+  });
+
+  it("never compresses a glyph that advances past two columns", () => {
+    expect(resolveTerminalWideRunLetterSpacing({ cellWidth: 20, wideAdvance: 48 })).toBe(0);
+  });
+
+  it("ignores an unmeasured advance", () => {
+    expect(resolveTerminalWideRunLetterSpacing({ cellWidth: 20, wideAdvance: 0 })).toBe(0);
   });
 });
