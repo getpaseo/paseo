@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type {
@@ -198,6 +198,89 @@ test("a failed draft session does not wedge or poison later identical requests",
   await expect(manager.listDraftFeatures(config)).rejects.toThrow("provider startup failed");
   await expect(manager.listDraftFeatures(config)).resolves.toEqual([]);
   expect(createCalls).toBe(2);
+});
+
+test("waits for timed-out snapshot cleanup before starting draft introspection", async () => {
+  vi.useFakeTimers();
+  const catalogStarted = deferred<void>();
+  const catalogAborted = deferred<void>();
+  const cleanupAllowed = deferred<void>();
+  const draftStarted = deferred<void>();
+  let catalogActive = false;
+  let createSessionCalls = 0;
+  const client = createClient({
+    async fetchCatalog(_options, context) {
+      if (!context) throw new Error("missing refresh context");
+      catalogActive = true;
+      catalogStarted.resolve();
+      return await new Promise<never>((_resolve, reject) => {
+        context.signal.addEventListener(
+          "abort",
+          () => {
+            catalogAborted.resolve();
+            void cleanupAllowed.promise.then(() => {
+              catalogActive = false;
+              reject(context.signal.reason);
+              return undefined;
+            });
+          },
+          { once: true },
+        );
+      });
+    },
+    async createSession(config) {
+      createSessionCalls += 1;
+      expect(catalogActive).toBe(false);
+      draftStarted.resolve();
+      return createSession(config);
+    },
+  });
+  const queue = new ProviderIntrospectionQueue();
+  const snapshotManager = new ProviderSnapshotManager({
+    logger: createTestLogger(),
+    refreshTimeoutMs: 100,
+    extraClients: { codex: client },
+    providerIntrospectionQueue: queue,
+  });
+  const agentManager = new AgentManager({
+    clients: { codex: client },
+    providerIntrospectionQueue: queue,
+    logger: createTestLogger(),
+  });
+  const config = {
+    provider: "codex",
+    cwd: process.cwd(),
+    model: "gpt-5.4",
+    modeId: "default",
+  } as const;
+
+  try {
+    const snapshot = snapshotManager.getProvider({
+      cwd: process.cwd(),
+      provider: "codex",
+      wait: true,
+    });
+    await catalogStarted.promise;
+    const features = agentManager.listDraftFeatures(config);
+
+    await vi.advanceTimersByTimeAsync(100);
+    await catalogAborted.promise;
+    expect(createSessionCalls).toBe(0);
+
+    cleanupAllowed.resolve();
+    await draftStarted.promise;
+
+    await expect(snapshot).resolves.toMatchObject({
+      provider: "codex",
+      status: "error",
+      error: "Timed out refreshing Codex after 100ms",
+    });
+    await expect(features).resolves.toEqual([]);
+    expect(createSessionCalls).toBe(1);
+  } finally {
+    snapshotManager.destroy();
+    vi.useRealTimers();
+  }
 });
 
 test("serializes snapshot warmup with draft session creation for the same provider", async () => {
