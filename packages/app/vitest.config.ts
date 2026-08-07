@@ -41,6 +41,7 @@ export default defineConfig({
             instances: [{ browser: "chromium" }],
             screenshotDirectory: ".vitest-screenshots",
           },
+          globalSetup: path.resolve(__dirname, "src/runtime/websocket-test-global-setup.ts"),
         },
       },
     ],
