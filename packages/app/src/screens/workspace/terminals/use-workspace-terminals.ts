@@ -129,7 +129,6 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
     () => collectStandaloneTerminalIds({ terminals, scriptTerminalIds }),
     [scriptTerminalIds, terminals],
   );
-
   const createMutation = useMutation({
     mutationFn: async (_input?: PendingTerminalCreateInput) => {
       if (!client || !workspaceDirectory) {
@@ -142,6 +141,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
             workspaceId: normalizedWorkspaceId || undefined,
           })
         : await client.createTerminal(workspaceDirectory, undefined, undefined, {
+            // The shell comes from the host's own config; the daemon applies it.
             workspaceId: normalizedWorkspaceId || undefined,
           });
       // The daemon reports a failed spawn (e.g. a profile command that isn't

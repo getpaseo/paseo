@@ -24,6 +24,7 @@ export interface WorkerCreateTerminalOptions {
   workspaceId?: string;
   name?: string;
   title?: string;
+  shell?: string;
   env?: Record<string, string>;
   command?: string;
   args?: string[];

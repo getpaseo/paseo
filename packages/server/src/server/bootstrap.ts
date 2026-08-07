@@ -399,6 +399,8 @@ export interface PaseoDaemonConfig {
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
+  terminalShell?: string;
+  customTerminalShellPath?: string;
   staticDir: string;
   mcpDebug: boolean;
   isDev?: boolean;
@@ -532,6 +534,8 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
     appendSystemPrompt: config.appendSystemPrompt ?? "",
+    terminalShell: config.terminalShell ?? "default",
+    customTerminalShellPath: config.customTerminalShellPath ?? "",
   };
 
   if (config.terminalProfiles !== undefined) {

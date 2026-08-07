@@ -5,6 +5,7 @@ import type {
   KillTerminalRequest,
   ListTerminalsRequest,
   RenameTerminalRequest,
+  ListTerminalShellsRequest,
   SessionInboundMessage,
   SessionOutboundMessage,
   SubscribeTerminalRequest,
@@ -34,6 +35,7 @@ import {
 import type { TerminalSession } from "./terminal.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import { applyTerminalSize } from "./terminal-size-ownership.js";
+import { listAvailableTerminalShells } from "./terminal-shell.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
 
@@ -83,6 +85,9 @@ export interface TerminalSessionControllerOptions {
   // Bytes queued on the client transport but not yet sent, or null when the
   // transport exposes no backpressure signal (e.g. the multiplexed relay socket).
   getClientBufferedAmount?: () => number | null;
+  // The daemon's configured shell for plain terminals, applied when a request
+  // does not name one. The host owns this, not the client.
+  getConfiguredTerminalShell?: () => string | undefined;
 }
 
 interface TerminalWorkspaceRef {
@@ -105,7 +110,8 @@ type TerminalDispatchableMessage =
   | TerminalInput
   | KillTerminalRequest
   | CaptureTerminalRequest
-  | RenameTerminalRequest;
+  | RenameTerminalRequest
+  | ListTerminalShellsRequest;
 
 const TERMINAL_MESSAGE_TYPES: ReadonlySet<TerminalDispatchableMessage["type"]> = new Set([
   "subscribe_terminals_request",
@@ -118,6 +124,7 @@ const TERMINAL_MESSAGE_TYPES: ReadonlySet<TerminalDispatchableMessage["type"]> =
   "kill_terminal_request",
   "capture_terminal_request",
   "terminal.rename.request",
+  "terminal.shells.list.request",
 ]);
 
 export class TerminalSessionController {
@@ -131,6 +138,7 @@ export class TerminalSessionController {
   private readonly listTerminalWorkspaceRoots: () => Promise<readonly string[]>;
   private readonly clientSupportsWrapReflow: () => boolean;
   private readonly getClientBufferedAmount: () => number | null;
+  private readonly getConfiguredTerminalShell: () => string | undefined;
   private readonly terminalSizeOwner = {};
 
   // A subscription is scoped to a (cwd, workspaceId) pair, keyed by
@@ -160,6 +168,7 @@ export class TerminalSessionController {
       (async () => (await this.listTerminalWorkspaceRefs()).map((workspace) => workspace.cwd));
     this.clientSupportsWrapReflow = options.clientSupportsWrapReflow ?? (() => false);
     this.getClientBufferedAmount = options.getClientBufferedAmount ?? (() => 0);
+    this.getConfiguredTerminalShell = options.getConfiguredTerminalShell ?? (() => undefined);
   }
 
   start(): void {
@@ -207,6 +216,8 @@ export class TerminalSessionController {
         return this.handleCaptureTerminalRequest(msg);
       case "terminal.rename.request":
         return this.handleRenameTerminalRequest(msg);
+      case "terminal.shells.list.request":
+        return this.handleListTerminalShellsRequest(msg);
       default:
         return undefined;
     }
@@ -551,6 +562,9 @@ export class TerminalSessionController {
         name: msg.name,
         command: msg.command,
         args: msg.args,
+        // A profile carries its own command and never runs through a shell, so the
+        // configured shell only applies to a plain terminal.
+        shell: msg.shell ?? (msg.command ? undefined : this.getConfiguredTerminalShell?.()),
         rows: msg.size?.rows,
         cols: msg.size?.cols,
       });
@@ -606,6 +620,26 @@ export class TerminalSessionController {
       workspaceRefs.find((workspace) => this.isSamePath(workspace.cwd, ownerRoot))?.workspaceId ??
       null
     );
+  }
+
+  private async handleListTerminalShellsRequest(msg: ListTerminalShellsRequest): Promise<void> {
+    try {
+      const shells = await listAvailableTerminalShells();
+      this.emit({
+        type: "terminal.shells.list.response",
+        payload: { requestId: msg.requestId, shells, error: null },
+      });
+    } catch (error) {
+      this.sessionLogger.error({ err: error }, "Failed to list terminal shells");
+      this.emit({
+        type: "terminal.shells.list.response",
+        payload: {
+          requestId: msg.requestId,
+          shells: [],
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
   }
 
   private async handleRenameTerminalRequest(msg: RenameTerminalRequest): Promise<void> {

@@ -47,6 +47,19 @@ Terminals receive four environment variables when the daemon creates the shell:
 
 The generated shell command uses `PASEO_HOOK_CLI` to run the current CLI. `paseo hooks <agent> <event>` then reads the terminal id, token, and activity URL, asks the agent hook provider registry to resolve the event to a coarse activity state, and silently posts `{ terminalId, token, state }` to the activity URL. Missing env, unsupported agents/events, malformed hook input, and daemon/network failures are no-ops so agent hooks never break the user's terminal session.
 
+Reporting is carried entirely by that environment, not by shell integration, so it
+works the same in any shell the user picks — with one exception. A terminal running
+`wsl` crosses an OS boundary: Windows does not pass its environment into WSL unless
+each variable is named in `WSLENV`, so all four arrive empty and every hook no-ops.
+Anything run inside a WSL terminal therefore reports no activity, which means no
+running dot, no "Terminal finished" attention, and no needs-input notification.
+
+Naming them in `WSLENV` would not be enough on its own. `PASEO_HOOK_CLI` points at a
+Windows executable, which Linux cannot run, so WSL needs a Linux-side CLI. Whether
+`PASEO_TERMINAL_ACTIVITY_URL` is even reachable depends on the user's WSL networking
+mode: `networkingMode=mirrored` shares the host's loopback, while the default NAT mode
+does not route guest traffic to the host on `127.0.0.1`.
+
 Claude hook mapping:
 
 - `UserPromptSubmit` → `running`

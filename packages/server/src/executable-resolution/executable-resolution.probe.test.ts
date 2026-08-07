@@ -13,7 +13,7 @@ import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { isPlatform } from "../test-utils/platform.js";
-import { probeExecutable } from "./executable-resolution.js";
+import { findExecutableOnPath, probeExecutable } from "./executable-resolution.js";
 
 const timeoutMs = 1000;
 const timeoutSlackMs = 500;
@@ -179,4 +179,52 @@ describe("probeExecutable", () => {
       }
     },
   );
+});
+
+// The probe argv is what other callers depend on staying put: provider launch,
+// forge CLIs and ssh all rely on the `--version` default. Shells deliberately do
+// not probe at all — see findExecutableOnPath.
+describe("probeExecutable argv", () => {
+  function createArgvRecordingFixture(dir: string): { executablePath: string; argvFile: string } {
+    const argvFile = path.join(dir, "argv.txt");
+    const executablePath = scriptPath(dir, "record-argv");
+    const script =
+      process.platform === "win32"
+        ? `@echo off\r\n> "${argvFile}" echo %*\r\nexit /b 0\r\n`
+        : `#!/bin/sh\nprintf '%s' "$*" > "${argvFile}"\nexit 0\n`;
+    writeExecutable(executablePath, script);
+    return { executablePath, argvFile };
+  }
+
+  test("defaults to --version so existing callers are unchanged", async () => {
+    const { executablePath, argvFile } = createArgvRecordingFixture(makeTempDir());
+
+    await expect(probeExecutable(executablePath, timeoutMs)).resolves.toBe(true);
+
+    expect(readFileSync(argvFile, "utf8").trim()).toBe("--version");
+  });
+});
+
+// The shell dropdown lists whatever it finds here, so this must stay cheap and
+// must not depend on the candidate being willing to run. The fixture below can
+// only ever end a probe by timing out, which is exactly what cmd.exe and
+// Windows PowerShell do against `--version`.
+describe("findExecutableOnPath", () => {
+  test("finds a binary on PATH without running it", async () => {
+    const dir = makeTempDir();
+    createHangingFixture(dir);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${dir}${path.delimiter}${originalPath ?? ""}`;
+
+    try {
+      const started = performance.now();
+      const resolved = await findExecutableOnPath("hangs");
+      const elapsed = performance.now() - started;
+
+      expect(resolved).not.toBeNull();
+      expect(elapsed).toBeLessThan(timeoutMs);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
 });

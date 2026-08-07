@@ -30,6 +30,7 @@ import {
   ProfileDraft,
   TerminalProfileEditModal,
 } from "@/screens/settings/terminal-profile-edit-modal";
+import { TerminalShellCard } from "@/screens/settings/terminal-shell-card";
 import { getIsElectron } from "@/constants/platform";
 import {
   getDesktopDaemonStatus,
@@ -1778,6 +1779,9 @@ export function HostTerminalsPage({ serverId }: { serverId: string }) {
     <View>
       <SettingsSection title="Terminal agents">
         <EnableTerminalAgentHooksCard serverId={serverId} />
+      </SettingsSection>
+      <SettingsSection title="Shell">
+        <TerminalShellCard serverId={serverId} />
       </SettingsSection>
       <TerminalProfilesSection serverId={serverId} />
     </View>

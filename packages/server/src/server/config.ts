@@ -433,7 +433,21 @@ function resolveWorktreesRoot(
 function resolveAppendSystemPrompt(persisted: ReturnType<typeof loadPersistedConfig>): string {
   return persisted.daemon?.appendSystemPrompt ?? "";
 }
+export interface TerminalShellConfig {
+  /** Preset id (`pwsh`, `nu`, `git-bash`, …), `custom`, or `default`. */
+  terminalShell: string;
+  /** Absolute path used when `terminalShell` is `custom`. */
+  customTerminalShellPath: string;
+}
 
+function resolveTerminalShellConfig(
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): TerminalShellConfig {
+  return {
+    terminalShell: persisted.daemon?.terminalShell ?? "default",
+    customTerminalShellPath: persisted.daemon?.customTerminalShellPath ?? "",
+  };
+}
 function resolveBrowserToolsEnabled(persisted: ReturnType<typeof loadPersistedConfig>): boolean {
   return persisted.daemon?.browserTools?.enabled ?? false;
 }
@@ -451,6 +465,7 @@ function resolveStaticLoadConfigSettings(
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
     terminalProfiles: persisted.daemon?.terminalProfiles,
+    ...resolveTerminalShellConfig(persisted),
     hostnames: mergeHostnames([
       persisted.daemon?.hostnames,
       parseHostnamesEnv(env.PASEO_HOSTNAMES ?? env.PASEO_ALLOWED_HOSTS),

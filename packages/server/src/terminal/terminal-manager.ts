@@ -57,6 +57,7 @@ export interface TerminalManager {
     workspaceId: string;
     name?: string;
     title?: string;
+    shell?: string;
     env?: Record<string, string>;
     command?: string;
     args?: string[];
@@ -314,6 +315,7 @@ export function createTerminalManager(
       workspaceId: string;
       name?: string;
       title?: string;
+      shell?: string;
       env?: Record<string, string>;
       command?: string;
       args?: string[];
@@ -352,6 +354,7 @@ export function createTerminalManager(
             ...(options.title ? { title: options.title } : {}),
             ...(options.command ? { command: options.command } : {}),
             ...(options.args ? { args: options.args } : {}),
+            ...(options.shell ? { shell: options.shell } : {}),
             ...(options.rows !== undefined ? { rows: options.rows } : {}),
             ...(options.cols !== undefined ? { cols: options.cols } : {}),
             ...(mergedEnv ? { env: mergedEnv } : {}),
