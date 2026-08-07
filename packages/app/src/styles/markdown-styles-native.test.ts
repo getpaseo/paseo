@@ -24,7 +24,7 @@ describe("createMarkdownStyles on native", () => {
     });
     expect(createCompactMarkdownStyles(darkTheme).code_inline).toMatchObject({
       paddingVertical: 0,
-      lineHeight: proseLineHeight,
+      lineHeight: 20,
     });
   });
 });

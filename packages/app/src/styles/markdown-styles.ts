@@ -403,6 +403,7 @@ export function createCompactMarkdownStyles(theme: Theme) {
     code_inline: {
       ...baseStyles.code_inline,
       fontSize: theme.fontSize.code,
+      lineHeight: isWeb ? baseStyles.code_inline.lineHeight : 20,
     },
 
     code_block: {
