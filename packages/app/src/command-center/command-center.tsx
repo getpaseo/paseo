@@ -477,6 +477,7 @@ export function CommandCenter() {
 
   const revealActiveResult = useCallback(() => {
     if (!state.open || !state.activeId) return;
+    if (state.rows.length === 0) return;
     const index = state.rowIndexByResultId.get(state.activeId);
     if (index === undefined) return;
     const { offset, visibleLength } = scrollMetricsRef.current;
@@ -536,11 +537,17 @@ export function CommandCenter() {
     [state.activeId, state.select],
   );
   const getItemLayout = useCallback(
-    (_data: ArrayLike<CommandCenterListRow> | null | undefined, index: number) => ({
-      index,
-      length: state.rows[index].height,
-      offset: state.offsets[index],
-    }),
+    (_data: ArrayLike<CommandCenterListRow> | null | undefined, index: number) => {
+      const row = state.rows[index];
+      if (!row) {
+        return { length: 0, offset: 0, index };
+      }
+      return {
+        index,
+        length: row.height,
+        offset: state.offsets[index],
+      };
+    },
     [state.offsets, state.rows],
   );
   const keyExtractor = useCallback((row: CommandCenterListRow) => row.key, []);
