@@ -81,9 +81,11 @@ export const zhCN: TranslationResources = {
       desktop: "给 Agent 发消息，标记 @files，或使用 /commands 和 /skills",
       mobile: "发消息，@files，/commands",
       fallback: "输入消息...",
+      terminal: "Prompt",
     },
     input: {
       accessibilityLabel: "给 Agent 发消息...",
+      terminalAccessibilityLabel: "Terminal prompt",
       focusHint: "{{shortcut}} 聚焦",
       addAttachment: "添加附件",
       interruptAgent: "中断 Agent",
@@ -205,7 +207,7 @@ export const zhCN: TranslationResources = {
     states: {
       notFound: "未找到 Agent",
       failedToLoad: "加载 Agent 失败",
-      reconnecting: "正在重连...",
+      reconnecting: "正在重连",
       timelineSyncFailed: "无法刷新代理历史记录。正在重试…",
       archivingTitle: "正在归档 Agent...",
       archivingSubtitle: "请稍候，我们正在归档这个 Agent。",
@@ -384,7 +386,7 @@ export const zhCN: TranslationResources = {
       openFile: "打开文件",
       copyPath: "复制路径",
       download: "下载",
-      addToChat: "添加到聊天…",
+      addToChat: "添加到聊天",
       moreActions: "更多操作",
     },
     fileExplorer: {
@@ -481,6 +483,7 @@ export const zhCN: TranslationResources = {
     },
     terminal: {
       hostDisconnected: "Host 未连接",
+      updateHost: "请更新主机以使用原生终端渲染器。",
       unableToSubscribe: "无法订阅 Terminal",
     },
     tabs: {
@@ -826,6 +829,14 @@ export const zhCN: TranslationResources = {
           viewPullRequest: "查看",
           openOn: "在 {{brand}} 上打开",
         },
+        checksSummary: {
+          passedLabel: "通过",
+          failedLabel: "失败",
+          runningLabel: "运行中",
+          passedAccessible: "检查通过",
+          failedAccessible: "检查失败",
+          runningAccessible: "检查运行中",
+        },
         sections: {
           checks: "Checks",
           pipeline: "流水线",
@@ -873,6 +884,38 @@ export const zhCN: TranslationResources = {
     },
   },
   sidebar: {
+    display: {
+      trigger: "显示偏好",
+      heading: "显示",
+      grouping: {
+        label: "分组",
+        project: "项目",
+        status: "状态",
+      },
+      titleSource: {
+        label: "标题",
+        title: "标题",
+        branch: "分支名称",
+      },
+      show: {
+        label: "显示",
+        host: "主机",
+        changeRequest: "拉取请求",
+        checks: "检查",
+        services: "服务",
+        diff: "差异统计",
+        timestamp: "最近活动",
+      },
+      checks: {
+        iconAndText: "图标和文字",
+        icon: "仅图标",
+        none: "隐藏",
+      },
+      hostFilter: {
+        label: "主机",
+        all: "所有主机",
+      },
+    },
     pinned: {
       title: "已置顶",
     },
@@ -898,7 +941,7 @@ export const zhCN: TranslationResources = {
       discord: "Discord",
       github: "创建 GitHub Issue",
       whatsNew: "新功能",
-      version: "Paseo {{version}}",
+      appName: "Paseo",
     },
     sections: {
       sessions: "历史",
@@ -938,7 +981,8 @@ export const zhCN: TranslationResources = {
     },
     workspace: {
       status: {
-        scriptsAvailable: "有可用 scripts",
+        serviceRunning: "服务 {{name}} 运行中",
+        serviceUnhealthy: "服务 {{name}} 异常",
         creating: "正在创建...",
       },
       actions: {
@@ -999,14 +1043,29 @@ export const zhCN: TranslationResources = {
       composerStateRequired: "Composer 状态必填",
       selectModel: "请选择模型",
     },
+    tooltips: {
+      project: "Choose the project",
+      host: "Choose the host",
+      isolation: "Choose the isolation level",
+      startingRef: "选择起始位置",
+      launch: "Choose what to launch",
+    },
     refPicker: {
       startingRef: "起始 ref",
-      chooseStart: "选择起始位置",
       intoBase: "进入 {{baseRef}}",
       searching: "正在搜索...",
       noMatchingRefs: "没有匹配的 refs。",
       searchPlaceholder: "搜索分支和 PR",
       title: "起始位置",
+    },
+    launch: {
+      title: "What to launch",
+      chat: "Chat",
+      terminal: "Terminal",
+      manageProfiles: "Manage profiles",
+      submit: "Launch",
+      promptPlaceholder: "Prompt {{name}}",
+      commandPlaceholder: "Run a command, or leave empty for a blank terminal",
     },
   },
   desktop: {
@@ -1345,6 +1404,19 @@ export const zhCN: TranslationResources = {
         label: "高级",
         show: "显示高级选项",
         hide: "隐藏高级选项",
+      },
+      headers: {
+        title: "自定义请求头",
+        add: "添加请求头",
+        name: "名称",
+        value: "值",
+        remove: "删除请求头",
+        errors: {
+          missingName: "请为每个请求头输入名称",
+          invalidName: "{{name}} 不是有效的请求头名称",
+          invalidValue: "{{name}} 包含无效换行符",
+          duplicateName: "{{name}} 输入了多次",
+        },
       },
       passwordVisibility: {
         show: "显示密码",
@@ -1687,6 +1759,7 @@ export const zhCN: TranslationResources = {
           es: "Español",
           fr: "Français",
           ja: "日本語",
+          ko: "한국어",
           ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "简体中文",
@@ -1695,6 +1768,11 @@ export const zhCN: TranslationResources = {
     },
     diagnostics: {
       title: "诊断",
+      legacyTerminalRenderer: {
+        label: "使用旧版终端渲染器",
+        description: "重新打开终端后使用之前的 WebView 终端",
+        accessibilityLabel: "使用旧版终端渲染器",
+      },
       testAudio: "测试音频",
       playTest: "播放测试",
       playing: "正在播放...",

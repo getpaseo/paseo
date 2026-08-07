@@ -11,6 +11,7 @@ import {
   defaultHostAppearance,
   normalizeStoredHostAppearance,
 } from "@/hosts/appearance";
+import { normalizeConnectionHeadersRecord } from "@/utils/connection-headers";
 
 export { DirectTcpHostConnectionSchema, type DirectTcpHostConnection };
 
@@ -104,6 +105,18 @@ export function resolveActiveHostServerId(params: {
   );
 }
 
+function stringRecordEquals(
+  left: Record<string, string> | undefined,
+  right: Record<string, string> | undefined,
+): boolean {
+  const leftEntries = Object.entries(left ?? {});
+  const rightRecord = right ?? {};
+  return (
+    leftEntries.length === Object.keys(rightRecord).length &&
+    leftEntries.every(([key, value]) => rightRecord[key] === value)
+  );
+}
+
 function hostConnectionEquals(left: HostConnection, right: HostConnection): boolean {
   if (left.type !== right.type || left.id !== right.id) {
     return false;
@@ -113,7 +126,8 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
     return (
       left.endpoint === right.endpoint &&
       (left.useTls ?? false) === (right.useTls ?? false) &&
-      left.password === right.password
+      left.password === right.password &&
+      stringRecordEquals(left.headers, right.headers)
     );
   }
   if (left.type === "directSocket" && right.type === "directSocket") {
@@ -137,14 +151,23 @@ function hostLifecycleEquals(left: HostLifecycle, right: HostLifecycle): boolean
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function dedupeHostConnections(connections: HostConnection[]): HostConnection[] {
+function upsertHostConnectionById(
+  connections: HostConnection[],
+  connection: HostConnection,
+): HostConnection[] {
   const next: HostConnection[] = [];
-  for (const connection of connections) {
-    if (next.some((existing) => hostConnectionEquals(existing, connection))) {
+  let replaced = false;
+  for (const existing of connections) {
+    if (existing.id !== connection.id) {
+      next.push(existing);
       continue;
     }
+
+    if (replaced) continue;
     next.push(connection);
+    replaced = true;
   }
+  if (!replaced) next.push(connection);
   return next;
 }
 
@@ -190,10 +213,10 @@ export function upsertHostConnectionInProfiles(input: {
 
   const matchedProfiles = matchingIndexes.map((index) => existing[index]);
   const prev = matchedProfiles.find((daemon) => daemon.serverId === serverId) ?? matchedProfiles[0];
-  const nextConnections = dedupeHostConnections([
-    ...matchedProfiles.flatMap((daemon) => daemon.connections),
+  const nextConnections = upsertHostConnectionById(
+    matchedProfiles.flatMap((daemon) => daemon.connections),
     input.connection,
-  ]);
+  );
   const nextLifecycle = prev.lifecycle;
   const nextLabel = prev.label === prev.serverId ? derivedLabel : prev.label;
   const nextPreferredConnectionId =
@@ -292,6 +315,11 @@ function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
   return isPlainRecord(value) ? value : undefined;
 }
 
+function normalizeStoredHeaders(value: unknown): { headers?: Record<string, string> } {
+  const headers = normalizeConnectionHeadersRecord(value);
+  return headers ? { headers } : {};
+}
+
 function normalizeStoredConnection(connection: unknown): HostConnection | null {
   const record = toObjectRecord(connection);
   if (!record) {
@@ -309,6 +337,7 @@ function normalizeStoredConnection(connection: unknown): HostConnection | null {
         endpoint,
         useTls: record.useTls,
         ...(typeof record.password === "string" ? { password: record.password } : {}),
+        ...normalizeStoredHeaders(record.headers),
       });
     } catch {
       return null;

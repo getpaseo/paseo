@@ -16,6 +16,7 @@ import {
   submitNewWorkspacePrompt,
 } from "../support/helpers/new-workspace";
 import { getServerId } from "../support/helpers/server-id";
+import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import {
   expectSubagentRowVisible,
@@ -82,8 +83,7 @@ async function fetchAgentStatus(seeded: SeededWorkspace, agentId: string): Promi
 }
 
 async function switchSidebarToStatusGrouping(page: import("@playwright/test").Page) {
-  await page.getByTestId("sidebar-display-preferences-menu").click();
-  await page.getByTestId("sidebar-grouping-status").click();
+  await selectSidebarStatusGrouping(page);
   await expect(page.locator('[data-testid^="sidebar-status-group-"]').first()).toBeVisible({
     timeout: 30_000,
   });

@@ -616,6 +616,30 @@ describe("stream reducer canonical tool calls", () => {
     expect(new Set(messages.map((message) => message.id)).size).toBe(messages.length);
   });
 
+  it("keeps the timeline position on every promoted assistant block", () => {
+    const timelineCursor = { epoch: "epoch-1", seq: 42 };
+    const result = applyStreamEvent({
+      tail: [],
+      head: [],
+      event: assistantTimeline("First paragraph.\n\nSecond paragraph.", undefined, "message-1"),
+      timestamp: new Date("2025-01-01T10:02:00Z"),
+      timelineCursor,
+    });
+
+    const messages = [...result.tail, ...result.head].filter(
+      (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+        item.kind === "assistant_message",
+    );
+    expect(messages.map((message) => message.text)).toEqual([
+      "First paragraph.",
+      "Second paragraph.",
+    ]);
+    expect(messages.map((message) => message.timelineCursor)).toEqual([
+      timelineCursor,
+      timelineCursor,
+    ]);
+  });
+
   it("preserves old assistant merge behavior when message ids are absent", () => {
     const state = hydrateStreamState([
       {

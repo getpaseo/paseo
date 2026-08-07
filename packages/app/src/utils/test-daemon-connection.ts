@@ -11,6 +11,7 @@ import {
 import {
   buildLocalDaemonTransportUrl,
   createDesktopLocalDaemonTransportFactory,
+  createDesktopWebSocketTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
 
 export interface DaemonProbeClient {
@@ -29,6 +30,7 @@ export interface DaemonConnectionDependencies<TClient extends DaemonProbeClient>
   getClientId(): Promise<string>;
   resolveAppVersion(): string | null;
   createLocalTransportFactory(): DaemonClientConfig["transportFactory"] | null;
+  createWebSocketTransportFactory?(): DaemonClientConfig["transportFactory"] | null;
   buildLocalTransportUrl(input: LocalTransportUrlInput): string;
   createClient(config: DaemonClientConfig): TClient;
 }
@@ -37,9 +39,16 @@ const defaultDaemonConnectionDependencies: DaemonConnectionDependencies<DaemonCl
   getClientId: getOrCreateClientId,
   resolveAppVersion,
   createLocalTransportFactory: createDesktopLocalDaemonTransportFactory,
+  createWebSocketTransportFactory: createDesktopWebSocketTransportFactory,
   buildLocalTransportUrl: buildLocalDaemonTransportUrl,
   createClient: (config) => new DaemonClient(config),
 };
+
+function resolveWebSocketTransportFactory(
+  deps: Pick<DaemonConnectionDependencies<DaemonProbeClient>, "createWebSocketTransportFactory">,
+): DaemonClientConfig["transportFactory"] {
+  return deps.createWebSocketTransportFactory?.() ?? undefined;
+}
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -97,10 +106,17 @@ export class DaemonConnectionTestError extends Error {
 export async function buildClientConfig(
   connection: HostConnection,
   serverId?: string,
-  options?: { capabilities?: DaemonClientConfig["capabilities"] },
+  options?: {
+    capabilities?: DaemonClientConfig["capabilities"];
+    trace?: DaemonClientConfig["trace"];
+  },
   deps: Pick<
     DaemonConnectionDependencies<DaemonProbeClient>,
-    "getClientId" | "resolveAppVersion" | "createLocalTransportFactory" | "buildLocalTransportUrl"
+    | "getClientId"
+    | "resolveAppVersion"
+    | "createLocalTransportFactory"
+    | "createWebSocketTransportFactory"
+    | "buildLocalTransportUrl"
   > = defaultDaemonConnectionDependencies,
 ): Promise<DaemonClientConfig> {
   const clientId = await deps.getClientId();
@@ -112,6 +128,7 @@ export async function buildClientConfig(
     suppressSendErrors: true,
     reconnect: { enabled: false },
     ...(options?.capabilities ? { capabilities: options.capabilities } : {}),
+    ...(options?.trace ? { trace: options.trace } : {}),
     ...((connection.type === "directSocket" || connection.type === "directPipe") &&
     localTransportFactory
       ? { transportFactory: localTransportFactory }
@@ -131,8 +148,10 @@ export async function buildClientConfig(
   if (connection.type === "directTcp") {
     return {
       ...base,
+      transportFactory: resolveWebSocketTransportFactory(deps),
       url: buildDaemonWebSocketUrl(connection.endpoint, { useTls: connection.useTls ?? false }),
       ...(connection.password ? { password: connection.password } : {}),
+      ...(connection.headers ? { headers: connection.headers } : {}),
     };
   }
 
@@ -224,6 +243,7 @@ interface ProbeOptions {
   serverId?: string;
   timeoutMs?: number;
   capabilities?: DaemonClientConfig["capabilities"];
+  trace?: DaemonClientConfig["trace"];
 }
 
 function resolveTimeout(connection: HostConnection, options?: ProbeOptions): number {

@@ -30,6 +30,7 @@ import {
   expectReconnectingToastGone,
   switchWorkspaceViaSidebar,
   waitForSidebarHydration,
+  waitForWorkspaceInSidebar,
   workspaceDeckEntryLocator,
   expectWorkspaceDeckEntryCount,
 } from "../support/helpers/workspace-ui";
@@ -37,7 +38,8 @@ import { clickSettingsBackToWorkspace } from "../support/helpers/settings";
 import { getServerId } from "../support/helpers/server-id";
 import { expectAppRoute } from "../support/helpers/route-assertions";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
-import { addOfflineHostAndReload } from "../support/helpers/hosts";
+import { addConnectedHostAndReload, addOfflineHostAndReload } from "../support/helpers/hosts";
+import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 
 const LOADING_WORKSPACE_TEXT_PATTERN = /Loading workspace/i;
 async function expectNoLoadingWorkspacePane(
@@ -196,6 +198,62 @@ test.describe("Workspace navigation regression", () => {
     } finally {
       daemonGate.restore();
       await workspace.cleanup();
+    }
+  });
+
+  test("does not show reconnecting for an inactive host workspace", async ({ page }) => {
+    const secondaryHost = await startIsolatedHostDaemon("inactive-reconnecting-host");
+    const primaryWorkspace = await seedWorkspace({ repoPrefix: "active-reconnecting-host-" });
+    const secondaryWorkspace = await seedWorkspace({
+      repoPrefix: "inactive-reconnecting-host-",
+      port: secondaryHost.port,
+    });
+
+    try {
+      await Promise.all([
+        createIdleAgent(primaryWorkspace.client, {
+          cwd: primaryWorkspace.repoPath,
+          workspaceId: primaryWorkspace.workspaceId,
+          title: "Active host agent",
+        }),
+        createIdleAgent(secondaryWorkspace.client, {
+          cwd: secondaryWorkspace.repoPath,
+          workspaceId: secondaryWorkspace.workspaceId,
+          title: "Inactive host agent",
+        }),
+      ]);
+
+      await gotoAppShell(page);
+      await addConnectedHostAndReload(page, {
+        serverId: secondaryHost.serverId,
+        label: "Inactive host",
+        port: secondaryHost.port,
+      });
+      await waitForWorkspaceInSidebar(page, {
+        serverId: secondaryHost.serverId,
+        workspaceId: secondaryWorkspace.workspaceId,
+      });
+      await switchWorkspaceViaSidebar({
+        page,
+        serverId: secondaryHost.serverId,
+        workspaceId: secondaryWorkspace.workspaceId,
+      });
+      await waitForWorkspaceTabsVisible(page);
+      await switchWorkspaceViaSidebar({
+        page,
+        serverId: getServerId(),
+        workspaceId: primaryWorkspace.workspaceId,
+      });
+      await waitForWorkspaceTabsVisible(page);
+
+      await secondaryHost.close();
+      await page.waitForTimeout(1_500);
+
+      await expectReconnectingToastGone(page, { timeout: 100 });
+    } finally {
+      await secondaryHost.close();
+      await secondaryWorkspace.cleanup();
+      await primaryWorkspace.cleanup();
     }
   });
 

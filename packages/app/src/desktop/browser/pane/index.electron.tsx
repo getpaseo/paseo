@@ -28,6 +28,7 @@ import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles"
 import { useTranslation } from "react-i18next";
 import * as Clipboard from "expo-clipboard";
 import { Button } from "@/components/ui/button";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/contexts/toast-context";
 import {
@@ -49,10 +50,21 @@ import {
   isElectronRuntime,
   type DesktopBrowserShortcutEvent,
 } from "@/desktop/host";
-import { useBrowserStore, normalizeWorkspaceBrowserUrl } from "@/desktop/browser/store";
 import {
+  type BrowserViewport,
+  createFixedBrowserViewport,
+  normalizeWorkspaceBrowserUrl,
+  RESPONSIVE_BROWSER_VIEWPORT,
+  useBrowserStore,
+} from "@/desktop/browser/store";
+import {
+  applyInactiveBrowserWebviewViewport,
+  isResidentBrowserWebviewReady,
   prepareBrowserWebview,
+  presentBrowserWebview,
+  rememberBrowserWebviewSize,
   releaseResidentBrowserWebview,
+  removeResidentBrowserWebview,
   takeResidentBrowserWebview,
 } from "../resident-webviews";
 
@@ -551,7 +563,7 @@ function DeviceSizeMenu({
   onSelect,
   triggerStyle,
 }: {
-  selectedId: DeviceSizeId;
+  selectedId: DeviceSizeId | null;
   onSelect: (id: DeviceSizeId) => void;
   triggerStyle: (state: { hovered?: boolean; pressed?: boolean }) => StyleProp<ViewStyle>;
 }) {
@@ -590,6 +602,22 @@ function DeviceSizeMenu({
   );
 }
 
+function deviceSizeIdForViewport(viewport: BrowserViewport): DeviceSizeId | null {
+  if (viewport.mode === "responsive") {
+    return "responsive";
+  }
+  return (
+    DEVICE_SIZE_PRESETS.find(
+      (preset) => preset.width === viewport.width && preset.height === viewport.height,
+    )?.id ?? null
+  );
+}
+
+function rememberResolvedBrowserWebviewSize(browserId: string, webview: HTMLElement): void {
+  const bounds = webview.getBoundingClientRect();
+  rememberBrowserWebviewSize({ browserId, width: bounds.width, height: bounds.height });
+}
+
 // eslint-disable-next-line complexity
 export function BrowserPane({
   browserId,
@@ -610,8 +638,16 @@ export function BrowserPane({
   const { t } = useTranslation();
   const browser = useBrowserStore((state) => state.browsersById[browserId] ?? null);
   const updateBrowser = useBrowserStore((state) => state.updateBrowser);
+  const setBrowserViewport = useBrowserStore((state) => state.setBrowserViewport);
+  const browserViewport = browser?.viewport ?? RESPONSIVE_BROWSER_VIEWPORT;
+  const browserViewportRef = useRef(browserViewport);
+  browserViewportRef.current = browserViewport;
+  const isPresented = useRetainedPanelActive();
+  const isPresentedRef = useRef(isPresented);
+  isPresentedRef.current = isPresented;
   const webviewRef = useRef<ElectronWebview | null>(null);
   const webviewHostRef = useRef<HTMLDivElement | null>(null);
+  const webviewClipRef = useRef<HTMLElement | null>(null);
   const urlInputRef = useRef<WebTextInput | null>(null);
   const initialUrlRef = useRef(browser?.url ?? "https://example.com");
   const browserIdRef = useRef(browserId);
@@ -629,7 +665,6 @@ export function BrowserPane({
   const toast = useToast();
   const toastRef = useRef(toast);
   toastRef.current = toast;
-  const [deviceSizeId, setDeviceSizeId] = useState<DeviceSizeId>("responsive");
   const [pendingSelection, setPendingSelection] = useState<BrowserElementSelection | null>(null);
   // Screenshot is captured at selection time (overlay already torn down, no
   // scroll drift) and reused when the annotation card is submitted.
@@ -727,7 +762,8 @@ export function BrowserPane({
     }
 
     const host = webviewHostRef.current;
-    if (!host) {
+    const clip = webviewClipRef.current;
+    if (!host || !clip) {
       return;
     }
 
@@ -740,6 +776,7 @@ export function BrowserPane({
     const residentWebview = takeResidentBrowserWebview(browserId) as ElectronWebview | null;
     const webview = residentWebview ?? (document.createElement("webview") as ElectronWebview);
     webviewRef.current = webview;
+    domReadyRef.current = isResidentBrowserWebviewReady(webview);
     if (!residentWebview) {
       prepareBrowserWebview(webview, {
         browserId,
@@ -747,14 +784,31 @@ export function BrowserPane({
         initialUrl: initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
       });
     }
-    webview.style.display = "flex";
-    webview.style.flex = "1";
-    webview.style.width = "100%";
-    webview.style.height = "100%";
-    webview.style.border = "0";
-    webview.style.background = "transparent";
+    releaseResidentBrowserWebview(browserId, webview);
+    if (isPresentedRef.current) {
+      presentBrowserWebview(browserId, webview, host, clip, browserViewportRef.current);
+    } else {
+      applyInactiveBrowserWebviewViewport(browserId, webview, browserViewportRef.current);
+    }
+    const sizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            if (!isPresentedRef.current) {
+              return;
+            }
+            presentBrowserWebview(
+              browserIdRef.current,
+              webview,
+              host,
+              clip,
+              browserViewportRef.current,
+            );
+            rememberResolvedBrowserWebviewSize(browserIdRef.current, webview);
+          });
 
     const handleStartLoading = () => {
+      domReadyRef.current = false;
       updateBrowser(browserId, { isLoading: true, lastError: null });
       syncNavigationState({ syncUrl: false });
     };
@@ -832,6 +886,13 @@ export function BrowserPane({
     };
     const handleWebviewFocus = () => {
       onFocusPane?.();
+      webview.focus?.();
+      const focusBrowser = getDesktopHost()?.browser?.focus;
+      if (typeof focusBrowser === "function") {
+        void focusBrowser(browserIdRef.current).catch((error) => {
+          console.error("[browser-webview] focus failed", error);
+        });
+      }
     };
 
     webview.addEventListener("did-start-loading", handleStartLoading);
@@ -846,7 +907,11 @@ export function BrowserPane({
     webview.addEventListener("focus", handleWebviewFocus);
     webview.addEventListener("mousedown", handleWebviewFocus);
 
-    host.appendChild(webview);
+    if (isPresentedRef.current) {
+      rememberResolvedBrowserWebviewSize(browserId, webview);
+    }
+    sizeObserver?.observe(host);
+    sizeObserver?.observe(clip);
     if (initialUnsafeNavigationMessage) {
       updateBrowserRef.current(browserIdRef.current, {
         isLoading: false,
@@ -855,6 +920,7 @@ export function BrowserPane({
     }
 
     return () => {
+      sizeObserver?.disconnect();
       webview.removeEventListener("did-start-loading", handleStartLoading);
       webview.removeEventListener("did-stop-loading", handleStopLoading);
       webview.removeEventListener("will-navigate", handleWillNavigate);
@@ -866,15 +932,13 @@ export function BrowserPane({
       webview.removeEventListener("dom-ready", handleDomReady);
       webview.removeEventListener("focus", handleWebviewFocus);
       webview.removeEventListener("mousedown", handleWebviewFocus);
-      if (host.contains(webview)) {
-        const browserStillExists = Boolean(
-          useBrowserStore.getState().browsersById[browserIdRef.current],
-        );
-        if (browserStillExists) {
-          releaseResidentBrowserWebview(browserIdRef.current, webview);
-        } else {
-          host.removeChild(webview);
-        }
+      const browserStillExists = Boolean(
+        useBrowserStore.getState().browsersById[browserIdRef.current],
+      );
+      if (browserStillExists) {
+        releaseResidentBrowserWebview(browserIdRef.current, webview);
+      } else {
+        removeResidentBrowserWebview(browserIdRef.current);
       }
       if (webviewRef.current === webview) {
         webviewRef.current = null;
@@ -883,6 +947,31 @@ export function BrowserPane({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [browserId, onFocusPane]);
+
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (!webview) {
+      return;
+    }
+    if (!isPresented) {
+      releaseResidentBrowserWebview(browserId, webview);
+      return;
+    }
+    const host = webviewHostRef.current;
+    const clip = webviewClipRef.current;
+    if (host && clip) {
+      presentBrowserWebview(browserId, webview, host, clip, browserViewport);
+    }
+    if (browserViewport.mode === "fixed") {
+      rememberBrowserWebviewSize({
+        browserId,
+        width: browserViewport.width,
+        height: browserViewport.height,
+      });
+    } else {
+      rememberResolvedBrowserWebviewSize(browserId, webview);
+    }
+  }, [browserId, browserViewport, isPresented]);
 
   const navigate = useCallback(
     (nextUrl: string) => {
@@ -1525,12 +1614,26 @@ export function BrowserPane({
     [selectorMode],
   );
 
-  const devicePreset = useMemo(
-    () =>
-      DEVICE_SIZE_PRESETS.find((preset) => preset.id === deviceSizeId) ?? DEVICE_SIZE_PRESETS[0],
-    [deviceSizeId],
+  const selectedDeviceSizeId = useMemo(
+    () => deviceSizeIdForViewport(browserViewport),
+    [browserViewport],
   );
-  const isResponsiveDevice = devicePreset.width === null;
+  const isResponsiveDevice = browserViewport.mode === "responsive";
+
+  const handleSelectDeviceSize = useCallback(
+    (deviceSizeId: DeviceSizeId) => {
+      const preset =
+        DEVICE_SIZE_PRESETS.find((candidate) => candidate.id === deviceSizeId) ??
+        DEVICE_SIZE_PRESETS[0];
+      setBrowserViewport(
+        browserId,
+        preset.width === null || preset.height === null
+          ? RESPONSIVE_BROWSER_VIEWPORT
+          : createFixedBrowserViewport(preset.width, preset.height),
+      );
+    },
+    [browserId, setBrowserViewport],
+  );
 
   const webviewHostStyle = useMemo<CSSProperties>(
     () =>
@@ -1546,15 +1649,13 @@ export function BrowserPane({
         : {
             // Fixed-size device frame, centered within webviewWrap (see styles).
             display: "flex",
-            width: devicePreset.width ?? undefined,
-            maxWidth: "100%",
-            height: devicePreset.height ?? undefined,
-            maxHeight: "100%",
+            width: browserViewport.width,
+            height: browserViewport.height,
             minHeight: 0,
             background: theme.colors.surface0,
             boxShadow: "0 2px 16px rgba(0,0,0,0.25)",
           },
-    [devicePreset.height, devicePreset.width, isResponsiveDevice, theme.colors.surface0],
+    [browserViewport, isResponsiveDevice, theme.colors.surface0],
   );
 
   const webviewWrapStyle = useMemo(
@@ -1564,6 +1665,10 @@ export function BrowserPane({
 
   const setWebviewHostNode = useCallback((node: HTMLDivElement | null) => {
     webviewHostRef.current = node;
+  }, []);
+
+  const setWebviewClipNode = useCallback((node: unknown) => {
+    webviewClipRef.current = node instanceof HTMLElement ? node : null;
   }, []);
 
   if (!isElectronRuntime()) {
@@ -1624,8 +1729,8 @@ export function BrowserPane({
         </View>
         <View style={styles.chromeRight}>
           <DeviceSizeMenu
-            selectedId={deviceSizeId}
-            onSelect={setDeviceSizeId}
+            selectedId={selectedDeviceSizeId}
+            onSelect={handleSelectDeviceSize}
             triggerStyle={baseIconButtonStyle}
           />
           <ToolbarButton
@@ -1678,7 +1783,11 @@ export function BrowserPane({
           </Text>
         </View>
       ) : null}
-      <View style={webviewWrapStyle}>
+      <View
+        ref={setWebviewClipNode}
+        style={webviewWrapStyle}
+        testID={`browser-webview-clip-${browserId}`}
+      >
         {createElement("div", {
           ref: setWebviewHostNode,
           style: webviewHostStyle,
@@ -1884,6 +1993,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   annotationOverlay: {
     position: "absolute",
+    zIndex: 1,
     left: 0,
     right: 0,
     bottom: 0,

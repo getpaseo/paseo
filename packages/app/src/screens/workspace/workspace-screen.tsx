@@ -26,7 +26,6 @@ import {
   ChevronDown,
   Copy,
   Ellipsis,
-  EllipsisVertical,
   Globe,
   Import as ImportIcon,
   PanelRight,
@@ -45,6 +44,8 @@ import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { ScreenHeader } from "@/components/headers/screen-header";
 import { ScreenTitle } from "@/components/headers/screen-title";
+import { HostBadge } from "@/hosts/host-badge";
+import { useHostBadges } from "@/hosts/use-host-badges";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -73,6 +74,7 @@ import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useToast } from "@/contexts/toast-context";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
+import { traceInstant } from "@/performance/native-trace";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import {
   collectAllTabs,
@@ -191,6 +193,7 @@ import {
 } from "@/screens/workspace/terminals/use-workspace-terminals";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import {
+  resolveTerminalProfileLaunch,
   getTerminalProfileIcon,
   resolveTerminalProfiles,
 } from "@getpaseo/protocol/terminal-profiles";
@@ -244,7 +247,6 @@ function buildWorkspaceFileLocation(
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedEllipsis = withUnistyles(Ellipsis);
-const ThemedEllipsisVertical = withUnistyles(EllipsisVertical);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedRotateCw = withUnistyles(RotateCw);
@@ -938,6 +940,12 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
   recoveryAgentId,
 }: WorkspaceScreenProps) {
   const navigationFocused = useIsFocused();
+  useEffect(() => {
+    traceInstant("paseo.workspace.mount", { serverId, workspaceId });
+    return () => {
+      traceInstant("paseo.workspace.unmount", { serverId, workspaceId });
+    };
+  }, [serverId, workspaceId]);
   return (
     <WorkspaceScreenContent
       serverId={serverId}
@@ -1012,11 +1020,7 @@ function HeaderMenuProfileItem({
   onCreateTerminalWithProfile,
 }: HeaderMenuProfileItemProps) {
   const handleSelect = useCallback(() => {
-    onCreateTerminalWithProfile({
-      name: profile.name,
-      command: profile.command,
-      args: profile.args,
-    });
+    onCreateTerminalWithProfile(resolveTerminalProfileLaunch(profile, ""));
   }, [onCreateTerminalWithProfile, profile]);
 
   const icon = getTerminalProfileIcon(profile);
@@ -1043,18 +1047,16 @@ function HeaderMenuProfileItem({
   );
 }
 
-function WorkspaceHeaderMenuTriggerIcon({
-  hovered,
-  open,
-  isMobile,
-}: {
-  hovered: boolean;
-  open: boolean;
-  isMobile: boolean;
-}) {
-  const Icon = isMobile ? ThemedEllipsisVertical : ThemedEllipsis;
+/**
+ * The compact header buttons draw at 32pt, under the 44pt touch minimum, and sit flush against
+ * each other — so the slop can only grow vertically. Widening it would put two buttons' slop over
+ * the same pixels, which is a worse miss than a small target.
+ */
+const COMPACT_HEADER_BUTTON_HIT_SLOP = { top: 8, bottom: 8 } as const;
+
+function WorkspaceHeaderMenuTriggerIcon({ hovered, open }: { hovered: boolean; open: boolean }) {
   const colorMapping = hovered || open ? foregroundColorMapping : mutedColorMapping;
-  return <Icon size={16} uniProps={colorMapping} />;
+  return <ThemedEllipsis size={16} uniProps={colorMapping} />;
 }
 
 function WorkspaceHeaderMenu({
@@ -1095,22 +1097,28 @@ function WorkspaceHeaderMenu({
 
   const renderTriggerIcon = useCallback(
     ({ hovered, open }: { hovered: boolean; open: boolean }) => (
-      <WorkspaceHeaderMenuTriggerIcon hovered={hovered} open={open} isMobile={isMobile} />
+      <WorkspaceHeaderMenuTriggerIcon hovered={hovered} open={open} />
     ),
-    [isMobile],
+    [],
   );
 
   return (
-    <DropdownMenu>
+    <DropdownMenu compactMode="sheet">
       <DropdownMenuTrigger
         testID="workspace-header-menu-trigger"
         style={isMobile ? styles.compactHeaderActionButton : styles.headerActionButton}
+        hitSlop={isMobile ? COMPACT_HEADER_BUTTON_HIT_SLOP : undefined}
         accessibilityRole="button"
         accessibilityLabel={t("workspace.header.actions.workspaceActions")}
       >
         {renderTriggerIcon}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" width={220} testID="workspace-header-menu">
+      <DropdownMenuContent
+        align="start"
+        width={220}
+        testID="workspace-header-menu"
+        sheetTitle={t("workspace.header.actions.workspaceActions")}
+      >
         <DropdownMenuItem
           testID="workspace-header-new-agent"
           leading={menuNewAgentIcon}
@@ -1194,11 +1202,52 @@ function WorkspaceHeaderMenu({
   );
 }
 
+/**
+ * Which project the workspace belongs to, and which machine it runs on.
+ *
+ * Compact gets both, on their own line under the workspace name: this header is the only thing on
+ * screen that says where the workspace lives, because the sidebar that normally carries the host
+ * badge is closed. It still follows the host's own badge setting, so a purely local setup stays
+ * quiet. A project name that only repeats the workspace name is dropped on wide, where the two sit
+ * side by side, and kept on compact, where the line exists for the host anyway.
+ */
+function WorkspaceHeaderProjectRow({
+  subtitle,
+  isSubtitleDistinct,
+  serverId,
+}: {
+  subtitle: string;
+  isSubtitleDistinct: boolean;
+  serverId: string;
+}) {
+  const isCompact = useIsCompactFormFactor();
+  const hostBadge = useHostBadges({ enabled: isCompact }).get(serverId) ?? null;
+  const showProject = isSubtitleDistinct || isCompact;
+  if (!showProject && !hostBadge) {
+    return null;
+  }
+  return (
+    <View style={styles.headerProjectRow}>
+      {showProject ? (
+        <Text
+          testID="workspace-header-subtitle"
+          style={styles.headerProjectTitle}
+          numberOfLines={1}
+        >
+          {subtitle}
+        </Text>
+      ) : null}
+      {showProject && hostBadge ? <Text style={styles.headerProjectSeparator}>·</Text> : null}
+      {hostBadge ? <HostBadge badge={hostBadge} /> : null}
+    </View>
+  );
+}
+
 interface WorkspaceHeaderTitleBarProps {
   isLoading: boolean;
   title: string;
   subtitle: string;
-  showSubtitle: boolean;
+  isSubtitleDistinct: boolean;
   currentBranchName: string | null;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
@@ -1233,7 +1282,7 @@ function WorkspaceHeaderTitleBar({
   isLoading,
   title,
   subtitle,
-  showSubtitle,
+  isSubtitleDistinct,
   currentBranchName,
   normalizedServerId,
   normalizedWorkspaceId,
@@ -1271,16 +1320,14 @@ function WorkspaceHeaderTitleBar({
         </View>
       ) : (
         <View style={styles.headerTitleTextGroup}>
-          <ScreenTitle testID="workspace-header-title">{title}</ScreenTitle>
-          {showSubtitle ? (
-            <Text
-              testID="workspace-header-subtitle"
-              style={styles.headerProjectTitle}
-              numberOfLines={1}
-            >
-              {subtitle}
-            </Text>
-          ) : null}
+          <ScreenTitle testID="workspace-header-title" style={styles.headerTitle}>
+            {title}
+          </ScreenTitle>
+          <WorkspaceHeaderProjectRow
+            subtitle={subtitle}
+            isSubtitleDistinct={isSubtitleDistinct}
+            serverId={normalizedServerId}
+          />
         </View>
       )}
       <View style={styles.compactHeaderMenuCluster}>
@@ -1410,7 +1457,7 @@ interface WorkspaceHeaderFields {
   isWorkspaceHeaderLoading: boolean;
   workspaceHeaderTitle: string;
   workspaceHeaderSubtitle: string;
-  shouldShowWorkspaceHeaderSubtitle: boolean;
+  isWorkspaceHeaderSubtitleDistinct: boolean;
   isGitCheckout: boolean;
   currentBranchName: string | null;
 }
@@ -1445,7 +1492,7 @@ function deriveWorkspaceHeaderFields(input: {
       isWorkspaceHeaderLoading: true,
       workspaceHeaderTitle: "",
       workspaceHeaderSubtitle: "",
-      shouldShowWorkspaceHeaderSubtitle: false,
+      isWorkspaceHeaderSubtitleDistinct: false,
       isGitCheckout: false,
       currentBranchName: null,
     };
@@ -1454,7 +1501,7 @@ function deriveWorkspaceHeaderFields(input: {
     isWorkspaceHeaderLoading: false,
     workspaceHeaderTitle: renderState.title,
     workspaceHeaderSubtitle: renderState.subtitle,
-    shouldShowWorkspaceHeaderSubtitle: renderState.shouldShowSubtitle,
+    isWorkspaceHeaderSubtitleDistinct: renderState.isSubtitleDistinct,
     isGitCheckout: renderState.isGitCheckout,
     currentBranchName: renderState.currentBranchName,
   };
@@ -1929,7 +1976,7 @@ function WorkspaceScreenContent({
     isWorkspaceHeaderLoading,
     workspaceHeaderTitle,
     workspaceHeaderSubtitle,
-    shouldShowWorkspaceHeaderSubtitle,
+    isWorkspaceHeaderSubtitleDistinct,
     isGitCheckout,
     currentBranchName,
   } = deriveWorkspaceHeaderFields({
@@ -3760,7 +3807,7 @@ function WorkspaceScreenContent({
                 isLoading={isWorkspaceHeaderLoading}
                 title={workspaceHeaderTitle}
                 subtitle={workspaceHeaderSubtitle}
-                showSubtitle={shouldShowWorkspaceHeaderSubtitle}
+                isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}
                 currentBranchName={currentBranchName}
                 normalizedServerId={normalizedServerId}
                 normalizedWorkspaceId={normalizedWorkspaceId}
@@ -3925,14 +3972,14 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
   },
+  // Compact steps the whole header down one rung of the scale. The title and the project line
+  // stack there, so at the shared size they read as two headings rather than a subject and its
+  // caption, and they cost two full lines of a header that has none to spare.
   headerTitle: {
-    fontSize: theme.fontSize.base,
-    fontWeight: {
-      xs: "400",
-      md: "300",
+    fontSize: {
+      xs: theme.fontSize.sm,
+      md: theme.fontSize.base,
     },
-    color: theme.colors.foreground,
-    flexShrink: 1,
   },
   headerTitleContainer: {
     flex: 1,
@@ -3968,15 +4015,29 @@ const styles = StyleSheet.create((theme) => ({
       md: theme.spacing[2],
     },
   },
+  // No width cap. A percentage cap resolves against the title group, whose own width comes from
+  // this row's content, so it clips the project name while there is still room beside it.
+  // `flexShrink` on both this row and the title already gives up space only when there is none.
+  headerProjectRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+    minWidth: 0,
+    flexShrink: 1,
+  },
   headerProjectTitle: {
     color: theme.colors.foregroundMuted,
     fontSize: {
-      xs: theme.fontSize.sm,
+      xs: theme.fontSize.xs,
       md: theme.fontSize.base,
     },
     flexShrink: 1,
     minWidth: 0,
-    maxWidth: "60%",
+  },
+  headerProjectSeparator: {
+    color: theme.colors.foregroundExtraMuted,
+    fontSize: theme.fontSize.xs,
+    flexShrink: 0,
   },
   headerTitleSkeleton: {
     width: 220,

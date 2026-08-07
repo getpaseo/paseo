@@ -440,6 +440,38 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("listModels excludes compatibility-only catalog entries", async () => {
+    const client = createExtraClient("codex", {
+      isAvailable: async () => true,
+      fetchCatalog: async () => ({
+        models: [
+          { provider: "codex", id: "gpt-5.4", label: "GPT 5.4" },
+          {
+            provider: "codex",
+            id: "gpt-5.4-legacy",
+            label: "GPT 5.4 legacy",
+            isSelectable: false,
+          },
+        ],
+        modes: [],
+      }),
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: { codex: client },
+    });
+    try {
+      const models = await manager.listModels({
+        cwd: "/tmp/project",
+        provider: "codex",
+        wait: true,
+      });
+      expect(models.map((model) => model.id)).toEqual(["gpt-5.4"]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("listModes rejects when the provider is disabled", async () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),

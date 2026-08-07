@@ -1,0 +1,2 @@
+export const STATUS_INDICATOR_DOT_SIZE = 8;
+export const STATUS_INDICATOR_ALERT_SIZE = 12;

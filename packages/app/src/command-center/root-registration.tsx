@@ -15,6 +15,7 @@ import { getIsElectronRuntime } from "@/constants/layout";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
+import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { resolveShortcutKeysForAction } from "@/keyboard/keyboard-shortcuts";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
@@ -77,6 +78,7 @@ function HomeIcon({ size }: CommandCenterIconProps) {
 export function CommandCenterRootActions() {
   const { t } = useTranslation();
   const { overrides } = useKeyboardShortcutOverrides();
+  const shortcutsAvailable = useKeyboardShortcutsAvailable();
   const openAddProject = useOpenAddProject();
   const settingsRoute = useMemo<Href>(() => buildSettingsRoute(), []);
   const homeRoute = useMemo<Href>(() => buildOpenProjectRoute(), []);
@@ -87,8 +89,8 @@ export function CommandCenterRootActions() {
     () => ({ isMac: getShortcutOs() === "mac", isDesktop: getIsElectronRuntime() }),
     [],
   );
-  const actions = useMemo<CommandCenterContribution[]>(
-    () => [
+  const actions = useMemo<CommandCenterContribution[]>(() => {
+    const availableActions: CommandCenterContribution[] = [
       {
         id: "add-project",
         group: "actions",
@@ -204,7 +206,10 @@ export function CommandCenterRootActions() {
             undefined,
         },
       },
-      {
+    ];
+
+    if (shortcutsAvailable) {
+      availableActions.push({
         id: "keyboard-shortcuts",
         group: "actions",
         groupRank: 0,
@@ -221,20 +226,22 @@ export function CommandCenterRootActions() {
             resolveShortcutKeysForAction("show-shortcuts", overrides, shortcutPlatform) ??
             undefined,
         },
-      },
-    ],
-    [
-      homeRoute,
-      openAddProject,
-      overrides,
-      schedulesRoute,
-      sessionsRoute,
-      setShortcutsDialogOpen,
-      settingsRoute,
-      shortcutPlatform,
-      t,
-    ],
-  );
+      });
+    }
+
+    return availableActions;
+  }, [
+    homeRoute,
+    openAddProject,
+    overrides,
+    schedulesRoute,
+    sessionsRoute,
+    setShortcutsDialogOpen,
+    settingsRoute,
+    shortcutPlatform,
+    shortcutsAvailable,
+    t,
+  ]);
 
   useCommandCenterActions({ sourceId: "root", enabled: true, actions });
   return null;

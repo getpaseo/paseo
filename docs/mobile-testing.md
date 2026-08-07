@@ -1,6 +1,47 @@
 # Mobile Testing
 
-## Maestro
+## Agent Device
+
+Agent Device `.ad` scripts are the primary mobile E2E format. An agent discovers a working flow interactively, saves the successful commands, then the replay runner executes the same typed plan locally or in CI.
+
+Record a flow while driving the app normally:
+
+```bash
+agent-device open sh.paseo.debug \
+  --platform ios \
+  --session terminal-author \
+  --save-script ./packages/app/e2e/mobile/agent-device/terminal.ios.ad
+agent-device snapshot -i --session terminal-author
+agent-device press 'id="workspace-header-menu-trigger"' --session terminal-author
+# Continue the flow and verify its result with wait/get/is/find.
+agent-device close --session terminal-author
+```
+
+`close` writes the script. Keep selectors based on stable app IDs. Keep assertions as `wait`, `get`, `is`, or `find` commands; screenshots are evidence, not assertions.
+
+Run the Paseo mobile suite:
+
+```bash
+npm run test:e2e:mobile
+```
+
+The runner uses an isolated Agent Device state directory, verifies or starts Metro for this checkout, prewarms the iOS runner, discovers each script's platform from its `context` header, and cleans its sessions, runner lease, daemon, and any Metro process it started. Attempt results, timings, logs, and failure artifacts go under `.dev/agent-device-artifacts`.
+
+Set `PASEO_MOBILE_E2E_METRO_PORT` when this worktree already has Metro on a non-default port:
+
+```bash
+PASEO_MOBILE_E2E_METRO_PORT=62093 npm run test:e2e:mobile
+```
+
+[native-terminal-basic.ios.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.ios.ad) and [native-terminal-basic.android.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.android.ad) are the smallest examples. Each opens a fresh terminal, types a command at zero delay, submits it, and asserts its distinct output. The app must be connected to a daemon with an active workspace.
+
+When replay diverges, read its ranked selector suggestions. Edit the script deliberately and rerun it from the beginning. `--update` is retained for compatibility but no longer rewrites scripts.
+
+## Maestro compatibility
+
+Existing Maestro flows live in `packages/app/maestro/`. Agent Device can execute its supported subset with `agent-device test <path> --maestro`, which provides a migration path while `.ad` coverage replaces these flows.
+
+### Existing flows
 
 Maestro flows live in `packages/app/maestro/`. Reusable sub-flows live in `packages/app/maestro/flows/`.
 
@@ -211,6 +252,25 @@ adb emu gsm call 5551234
 
 Expected result: Paseo does not throw `RuntimeException: Audio focus request failed`; native audio reports an interruption and voice mode stops or pauses coherently.
 
+### Releasing the audio session when idle
+
+Paseo must not hold the OS audio session once it is neither capturing nor playing, or the user's
+background music stays paused. On iOS this is not just a "while recording" problem: the
+`.playAndRecord`/`.voiceChat` category is non-mixing and survives backgrounding, and iOS re-asserts
+it every time the app returns to the foreground — so one dictation turn kills music for the life of
+the process, on every open, until the app is force-quit. Android holds
+`AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE` with the same effect.
+
+`createAudioEngine` (`packages/app/src/voice/audio-engine.native.ts`) calls
+`releaseAudioSession()` whenever capture stops and the playback queue drains, and the iOS module
+also releases on `OnAppEntersBackground`. The native side re-guards on `isRecording` /
+`speechPlayer.isPlaying`, because the native engine is a singleton shared by multiple JS engine
+wrappers (voice provider + dictation) and only it knows the true state.
+
+This cannot be validated by a JS test — verify on a device: play music, open Paseo, use dictation
+once, stop, and confirm the music resumes; then background/foreground the app and confirm it keeps
+playing.
+
 ## Unistyles + Reanimated
 
 ### The crash
@@ -278,6 +338,111 @@ Platform-specific stream edges belong on `StreamStrategy`:
 - native inverted uses the first history item as the history/live-head boundary and compensates for inverted cell child order
 
 If a chat footer looks duplicated or appears above the assistant message on mobile, start with `packages/app/src/agent-stream/layout.test.ts`. Do not add a React Native renderer test for this class of bug; make the pure layout invariant fail first.
+
+## Local iOS device builds
+
+Native changes (anything under `packages/expo-two-way-audio/ios/`, or any new Expo module) **cannot be
+tested over Metro or EAS Update**. Those ship JS only. A stale dev-client binary silently lacks the new
+native functions, so the feature no-ops and the test proves nothing. Rebuild the binary.
+
+Symptom of a stale dev client: `Cannot find native module 'ExpoDocumentPicker'` at startup, followed by a
+cascade of `Route "./X.tsx" is missing the required default export` warnings. The route warnings are not a
+router bug — the module-level throw aborts `_layout.tsx` evaluation, so its default export never gets
+assigned. One missing native module, N confusing warnings.
+
+**Prerequisite: Xcode needs a signed-in Apple ID for the signing team _with a valid keychain token_.** An
+account that merely appears in Xcode → Settings → Accounts is not enough — if its `Xcode-Token` is missing,
+the build below fails at code signing and blames a _certificate_ instead. See
+[Signing needs a working Apple ID token in Xcode](#signing-needs-a-working-apple-id-token-in-xcode) before
+you start, not after it fails.
+
+```bash
+cd packages/app
+npm --prefix ../.. run build:client
+APP_VARIANT=development npx expo prebuild --platform ios
+APP_VARIANT=development npx expo run:ios --device
+```
+
+`APP_VARIANT=development` is required. The `ios` npm script does not set it, and `app.config.js` defaults
+to `production` — so a bare `npm run ios` builds `sh.paseo` and collides with the App Store install instead
+of the `sh.paseo.debug` dev client. Ignore prebuild's `--non-interactive is not supported` warning; use
+`CI=1` if you need non-interactive.
+
+### Signing needs a working Apple ID token in Xcode
+
+Device builds fail with a trio of errors that all point away from the real cause:
+
+```
+error: No Accounts: Add a new account in Accounts settings.
+error: Provisioning profile "iOS Team Provisioning Profile: *" doesn't include
+       signing certificate "Apple Development: <name>".
+error: Provisioning profile "iOS Team Provisioning Profile: *" doesn't include
+       the aps-environment entitlement.
+```
+
+**`No Accounts` does not reliably mean no account is configured.** Check the line _above_ it in the build
+log before believing it:
+
+```
+DVTDeveloperAccountManager: Failed to load credentials for <apple-id>:
+  Invalid credentials in keychain for <apple-id>, missing Xcode-Token
+```
+
+That is the actual failure: the Apple ID is registered in Xcode, but its `Xcode-Token` keychain item is gone
+(typically after an Apple ID password change or a keychain reset). Xcode reports it as `No Accounts`, then
+falls back to whatever stale profile is cached — and if the machine holds a dev cert newer than that
+profile, you get the _certificate_ mismatch as a second-order symptom. Chasing the certificate error is a
+dead end.
+
+Verify what is actually configured rather than trusting the message:
+
+```bash
+# Accounts Xcode knows about
+defaults read com.apple.dt.Xcode DVTDeveloperAccountManagerAppleIDLists
+
+# The credential that is actually missing (error => no token)
+security find-generic-password -s "Xcode-Token"
+```
+
+Fix: Xcode → Settings → Accounts, re-sign-in to the listed Apple ID (removing and re-adding forces a fresh
+token). That restores `-allowProvisioningUpdates`, profile regeneration, and push.
+
+Signing an Xcode-_managed_ profile via `CODE_SIGN_STYLE=Manual` is not a workaround; Xcode rejects it with
+`is Xcode managed, but signing settings require a manually managed profile`.
+
+If you need a build on the device before the token is fixed, build unsigned and sign by hand with a cert the
+cached profile already embeds (list them with `security cms -D -i <profile>.mobileprovision`, then compare
+against `security find-identity -v -p codesigning`):
+
+```bash
+xcodebuild ... CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+cp <profile>.mobileprovision "$APP/embedded.mobileprovision"
+# sign nested frameworks/dylibs first, then the bundle, then:
+xcrun devicectl device install app --device <udid> "$APP"
+```
+
+This is a stopgap, not a fix: `expo prebuild` regenerates `packages/app/ios/` and discards it. It also
+requires stripping entitlements the cached profile lacks (e.g. `aps-environment`), so push is dead in such a
+build.
+
+To verify only that native Swift compiles, skip signing entirely — the pods have their own schemes:
+
+```bash
+cd packages/app/ios
+xcodebuild -workspace PaseoDebug.xcworkspace -scheme ExpoTwoWayAudio \
+  -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
+```
+
+Confirm the log compiled _your_ file and not a cached copy: the `SwiftCompile` line should reference
+`packages/expo-two-way-audio/ios/...`, not a path inside DerivedData.
+
+### Headless launch cannot verify runtime behavior
+
+`xcrun devicectl device process launch` reports `The app terminated with the exit code 0` about a second
+after launch when the phone's screen is off — the app is suspended and killed before the JS bundle loads.
+This is **not** a build defect. Confirm with a control: launch `com.apple.Preferences` the same way and
+watch it exit identically. Headless install and launch prove the binary is valid and that startup reaches
+RN init; anything about on-screen behavior needs a human holding the phone.
 
 ## iOS Simulator
 

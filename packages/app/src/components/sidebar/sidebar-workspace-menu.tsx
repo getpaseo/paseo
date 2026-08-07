@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Archive, CircleCheck, Copy, MoreVertical, Pencil, Pin, PinOff } from "lucide-react-native";
-import { isNative, isWeb } from "@/constants/platform";
+import { isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -24,6 +24,10 @@ import {
 import { Shortcut } from "@/components/ui/shortcut";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 import { resolveSidebarWorkspaceAccessibilityLabel } from "@/components/sidebar/sidebar-workspace-title";
+import {
+  workspaceServiceLabelKey,
+  type WorkspaceServiceSummary,
+} from "@/components/sidebar/workspace-meta-row";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -70,9 +74,18 @@ export interface SidebarWorkspaceMenuProps {
   isPinned?: boolean;
   onTogglePin?: () => void;
   openInFileManagerPath?: string | null;
+  /**
+   * Lifted so the row that reveals the kebab can keep it mounted while its menu is up. See
+   * `useOpenKebabMenuVisibility`.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-interface SidebarWorkspaceMenuItemsProps extends Omit<SidebarWorkspaceMenuProps, "onArchive"> {
+interface SidebarWorkspaceMenuItemsProps extends Omit<
+  SidebarWorkspaceMenuProps,
+  "onArchive" | "open" | "onOpenChange"
+> {
   onArchive?: () => void;
 }
 
@@ -109,7 +122,7 @@ function SidebarWorkspaceMenuItems({
 }: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
   const { t } = useTranslation();
   const archiveTrailing = useMemo(
-    () => (archiveShortcutKeys && !isNative ? <Shortcut chord={archiveShortcutKeys} /> : null),
+    () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
     [archiveShortcutKeys],
   );
 
@@ -201,10 +214,12 @@ export function SidebarWorkspaceMenu({
   isPinned,
   onTogglePin,
   openInFileManagerPath,
+  open,
+  onOpenChange,
 }: SidebarWorkspaceMenuProps) {
   const { t } = useTranslation();
   return (
-    <DropdownMenu>
+    <DropdownMenu compactMode="sheet" open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
         hitSlop={8}
         style={triggerStyle}
@@ -214,7 +229,7 @@ export function SidebarWorkspaceMenu({
       >
         {renderTriggerIcon}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" width={260}>
+      <DropdownMenuContent align="end" width={260} sheetTitle={t("sidebar.workspace.actions.menu")}>
         <SidebarWorkspaceMenuItems
           surface="dropdown"
           workspaceKey={workspaceKey}
@@ -238,7 +253,7 @@ export function SidebarWorkspaceMenu({
 
 type ContextTriggerProps = Omit<
   ComponentProps<typeof ContextMenuTrigger>,
-  "children" | "enabledOnMobile"
+  "children" | "enabledOnMobile" | "highlightStyle"
 >;
 
 export function SidebarWorkspaceContextMenu({
@@ -248,7 +263,7 @@ export function SidebarWorkspaceContextMenu({
   workspace,
   leadingProjectName,
   hostBadgeLabel,
-  scriptIconKind,
+  serviceSummary,
   workspaceKey,
   onCopyPath,
   onCopyBranchName,
@@ -263,6 +278,7 @@ export function SidebarWorkspaceContextMenu({
   onTogglePin,
   openInFileManagerPath,
   accessibilityLabel,
+  highlightStyle,
   ...triggerProps
 }: PropsWithChildren<
   SidebarWorkspaceMenuItemsProps &
@@ -272,7 +288,8 @@ export function SidebarWorkspaceContextMenu({
       workspace: SidebarWorkspaceEntry;
       leadingProjectName?: string | null;
       hostBadgeLabel?: string | null;
-      scriptIconKind?: "service" | "command" | null;
+      serviceSummary?: WorkspaceServiceSummary | null;
+      highlightStyle: ComponentProps<typeof ContextMenuTrigger>["highlightStyle"];
     }
 >) {
   const {
@@ -291,7 +308,9 @@ export function SidebarWorkspaceContextMenu({
     leadingProjectName,
     hostBadgeLabel,
     pullRequestLabel,
-    scriptLabel: scriptIconKind ? t("workspace.status.scriptsAvailable") : null,
+    serviceLabel: serviceSummary
+      ? t(workspaceServiceLabelKey(serviceSummary), { name: serviceSummary.name })
+      : null,
   });
 
   return (
@@ -300,6 +319,7 @@ export function SidebarWorkspaceContextMenu({
         {...triggerProps}
         enabledOnMobile={false}
         accessibilityLabel={accessibilityLabel ?? rowAccessibilityLabel}
+        highlightStyle={highlightStyle}
       >
         {children}
       </ContextMenuTrigger>
@@ -338,6 +358,9 @@ const styles = StyleSheet.create((theme) => ({
     padding: 2,
     borderRadius: 4,
     marginLeft: 2,
+    // MoreVertical paints only around the center of its SVG. Keep the padded hit box, but
+    // pull the painted dots through that unused view-box space onto the trailing-content rail.
+    marginRight: -7,
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,

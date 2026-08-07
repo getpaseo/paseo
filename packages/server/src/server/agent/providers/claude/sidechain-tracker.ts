@@ -59,6 +59,7 @@ export class ClaudeSidechainTracker {
   private readonly activeSidechains = new Map<string, SubAgentActivityState>();
   private readonly getToolInput: (toolUseId: string) => AgentMetadata | null | undefined;
   private readonly isDescriptorOwnedElsewhere: () => boolean;
+  private readonly needsSyntheticParentToolCard: (toolUseId: string) => boolean;
 
   constructor(input: {
     getToolInput: (toolUseId: string) => AgentMetadata | null | undefined;
@@ -68,9 +69,11 @@ export class ClaudeSidechainTracker {
      * same descriptor from different evidence is how the live and replay paths drifted apart.
      */
     isDescriptorOwnedElsewhere?: () => boolean;
+    needsSyntheticParentToolCard?: (toolUseId: string) => boolean;
   }) {
     this.getToolInput = input.getToolInput;
     this.isDescriptorOwnedElsewhere = input.isDescriptorOwnedElsewhere ?? (() => false);
+    this.needsSyntheticParentToolCard = input.needsSyntheticParentToolCard ?? (() => true);
   }
 
   handleMessage(message: SDKMessage, parentToolUseId: string): AgentStreamEvent[] {
@@ -151,6 +154,19 @@ export class ClaudeSidechainTracker {
           },
         ];
 
+    const parentCard: AgentStreamEvent[] = this.needsSyntheticParentToolCard(parentToolUseId)
+      ? [
+          {
+            type: "timeline",
+            item: {
+              ...toolCall,
+              detail,
+            },
+            provider: "claude",
+          },
+        ]
+      : [];
+
     return [
       ...descriptorEvents,
       ...childTimelineItems.map(
@@ -160,14 +176,7 @@ export class ClaudeSidechainTracker {
           event: { type: "timeline", id: parentToolUseId, item },
         }),
       ),
-      {
-        type: "timeline",
-        item: {
-          ...toolCall,
-          detail,
-        },
-        provider: "claude",
-      },
+      ...parentCard,
     ];
   }
 
