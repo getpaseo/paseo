@@ -20,6 +20,12 @@ input focused while its scrollable list lives in a Portal. There is no shared
 "floating panel" primitive yet — when a fifth use case shows up we can revisit;
 until then prefer copying the closest file and trimming.
 
+Compact bottom-sheet content can stay mounted while the sheet is closed. An
+input's mount-time `autoFocus` is therefore not an open signal. Gate focus on the
+surface's visible state and retry it through the presentation animation. For a
+picker that should not open the soft keyboard, also gate native focus on the
+hardware-keyboard connection state.
+
 ## Popover width contract
 
 Combobox desktop popovers are never narrower than their trigger, and they grow

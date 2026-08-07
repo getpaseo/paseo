@@ -6,6 +6,7 @@ import { Modal, Platform, Pressable, ScrollView, Text, View } from "react-native
 import type {
   NativeSyntheticEvent,
   StyleProp,
+  TextInput,
   TextInputKeyPressEventData,
   ViewStyle,
 } from "react-native";
@@ -38,6 +39,7 @@ import {
 import { listNavigationDataSet } from "@/keyboard/list-search-keys";
 import { isWeb } from "@/constants/platform";
 import { useKeyboardVisibility } from "@/hooks/use-keyboard-visibility";
+import { useInputFocus } from "@/hooks/use-input-focus";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AdaptiveTextInput } from "@/components/adaptive-text-input";
 export { AdaptiveTextInput, type AdaptiveTextInputProps } from "@/components/adaptive-text-input";
@@ -298,14 +300,22 @@ function BottomSheetVisibleContent({ children }: { children: ReactNode }) {
   );
 }
 
+function useHeaderSearchInputFocus(enabled: boolean) {
+  const inputRef = useRef<TextInput>(null);
+  useInputFocus(inputRef, enabled);
+  return inputRef;
+}
+
 export function SheetHeaderView({
   header,
   onClose,
+  active = true,
   showCloseButton = true,
   testID,
 }: {
   header: SheetHeader;
   onClose: () => void;
+  active?: boolean;
   showCloseButton?: boolean;
   testID?: string;
 }) {
@@ -318,6 +328,7 @@ export function SheetHeaderView({
   const back = header.back;
   const handleBackPress = back?.onPress;
   const search = header.search;
+  const searchInputRef = useHeaderSearchInputFocus(Boolean(search?.autoFocus && active));
   const handleSearchChange = useCallback(
     (value: string) => {
       search?.onChange(value);
@@ -376,6 +387,7 @@ export function SheetHeaderView({
         >
           <Search size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
           <AdaptiveTextInput
+            ref={searchInputRef}
             // @ts-expect-error - outlineStyle is web-only
             style={[styles.searchInput, isWeb && { outlineStyle: "none" }]}
             placeholder={search.placeholder ?? t("common.actions.search")}
@@ -387,7 +399,7 @@ export function SheetHeaderView({
             onBlur={search.onBlur}
             autoCapitalize="none"
             autoCorrect={false}
-            autoFocus={search.autoFocus}
+            autoFocus={search.autoFocus && active}
             testID={search.testID}
           />
         </View>
@@ -402,6 +414,7 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
   const back = header.back;
   const handleBackPress = back?.onPress;
   const hasInlineRow = Boolean(handleBackPress || header.leading || header.actions);
+  const searchInputRef = useHeaderSearchInputFocus(Boolean(header.search?.autoFocus));
   if (!hasInlineRow && !header.search) return null;
   return (
     <View>
@@ -440,6 +453,7 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
         >
           <Search size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
           <AdaptiveTextInput
+            ref={searchInputRef}
             // @ts-expect-error - outlineStyle is web-only
             style={[styles.searchInput, isWeb && { outlineStyle: "none" }]}
             placeholder={header.search.placeholder ?? t("common.actions.search")}
@@ -650,7 +664,7 @@ export function AdaptiveModalSheet({
   if (isMobile) {
     const sheetContent = (
       <>
-        <SheetHeaderView header={header} onClose={onClose} testID={testID} />
+        <SheetHeaderView header={header} onClose={onClose} active={visible} testID={testID} />
         {scrollable ? (
           <BottomSheetScrollView
             style={sizeContentToCurrentSnapPoint ? styles.bottomSheetVisibleScroll : undefined}
@@ -695,7 +709,7 @@ export function AdaptiveModalSheet({
 
   const cardInner = (
     <OverlayLayerProvider layer={modalLayer}>
-      <SheetHeaderView header={header} onClose={onClose} />
+      <SheetHeaderView header={header} onClose={onClose} active={visible} />
       {scrollable ? (
         <View style={styles.desktopScrollContainer}>
           <ScrollView
