@@ -252,6 +252,21 @@ describe("pluginFilePreviewConflicts", () => {
     ]);
   });
 
+  // Neither plugin wins `.html` — core renders every one of them — so calling
+  // one of them the winner would describe a pane nobody gets. `.tpl.html` is in
+  // here because the report widens claims by suffix, and every `.tpl.html` file
+  // ends with `.html`, so it is exactly as unwinnable.
+  it("reports no contest over an extension a built-in already renders", () => {
+    const plugins = [
+      installedPlugin({ id: "alpha-html", extensions: [".html"] }),
+      installedPlugin({ id: "zeta-html", extensions: [".htm", ".tpl.html"] }),
+      installedPlugin({ id: "alpha-md", extensions: [".md"] }),
+      installedPlugin({ id: "zeta-md", extensions: [".markdown"] }),
+    ];
+
+    expect(pluginFilePreviewConflicts(plugins)).toEqual([]);
+  });
+
   it("does not report a plugin whose two extensions are suffixes of each other", () => {
     const plugins = [installedPlugin({ id: "csv-table", extensions: [".csv", ".data.csv"] })];
 

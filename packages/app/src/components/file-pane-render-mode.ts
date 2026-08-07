@@ -137,6 +137,18 @@ export function pluginFilePreviewConflicts(
     for (const preview of plugin.manifest.contributes.filePreviews ?? []) {
       for (const extension of preview.extensions) {
         const normalized = extension.toLowerCase();
+        // A built-in renders every file with this extension, so no plugin
+        // claiming it wins anything and there is no contest to report. Without
+        // this the report names one plugin the winner for `.md` while core
+        // renders all of them — the pane and this list disagreeing about the
+        // same file, which is the whole thing the built-ins-win rule prevents.
+        // `filePreviewRenderKind` takes the extension directly because it
+        // matches on suffix, the same rule that widens the claims below: a
+        // plugin claiming `.tpl.html` is just as unwinnable as one claiming
+        // `.html`.
+        if (filePreviewRenderKind(normalized) !== null) {
+          continue;
+        }
         const claims = claimsByExtension.get(normalized) ?? new Set<string>();
         claims.add(plugin.manifest.id);
         claimsByExtension.set(normalized, claims);

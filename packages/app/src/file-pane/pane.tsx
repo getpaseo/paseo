@@ -231,9 +231,11 @@ function FilePreviewBody({
   const theme = UnistylesRuntime.getTheme();
   const { t } = useTranslation();
   const filePath = location.path;
-  // The line-target and source-mode fallbacks that used to live here are now in
-  // `useFilePreviewRenderer`, which resolves to `code` for both before this
-  // renders — one decision, in one place, for built-ins and plugins alike.
+  // The fallbacks that used to be decided here are both upstream of this now:
+  // a line target in `useFilePreviewRenderer`, which resolves to `code` for one,
+  // and source mode in the `SOURCE_RENDERER` substitution in
+  // `FilePanePresentation`. Either way `renderer` has already settled, for
+  // built-ins and plugins alike.
   const previewScrollRef = useRef<RNScrollView>(null);
 
   const highlightedLines = useMemo(() => {
