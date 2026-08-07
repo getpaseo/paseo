@@ -45,6 +45,8 @@ export type KeyboardActionId =
   | "workspace.terminal.new"
   | "workspace.new"
   | "workspace.project.pick"
+  | "workspace.isolation.pick"
+  | "workspace.base-ref.pick"
   | "worktree.new"
   | "workspace.archive"
   | "workspace.pin"

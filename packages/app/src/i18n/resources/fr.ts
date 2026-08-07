@@ -1982,6 +1982,8 @@ export const fr: TranslationResources = {
         queueMessage: "Message de file d'attente",
         muteUnmuteVoiceMode: "Mode vocal/unmutemuet",
         switchProject: "Changer de projet",
+        chooseWorkspaceIsolation: "Choisir l'environnement de l'espace de travail",
+        chooseBaseBranch: "Choisir la branche de départ",
       },
       helpNotes: {
         showKeyboardShortcuts:

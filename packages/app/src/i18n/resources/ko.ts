@@ -1942,6 +1942,8 @@ export const ko: TranslationResources = {
         queueMessage: "메시지 대기열에 추가",
         muteUnmuteVoiceMode: "음성 모드 음소거/해제",
         switchProject: "프로젝트 전환",
+        chooseWorkspaceIsolation: "워크스페이스 환경 선택",
+        chooseBaseBranch: "시작 브랜치 선택",
       },
       helpNotes: {
         showKeyboardShortcuts: "포커스가 텍스트 필드나 터미널에 있지 않을 때 사용할 수 있습니다.",

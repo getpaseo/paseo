@@ -1931,6 +1931,8 @@ export const ar: TranslationResources = {
         queueMessage: "رسالة قائمة الانتظار",
         muteUnmuteVoiceMode: "كتم وضع الصوت /unmute",
         switchProject: "تبديل المشروع",
+        chooseWorkspaceIsolation: "اختيار بيئة مساحة العمل",
+        chooseBaseBranch: "اختيار الفرع الأولي",
       },
       helpNotes: {
         showKeyboardShortcuts: "متاح عندما لا يكون التركيز في حقل نص أو محطة طرفية.",

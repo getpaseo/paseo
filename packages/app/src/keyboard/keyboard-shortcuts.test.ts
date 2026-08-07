@@ -294,16 +294,16 @@ describe("keyboard-shortcuts", () => {
       action: "sidebar.toggle.left",
     },
     {
-      name: "routes Mod+. to toggle both sidebars on non-mac",
+      name: "routes Mod+. to the project picker first on non-mac",
       event: { key: ".", code: "Period", ctrlKey: true },
       context: { isMac: false },
-      action: "sidebar.toggle.both",
+      action: "workspace.project.pick",
     },
     {
-      name: "matches Dvorak logical Cmd+. to toggle both sidebars on macOS",
+      name: "matches Dvorak logical Cmd+. on macOS",
       event: { key: ".", code: "KeyE", metaKey: true },
       context: { isMac: true },
-      action: "sidebar.toggle.both",
+      action: "workspace.project.pick",
     },
     {
       name: "routes Mod+D to message-input action outside terminal",
@@ -602,6 +602,18 @@ describe("keyboard-shortcuts", () => {
 
     expect(onChordReset).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
+  });
+});
+
+describe("Mod+. fallback chain", () => {
+  it("offers the sidebar toggle as a fallback behind the project picker", () => {
+    const result = resolveShortcut({
+      event: { key: ".", code: "Period", metaKey: true },
+      context: { isMac: true },
+    });
+
+    expect(result.match?.action).toBe("workspace.project.pick");
+    expect(result.fallbackMatches?.map((m) => m.action)).toContain("sidebar.toggle.both");
   });
 });
 

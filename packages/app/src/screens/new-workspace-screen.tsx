@@ -204,6 +204,34 @@ function RefPickerBadgeContent({
   );
 }
 
+// Trigger tooltip for the three New workspace pickers: what it picks, plus the
+// shortcut that opens the same picker. `shortcutHelpId` is a binding help id,
+// so a user's rebind shows through instead of a hardcoded chord.
+function PickerTooltip({
+  label,
+  shortcutHelpId,
+  children,
+}: {
+  label: string;
+  shortcutHelpId: string;
+  children: React.ReactElement;
+}) {
+  const keys = useShortcutKeys(shortcutHelpId);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild triggerRefProp="ref">
+        {children}
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={8}>
+        <View style={styles.tooltipRow}>
+          <Text style={styles.tooltipText}>{label}</Text>
+          {keys ? <Shortcut chord={keys} /> : null}
+        </View>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function RefPickerTrigger({
   pickerAnchorRef,
   onPress,
@@ -228,29 +256,24 @@ function RefPickerTrigger({
   iconSize: number;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild triggerRefProp="ref">
-        <ComboboxTrigger
-          ref={pickerAnchorRef}
-          testID="new-workspace-ref-picker-trigger"
-          onPress={onPress}
-          disabled={disabled}
-          style={badgePressableStyle}
-          accessibilityRole="button"
-          accessibilityLabel={accessibilityLabel}
-        >
-          <RefPickerBadgeContent
-            selectedItem={selectedItem}
-            triggerLabel={triggerLabel}
-            iconColor={iconColor}
-            iconSize={iconSize}
-          />
-        </ComboboxTrigger>
-      </TooltipTrigger>
-      <TooltipContent side="top" align="center" offset={8}>
-        <Text style={styles.tooltipText}>{tooltipLabel}</Text>
-      </TooltipContent>
-    </Tooltip>
+    <PickerTooltip label={tooltipLabel} shortcutHelpId="choose-base-branch">
+      <ComboboxTrigger
+        ref={pickerAnchorRef}
+        testID="new-workspace-ref-picker-trigger"
+        onPress={onPress}
+        disabled={disabled}
+        style={badgePressableStyle}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+      >
+        <RefPickerBadgeContent
+          selectedItem={selectedItem}
+          triggerLabel={triggerLabel}
+          iconColor={iconColor}
+          iconSize={iconSize}
+        />
+      </ComboboxTrigger>
+    </PickerTooltip>
   );
 }
 
@@ -278,39 +301,34 @@ function ProjectPickerTrigger({
   const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(label);
   const placeholderInitial = placeholderLabel.charAt(0).toUpperCase() || "?";
   return (
-    <Tooltip>
-      <TooltipTrigger asChild triggerRefProp="ref">
-        <ComboboxTrigger
-          ref={pickerAnchorRef}
-          testID="new-workspace-project-picker-trigger"
-          onPress={onPress}
-          disabled={disabled}
-          style={badgePressableStyle}
-          accessibilityRole="button"
-          accessibilityLabel="Workspace project"
-        >
-          <View style={styles.badgeIconBox}>
-            {projectViewKey ? (
-              <ProjectIconView
-                iconDataUri={iconDataUri}
-                initial={placeholderInitial}
-                projectViewKey={projectViewKey}
-                size={ICON_SIZE.md}
-                textStyle={styles.projectIconFallbackText}
-              />
-            ) : (
-              <Folder size={iconSize} color={iconColor} />
-            )}
-          </View>
-          <Text style={styles.badgeText} numberOfLines={1}>
-            {label}
-          </Text>
-        </ComboboxTrigger>
-      </TooltipTrigger>
-      <TooltipContent side="top" align="center" offset={8}>
-        <Text style={styles.tooltipText}>Choose project</Text>
-      </TooltipContent>
-    </Tooltip>
+    <PickerTooltip label="Choose project" shortcutHelpId="switch-project">
+      <ComboboxTrigger
+        ref={pickerAnchorRef}
+        testID="new-workspace-project-picker-trigger"
+        onPress={onPress}
+        disabled={disabled}
+        style={badgePressableStyle}
+        accessibilityRole="button"
+        accessibilityLabel="Workspace project"
+      >
+        <View style={styles.badgeIconBox}>
+          {projectViewKey ? (
+            <ProjectIconView
+              iconDataUri={iconDataUri}
+              initial={placeholderInitial}
+              projectViewKey={projectViewKey}
+              size={ICON_SIZE.md}
+              textStyle={styles.projectIconFallbackText}
+            />
+          ) : (
+            <Folder size={iconSize} color={iconColor} />
+          )}
+        </View>
+        <Text style={styles.badgeText} numberOfLines={1}>
+          {label}
+        </Text>
+      </ComboboxTrigger>
+    </PickerTooltip>
   );
 }
 
@@ -592,6 +610,7 @@ function IsolationPickerTrigger({
   badgePressableStyle,
   isolation,
   label,
+  tooltipLabel,
   iconColor,
   iconSize,
 }: {
@@ -601,30 +620,33 @@ function IsolationPickerTrigger({
   badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
   isolation: "local" | "worktree";
   label: string;
+  tooltipLabel: string;
   iconColor: string;
   iconSize: number;
 }) {
   return (
-    <ComboboxTrigger
-      ref={pickerAnchorRef}
-      testID="workspace-create-isolation-trigger"
-      onPress={onPress}
-      disabled={disabled}
-      style={badgePressableStyle}
-      accessibilityRole="button"
-      accessibilityLabel="Workspace isolation"
-    >
-      <View style={styles.badgeIconBox}>
-        {isolation === "worktree" ? (
-          <GitBranch size={iconSize} color={iconColor} />
-        ) : (
-          <Folder size={iconSize} color={iconColor} />
-        )}
-      </View>
-      <Text style={styles.badgeText} numberOfLines={1}>
-        {label}
-      </Text>
-    </ComboboxTrigger>
+    <PickerTooltip label={tooltipLabel} shortcutHelpId="choose-workspace-isolation">
+      <ComboboxTrigger
+        ref={pickerAnchorRef}
+        testID="workspace-create-isolation-trigger"
+        onPress={onPress}
+        disabled={disabled}
+        style={badgePressableStyle}
+        accessibilityRole="button"
+        accessibilityLabel="Workspace isolation"
+      >
+        <View style={styles.badgeIconBox}>
+          {isolation === "worktree" ? (
+            <GitBranch size={iconSize} color={iconColor} />
+          ) : (
+            <Folder size={iconSize} color={iconColor} />
+          )}
+        </View>
+        <Text style={styles.badgeText} numberOfLines={1}>
+          {label}
+        </Text>
+      </ComboboxTrigger>
+    </PickerTooltip>
   );
 }
 
@@ -1380,6 +1402,9 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         badgePressableStyle={badgePressableStyle}
         isolation={isolation.effectiveIsolation}
         label={isolationTriggerLabel}
+        // Same phrase as the shortcut help row, so the tooltip and the settings
+        // list name this picker identically.
+        tooltipLabel={t("settings.shortcuts.help.chooseWorkspaceIsolation")}
         iconColor={theme.colors.foregroundMuted}
         iconSize={theme.iconSize.sm}
       />
@@ -1772,6 +1797,32 @@ export function NewWorkspaceScreen({
     if (!canCreateWorktree) return [localOption];
     return [localOption, { id: "worktree", label: isolationLabel(t, "worktree") }];
   }, [canCreateWorktree, t]);
+
+  // Mod+Shift+. / Mod+Alt+. mirror Mod+. on the project picker: the two other
+  // New workspace selects, opened from the keyboard. Each is gated on the
+  // picker actually being reachable, so the shortcut stays unhandled (and the
+  // key falls through) when the row is hidden.
+  useKeyboardActionHandler({
+    handlerId: "new-workspace-isolation-pick",
+    actions: ["workspace.isolation.pick"],
+    enabled: canCreateWorktree,
+    priority: 0,
+    handle: () => {
+      openIsolationPicker();
+      return true;
+    },
+  });
+
+  useKeyboardActionHandler({
+    handlerId: "new-workspace-base-ref-pick",
+    actions: ["workspace.base-ref.pick"],
+    enabled: showRefPicker,
+    priority: 0,
+    handle: () => {
+      openPicker();
+      return true;
+    },
+  });
 
   const handleSelectIsolationOption = useCallback(
     (id: string) => {
@@ -2232,6 +2283,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
+  },
+  tooltipRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
   },
   tooltipText: {
     fontSize: theme.fontSize.sm,

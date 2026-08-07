@@ -105,6 +105,14 @@ export interface ParsedShortcutBinding extends ShortcutBinding {
   parsedChord: KeyCombo[];
 }
 
+export interface ShortcutResolution {
+  match: KeyboardShortcutMatch | null;
+  /** Lower-priority bindings for the same combo, tried when `match` goes unhandled. */
+  fallbackMatches?: KeyboardShortcutMatch[];
+  nextChordState: ChordState;
+  preventDefault: boolean;
+}
+
 export interface ChordState {
   candidateIndices: number[];
   step: number;
@@ -133,6 +141,8 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "new-agent": "settings.shortcuts.help.openProject",
   "new-workspace": "settings.shortcuts.help.newWorkspace",
   "switch-project": "settings.shortcuts.help.switchProject",
+  "choose-workspace-isolation": "settings.shortcuts.help.chooseWorkspaceIsolation",
+  "choose-base-branch": "settings.shortcuts.help.chooseBaseBranch",
   "archive-workspace": "settings.shortcuts.help.archiveWorkspace",
   "workspace-tab-new": "settings.shortcuts.help.newTab",
   "workspace-tab-close-current": "settings.shortcuts.help.closeCurrentTab",
@@ -256,6 +266,71 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       section: "projects",
       label: "Switch project",
       keys: ["mod", "P"],
+    },
+  },
+
+  // --- New workspace pickers (Cursor-style Mod+. family) ---
+  // These must stay ahead of `sidebar.toggle.both` (Mod+.): both bindings match
+  // the same combo, and the resolver falls through to the sidebar toggle when
+  // the New workspace screen isn't mounted to claim the picker action.
+  {
+    id: "workspace-project-pick-cmd-period-mac",
+    action: "workspace.project.pick",
+    combo: "Cmd+.",
+    when: { mac: true, commandCenter: false },
+  },
+  {
+    id: "workspace-project-pick-ctrl-period-non-mac",
+    action: "workspace.project.pick",
+    combo: "Ctrl+.",
+    when: { mac: false, commandCenter: false, terminal: false },
+  },
+  {
+    id: "workspace-isolation-pick-cmd-shift-period-mac",
+    action: "workspace.isolation.pick",
+    combo: "Cmd+Shift+.",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "choose-workspace-isolation",
+      section: "projects",
+      label: "Choose workspace environment",
+      keys: ["mod", "shift", "."],
+    },
+  },
+  {
+    id: "workspace-isolation-pick-ctrl-shift-period-non-mac",
+    action: "workspace.isolation.pick",
+    combo: "Ctrl+Shift+.",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "choose-workspace-isolation",
+      section: "projects",
+      label: "Choose workspace environment",
+      keys: ["mod", "shift", "."],
+    },
+  },
+  {
+    id: "workspace-base-ref-pick-cmd-alt-period-mac",
+    action: "workspace.base-ref.pick",
+    combo: "Cmd+Alt+.",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "choose-base-branch",
+      section: "projects",
+      label: "Choose starting branch",
+      keys: ["mod", "alt", "."],
+    },
+  },
+  {
+    id: "workspace-base-ref-pick-ctrl-alt-period-non-mac",
+    action: "workspace.base-ref.pick",
+    combo: "Ctrl+Alt+.",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "choose-base-branch",
+      section: "projects",
+      label: "Choose starting branch",
+      keys: ["mod", "alt", "."],
     },
   },
 
@@ -1244,14 +1319,10 @@ function resolveInitialChordStep(input: {
   chordState: ChordState;
   onChordReset: () => void;
   bindings: readonly ParsedShortcutBinding[];
-}): {
-  match: KeyboardShortcutMatch | null;
-  nextChordState: ChordState;
-  preventDefault: boolean;
-} {
+}): ShortcutResolution {
   const { event, context, chordState, onChordReset, bindings } = input;
   const advancingCandidateIndices: number[] = [];
-  let singleComboMatch: KeyboardShortcutMatch | null = null;
+  const singleComboMatches: KeyboardShortcutMatch[] = [];
 
   for (const [index, binding] of bindings.entries()) {
     const firstCombo = binding.parsedChord[0];
@@ -1268,9 +1339,7 @@ function resolveInitialChordStep(input: {
       advancingCandidateIndices.push(index);
       continue;
     }
-    if (!singleComboMatch) {
-      singleComboMatch = buildMatchFromBinding(binding, event);
-    }
+    singleComboMatches.push(buildMatchFromBinding(binding, event));
   }
 
   if (advancingCandidateIndices.length > 0) {
@@ -1286,7 +1355,8 @@ function resolveInitialChordStep(input: {
   }
 
   return {
-    match: singleComboMatch,
+    match: singleComboMatches[0] ?? null,
+    fallbackMatches: singleComboMatches.slice(1),
     nextChordState: resetChordState(chordState),
     preventDefault: false,
   };
@@ -1298,11 +1368,7 @@ function resolveAdvancingChordStep(input: {
   chordState: ChordState;
   onChordReset: () => void;
   bindings: readonly ParsedShortcutBinding[];
-}): {
-  match: KeyboardShortcutMatch | null;
-  nextChordState: ChordState;
-  preventDefault: boolean;
-} {
+}): ShortcutResolution {
   const { event, context, chordState, onChordReset, bindings } = input;
   const matchingCandidateIndices: number[] = [];
   let completedMatch: KeyboardShortcutMatch | null = null;
@@ -1363,11 +1429,7 @@ export function resolveKeyboardShortcut(input: {
   chordState: ChordState;
   onChordReset: () => void;
   bindings?: readonly ParsedShortcutBinding[];
-}): {
-  match: KeyboardShortcutMatch | null;
-  nextChordState: ChordState;
-  preventDefault: boolean;
-} {
+}): ShortcutResolution {
   const { event, context, chordState, onChordReset, bindings = DEFAULT_BINDINGS } = input;
   if (chordState.step === 0) {
     return resolveInitialChordStep({ event, context, chordState, onChordReset, bindings });

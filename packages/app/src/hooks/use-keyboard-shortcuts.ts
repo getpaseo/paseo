@@ -271,12 +271,19 @@ export function useKeyboardShortcuts({
         return;
       }
 
-      const handled = routeAndPerformShortcut({
-        action: result.match.action,
-        payload: result.match.payload,
-        domEvent: input.domEvent,
-        browserFocusRestoreElement: input.browserFocusRestoreElement,
-      });
+      // Several bindings can share a combo (e.g. Cmd+. opens the New workspace
+      // project picker, and otherwise toggles both sidebars). Walk them in
+      // binding order until one claims the key.
+      let handled = false;
+      for (const candidate of [result.match, ...(result.fallbackMatches ?? [])]) {
+        handled = routeAndPerformShortcut({
+          action: candidate.action,
+          payload: candidate.payload,
+          domEvent: input.domEvent,
+          browserFocusRestoreElement: input.browserFocusRestoreElement,
+        });
+        if (handled) break;
+      }
       if (!handled || !input.domEvent) {
         return;
       }

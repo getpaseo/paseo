@@ -1909,6 +1909,8 @@ export const zhCN: TranslationResources = {
         queueMessage: "消息排队",
         muteUnmuteVoiceMode: "静音/取消静音语音模式",
         switchProject: "切换项目",
+        chooseWorkspaceIsolation: "选择工作区环境",
+        chooseBaseBranch: "选择起始分支",
       },
       helpNotes: {
         showKeyboardShortcuts: "焦点不在文本输入框或终端内时可用。",

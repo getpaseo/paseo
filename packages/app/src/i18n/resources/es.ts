@@ -1979,6 +1979,8 @@ export const es: TranslationResources = {
         queueMessage: "mensaje de cola",
         muteUnmuteVoiceMode: "Silenciar el modo de voz/unmute",
         switchProject: "Cambiar proyecto",
+        chooseWorkspaceIsolation: "Elegir entorno del espacio de trabajo",
+        chooseBaseBranch: "Elegir rama inicial",
       },
       helpNotes: {
         showKeyboardShortcuts: "Disponible cuando el foco no está en un campo de texto o terminal.",

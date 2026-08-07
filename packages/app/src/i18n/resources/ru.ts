@@ -1969,6 +1969,8 @@ export const ru: TranslationResources = {
         queueMessage: "Сообщение в очереди",
         muteUnmuteVoiceMode: "Отключить голосовой режим /unmute",
         switchProject: "Сменить проект",
+        chooseWorkspaceIsolation: "Выбрать среду рабочего пространства",
+        chooseBaseBranch: "Выбрать начальную ветку",
       },
       helpNotes: {
         showKeyboardShortcuts: "Доступно, когда фокус находится не в текстовом поле или терминале.",

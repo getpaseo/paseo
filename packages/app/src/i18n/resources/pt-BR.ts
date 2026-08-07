@@ -1962,6 +1962,8 @@ export const ptBR: TranslationResources = {
         queueMessage: "Enfileirar mensagem",
         muteUnmuteVoiceMode: "Silenciar/ativar modo de voz",
         switchProject: "Trocar projeto",
+        chooseWorkspaceIsolation: "Escolher ambiente do workspace",
+        chooseBaseBranch: "Escolher branch inicial",
       },
       helpNotes: {
         showKeyboardShortcuts:

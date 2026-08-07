@@ -31,6 +31,8 @@ export type KeyboardActionId =
   | "sidebar.toggle.right"
   | "workspace.new"
   | "workspace.project.pick"
+  | "workspace.isolation.pick"
+  | "workspace.base-ref.pick"
   | "worktree.new"
   | "workspace.archive"
   | "workspace.pin";
@@ -66,6 +68,8 @@ export type KeyboardActionDefinition =
   | { id: "sidebar.toggle.right"; scope: KeyboardActionScope }
   | { id: "workspace.new"; scope: KeyboardActionScope }
   | { id: "workspace.project.pick"; scope: KeyboardActionScope }
+  | { id: "workspace.isolation.pick"; scope: KeyboardActionScope }
+  | { id: "workspace.base-ref.pick"; scope: KeyboardActionScope }
   | { id: "worktree.new"; scope: KeyboardActionScope }
   | { id: "workspace.archive"; scope: KeyboardActionScope }
   | { id: "workspace.pin"; scope: KeyboardActionScope };
