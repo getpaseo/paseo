@@ -119,7 +119,7 @@ interface ChatAgentStateShape {
   lastError?: Agent["lastError"] | null;
 }
 
-const RECONNECT_TOAST_DELAY_MS = 1_000;
+const RECONNECT_TOAST_DELAY_MS = 1_500;
 
 const reconnectToastStateByServerId = new Map<string, ReconnectToastState>();
 
