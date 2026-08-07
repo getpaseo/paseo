@@ -62,6 +62,7 @@ import {
   resolveVoiceAccessibilityLabel,
   resolveVoiceTooltipText,
 } from "./labels";
+import { installComposerCompositionHandlers } from "./composition";
 import {
   applyDictationTranscript,
   computeCanStartDictation,
@@ -74,6 +75,31 @@ import {
 
 const DEFAULT_SEND_KEYS: ShortcutKey[][] = [["Enter"]];
 const COMPOSER_INPUT_DATASET = { composerInput: "" } as const;
+
+function useWebInputCompositionState(
+  textareaRef: React.MutableRefObject<HTMLElement | null>,
+  valueRef: React.MutableRefObject<string>,
+  onChangeText: (text: string) => void,
+): boolean {
+  const [isComposing, setIsComposing] = useState(false);
+
+  useLayoutEffect(() => {
+    if (!isWeb) return;
+    const textarea = textareaRef.current;
+    if (!(textarea instanceof HTMLTextAreaElement)) return;
+    return installComposerCompositionHandlers(textarea, valueRef, onChangeText, setIsComposing);
+  }, [onChangeText, textareaRef, valueRef]);
+
+  return isComposing;
+}
+
+function resolveComposerTextValue(
+  isWebInput: boolean,
+  isComposing: boolean,
+  value: string,
+): string | undefined {
+  return isWebInput && isComposing ? undefined : value;
+}
 
 export interface AttachmentMenuItem {
   id: string;
@@ -587,7 +613,7 @@ function FocusHint({
 
 interface ComposerTextSurfaceProps {
   readOnly: boolean;
-  value: string;
+  value: string | undefined;
   textInputRef: React.Ref<TextInput>;
   textInputStyle: React.ComponentProps<typeof ThemedTextInput>["style"];
   readOnlyTextStyle: React.ComponentProps<typeof Text>["style"];
@@ -617,7 +643,7 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
     return (
       <View style={styles.textInputScrollWrapper}>
         <Text style={props.readOnlyTextStyle} testID="composer-readonly-content">
-          {props.value}
+          {props.value ?? ""}
         </Text>
       </View>
     );
@@ -1481,6 +1507,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       }
     }, [getWebTextArea]);
 
+    const isInputComposing = useWebInputCompositionState(webTextareaRef, valueRef, onChangeText);
+
     usePasteImagesEffect({
       getWebTextArea,
       isConnected,
@@ -1717,7 +1745,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           {/* Text input */}
           <ComposerTextSurface
             readOnly={readOnly}
-            value={value}
+            value={resolveComposerTextValue(isWeb, isInputComposing, value)}
             textInputRef={textInputRef}
             textInputStyle={textInputStyle}
             readOnlyTextStyle={readOnlyTextStyle}
