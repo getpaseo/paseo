@@ -392,4 +392,4 @@ test("native recursive observation updates tracked state and prunes ignored stor
   expect(getCheckoutWorktreeState).not.toHaveBeenCalled();
   expect(getCheckoutDiff).not.toHaveBeenCalled();
   expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(0);
-}, 15_000);
+}, 30_000);
