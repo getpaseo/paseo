@@ -1454,7 +1454,7 @@ export class DaemonClient {
     ) {
       return;
     }
-    void this.connect();
+    void this.connect().catch(() => undefined);
   }
 
   getConnectionState(): ConnectionState {

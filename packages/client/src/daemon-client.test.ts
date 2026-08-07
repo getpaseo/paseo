@@ -1014,6 +1014,28 @@ test("rejects an initial connection wait when closed before server_info", async 
   expect(client.getConnectionState().status).toBe("disposed");
 });
 
+test("ensureConnected observes a reconnect wait that close rejects", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "ensure_connected_close",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+
+  const initialConnect = client.connect();
+  mock.triggerOpen();
+  await initialConnect;
+  mock.triggerClose({ code: 1006, reason: "lost" });
+  expect(client.getConnectionState().status).toBe("disconnected");
+
+  client.ensureConnected();
+  expect(client.getConnectionState().status).toBe("connecting");
+  await client.close();
+  expect(client.getConnectionState().status).toBe("disposed");
+});
+
 test("keeps the transport connected when a session RPC ping times out", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -3218,10 +3240,17 @@ test("provider-policy patch rejects when reconnect closes before server_info", a
     { mcp: { injectIntoProviders: ["codex-lead"] } },
     "provider-policy-reconnect-close",
   );
+  second.triggerOpen({ preserveSent: true, sendServerInfo: false });
   await client.close();
 
   await expect(patch).rejects.toThrow("Daemon client closed");
   expect(client.getConnectionState().status).toBe("disposed");
+  expect(
+    second.sent.some(
+      (data) =>
+        typeof data === "string" && JSON.parse(data).message?.type === "set_daemon_config_request",
+    ),
+  ).toBe(false);
 });
 
 test("requires non-empty clientId", () => {
