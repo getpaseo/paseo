@@ -230,8 +230,13 @@ export const en = {
   sessions: {
     title: "History",
     empty: "No sessions yet",
+    noMatches: "No sessions match",
+    tooManyMatches: "Too many matches — narrow your search",
+    hostLoadFailed: "{{host}}: Could not load history",
+    searchPlaceholder: "Search history",
     actions: {
       loadMore: "Load more",
+      clearSearch: "Clear search",
     },
   },
   agentList: {
