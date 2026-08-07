@@ -1230,8 +1230,10 @@ export class DaemonClient {
     this.connectPromise = new Promise((resolve, reject) => {
       this.connectResolve = resolve;
       this.connectReject = reject;
-      this.attemptConnect();
     });
+    if (this.connectionState.status !== "connecting") {
+      this.attemptConnect();
+    }
 
     return this.connectPromise;
   }
