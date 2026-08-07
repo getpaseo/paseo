@@ -2109,7 +2109,12 @@ export class HostRuntimeStore {
               error: toErrorMessage(error),
             });
           }),
-        ]).then(() => undefined),
+        ]).then(() => {
+          // The directory is current now, so any queue whose agent stopped running
+          // unobserved can go out.
+          this.drainQueuedAgentMessagesForServer(serverId);
+          return undefined;
+        }),
       )
       .finally(() => {
         const inFlight = this.directoryBootstrapInFlight.get(serverId);
@@ -2119,6 +2124,25 @@ export class HostRuntimeStore {
       });
 
     this.directoryBootstrapInFlight.set(serverId, bootstrap);
+  }
+
+  /**
+   * Drain every agent that is holding a queue and is not running.
+   *
+   * `onAgentStoppedRunning` only fires on a running -> not-running transition. An agent that
+   * finished its turn while the app was disconnected, backgrounded, or not yet holding the
+   * directory has no transition left to observe once the app catches up, so its queue would
+   * sit until the user sent it by hand. Re-checking the queue against current state after a
+   * directory bootstrap covers the edge nobody was listening for.
+   */
+  drainQueuedAgentMessagesForServer(serverId: string): void {
+    const session = useSessionStore.getState().sessions[serverId];
+    if (!session) return;
+    for (const [agentId, queue] of session.queuedMessages) {
+      if (!queue.length) continue;
+      if (session.agents.get(agentId)?.status === "running") continue;
+      this.drainQueuedAgentMessage(serverId, agentId);
+    }
   }
 
   drainQueuedAgentMessage(serverId: string, agentId: string): void {

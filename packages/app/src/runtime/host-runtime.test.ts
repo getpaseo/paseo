@@ -2615,6 +2615,88 @@ describe("HostRuntimeStore", () => {
     useSessionStore.getState().clearSession(host.serverId);
   });
 
+  it("drains a queue whose agent stopped running unobserved", async () => {
+    const host = makeHost({ serverId: "srv_queue_no_transition" });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_queue_no_transition",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+
+    // The agent is already idle: the running -> idle transition happened while this client
+    // was not watching, so onAgentStoppedRunning has nothing left to fire.
+    const entry = makeFetchAgentsEntry({
+      id: "agent",
+      cwd: "/repo",
+      updatedAt: "2026-07-12T10:00:00.000Z",
+    });
+    sessionStore.setAgents(
+      host.serverId,
+      new Map([["agent", { ...replicaAgent(entry.agent, host.serverId), status: "idle" }]]),
+    );
+    sessionStore.setQueuedMessages(
+      host.serverId,
+      new Map([["agent", [{ id: "stranded", text: "send me", attachments: [] }]]]),
+    );
+
+    store.drainQueuedAgentMessagesForServer(host.serverId);
+
+    await fakeClient.waitForSentMessages(1);
+    expect(fakeClient.sentAgentMessages).toHaveLength(1);
+
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
+  it("leaves a queue alone while its agent is still running", async () => {
+    const host = makeHost({ serverId: "srv_queue_still_running" });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_queue_still_running",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+
+    const entry = makeFetchAgentsEntry({
+      id: "agent",
+      cwd: "/repo",
+      updatedAt: "2026-07-12T10:00:00.000Z",
+    });
+    sessionStore.setAgents(
+      host.serverId,
+      new Map([["agent", { ...replicaAgent(entry.agent, host.serverId), status: "running" }]]),
+    );
+    sessionStore.setQueuedMessages(
+      host.serverId,
+      new Map([["agent", [{ id: "waiting", text: "hold me", attachments: [] }]]]),
+    );
+
+    store.drainQueuedAgentMessagesForServer(host.serverId);
+
+    expect(fakeClient.sentAgentMessages).toHaveLength(0);
+    expect(useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get("agent")).toEqual(
+      [{ id: "waiting", text: "hold me", attachments: [] }],
+    );
+
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
   it("uses legacy GitHub attachments when draining a queue for an old daemon", async () => {
     const host = makeHost({ serverId: "srv_legacy_queue_attachment" });
     const fakeClient = new FakeDaemonClient();
