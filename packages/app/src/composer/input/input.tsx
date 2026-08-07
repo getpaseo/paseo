@@ -65,6 +65,7 @@ import {
   applyDictationTranscript,
   computeCanStartDictation,
   resolveComposerSurfacePresentation,
+  resolveDesktopEnterAction,
   runAlternateSendAction,
   runDefaultSendAction,
   runMessageInputKeyboardAction,
@@ -164,6 +165,7 @@ type WebTextInputKeyPressEvent = NativeSyntheticEvent<
   TextInputKeyPressEventData & {
     metaKey?: boolean;
     ctrlKey?: boolean;
+    altKey?: boolean;
     shiftKey?: boolean;
     // Web-only: present on DOM KeyboardEvent during IME composition (CJK input).
     isComposing?: boolean;
@@ -346,6 +348,7 @@ interface DesktopKeyPressContext {
   isSubmitDisabled: boolean;
   isSubmitLoading: boolean;
   disabled: boolean;
+  handleQueueMessage: () => void;
   handleAlternateSendAction: () => void;
   handleDefaultSendAction: () => void;
 }
@@ -364,22 +367,29 @@ function handleDesktopKeyPressImpl(
     if (handled) return;
   }
 
-  const { shiftKey, metaKey, ctrlKey } = event.nativeEvent;
+  const { shiftKey, metaKey, ctrlKey, altKey } = event.nativeEvent;
 
   if (event.nativeEvent.key !== "Enter") return;
   if (!ctx.submitOnEnter) return;
-  if (shiftKey) return;
 
-  if ((metaKey || ctrlKey) && ctx.isAgentRunning && ctx.onQueue) {
-    if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
-    event.preventDefault();
-    ctx.handleAlternateSendAction();
-    return;
-  }
+  const action = resolveDesktopEnterAction({
+    shiftKey: Boolean(shiftKey),
+    altKey: Boolean(altKey),
+    modKey: Boolean(metaKey || ctrlKey),
+    isAgentRunning: ctx.isAgentRunning,
+    canQueue: Boolean(ctx.onQueue),
+    canSubmit: !ctx.isSubmitDisabled && !ctx.isSubmitLoading && !ctx.disabled,
+  });
+  if (!action) return;
 
-  if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
   event.preventDefault();
-  ctx.handleDefaultSendAction();
+  if (action === "queue") {
+    ctx.handleQueueMessage();
+  } else if (action === "alternate") {
+    ctx.handleAlternateSendAction();
+  } else {
+    ctx.handleDefaultSendAction();
+  }
 }
 
 function getTextInputNativeElement(
@@ -1445,6 +1455,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         isSubmitDisabled,
         isSubmitLoading,
         disabled,
+        handleQueueMessage,
         handleAlternateSendAction,
         handleDefaultSendAction,
       });

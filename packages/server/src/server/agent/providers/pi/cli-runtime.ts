@@ -111,6 +111,7 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     const { id: requestId, promise } = this.process.startRequest({
       type: "prompt",
       message,
+      streamingBehavior: "steer",
       ...(images?.length ? { images } : {}),
     });
     const data = await promise;

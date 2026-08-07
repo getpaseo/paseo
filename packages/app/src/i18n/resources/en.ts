@@ -1728,8 +1728,10 @@ export const en = {
       defaultSend: {
         label: "Default send",
         descriptions: {
-          interrupt: "When the agent is running, Enter interrupts. Command/Ctrl+Enter queues.",
-          queue: "When the agent is running, Enter queues. Command/Ctrl+Enter submits.",
+          interrupt:
+            "When the agent is running, Enter interrupts. Command/Ctrl+Enter or Alt+Enter queues.",
+          queue:
+            "When the agent is running, Enter or Alt+Enter queues. Command/Ctrl+Enter submits.",
         },
         options: {
           interrupt: "Interrupt",

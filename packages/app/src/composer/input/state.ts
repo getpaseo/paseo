@@ -109,6 +109,20 @@ export function computeCanStartDictation(input: {
   );
 }
 
+export function resolveDesktopEnterAction(input: {
+  shiftKey: boolean;
+  altKey: boolean;
+  modKey: boolean;
+  isAgentRunning: boolean;
+  canQueue: boolean;
+  canSubmit: boolean;
+}): "queue" | "alternate" | "default" | null {
+  if (input.shiftKey || !input.canSubmit) return null;
+  if (input.altKey && input.isAgentRunning && input.canQueue) return "queue";
+  if (input.modKey && input.isAgentRunning && input.canQueue) return "alternate";
+  return "default";
+}
+
 export function runDefaultSendAction(ctx: SendActionContext): void {
   if (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning && ctx.onQueue) {
     ctx.handleQueueMessage();

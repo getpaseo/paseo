@@ -3,6 +3,7 @@ import {
   applyDictationTranscript,
   computeCanStartDictation,
   resolveComposerSurfacePresentation,
+  resolveDesktopEnterAction,
   runAlternateSendAction,
   runDefaultSendAction,
   runMessageInputKeyboardAction,
@@ -197,6 +198,26 @@ describe("composer send behavior", () => {
       onQueue: () => undefined,
     };
   }
+
+  it("routes desktop Enter modifiers without changing the existing send actions", () => {
+    const base = {
+      shiftKey: false,
+      altKey: false,
+      modKey: false,
+      isAgentRunning: true,
+      canQueue: true,
+      canSubmit: true,
+    };
+
+    expect(resolveDesktopEnterAction({ ...base, altKey: true })).toBe("queue");
+    expect(resolveDesktopEnterAction({ ...base, altKey: true, isAgentRunning: false })).toBe(
+      "default",
+    );
+    expect(resolveDesktopEnterAction({ ...base, modKey: true })).toBe("alternate");
+    expect(resolveDesktopEnterAction(base)).toBe("default");
+    expect(resolveDesktopEnterAction({ ...base, shiftKey: true })).toBeNull();
+    expect(resolveDesktopEnterAction({ ...base, canSubmit: false })).toBeNull();
+  });
 
   it("uses Enter to interrupt and Mod+Enter to queue when interrupt is selected", () => {
     const defaultAction = actions();
