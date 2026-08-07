@@ -21,6 +21,11 @@ If you used an agent to investigate, paste the raw evidence and repro steps it c
 
 You may submit a PR to fix a bug, please read the PR guidelines below.
 
+## Local development setup
+
+[docs/development.md](docs/development.md) covers running the daemon, app, and desktop client
+locally, including a build step you need after `npm install` and before `npm run typecheck`.
+
 ## Product discussions go in GitHub Discussions or Discord
 
 There's no feature request backlog. Open a product discussion in [Discussions](https://github.com/getpaseo/paseo/discussions) or `#product` in [Discord](https://discord.gg/jz8T2uahpH), and frame it as a workflow:
