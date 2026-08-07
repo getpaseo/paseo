@@ -69,6 +69,9 @@ async function createSession() {
     logger: createTestLogger(),
     queryFactory: sdkQueryFactory,
     resolveBinary: async () => "/test/claude/bin",
+    // Bypass expectations below only hold for a non-root daemon, so pin the uid rather than
+    // inherit whatever user runs the suite. See agent.root-bypass.test.ts.
+    getUid: () => 1000,
   });
   return client.createSession({
     provider: "claude",
@@ -81,6 +84,7 @@ function createSessionWithLogger(logger: Logger) {
     logger,
     queryFactory: sdkQueryFactory,
     resolveBinary: async () => "/test/claude/bin",
+    getUid: () => 1000,
   });
   return client.createSession({
     provider: "claude",
@@ -953,6 +957,7 @@ test("captures Claude stderr in the turn failure diagnostic when stderr arrives 
     logger: loggerSpy.logger,
     queryFactory: sdkQueryFactory,
     resolveBinary: async () => "/test/claude/bin",
+    getUid: () => 1000,
   });
   const session = await client.createSession({
     provider: "claude",
