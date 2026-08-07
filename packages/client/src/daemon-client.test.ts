@@ -996,6 +996,24 @@ test("does not reconnect after close when ensureConnected is called", async () =
   expect(client.getConnectionState().status).toBe("disposed");
 });
 
+test("rejects an initial connection wait when closed before server_info", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "close_before_server_info",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+
+  const pendingConnect = client.connect();
+  expect(client.getConnectionState().status).toBe("connecting");
+  await client.close();
+
+  await expect(pendingConnect).rejects.toThrow("Daemon client closed");
+  expect(client.getConnectionState().status).toBe("disposed");
+});
+
 test("keeps the transport connected when a session RPC ping times out", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -3174,6 +3192,36 @@ test("provider-policy patch rejects unsupported reconnect handshake without send
   second.triggerServerInfo({});
   await expect(patch).rejects.toThrow("Update the host to configure provider-scoped Paseo tools.");
   expect(second.sent).toEqual([]);
+});
+
+test("provider-policy patch rejects when reconnect closes before server_info", async () => {
+  useHeartbeatClock();
+  const first = createMockTransport();
+  const second = createMockTransport();
+  let transportIndex = 0;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "provider_policy_reconnect_close",
+    transportFactory: () => (transportIndex++ === 0 ? first.transport : second.transport),
+    reconnect: { enabled: true, baseDelayMs: 5, maxDelayMs: 5 },
+  });
+  clients.push(client);
+
+  const initialConnect = client.connect();
+  first.triggerOpen({ features: { providerScopedPaseoTools: true } });
+  await initialConnect;
+  first.triggerClose({ code: 1006, reason: "lost" });
+  await vi.advanceTimersByTimeAsync(5);
+  expect(client.getConnectionState().status).toBe("connecting");
+
+  const patch = client.patchDaemonConfig(
+    { mcp: { injectIntoProviders: ["codex-lead"] } },
+    "provider-policy-reconnect-close",
+  );
+  await client.close();
+
+  await expect(patch).rejects.toThrow("Daemon client closed");
+  expect(client.getConnectionState().status).toBe("disposed");
 });
 
 test("requires non-empty clientId", () => {
