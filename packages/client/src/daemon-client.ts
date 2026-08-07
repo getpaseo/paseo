@@ -1231,7 +1231,7 @@ export class DaemonClient {
       this.connectResolve = resolve;
       this.connectReject = reject;
     });
-    if (this.connectionState.status !== "connecting") {
+    if (this.connectionState.status !== "connecting" && !this.reconnectTimeout) {
       this.attemptConnect();
     }
 
@@ -1389,7 +1389,6 @@ export class DaemonClient {
         event: "CONNECT_FAILED",
         reasonCode: "connect_failed",
       });
-      this.rejectConnect(error instanceof Error ? error : new Error(message));
     }
   }
 
@@ -5396,7 +5395,7 @@ export class DaemonClient {
 
   private requireProviderScopedPaseoToolsSupport(): Promise<void> | void {
     // COMPAT(providerScopedPaseoTools): added in v0.2.6, remove gate after 2027-02-04 once daemon floor >= v0.2.6.
-    if (this.connectionState.status === "connecting") {
+    if (this.connectionState.status === "connecting" || this.reconnectTimeout) {
       return this.connect().then(() => this.assertProviderScopedPaseoToolsSupport());
     }
     this.assertProviderScopedPaseoToolsSupport();
