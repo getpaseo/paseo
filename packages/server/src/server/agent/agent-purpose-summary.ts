@@ -155,7 +155,6 @@ export class AgentPurposeSummaryService {
     if (this.shouldGenerate(agent, state)) {
       this.clearWakeTimer(state);
       state.inFlight = true;
-      state.lastAttemptAt = this.now();
       const turnsAtStart = agent.summaryTurnsSinceUpdate ?? 0;
       const timer = setTimeout(() => {
         this.scheduled.delete(timer);

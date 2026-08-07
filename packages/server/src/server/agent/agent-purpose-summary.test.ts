@@ -160,6 +160,31 @@ describe("AgentPurposeSummaryService", () => {
     harness.service.dispose();
   });
 
+  it("does not apply the interval floor after an empty transcript", async () => {
+    vi.useFakeTimers({ now: BASE_TIME });
+    const harness = createHarness({
+      timelineRows: [],
+      minTurnsBetweenGenerations: 1,
+      minIntervalMs: 300_000,
+    });
+
+    harness.completeTurn();
+    await vi.runAllTimersAsync();
+    expect(harness.generationRequests).toHaveLength(0);
+
+    harness.appendRow(
+      row(1, "2026-07-30T12:06:00.000Z", {
+        type: "user_message",
+        text: "Summarize the now-visible work.",
+      }),
+    );
+    harness.completeTurn();
+    await vi.runAllTimersAsync();
+
+    expect(harness.generationRequests).toHaveLength(1);
+    harness.service.dispose();
+  });
+
   it("does not stack wake timers when more turns land inside the interval", async () => {
     vi.useFakeTimers({ now: BASE_TIME });
     const harness = createHarness({
