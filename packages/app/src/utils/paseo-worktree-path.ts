@@ -75,7 +75,10 @@ function matchWorktreesRoot(cwd: string, worktreesRoot: string): PaseoWorktreePl
   }
 
   const normalizedCwd = toForwardSlashes(cwd);
-  if (!normalizedCwd.startsWith(`${normalizedRoot}/`)) {
+  const isWindowsPath = /^[A-Za-z]:/.test(normalizedRoot) || /^[A-Za-z]:/.test(normalizedCwd);
+  const comparableRoot = isWindowsPath ? normalizedRoot.toLowerCase() : normalizedRoot;
+  const comparableCwd = isWindowsPath ? normalizedCwd.toLowerCase() : normalizedCwd;
+  if (!comparableCwd.startsWith(`${comparableRoot}/`)) {
     return null;
   }
 

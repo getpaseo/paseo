@@ -73,6 +73,17 @@ describe("resolvePaseoWorktreePlacement with a daemon-reported root", () => {
       mainRepoRoot: null,
     });
   });
+
+  it("matches Windows paths without regard to drive or directory casing", () => {
+    expect(
+      resolvePaseoWorktreePlacement(
+        "c:\\users\\ME\\.PASEO\\WORKTREES\\a1b2c3d4\\brave-otter",
+        "C:\\Users\\me\\.paseo\\worktrees",
+      ),
+    ).toMatchObject({
+      worktreePath: "c:\\users\\ME\\.PASEO\\WORKTREES\\a1b2c3d4\\brave-otter",
+    });
+  });
 });
 
 // COMPAT(worktreesRoot): delete this block together with the fallback it covers.
