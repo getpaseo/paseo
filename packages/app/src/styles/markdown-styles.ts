@@ -4,6 +4,30 @@ import { isWeb } from "@/constants/platform";
 const webSelectableTextStyle = isWeb ? { userSelect: "text" as const } : {};
 
 /**
+ * Smallest `lineHeight / fontSize` any markdown text may use.
+ *
+ * Noto Sans CJK's ascent + descent is ~1.45em, so a Korean, Japanese, or Chinese
+ * line needs that much room. Android does not overflow when it is short: RN's
+ * `CustomLineHeightSpan` clamps the ascent instead, which slices the top off every
+ * wrapped line. Latin fonts hide the problem because their glyph box is ~1.2em.
+ */
+const MIN_LINE_HEIGHT_RATIO = 1.45;
+
+/**
+ * Derive a line height from the font size instead of hardcoding one.
+ *
+ * `applyAppearance` rescales the whole `theme.fontSize` ramp when the user changes
+ * the UI font size, so a constant `lineHeight` tightens as the ramp grows — at UI
+ * size 24 the old heading constants dropped to ~0.8, and headings collided.
+ *
+ * Ceil, not round: rounding down lands back under the ratio this exists to
+ * guarantee (18 * 1.45 rounds to 26, a ratio of 1.44).
+ */
+function lineHeightFor(fontSize: number): number {
+  return Math.ceil(fontSize * MIN_LINE_HEIGHT_RATIO);
+}
+
+/**
  * Creates comprehensive markdown styles for react-native-markdown-display.
  *
  * Usage:
@@ -20,9 +44,9 @@ export function createMarkdownStyles(theme: Theme) {
       ...webSelectableTextStyle,
       color: theme.colors.foreground,
       fontSize: theme.fontSize.base,
-      // Prose line-height scales with the UI ramp (≈22 at base 16), NOT the
+      // Prose line-height scales with the UI ramp (24 at base 16), NOT the
       // code-size-coupled lineHeight.diff token used by code/diff surfaces.
-      lineHeight: Math.round(theme.fontSize.base * 1.4),
+      lineHeight: lineHeightFor(theme.fontSize.base),
       flexShrink: 1,
       minWidth: 0,
       width: "100%" as const,
@@ -59,7 +83,7 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.foreground,
       marginTop: theme.spacing[6],
       marginBottom: theme.spacing[3],
-      lineHeight: 32,
+      lineHeight: lineHeightFor(theme.fontSize["3xl"]),
       borderBottomWidth: 1,
       borderBottomColor: theme.colors.border,
       paddingBottom: theme.spacing[2],
@@ -72,7 +96,7 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.foreground,
       marginTop: theme.spacing[6],
       marginBottom: theme.spacing[3],
-      lineHeight: 28,
+      lineHeight: lineHeightFor(theme.fontSize["2xl"]),
       borderBottomWidth: 1,
       borderBottomColor: theme.colors.border,
       paddingBottom: theme.spacing[2],
@@ -85,7 +109,7 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.foreground,
       marginTop: theme.spacing[4],
       marginBottom: theme.spacing[2],
-      lineHeight: 26,
+      lineHeight: lineHeightFor(theme.fontSize.xl),
     },
 
     heading4: {
@@ -95,7 +119,7 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.foreground,
       marginTop: theme.spacing[4],
       marginBottom: theme.spacing[2],
-      lineHeight: 24,
+      lineHeight: lineHeightFor(theme.fontSize.lg),
     },
 
     heading5: {
@@ -105,7 +129,7 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.foreground,
       marginTop: theme.spacing[3],
       marginBottom: theme.spacing[1],
-      lineHeight: 22,
+      lineHeight: lineHeightFor(theme.fontSize.base),
     },
 
     heading6: {
@@ -115,7 +139,7 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.foregroundMuted,
       marginTop: theme.spacing[3],
       marginBottom: theme.spacing[1],
-      lineHeight: 20,
+      lineHeight: lineHeightFor(theme.fontSize.base),
       textTransform: "uppercase" as const,
       letterSpacing: 0.5,
     },
@@ -172,7 +196,7 @@ export function createMarkdownStyles(theme: Theme) {
       borderWidth: 0,
       fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
-      lineHeight: Math.round(theme.fontSize.code * 1.45),
+      lineHeight: lineHeightFor(theme.fontSize.code),
     },
 
     code_block: {
@@ -285,7 +309,7 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.foregroundMuted,
       marginRight: 4,
       fontSize: theme.fontSize.base,
-      lineHeight: 22,
+      lineHeight: lineHeightFor(theme.fontSize.base),
     },
 
     ordered_list_icon: {
@@ -294,7 +318,7 @@ export function createMarkdownStyles(theme: Theme) {
       marginRight: 4,
       fontSize: theme.fontSize.base,
       fontWeight: theme.fontWeight.normal,
-      lineHeight: 22,
+      lineHeight: lineHeightFor(theme.fontSize.base),
       minWidth: 12,
     },
 
@@ -356,7 +380,7 @@ export function createCompactMarkdownStyles(theme: Theme) {
     body: {
       ...baseStyles.body,
       fontSize: theme.fontSize.sm,
-      lineHeight: 20,
+      lineHeight: lineHeightFor(theme.fontSize.sm),
     },
 
     heading1: {
@@ -364,7 +388,7 @@ export function createCompactMarkdownStyles(theme: Theme) {
       fontSize: theme.fontSize.xl,
       marginTop: theme.spacing[4],
       marginBottom: theme.spacing[2],
-      lineHeight: 26,
+      lineHeight: lineHeightFor(theme.fontSize.xl),
     },
 
     heading2: {
@@ -372,7 +396,7 @@ export function createCompactMarkdownStyles(theme: Theme) {
       fontSize: theme.fontSize.lg,
       marginTop: theme.spacing[3],
       marginBottom: theme.spacing[2],
-      lineHeight: 24,
+      lineHeight: lineHeightFor(theme.fontSize.lg),
     },
 
     heading3: {
@@ -380,7 +404,7 @@ export function createCompactMarkdownStyles(theme: Theme) {
       fontSize: theme.fontSize.base,
       marginTop: theme.spacing[3],
       marginBottom: theme.spacing[1],
-      lineHeight: 22,
+      lineHeight: lineHeightFor(theme.fontSize.base),
     },
 
     paragraph: {
