@@ -354,9 +354,15 @@ describe("wrapPluginHtml", () => {
      * The width assertion is the point, and it is why this is not just
      * "distinct, and bigger than a counter": a 24-bit id would satisfy that and
      * still be walkable, and the guest has an oracle — a wrong stamp is silent,
-     * a right one draws an `init`. Over 200 draws the max lands above 2^50 with
-     * probability 1 - (1 - 1/4)^200, which is 1 in 10^25 of flaking, and any
-     * narrowing of the range reds it immediately.
+     * a right one draws an `init`.
+     *
+     * What it pins is a floor of roughly 2^50, not the full 2^52: a draw is
+     * uniform on [0, 2^52), so it clears 2^50 three times in four, and 200 of
+     * them all falling below is (1/4)^200. That is the flake probability, and
+     * it is why the bound is checked against the max rather than per draw. A
+     * generator narrowed to 2^51 would still pass — the floor is what carries
+     * the security property, since ~2^49 expected guesses against a
+     * one-message-per-guess oracle is not a thing anyone waits out.
      */
     function drawIds(): number[] {
       const ids: number[] = [];

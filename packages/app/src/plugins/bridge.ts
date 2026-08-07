@@ -599,18 +599,20 @@ function toScriptString(value: string): string {
  *   (`RNCWebView.java:250`). `"*"` injects the object into every frame.
  * - iOS: the `window.ReactNativeWebView` shim is injected `forMainFrameOnly:YES`
  *   (`RNCWebViewImpl.m:1738`), which is why iOS reads as safe and is not. The
- *   handler behind it is registered on the whole `WKUserContentController`
- *   (`:491`), so `window.webkit.messageHandlers.ReactNativeWebView.postMessage`
- *   is reachable from every frame, and `didReceiveScriptMessage` (`:776`) never
- *   reads `message.frameInfo.isMainFrame`.
+ *   handler behind it goes on through `addScriptMessageHandler:name:`
+ *   (`:1837`, `:1928`), which has no frame scoping to give, so
+ *   `window.webkit.messageHandlers.ReactNativeWebView.postMessage` is reachable
+ *   from every frame — and `didReceiveScriptMessage` (`:776`) never reads
+ *   `message.frameInfo.isMainFrame`.
  *
  * Neither can be taken away from the guest: the object lives in the guest's
  * realm, which is cross-origin and unreachable from the host document.
  *
  * An integer, because the value is interpolated into the relay's script as a
  * bare literal, and inside 2^52 so it survives JSON intact. In this app the
- * `getRandomValues` branch is the one that runs everywhere, native included —
- * `index.ts` installs an `expo-crypto`-backed polyfill before any other import.
+ * `getRandomValues` branch is the one that runs everywhere, native included:
+ * `index.ts` installs an `expo-crypto`-backed polyfill at startup, long before
+ * anything renders a plugin and calls this.
  * The `Math.random` fallback is for a runtime that somehow has neither; treat
  * it as a floor, not as the native path, because a guest that guesses wrong
  * learns it guessed wrong (a right stamp draws an `init`), and against that
