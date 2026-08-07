@@ -553,6 +553,31 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("streams assistant deltas from pi >= 0.84 message_update events without a message field", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "hel" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "lo" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", delta: "thinking" },
+    });
+
+    expect(events.timelineItems()).toEqual([
+      { type: "assistant_message", text: "hel", messageId: expect.any(String) },
+      { type: "assistant_message", text: "lo", messageId: expect.any(String) },
+      { type: "reasoning", text: "thinking" },
+    ]);
+  });
+
   test("streams Pi task calls as sub-agent cards with lifecycle status", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

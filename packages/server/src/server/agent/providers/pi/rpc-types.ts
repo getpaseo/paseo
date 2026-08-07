@@ -160,7 +160,10 @@ export type PiAgentSessionEvent =
   | { type: "message_end"; message: PiAgentMessage }
   | {
       type: "message_update";
-      message: PiAgentMessage;
+      // pi >= 0.84 emits message_update without the cumulative `message` field
+      // (only `assistantMessageEvent` deltas); message_start/message_end carry
+      // the authoritative message.
+      message?: PiAgentMessage;
       assistantMessageEvent: PiAssistantMessageEvent;
     }
   | {
