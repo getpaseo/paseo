@@ -379,6 +379,34 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("Default Permissions sends the user reviewer to thread/start", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const session = createSession({ modeId: "auto", thinkingOptionId: "medium" });
+    session.currentThreadId = null;
+    session.activeForegroundTurnId = null;
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/start") {
+          return { thread: { id: "default-permissions-thread" } };
+        }
+        if (method === "turn/start") {
+          return {};
+        }
+        throw new Error(`Unexpected request: ${method}`);
+      }),
+    };
+
+    await session.startTurn("trigger thread creation");
+
+    const startCall = requests.find((request) => request.method === "thread/start");
+    expect(startCall?.params).toMatchObject({
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      approvalsReviewer: "user",
+    });
+  });
+
   test("setMode and setThinkingOption return a next-turn notice while a turn is active", async () => {
     const session = createSession({ modeId: "auto", thinkingOptionId: "medium" });
 
@@ -429,8 +457,11 @@ describe("Codex app-server provider", () => {
     },
   );
 
-  test("turn/start forwards approvalsReviewer while in auto-review mode", async () => {
-    const session = createSession({ modeId: "auto-review" }, { autoReviewEnabled: true });
+  test.each([
+    ["Default Permissions", "auto", "user"],
+    ["Auto-review", "auto-review", "auto_review"],
+  ])("turn/start forwards the %s reviewer", async (_label, modeId, approvalsReviewer) => {
+    const session = createSession({ modeId }, { autoReviewEnabled: true });
     const request = vi.fn(async (method: string) => {
       if (method === "thread/loaded/list") {
         return { data: ["test-thread"] };
@@ -449,7 +480,7 @@ describe("Codex app-server provider", () => {
     expect(turnStartCall?.[1]).toEqual(
       expect.objectContaining({
         approvalPolicy: "on-request",
-        approvalsReviewer: "auto_review",
+        approvalsReviewer,
       }),
     );
   });
