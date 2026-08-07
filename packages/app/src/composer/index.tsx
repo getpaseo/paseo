@@ -49,6 +49,13 @@ import { useFileDrop } from "@/components/file-drop/use-file-drop";
 import type { DroppedItem } from "@/components/file-drop/types";
 import { MessageInput, type MessageInputRef, type AttachmentMenuItem } from "./input/input";
 import type { ImageAttachment, MessagePayload } from "./types";
+import type { StreamItem } from "@/types/stream";
+import {
+  DRAFT_HISTORY_INDEX,
+  collectUserMessageHistory,
+  shouldEnterMessageHistory,
+  stepMessageHistory,
+} from "./message-history";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
@@ -892,6 +899,7 @@ interface ComposerProps {
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
+const EMPTY_STREAM_ITEMS: readonly StreamItem[] = [];
 const StableMessageInput = memo(MessageInput);
 
 function resolveContextWindowValues(
@@ -1115,6 +1123,34 @@ export function Composer({
   const messagePlaceholder = resolveMessagePlaceholder(inputMode, isDesktopLayout, t, placeholder);
   const userInput = value;
   const setUserInput = onChangeText;
+
+  // Up/Down recall previously sent messages. Everything the handler needs is mirrored into
+  // refs so the callback stays stable, matching the autocomplete handler beside it.
+  const streamTail = useSessionStore((state) =>
+    state.sessions[serverId]?.agentStreamTail.get(agentId),
+  );
+  const messageHistory = useMemo(
+    () => collectUserMessageHistory(streamTail ?? EMPTY_STREAM_ITEMS),
+    [streamTail],
+  );
+  const messageHistoryRef = useRef(messageHistory);
+  messageHistoryRef.current = messageHistory;
+  const userInputRef = useRef(userInput);
+  userInputRef.current = userInput;
+  const setUserInputRef = useRef(setUserInput);
+  setUserInputRef.current = setUserInput;
+  const historyIndexRef = useRef(DRAFT_HISTORY_INDEX);
+  const heldDraftRef = useRef("");
+
+  // Editing recalled text leaves history, so the next Up starts from the newest message
+  // again rather than continuing from wherever the user stopped.
+  useEffect(() => {
+    const index = historyIndexRef.current;
+    if (index === DRAFT_HISTORY_INDEX) return;
+    if (userInput !== messageHistoryRef.current[index]) {
+      historyIndexRef.current = DRAFT_HISTORY_INDEX;
+    }
+  }, [userInput]);
   const workspaceAttachments = useWorkspaceAttachmentsForScopes(attachmentScopeKeys);
   const {
     selectedAttachments,
@@ -1728,10 +1764,29 @@ export function Composer({
 
   const hasSendableContent = userInput.trim().length > 0 || selectedAttachments.length > 0;
 
-  // Handle keyboard navigation for command autocomplete.
+  // Handle keyboard navigation for command autocomplete, then message recall. Autocomplete
+  // owns the arrow keys while its menu is open, so recall only sees what it declined.
   const handleCommandKeyPress = useCallback(
-    (event: { key: string; preventDefault: () => void }) =>
-      autocompleteOnKeyPressRef.current(event),
+    (event: { key: string; preventDefault: () => void }) => {
+      if (autocompleteOnKeyPressRef.current(event)) return true;
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return false;
+      const index = historyIndexRef.current;
+      if (!shouldEnterMessageHistory({ value: userInputRef.current, index })) return false;
+      if (index === DRAFT_HISTORY_INDEX) {
+        heldDraftRef.current = userInputRef.current;
+      }
+      const step = stepMessageHistory({
+        history: messageHistoryRef.current,
+        index,
+        direction: event.key === "ArrowUp" ? "older" : "newer",
+        draft: heldDraftRef.current,
+      });
+      if (!step) return false;
+      historyIndexRef.current = step.index;
+      setUserInputRef.current(step.text);
+      event.preventDefault();
+      return true;
+    },
     [],
   );
 
