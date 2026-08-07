@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { focusWithRetries } from "./web-focus";
+import { focusWithRetries } from "./focus-with-retries";
 
 describe("focusWithRetries", () => {
   let frameQueue: FrameRequestCallback[] = [];
