@@ -275,6 +275,7 @@ export const es: TranslationResources = {
       copyMessage: "Copiar mensaje",
       forkMenu: "Bifurcar mensaje",
       forkInNewTab: "Bifurcar en una pestaña nueva",
+      forkNativelyInNewTab: "Bifurcar de forma nativa en una pestaña nueva (experimental)",
       forkInNewWorkspace: "Bifurcar en un espacio de trabajo nuevo",
       forkUnavailable: "Actualiza el host para usar esto.",
       forkMissingWorkspace: "Este agente no está en un espacio de trabajo.",

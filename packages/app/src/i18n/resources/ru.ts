@@ -274,6 +274,7 @@ export const ru: TranslationResources = {
       copyMessage: "Копировать сообщение",
       forkMenu: "Форкнуть сообщение",
       forkInNewTab: "Форкнуть в новой вкладке",
+      forkNativelyInNewTab: "Форкнуть нативно в новой вкладке (экспериментально)",
       forkInNewWorkspace: "Форкнуть в новом рабочем пространстве",
       forkUnavailable: "Обновите хост, чтобы использовать это.",
       forkMissingWorkspace: "Этот агент не находится в рабочем пространстве.",

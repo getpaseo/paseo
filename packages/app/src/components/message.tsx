@@ -557,6 +557,8 @@ interface AssistantTurnFooterProps {
   completedAt?: Date;
   durationMs?: number;
   onFork?: (target: AssistantForkTarget) => Promise<void> | void;
+  /** Offer experimental Claude native fork in the fork menu. */
+  showNativeForkOption?: boolean;
 }
 
 const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
@@ -602,6 +604,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   completedAt,
   durationMs,
   onFork,
+  showNativeForkOption = false,
 }: AssistantTurnFooterProps) {
   const [hovered, setHovered] = useState(false);
   const [pressedReveal, setPressedReveal] = useState(false);
@@ -655,7 +658,9 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
         getContent={getContent}
         containerStyle={assistantTurnFooterStylesheet.copyButton}
       />
-      {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
+      {canFork ? (
+        <AssistantForkMenu onFork={handleFork} showNativeTabOption={showNativeForkOption} />
+      ) : null}
       {durationLabel ? (
         <Pressable
           onPress={handlePress}

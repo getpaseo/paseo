@@ -682,6 +682,11 @@ export interface AgentSession {
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
   /**
+   * Map a timeline/API boundary id to a Claude transcript UUID suitable for
+   * `forkSession({ upToMessageId })`. Claude-only; optional elsewhere.
+   */
+  resolveNativeForkUpToMessageId?(boundaryMessageId: string): Promise<string>;
+  /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events
    * directly via the provided `emit` callback, which routes through the

@@ -12,10 +12,12 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Theme } from "@/styles/theme";
 
-export type AssistantForkTarget = "tab" | "workspace";
+export type AssistantForkTarget = "tab" | "workspace" | "native-tab";
 
 interface AssistantForkMenuProps {
   onFork: (target: AssistantForkTarget) => Promise<void> | void;
+  /** When true, offer Claude SDK native fork as an experimental menu item. */
+  showNativeTabOption?: boolean;
   testID?: string;
 }
 
@@ -26,6 +28,7 @@ const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.for
 
 export const AssistantForkMenu = memo(function AssistantForkMenu({
   onFork,
+  showNativeTabOption = false,
   testID = "assistant-fork-menu",
 }: AssistantForkMenuProps) {
   const { t } = useTranslation();
@@ -105,6 +108,18 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
         >
           {t("message.actions.forkInNewTab")}
         </DropdownMenuItem>
+        {showNativeTabOption ? (
+          <DropdownMenuItem
+            closeOnSelect={false}
+            disabled={isLocked && pendingTarget !== "native-tab"}
+            leading={forkIcon}
+            onSelect={handleSelect("native-tab")}
+            status={pendingTarget === "native-tab" ? "pending" : undefined}
+            testID={`${testID}-native-new-tab`}
+          >
+            {t("message.actions.forkNativelyInNewTab")}
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuItem
           closeOnSelect={false}
           disabled={isLocked && pendingTarget !== "workspace"}

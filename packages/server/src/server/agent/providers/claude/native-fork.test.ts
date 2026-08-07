@@ -9,10 +9,14 @@ describe("forkClaudeSessionAtMessage", () => {
     const result = await forkClaudeSessionAtMessage({
       sdk,
       sessionId: "source-1",
-      upToMessageId: "msg-9",
+      upToMessageId: "uuid-9",
+      dir: "/tmp/project",
     });
     expect(result.forkedSessionId).toBe("forked-1");
-    expect(sdk.forkSession).toHaveBeenCalledWith("source-1", { upToMessageId: "msg-9" });
+    expect(sdk.forkSession).toHaveBeenCalledWith("source-1", {
+      upToMessageId: "uuid-9",
+      dir: "/tmp/project",
+    });
   });
 
   it("rejects empty session id", async () => {

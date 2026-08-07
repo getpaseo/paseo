@@ -271,6 +271,7 @@ export const en = {
       copyMessage: "Copy message",
       forkMenu: "Fork chat",
       forkInNewTab: "Fork in a new tab",
+      forkNativelyInNewTab: "Fork natively in a new tab (experimental)",
       forkInNewWorkspace: "Fork in a new workspace",
       forkUnavailable: "Update the host to use this.",
       forkMissingWorkspace: "This agent is not in a workspace.",

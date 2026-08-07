@@ -272,6 +272,7 @@ export const ar: TranslationResources = {
       copyMessage: "انسخ الرسالة",
       forkMenu: "تفريع الرسالة",
       forkInNewTab: "تفريع في تبويب جديد",
+      forkNativelyInNewTab: "تفريع أصلي في تبويب جديد (تجريبي)",
       forkInNewWorkspace: "تفريع في مساحة عمل جديدة",
       forkUnavailable: "حدّث المضيف لاستخدام هذا.",
       forkMissingWorkspace: "هذا الوكيل ليس في مساحة عمل.",

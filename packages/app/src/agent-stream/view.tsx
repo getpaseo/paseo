@@ -71,6 +71,7 @@ import {
   type AssistantTurnForkHandler,
   type TurnContentStrategy,
 } from "./turn-footer";
+import { resolveAssistantForkStrategy } from "./fork-strategy";
 import { layoutStream, type StreamLayoutItem } from "./layout";
 import {
   type BottomAnchorLocalRequest,
@@ -154,6 +155,7 @@ function renderStreamItemWithTurnFooter(input: {
   layoutItem: StreamLayoutItem;
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
+  supportsNativeFork?: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
   isActiveSearchResult: boolean;
 }): ReactNode {
@@ -169,6 +171,7 @@ function renderStreamItemWithTurnFooter(input: {
       timing={footerHost.timing}
       startIndex={footerHost.startIndex}
       supportsTimelineCursor={input.supportsTimelineCursor}
+      supportsNativeFork={input.supportsNativeFork}
       onForkAssistantTurn={input.onForkAssistantTurn}
     />
   ) : null;
@@ -340,7 +343,7 @@ function buildForkDraftTabTarget(
 
 // oxlint-disable-next-line complexity -- fork strategy matrix (native/context × tab/workspace)
 async function runAssistantTurnFork(input: {
-  target: "tab" | "workspace";
+  target: "tab" | "workspace" | "native-tab";
   boundary: {
     boundaryCursor?: { epoch: string; seq: number };
     boundaryMessageId?: string;
@@ -370,8 +373,13 @@ async function runAssistantTurnFork(input: {
   } = input;
 
   try {
-    // Prefer provider-native Claude fork when available (tab target).
-    if (supportsNativeFork && target === "tab") {
+    // Experimental: Claude SDK native fork only when the user explicitly picks it.
+    // Default "Fork in a new tab" keeps the reliable chat-history draft path.
+    if (resolveAssistantForkStrategy(target) === "native") {
+      if (!supportsNativeFork) {
+        toast?.error(t("message.actions.forkUnavailable"));
+        return;
+      }
       const workspaceId = context.workspaceId;
       if (!workspaceId) {
         throw new Error(t("message.actions.forkMissingWorkspace"));
@@ -1002,6 +1010,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           layoutItem,
           strategy: streamRenderStrategy,
           supportsTimelineCursor: supportsAgentForkContextCursor,
+          supportsNativeFork,
           onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
           isActiveSearchResult: layoutItem.item.id === activeSearchResultId,
         });
@@ -1013,6 +1022,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         renderStreamItemContent,
         streamRenderStrategy,
         supportsAgentForkContextCursor,
+        supportsNativeFork,
       ],
     );
 
@@ -1040,6 +1050,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
             supportsTimelineCursor={supportsAgentForkContextCursor}
+            supportsNativeFork={supportsNativeFork}
             onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
           />
         ) : null,
@@ -1051,6 +1062,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         bottomTurnFooterHost,
         streamRenderStrategy,
         supportsAgentForkContextCursor,
+        supportsNativeFork,
       ],
     );
     const renderModel = useMemo<AgentStreamRenderModel>(() => {

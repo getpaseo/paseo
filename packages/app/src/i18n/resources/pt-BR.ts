@@ -275,6 +275,7 @@ export const ptBR: TranslationResources = {
       copyMessage: "Copiar mensagem",
       forkMenu: "Bifurcar mensagem",
       forkInNewTab: "Bifurcar em uma nova aba",
+      forkNativelyInNewTab: "Bifurcar nativamente em uma nova aba (experimental)",
       forkInNewWorkspace: "Bifurcar em um novo workspace",
       forkUnavailable: "Atualize o host para usar isto.",
       forkMissingWorkspace: "Este agente não está em um workspace.",

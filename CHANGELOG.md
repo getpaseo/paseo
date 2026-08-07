@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.924 - 2026-08-07
+
+### Fixed
+
+- Claude native fork maps timeline/API message ids (`msg_…`) to transcript UUIDs before `forkSession`, and passes project `dir` so the session file is found
+- Default **Fork in a new tab** uses the reliable context/draft path again; native fork is opt-in via **Fork natively in a new tab (experimental)**
+
 ## 0.2.923 - 2026-08-07
 
 ### Added

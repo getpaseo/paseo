@@ -275,6 +275,7 @@ export const ja: TranslationResources = {
       copyMessage: "メッセージをコピー",
       forkMenu: "メッセージをフォーク",
       forkInNewTab: "新しいタブにフォーク",
+      forkNativelyInNewTab: "新しいタブにネイティブフォーク（実験的）",
       forkInNewWorkspace: "新しいワークスペースにフォーク",
       forkUnavailable: "これを使用するにはホストを更新してください。",
       forkMissingWorkspace: "このエージェントはワークスペース内にありません。",

@@ -2662,10 +2662,16 @@ export class AgentManager {
       boundaryCursor: input.boundaryCursor,
     });
 
+    const upToMessageId =
+      typeof source.session.resolveNativeForkUpToMessageId === "function"
+        ? await source.session.resolveNativeForkUpToMessageId(boundaryMessageId)
+        : boundaryMessageId;
+
     const { forkedSessionId } = await forkClaudeSessionAtMessage({
       sdk: realClaudeRewindSdk,
       sessionId: sourceSessionId,
-      upToMessageId: boundaryMessageId,
+      upToMessageId,
+      dir: source.cwd,
     });
 
     // Source must remain on its original session id.

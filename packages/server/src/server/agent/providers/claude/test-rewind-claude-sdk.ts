@@ -12,7 +12,7 @@ export class FakeClaudeSdk implements ClaudeRewindSdk {
 
   async forkSession(
     _sessionId: string,
-    options: { upToMessageId: string },
+    options: { upToMessageId: string; dir?: string },
   ): Promise<{ sessionId: string }> {
     this.recordedForks.push({ upToMessageId: options.upToMessageId });
     return { sessionId: this.nextSessionId };

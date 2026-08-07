@@ -17,6 +17,7 @@ import {
   type SDKResultMessage,
   type SDKSystemMessage,
   type SDKUserMessage,
+  getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Logger } from "pino";
 import {
@@ -60,6 +61,11 @@ import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "../prov
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from "./rewind.js";
+import {
+  readApiMessageIdFromContainer,
+  resolveClaudeTranscriptMessageId,
+  type ClaudeTranscriptMessageLookup,
+} from "./transcript-message-id.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
@@ -2027,6 +2033,8 @@ class ClaudeAgentSession implements AgentSession {
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
   private readonly rewindTurnAnchors: ClaudeRewindTurnAnchor[] = [];
+  /** Live/history map from Anthropic API `msg_…` ids → transcript JSONL UUIDs. */
+  private readonly apiMessageIdToTranscriptUuid = new Map<string, string>();
   private pendingFreshSessionId: string | null = null;
   private recentStderr = "";
   private closed = false;
@@ -2854,6 +2862,7 @@ class ClaudeAgentSession implements AgentSession {
     this.userMessageIds = [];
     this.emittedUserMessageIds.clear();
     this.rewindTurnAnchors.length = 0;
+    this.apiMessageIdToTranscriptUuid.clear();
     this.loadPersistedHistory(sessionId);
     if (oldSessionId && oldSessionId !== sessionId) {
       this.dispatchEvents([
@@ -2884,6 +2893,7 @@ class ClaudeAgentSession implements AgentSession {
     this.userMessageIds = [];
     this.emittedUserMessageIds.clear();
     this.rewindTurnAnchors.length = 0;
+    this.apiMessageIdToTranscriptUuid.clear();
   }
 
   private rememberUserMessageId(messageId: string | null | undefined): void {
@@ -2935,6 +2945,7 @@ class ClaudeAgentSession implements AgentSession {
     if (!messageId) {
       return;
     }
+    this.rememberTranscriptUuidAlias(message, messageId);
     if (
       message.type === "user" &&
       !isSyntheticUserEntry(message) &&
@@ -2957,8 +2968,99 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
+  private rememberTranscriptUuidAlias(message: SDKMessage, transcriptUuid: string): void {
+    const root = toObjectRecord(message) ?? {};
+    const streamEvent = toObjectRecord(root.event);
+    const streamEventMessage = toObjectRecord(streamEvent?.message);
+    const messageContainer = toObjectRecord(root.message);
+    const apiMessageId = firstTrimmedString([
+      root.message_id,
+      streamEvent?.message_id,
+      streamEventMessage?.id,
+      streamEventMessage?.message_id,
+      messageContainer?.id,
+      messageContainer?.message_id,
+    ]);
+    if (apiMessageId && apiMessageId !== transcriptUuid) {
+      this.apiMessageIdToTranscriptUuid.set(apiMessageId, transcriptUuid);
+    }
+  }
+
+  private collectKnownTranscriptUuids(): Set<string> {
+    const known = new Set<string>();
+    for (const userMessageId of this.userMessageIds) {
+      known.add(userMessageId);
+    }
+    for (const anchor of this.rewindTurnAnchors) {
+      known.add(anchor.userMessageId);
+      if (anchor.assistantMessageId) {
+        known.add(anchor.assistantMessageId);
+      }
+    }
+    for (const transcriptUuid of this.apiMessageIdToTranscriptUuid.values()) {
+      known.add(transcriptUuid);
+    }
+    return known;
+  }
+
+  private async loadSessionTranscriptLookups(): Promise<ClaudeTranscriptMessageLookup[]> {
+    const sessionId = this.claudeSessionId?.trim();
+    if (!sessionId) {
+      return [];
+    }
+    try {
+      const messages = await getSessionMessages(
+        sessionId,
+        this.config.cwd ? { dir: this.config.cwd } : undefined,
+      );
+      const lookups: ClaudeTranscriptMessageLookup[] = [];
+      for (const message of messages) {
+        const uuid = typeof message.uuid === "string" ? message.uuid.trim() : "";
+        if (!uuid) {
+          continue;
+        }
+        const apiMessageId = readApiMessageIdFromContainer(message.message);
+        if (apiMessageId && apiMessageId !== uuid) {
+          this.apiMessageIdToTranscriptUuid.set(apiMessageId, uuid);
+        }
+        lookups.push({ uuid, apiMessageId });
+      }
+      return lookups;
+    } catch (error) {
+      this.logger.warn(
+        { err: error, sessionId },
+        "Failed to load Claude session messages for native fork id resolution",
+      );
+      return [];
+    }
+  }
+
+  async resolveNativeForkUpToMessageId(boundaryMessageId: string): Promise<string> {
+    const candidate = boundaryMessageId.trim();
+    if (!candidate) {
+      throw new Error("Native fork requires a boundary message id");
+    }
+
+    const known = this.collectKnownTranscriptUuids();
+    const mapped = this.apiMessageIdToTranscriptUuid.get(candidate);
+    if (mapped) {
+      return mapped;
+    }
+    if (known.has(candidate)) {
+      return candidate;
+    }
+
+    const sessionMessages = await this.loadSessionTranscriptLookups();
+    return resolveClaudeTranscriptMessageId({
+      candidate,
+      apiMessageIdToTranscriptUuid: this.apiMessageIdToTranscriptUuid,
+      knownTranscriptUuids: this.collectKnownTranscriptUuids(),
+      sessionMessages,
+    });
+  }
+
   private resolveClaudeMessageId(messageId: string): string {
-    return messageId;
+    return this.apiMessageIdToTranscriptUuid.get(messageId) ?? messageId;
   }
 
   private resolveConversationRewindTarget(messageId: string): ClaudeConversationRewindTarget {
@@ -4535,6 +4637,10 @@ class ClaudeAgentSession implements AgentSession {
     }
     if (entry.type === "assistant" && typeof entry.uuid === "string") {
       this.rememberRewindAssistantAnchor(entry.uuid);
+      const apiMessageId = readApiMessageIdFromContainer(entry.message);
+      if (apiMessageId && apiMessageId !== entry.uuid) {
+        this.apiMessageIdToTranscriptUuid.set(apiMessageId, entry.uuid);
+      }
     }
 
     if (items.length > 0) {

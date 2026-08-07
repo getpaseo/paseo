@@ -276,6 +276,7 @@ export const fr: TranslationResources = {
       copyMessage: "Copier le message",
       forkMenu: "Dupliquer le message",
       forkInNewTab: "Dupliquer dans un nouvel onglet",
+      forkNativelyInNewTab: "Dupliquer nativement dans un nouvel onglet (expérimental)",
       forkInNewWorkspace: "Dupliquer dans un nouvel espace de travail",
       forkUnavailable: "Mettez l'hôte à jour pour utiliser ceci.",
       forkMissingWorkspace: "Cet agent n'est pas dans un espace de travail.",
