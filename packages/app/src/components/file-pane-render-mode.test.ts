@@ -253,13 +253,20 @@ describe("pluginFilePreviewConflicts", () => {
   });
 
   // Neither plugin wins `.html` — core renders every one of them — so calling
-  // one of them the winner would describe a pane nobody gets. `.tpl.html` is in
-  // here because the report widens claims by suffix, and every `.tpl.html` file
-  // ends with `.html`, so it is exactly as unwinnable.
+  // one of them the winner would describe a pane nobody gets.
+  //
+  // Two plugins claim `.tpl.html`, and that pair is the point. The gate has to
+  // match core's extensions by suffix, the same way the report widens claims;
+  // swapping it for an exact-match lookup set is the obvious "simplification"
+  // and it still lies here, because `.tpl.html` is not in the set and its two
+  // claimants then read as a genuine contest over files core renders every one
+  // of. With a single claimant this case passes against that mutant for the
+  // wrong reason: no contest, because nobody to contest with.
   it("reports no contest over an extension a built-in already renders", () => {
     const plugins = [
       installedPlugin({ id: "alpha-html", extensions: [".html"] }),
       installedPlugin({ id: "zeta-html", extensions: [".htm", ".tpl.html"] }),
+      installedPlugin({ id: "beta-html", extensions: [".tpl.html"] }),
       installedPlugin({ id: "alpha-md", extensions: [".md"] }),
       installedPlugin({ id: "zeta-md", extensions: [".markdown"] }),
     ];
