@@ -550,6 +550,81 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("streams Pi 0.84+ delta-only message updates without a cumulative message", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", content: [], responseId: "response-1" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "think" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_end", contentIndex: 0, content: "think" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "hello" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_end", contentIndex: 1, content: "hello" },
+    });
+    fakeSession.finishTurn();
+
+    await events.nextTurnCompletion();
+
+    expect(events.timelineItems()).toEqual([
+      { type: "reasoning", text: "think" },
+      { type: "assistant_message", text: "hello", messageId: "response-1" },
+    ]);
+  });
+
+  test("ignores Pi 0.84+ toolcall deltas and content markers without emitting timeline items", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", content: [], responseId: "response-1" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "toolcall_start", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: '{"command":' },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "toolcall_end", contentIndex: 0, toolCall: { id: "tool-1" } },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "done" },
+    });
+    fakeSession.finishTurn();
+
+    await events.nextTurnCompletion();
+
+    expect(events.timelineItems()).toEqual([]);
+  });
+
   test("streams Pi task calls as sub-agent cards with lifecycle status", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
