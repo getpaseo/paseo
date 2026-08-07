@@ -500,18 +500,15 @@ describe("PiRpcAgentSession", () => {
     });
     fakeSession.emit({
       type: "message_update",
-      message: { role: "assistant", content: [], responseId: "response-1" },
-      assistantMessageEvent: { type: "text_delta", delta: "hel" },
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "hel" },
     });
     fakeSession.emit({
       type: "message_update",
-      message: { role: "assistant", content: [], responseId: "response-1" },
-      assistantMessageEvent: { type: "text_delta", delta: "lo" },
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "lo" },
     });
     fakeSession.emit({
       type: "message_update",
-      message: { role: "assistant", content: [] },
-      assistantMessageEvent: { type: "thinking_delta", delta: "thinking" },
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "thinking" },
     });
     fakeSession.emit({
       type: "tool_execution_start",
@@ -615,13 +612,11 @@ describe("PiRpcAgentSession", () => {
     await session.startTurn("hello");
     fakeSession.emit({
       type: "message_update",
-      message: { role: "assistant", content: [] },
-      assistantMessageEvent: { type: "text_delta", delta: "hel" },
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "hel" },
     });
     fakeSession.emit({
       type: "message_update",
-      message: { role: "assistant", content: [] },
-      assistantMessageEvent: { type: "text_delta", delta: "lo" },
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "lo" },
     });
 
     const [firstChunk, secondChunk] = events.timelineItems();
@@ -638,7 +633,7 @@ describe("PiRpcAgentSession", () => {
     });
   });
 
-  test("uses a response id that first appears on the assistant update", async () => {
+  test("uses a legacy response id carried on the assistant update", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
 
@@ -650,7 +645,7 @@ describe("PiRpcAgentSession", () => {
     fakeSession.emit({
       type: "message_update",
       message: { role: "assistant", content: [], responseId: "late-response-id" },
-      assistantMessageEvent: { type: "text_delta", delta: "hello" },
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "hello" },
     });
 
     expect(events.timelineItems()).toEqual([

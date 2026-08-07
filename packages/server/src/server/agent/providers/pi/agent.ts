@@ -2191,32 +2191,38 @@ export class PiRpcAgentSession implements AgentSession {
     event: Extract<PiAgentSessionEvent, { type: "message_update" }>,
     turnId: string | undefined,
   ): void {
-    if (event.message.role !== "assistant") {
+    // COMPAT(piMessageUpdateDeltas): Pi >=0.84 emits only `assistantMessageEvent`
+    // deltas — the cumulative `message` field was removed (pi #7290).
+    // `message_start` still carries the full assistant message, so only the
+    // legacy binary path needs the optional `message` field.
+    const legacyMessage = event.message;
+    if (legacyMessage && legacyMessage.role !== "assistant") {
       return;
     }
-    if (event.assistantMessageEvent.type === "text_delta") {
+    const { assistantMessageEvent } = event;
+    if (assistantMessageEvent.type === "text_delta") {
       // Pi-compatible runtimes may emit updates without a preceding message_start.
-      this.activeAssistantMessageId ??= event.message.responseId || randomUUID();
+      this.activeAssistantMessageId ??= legacyMessage?.responseId || randomUUID();
       this.emit({
         type: "timeline",
         provider: this.provider,
         turnId,
         item: {
           type: "assistant_message",
-          text: event.assistantMessageEvent.delta ?? "",
+          text: assistantMessageEvent.delta ?? "",
           messageId: this.activeAssistantMessageId,
         },
       });
       return;
     }
-    if (event.assistantMessageEvent.type === "thinking_delta") {
+    if (assistantMessageEvent.type === "thinking_delta") {
       this.emit({
         type: "timeline",
         provider: this.provider,
         turnId,
         item: {
           type: "reasoning",
-          text: event.assistantMessageEvent.delta ?? "",
+          text: assistantMessageEvent.delta ?? "",
         },
       });
     }

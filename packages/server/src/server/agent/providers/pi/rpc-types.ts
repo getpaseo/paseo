@@ -149,9 +149,17 @@ export interface PiRpcResponse {
 }
 
 export type PiAssistantMessageEvent =
-  | { type: "text_delta"; delta?: string }
-  | { type: "thinking_delta"; delta?: string }
-  | { type: "start" | "text_start" | "text_end" | "thinking_start" | "thinking_end" | "done" };
+  | { type: "start"; contentIndex?: number }
+  | { type: "text_start"; contentIndex: number }
+  | { type: "text_delta"; contentIndex: number; delta?: string }
+  | { type: "text_end"; contentIndex: number; content?: string }
+  | { type: "thinking_start"; contentIndex: number }
+  | { type: "thinking_delta"; contentIndex: number; delta?: string }
+  | { type: "thinking_end"; contentIndex: number; content?: string }
+  | { type: "toolcall_start"; contentIndex: number }
+  | { type: "toolcall_delta"; contentIndex: number; delta?: string }
+  | { type: "toolcall_end"; contentIndex: number; toolCall?: unknown }
+  | { type: "done"; contentIndex?: number };
 
 export type PiAgentSessionEvent =
   | { type: "agent_start" }
@@ -160,7 +168,11 @@ export type PiAgentSessionEvent =
   | { type: "message_end"; message: PiAgentMessage }
   | {
       type: "message_update";
-      message: PiAgentMessage;
+      // COMPAT(piMessageUpdateDeltas): Pi >=0.84 emits only `assistantMessageEvent`
+      // deltas — the cumulative `message` field was removed (pi #7290). Older
+      // binaries still include it. Remove the optional field after the supported
+      // pi floor includes 0.84.
+      message?: PiAgentMessage;
       assistantMessageEvent: PiAssistantMessageEvent;
     }
   | {
