@@ -88,9 +88,11 @@ export const zhCN: TranslationResources = {
       addAttachment: "添加附件",
       interruptAgent: "中断 Agent",
       queueMessage: "消息排队",
+      steerAgent: "引导 Agent",
       sendAndInterrupt: "发送并中断",
       sendMessage: "发送消息",
       queue: "排队",
+      steer: "引导",
       send: "发送",
     },
     cancel: {
@@ -133,6 +135,7 @@ export const zhCN: TranslationResources = {
     },
     errors: {
       failedToSend: "发送消息失败",
+      steeringUnavailable: "请更新 Host 以引导此 Agent",
       failedToCreateAgent: "创建 Agent 失败",
       noHostSelected: "未选择 Host",
       initialPromptRequired: "初始 prompt 必填",
@@ -1698,10 +1701,12 @@ export const zhCN: TranslationResources = {
         label: "默认发送",
         descriptions: {
           interrupt: "Agent 运行时，Enter 会中断。Command/Ctrl+Enter 会排队。",
-          queue: "Agent 运行时，Enter 会排队。Command/Ctrl+Enter 会提交。",
+          steer: "Agent 运行时，Enter 会引导。Command/Ctrl+Enter 会中断。Alt+Enter 会排队。",
+          queue: "Agent 运行时，Enter 或 Alt+Enter 会排队。Command/Ctrl+Enter 会中断。",
         },
         options: {
           interrupt: "中断",
+          steer: "引导",
           queue: "排队",
         },
       },

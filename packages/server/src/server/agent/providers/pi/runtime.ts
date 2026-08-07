@@ -43,6 +43,7 @@ export interface PiRuntimeSession {
   prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    streamingBehavior?: "steer" | "followUp",
   ): Promise<PiPromptAck>;
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;

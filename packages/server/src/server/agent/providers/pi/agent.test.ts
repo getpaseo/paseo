@@ -736,6 +736,64 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("steers an active Pi turn through native streaming behavior", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("initial request", { clientMessageId: "client-initial" });
+    fakeSession.emit({ type: "turn_start" });
+    await session.steer?.("change direction", { clientMessageId: "client-steer" });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-initial",
+      parentId: null,
+      text: "initial request",
+    });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-steer",
+      parentId: "entry-initial",
+      text: "change direction",
+    });
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "initial request",
+        messageId: "entry-initial",
+        clientMessageId: "client-initial",
+      },
+      {
+        type: "user_message",
+        text: "change direction",
+        messageId: "entry-steer",
+        clientMessageId: "client-steer",
+      },
+    ]);
+    expect(fakeSession.prompts).toEqual([
+      { message: "initial request", imageCount: 0 },
+      { message: "change direction", imageCount: 0 },
+    ]);
+    expect(fakeSession.promptStreamingBehaviors).toEqual(["steer", "steer"]);
+  });
+
+  test("keeps a steered Pi turn active until the queued continuation settles", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("initial request");
+    fakeSession.emit({ type: "turn_start" });
+    await session.steer?.("change direction");
+    fakeSession.state.isStreaming = true;
+    fakeSession.emit({ type: "agent_end", messages: [] });
+    await flushTurnScheduling();
+
+    expect(events.eventTypes()).not.toContain("turn_completed");
+
+    fakeSession.state.isStreaming = false;
+    fakeSession.emit({ type: "agent_settled" });
+
+    await expect(events.nextTurnCompletion()).resolves.toMatchObject({ type: "turn_completed" });
+  });
+
   test("canceling a silent Pi extension command leaves the session usable", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

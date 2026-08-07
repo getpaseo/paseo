@@ -88,9 +88,11 @@ export const es: TranslationResources = {
       addAttachment: "Agregar archivo adjunto",
       interruptAgent: "agente de interrupción",
       queueMessage: "mensaje de cola",
+      steerAgent: "Guiar agente",
       sendAndInterrupt: "Enviar e interrumpir",
       sendMessage: "enviar mensaje",
       queue: "Cola",
+      steer: "Guiar",
       send: "Enviar",
     },
     cancel: {
@@ -133,6 +135,7 @@ export const es: TranslationResources = {
     },
     errors: {
       failedToSend: "No se pudo enviar el mensaje",
+      steeringUnavailable: "Actualiza el host para guiar este agente",
       failedToCreateAgent: "No se pudo crear el agente",
       noHostSelected: "Ningún anfitrión seleccionado",
       initialPromptRequired: "Se requiere aviso inicial",
@@ -1764,11 +1767,14 @@ export const es: TranslationResources = {
         descriptions: {
           interrupt:
             "Cuando el agente se está ejecutando, Enter interrumpe. Command/Ctrl+Enter pone en cola.",
+          steer:
+            "Cuando el agente se está ejecutando, Enter guía. Command/Ctrl+Enter interrumpe. Alt+Enter pone en cola.",
           queue:
-            "Cuando el agente se está ejecutando, Enter pone en cola. Command/Ctrl+Enter envía.",
+            "Cuando el agente se está ejecutando, Enter o Alt+Enter pone en cola. Command/Ctrl+Enter interrumpe.",
         },
         options: {
           interrupt: "Interrumpir",
+          steer: "Guiar",
           queue: "Cola",
         },
       },

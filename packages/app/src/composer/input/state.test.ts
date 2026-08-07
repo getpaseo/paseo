@@ -193,7 +193,8 @@ describe("composer send behavior", () => {
     const calls: string[] = [];
     return {
       calls,
-      handleSendMessage: () => calls.push("send"),
+      handleSendMessage: (busyBehavior?: "replace" | "steer") =>
+        calls.push(busyBehavior ? `send:${busyBehavior}` : "send"),
       handleQueueMessage: () => calls.push("queue"),
       onQueue: () => undefined,
     };
@@ -238,7 +239,7 @@ describe("composer send behavior", () => {
       handleQueueMessage: alternateAction.handleQueueMessage,
     });
 
-    expect(defaultAction.calls).toEqual(["send"]);
+    expect(defaultAction.calls).toEqual(["send:replace"]);
     expect(alternateAction.calls).toEqual(["queue"]);
   });
 
@@ -262,7 +263,30 @@ describe("composer send behavior", () => {
     });
 
     expect(defaultAction.calls).toEqual(["queue"]);
-    expect(alternateAction.calls).toEqual(["send"]);
+    expect(alternateAction.calls).toEqual(["send:replace"]);
+  });
+
+  it("uses Enter to steer and Mod+Enter to interrupt when steer is selected", () => {
+    const defaultAction = actions();
+    runDefaultSendAction({
+      defaultSendBehavior: "steer",
+      isAgentRunning: true,
+      onQueue: defaultAction.onQueue,
+      handleSendMessage: defaultAction.handleSendMessage,
+      handleQueueMessage: defaultAction.handleQueueMessage,
+    });
+
+    const alternateAction = actions();
+    runAlternateSendAction({
+      defaultSendBehavior: "steer",
+      isAgentRunning: true,
+      onQueue: alternateAction.onQueue,
+      handleSendMessage: alternateAction.handleSendMessage,
+      handleQueueMessage: alternateAction.handleQueueMessage,
+    });
+
+    expect(defaultAction.calls).toEqual(["send:steer"]);
+    expect(alternateAction.calls).toEqual(["send:replace"]);
   });
 });
 

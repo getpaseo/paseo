@@ -54,6 +54,18 @@ describe("loadAppSettingsFromStorage", () => {
     );
   });
 
+  it("loads the steer default send preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sendBehavior: "steer" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sendBehavior).toBe("steer");
+  });
+
   it("defaults language to system when storage is empty", async () => {
     const deps = makeDeps();
 

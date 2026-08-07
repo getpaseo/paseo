@@ -316,6 +316,8 @@ const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z
     supportsMcpServers: z.boolean(),
     supportsReasoningStream: z.boolean(),
     supportsToolInvocations: z.boolean(),
+    // COMPAT(agentSteering): added in v0.3.0, remove optional after 2027-02-07.
+    supportsSteering: z.boolean().optional(),
     // COMPAT(rewind): added in v0.1.X, drop when floor >= v0.1.X.
     supportsRewindConversation: z.boolean().optional().default(false),
     // COMPAT(rewind): added in v0.1.X, drop when floor >= v0.1.X.
@@ -1176,6 +1178,7 @@ export const SendAgentMessageRequestSchema = z.object({
   /** Accepts full ID, unique prefix, or exact full title (server resolves). */
   agentId: z.string(),
   text: z.string(),
+  busyBehavior: z.enum(["replace", "steer"]).optional(),
   messageId: z.string().optional(), // Client-provided ID for deduplication
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
@@ -2938,6 +2941,8 @@ export const ServerInfoStatusPayloadSchema = z
         selectiveAgentTimeline: z.boolean().optional(),
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
         canonicalSubmittedPrompts: z.boolean().optional(),
+        // COMPAT(agentSteering): added in v0.3.0, remove gate after 2027-02-07.
+        agentSteering: z.boolean().optional(),
         // COMPAT(agentTurnIdentity): accept peers that observed pre-release v0.2.6 through 2027-01-31.
         agentTurnIdentity: z.boolean().optional(),
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.

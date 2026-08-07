@@ -263,6 +263,7 @@ const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
   "supportsMcpServers",
   "supportsReasoningStream",
   "supportsToolInvocations",
+  "supportsSteering",
   "supportsRewindConversation",
   "supportsRewindFiles",
   "supportsRewindBoth",

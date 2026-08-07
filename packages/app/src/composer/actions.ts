@@ -48,6 +48,7 @@ export interface ComposerSendClient {
     text: string,
     options: {
       messageId: string;
+      busyBehavior?: "replace" | "steer";
       images: Array<{ data: string; mimeType: string }>;
       attachments: ReturnType<typeof splitComposerAttachmentsForSubmit>["attachments"];
     },
@@ -171,6 +172,7 @@ export interface DispatchComposerAgentMessageInput {
   agentId: string;
   text: string;
   attachments: ComposerAttachment[];
+  busyBehavior?: "replace" | "steer";
   attachmentSubmitFormat?: ComposerAttachmentSubmitFormat;
   encodeImages: (
     images: AttachmentMetadata[],
@@ -197,6 +199,7 @@ export async function dispatchComposerAgentMessage(
     const imagesData = await input.encodeImages(wirePayload.images);
     await input.client.sendAgentMessage(input.agentId, input.text, {
       messageId: clientMessageId,
+      ...(input.busyBehavior ? { busyBehavior: input.busyBehavior } : {}),
       images: imagesData ?? [],
       attachments: wirePayload.attachments,
     });

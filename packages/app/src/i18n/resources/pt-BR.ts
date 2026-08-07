@@ -88,9 +88,11 @@ export const ptBR: TranslationResources = {
       addAttachment: "Adicionar anexo",
       interruptAgent: "Interromper agente",
       queueMessage: "Enfileirar mensagem",
+      steerAgent: "Orientar agente",
       sendAndInterrupt: "Enviar e interromper",
       sendMessage: "Enviar mensagem",
       queue: "Fila",
+      steer: "Orientar",
       send: "Enviar",
     },
     cancel: {
@@ -133,6 +135,7 @@ export const ptBR: TranslationResources = {
     },
     errors: {
       failedToSend: "Falha ao enviar mensagem",
+      steeringUnavailable: "Atualize o host para orientar este agente",
       failedToCreateAgent: "Falha ao criar agente",
       noHostSelected: "Nenhum host selecionado",
       initialPromptRequired: "O prompt inicial é obrigatório",
@@ -1749,10 +1752,14 @@ export const ptBR: TranslationResources = {
         descriptions: {
           interrupt:
             "Quando o agente está em execução, Enter interrompe. Command/Ctrl+Enter enfileira.",
-          queue: "Quando o agente está em execução, Enter enfileira. Command/Ctrl+Enter envia.",
+          steer:
+            "Quando o agente está em execução, Enter orienta. Command/Ctrl+Enter interrompe. Alt+Enter enfileira.",
+          queue:
+            "Quando o agente está em execução, Enter ou Alt+Enter enfileira. Command/Ctrl+Enter interrompe.",
         },
         options: {
           interrupt: "Interromper",
+          steer: "Orientar",
           queue: "Fila",
         },
       },

@@ -352,13 +352,17 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   expect(updatedAgents).toEqual(["Updated"]);
   expect(agent.latest()).toEqual(updatedAgent);
 
-  const sendPromise = agent.send("hello", { messageId: "message-sdk" });
+  const sendPromise = agent.send("hello", {
+    messageId: "message-sdk",
+    busyBehavior: "steer",
+  });
   const sendRequest = parseSentSessionMessage(ws.sent.at(-1));
   expect(sendRequest).toMatchObject({
     type: "send_agent_message_request",
     agentId: "agent_sdk",
     text: "hello",
     messageId: "message-sdk",
+    busyBehavior: "steer",
   });
 
   ws.message(

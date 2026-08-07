@@ -86,9 +86,11 @@ export const en = {
       addAttachment: "Add attachment",
       interruptAgent: "Interrupt agent",
       queueMessage: "Queue message",
+      steerAgent: "Steer agent",
       sendAndInterrupt: "Send and interrupt",
       sendMessage: "Send message",
       queue: "Queue",
+      steer: "Steer",
       send: "Send",
     },
     cancel: {
@@ -131,6 +133,7 @@ export const en = {
     },
     errors: {
       failedToSend: "Failed to send message",
+      steeringUnavailable: "Update the host to steer this agent",
       failedToCreateAgent: "Failed to create agent",
       noHostSelected: "No host selected",
       initialPromptRequired: "Initial prompt is required",
@@ -1730,11 +1733,14 @@ export const en = {
         descriptions: {
           interrupt:
             "When the agent is running, Enter interrupts. Command/Ctrl+Enter or Alt+Enter queues.",
+          steer:
+            "When the agent is running, Enter steers. Command/Ctrl+Enter interrupts. Alt+Enter queues.",
           queue:
-            "When the agent is running, Enter or Alt+Enter queues. Command/Ctrl+Enter submits.",
+            "When the agent is running, Enter or Alt+Enter queues. Command/Ctrl+Enter interrupts.",
         },
         options: {
           interrupt: "Interrupt",
+          steer: "Steer",
           queue: "Queue",
         },
       },
