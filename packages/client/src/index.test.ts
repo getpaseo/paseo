@@ -80,9 +80,11 @@ function parseSentFrame(
   return JSON.parse(data);
 }
 
-async function connectClient(options?: {
-  features?: Record<string, boolean>;
-}): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
+function beginConnectingClient(): {
+  client: PaseoClient;
+  ws: FakeWebSocket;
+  connectPromise: Promise<void>;
+} {
   vi.stubGlobal("WebSocket", FakeWebSocket);
   const client = createPaseoClient({
     url: "ws://daemon.test",
@@ -99,6 +101,13 @@ async function connectClient(options?: {
     protocolVersion: 1,
   });
   expect(hello.clientId).toEqual(expect.stringMatching(/^paseo-sdk-/));
+  return { client, ws, connectPromise };
+}
+
+async function connectClient(options?: {
+  features?: Record<string, boolean>;
+}): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
+  const { client, ws, connectPromise } = beginConnectingClient();
   ws.message(
     sessionMessage({
       type: "status",
@@ -771,6 +780,83 @@ test("provider-policy config patches require daemon support before sending", asy
   }
 
   expect(ws.sent).toHaveLength(sentBeforePatches);
+  await client.close();
+});
+
+test("provider-policy config patches wait for a supported handshake before sending", async () => {
+  const { client, ws, connectPromise } = beginConnectingClient();
+  const patchPromise = client.config.patch(
+    { mcp: { injectIntoProviders: ["codex-lead"] } },
+    "config-provider-policy-connecting-supported",
+  );
+
+  expect(ws.sent).toHaveLength(1);
+  ws.message(
+    sessionMessage({
+      type: "status",
+      payload: {
+        status: "server_info",
+        serverId: "srv_sdk_test",
+        hostname: null,
+        version: null,
+        features: { providerScopedPaseoTools: true },
+      },
+    }),
+  );
+  await connectPromise;
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "set_daemon_config_request",
+    requestId: "config-provider-policy-connecting-supported",
+    config: { mcp: { injectIntoProviders: ["codex-lead"] } },
+  });
+  ws.message(
+    sessionMessage({
+      type: "set_daemon_config_response",
+      payload: {
+        requestId: "config-provider-policy-connecting-supported",
+        config: {
+          mcp: { injectIntoAgents: true, injectIntoProviders: ["codex-lead"] },
+          providers: {},
+          autoArchiveAfterMerge: false,
+        },
+      },
+    }),
+  );
+  await expect(patchPromise).resolves.toMatchObject({
+    requestId: "config-provider-policy-connecting-supported",
+  });
+  await client.close();
+});
+
+test("provider-policy config patches reject an unsupported handshake without sending the field", async () => {
+  const { client, ws, connectPromise } = beginConnectingClient();
+  const patchPromise = client.config.patch(
+    { mcp: { injectIntoProviders: ["codex-lead"] } },
+    "config-provider-policy-connecting-unsupported",
+  );
+
+  expect(ws.sent).toHaveLength(1);
+  ws.message(
+    sessionMessage({
+      type: "status",
+      payload: {
+        status: "server_info",
+        serverId: "srv_sdk_test",
+        hostname: null,
+        version: null,
+        features: {},
+      },
+    }),
+  );
+  await connectPromise;
+  await expect(patchPromise).rejects.toThrow(
+    "Update the host to configure provider-scoped Paseo tools.",
+  );
+  expect(ws.sent).toHaveLength(1);
   await client.close();
 });
 

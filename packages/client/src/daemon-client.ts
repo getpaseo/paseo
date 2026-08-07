@@ -4588,7 +4588,10 @@ export class DaemonClient {
     requestId?: string,
   ): Promise<{ requestId: string; config: MutableDaemonConfig }> {
     if (config.mcp && Object.hasOwn(config.mcp, "injectIntoProviders")) {
-      this.requireProviderScopedPaseoToolsSupport();
+      const supportCheck = this.requireProviderScopedPaseoToolsSupport();
+      if (supportCheck) {
+        await supportCheck;
+      }
     }
     return this.sendCorrelatedSessionRequest({
       requestId,
@@ -5391,8 +5394,15 @@ export class DaemonClient {
     }
   }
 
-  private requireProviderScopedPaseoToolsSupport(): void {
+  private requireProviderScopedPaseoToolsSupport(): Promise<void> | void {
     // COMPAT(providerScopedPaseoTools): added in v0.2.6, remove gate after 2027-02-04 once daemon floor >= v0.2.6.
+    if (this.connectionState.status === "connecting") {
+      return this.connect().then(() => this.assertProviderScopedPaseoToolsSupport());
+    }
+    this.assertProviderScopedPaseoToolsSupport();
+  }
+
+  private assertProviderScopedPaseoToolsSupport(): void {
     if (this.lastServerInfoMessage?.features?.providerScopedPaseoTools !== true) {
       throw new Error("Update the host to configure provider-scoped Paseo tools.");
     }
