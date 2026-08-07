@@ -684,7 +684,23 @@ describe("ClaudeAgentSession features", () => {
       client.listFeatures({
         provider: "claude",
         cwd: process.cwd(),
+        model: "claude-opus-5",
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+
+    await expect(
+      client.listFeatures({
+        provider: "claude",
+        cwd: process.cwd(),
         model: "openrouter/anthropic/claude-opus-4-8",
+      }),
+    ).resolves.toEqual([]);
+
+    await expect(
+      client.listFeatures({
+        provider: "claude",
+        cwd: process.cwd(),
+        model: "claude-sonnet-5",
       }),
     ).resolves.toEqual([]);
 

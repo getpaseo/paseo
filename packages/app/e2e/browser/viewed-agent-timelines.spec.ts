@@ -12,6 +12,7 @@ import {
   expectTurnCopyButton,
 } from "../support/helpers/agent-stream";
 import {
+  expectReconnectingToastDebounced,
   expectReconnectingToastGone,
   expectReconnectingToastVisible,
 } from "../support/helpers/workspace-ui";
@@ -179,6 +180,7 @@ test.describe("Viewed agent timelines", () => {
         "true",
       );
       await gate.drop();
+      await expectReconnectingToastDebounced(page);
       await expectReconnectingToastVisible(page);
       await commitMessage(scenario, scenario.firstAgentId, "Committed while the chat reconnects.");
       await expect(
@@ -191,6 +193,25 @@ test.describe("Viewed agent timelines", () => {
       });
       await expect(recoveredMessage).toHaveCount(1);
       await expect(recoveredMessage).toBeVisible();
+    } finally {
+      gate.restore();
+      await scenario.cleanup();
+    }
+  });
+
+  test("preserves reconnecting toast through retained tab switches", async ({ page }) => {
+    const gate = await installDaemonWebSocketGate(page);
+    const scenario = await seedViewedTimelineScenario();
+    try {
+      await openAgent(page, scenario, scenario.firstAgentId);
+      await selectAgent(page, "Second viewed chat");
+      await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeVisible();
+      await selectAgent(page, "First viewed chat");
+      await gate.drop();
+      await expectReconnectingToastVisible(page);
+
+      await selectAgent(page, "Second viewed chat");
+      await expectReconnectingToastVisible(page, { timeout: 500 });
     } finally {
       gate.restore();
       await scenario.cleanup();

@@ -1,7 +1,12 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
+import type { AgentTimelineRow } from "../../agent-manager.js";
+import { projectTimelineRows } from "../../timeline-projection.js";
 import { ClaudeAgentClient } from "./agent.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 
@@ -15,6 +20,23 @@ import { streamSession } from "../test-utils/session-stream-adapter.js";
  */
 
 const queryFactory = vi.fn();
+const testTempDirs: string[] = [];
+
+function writeWorkflowOutput(): string {
+  const directory = mkdtempSync(path.join(tmpdir(), "paseo-workflow-output-"));
+  testTempDirs.push(directory);
+  const outputPath = path.join(directory, "workflow.output");
+  writeFileSync(
+    outputPath,
+    JSON.stringify({
+      result: { report: "What Paseo is\nA local-first coding-agent environment." },
+      script: "SECRET WORKFLOW SOURCE",
+      workflowProgress: [{ promptPreview: "SECRET CHILD PROMPT" }],
+    }),
+    "utf8",
+  );
+  return outputPath;
+}
 
 function buildQueryMock(events: unknown[]) {
   let index = 0;
@@ -86,6 +108,9 @@ async function collectUntilTerminal(
 describe("background Claude subagents", () => {
   afterEach(() => {
     queryFactory.mockReset();
+    for (const directory of testTempDirs.splice(0)) {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   async function runStream(): Promise<AgentStreamEvent[]> {
@@ -127,13 +152,25 @@ describe("background Claude subagents", () => {
     });
   });
 
-  test("keeps a filtered task out of the track even when it emits sidechain frames", async () => {
-    // A workflow child is refused at declaration, but its frames still carry a parent_tool_use_id.
-    // Attributing them would recreate exactly what the filter rejected: a descriptor with no
-    // title and a defaulted "running" status — a nameless row that never finishes.
+  test("exposes a workflow through the same provider-subagent stream as its child frames", async () => {
+    const workflowOutputPath = writeWorkflowOutput();
     queryFactory.mockImplementation(() =>
       buildQueryMock([
         { type: "system", subtype: "init", session_id: "bg-session", permissionMode: "default" },
+        {
+          type: "assistant",
+          message: {
+            model: "claude-opus-5",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu_workflow",
+                name: "Workflow",
+                input: { workflow: "spec" },
+              },
+            ],
+          },
+        },
         {
           type: "system",
           subtype: "task_started",
@@ -144,9 +181,38 @@ describe("background Claude subagents", () => {
           description: "Run the spec workflow",
         },
         {
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "toolu_workflow",
+                content:
+                  "Workflow launched in background.\nTask ID: wf-1\nRun ID: wf-run-1\n\nYou will be notified when it completes.",
+              },
+            ],
+          },
+        },
+        {
           type: "assistant",
           parent_tool_use_id: "toolu_workflow",
           message: { model: "claude-opus-5", content: [{ type: "text", text: "working" }] },
+        },
+        {
+          type: "system",
+          subtype: "task_updated",
+          task_id: "wf-1",
+          patch: { status: "completed" },
+        },
+        {
+          type: "system",
+          subtype: "task_notification",
+          task_id: "wf-1",
+          tool_use_id: "toolu_workflow",
+          status: "completed",
+          summary: "Workflow completed",
+          output_file: workflowOutputPath,
         },
         { type: "result", subtype: "success", usage: {}, total_cost_usd: 0 },
       ]),
@@ -159,7 +225,74 @@ describe("background Claude subagents", () => {
     const events = await collectUntilTerminal(streamSession(session, "run the workflow"));
     await session.close();
 
-    expect(events.filter((event) => event.type === "provider_subagent")).toEqual([]);
+    const providerEvents = events.filter((event) => event.type === "provider_subagent");
+    expect(providerEvents[0]).toMatchObject({
+      event: {
+        type: "upsert",
+        id: "toolu_workflow",
+        title: "Workflow",
+        description: "Run the spec workflow",
+        status: "running",
+      },
+    });
+    expect(providerEvents).toContainEqual(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "timeline",
+          id: "toolu_workflow",
+          item: expect.objectContaining({ type: "assistant_message", text: "working" }),
+        }),
+      }),
+    );
+    expect(providerEvents).toContainEqual(
+      expect.objectContaining({
+        event: {
+          type: "timeline",
+          id: "toolu_workflow",
+          item: {
+            type: "assistant_message",
+            text: "What Paseo is\nA local-first coding-agent environment.",
+          },
+        },
+      }),
+    );
+    expect(JSON.stringify(providerEvents)).not.toContain("SECRET WORKFLOW SOURCE");
+    expect(JSON.stringify(providerEvents)).not.toContain("SECRET CHILD PROMPT");
+    expect(providerEvents).toContainEqual(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "toolu_workflow",
+          status: "completed",
+        }),
+      }),
+    );
+
+    const parentCardUpdates = events
+      .filter((event) => event.type === "timeline")
+      .map((event) => event.item)
+      .filter((item) => item.type === "tool_call" && item.callId === "toolu_workflow");
+    const rows: AgentTimelineRow[] = parentCardUpdates.map((item, index) => ({
+      seq: index + 1,
+      timestamp: `2026-08-06T11:06:0${index}.000Z`,
+      item,
+    }));
+    const projectedWorkflowCards = projectTimelineRows({ rows, mode: "projected" }).filter(
+      (entry) => entry.item.type === "tool_call" && entry.item.callId === "toolu_workflow",
+    );
+    expect(projectedWorkflowCards).toHaveLength(1);
+    expect(projectedWorkflowCards[0]?.item).toMatchObject({
+      type: "tool_call",
+      name: "Workflow",
+      callId: "toolu_workflow",
+    });
+    expect(projectedWorkflowCards[0]?.item).not.toMatchObject({ detail: { type: "sub_agent" } });
+    expect(
+      events
+        .filter((event) => event.type === "timeline")
+        .map((event) => event.item)
+        .find((item) => item.type === "tool_call" && item.name === "task_notification"),
+    ).toBeUndefined();
   });
 
   test("labels the parent's Task card with the type and task", async () => {

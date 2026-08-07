@@ -28,7 +28,7 @@ On the machine that will run agents:
 paseo hub connect https://your-hub.example.com
 ```
 
-The CLI prints a verification code. In Hub, open **Daemons → Register a daemon**, enter the code, and give it a name. See [Daemons](/docs/hub/daemons).
+The CLI prints a verification code. In Hub, open **Daemons → Register a daemon**, enter the code, and choose a friendly slug. Hub normalizes `Build Studio` to `build-studio`. See [Daemons](/docs/hub/daemons).
 
 ## 4. Create a project
 
@@ -48,21 +48,26 @@ environments:
 triggers:
   - name: mention
     on: github.issue_comment
-    environment: dev
+    max_runtime: 2h
     filters:
       repo: yourname/your-repo
       contains: "@paseo"
       from_users: [your-github-login]
-    agent:
-      provider: codex
-      mode: full-access
-    prompt: |
-      Someone asked for help on ${{ paseo.event.github.issue.html_url }}.
-
-      ${{ paseo.event.github.comment.body }}
+    steps:
+      - id: work
+        environment: dev
+        max_runtime: 90m
+        idle_timeout: 10m
+        agent:
+          provider: codex
+          mode: full-access
+        prompt:
+          - text: |
+              Someone asked for help.
+              ${{ paseo.prompt }}
 ```
 
-`daemon` is the name you gave it in step 3. `cwd` is a directory on that machine.
+`daemon` is the normalized slug from step 3. `cwd` is a directory on that machine.
 
 ## 6. Push
 

@@ -56,4 +56,4 @@ While a project uses a GitHub source, the dashboard editor is read-only. The rep
 
 `filters.repo` can name any repository the organization has a connection for. Keeping `hub.yml` in a private repository while triggers watch several public ones is a common setup, because push access to the configuration repository grants access to the organization's connections.
 
-Next: the [`hub.yml` reference](/docs/hub/configuration/hub-yml).
+Next: [Hub workflows](/docs/hub/workflows), then the [`hub.yml` reference](/docs/hub/configuration/hub-yml).

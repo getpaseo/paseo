@@ -65,7 +65,7 @@ Request body:
 ```json
 {
   "projectSlug": "my-project",
-  "yaml": "environments:\n  - name: production\n    kind: daemon\n    daemon: build-server\n    cwd: /workspace\ntriggers:\n  - name: deploy\n    on: manual.run\n    environment: production\n    filters:\n      from_users: [automation]\n    agent:\n      provider: opencode\n      mode: full-access\n    prompt: Deploy the project"
+  "yaml": "environments:\n  - name: production\n    kind: daemon\n    daemon: build-server\n    cwd: /workspace\ntriggers:\n  - name: deploy\n    on: manual.run\n    max_runtime: 2h\n    filters:\n      from_users: [automation]\n    steps:\n      - id: deploy\n        environment: production\n        max_runtime: 90m\n        idle_timeout: 10m\n        agent:\n          provider: opencode\n          mode: full-access\n        prompt:\n          - text: Deploy the project"
 }
 ```
 
@@ -117,17 +117,16 @@ Request body:
   "trigger": "deploy",
   "actor": "automation",
   "deliveryKey": "deploy-2026-08-04-001",
-  "input": {
-    "ref": "main"
-  }
+  "input": "repo=project investigate the failed sync"
 }
 ```
 
 `expectedVersionId` is optional. When supplied, Hub rejects the dispatch if
-that configuration revision is no longer active. `input` is application data
-made available to the trigger; it may be any JSON value. Use a unique,
-stable `deliveryKey` for each dispatch. Reusing it makes the request resolve to
-the existing trigger instead of starting a duplicate run.
+that configuration revision is no longer active. `input` is the same string
+used by a provider message: consecutive leading `key=value` tokens are parsed
+as the trigger's declared inputs, and the remainder becomes `${{ paseo.prompt }}`.
+Use a unique, stable `deliveryKey` for each dispatch. Reusing it makes the
+request resolve to the existing trigger instead of starting a duplicate run.
 
 On success, Hub returns `200`:
 
@@ -159,9 +158,12 @@ curl --fail-with-body -sS -X POST "$HUB_URL/api/manual-runs" \
     "trigger": "deploy",
     "actor": "automation",
     "deliveryKey": "deploy-2026-08-04-001",
-    "input": {"ref": "main"}
+    "input": "repo=project investigate the failed sync"
   }'
 ```
+
+See [Hub workflows](/docs/hub/workflows) for input types, defaults, choices,
+rejected input, and manual invocation examples.
 
 ## Daemon enrollment
 

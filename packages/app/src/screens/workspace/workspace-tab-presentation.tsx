@@ -1,16 +1,18 @@
 import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
-import { Check } from "lucide-react-native";
+import { Check, CircleAlert } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import invariant from "tiny-invariant";
-import { SyncedLoader } from "@/components/synced-loader";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
 import { getPanelRegistration } from "@/panels/panel-registry";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
-import { getStatusDotColor, isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
-import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
+import { getStatusDotColor } from "@/utils/status-dot-color";
+import {
+  STATUS_INDICATOR_ALERT_SIZE,
+  STATUS_INDICATOR_DOT_SIZE,
+} from "@/utils/status-indicator-geometry";
 import type { Theme } from "@/styles/theme";
 import { usePanelInstanceAttributes } from "@/panels/panel-instance-attributes";
 
@@ -26,10 +28,8 @@ export interface WorkspaceTabPresentation {
   statusBucket: SidebarStateBucket | null;
 }
 
-const DEFAULT_STATUS_DOT_SIZE = 7;
-const EMPHASIZED_STATUS_DOT_SIZE = 9;
 const DEFAULT_STATUS_DOT_OFFSET = -2;
-const EMPHASIZED_STATUS_DOT_OFFSET = -3;
+const STATUS_ALERT_OFFSET = -3;
 
 interface WorkspaceTabPresentationResolverProps {
   tab: WorkspaceTabDescriptor;
@@ -115,7 +115,12 @@ interface WorkspaceTabIconProps {
 }
 
 const ThemedCheckIcon = withUnistyles(Check);
+const ThemedCircleAlert = withUnistyles(CircleAlert);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const needsInputAlertMapping = (theme: Theme) => ({
+  color: theme.colors.surface0,
+  fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
+});
 
 export function WorkspaceTabIcon({
   presentation,
@@ -126,20 +131,10 @@ export function WorkspaceTabIcon({
   const iconColor = active ? styles.iconActive.color : styles.iconInactive.color;
   const bucket = presentation.statusBucket;
   let statusDotColor: string | undefined;
-  if (bucket === "needs_input") statusDotColor = styles.statusDotNeedsInput.color;
-  else if (bucket === "failed") statusDotColor = styles.statusDotFailed.color;
+  if (bucket === "failed") statusDotColor = styles.statusDotFailed.color;
   else if (bucket === "running") statusDotColor = styles.statusDotRunning.color;
   else if (bucket === "attention") statusDotColor = styles.statusDotAttention.color;
-  const statusDotSize = isEmphasizedStatusDotBucket(presentation.statusBucket)
-    ? EMPHASIZED_STATUS_DOT_SIZE
-    : DEFAULT_STATUS_DOT_SIZE;
-  const statusDotOffset =
-    statusDotSize === EMPHASIZED_STATUS_DOT_SIZE
-      ? EMPHASIZED_STATUS_DOT_OFFSET
-      : DEFAULT_STATUS_DOT_OFFSET;
-  const shouldShowLoader = shouldRenderSyncedStatusLoader({
-    bucket: presentation.statusBucket,
-  });
+  const showNeedsInputAlert = bucket === "needs_input";
   const Icon = presentation.icon;
   const agentIconWrapperStyle = useMemo(
     () => [styles.agentIconWrapper, { width: size, height: size }],
@@ -151,31 +146,26 @@ export function WorkspaceTabIcon({
       {
         backgroundColor: statusDotColor,
         borderColor: statusDotBorderColor ?? styles.statusDotBorderDefault.borderColor,
-        width: statusDotSize,
-        height: statusDotSize,
-        right: statusDotOffset,
-        bottom: statusDotOffset,
       },
     ],
-    [statusDotColor, statusDotBorderColor, statusDotSize, statusDotOffset],
+    [statusDotColor, statusDotBorderColor],
   );
-
-  if (shouldShowLoader) {
-    return (
-      <View
-        style={agentIconWrapperStyle}
-        accessibilityRole="progressbar"
-        accessibilityLabel="Agent running"
-      >
-        <SyncedLoader size={size - 1} color={styles.syncedLoader.color} />
-      </View>
-    );
-  }
 
   return (
     <View style={agentIconWrapperStyle}>
       <Icon size={size} color={iconColor} />
-      {statusDotColor ? <View style={statusDotStyle} /> : null}
+      {statusDotColor ? (
+        <View
+          style={statusDotStyle}
+          accessibilityRole={bucket === "running" ? "progressbar" : undefined}
+          accessibilityLabel={bucket === "running" ? "Agent running" : undefined}
+        />
+      ) : null}
+      {showNeedsInputAlert ? (
+        <View style={styles.statusAlertOverlay}>
+          <ThemedCircleAlert size={STATUS_INDICATOR_ALERT_SIZE} uniProps={needsInputAlertMapping} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -246,16 +236,18 @@ const styles = StyleSheet.create((theme) => ({
     position: "absolute",
     right: DEFAULT_STATUS_DOT_OFFSET,
     bottom: DEFAULT_STATUS_DOT_OFFSET,
-    width: DEFAULT_STATUS_DOT_SIZE,
-    height: DEFAULT_STATUS_DOT_SIZE,
+    width: STATUS_INDICATOR_DOT_SIZE,
+    height: STATUS_INDICATOR_DOT_SIZE,
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
   },
   statusDotBorderDefault: {
     borderColor: theme.colors.surface0,
   },
-  statusDotNeedsInput: {
-    color: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
+  statusAlertOverlay: {
+    position: "absolute",
+    right: STATUS_ALERT_OFFSET,
+    bottom: STATUS_ALERT_OFFSET,
   },
   statusDotFailed: {
     color: getStatusDotColor({ theme, bucket: "failed" }) ?? undefined,
@@ -271,9 +263,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   iconInactive: {
     color: theme.colors.foregroundMuted,
-  },
-  syncedLoader: {
-    color: theme.colors.foreground,
   },
   optionRow: {
     flexDirection: "row",

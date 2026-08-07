@@ -155,17 +155,24 @@ describe("assistant selection copy ranges", () => {
     },
   );
 
-  it.each([
-    { tag: "strong", expected: "**bold text**" },
-    { tag: "code", expected: "`inline code`" },
-  ])("retains $tag delimiters when its complete contents are selected", ({ tag, expected }) => {
+  it("retains strong delimiters when its complete contents are selected", () => {
     const message = mountFixture();
-    const element = fixtureElement(message, `[data-paseo-markdown-tag="${tag}"]`);
+    const element = fixtureElement(message, '[data-paseo-markdown-tag="strong"]');
     const content = createAssistantSelectionClipboardContent(
       selectText(element, 0, textNode(element).length),
     );
-    expect(content?.plainText).toBe(expected);
-    expect(content?.html).toContain(`<${tag}>`);
+    expect(content?.plainText).toBe("**bold text**");
+    expect(content?.html).toContain("<strong>");
+  });
+
+  it("copies complete inline code without delimiters when the selection stays inside", () => {
+    const message = mountFixture();
+    const element = fixtureElement(message, '[data-paseo-markdown-tag="code"]');
+    const content = createAssistantSelectionClipboardContent(
+      selectText(element, 0, textNode(element).length),
+    );
+    expect(content?.plainText).toBe("inline code");
+    expect(content?.html).not.toContain("<code>");
   });
 
   it("keeps a complete inline node but drops formatting from a partial node at the other edge", () => {
@@ -228,14 +235,226 @@ describe("assistant selection copy ranges", () => {
     expect(content?.html).not.toContain("<pre>");
   });
 
-  it("retains the fence and language when the complete code block is selected", () => {
+  it("copies code without a fence when every character is selected inside the block", () => {
     const message = mountFixture();
     const blockCode = fixtureElement(
       message,
       '[data-paseo-markdown-tag="pre"] [data-paseo-markdown-tag="code"]',
     );
     expect(copiedMarkdown(selectText(blockCode, 0, textNode(blockCode).length))).toBe(
-      "```ts\nconst answer = true;\n```",
+      "const answer = true;",
+    );
+  });
+});
+
+/**
+ * The fixture above holds a code block in one text node. The real renderer splits a
+ * highlighted line across one text node per syntax token and emits each newline as a
+ * node of its own (`highlighted-code-block.tsx`), and it puts the hover Copy button
+ * inside the `pre`. Line breaks and indentation only survive if the code skips
+ * Turndown, so those cases need a fixture shaped like the real thing.
+ */
+function highlightedFixture(language: string | null): string {
+  const languageAttribute =
+    language === null ? "" : ` data-paseo-markdown-language="${escapeAttribute(language)}"`;
+  return [
+    '<div data-testid="assistant-message">',
+    `<div data-paseo-markdown-tag="pre"${languageAttribute}>`,
+    '<span data-paseo-markdown-tag="code">',
+    "<span>const</span><span> answer</span><span> = 1;</span>",
+    "<span>\n</span>",
+    "<span>  if</span><span> (answer)</span><span> {</span>",
+    "<span>\n</span>",
+    "<span>    doThing();</span>",
+    "</span>",
+    '<div data-paseo-markdown-ignore="true"><span>Copy</span></div>',
+    "</div>",
+    '<div data-paseo-markdown-tag="p"><span>After the block.</span></div>',
+    "</div>",
+  ].join("");
+}
+
+function escapeAttribute(value: string): string {
+  const holder = document.createElement("div");
+  holder.setAttribute("data-value", value);
+  return holder.outerHTML.slice('<div data-value="'.length, -"></div>".length);
+}
+
+function mountHighlighted(language: string | null = "typescript"): HTMLElement {
+  const host = document.createElement("div");
+  host.innerHTML = highlightedFixture(language);
+  document.body.append(host);
+  const message = host.querySelector<HTMLElement>('[data-testid="assistant-message"]');
+  if (!message) {
+    throw new Error("Expected assistant message fixture");
+  }
+  return message;
+}
+
+/** The single text node whose content is exactly `text`. */
+function tokenText(root: Node, text: string): Text {
+  const matches = allTextNodes(root, text);
+  if (matches.length !== 1) {
+    throw new Error(`Expected exactly one text node "${text}", found ${matches.length}`);
+  }
+  return matches[0];
+}
+
+function allTextNodes(root: Node, text: string): Text[] {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const matches: Text[] = [];
+  while (walker.nextNode()) {
+    if (walker.currentNode.textContent === text) {
+      matches.push(walker.currentNode as Text);
+    }
+  }
+  return matches;
+}
+
+/** The standalone `\n` node that ends rendered code line `index`. */
+function lineBreak(root: Node, index: number): Text {
+  const breaks = allTextNodes(root, "\n");
+  const node = breaks[index];
+  if (!node) {
+    throw new Error(`Expected a line break at index ${index}, found ${breaks.length}`);
+  }
+  return node;
+}
+
+function copyBetween(start: [Text, number], end: [Text, number]) {
+  const range = document.createRange();
+  range.setStart(start[0], start[1]);
+  range.setEnd(end[0], end[1]);
+  const selection = window.getSelection();
+  if (!selection) {
+    throw new Error("Expected browser selection");
+  }
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return createAssistantSelectionClipboardContent(selection);
+}
+
+/** Select from the start of one text node to the end of another. */
+function copyAcross(root: Node, startText: string, endText: string) {
+  return copyBetween([tokenText(root, startText), 0], [tokenText(root, endText), endText.length]);
+}
+
+describe("assistant selection copy inside highlighted code", () => {
+  it("keeps the line break and the indentation of a partial multi-line selection", () => {
+    const message = mountHighlighted();
+
+    const content = copyAcross(message, "const", " {");
+
+    expect(content?.plainText).toBe("const answer = 1;\n  if (answer) {");
+  });
+
+  it("keeps multi-line code as a block in the html half so the lines survive", () => {
+    const message = mountHighlighted();
+
+    const content = copyAcross(message, "const", " {");
+
+    expect(content?.html).toBe(
+      '<meta charset="utf-8"><pre><code class="language-typescript">const answer = 1;\n  if (answer) {</code></pre>',
+    );
+  });
+
+  it("does not escape Markdown characters inside copied code", () => {
+    const message = mountHighlighted();
+
+    const content = copyBetween([tokenText(message, " = 1;"), 1], [tokenText(message, " = 1;"), 5]);
+
+    expect(content?.plainText).toBe("= 1;");
+  });
+
+  it("handles a common ancestor that is an element rather than a text node", () => {
+    const message = mountHighlighted();
+
+    // Spanning two token spans makes `commonAncestorContainer` the `code` element.
+    const content = copyBetween(
+      [tokenText(message, "const"), 1],
+      [tokenText(message, " answer"), 4],
+    );
+
+    expect(content?.plainText).toBe("onst ans");
+  });
+
+  it("drops a trailing line break swept in from the end of a line", () => {
+    const message = mountHighlighted();
+
+    const content = copyBetween([tokenText(message, " = 1;"), 1], [lineBreak(message, 0), 1]);
+
+    expect(content?.plainText).toBe("= 1;");
+  });
+
+  it("drops a trailing line break together with the indentation after it", () => {
+    const message = mountHighlighted();
+
+    const content = copyBetween([tokenText(message, "const"), 0], [tokenText(message, "  if"), 2]);
+
+    expect(content?.plainText).toBe("const answer = 1;");
+  });
+
+  it("keeps line breaks that are not at the end of the selection", () => {
+    const message = mountHighlighted();
+
+    const content = copyBetween([tokenText(message, "const"), 0], [tokenText(message, "  if"), 4]);
+
+    expect(content?.plainText).toBe("const answer = 1;\n  if");
+  });
+
+  it("leaves the hover copy button out of the copied code", () => {
+    const message = mountHighlighted();
+
+    const content = copyAcross(message, " answer", "Copy");
+
+    expect(content?.plainText).toBe(" answer = 1;\n  if (answer) {\n    doThing();");
+    expect(content?.plainText).not.toContain("Copy");
+  });
+
+  it("does not treat a selection inside the copy button as code", () => {
+    const message = mountHighlighted();
+
+    expect(copyAcross(message, "Copy", "Copy")).toBeNull();
+  });
+
+  it("omits the language class when the fence carries no info string", () => {
+    const message = mountHighlighted(null);
+
+    const content = copyAcross(message, "const", " {");
+
+    expect(content?.html).toBe(
+      '<meta charset="utf-8"><pre><code>const answer = 1;\n  if (answer) {</code></pre>',
+    );
+  });
+
+  it("escapes a fence info string that would break out of the class attribute", () => {
+    const message = mountHighlighted('ts" onload="x');
+
+    const content = copyAcross(message, "const", " {");
+
+    expect(content?.html).toContain('class="language-ts&quot; onload=&quot;x"');
+    expect(content?.html).not.toContain('onload="x"');
+  });
+
+  it("copies a fully selected multi-line region as code when the selection stays inside", () => {
+    const message = mountHighlighted();
+    const blockCode = fixtureElement(
+      message,
+      '[data-paseo-markdown-tag="pre"] [data-paseo-markdown-tag="code"]',
+    );
+
+    expect(copiedMarkdown(selectNodeContents(blockCode))).toBe(
+      "const answer = 1;\n  if (answer) {\n    doThing();",
+    );
+  });
+
+  it("retains the fence when a complete code block is selected across its boundary", () => {
+    const message = mountHighlighted();
+
+    const content = copyAcross(message, "const", "After the block.");
+
+    expect(content?.plainText).toBe(
+      "```typescript\nconst answer = 1;\n  if (answer) {\n    doThing();\n```\n\nAfter the block.",
     );
   });
 });

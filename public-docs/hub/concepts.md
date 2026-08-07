@@ -1,6 +1,6 @@
 ---
 title: How Hub works
-description: The Hub object model, how an inbound event reaches a project, and what happens when a configuration is activated.
+description: How a provider event reaches a workflow and a Paseo daemon, for hosted and self-hosted Hub.
 nav: How it works
 order: 62
 category: Hub
@@ -8,72 +8,57 @@ category: Hub
 
 # How Hub works
 
-## The object model
+Hub connects the places where requests arrive to the machines where your agents run. The same flow applies to hosted and self-hosted Hub.
 
 ```text
-organization
-├── members
-├── connections    GitHub installations, Slack workspaces, Discord guilds
-├── daemons        registered machines that run agents
-└── projects
-    └── configuration
-        ├── environments
-        └── triggers
+GitHub / Slack / Discord / manual request
+                    ↓
+                  Hub
+        matches a project trigger
+                    ↓
+                workflow
+          runs ordered agent steps
+                    ↓
+             Paseo daemon
+             starts the agent
 ```
 
-**Connections belong to the organization.** One organization can hold several GitHub installations, several Slack workspaces, and several Discord guilds at the same time. Your personal GitHub account and two company organizations can sit side by side.
+## The pieces
 
-**Every connection gets a slug**, generated from the account it points at: `getpaseo-github`, `boudra-github`, `acme-slack`. Slugs are unique inside the organization, and configuration uses them to name a specific connection.
+- A **connection** lets Hub receive events from GitHub, Slack, or Discord.
+- A **daemon** is a registered machine running the Paseo daemon.
+- A **project** groups one configuration with the connections and daemons it uses.
+- An **environment** names where a workflow step runs: a daemon, its working directory, and an optional worktree.
+- A **trigger** says which provider event can start a workflow and which events are allowed through.
+- A **workflow** is the ordered set of steps that runs after a trigger matches.
+- A **step** starts one agent execution, with its own prompt, agent selection, reply capabilities, and limits.
 
-**Daemons belong to the organization too.** Register a machine once and any project can use it.
+The configuration lives in `.paseo/hub.yml` when the project uses a GitHub source. A project has one active configuration revision at a time.
 
-**A project is one set of environments and triggers.** Projects are how you separate work that should stay separate: one product, one team, one repository. They share the organization's connections and daemons, so separating costs you nothing.
+## From event to agent
 
-**A project has one active configuration.** You edit it in the dashboard or sync it from a repository, and it applies as a whole.
+1. A provider sends an event to Hub. GitHub and Slack use webhooks; Discord uses its gateway connection; manual runs use the Hub API.
+2. Hub verifies the provider event and identifies its project resource, such as a repository, workspace, or guild.
+3. Hub evaluates triggers and their filters, including the required `from_users` allowlist.
+4. A matching trigger creates a workflow run from the active configuration revision.
+5. The workflow evaluates its next step. A false `if` condition skips that step; a true condition starts it on the configured daemon.
+6. The daemon starts the agent and Hub records its replies, structured output, status, and completion.
+7. The next step sees the completed step's output. When no steps remain, the workflow run is complete.
 
-**Nothing is attached to a project in the dashboard.** No screen assigns a repository or a channel. The project's configuration decides what it listens to, through trigger filters.
-
-## Routing
-
-```text
-event arrives
-  → the connection verifies it (signature, or an authenticated gateway)
-  → the event carries a resource id (repository, workspace, guild)
-  → Hub finds compiled routes referencing that resource
-  → the trigger's filters run
-  → the trigger's environment executes
-```
-
-Routes are compiled when a configuration is activated, not evaluated per event. A repository is not owned by one project, so if two projects both name it, both run.
+The [Workflows guide](/docs/hub/workflows) starts with a one-step Slack example and adds inputs, structured outputs, and routing one concept at a time.
 
 ## Activation
 
-Activating a configuration resolves what you wrote into stable identities:
+When Hub syncs `.paseo/hub.yml`, it validates the configuration and resolves its references:
 
-| You write                    | Hub resolves it to                      |
-| ---------------------------- | --------------------------------------- |
-| `filters.repo: owner/repo`   | a GitHub repository id and a connection |
-| `filters.workspace: T0123…`  | a Slack workspace and a connection      |
-| `filters.guild: 9876…`       | a Discord guild and a connection        |
-| `environment.daemon: my-box` | a registered daemon id                  |
+- `filters.repo`, `filters.workspace`, and `filters.guild` must name resources available through the organization's connections.
+- `environment.daemon` must match a registered daemon's friendly slug.
+- Step ids, expressions, input filters, output schemas, and durations must be valid.
 
-If any of those cannot be resolved through a connection in the organization, activation fails and the previous revision stays active. You find out when you push, rather than when someone comments on an issue.
+If activation fails, Hub keeps the previous active revision. The Configuration tab shows the failed sync and its validation error; Activity continues to reflect the last active revision.
 
-A trigger with no resource filter routes to every connection of that provider in the organization. Add `filters.connection: <slug>` to narrow it to one.
+## Security boundaries
 
-## Executions
+Triggers require a non-empty `from_users` allowlist for externally sourced events. Protect the configuration repository because anyone who can change the active configuration can choose which connections, daemons, and agent capabilities a project uses.
 
-A matched trigger produces an execution. Hub sends the create request to the daemon, then owns that agent's lifecycle: reconnect recovery, output observation, and completion.
-
-- `timeout` is absolute and defaults to `1h`.
-- `idle_timeout` starts only when the daemon reports the agent idle, resets on the next idle report, and clears when the agent reports running. It defaults to `5m`.
-- Every dispatched agent gets a per-execution MCP server with `finish_execution`. Completion is authoritative when the agent calls it.
-- `allow_outputs` adds a single-use `reply` tool for Slack and Discord executions.
-
-If Hub loses the create response, or the daemon reconnects, Hub resends the same create intent with the same execution id. The daemon returns the existing agent instead of running the prompt twice.
-
-## Trust boundary
-
-A project's configuration can reference any connection in its organization. Anyone who can push to the configuration repository controls that project's access to those connections, so protect that branch the way you protect a release branch.
-
-Triggers require a `from_users` allowlist for the same reason. Without one, any stranger commenting on a public issue could start an agent on your machine.
+GitHub-triggered steps receive a scoped GitHub credential for the triggering repository. Slack and Discord do not implicitly choose a GitHub connection.
