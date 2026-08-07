@@ -31,6 +31,7 @@ import {
   getTerminalVirtualKeyboardControlId,
   shouldShowTerminalFloatingCopyAction,
   shouldShowTerminalPasteAction,
+  shouldShowTerminalVirtualKeyboard,
   TERMINAL_VIRTUAL_KEYBOARD_ROWS,
   type TerminalVirtualKeyboardControl,
 } from "@/terminal/runtime/terminal-virtual-keyboard";
@@ -980,6 +981,10 @@ export function TerminalPane({
     hasSelection,
     isNative,
   });
+  const showVirtualKeyboard = shouldShowTerminalVirtualKeyboard({
+    isCompactFormFactor: isMobile,
+    isNative,
+  });
   const keyboardToggleIconColor = theme.colors.foregroundMuted;
 
   const renderVirtualKeyboardControl = (control: TerminalVirtualKeyboardControl) => {
@@ -1096,7 +1101,7 @@ export function TerminalPane({
         </View>
       ) : null}
 
-      {isMobile ? (
+      {showVirtualKeyboard ? (
         <View style={styles.keyboardContainer} testID="terminal-virtual-keyboard">
           <View style={styles.keyboardRows}>
             {TERMINAL_VIRTUAL_KEYBOARD_ROWS.map((row) => (

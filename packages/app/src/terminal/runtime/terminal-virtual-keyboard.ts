@@ -60,6 +60,13 @@ export function shouldShowTerminalPasteAction(input: { isNative: boolean }): boo
   return input.isNative;
 }
 
+export function shouldShowTerminalVirtualKeyboard(input: {
+  isCompactFormFactor: boolean;
+  isNative: boolean;
+}): boolean {
+  return input.isNative || input.isCompactFormFactor;
+}
+
 export function shouldShowTerminalFloatingCopyAction(input: {
   hasSelection: boolean;
   isNative: boolean;
