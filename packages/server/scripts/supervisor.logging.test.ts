@@ -208,12 +208,66 @@ describe("supervisor durable logging", () => {
     expect(result.log).not.toContain('"msg":"Worker heartbeat timed out; restarting worker"');
   }, 10_000);
 
+  test("tolerates a transient seven-second heartbeat pause", async () => {
+    const result = await runSupervisorFixture({
+      timeoutMs: 10_000,
+      workerSource: `
+        import { existsSync, writeFileSync } from "node:fs";
+
+        const marker = process.argv[1] + ".started";
+        if (!existsSync(marker)) {
+          writeFileSync(marker, "started");
+          let heartbeatCount = 0;
+          const heartbeat = setInterval(() => {
+            process.send?.({ type: "paseo:worker-heartbeat" });
+            heartbeatCount += 1;
+            if (heartbeatCount === 3) clearInterval(heartbeat);
+          }, 100);
+          setTimeout(() => {
+            process.send?.({ type: "paseo:shutdown", reason: "heartbeat_pause_tolerated" });
+          }, 7_000);
+          setInterval(() => {}, 1_000);
+        } else {
+          process.send?.({ type: "paseo:shutdown", reason: "unexpected_heartbeat_restart" });
+          setInterval(() => {}, 1_000);
+        }
+      `,
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.log).toContain('"reason":"heartbeat_pause_tolerated"');
+    expect(result.log).not.toContain('"reason":"unexpected_heartbeat_restart"');
+    expect(result.log).not.toContain('"msg":"Worker heartbeat timed out; restarting worker"');
+  }, 10_000);
+
+  test.skipIf(isPlatform("win32"))(
+    "forces shutdown when a worker ignores SIGTERM",
+    async () => {
+      const result = await runSupervisorFixture({
+        timeoutMs: 15_000,
+        workerSource: `
+          process.on("SIGTERM", () => {});
+          process.send?.({ type: "paseo:shutdown", reason: "stalled_worker_shutdown" });
+          setInterval(() => {}, 1_000);
+        `,
+      });
+
+      expect(result.code).toBe(0);
+      expect(result.signal).toBeNull();
+      expect(result.log).toContain('"reason":"stalled_worker_shutdown"');
+      expect(result.log).toContain('"msg":"Worker did not exit after SIGTERM; forcing SIGKILL"');
+      expect(result.log).toContain('"signal":"SIGKILL"');
+    },
+    20_000,
+  );
+
   // POSIX-only: the watchdog uses SIGKILL after its graceful shutdown window.
   test.skipIf(isPlatform("win32"))(
     "restarts a worker that stops heartbeating",
     async () => {
       const result = await runSupervisorFixture({
-        timeoutMs: 25_000,
+        timeoutMs: 35_000,
         workerSource: `
           import { existsSync, writeFileSync } from "node:fs";
 
@@ -241,7 +295,7 @@ describe("supervisor durable logging", () => {
       expect(result.log).toContain('"msg":"Worker did not exit after SIGTERM; forcing SIGKILL"');
       expect(result.log).toContain('"signal":"SIGKILL"');
     },
-    25_000,
+    40_000,
   );
 
   test.skipIf(isPlatform("win32"))(

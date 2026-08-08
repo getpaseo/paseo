@@ -5,7 +5,7 @@ import { createStream as createRotatingFileStream } from "rotating-file-stream";
 import { signalProcessTree } from "../src/utils/tree-kill.js";
 
 const WORKER_HEARTBEAT_INTERVAL_MS = 1_000;
-const WORKER_HEARTBEAT_TIMEOUT_MS = 5_000;
+const WORKER_HEARTBEAT_TIMEOUT_MS = 15_000;
 const WORKER_TERMINATION_GRACE_MS = 10_000;
 
 interface SupervisorLogFileOptions {
