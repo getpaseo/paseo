@@ -2141,7 +2141,7 @@ export const ko: TranslationResources = {
         moreActions: "추가 작업",
         systemShell: "시스템 셸",
         systemShellUnknown: "호스트가 결정합니다",
-        defaultHint: "행을 선택하면 새 터미널이 여는 항목이 바뀝니다.",
+        defaultHint: "행을 선택하면 새 터미널이 기본으로 여는 항목이 바뀝니다.",
         save: "저장",
         emptyState: "아직 프로필이 없습니다. 특정 명령으로 터미널을 실행하려면 하나 추가하세요.",
       },

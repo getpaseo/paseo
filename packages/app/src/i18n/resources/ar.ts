@@ -2129,7 +2129,7 @@ export const ar: TranslationResources = {
         moreActions: "More actions",
         systemShell: "System shell",
         systemShellUnknown: "Resolved by the host",
-        defaultHint: "Select a row to choose what a new terminal opens.",
+        defaultHint: "Select a row to choose what a new terminal opens by default.",
         save: "Save",
         emptyState: "No profiles yet. Add one to launch terminals with a specific command.",
       },

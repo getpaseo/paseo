@@ -2,7 +2,6 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpToLine,
-  Check,
   ChevronRight,
   Globe,
   Monitor,
@@ -35,6 +34,7 @@ import {
   DropdownMenuTrigger,
   type MenuPageDefinition,
 } from "@/components/ui/dropdown-menu";
+import { Radio } from "@/components/ui/radio";
 import { Switch } from "@/components/ui/switch";
 import {
   ProfileDraft,
@@ -90,7 +90,6 @@ const ThemedProfilePencil = withUnistyles(Pencil);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedProfileSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedPlus = withUnistyles(Plus);
-const ThemedCheck = withUnistyles(Check);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 
 interface DynamicProviderIconProps {
@@ -114,7 +113,6 @@ const moveDownIcon = <ThemedArrowDown size={ICON_SIZE.sm} uniProps={mutedColorMa
 const editProfileIcon = <ThemedProfilePencil size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 const removeProfileIcon = <ThemedTrash2 size={ICON_SIZE.sm} uniProps={destructiveColorMapping} />;
 const addProfileIcon = <ThemedPlus size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
-const defaultProfileIcon = <ThemedCheck size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 const kebabIcon = <ThemedMoreVertical size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 
 function formatHostConnectionLabel(connection: HostConnection, t: TFunction): string {
@@ -1498,11 +1496,30 @@ function DetectedShellMenuItem({
 }
 
 /**
+ * Hover for a profile row.
+ *
+ * Tracked on the row's plain wrapper View, never on a Pressable: a Pressable
+ * carries its own hover state machine and the ones nested inside the row would
+ * fight it (docs/hover.md, failure mode 1). Nothing is revealed and no geometry
+ * moves — the radio slot is a fixed width whether it draws a dot or not — so the
+ * flicker loops that doc describes cannot start.
+ *
+ * These events do not fire on native, which is the intent: hover is a pointer
+ * affordance and every control here is visible without it.
+ */
+function useRowHover() {
+  const [isHovered, setIsHovered] = useState(false);
+  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+  return { isHovered, handlePointerEnter, handlePointerLeave };
+}
+
+/**
  * The system shell as a first-class row.
  *
- * Without it the default marker could only ever move between profiles, so once a
- * profile was marked there was no way back to the plain shell. Making it a row
- * means exactly one row always carries the mark, and clearing is the same
+ * Without it the selection could only ever move between profiles, so once a
+ * profile was chosen there was no way back to the plain shell. Making it a row
+ * means exactly one row always carries the dot, and clearing is the same
  * gesture as choosing.
  */
 function SystemShellRow({
@@ -1518,10 +1535,13 @@ function SystemShellRow({
   const isCompact = useIsCompactFormFactor();
   const handleSetDefault = useCallback(() => onSetDefault(""), [onSetDefault]);
   const selectionState = useMemo(() => ({ selected: isDefault }), [isDefault]);
+  const { isHovered, handlePointerEnter, handlePointerLeave } = useRowHover();
 
   return (
     <View
       style={[settingsStyles.row, terminalProfileStyles.row]}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
       testID="terminal-profile-row-system-shell"
     >
       <Pressable
@@ -1551,7 +1571,11 @@ function SystemShellRow({
           }
           testID={isDefault ? "terminal-profile-default-system-shell" : undefined}
         >
-          {isDefault ? defaultProfileIcon : null}
+          <Radio
+            selected={isDefault}
+            preview={isHovered && !isDefault}
+            testID="terminal-profile-radio-system-shell"
+          />
         </View>
       </Pressable>
       <View style={terminalProfileStyles.rowActions}>
@@ -1623,9 +1647,15 @@ function TerminalProfileRow({
     () => (canSetDefault ? { selected: isDefault } : undefined),
     [canSetDefault, isDefault],
   );
+  const { isHovered, handlePointerEnter, handlePointerLeave } = useRowHover();
 
   return (
-    <View style={rowStyle} testID={`terminal-profile-row-${profile.id}`}>
+    <View
+      style={rowStyle}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
+      testID={`terminal-profile-row-${profile.id}`}
+    >
       <Pressable
         style={terminalProfileStyles.selectArea}
         onPress={canSetDefault ? handleSetDefault : undefined}
@@ -1663,7 +1693,11 @@ function TerminalProfileRow({
             }
             testID={isDefault ? `terminal-profile-default-${profile.id}` : undefined}
           >
-            {isDefault ? defaultProfileIcon : null}
+            <Radio
+              selected={isDefault}
+              preview={isHovered && !isDefault}
+              testID={`terminal-profile-radio-${profile.id}`}
+            />
           </View>
         ) : null}
       </Pressable>
@@ -2136,10 +2170,11 @@ const terminalProfileStyles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
-  // A fixed slot so the action rail sits on the same rung whether or not the
-  // row carries the default check.
+  // A fixed slot so the action rail sits on the same rung whether or not this is
+  // the selected row. Sized to the radio, which draws its ring either way, so
+  // nothing moves under the cursor (docs/hover.md, failure mode 2).
   defaultSlot: {
-    width: theme.iconSize.sm,
+    width: 18,
     alignItems: "center",
   },
   rowActions: {

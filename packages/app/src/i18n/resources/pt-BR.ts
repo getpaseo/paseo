@@ -2163,7 +2163,7 @@ export const ptBR: TranslationResources = {
         moreActions: "Mais ações",
         systemShell: "Shell do sistema",
         systemShellUnknown: "Resolvido pelo host",
-        defaultHint: "Selecione uma linha para escolher o que um novo terminal abre.",
+        defaultHint: "Selecione uma linha para escolher o que um novo terminal abre por padrão.",
         save: "Salvar",
         emptyState:
           "Nenhum perfil ainda. Adicione um para abrir terminais com um comando específico.",

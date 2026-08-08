@@ -22,6 +22,7 @@ const { theme, hostState, configState, patchConfigMock, confirmDialogMock } = vi
     fontSize: { xs: 11, sm: 13, base: 15 },
     fontWeight: { normal: "400", medium: "500" },
     borderRadius: { md: 6, lg: 8, full: 9999 },
+    borderWidth: { 1: 1 },
     opacity: { 50: 0.5 },
     colors: {
       surface1: "#111",
@@ -58,14 +59,23 @@ vi.mock("react-native", () => ({
     children,
     testID,
     accessibilityLabel,
+    onPointerEnter,
+    onPointerLeave,
   }: {
     children?: React.ReactNode;
     testID?: string;
     accessibilityLabel?: string;
+    onPointerEnter?: () => void;
+    onPointerLeave?: () => void;
   }) =>
     React.createElement(
       "div",
-      { "data-testid": testID, "aria-label": accessibilityLabel },
+      {
+        "data-testid": testID,
+        "aria-label": accessibilityLabel,
+        onMouseEnter: onPointerEnter,
+        onMouseLeave: onPointerLeave,
+      },
       children,
     ),
   Text: ({ children }: { children?: React.ReactNode }) =>
@@ -488,6 +498,24 @@ describe("HostTerminalsPage terminal profiles", () => {
 
     expect(patchConfigMock).toHaveBeenCalledTimes(1);
     expect(patchConfigMock).toHaveBeenCalledWith({ defaultTerminalProfileId: "claude" });
+  });
+
+  // The radio ring is always drawn; only the dot changes. Hovering previews the
+  // dot the row would gain so the list reads as pressable before you press it.
+  it("previews the dot on the hovered row without claiming it is selected", async () => {
+    render();
+
+    expect(find("terminal-profile-radio-claude-dot")).toBeNull();
+
+    const row = find("terminal-profile-row-claude");
+    await act(async () => {
+      row?.dispatchEvent(new window.MouseEvent("mouseover", { bubbles: true }));
+    });
+
+    expect(find("terminal-profile-radio-claude-dot")).not.toBeNull();
+    // Previewing is not selecting: the row still reports unselected and nothing saved.
+    expect(find("terminal-profile-select-claude")?.getAttribute("aria-selected")).toBe("false");
+    expect(patchConfigMock).not.toHaveBeenCalled();
   });
 
   it("clears the default in the same patch that removes its profile", async () => {
