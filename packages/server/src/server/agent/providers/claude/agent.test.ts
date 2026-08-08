@@ -6,6 +6,7 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import * as executableUtils from "../../../../executable-resolution/executable-resolution.js";
+import { buildAgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
 import {
   ClaudeAgentClient,
   convertClaudeHistoryEntry,
@@ -2648,5 +2649,118 @@ describe("toClaudeSdkMcpConfig", () => {
     });
     expect(result.type).toBe("stdio");
     expect(result.alwaysLoad).toBeUndefined();
+  });
+});
+
+describe("Claude question permission notifications", () => {
+  // Regression for #2612: the attention notification serialized the raw
+  // AskUserQuestion input, so both the iOS push and the desktop app showed
+  // JSON instead of the question.
+  async function requestPermission(
+    toolName: string,
+    input: Record<string, unknown>,
+  ): Promise<Extract<AgentStreamEvent, { type: "permission_requested" }>["request"]> {
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      const internal = session as unknown as {
+        handlePermissionRequest: (
+          toolName: string,
+          input: Record<string, unknown>,
+          options: Record<string, unknown>,
+        ) => Promise<unknown>;
+      };
+      void internal.handlePermissionRequest(toolName, input, {}).catch(() => undefined);
+
+      const requested = events.find(
+        (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+          event.type === "permission_requested",
+      );
+      if (!requested) {
+        throw new Error(`no permission was requested for ${toolName}`);
+      }
+      return requested.request;
+    } finally {
+      await session.close();
+    }
+  }
+
+  test("renders the notification as the question and its options", async () => {
+    const request = await requestPermission("AskUserQuestion", {
+      questions: [
+        {
+          question: "Which library should we use?",
+          header: "Library",
+          options: [{ label: "date-fns" }, { label: "Luxon" }],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    const payload = buildAgentAttentionNotificationPayload({
+      reason: "permission",
+      serverId: "srv-2612",
+      workspaceId: "workspace-2612",
+      agentId: "agent-2612",
+      permissionRequest: request,
+    });
+
+    expect(payload.body).toBe("Which library should we use? - date-fns / Luxon");
+    expect(payload.body).not.toContain('"questions"');
+  });
+
+  test("keeps the full question payload for the permission UI", async () => {
+    const request = await requestPermission("AskUserQuestion", {
+      questions: [
+        {
+          question: "Which library should we use?",
+          header: "Library",
+          options: [{ label: "date-fns" }, { label: "Luxon" }],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    expect(request.input).toEqual(
+      normalizeClaudeAskUserQuestionRequestInput("AskUserQuestion", {
+        questions: [
+          {
+            question: "Which library should we use?",
+            header: "Library",
+            options: [{ label: "date-fns" }, { label: "Luxon" }],
+            multiSelect: false,
+          },
+        ],
+      }),
+    );
+  });
+
+  test("falls back to the question alone when it has no options", async () => {
+    const request = await requestPermission("AskUserQuestion", {
+      questions: [{ question: "Ready to deploy?", header: "Deploy", options: [] }],
+    });
+
+    const payload = buildAgentAttentionNotificationPayload({
+      reason: "permission",
+      serverId: "srv-2612",
+      workspaceId: "workspace-2612",
+      agentId: "agent-2612",
+      permissionRequest: request,
+    });
+
+    expect(payload.body).toBe("Ready to deploy?");
+  });
+
+  test("leaves other tools unsummarised", async () => {
+    const request = await requestPermission("Bash", { command: "ls" });
+
+    expect(request.title).toBeUndefined();
+    expect(request.description).toBeUndefined();
   });
 });
