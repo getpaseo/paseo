@@ -39,6 +39,7 @@ const { theme, hostState, configState, patchConfigMock, confirmDialogMock } = vi
     supportsDefaultProfile: true,
     shells: [] as Array<{ id: string; path: string }>,
     systemShellPath: "C:\\Windows\\System32\\cmd.exe",
+    isCompact: false,
   },
   configState: {
     config: null as MutableDaemonConfig | null,
@@ -100,6 +101,7 @@ vi.mock("lucide-react-native", () => {
     CircleCheck: icon("CircleCheck"),
     Globe: icon("Globe"),
     Monitor: icon("Monitor"),
+    MoreVertical: icon("MoreVertical"),
     Pencil: icon("Pencil"),
     Plus: icon("Plus"),
     RotateCw: icon("RotateCw"),
@@ -261,6 +263,9 @@ vi.mock("@/desktop/daemon/desktop-daemon", () => ({
 }));
 vi.mock("@/desktop/updates/desktop-updates", () => ({ isVersionMismatch: () => false }));
 vi.mock("@/constants/platform", () => ({ getIsElectron: () => false }));
+vi.mock("@/constants/layout", () => ({
+  useIsCompactFormFactor: () => hostState.isCompact,
+}));
 vi.mock("@/hooks/use-is-local-daemon", () => ({ useIsLocalDaemon: () => false }));
 
 vi.mock("@/hooks/use-daemon-config", () => ({
@@ -339,6 +344,7 @@ describe("HostTerminalsPage terminal profiles", () => {
 
     hostState.supportsDefaultProfile = true;
     hostState.shells = [];
+    hostState.isCompact = false;
     configState.config = makeConfig();
     patchConfigMock.mockReset();
     patchConfigMock.mockResolvedValue(undefined);
@@ -411,6 +417,31 @@ describe("HostTerminalsPage terminal profiles", () => {
     render();
 
     expect(find("terminal-profile-row-system-shell")).toBeNull();
+  });
+
+  // Five inline actions leave ~110px for the name and command on a phone, which
+  // truncates both to nothing. The four secondary ones move behind a kebab and
+  // only "set as default" — the point of the card — stays on the row.
+  it("collapses the secondary row actions behind a kebab on a compact screen", () => {
+    hostState.isCompact = true;
+
+    render();
+
+    expect(find("terminal-profile-kebab-claude")).not.toBeNull();
+    expect(find("terminal-profile-set-default-claude")).not.toBeNull();
+    for (const action of ["move-up", "move-down", "edit", "remove"]) {
+      expect(find(`terminal-profile-${action}-claude`)).toBeNull();
+      expect(find(`terminal-profile-menu-${action}-claude`)).not.toBeNull();
+    }
+  });
+
+  it("keeps every row action inline on a wide screen", () => {
+    render();
+
+    expect(find("terminal-profile-kebab-claude")).toBeNull();
+    for (const action of ["move-up", "move-down", "edit", "remove"]) {
+      expect(find(`terminal-profile-${action}-claude`)).not.toBeNull();
+    }
   });
 
   it("marks only the profile the host opens by default", () => {

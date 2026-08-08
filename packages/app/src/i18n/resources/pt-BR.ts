@@ -2160,6 +2160,7 @@ export const ptBR: TranslationResources = {
         moveDown: "Mover para baixo",
         setAsDefault: "Definir como padrão",
         defaultMarker: "Perfil padrão",
+        moreActions: "Mais ações",
         systemShell: "Shell do sistema",
         systemShellUnknown: "Resolvido pelo host",
         defaultHint: "Um novo terminal abre a linha marcada.",

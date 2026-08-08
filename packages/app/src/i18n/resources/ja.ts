@@ -2145,6 +2145,7 @@ export const ja: TranslationResources = {
         moveDown: "下に移動",
         setAsDefault: "デフォルトに設定",
         defaultMarker: "デフォルトのプロファイル",
+        moreActions: "その他の操作",
         systemShell: "システムシェル",
         systemShellUnknown: "ホストが解決します",
         defaultHint: "新しいターミナルは、マークされた行を開きます。",

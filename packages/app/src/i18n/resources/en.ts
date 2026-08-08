@@ -2137,6 +2137,7 @@ export const en = {
         moveDown: "Move down",
         setAsDefault: "Set as default",
         defaultMarker: "Default profile",
+        moreActions: "More actions",
         systemShell: "System shell",
         systemShellUnknown: "Resolved by the host",
         defaultHint: "New terminal opens the marked row.",

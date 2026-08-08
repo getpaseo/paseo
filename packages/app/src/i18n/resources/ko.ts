@@ -2138,6 +2138,7 @@ export const ko: TranslationResources = {
         moveDown: "아래로 이동",
         setAsDefault: "기본값으로 설정",
         defaultMarker: "기본 프로필",
+        moreActions: "추가 작업",
         systemShell: "시스템 셸",
         systemShellUnknown: "호스트가 결정합니다",
         defaultHint: "새 터미널은 표시된 항목을 엽니다.",

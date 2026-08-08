@@ -7,6 +7,7 @@ import {
   CircleCheck,
   Globe,
   Monitor,
+  MoreVertical,
   Pencil,
   Plus,
   RotateCw,
@@ -40,6 +41,7 @@ import {
   ProfileDraft,
   TerminalProfileEditModal,
 } from "@/screens/settings/terminal-profile-edit-modal";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { getIsElectron } from "@/constants/platform";
 import { useFetchQuery } from "@/data/query";
 import {
@@ -91,6 +93,7 @@ const ThemedProfileSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedPlus = withUnistyles(Plus);
 const ThemedCheck = withUnistyles(Check);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
+const ThemedMoreVertical = withUnistyles(MoreVertical);
 
 interface DynamicProviderIconProps {
   iconKey: string;
@@ -115,6 +118,7 @@ const removeProfileIcon = <ThemedTrash2 size={ICON_SIZE.sm} uniProps={destructiv
 const addProfileIcon = <ThemedPlus size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 const defaultProfileIcon = <ThemedCheck size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 const setDefaultIcon = <ThemedCircleCheck size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
+const kebabIcon = <ThemedMoreVertical size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 
 function formatHostConnectionLabel(connection: HostConnection, t: TFunction): string {
   if (connection.type === "relay") {
@@ -1514,6 +1518,7 @@ function SystemShellRow({
   onSetDefault: (id: string) => void;
 }) {
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
   const handleSetDefault = useCallback(() => onSetDefault(""), [onSetDefault]);
 
   return (
@@ -1552,10 +1557,12 @@ function SystemShellRow({
           accessibilityLabel={t("settings.host.terminalProfiles.setAsDefault")}
           testID="terminal-profile-set-default-system-shell"
         />
-        <View style={terminalProfileStyles.rowActionSpacer} />
-        <View style={terminalProfileStyles.rowActionSpacer} />
-        <View style={terminalProfileStyles.rowActionSpacer} />
-        <View style={terminalProfileStyles.rowActionSpacer} />
+        {/* One spacer per action a profile row has and this row does not, so the
+            rail lands on the same rung. Compact collapses those four into one
+            kebab, so one spacer covers it. */}
+        {Array.from({ length: isCompact ? 1 : 4 }, (_unused, index) => (
+          <View key={index} style={terminalProfileStyles.rowActionSpacer} />
+        ))}
       </View>
     </View>
   );
@@ -1595,6 +1602,7 @@ function TerminalProfileRow({
   onSetDefault,
 }: TerminalProfileRowProps) {
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
 
   const handleEdit = useCallback(() => onEdit(profile.id), [onEdit, profile.id]);
   const handleRemove = useCallback(() => onRemove(profile.id), [onRemove, profile.id]);
@@ -1659,40 +1667,84 @@ function TerminalProfileRow({
             testID={`terminal-profile-set-default-${profile.id}`}
           />
         ) : null}
-        <Button
-          variant="ghost"
-          size="sm"
-          leftIcon={moveUpIcon}
-          onPress={handleMoveUp}
-          disabled={isFirst}
-          accessibilityLabel={t("settings.host.terminalProfiles.moveUp")}
-          testID={`terminal-profile-move-up-${profile.id}`}
-        />
-        <Button
-          variant="ghost"
-          size="sm"
-          leftIcon={moveDownIcon}
-          onPress={handleMoveDown}
-          disabled={isLast}
-          accessibilityLabel={t("settings.host.terminalProfiles.moveDown")}
-          testID={`terminal-profile-move-down-${profile.id}`}
-        />
-        <Button
-          variant="ghost"
-          size="sm"
-          leftIcon={editProfileIcon}
-          onPress={handleEdit}
-          accessibilityLabel={t("settings.host.terminalProfiles.editProfile")}
-          testID={`terminal-profile-edit-${profile.id}`}
-        />
-        <Button
-          variant="ghost"
-          size="sm"
-          leftIcon={removeProfileIcon}
-          onPress={handleRemove}
-          accessibilityLabel={t("settings.host.terminalProfiles.remove")}
-          testID={`terminal-profile-remove-${profile.id}`}
-        />
+        {isCompact ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              accessibilityRole="button"
+              accessibilityLabel={t("settings.host.terminalProfiles.moreActions")}
+              style={terminalProfileStyles.kebabTrigger}
+              testID={`terminal-profile-kebab-${profile.id}`}
+            >
+              {kebabIcon}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" width={200}>
+              <DropdownMenuItem
+                onSelect={handleMoveUp}
+                disabled={isFirst}
+                testID={`terminal-profile-menu-move-up-${profile.id}`}
+              >
+                {t("settings.host.terminalProfiles.moveUp")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={handleMoveDown}
+                disabled={isLast}
+                testID={`terminal-profile-menu-move-down-${profile.id}`}
+              >
+                {t("settings.host.terminalProfiles.moveDown")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={handleEdit}
+                testID={`terminal-profile-menu-edit-${profile.id}`}
+              >
+                {t("settings.host.terminalProfiles.editProfile")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={handleRemove}
+                destructive
+                testID={`terminal-profile-menu-remove-${profile.id}`}
+              >
+                {t("settings.host.terminalProfiles.remove")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={moveUpIcon}
+              onPress={handleMoveUp}
+              disabled={isFirst}
+              accessibilityLabel={t("settings.host.terminalProfiles.moveUp")}
+              testID={`terminal-profile-move-up-${profile.id}`}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={moveDownIcon}
+              onPress={handleMoveDown}
+              disabled={isLast}
+              accessibilityLabel={t("settings.host.terminalProfiles.moveDown")}
+              testID={`terminal-profile-move-down-${profile.id}`}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={editProfileIcon}
+              onPress={handleEdit}
+              accessibilityLabel={t("settings.host.terminalProfiles.editProfile")}
+              testID={`terminal-profile-edit-${profile.id}`}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={removeProfileIcon}
+              onPress={handleRemove}
+              accessibilityLabel={t("settings.host.terminalProfiles.remove")}
+              testID={`terminal-profile-remove-${profile.id}`}
+            />
+          </>
+        )}
       </View>
     </View>
   );
@@ -2109,6 +2161,14 @@ const terminalProfileStyles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     padding: theme.spacing[1],
     borderRadius: theme.borderRadius.md,
+  },
+  // Matches the footprint of the ghost sm Buttons it replaces on compact, so the
+  // rail keeps its rung whichever branch renders.
+  kebabTrigger: {
+    width: theme.iconSize.sm + theme.spacing[3] * 2 + 2,
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "stretch",
   },
   emptyCard: {
     padding: theme.spacing[4],
