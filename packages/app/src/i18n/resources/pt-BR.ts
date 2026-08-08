@@ -2158,7 +2158,6 @@ export const ptBR: TranslationResources = {
         removeConfirmMessage: 'Remover "{{name}}"?',
         moveUp: "Mover para cima",
         moveDown: "Mover para baixo",
-        setAsDefault: "Definir como padrão",
         defaultMarker: "Perfil padrão",
         moreActions: "Mais ações",
         systemShell: "Shell do sistema",

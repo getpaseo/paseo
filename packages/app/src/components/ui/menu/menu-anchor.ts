@@ -43,10 +43,13 @@ export function measureElement(element: View): Promise<Rect> {
  * edge clamping drags it back over the row that opened it. Flipping to the left is the only
  * placement that fits.
  *
- * This is decided once, from the trigger rect and the measured content, and those do not change
- * while a flyout is open. The hazard the caller-picks-a-side rule guarded against was re-deciding
- * mid-hover and moving the surface out from under a pointer travelling toward it; a stable
- * decision taken before the surface is placed cannot do that.
+ * The old rule was that only the caller may pick a side, because re-deciding mid-hover moves
+ * the surface out from under a pointer travelling toward it. That hazard is real and this does
+ * not fully remove it: `menu-overlay.tsx` recomputes whenever `onContentLayout` reports a new
+ * size, so a flyout whose content resizes while open can still flip under the cursor. What
+ * makes it safe in practice is that menu content is a fixed list measured once on open — if you
+ * add a flyout whose content grows after it opens, freeze the placement after the first
+ * measurement rather than relying on this.
  */
 function flipPlacement(input: {
   placement: Placement;

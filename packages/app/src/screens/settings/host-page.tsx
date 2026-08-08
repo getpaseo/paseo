@@ -64,6 +64,7 @@ import {
   useHostRuntimeSnapshot,
   useHosts,
 } from "@/runtime/host-runtime";
+import { useHostFeature } from "@/runtime/host-features";
 import { ProvidersSection } from "@/screens/settings/providers-section";
 import { ProviderUsageSettingsSection } from "@/provider-usage/settings-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
@@ -1483,11 +1484,11 @@ function DetectedShellMenuItem({
   onSelect: (shell: DetectedShell) => void;
 }) {
   const handleSelect = useCallback(() => onSelect(shell), [onSelect, shell]);
-  // No path here on purpose. A menu surface sizes to its content and side
-  // placements do not flip (menu-anchor.ts), so an absolute path as the
-  // description grew the flyout past the window edge and clamping then dropped it
-  // on top of the parent menu. The label is the decision; the path shows up in
-  // the row the moment the profile exists.
+  // No path here on purpose. A menu surface sizes to its content, so an absolute
+  // path as the description grew this flyout to ~580px — wide enough that on a
+  // narrow window neither side fits and flipping cannot help, leaving only edge
+  // clamping. The label is the decision; the path shows up in the row the moment
+  // the profile exists.
   return (
     <DropdownMenuItem onSelect={handleSelect} testID={`terminal-profiles-add-shell-${shell.id}`}>
       {TERMINAL_SHELL_LABELS[shell.id] ?? shell.id}
@@ -1790,12 +1791,10 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
   const client = useHostRuntimeClient(serverId);
-  // COMPAT(defaultTerminalProfile): hosts before v0.3.0 always open the system
+  // COMPAT(defaultTerminalProfile): hosts up to and including v0.3.0 always open the system
   // shell and have no shell listing, so both are hidden rather than shown and
   // silently ignored.
-  const canSetDefault = useSessionStore(
-    (state) => state.sessions[serverId]?.serverInfo?.features?.defaultTerminalProfile === true,
-  );
+  const canSetDefault = useHostFeature(serverId, "defaultTerminalProfile");
   const [editingProfile, setEditingProfile] = useState<{
     id: string;
     draft: ProfileDraft;
@@ -1819,6 +1818,12 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
     queryFn: async () => {
       if (!client) return { shells: [] as DetectedShell[], systemShellPath: "" };
       const payload = await client.listTerminalShells();
+      // The daemon reports a failed probe in the payload rather than rejecting.
+      // Swallowing it renders as "no shells installed", which is a different and
+      // wrong answer.
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
       return { shells: payload.shells, systemShellPath: payload.systemShellPath };
     },
     enabled: Boolean(client) && isConnected && canSetDefault,
@@ -2043,7 +2048,7 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
           align="end"
           minWidth={220}
           pages={shellPages}
-          sheetTitle={t("settings.host.terminalProfiles.sectionTitle")}
+          sheetTitle={t("settings.host.terminalProfiles.addProfileTitle")}
         >
           <DropdownMenuItem onSelect={handleAddOpen} testID="terminal-profiles-add-profile">
             {t("settings.host.terminalProfiles.addProfile")}

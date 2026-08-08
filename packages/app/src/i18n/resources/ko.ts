@@ -2136,7 +2136,6 @@ export const ko: TranslationResources = {
         removeConfirmMessage: '"{{name}}"을(를) 제거할까요?',
         moveUp: "위로 이동",
         moveDown: "아래로 이동",
-        setAsDefault: "기본값으로 설정",
         defaultMarker: "기본 프로필",
         moreActions: "추가 작업",
         systemShell: "시스템 셸",

@@ -41,6 +41,7 @@ const { theme, hostState, configState, patchConfigMock, confirmDialogMock } = vi
     shells: [] as Array<{ id: string; path: string }>,
     systemShellPath: "C:\\Windows\\System32\\cmd.exe",
     isCompact: false,
+    shellQueryRan: false,
   },
   configState: {
     config: null as MutableDaemonConfig | null,
@@ -148,7 +149,6 @@ vi.mock("react-i18next", () => ({
         "settings.host.terminalProfiles.addProfileTitle": "Add terminal profile",
         "settings.host.terminalProfiles.addProfile": "Add profile...",
         "settings.host.terminalProfiles.detectedShells": "Detected shells",
-        "settings.host.terminalProfiles.setAsDefault": "Set as default",
         "settings.host.terminalProfiles.defaultMarker": "Default profile",
         "settings.host.terminalProfiles.systemShell": "System shell",
         "settings.host.terminalProfiles.systemShellUnknown": "Resolved by the host",
@@ -235,15 +235,25 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
     description,
     onSelect,
     testID,
+    disabled,
   }: {
     children?: React.ReactNode;
     description?: string;
     onSelect?: () => void;
     testID?: string;
+    disabled?: boolean;
   }) =>
     React.createElement(
       "button",
-      { type: "button", "data-testid": testID, "data-description": description, onClick: onSelect },
+      {
+        type: "button",
+        "data-testid": testID,
+        "data-description": description,
+        disabled,
+        // Forwarded so a test can catch the first/last move entries losing their
+        // disabled state; a mock that always fires onSelect cannot.
+        onClick: disabled ? undefined : onSelect,
+      },
       children,
     ),
   DropdownMenuSubTrigger: ({
@@ -330,10 +340,16 @@ vi.mock("@/stores/session-store", () => ({
     }),
 }));
 
+// Honours `enabled`. The real query is gated on the host advertising the
+// capability, because a daemon that predates it has no handler for
+// terminal.shells.list at all — a mock that always returns data cannot fail when
+// that gate is dropped.
 vi.mock("@/data/query", () => ({
-  useFetchQuery: () => ({
-    data: { shells: hostState.shells, systemShellPath: hostState.systemShellPath },
-  }),
+  useFetchQuery: ({ enabled }: { enabled?: boolean }) => {
+    if (enabled === false) return { data: undefined };
+    hostState.shellQueryRan = true;
+    return { data: { shells: hostState.shells, systemShellPath: hostState.systemShellPath } };
+  },
 }));
 
 vi.mock("@/utils/confirm-dialog", () => ({ confirmDialog: confirmDialogMock }));
@@ -375,6 +391,7 @@ describe("HostTerminalsPage terminal profiles", () => {
     hostState.supportsDefaultProfile = true;
     hostState.shells = [];
     hostState.isCompact = false;
+    hostState.shellQueryRan = false;
     configState.config = makeConfig();
     patchConfigMock.mockReset();
     patchConfigMock.mockResolvedValue(undefined);
@@ -442,12 +459,15 @@ describe("HostTerminalsPage terminal profiles", () => {
     expect(patchConfigMock).toHaveBeenCalledWith({ defaultTerminalProfileId: "" });
   });
 
-  it("hides the system shell row on a host that cannot honor a default", () => {
+  // The gate is not cosmetic: a daemon predating the capability has no handler
+  // for terminal.shells.list, so the request must not be sent at all.
+  it("hides the system shell row and skips the shells RPC on a host that cannot honor a default", () => {
     hostState.supportsDefaultProfile = false;
 
     render();
 
     expect(find("terminal-profile-row-system-shell")).toBeNull();
+    expect(hostState.shellQueryRan).toBe(false);
   });
 
   // Five inline actions leave ~110px for the name and command on a phone, which
@@ -464,6 +484,12 @@ describe("HostTerminalsPage terminal profiles", () => {
       expect(find(`terminal-profile-${action}-claude`)).toBeNull();
       expect(find(`terminal-profile-menu-${action}-claude`)).not.toBeNull();
     }
+    // Claude is first, so its "move up" is inert. Pressing it must not save.
+    expect(find("terminal-profile-menu-move-up-claude")?.hasAttribute("disabled")).toBe(true);
+    find("terminal-profile-menu-move-up-claude")?.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true }),
+    );
+    expect(patchConfigMock).not.toHaveBeenCalled();
   });
 
   it("keeps every row action inline on a wide screen", () => {

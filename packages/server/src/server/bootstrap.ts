@@ -164,6 +164,7 @@ import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createConfiguredTerminalManager } from "../terminal/terminal-manager-factory.js";
 import { applyTerminalAgentHookSetting } from "../terminal/agent-hooks/terminal-agent-hook-setting.js";
+import { executableExists } from "../executable-resolution/executable-resolution.js";
 import { findTerminalShellBinary } from "../terminal/terminal-shell.js";
 import { resolveTerminalProfiles } from "@getpaseo/protocol/terminal-profiles";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
@@ -540,9 +541,14 @@ async function migrateTerminalShellSetting(paseoHome: string): Promise<TerminalP
     return null;
   }
 
+  // Both branches have to clear the same bar. `findTerminalShellBinary` already
+  // confirms a preset resolves to something on disk; a hand-typed custom path is
+  // the more likely one to be stale, so it gets the same check rather than being
+  // trusted verbatim.
   let command: string | null;
   if (shell === "custom") {
-    command = daemon.customTerminalShellPath?.trim() ?? null;
+    const configured = daemon.customTerminalShellPath?.trim();
+    command = configured ? executableExists(configured) : null;
   } else {
     command = await findTerminalShellBinary(shell);
   }

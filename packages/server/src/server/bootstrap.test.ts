@@ -80,7 +80,10 @@ test("reconciliation isolates workspace update failures between sessions", async
 // pointing at a real binary, without discarding the shipped profiles the user
 // never edited.
 test("migrates a persisted terminal shell into a default terminal profile", async () => {
-  const shellPath = path.join(tmpdir(), "pwsh.exe");
+  // A real file on disk: the migration is supposed to reject a path that is not
+  // there, so pointing at a name that never existed would assert the wrong thing.
+  const shellPath = path.join(mkdtempSync(path.join(tmpdir(), "paseo-shell-")), "pwsh.exe");
+  writeFileSync(shellPath, "");
   const paseoHome = seedPaseoHome({
     terminalShell: "custom",
     customTerminalShellPath: shellPath,
@@ -95,6 +98,22 @@ test("migrates a persisted terminal shell into a default terminal profile", asyn
     command: shellPath,
   });
   expect(mutable.terminalProfiles?.some((profile) => profile.id === "codex")).toBe(true);
+});
+
+// The same bar as an uninstalled preset. A hand-typed path is the more likely one
+// to be stale, and a default pointing at a missing binary breaks every new
+// terminal with no way to self-heal — the migration only runs while no default is
+// recorded.
+test("leaves no default when the persisted custom shell path is missing", async () => {
+  const paseoHome = seedPaseoHome({
+    terminalShell: "custom",
+    customTerminalShellPath: path.join(tmpdir(), "paseo-shell-that-never-existed.exe"),
+  });
+
+  const mutable = await createInitialMutableDaemonConfig(loadConfig(paseoHome, { env: {} }));
+
+  expect(mutable.defaultTerminalProfileId).toBe("");
+  expect(mutable.terminalProfiles).toBeUndefined();
 });
 
 // The migration runs at every start until a patch writes the result back, so a

@@ -3000,7 +3000,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceScriptManagement: z.boolean().optional(),
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: z.boolean().optional(),
-        // COMPAT(defaultTerminalProfile): added in v0.3.0, remove gate after 2027-08-08.
+        // COMPAT(defaultTerminalProfile): added in the first release after v0.3.0 (pin the
+        // real version on merge), remove gate after 2027-08-08.
         // The daemon opens a chosen profile for a plain new terminal; the client hides
         // the Host setting when the host cannot honor it.
         defaultTerminalProfile: z.boolean().optional(),

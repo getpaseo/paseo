@@ -1609,7 +1609,8 @@ export class VoiceAssistantWebSocketServer {
         workspaceScriptManagement: true,
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: true,
-        // COMPAT(defaultTerminalProfile): added in v0.3.0, remove gate after 2027-08-08.
+        // COMPAT(defaultTerminalProfile): added in the first release after v0.3.0 (pin the
+        // real version on merge), remove gate after 2027-08-08.
         defaultTerminalProfile: true,
       },
     };
