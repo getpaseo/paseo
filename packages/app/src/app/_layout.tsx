@@ -954,19 +954,17 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
 // context and need one shared provider for sibling sheets to stack.
 function RootProviders({ children }: { children: ReactNode }) {
   return (
-    <SafeAreaProvider>
-      <WindowChromeProvider>
-        <KeyboardProvider>
-          <KeyboardShiftProvider>
-            <ToastProvider>
-              <PortalProvider>
-                <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
-              </PortalProvider>
-            </ToastProvider>
-          </KeyboardShiftProvider>
-        </KeyboardProvider>
-      </WindowChromeProvider>
-    </SafeAreaProvider>
+    <WindowChromeProvider>
+      <KeyboardProvider>
+        <KeyboardShiftProvider>
+          <ToastProvider>
+            <PortalProvider>
+              <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
+            </PortalProvider>
+          </ToastProvider>
+        </KeyboardShiftProvider>
+      </KeyboardProvider>
+    </WindowChromeProvider>
   );
 }
 
@@ -998,9 +996,11 @@ export default function RootLayout() {
   return (
     <QueryProvider>
       <I18nProvider>
-        <RootErrorBoundary>
-          <RootAppTree />
-        </RootErrorBoundary>
+        <SafeAreaProvider>
+          <RootErrorBoundary>
+            <RootAppTree />
+          </RootErrorBoundary>
+        </SafeAreaProvider>
       </I18nProvider>
     </QueryProvider>
   );

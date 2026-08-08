@@ -1243,7 +1243,6 @@ export const ar: TranslationResources = {
     },
   },
   rootError: {
-    kicker: "حدث خطأ",
     title: "واجه Paseo مشكلة.",
     body: "جرّب مرة أخرى لإعادة تحميل التطبيق. إذا استمر حدوث ذلك، فأرفق التفاصيل أدناه عند الإبلاغ عنه.",
     details: "التفاصيل",
