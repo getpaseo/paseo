@@ -1202,6 +1202,7 @@ interface NewWorkspaceInitialContextState {
   openHostPicker: () => void;
   projects: HostProjectListItem[];
   routeProject: HostProjectListItem | null;
+  routeProjectContextViewKey: string | null;
   lastActiveProject: HostProjectListItem | null;
 }
 
@@ -1215,13 +1216,17 @@ function useNewWorkspaceInitialContext({
   const allServerIds = useMemo(() => allHosts.map((h) => h.serverId), [allHosts]);
   const projects = useHostProjects(allServerIds);
   const routeDisplayName = displayNameProp?.trim() ?? "";
+  const routePlacement = useMemo(
+    () =>
+      hostProjectFromRoute({
+        serverId,
+        projectId,
+        displayName: routeDisplayName,
+        sourceDirectory: sourceDirectoryProp,
+      }),
+    [projectId, routeDisplayName, serverId, sourceDirectoryProp],
+  );
   const routeProject = useMemo(() => {
-    const routePlacement = hostProjectFromRoute({
-      serverId,
-      projectId,
-      displayName: routeDisplayName,
-      sourceDirectory: sourceDirectoryProp,
-    });
     if (!routePlacement) return null;
     return (
       resolveHostProjectCandidate({
@@ -1230,7 +1235,7 @@ function useNewWorkspaceInitialContext({
         serverId,
       }) ?? routePlacement
     );
-  }, [projectId, projects, routeDisplayName, serverId, sourceDirectoryProp]);
+  }, [projects, routePlacement, serverId]);
   const lastWorkspaceSelection = useLastWorkspaceSelection();
   const lastWorkspaceServerId = useMemo(
     () =>
@@ -1274,6 +1279,7 @@ function useNewWorkspaceInitialContext({
     openHostPicker,
     projects,
     routeProject,
+    routeProjectContextViewKey: routePlacement?.viewKey ?? null,
     lastActiveProject,
   };
 }
@@ -1553,6 +1559,7 @@ export function NewWorkspaceScreen({
     openHostPicker,
     projects,
     routeProject,
+    routeProjectContextViewKey,
     lastActiveProject,
   } = useNewWorkspaceInitialContext({
     serverId,
@@ -1633,6 +1640,7 @@ export function NewWorkspaceScreen({
     selectedServerId,
     projects,
     routeProject,
+    routeProjectContextViewKey,
     lastActiveProject,
     allowAllProjects: supportsWorkspaceMultiplicity,
   });
