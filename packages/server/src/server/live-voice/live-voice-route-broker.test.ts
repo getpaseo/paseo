@@ -8,11 +8,12 @@ import { LiveVoiceRouteBroker } from "./live-voice-route-broker.js";
 const HOST_AGENT_ID = "voice-host-1";
 const LIVE_SESSION_ID = "live-session-1";
 
-function createHarness(options: { timeoutMs?: number } = {}) {
+function createHarness(options: { timeoutMs?: number; circuitCooldownMs?: number } = {}) {
   const sourceKey = {};
   const requests: VoiceLiveRouteRequest[] = [];
   const broker = new LiveVoiceRouteBroker({
     defaultTimeoutMs: options.timeoutMs ?? 100,
+    circuitCooldownMs: options.circuitCooldownMs ?? 30_000,
     createRequestId: () => "route-request-1",
   });
   const unregister = broker.register({
@@ -180,7 +181,12 @@ describe("LiveVoiceRouteBroker", () => {
 
   it("reports each routed operation to the observer without letting it interfere", async () => {
     const sourceKey = {};
-    const observations: Array<{ phase: string; requestId: string; ok?: boolean }> = [];
+    const observations: Array<{
+      phase: string;
+      requestId: string;
+      ok?: boolean;
+      errorCode?: string;
+    }> = [];
     const broker = new LiveVoiceRouteBroker({
       defaultTimeoutMs: 100,
       createRequestId: () => "route-request-1",
@@ -195,6 +201,7 @@ describe("LiveVoiceRouteBroker", () => {
           phase: observation.phase,
           requestId: observation.requestId,
           ...(observation.ok === undefined ? {} : { ok: observation.ok }),
+          ...(observation.errorCode === undefined ? {} : { errorCode: observation.errorCode }),
         });
         // A throwing observer must never disturb routing.
         throw new Error("diagnostics blew up");
@@ -216,7 +223,7 @@ describe("LiveVoiceRouteBroker", () => {
 
   it("reports a failed routed operation as not ok", async () => {
     const sourceKey = {};
-    const observations: Array<{ phase: string; ok?: boolean }> = [];
+    const observations: Array<{ phase: string; ok?: boolean; errorCode?: string }> = [];
     const broker = new LiveVoiceRouteBroker({
       defaultTimeoutMs: 100,
       createRequestId: () => "route-request-1",
@@ -230,6 +237,7 @@ describe("LiveVoiceRouteBroker", () => {
         observations.push({
           phase: observation.phase,
           ...(observation.ok === undefined ? {} : { ok: observation.ok }),
+          ...(observation.errorCode === undefined ? {} : { errorCode: observation.errorCode }),
         }),
     });
 
@@ -249,7 +257,10 @@ describe("LiveVoiceRouteBroker", () => {
 
     await expect(resultPromise).rejects.toThrow("offline");
     await Promise.resolve();
-    expect(observations).toEqual([{ phase: "start" }, { phase: "end", ok: false }]);
+    expect(observations).toEqual([
+      { phase: "start" },
+      { phase: "end", ok: false, errorCode: "host_offline" },
+    ]);
   });
 
   it("times out without accepting a later response", async () => {
@@ -265,6 +276,29 @@ describe("LiveVoiceRouteBroker", () => {
     await rejection;
     expect(broker.getPendingRequestCount()).toBe(0);
     expect(broker.receiveResponse(hostsResponse("route-request-1"), sourceKey)).toBe(false);
+  });
+
+  it("fails repeated routing immediately after the owning app stops responding", async () => {
+    vi.useFakeTimers();
+    const { broker, requests } = createHarness({ timeoutMs: 10, circuitCooldownMs: 30_000 });
+    const first = broker.execute(HOST_AGENT_ID, { kind: "list_hosts" });
+    const firstRejection = expect(first).rejects.toThrow(
+      "Timed out waiting for the owning client to route this request.",
+    );
+
+    await vi.advanceTimersByTimeAsync(11);
+    await firstRejection;
+    await expect(broker.execute(HOST_AGENT_ID, { kind: "list_hosts" })).rejects.toMatchObject({
+      name: "LiveVoiceRoutedRequestError",
+      code: "router_unavailable",
+      retryable: false,
+    });
+    expect(requests).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    const probe = broker.execute(HOST_AGENT_ID, { kind: "list_hosts" });
+    expect(requests).toHaveLength(2);
+    probe.catch(() => undefined);
   });
 
   it("removes a pending request when sending to the owner fails", async () => {

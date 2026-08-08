@@ -82,11 +82,15 @@ export async function startLiveVoiceSession(
   }
 
   function handleConnectionStateChange(): void {
-    handleConnectionState(pc?.connectionState ?? "closed");
+    const state = pc?.connectionState ?? "closed";
+    console.info("[LiveVoice] WebRTC connection state", state);
+    handleConnectionState(state);
   }
 
   function handleIceConnectionStateChange(): void {
-    handleConnectionState(pc?.iceConnectionState ?? "closed");
+    const state = pc?.iceConnectionState ?? "closed";
+    console.info("[LiveVoice] WebRTC ICE state", state);
+    handleConnectionState(state);
   }
 
   function cleanup(): void {
@@ -132,6 +136,7 @@ export async function startLiveVoiceSession(
       return;
     }
     terminalReported = true;
+    console.warn("[LiveVoice] Native session ended", { code, message });
     cleanup();
     options.onTerminal({ code, message });
   }

@@ -136,7 +136,7 @@ describe("find_workspace", () => {
             toolName: "list_workspaces",
             arguments: {},
           },
-          { timeoutMs: 30_000 },
+          { timeoutMs: 5_000 },
         ],
         [
           HOST_AGENT_ID,
@@ -146,7 +146,7 @@ describe("find_workspace", () => {
             toolName: "list_workspaces",
             arguments: {},
           },
-          { timeoutMs: 30_000 },
+          { timeoutMs: 5_000 },
         ],
       ],
     );

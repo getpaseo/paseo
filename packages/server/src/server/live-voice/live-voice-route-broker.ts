@@ -11,6 +11,7 @@ import {
 // tools wait for an agent turn, so this cannot use the short interactive RPC
 // timeout used by browser automation.
 const DEFAULT_ROUTE_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_ROUTE_CIRCUIT_COOLDOWN_MS = 30_000;
 
 type VoiceLiveRouteSuccessPayload = Extract<VoiceLiveRouteResponse["payload"], { ok: true }>;
 
@@ -48,6 +49,7 @@ export interface LiveVoiceRouteObservation {
   /** Set on `end`. */
   durationMs?: number;
   ok?: boolean;
+  errorCode?: string;
 }
 
 export interface LiveVoiceRouteRegistration {
@@ -61,11 +63,14 @@ export interface LiveVoiceRouteRegistration {
 
 export interface LiveVoiceRouteBrokerOptions {
   defaultTimeoutMs?: number;
+  circuitCooldownMs?: number;
   createRequestId?: () => string;
+  now?: () => number;
 }
 
 interface RegisteredLiveVoiceRoute extends LiveVoiceRouteRegistration {
   registrationId: number;
+  circuitOpenUntil: number;
 }
 
 interface PendingLiveVoiceRoute {
@@ -84,14 +89,18 @@ interface PendingLiveVoiceRoute {
  */
 export class LiveVoiceRouteBroker {
   private readonly defaultTimeoutMs: number;
+  private readonly circuitCooldownMs: number;
   private readonly createRequestId: () => string;
+  private readonly now: () => number;
   private readonly routesByHostAgentId = new Map<string, RegisteredLiveVoiceRoute>();
   private readonly pendingByRequestId = new Map<string, PendingLiveVoiceRoute>();
   private registrationSequence = 0;
 
   constructor(options: LiveVoiceRouteBrokerOptions = {}) {
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_ROUTE_TIMEOUT_MS;
+    this.circuitCooldownMs = options.circuitCooldownMs ?? DEFAULT_ROUTE_CIRCUIT_COOLDOWN_MS;
     this.createRequestId = options.createRequestId ?? randomUUID;
+    this.now = options.now ?? Date.now;
   }
 
   register(registration: LiveVoiceRouteRegistration): () => void {
@@ -103,6 +112,7 @@ export class LiveVoiceRouteBroker {
     const registered: RegisteredLiveVoiceRoute = {
       ...registration,
       registrationId: ++this.registrationSequence,
+      circuitOpenUntil: 0,
     };
     this.routesByHostAgentId.set(registration.hostAgentId, registered);
     return () => this.unregister(registration.hostAgentId, registered.registrationId);
@@ -121,6 +131,12 @@ export class LiveVoiceRouteBroker {
     if (!route) {
       throw new Error("This Live Voice call is no longer connected to its owning client.");
     }
+    if (route.circuitOpenUntil > this.now()) {
+      throw new LiveVoiceRoutedRequestError(
+        "The owning app is not responding to Live Voice routing. Try again after Paseo returns to the foreground.",
+        { code: "router_unavailable", retryable: false },
+      );
+    }
 
     const requestId = this.createUniqueRequestId();
     const parsedRequest = VoiceLiveRouteRequestSchema.safeParse({
@@ -135,7 +151,7 @@ export class LiveVoiceRouteBroker {
       );
     }
     this.observe(route, { phase: "start", requestId, operation });
-    const startedAt = Date.now();
+    const startedAt = this.now();
 
     const resultPromise = new Promise<LiveVoiceRouteResult>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -144,7 +160,13 @@ export class LiveVoiceRouteBroker {
           return;
         }
         this.pendingByRequestId.delete(requestId);
-        pending.reject(new Error("Timed out waiting for the owning client to route this request."));
+        route.circuitOpenUntil = this.now() + this.circuitCooldownMs;
+        pending.reject(
+          new LiveVoiceRoutedRequestError(
+            "Timed out waiting for the owning client to route this request.",
+            { code: "router_timeout", retryable: true },
+          ),
+        );
       }, options.timeoutMs ?? this.defaultTimeoutMs);
       timeout.unref?.();
       this.pendingByRequestId.set(requestId, {
@@ -166,16 +188,18 @@ export class LiveVoiceRouteBroker {
             phase: "end",
             requestId,
             operation,
-            durationMs: Date.now() - startedAt,
+            durationMs: this.now() - startedAt,
             ok: true,
           }),
-        () =>
+        (error) =>
           this.observe(route, {
             phase: "end",
             requestId,
             operation,
-            durationMs: Date.now() - startedAt,
+            durationMs: this.now() - startedAt,
             ok: false,
+            errorCode:
+              error instanceof LiveVoiceRoutedRequestError ? error.code : "router_request_failed",
           }),
       )
       .catch(() => undefined);
@@ -183,12 +207,14 @@ export class LiveVoiceRouteBroker {
     try {
       await route.send(parsedRequest.data);
     } catch (error) {
+      route.circuitOpenUntil = this.now() + this.circuitCooldownMs;
       this.rejectPending(
         requestId,
-        new Error(
+        new LiveVoiceRoutedRequestError(
           `Could not send the Live Voice route request: ${
             error instanceof Error ? error.message : String(error)
           }`,
+          { code: "router_send_failed", retryable: true },
         ),
       );
     }
@@ -225,6 +251,10 @@ export class LiveVoiceRouteBroker {
 
     this.pendingByRequestId.delete(payload.requestId);
     clearTimeout(pending.timeout);
+    const route = this.routesByHostAgentId.get(pending.hostAgentId);
+    if (route?.sourceKey === sourceKey && route.liveSessionId === pending.liveSessionId) {
+      route.circuitOpenUntil = 0;
+    }
     if (payload.ok) {
       pending.resolve(payload.result);
     } else {
@@ -262,7 +292,10 @@ export class LiveVoiceRouteBroker {
       if (pending.hostAgentId === hostAgentId) {
         this.rejectPending(
           requestId,
-          new Error("The Live Voice call closed before its routed request completed."),
+          new LiveVoiceRoutedRequestError(
+            "The Live Voice call closed before its routed request completed.",
+            { code: "route_closed", retryable: false },
+          ),
         );
       }
     }

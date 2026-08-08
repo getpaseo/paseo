@@ -12,6 +12,7 @@ import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
+import android.util.Log
 
 /**
  * Holds the foreground-service notification for an active Live Voice call.
@@ -35,6 +36,7 @@ internal class BackgroundCallService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        Log.i(LOG_TAG, "Foreground service created")
         createNotificationChannel()
     }
 
@@ -76,10 +78,17 @@ internal class BackgroundCallService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
         isForeground = true
+        Log.i(LOG_TAG, "Foreground service started")
         return START_NOT_STICKY
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Log.w(LOG_TAG, "App task removed while foreground service is active")
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
+        Log.i(LOG_TAG, "Foreground service destroyed")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -239,6 +248,7 @@ internal class BackgroundCallService : Service() {
     }
 
     internal companion object {
+        private const val LOG_TAG = "PaseoLiveVoice"
         /** Superseded by the v2 channel when the importance had to be raised. */
         const val LEGACY_NOTIFICATION_CHANNEL_ID = "paseo_live_voice_call"
         const val NOTIFICATION_CHANNEL_ID = "paseo_live_voice_call_v2"

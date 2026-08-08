@@ -50,6 +50,7 @@ export type LiveVoiceCloseCause =
   | "provider_closed"
   | "provider_exit"
   | "host_session_closed"
+  | "daemon_shutdown"
   | "start_failed";
 
 /**
@@ -67,6 +68,7 @@ const CAUSES_REQUIRING_PROVIDER_STOP: ReadonlySet<LiveVoiceCloseCause> = new Set
   "error",
   "start_failed",
   "host_session_closed",
+  "daemon_shutdown",
 ]);
 
 /** Mirrors the protocol's `VoiceLiveEventSchema` union. */
@@ -432,7 +434,7 @@ export class LiveVoiceCoordinator {
     this.unsubscribeAgentClosing();
     for (const call of Array.from(this.calls.values())) {
       // The daemon is going away and the host sessions with it.
-      this.close(call, "host_session_closed");
+      this.close(call, "daemon_shutdown");
     }
   }
 
@@ -604,6 +606,7 @@ export class LiveVoiceCoordinator {
         ...(targetServerId ? { targetServerId } : {}),
         durationMs: observation.durationMs,
         ok: observation.ok,
+        ...(observation.errorCode ? { errorCode: observation.errorCode } : {}),
       },
       "live_voice.timing.tool_end",
     );

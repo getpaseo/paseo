@@ -5387,7 +5387,7 @@ describe("Live Voice cross-host MCP tools", () => {
       1,
       "voice-host",
       { kind: "list_hosts" },
-      { timeoutMs: 30_000 },
+      { timeoutMs: 5_000 },
     );
     expect(execute).toHaveBeenNthCalledWith(2, "voice-host", {
       kind: "execute_tool",

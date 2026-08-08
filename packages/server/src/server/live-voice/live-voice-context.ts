@@ -182,6 +182,7 @@ const CROSS_HOST_REACH = [
   "- What the user feels is the number of calls you make, not how much each one does, because they wait through every one in silence. Prefer the call that answers the whole question: one that reads every machine beats five that each read one.",
   `- These reads go to every machine at once through run_paseo_tool_on_all_hosts: ${LIVE_VOICE_ALL_HOSTS_READ_TOOLS.join(", ")}. Everything else runs on one named machine through run_paseo_tool_on_host, so one sentence from the user can never change several machines at once.`,
   "- A result can name machines that have no answer, in two different ways. unavailableHosts could not be reached — say you could not see them. erroredHosts answered but that one read failed there — say what failed, and expect these when you fan out an id to find which machine owns it. Neither ever means the machine held nothing.",
+  "- If routing says the owning app is unavailable or must return to the foreground, tell the user once and do not retry. Resume Paseo work only after the user says the app is foregrounded again.",
 ];
 
 /**

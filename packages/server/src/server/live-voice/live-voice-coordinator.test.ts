@@ -593,6 +593,14 @@ describe("LiveVoiceCoordinator", () => {
 
     expect(harness.coordinator.hasActiveCall(first.liveSessionId)).toBe(false);
     expect(harness.coordinator.hasActiveCall(second.liveSessionId)).toBe(false);
+    expect(
+      harness.updates
+        .filter((update) => update.event.kind === "closed")
+        .map((update) => update.event),
+    ).toEqual([
+      { kind: "closed", cause: "daemon_shutdown" },
+      { kind: "closed", cause: "daemon_shutdown" },
+    ]);
     expect(harness.closedHostIds).toEqual(["host-1", "host-2"]);
   });
 

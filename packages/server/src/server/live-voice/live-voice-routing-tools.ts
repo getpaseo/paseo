@@ -28,7 +28,7 @@ import type {
  * sized for tools that wait on an agent turn; a host that goes quiet mid-search
  * would otherwise hold the whole call silent for ten minutes.
  */
-const DISCOVERY_TIMEOUT_MS = 30_000;
+const DISCOVERY_TIMEOUT_MS = 5_000;
 
 /**
  * Saved hosts change when the user edits them, not mid-sentence. Without this,
@@ -113,6 +113,10 @@ const UNREACHABLE_ROUTE_CODES = new Set([
   "agent_notifications_unsupported",
   "unauthorized_source_call",
   "target_request_failed",
+  "router_timeout",
+  "router_send_failed",
+  "router_unavailable",
+  "route_closed",
 ]);
 
 function isUnreachableFailure(error: unknown): boolean {

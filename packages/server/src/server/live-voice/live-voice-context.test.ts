@@ -162,6 +162,8 @@ describe("live voice prompt", () => {
     expect(prompt).toContain("erroredHosts");
     expect(prompt).toMatch(/answered but that one read failed/i);
     expect(prompt).toMatch(/Neither ever means the machine held nothing/i);
+    expect(prompt).toMatch(/owning app is unavailable/i);
+    expect(prompt).toMatch(/do not retry/i);
   });
 
   it("gives a local-only call the same tool names but no cross-host recipe", () => {
