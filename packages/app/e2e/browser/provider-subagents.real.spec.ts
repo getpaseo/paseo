@@ -34,7 +34,7 @@ const cases: ProviderSubagentCase[] = [
     provider: "codex",
     sentinel: "CODEX_CHILD_SENTINEL",
     expectedName: "Sentinel child",
-    providerConfig: { extra: { codex: { features: { multi_agent_v2: true } } } },
+    providerConfig: { providerOptions: { features: { multi_agent_v2: true } } },
     prompt:
       'Use the native collaboration.spawn_agent tool exactly once with task_name "sentinel_child" and fork_turns "none". Ask it to reply with exactly CODEX_CHILD_SENTINEL and do nothing else. Wait for it with collaboration.wait_agent, then reply ROOT_DONE. Do not use Paseo tools.',
   },

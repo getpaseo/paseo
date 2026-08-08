@@ -14,6 +14,7 @@ import { highlightToKeyedLines, type KeyedLine } from "@/utils/highlight-cache";
 import {
   markdownCopyCodeBlockDataSet,
   markdownCopyDataSet,
+  TRAILING_CODE_LINE_BREAKS,
 } from "@/assistant-selection-copy/markup";
 
 interface HighlightedCodeBlockProps {
@@ -82,7 +83,10 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
   const controlsVisible = isHovered || isNative || isCompact;
-  const getCode = useCallback(() => code, [code]);
+  // Copy the code without its trailing blank lines. A fence body ends in a newline,
+  // and ends in more than one when the author left a blank line before the closing
+  // fence; pasting any of them into a terminal runs the last line.
+  const getCode = useCallback(() => code.replace(TRAILING_CODE_LINE_BREAKS, ""), [code]);
 
   return (
     <View

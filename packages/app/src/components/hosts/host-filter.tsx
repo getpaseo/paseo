@@ -20,6 +20,7 @@ export interface HostFilterProps {
   selectedHost: string;
   onSelectHost: (serverId: string) => void;
   triggerTestID?: string;
+  hostOptionTestID?: (serverId: string) => string;
 }
 
 /**
@@ -32,6 +33,7 @@ export function HostFilter({
   selectedHost,
   onSelectHost,
   triggerTestID,
+  hostOptionTestID,
 }: HostFilterProps): ReactElement {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const filterAnchorRef = useRef<View>(null);
@@ -64,6 +66,7 @@ export function HostFilter({
       searchable={false}
       title="Filter by host"
       desktopPlacement="bottom-start"
+      hostOptionTestID={hostOptionTestID}
     >
       <View ref={filterAnchorRef} collapsable={false} style={styles.filterTriggerWrap}>
         <Pressable

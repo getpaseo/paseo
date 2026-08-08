@@ -46,7 +46,21 @@ describe("runPinnedTabTarget", () => {
     const { launches, handlers } = recordingHandlers();
     runPinnedTabTarget({ kind: "profile", profileId: "claude" }, PROFILES, handlers);
     expect(launches).toEqual([
-      { action: "profile", profile: { name: "Claude Code", command: "claude" } },
+      { action: "profile", profile: { name: "Claude Code", command: "claude", args: [] } },
+    ]);
+  });
+
+  it("launches a prompt-taking profile bare, never with the sentinel as a literal argument", () => {
+    const { launches, handlers } = recordingHandlers();
+    runPinnedTabTarget(
+      { kind: "profile", profileId: "codex" },
+      [{ id: "codex", name: "Codex", command: "codex", args: ["--yolo", "{{{prompt}}}"] }],
+      handlers,
+    );
+    // A pin has nowhere to type, so the prompt-only arg drops instead of
+    // reaching the CLI as the literal text `{{{prompt}}}`.
+    expect(launches).toEqual([
+      { action: "profile", profile: { name: "Codex", command: "codex", args: ["--yolo"] } },
     ]);
   });
 

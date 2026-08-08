@@ -12,6 +12,7 @@ import {
 } from "@/utils/project-status-badge-content";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { getStatusDotColor } from "@/utils/status-dot-color";
+import { STATUS_INDICATOR_ALERT_SIZE } from "@/utils/status-indicator-geometry";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 
 // Every surfaced status shares one badge shell, so the badge never changes size or position
@@ -26,11 +27,9 @@ const STATUS_BADGE_OFFSET = -4;
 // odd size measured 1.5 device px right and down at 3x, ~3px of asymmetry between opposite gaps).
 // Even sizes divide the shell into whole pixels and land dead center with no correction.
 //
-// Lucide's circle-alert paints ~83% of its nominal size, so an alert of 8 draws a ~6.6pt circle
-// against the 6pt dot — the two states read as the same-diameter disc. 8 is the closest even
-// size to the exact match (6 / 0.83 = 7.2); 6 would undershoot the dot rather than meet it.
+// The filled alert occupies the full badge shell so needs-input remains more prominent than
+// the passive status dots.
 const STATUS_BADGE_DOT_SIZE = 6;
-const STATUS_BADGE_ALERT_SIZE = 8;
 // Matches the workspace title's lineHeight (sidebar-workspace-row-content's
 // workspaceBranchText) so the icon centers on the title rather than floating above it.
 const LEADING_SLOT_HEIGHT = 20;
@@ -42,7 +41,8 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
 const needsInputColorMapping = (theme: Theme) => ({
-  color: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
+  color: theme.colors.surface0,
+  fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
 });
 
 /**
@@ -174,7 +174,7 @@ function ProjectStatusBadge({
       testID="project-status-badge"
     >
       {content.kind === "alert" ? (
-        <ThemedCircleAlert size={STATUS_BADGE_ALERT_SIZE} uniProps={needsInputColorMapping} />
+        <ThemedCircleAlert size={STATUS_INDICATOR_ALERT_SIZE} uniProps={needsInputColorMapping} />
       ) : (
         <ProjectStatusDot bucket={content.bucket} />
       )}

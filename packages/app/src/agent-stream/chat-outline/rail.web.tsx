@@ -12,7 +12,7 @@ import type { ChatOutlineRailProps } from "./rail";
 // magnifying a slot must not move the box the pointer is resting on. See docs/hover.md.
 const RAIL_WIDTH = 36;
 const SLOT_HEIGHT = 8;
-const MIN_PANEL_WIDTH = 818;
+const MIN_PANEL_WIDTH = 918;
 const RESTING_PILL_HEIGHT = 2;
 const MAGNIFIED_PILL_HEIGHT = 4;
 const RESTING_PILL_WIDTH = 10;

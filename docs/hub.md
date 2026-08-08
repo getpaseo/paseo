@@ -2,7 +2,9 @@
 
 Paseo Hub is an explicit opt-in connection from one Paseo daemon to one Hub. Running a daemon does
 not register it with a Hub. The relationship begins only when a user runs
-`paseo hub connect <url> --token <token>` from the daemon machine.
+`paseo hub connect [url]` from the daemon machine with an explicit API key or matching stored CLI login.
+
+The human CLI login and daemon relationship are separate identities. `paseo hub login [url]` stores a durable organization-scoped CLI credential keyed by normalized Hub origin under `PASEO_HOME`. Origin resolution uses explicit command input, `PASEO_HUB_URL`, active login, then `https://hub.paseo.sh`. Connect uses exact-origin authority to request a one-time enrollment token, then passes only that token to the daemon. The daemon generates and persists its own relationship credential.
 
 ## Connection and authority
 
@@ -45,11 +47,27 @@ replays the original prompt. A duplicate create returns the existing agent witho
 turn.
 
 Hub creates use the same agent creation path as trusted clients. They may select any existing
-worktree target shape and carry optional MCP server configuration for the agent session. The daemon
-keeps that configuration in its private agent record so provider sessions can recover after a
-restart; neither ordinary client snapshots and updates nor Hub projections expose session
-configuration. Execution completion policy remains outside the daemon: a completed agent turn does
-not imply that the Hub execution is terminal.
+worktree target shape and carry optional MCP server configuration and provider-native
+`providerOptions` for the agent session. The daemon keeps that configuration in its private agent
+record so provider sessions can recover after a restart; neither ordinary client snapshots and
+updates nor Hub projections expose session configuration. See [providers.md](providers.md) for the
+supported provider keys.
+
+Hub tool preapproval is a private, structured list of `{ kind: "mcp", server, tool }` references.
+Every reference must name an MCP server injected by the same create request. The daemon translates
+only those identities into the selected provider's native approval configuration. The protocol
+cannot name or preapprove native tools such as Bash, Edit, or Write. Explicit local or managed ask
+and deny policy takes precedence. Providers without exact MCP preapproval support reject unattended
+Hub creation instead of broadening access or waiting for an invisible prompt.
+When a create request includes a tool policy, a successful response includes
+`toolPolicyApplied: true`; absence of that acknowledgement is not success for unattended execution.
+
+A Hub workflow may use read-only provider settings for classifier steps. This is defense in depth,
+not a security boundary: classifier labels and prompt intent do not authorize tools. Exact MCP grants
+and the provider's local or managed policy remain the authorization controls.
+
+Execution completion policy remains outside the daemon: a completed agent turn does not imply that
+the Hub execution is terminal.
 
 The Hub ends an execution by sending `hub.execution.control.request` with the durable execution ID
 and either `interrupt` or `archive`. The daemon resolves the agent from the authenticated daemon
@@ -81,9 +99,13 @@ opening a Hub socket. This also covers an enrollment whose request may have succ
 response was lost. `--force` removes local authority immediately and warns that remote revocation may
 still be pending.
 
+`paseo hub logout` removes only the active human CLI credential and preserves credentials for other origins. Interactive logout inspects and optionally disconnects a same-origin daemon before deleting the login; a failed requested disconnect preserves the login. JSON and noninteractive logout never prompt or disconnect implicitly.
+
 ## Cross-repository compatibility
 
 The consumer implementation lives in Paseo Cloud. Cloud owns its copy of the Hub wire schemas and
 has no Paseo runtime or build dependency. Cross-repository end-to-end verification separately builds
 a Paseo source checkout and exercises the real daemon, CLI, direct WebSocket, Cloud service, and
 Postgres. That compatibility fixture is not a package dependency or fallback implementation.
+Its `hub-e2e` ACP provider accepts only exact tool names on the injected `hub` MCP server. Other
+custom ACP providers remain unsupported for unattended preapproval.
