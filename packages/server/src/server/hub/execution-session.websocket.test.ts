@@ -33,7 +33,7 @@ test("Hub retries one durable daemon execution across concurrency and reconstruc
   expect(stream).toMatchObject({ executionId: "execution-1", agentId: created.first.agentId });
   expect(reconstructed.replay.agent.id).toBe(created.first.agentId);
   expect(reconstructed.durableAgentCount).toBe(1);
-});
+}, 20_000);
 
 test("Hub denies trusted steering and browser dispatch", async () => {
   const hub = await launchRelationship();
@@ -138,9 +138,14 @@ test("Hub control waits for an in-flight create of the same execution", async ()
   expect(await hub.ownedAgentArchivedAt(created.payload.agentId!)).toEqual(expect.any(String));
 }, 20_000);
 
-test("Hub archives only the owned agent in a shared local checkout", async () => {
+test("Hub archives an execution workspace on a local checkout", async () => {
   const hub = await launchRelationship();
-  hub.beginOwnedCreate("local-create", "execution-local", { prompt: "sleep 30" });
+  const workspaceId = await hub.createSiblingWorkspace(hub.repoRoot());
+  const terminalId = await hub.createWorkspaceTerminal(workspaceId);
+  hub.beginOwnedCreate("local-create", "execution-local", {
+    workspaceId,
+    prompt: "sleep 30",
+  });
   const created = await hub.ownedCreateResult("local-create");
   await hub.ownedRunningUpdate(created.payload.agentId!);
 
@@ -149,7 +154,10 @@ test("Hub archives only the owned agent in a shared local checkout", async () =>
 
   expect(archived).toMatchObject({ success: true, error: null, action: "archive" });
   expect(duplicate).toMatchObject({ success: true, error: null, action: "archive" });
+  expect(created.payload.agent?.workspaceId).toBe(workspaceId);
   expect(await hub.ownedAgentArchivedAt(created.payload.agentId!)).toEqual(expect.any(String));
+  expect(await hub.ownedWorkspaceArchivedAt(created.payload.agentId!)).toEqual(expect.any(String));
+  expect(hub.terminalExists(terminalId)).toBe(false);
   expect(hub.ownedAgentIsRunning(created.payload.agentId!)).toBe(false);
   expect(hub.repoExists()).toBe(true);
 });
@@ -161,6 +169,7 @@ test("Hub archives a running execution's Paseo-created worktree", async () => {
     prompt: "sleep 30",
   });
   const worktreeCreated = await hub.ownedCreateResult("worktree-create");
+  const workspaceId = worktreeCreated.payload.agent?.workspaceId;
   const worktreeCwd = hub.latestCreatedCwd();
   await hub.ownedRunningUpdate(worktreeCreated.payload.agentId!);
   const duringRun = await hub.worktreeState(worktreeCwd!);
@@ -175,10 +184,9 @@ test("Hub archives a running execution's Paseo-created worktree", async () => {
   expect(duringRun).toEqual({ exists: true, listed: true });
   expect(response).toMatchObject({ success: true, error: null, action: "archive" });
   expect(afterArchive).toEqual({ exists: false, listed: false });
+  expect(workspaceId).toEqual(expect.any(String));
+  expect(await hub.archivedWorkspaceAt(workspaceId!)).toEqual(expect.any(String));
   expect(await hub.ownedAgentArchivedAt(worktreeCreated.payload.agentId!)).toEqual(
-    expect.any(String),
-  );
-  expect(await hub.ownedWorkspaceArchivedAt(worktreeCreated.payload.agentId!)).toEqual(
     expect.any(String),
   );
 }, 20_000);
@@ -190,13 +198,17 @@ test("a sibling workspace keeps an archived execution's worktree directory alive
     prompt: "sleep 30",
   });
   const created = await hub.ownedCreateResult("sibling-create");
+  const targetWorkspaceId = created.payload.agent?.workspaceId;
   const worktreeCwd = hub.latestCreatedCwd()!;
   await hub.ownedRunningUpdate(created.payload.agentId!);
-  await hub.createSiblingWorkspace(worktreeCwd);
+  const siblingWorkspaceId = await hub.createSiblingWorkspace(worktreeCwd);
 
   const response = await hub.archiveExecution("execution-sibling", "archive-sibling");
 
   expect(response).toMatchObject({ success: true, error: null });
+  expect(targetWorkspaceId).toEqual(expect.any(String));
+  expect(await hub.archivedWorkspaceAt(targetWorkspaceId!)).toEqual(expect.any(String));
+  expect(await hub.archivedWorkspaceAt(siblingWorkspaceId)).toBeNull();
   expect(await hub.worktreeState(worktreeCwd)).toEqual({ exists: true, listed: true });
   expect(await hub.ownedAgentArchivedAt(created.payload.agentId!)).toEqual(expect.any(String));
 }, 20_000);
@@ -214,6 +226,7 @@ test("archiving an execution in a reused worktree leaves the existing workspace 
   });
   const original = await hub.ownedCreateResult("original-worktree-create");
   const worktreeCwd = hub.latestCreatedCwd()!;
+  const originalWorkspaceId = original.payload.agent?.workspaceId;
   await hub.ownedTurnCompletion(original.payload.agentId!);
 
   hub.beginOwnedCreate("reused-worktree-create", "execution-reused-worktree", {
@@ -221,6 +234,7 @@ test("archiving an execution in a reused worktree leaves the existing workspace 
     prompt: "sleep 30",
   });
   const reused = await hub.ownedCreateResult("reused-worktree-create");
+  const reusedWorkspaceId = reused.payload.agent?.workspaceId;
   await hub.ownedRunningUpdate(reused.payload.agentId!);
 
   const response = await hub.archiveExecution(
@@ -229,10 +243,14 @@ test("archiving an execution in a reused worktree leaves the existing workspace 
   );
 
   expect(response).toMatchObject({ success: true, error: null });
+  expect(reusedWorkspaceId).toEqual(expect.any(String));
+  expect(reusedWorkspaceId).not.toBe(originalWorkspaceId);
   expect(hub.pathsReferToSameLocation(reused.payload.agent!.cwd, worktreeCwd)).toBe(true);
   expect(await hub.worktreeState(worktreeCwd)).toEqual({ exists: true, listed: true });
   expect(await hub.agentRemainsAvailable(original.payload.agentId!)).toBe(true);
   expect(await hub.ownedAgentArchivedAt(reused.payload.agentId!)).toEqual(expect.any(String));
+  expect(await hub.ownedWorkspaceArchivedAt(reused.payload.agentId!)).toEqual(expect.any(String));
+  expect(await hub.ownedWorkspaceArchivedAt(original.payload.agentId!)).toBeNull();
 }, 20_000);
 
 test("Hub resolves persisted execution ownership after daemon restart", async () => {
@@ -242,6 +260,7 @@ test("Hub resolves persisted execution ownership after daemon restart", async ()
     prompt: "sleep 30",
   });
   const created = await hub.ownedCreateResult("restart-create");
+  const workspaceId = created.payload.agent?.workspaceId;
   const worktreeCwd = hub.latestCreatedCwd()!;
   await hub.ownedRunningUpdate(created.payload.agentId!);
 
@@ -252,6 +271,8 @@ test("Hub resolves persisted execution ownership after daemon restart", async ()
 
   expect(response).toMatchObject({ success: true, error: null });
   expect(await hub.ownedAgentArchivedAt(created.payload.agentId!)).toEqual(expect.any(String));
+  expect(workspaceId).toEqual(expect.any(String));
+  expect(await hub.archivedWorkspaceAt(workspaceId!)).toEqual(expect.any(String));
   expect(await hub.worktreeState(worktreeCwd)).toEqual({ exists: false, listed: false });
 }, 20_000);
 

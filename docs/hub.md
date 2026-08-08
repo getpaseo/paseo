@@ -77,11 +77,11 @@ If no execution exists for that authenticated daemon and execution ID, interrupt
 success because the requested stopped or archived state already holds. An execution owned by another
 daemon is indistinguishable from a missing execution and is never exposed or affected.
 
-Interrupt uses the ordinary agent cancellation lifecycle. Archive first archives the owned agent.
-When that agent belongs to an active Paseo-owned worktree workspace, the daemon also archives the
-workspace through the shared workspace archive service, so the backing directory is removed only
-after its final active workspace reference disappears. Local and shared checkouts archive only the
-execution-owned agent.
+Interrupt uses the ordinary agent cancellation lifecycle. Archive resolves the execution agent's
+required workspaceId and sends it through the shared workspace archive service. The service archives
+that workspace's agents and terminals, then removes Paseo-owned backing directories only after their
+final active workspace reference disappears. Local checkouts remain on disk; sibling workspaces
+sharing a backing directory remain active.
 
 ## Disconnect and revocation
 

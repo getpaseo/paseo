@@ -11,7 +11,6 @@ import type { McpServerConfig } from "../agent/agent-sdk-types.js";
 import type { AgentStorage, StoredAgentRecord } from "../agent/agent-storage.js";
 import type { BoundCreateAgentCommand } from "../agent/create-agent/create.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../worktree-session.js";
-import type { ActiveWorkspaceRef } from "../workspace-archive-service.js";
 import { buildStoredAgentPayload } from "../agent/agent-projections.js";
 import { serializeAgentSnapshot, serializeAgentStreamEvent } from "../messages.js";
 import { daemonExecutionKey, type DaemonAgentOwner } from "../agent/agent-owner.js";
@@ -59,8 +58,6 @@ interface DaemonExecutionsOptions {
   agentStorage: AgentStorage;
   createAgent: BoundCreateAgentCommand;
   interruptAgent: (agentId: string) => Promise<unknown>;
-  archiveAgent: (agentId: string) => Promise<unknown>;
-  listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
   archiveWorkspace: (workspaceId: string, requestId: string) => Promise<unknown>;
   cleanupFailedCreate?: (input: {
     createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
@@ -176,6 +173,7 @@ export class DaemonExecutions implements HubExecutionAgents {
   ): Promise<OwnedAgentSnapshot> {
     const existing = await this.agentStorage.findByDaemonExecution(owner);
     if (existing) {
+      requireExecutionWorkspaceId(existing);
       this.requireAuthority(authorityGeneration);
       return this.resolveRecord(existing);
     }
@@ -214,15 +212,13 @@ export class DaemonExecutions implements HubExecutionAgents {
         owner,
         onWorktreeCreated: (worktree) => {
           createdWorktree = worktree;
-          if (worktree.created) {
-            owner.createdWorkspaceId = worktree.workspace.workspaceId;
-          }
         },
         onCreated: (created) => {
           createdAgentId = created.agentId;
         },
       });
       this.requireAuthority(authorityGeneration);
+      requireExecutionWorkspaceId(result.liveSnapshot);
     } catch (error) {
       try {
         if (createdAgentId && this.agentManager.getAgent(createdAgentId)) {
@@ -264,7 +260,7 @@ export class DaemonExecutions implements HubExecutionAgents {
     if (!record) {
       return;
     }
-    const storedOwner = this.requireOwner(record);
+    this.requireOwner(record);
 
     if (input.action === "interrupt") {
       if (!record.archivedAt && this.agentManager.getAgent(record.id)) {
@@ -273,23 +269,13 @@ export class DaemonExecutions implements HubExecutionAgents {
       return;
     }
 
-    const workspace = storedOwner.createdWorkspaceId
-      ? (await this.options.listActiveWorkspaces()).find(
-          (candidate) => candidate.workspaceId === storedOwner.createdWorkspaceId,
-        )
-      : undefined;
-
-    if (!record.archivedAt) {
-      this.requireAuthority(authorityGeneration, "execution control");
-      await this.options.archiveAgent(record.id);
-    }
-    if (workspace?.isPaseoOwnedWorktree) {
-      this.requireAuthority(authorityGeneration, "execution control");
-      await this.options.archiveWorkspace(workspace.workspaceId, input.requestId);
-    }
+    const workspaceId = requireExecutionWorkspaceId(record);
+    this.requireAuthority(authorityGeneration, "execution control");
+    await this.options.archiveWorkspace(workspaceId, input.requestId);
   }
 
   private resolveRecord(record: StoredAgentRecord): OwnedAgentSnapshot {
+    requireExecutionWorkspaceId(record);
     return this.projectRecord(record);
   }
 
@@ -389,6 +375,15 @@ function ownedCreatedWorktree(
   worktree: CreatePaseoWorktreeWorkflowResult | null,
 ): CreatePaseoWorktreeWorkflowResult | null {
   return worktree?.created === true ? worktree : null;
+}
+
+function requireExecutionWorkspaceId(
+  record: Pick<StoredAgentRecord, "id" | "workspaceId">,
+): string {
+  if (!record.workspaceId) {
+    throw new Error(`Hub execution agent ${record.id} has no workspaceId`);
+  }
+  return record.workspaceId;
 }
 
 function toCreateAgentWorktree(target: CreateAgentWorktreeTarget | undefined) {
