@@ -78,6 +78,7 @@ import {
   getWorktreeSupportForHostProject,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
+  resolveHostProjectCandidate,
   useHostProjects,
   type HostProjectListItem,
 } from "@/projects/host-projects";
@@ -1214,16 +1215,22 @@ function useNewWorkspaceInitialContext({
   const allServerIds = useMemo(() => allHosts.map((h) => h.serverId), [allHosts]);
   const projects = useHostProjects(allServerIds);
   const routeDisplayName = displayNameProp?.trim() ?? "";
-  const routeProject = useMemo(
-    () =>
-      hostProjectFromRoute({
+  const routeProject = useMemo(() => {
+    const routePlacement = hostProjectFromRoute({
+      serverId,
+      projectId,
+      displayName: routeDisplayName,
+      sourceDirectory: sourceDirectoryProp,
+    });
+    if (!routePlacement) return null;
+    return (
+      resolveHostProjectCandidate({
+        candidate: routePlacement,
+        projects,
         serverId,
-        projectId,
-        displayName: routeDisplayName,
-        sourceDirectory: sourceDirectoryProp,
-      }),
-    [projectId, routeDisplayName, serverId, sourceDirectoryProp],
-  );
+      }) ?? routePlacement
+    );
+  }, [projectId, projects, routeDisplayName, serverId, sourceDirectoryProp]);
   const lastWorkspaceSelection = useLastWorkspaceSelection();
   const lastWorkspaceServerId = useMemo(
     () =>
