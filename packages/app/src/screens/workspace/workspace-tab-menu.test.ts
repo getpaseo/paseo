@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildWorkspaceDesktopTabActions,
@@ -62,9 +63,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     const closeEditorTabsEntry = entries.find(
       (entry) => entry.kind === "item" && entry.key === "close-editor-tabs",
     );
-    if (!closeEditorTabsEntry || closeEditorTabsEntry.kind !== "item") {
-      throw new Error("Close editor tabs entry missing");
-    }
+    assert(closeEditorTabsEntry?.kind === "item", "Close editor tabs entry missing");
     expect(closeEditorTabsEntry.disabled).toBe(false);
     closeEditorTabsEntry.onSelect();
     expect(onCloseEditorTabs).toHaveBeenCalledTimes(1);
