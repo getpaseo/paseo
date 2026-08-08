@@ -484,7 +484,6 @@ function usePasteAttachmentsEffect(args: PasteAttachmentsEffectArgs): void {
       event.preventDefault();
 
       const restorePastedText = () => {
-        if (disposed) return;
         const restoredText = restoreFailedPastedText({
           currentText: getCurrentText(),
           initialText,

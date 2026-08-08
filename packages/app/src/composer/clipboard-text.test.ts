@@ -75,7 +75,7 @@ describe("pasted text attachments", () => {
     ).toBe("user typed while uploadingpasted");
   });
 
-  it("does not apply stale selection offsets after concurrent draft edits", () => {
+  it("preserves recovery text after a paste listener restart", () => {
     expect(
       restoreFailedPastedText({
         currentText: "before user edit selection after",
