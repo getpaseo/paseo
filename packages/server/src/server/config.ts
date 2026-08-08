@@ -534,6 +534,7 @@ export function loadConfig(
     appendSystemPrompt,
     terminalProfiles,
     agentProfiles,
+    plugins: persisted.plugins,
     mcpDebug: env.MCP_DEBUG === "1",
     isDev: resolvePaseoNodeEnv(env) === "development",
     agentStoragePath: path.join(paseoHome, "agents"),

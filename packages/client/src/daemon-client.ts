@@ -4722,6 +4722,32 @@ export class DaemonClient {
     });
   }
 
+  async getPluginCatalog(): Promise<Array<{ id: string; clientBundle: string }>> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "plugin.catalog.get.request", requestId },
+      responseType: "plugin.catalog.get.response",
+    });
+    return payload.plugins;
+  }
+
+  async invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "plugin.rpc.invoke.request",
+        requestId,
+        pluginId,
+        method,
+        input,
+      },
+      responseType: "plugin.rpc.invoke.response",
+    });
+    return payload.output;
+  }
+
   async respondToPermissionAndWait(
     agentId: string,
     requestId: string,

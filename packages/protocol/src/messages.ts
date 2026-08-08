@@ -173,6 +173,20 @@ const MutableRelayConfigSchema = z
     enabled: z.boolean(),
   })
   .passthrough();
+
+export const PluginIdSchema = z.string().regex(/^[a-z][a-z0-9-]*$/);
+
+export const DirectoryPluginSourceSchema = z
+  .object({
+    source: z.literal("directory"),
+    path: z.string().min(1),
+  })
+  .strict();
+
+export const PluginSourceSchema = z.discriminatedUnion("source", [DirectoryPluginSourceSchema]);
+
+export type PluginSource = z.infer<typeof PluginSourceSchema>;
+
 export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
@@ -190,6 +204,7 @@ export const MutableDaemonConfigSchema = z
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
+    plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
   })
   .passthrough();
 
@@ -208,6 +223,7 @@ export const MutableDaemonConfigPatchSchema = z
     appendSystemPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
+    plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
   })
   .partial()
   .passthrough();
@@ -1289,6 +1305,19 @@ export const HubManagementDaemonDisconnectRequestSchema = z.object({
 export const DiagnosticsRequestSchema = z.object({
   type: z.literal("diagnostics.request"),
   requestId: z.string(),
+});
+
+export const PluginCatalogGetRequestSchema = z.object({
+  type: z.literal("plugin.catalog.get.request"),
+  requestId: z.string(),
+});
+
+export const PluginRpcInvokeRequestSchema = z.object({
+  type: z.literal("plugin.rpc.invoke.request"),
+  requestId: z.string(),
+  pluginId: PluginIdSchema,
+  method: z.string().min(1),
+  input: z.unknown(),
 });
 
 export const GetDaemonConfigRequestMessageSchema = z.object({
@@ -2760,6 +2789,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HubManagementDaemonGetStatusRequestSchema,
   HubManagementDaemonDisconnectRequestSchema,
   DiagnosticsRequestSchema,
+  PluginCatalogGetRequestSchema,
+  PluginRpcInvokeRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
   ReadProjectConfigRequestMessageSchema,
@@ -3082,6 +3113,8 @@ export const ServerInfoStatusPayloadSchema = z
         relayConfig: z.boolean().optional(),
         // COMPAT(pushTokenRevocation): added in v0.3.2, remove gate after 2027-02-10.
         pushTokenRevocation: z.boolean().optional(),
+        // COMPAT(plugins): added in v0.3.0, remove gate after 2027-08-07.
+        plugins: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": z.boolean().optional(),
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
@@ -5707,6 +5740,27 @@ export function parseHubExecutionOutboundMessage(value: unknown): HubExecutionOu
 
 export type DaemonUpdateProgressMessage = z.infer<typeof DaemonUpdateProgressMessageSchema>;
 
+export const PluginCatalogGetResponseSchema = z.object({
+  type: z.literal("plugin.catalog.get.response"),
+  payload: z.object({
+    requestId: z.string(),
+    plugins: z.array(
+      z.object({
+        id: PluginIdSchema,
+        clientBundle: z.string(),
+      }),
+    ),
+  }),
+});
+
+export const PluginRpcInvokeResponseSchema = z.object({
+  type: z.literal("plugin.rpc.invoke.response"),
+  payload: z.object({
+    requestId: z.string(),
+    output: z.unknown(),
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateResponseSchema,
   HubExecutionAgentValidateResponseSchema,
@@ -5714,6 +5768,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentUpdateSchema,
   HubExecutionAgentStreamSchema,
   BrowserAutomationExecuteRequestSchema,
+  PluginCatalogGetResponseSchema,
+  PluginRpcInvokeResponseSchema,
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
   AudioOutputMessageSchema,

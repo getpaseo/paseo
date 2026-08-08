@@ -460,6 +460,10 @@ export interface SessionOptions {
   workspaceGitService: WorkspaceGitService;
   workspaceAutoName: WorkspaceAutoName;
   daemonConfigStore: DaemonConfigStore;
+  pluginRuntime?: {
+    catalog(): Array<{ id: string; clientBundle: string }>;
+    invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
+  };
   mcpBaseUrl?: string | null;
   stt: Resolvable<SpeechToTextProvider | null>;
   sttLanguage?: string;
@@ -637,6 +641,7 @@ export class Session {
   private readonly workspaceRecovery: WorkspaceRecoveryService;
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushNotifications: PushNotifications;
+  private readonly pluginRuntime: SessionOptions["pluginRuntime"];
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeProjectMutations: (() => void) | null = null;
   private unsubscribeWorkspaceMutations: (() => void) | null = null;
@@ -719,6 +724,7 @@ export class Session {
       workspaceGitService,
       workspaceAutoName,
       daemonConfigStore,
+      pluginRuntime,
       stt,
       sttLanguage,
       tts,
@@ -758,6 +764,7 @@ export class Session {
     this.paseoHome = paseoHome;
     this.projectIcons = new ProjectIconReader(paseoHome);
     this.worktreesRoot = worktreesRoot;
+    this.pluginRuntime = pluginRuntime;
     this.sessionLogger = logger.child({
       module: "session",
       clientId: this.clientId,
@@ -1861,10 +1868,35 @@ export class Session {
       this.dispatchWorkspaceAndProjectMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
       this.dispatchProviderMessage(msg) ??
+      this.dispatchPluginMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
       this.dispatchScheduleMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
+  }
+
+  private dispatchPluginMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "plugin.catalog.get.request") {
+      this.emit({
+        type: "plugin.catalog.get.response",
+        payload: {
+          requestId: msg.requestId,
+          plugins: this.pluginRuntime?.catalog() ?? [],
+        },
+      });
+      return undefined;
+    }
+    if (msg.type === "plugin.rpc.invoke.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin runtime is unavailable");
+      return this.pluginRuntime.invoke(msg.pluginId, msg.method, msg.input).then((output) => {
+        this.emit({
+          type: "plugin.rpc.invoke.response",
+          payload: { requestId: msg.requestId, output },
+        });
+        return undefined;
+      });
+    }
+    return undefined;
   }
 
   private dispatchVoiceAndControlMessage(msg: SessionInboundMessage): Promise<void> | undefined {
