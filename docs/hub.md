@@ -46,8 +46,10 @@ daemon, execution, and agent identity with that terminal state. Paseo never stor
 replays the original prompt. A duplicate create returns the existing agent without starting another
 turn.
 
-Hub creates use the same agent creation path as trusted clients. They may select any existing
-worktree target shape and carry optional MCP server configuration and provider-native
+Every Hub execution creates a fresh Paseo workspace. The workspace owns the execution's agents and
+terminals. Local checkout and worktree targets select only the workspace backing and isolation; the
+Hub cannot select or reuse an existing workspace. Hub creates use the same agent creation path as
+trusted clients. They may select any worktree target shape and carry optional MCP server configuration and provider-native
 `providerOptions` for the agent session. The daemon keeps that configuration in its private agent
 record so provider sessions can recover after a restart; neither ordinary client snapshots and
 updates nor Hub projections expose session configuration. See [providers.md](providers.md) for the

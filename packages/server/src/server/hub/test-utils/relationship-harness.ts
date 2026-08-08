@@ -661,19 +661,13 @@ export class HubRelationshipHarness {
       toolPolicy?: AgentSessionConfig["toolPolicy"];
     } = {},
   ): void {
-    const {
-      prompt = "Create through the Hub",
-      provider = "codex",
-      workspaceId = "hub-workspace",
-      ...requestOptions
-    } = options;
+    const { prompt = "Create through the Hub", provider = "codex", ...requestOptions } = options;
     this.latestSocket().socket.receive({
       type: "hub.execution.agent.create.request",
       requestId,
       executionId,
       provider,
       cwd: this.root,
-      workspaceId,
       prompt,
       ...requestOptions,
     });
@@ -1454,7 +1448,6 @@ export class HubRelationshipHarness {
       executionId,
       provider: "codex",
       cwd: this.root,
-      workspaceId: "hub-workspace",
       prompt: "Create through the Hub",
     };
   }

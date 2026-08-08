@@ -254,9 +254,7 @@ test("failed Hub creates release their lifecycle subscriptions", async () => {
   expect(hub.agentSubscriptionCount()).toBe(subscriptionBaseline);
 
   hub.failProviderPromptStart();
-  hub.beginOwnedCreate("failed-prompt-create-2", "failed-prompt-execution-2", {
-    worktree: { mode: "branch-off", newBranch: "failed-prompt-2" },
-  });
+  hub.beginOwnedCreate("failed-prompt-create-2", "failed-prompt-execution-2");
   const second = await hub.ownedCreateResult("failed-prompt-create-2");
 
   expect(second).toMatchObject({

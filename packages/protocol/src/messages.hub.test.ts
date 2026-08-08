@@ -80,6 +80,20 @@ describe("Hub session protocol", () => {
     expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
   });
 
+  test("keeps the retired Hub workspace selector wire-compatible", () => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-retired-workspace",
+      executionId: "execution-retired-workspace",
+      provider: "codex",
+      cwd: "/workspace",
+      workspaceId: "caller-owned-workspace",
+      prompt: "Implement the requested change",
+    };
+
+    expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
+  });
+
   test("accepts an optional MCP server configuration on Hub creates", () => {
     const message = {
       type: "hub.execution.agent.create.request",

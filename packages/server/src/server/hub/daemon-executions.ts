@@ -19,7 +19,6 @@ export interface HubExecutionAgentCreateInput {
   executionId: string;
   provider: string;
   cwd: string;
-  workspaceId?: string;
   prompt: string;
   model?: string;
   modeId?: string;
@@ -192,7 +191,6 @@ export class DaemonExecutions implements HubExecutionAgents {
         initialPrompt: input.prompt,
         promptFailure: "throw",
         cwd: input.cwd,
-        workspaceId: input.workspaceId,
         mode: input.modeId,
         thinking: input.thinkingOptionId,
         features: input.featureValues,
