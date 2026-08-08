@@ -25,7 +25,7 @@ test("sequential replay after reconstruction keeps one durable owned agent", asy
   expect(reconstructed.replay.agent.id).toBe(created.first.agentId);
   expect(reconstructed.replay.agent.status).toBe("closed");
   expect(reconstructed.durableAgentCount).toBe(1);
-}, 20_000);
+});
 
 test("Hub MCP configuration reaches the provider alongside Paseo MCP without entering snapshots", async () => {
   const hub = await HubRelationshipHarness.startWithAgentMcp();
@@ -232,7 +232,7 @@ test("a failed Hub create removes its auto-created worktree", async () => {
   });
   expect(await hub.listedWorktrees()).toHaveLength(1);
   expect(await hub.durableOwnedAgentIds()).toEqual([]);
-}, 20_000);
+});
 
 test("failed Hub creates release their lifecycle subscriptions", async () => {
   const hub = await launchRelationship();
@@ -267,7 +267,7 @@ test("failed Hub creates release their lifecycle subscriptions", async () => {
   expect(await hub.durableOwnedAgentIds()).toEqual([]);
   expect(await hub.listedWorktrees()).toHaveLength(1);
   expect(hub.agentSubscriptionCount()).toBe(subscriptionBaseline);
-}, 20_000);
+});
 
 test("failed Hub create cleans durable state when provider close rejects", async () => {
   const hub = await launchRelationship();
@@ -286,7 +286,7 @@ test("failed Hub create cleans durable state when provider close rejects", async
   expect(hub.activeOwnedAgentIds()).toEqual([]);
   expect(await hub.durableOwnedAgentIds()).toEqual([]);
   expect(await hub.listedWorktrees()).toHaveLength(1);
-}, 20_000);
+});
 
 test("Hub checkout uses the requested branch ref", async () => {
   const hub = await launchRelationship();
@@ -302,7 +302,7 @@ test("Hub checkout uses the requested branch ref", async () => {
     payload: { success: true, executionId: "checkout-execution" },
   });
   expect(await hub.currentBranch(hub.latestCreatedCwd()!)).toBe("existing-hub-branch");
-}, 20_000);
+});
 
 test("failed create never archives a reused worktree", async () => {
   const hub = await launchRelationship();
@@ -327,4 +327,4 @@ test("failed create never archives a reused worktree", async () => {
     payload: { success: false, executionId: "reused-execution" },
   });
   expect(await hub.worktreeState(worktreeCwd!)).toEqual({ exists: true, listed: true });
-}, 20_000);
+});

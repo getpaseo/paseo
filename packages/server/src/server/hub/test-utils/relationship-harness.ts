@@ -664,7 +664,7 @@ export class HubRelationshipHarness {
     const {
       prompt = "Create through the Hub",
       provider = "codex",
-      workspaceId,
+      workspaceId = "hub-workspace",
       ...requestOptions
     } = options;
     this.latestSocket().socket.receive({
@@ -673,7 +673,7 @@ export class HubRelationshipHarness {
       executionId,
       provider,
       cwd: this.root,
-      ...(workspaceId ? { workspaceId } : {}),
+      workspaceId,
       prompt,
       ...requestOptions,
     });
@@ -1454,6 +1454,7 @@ export class HubRelationshipHarness {
       executionId,
       provider: "codex",
       cwd: this.root,
+      workspaceId: "hub-workspace",
       prompt: "Create through the Hub",
     };
   }
