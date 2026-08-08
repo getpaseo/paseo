@@ -1,7 +1,7 @@
 import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
-import { HubDeployError } from "./error.js";
+import { HubCommandError } from "./error.js";
 
 const DEFAULT_CONFIGURATION_PATH = ".paseo/hub.yml";
 const PROMPT_PARTIAL_ROOT = ".paseo/partials";
@@ -39,13 +39,13 @@ export async function resolveHubDeployInput(input: ResolveHubDeployInput): Promi
   const projectSlug = input.project ?? projectFromConfiguration(configuration);
 
   if (projectSlug === undefined) {
-    throw new HubDeployError(
+    throw new HubCommandError(
       "HUB_PROJECT_REQUIRED",
       "Project is required. Pass --project <slug> or add top-level project to the YAML.",
     );
   }
   if (!PROJECT_SLUG_PATTERN.test(projectSlug)) {
-    throw new HubDeployError(
+    throw new HubCommandError(
       "HUB_INVALID_PROJECT",
       "Project must be a bare slug such as my-project.",
     );
@@ -83,7 +83,7 @@ async function readConfiguration(
   displayPath: string,
 ): Promise<string> {
   const unsafePath = () =>
-    new HubDeployError(
+    new HubCommandError(
       "HUB_CONFIGURATION_UNSAFE_PATH",
       `Hub configuration at ${displayPath} must not use a symlink.`,
     );
@@ -99,13 +99,13 @@ async function readConfiguration(
     throw unsafePath();
   }
   if (!stats.isFile()) {
-    throw new HubDeployError(
+    throw new HubCommandError(
       "HUB_CONFIGURATION_NOT_FILE",
       `Hub configuration at ${displayPath} must be a regular file.`,
     );
   }
   if (!hasReadPermission(stats.mode)) {
-    throw new HubDeployError(
+    throw new HubCommandError(
       "HUB_CONFIGURATION_UNREADABLE",
       `Could not read Hub configuration at ${displayPath}. Check file permissions.`,
     );
@@ -119,7 +119,7 @@ async function readConfiguration(
   }
   const yaml = bytes.toString("utf8");
   if (yaml.length > MAX_CONFIGURATION_LENGTH) {
-    throw new HubDeployError(
+    throw new HubCommandError(
       "HUB_CONFIGURATION_TOO_LARGE",
       `Hub configuration at ${displayPath} exceeds the ${MAX_CONFIGURATION_LENGTH}-character limit.`,
     );
@@ -132,10 +132,10 @@ function parseConfiguration(yaml: string): Record<string, unknown> {
   try {
     configuration = YAML.parse(yaml);
   } catch {
-    throw new HubDeployError("HUB_INVALID_CONFIGURATION", "Hub configuration is not valid YAML.");
+    throw new HubCommandError("HUB_INVALID_CONFIGURATION", "Hub configuration is not valid YAML.");
   }
   if (!isRecord(configuration)) {
-    throw new HubDeployError(
+    throw new HubCommandError(
       "HUB_INVALID_CONFIGURATION",
       "Hub configuration must be a YAML mapping.",
     );
@@ -147,7 +147,7 @@ function projectFromConfiguration(configuration: Record<string, unknown>): strin
   const project: unknown = configuration["project"];
   if (project === undefined) return undefined;
   if (typeof project !== "string") {
-    throw new HubDeployError(
+    throw new HubCommandError(
       "HUB_INVALID_PROJECT",
       "Top-level project must be a bare project slug.",
     );
@@ -161,7 +161,7 @@ async function resolvePromptPartials(
 ): Promise<HubDeployPartial[]> {
   const references = collectPromptPartialReferences(configuration);
   if (references.length > MAX_PROMPT_PARTIAL_COUNT) {
-    throw new HubDeployError(
+    throw new HubCommandError(
       "HUB_PARTIAL_LIMIT_EXCEEDED",
       `Hub configuration references ${references.length} partials; the limit is ${MAX_PROMPT_PARTIAL_COUNT}.`,
     );
@@ -178,14 +178,14 @@ async function resolvePromptPartials(
     const content = await readPartial(projectRoot, partialPath, reference.path);
     const contentBytes = Buffer.byteLength(content, "utf8");
     if (contentBytes > MAX_PROMPT_PARTIAL_CONTENT_BYTES) {
-      throw new HubDeployError(
+      throw new HubCommandError(
         "HUB_PARTIAL_TOO_LARGE",
         `Referenced Hub partial ${reference.path} exceeds the ${MAX_PROMPT_PARTIAL_CONTENT_BYTES}-byte limit.`,
       );
     }
     bundleBytes += contentBytes;
     if (bundleBytes > MAX_PROMPT_PARTIAL_BUNDLE_BYTES) {
-      throw new HubDeployError(
+      throw new HubCommandError(
         "HUB_PARTIAL_BUNDLE_TOO_LARGE",
         `Referenced Hub partials exceed the ${MAX_PROMPT_PARTIAL_BUNDLE_BYTES}-byte combined limit.`,
       );
@@ -215,14 +215,14 @@ function collectPromptPartialReferences(
         if (!isRecord(block) || !Object.hasOwn(block, "include")) continue;
         const include = block["include"];
         if (typeof include !== "string") {
-          throw new HubDeployError(
+          throw new HubCommandError(
             "HUB_PARTIAL_PATH_INVALID",
             "Hub partial include path must be a string.",
           );
         }
         const normalizedPath = normalizePromptPartialPath(include);
         if (seen.has(normalizedPath)) {
-          throw new HubDeployError(
+          throw new HubCommandError(
             "HUB_PARTIAL_DUPLICATE",
             `Hub partial ${normalizedPath} is referenced more than once. Remove the duplicate include.`,
           );
@@ -251,7 +251,7 @@ function normalizePromptPartialPath(value: string): string {
     throw invalidPromptPartialPath(value);
   }
   if (canonical.length > MAX_PROMPT_PARTIAL_PATH_LENGTH) {
-    throw new HubDeployError(
+    throw new HubCommandError(
       "HUB_PARTIAL_PATH_TOO_LONG",
       `Hub partial path ${value} exceeds the ${MAX_PROMPT_PARTIAL_PATH_LENGTH}-character limit.`,
     );
@@ -286,7 +286,7 @@ async function readPartial(
     projectRoot,
     partialPath,
     () =>
-      new HubDeployError(
+      new HubCommandError(
         "HUB_PARTIAL_UNSAFE_PATH",
         `Referenced Hub partial ${displayPath} must not use a symlink.`,
       ),
@@ -297,30 +297,30 @@ async function readPartial(
     stats = await lstat(partialPath);
   } catch (error) {
     if (errorCode(error) === "ENOENT") {
-      throw new HubDeployError(
+      throw new HubCommandError(
         "HUB_PARTIAL_MISSING",
         `Referenced Hub partial ${displayPath} does not exist.`,
       );
     }
-    throw new HubDeployError(
+    throw new HubCommandError(
       "HUB_PARTIAL_UNREADABLE",
       `Could not read referenced Hub partial ${displayPath}. Check the file and permissions.`,
     );
   }
   if (stats.isSymbolicLink()) {
-    throw new HubDeployError(
+    throw new HubCommandError(
       "HUB_PARTIAL_UNSAFE_PATH",
       `Referenced Hub partial ${displayPath} must not be a symlink.`,
     );
   }
   if (!stats.isFile()) {
-    throw new HubDeployError(
+    throw new HubCommandError(
       "HUB_PARTIAL_NOT_FILE",
       `Referenced Hub partial ${displayPath} must be a regular file.`,
     );
   }
   if (!hasReadPermission(stats.mode)) {
-    throw new HubDeployError(
+    throw new HubCommandError(
       "HUB_PARTIAL_UNREADABLE",
       `Could not read referenced Hub partial ${displayPath}. Check the file and permissions.`,
     );
@@ -329,7 +329,7 @@ async function readPartial(
   try {
     return (await readFile(partialPath)).toString("utf8");
   } catch {
-    throw new HubDeployError(
+    throw new HubCommandError(
       "HUB_PARTIAL_UNREADABLE",
       `Could not read referenced Hub partial ${displayPath}. Check the file and permissions.`,
     );
@@ -339,7 +339,7 @@ async function readPartial(
 async function rejectSymlinkComponents(
   root: string,
   target: string,
-  error: () => HubDeployError,
+  error: () => HubCommandError,
 ): Promise<void> {
   const relative = path.relative(root, target);
   let current = root;
@@ -348,35 +348,35 @@ async function rejectSymlinkComponents(
     try {
       if ((await lstat(current)).isSymbolicLink()) throw error();
     } catch (failure) {
-      if (failure instanceof HubDeployError) throw failure;
+      if (failure instanceof HubCommandError) throw failure;
       if (errorCode(failure) === "ENOENT") return;
       throw error();
     }
   }
 }
 
-function configurationReadError(displayPath: string, error: unknown): HubDeployError {
+function configurationReadError(displayPath: string, error: unknown): HubCommandError {
   if (errorCode(error) === "ENOENT") {
-    return new HubDeployError(
+    return new HubCommandError(
       "HUB_CONFIGURATION_UNREADABLE",
       `Could not read Hub configuration at ${displayPath}. Pass an existing YAML file.`,
     );
   }
-  return new HubDeployError(
+  return new HubCommandError(
     "HUB_CONFIGURATION_UNREADABLE",
     `Could not read Hub configuration at ${displayPath}. Check the file and permissions.`,
   );
 }
 
-function invalidConfigurationPath(): HubDeployError {
-  return new HubDeployError(
+function invalidConfigurationPath(): HubCommandError {
+  return new HubCommandError(
     "HUB_CONFIGURATION_PATH_INVALID",
     "Hub configuration path must stay within the current project root; parent-directory paths are not allowed.",
   );
 }
 
-function invalidPromptPartialPath(value: string): HubDeployError {
-  return new HubDeployError(
+function invalidPromptPartialPath(value: string): HubCommandError {
+  return new HubCommandError(
     "HUB_PARTIAL_PATH_INVALID",
     `Hub partial path must be a safe relative path under .paseo/partials/: ${value}`,
   );

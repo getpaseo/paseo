@@ -458,7 +458,9 @@ export class HubRelationshipHarness {
   }
 
   beginConnect(token = "ceremony-token", hubUrl = HUB_ORIGIN): CliProcess {
-    return { result: this.runCli(["hub", "connect", hubUrl, "--token", token]) };
+    return {
+      result: this.runCli(["hub", "connect", hubUrl, "--api-key", `hub-contract-api-key:${token}`]),
+    };
   }
 
   async status(): Promise<Record<string, unknown>> {

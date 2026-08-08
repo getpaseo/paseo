@@ -133,6 +133,14 @@ Paseo wraps agent CLIs (Claude Code, Codex, OpenCode) but does not manage their 
 
 Paseo never stores or transmits provider API keys. Agents run in your user context with your existing credentials.
 
+## Hub identities and credentials
+
+Hub CLI login and daemon enrollment are separate identities. `paseo hub login <origin>` stores a durable organization-scoped human credential in a private file under `PASEO_HOME`, keyed by the normalized Hub origin. A stored credential is never sent to another origin. Protect `PASEO_HOME` as sensitive local state.
+
+`paseo hub connect <origin>` uses that credential, or an explicit API key, only to request a short-lived one-time enrollment token. The daemon exchanges the token and retains its own independently generated relationship credential. Logging out of the CLI does not silently remove daemon authority. In JSON and noninteractive use, `logout` never prompts or disconnects; pass `--disconnect-daemon` only when automation intends to remove both identities.
+
+`--api-key` and `PASEO_HUB_API_KEY` override stored login without being persisted. Prefer environment or secret-manager injection for automation, and avoid command-line flags when local process listings or shell history are visible to other users.
+
 ## Recommendations
 
 - **Use the relay** for mobile access, it's the simplest option and all traffic is end-to-end encrypted

@@ -54,3 +54,12 @@ A project is one set of environments and triggers. Split your work into projects
 ## Running it
 
 Two ways: [hosted](/docs/hub/hosted) or [self-hosted](/docs/hub/self-hosting). Everything above is the same either way.
+
+Once Hub is running, approve durable CLI access and inspect the organization:
+
+```sh
+paseo hub login https://hub.example.com
+paseo hub projects
+```
+
+The login is scoped to that exact Hub origin. Use it to connect a daemon or deploy configuration without copying an API key into each command.

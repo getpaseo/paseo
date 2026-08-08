@@ -12,23 +12,31 @@ A daemon is one of your machines running the Paseo daemon. Enroll it once with y
 
 ## Connect
 
-On the machine:
+Log in from the machine first:
+
+```sh
+paseo hub login https://hub.example.com
+```
+
+The CLI prints a URL and verification code, opens your browser when the terminal is interactive, and stores the approved organization-scoped CLI credential under `PASEO_HOME`. Then enroll the daemon:
 
 ```sh
 paseo hub connect https://hub.example.com
 ```
 
-The CLI prints a URL and a verification code, and opens your browser if it can. In Hub, open **Daemons → Register a daemon**, enter the code, choose a friendly slug, and approve it.
+`connect` uses the stored login to request a short-lived, single-use enrollment token. The daemon exchanges that token and retains its own independently generated relationship credential. The human CLI credential is never stored as daemon authority.
 
 Each daemon has two identifiers: an immutable generated ID and a friendly slug. Hub normalizes the slug you enter with lowercase words joined by hyphens, so `Build Studio` becomes `build-studio`. The slug is what the dashboard shows and what configuration references.
 
 You can rename the slug later without changing the daemon ID. Renaming after a configuration is active means updating that configuration.
 
-For unattended setup, skip the browser with an enrollment token:
+For unattended setup, pass an organization API key without storing it:
 
 ```sh
-paseo hub connect https://hub.example.com --token <token>
+PASEO_HUB_API_KEY=paseo_pk_... paseo hub connect https://hub.example.com
 ```
+
+An explicit `--api-key <secret>` takes precedence over the environment and stored login.
 
 Check and undo:
 
@@ -39,6 +47,8 @@ paseo hub disconnect --force   # drop local authority when Hub is unreachable
 ```
 
 One daemon has one Hub relationship. Connecting a daemon that already has one is refused.
+
+`paseo hub logout` removes only the active human CLI credential. In an interactive terminal, it offers to disconnect when the daemon is related to the same Hub. Declining leaves the daemon connected. JSON and noninteractive logout never disconnect implicitly; use `paseo hub logout --disconnect-daemon` when automation intends to remove both identities.
 
 ## Reference it from configuration
 
