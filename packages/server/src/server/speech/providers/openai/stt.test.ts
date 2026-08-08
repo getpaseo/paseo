@@ -1,4 +1,5 @@
 import pino from "pino";
+import type { Readable } from "node:stream";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 const { openAiConstructorOptionsMock, transcriptionsCreateMock } = vi.hoisted(() => ({
@@ -20,6 +21,24 @@ vi.mock("openai", () => ({
 }));
 
 import { OpenAISTT } from "./stt.js";
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function drainStream(stream: NodeJS.ReadableStream): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    stream.once("error", reject);
+    stream.once("end", resolve);
+    stream.resume();
+  });
+}
 
 describe("OpenAISTT", () => {
   afterEach(() => {
@@ -43,11 +62,7 @@ describe("OpenAISTT", () => {
   test("passes transcription prompt to OpenAI REST STT", async () => {
     transcriptionsCreateMock.mockImplementation(
       async (request: { file: NodeJS.ReadableStream }) => {
-        await new Promise<void>((resolve, reject) => {
-          request.file.once("error", reject);
-          request.file.once("end", resolve);
-          request.file.resume();
-        });
+        await drainStream(request.file);
         return { text: "hello" };
       },
     );
@@ -86,5 +101,53 @@ describe("OpenAISTT", () => {
         response_format: "json",
       }),
     );
+  });
+
+  test("keeps audio appended while an OpenAI transcription is in flight", async () => {
+    const firstTranscription = createDeferred<{ text: string }>();
+    const transcripts: string[] = [];
+
+    transcriptionsCreateMock.mockImplementation(async (request: { file: Readable }) => {
+      await drainStream(request.file);
+      if (transcriptionsCreateMock.mock.calls.length === 1) {
+        await firstTranscription.promise;
+        return { text: "first" };
+      }
+      return { text: "second" };
+    });
+
+    const provider = new OpenAISTT({ apiKey: "sk-test" }, pino({ level: "silent" }));
+    const session = provider.createSession({
+      logger: pino({ level: "silent" }),
+      language: "en",
+    });
+
+    session.on("transcript", (event) => {
+      if (event.isFinal) {
+        transcripts.push(event.transcript);
+      }
+    });
+
+    await session.connect();
+    session.appendPcm16(Buffer.from([1, 0, 1, 0]));
+    session.commit();
+
+    await vi.waitFor(() => {
+      expect(transcriptionsCreateMock).toHaveBeenCalledTimes(1);
+    });
+
+    session.appendPcm16(Buffer.from([2, 0, 2, 0]));
+    firstTranscription.resolve({ text: "first" });
+
+    await vi.waitFor(() => {
+      expect(transcripts).toEqual(["first"]);
+    });
+
+    session.commit();
+
+    await vi.waitFor(() => {
+      expect(transcripts).toEqual(["first", "second"]);
+    });
+    expect(transcriptionsCreateMock).toHaveBeenCalledTimes(2);
   });
 });
