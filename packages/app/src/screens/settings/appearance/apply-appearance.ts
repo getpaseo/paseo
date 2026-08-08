@@ -19,10 +19,6 @@ const ALL_THEME_KEYS = [
   "darkClaude",
   "darkGhostty",
   "darkAmoled",
-  "catppuccinLatte",
-  "catppuccinFrappe",
-  "catppuccinMacchiato",
-  "catppuccinMocha",
 ] as const;
 
 // The UI font size at which the FONT_SIZE ramp is authored (1.0 scale factor).
@@ -60,23 +56,6 @@ function scaleFontSize(uiSize: number, codeSize: number): Theme["fontSize"] {
   };
 }
 
-function patchTheme<T extends Theme>(
-  theme: T,
-  fontFamily: Theme["fontFamily"],
-  fontSize: Theme["fontSize"],
-  diffLineHeight: number,
-  syntaxTheme: SyntaxThemeId,
-): T {
-  const lineHeight = { ...theme.lineHeight, diff: diffLineHeight };
-  return {
-    ...theme,
-    fontFamily,
-    fontSize,
-    lineHeight,
-    colors: { ...theme.colors, syntax: resolveSyntaxColors(syntaxTheme, theme.colorScheme) },
-  };
-}
-
 /**
  * Patch every registered Unistyles theme with the user's appearance choices.
  * All keys in `ALL_THEME_KEYS` are patched because the active theme can change
@@ -97,7 +76,23 @@ export function applyAppearance(input: AppearanceInput): void {
     UnistylesRuntime.updateTheme(key, (t) => {
       const fontFamily = { ui, mono };
       const fontSize = scaleFontSize(input.uiFontSize, input.codeFontSize);
-      return patchTheme(t, fontFamily, fontSize, diffLineHeight, input.syntaxTheme);
+      const lineHeight = { ...t.lineHeight, diff: diffLineHeight };
+      if (t.colorScheme === "light") {
+        return {
+          ...t,
+          fontFamily,
+          fontSize,
+          lineHeight,
+          colors: { ...t.colors, syntax: resolveSyntaxColors(input.syntaxTheme, t.colorScheme) },
+        };
+      }
+      return {
+        ...t,
+        fontFamily,
+        fontSize,
+        lineHeight,
+        colors: { ...t.colors, syntax: resolveSyntaxColors(input.syntaxTheme, t.colorScheme) },
+      };
     });
   }
 

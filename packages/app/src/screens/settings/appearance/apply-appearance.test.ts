@@ -17,10 +17,6 @@ const ALL_THEME_KEYS = [
   "darkClaude",
   "darkGhostty",
   "darkAmoled",
-  "catppuccinLatte",
-  "catppuccinFrappe",
-  "catppuccinMacchiato",
-  "catppuccinMocha",
 ] as const;
 
 // The signature of the updater passed to UnistylesRuntime.updateTheme.

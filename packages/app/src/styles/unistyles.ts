@@ -7,10 +7,6 @@ import {
   darkClaudeTheme,
   darkGhosttyTheme,
   darkAmoledTheme,
-  lightCatppuccinLatteTheme,
-  darkCatppuccinFrappeTheme,
-  darkCatppuccinMacchiatoTheme,
-  darkCatppuccinMochaTheme,
 } from "./theme";
 
 StyleSheet.configure({
@@ -22,10 +18,6 @@ StyleSheet.configure({
     darkClaude: darkClaudeTheme,
     darkGhostty: darkGhosttyTheme,
     darkAmoled: darkAmoledTheme,
-    catppuccinLatte: lightCatppuccinLatteTheme,
-    catppuccinFrappe: darkCatppuccinFrappeTheme,
-    catppuccinMacchiato: darkCatppuccinMacchiatoTheme,
-    catppuccinMocha: darkCatppuccinMochaTheme,
   },
   breakpoints: {
     xs: 0,
@@ -48,10 +40,6 @@ interface AppThemes {
   darkClaude: typeof darkClaudeTheme;
   darkGhostty: typeof darkGhosttyTheme;
   darkAmoled: typeof darkAmoledTheme;
-  catppuccinLatte: typeof lightCatppuccinLatteTheme;
-  catppuccinFrappe: typeof darkCatppuccinFrappeTheme;
-  catppuccinMacchiato: typeof darkCatppuccinMacchiatoTheme;
-  catppuccinMocha: typeof darkCatppuccinMochaTheme;
 }
 
 interface AppBreakpoints {
