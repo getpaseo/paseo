@@ -3,6 +3,7 @@ import { gotoAppShell } from "../support/helpers/app";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 
 // The pin shortcut used to be registered by the sidebar row itself, so it silently did nothing
 // whenever the row was unmounted — a collapsed project section being the common case. It now
@@ -39,8 +40,7 @@ async function collapseProjectSection(page: Page, project: SeededWorkspace): Pro
 }
 
 async function switchToStatusGrouping(page: Page): Promise<void> {
-  await page.getByTestId("sidebar-display-preferences-menu").click();
-  await page.getByTestId("sidebar-grouping-status").click();
+  await selectSidebarStatusGrouping(page);
   await expect(page.getByTestId("sidebar-status-list-scroll")).toBeVisible({ timeout: 10_000 });
 }
 

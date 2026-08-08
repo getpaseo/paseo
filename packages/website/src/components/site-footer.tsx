@@ -34,6 +34,12 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               Changelog
             </a>
             <a
+              href="/hub"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Hub
+            </a>
+            <a
               href="/docs/cli"
               className="block text-muted-foreground hover:text-foreground transition-colors"
             >

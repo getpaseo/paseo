@@ -19,6 +19,7 @@ import {
   CircleX,
   Copy,
   ExternalLink,
+  FileDiff,
   Folder,
   GitBranch,
   Server,
@@ -94,12 +95,14 @@ interface WorkspaceHoverCardProps {
   workspace: SidebarWorkspaceEntry;
   prHint: PrHint | null;
   isDragging: boolean;
+  disabled?: boolean;
 }
 
 export function WorkspaceHoverCard({
   workspace,
   prHint,
   isDragging,
+  disabled = false,
   children,
 }: PropsWithChildren<WorkspaceHoverCardProps>): ReactNode {
   const isCompact = useIsCompactFormFactor();
@@ -109,7 +112,12 @@ export function WorkspaceHoverCard({
   }
 
   return (
-    <WorkspaceHoverCardDesktop workspace={workspace} prHint={prHint} isDragging={isDragging}>
+    <WorkspaceHoverCardDesktop
+      workspace={workspace}
+      prHint={prHint}
+      isDragging={isDragging}
+      disabled={disabled}
+    >
       {children}
     </WorkspaceHoverCardDesktop>
   );
@@ -119,6 +127,7 @@ function WorkspaceHoverCardDesktop({
   workspace,
   prHint,
   isDragging,
+  disabled = false,
   children,
 }: PropsWithChildren<WorkspaceHoverCardProps>): ReactElement {
   const triggerRef = useRef<View>(null);
@@ -145,10 +154,10 @@ function WorkspaceHoverCardDesktop({
   const handleTriggerEnter = useCallback(() => {
     triggerHoveredRef.current = true;
     clearGraceTimer();
-    if (!isDragging) {
+    if (!isDragging && !disabled) {
       setOpen(true);
     }
-  }, [clearGraceTimer, isDragging]);
+  }, [clearGraceTimer, disabled, isDragging]);
 
   const handleTriggerLeave = useCallback(() => {
     triggerHoveredRef.current = false;
@@ -166,13 +175,13 @@ function WorkspaceHoverCardDesktop({
     onLeaveSafeZone: scheduleClose,
   });
 
-  // Close when drag starts
+  // Close while another row interaction owns attention.
   useEffect(() => {
-    if (isDragging) {
+    if (isDragging || disabled) {
       clearGraceTimer();
       setOpen(false);
     }
-  }, [isDragging, clearGraceTimer]);
+  }, [clearGraceTimer, disabled, isDragging]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -285,6 +294,16 @@ function WorkspaceHoverCardContent({
               {workspace.name}
             </Text>
           </View>
+          {prHint ? <PrBadge hint={prHint} style={styles.cardInfoRow} /> : null}
+          {workspace.diffStat ? (
+            <View style={styles.cardInfoRow}>
+              <ThemedFileDiff size={12} uniProps={foregroundMutedColorMapping} />
+              <DiffStat
+                additions={workspace.diffStat.additions}
+                deletions={workspace.diffStat.deletions}
+              />
+            </View>
+          ) : null}
           <HostRow serverId={workspace.serverId} />
           {workspace.currentBranch ? (
             <CopyableInfoRow
@@ -303,17 +322,6 @@ function WorkspaceHoverCardContent({
               copyLabel={t("workspace.hoverCard.copyPath")}
               testID="hover-card-workspace-cwd"
             />
-          ) : null}
-          {prHint || workspace.diffStat ? (
-            <View style={styles.cardMetaRow}>
-              {workspace.diffStat ? (
-                <DiffStat
-                  additions={workspace.diffStat.additions}
-                  deletions={workspace.diffStat.deletions}
-                />
-              ) : null}
-              {prHint ? <PrBadge hint={prHint} /> : null}
-            </View>
           ) : null}
           {prHint?.checks && prHint.checks.length > 0 ? (
             <>
@@ -334,6 +342,7 @@ function WorkspaceHoverCardContent({
 const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedServer = withUnistyles(Server);
+const ThemedFileDiff = withUnistyles(FileDiff);
 
 type CardInfoIcon = React.ComponentType<React.ComponentProps<typeof ThemedGitBranch>>;
 
@@ -595,13 +604,6 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
     flex: 1,
     minWidth: 0,
-  },
-  cardMetaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: theme.spacing[3],
-    paddingBottom: theme.spacing[2],
   },
   cardInfoRow: {
     flexDirection: "row",

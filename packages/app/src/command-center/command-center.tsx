@@ -592,6 +592,7 @@ export function CommandCenter() {
     return (
       <IsolatedBottomSheetModal
         ref={sheetRef}
+        contextBridge={null}
         snapPoints={COMMAND_CENTER_SNAP_POINTS}
         index={0}
         enableDynamicSizing={false}

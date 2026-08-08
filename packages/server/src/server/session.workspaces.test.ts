@@ -23,6 +23,7 @@ import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/pro
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createTerminalManager } from "../terminal/terminal-manager.js";
 import { AgentManager, type AgentManagerEvent, type ManagedAgent } from "./agent/agent-manager.js";
+import type { ProviderSubagentDescriptor } from "./agent/provider-subagents/store.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
 import type {
   AgentClient,
@@ -573,6 +574,7 @@ function createSessionForWorkspaceTests(
   const agentManager = asAgentManager({
     subscribe: () => () => {},
     listAgents: () => [],
+    listProviderSubagentActivity: () => [],
     getAgent: () => null,
     archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
     archiveSnapshot: async () => ({}),
@@ -7525,6 +7527,83 @@ test("a workspace leaving a filtered subscription after bootstrap emits a remova
   ]);
 });
 
+test("queued workspace updates are dropped when a new workspace subscription replaces the old one", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const descriptor = {
+    id: "ws-replaced-subscription",
+    projectId: "proj-replaced-subscription",
+    projectDisplayName: "repo",
+    projectRootPath: REPO_CWD,
+    workspaceDirectory: REPO_CWD,
+    projectKind: "git" as const,
+    workspaceKind: "local_checkout" as const,
+    name: "repo work",
+    status: "done" as const,
+    activityAt: null,
+    diffStat: null,
+  };
+  let currentDescriptor = descriptor;
+  let listCallCount = 0;
+  session.listFetchWorkspacesEntries = async () => {
+    listCallCount += 1;
+    return {
+      entries: listCallCount === 1 ? [descriptor] : [],
+      emptyProjects: [],
+      pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+    };
+  };
+
+  const firstBuildStarted = deferred<void>();
+  const releaseFirstBuild = deferred<void>();
+  let buildCount = 0;
+  session.buildWorkspaceDescriptorMap = async () => {
+    buildCount += 1;
+    if (buildCount === 1) {
+      firstBuildStarted.resolve();
+      await releaseFirstBuild.promise;
+    }
+    return new Map([[currentDescriptor.id, currentDescriptor]]);
+  };
+
+  await session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "req-old-workspaces",
+    filter: { query: "repo" },
+    subscribe: { subscriptionId: "sub-old-workspaces" },
+  });
+
+  emitted.length = 0;
+  const queuedUpdate = session.emitWorkspaceUpdatesForWorkspaceIds([descriptor.id]);
+  await firstBuildStarted.promise;
+
+  await session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "req-new-workspaces",
+    filter: { query: "other" },
+    subscribe: { subscriptionId: "sub-new-workspaces" },
+  });
+
+  emitted.length = 0;
+  releaseFirstBuild.resolve();
+  await queuedUpdate;
+  await waitForImmediate();
+
+  expect(filterByType(emitted, "workspace_update")).toEqual([]);
+
+  currentDescriptor = { ...descriptor, name: "other work" };
+  await session.emitWorkspaceUpdatesForWorkspaceIds([descriptor.id]);
+
+  expect(filterByType(emitted, "workspace_update")).toEqual([
+    {
+      type: "workspace_update",
+      payload: { kind: "upsert", workspace: currentDescriptor },
+    },
+  ]);
+});
+
 const ICON_PNG_1X1 = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
   0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00,
@@ -8070,6 +8149,91 @@ async function waitForWorkspaceUpdate(
   }
   throw new Error(`Timed out waiting for workspace_update: ${description}`);
 }
+
+test("overlapping workspace rebuilds publish the newest provider subagent status", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const parent = makeManagedAgent({
+    id: "provider-parent",
+    cwd: REPO_CWD,
+    workspaceId: "ws-repo-running",
+    lifecycle: "idle",
+    updatedAt: "2026-08-01T10:00:00.000Z",
+  }) as unknown as ManagedAgent;
+  const providerSubagents: ProviderSubagentDescriptor[] = [];
+  let listener: ((event: AgentManagerEvent) => void) | null = null;
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    agentStorage: { list: async () => [] },
+    agentManager: {
+      subscribe: (nextListener: (event: AgentManagerEvent) => void) => {
+        listener = nextListener;
+        return () => {};
+      },
+      listAgents: () => [parent],
+      listProviderSubagentActivity: () => providerSubagents,
+      getAgent: (agentId: string) => (agentId === parent.id ? parent : null),
+    },
+  });
+
+  await session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "provider-subagent-workspace-status",
+    subscribe: { subscriptionId: "provider-subagent-workspace-status" },
+  });
+  const initialWorkspace = findByType(emitted, "fetch_workspaces_response")?.payload.entries[0];
+  if (!initialWorkspace) {
+    throw new Error("Expected initial workspace descriptor");
+  }
+  const firstBuildStarted = deferred<void>();
+  const releaseFirstBuild = deferred<void>();
+  let buildCount = 0;
+  session.buildWorkspaceDescriptorMap = async () => {
+    buildCount += 1;
+    const status = providerSubagents.some((subagent) => subagent.status === "running")
+      ? "running"
+      : "done";
+    if (buildCount === 1) {
+      firstBuildStarted.resolve();
+      await releaseFirstBuild.promise;
+    }
+    return new Map([[initialWorkspace.id, { ...initialWorkspace, status }]]);
+  };
+  emitted.length = 0;
+
+  const runningSubagent: ProviderSubagentDescriptor = {
+    id: "native-child",
+    parentAgentId: parent.id,
+    provider: "codex",
+    title: "Native child",
+    description: null,
+    status: "running",
+    createdAt: "2026-08-01T10:01:00.000Z",
+    updatedAt: "2026-08-01T10:01:00.000Z",
+    toolCallId: null,
+    cwd: REPO_CWD,
+    subtitle: null,
+  };
+  providerSubagents.push(runningSubagent);
+  listener?.({ type: "provider_subagent", event: { type: "upsert", subagent: runningSubagent } });
+  await firstBuildStarted.promise;
+
+  const completedSubagent = {
+    ...runningSubagent,
+    status: "completed" as const,
+    updatedAt: "2026-08-01T10:02:00.000Z",
+  };
+  providerSubagents[0] = completedSubagent;
+  listener?.({ type: "provider_subagent", event: { type: "upsert", subagent: completedSubagent } });
+  await waitForImmediate();
+  releaseFirstBuild.resolve();
+  await vi.waitFor(() => expect(buildCount).toBe(2));
+  await waitForImmediate();
+
+  const statuses = filterByType(emitted, "workspace_update").flatMap((message) =>
+    message.payload.kind === "upsert" ? [message.payload.workspace.status] : [],
+  );
+  expect(statuses).toEqual(["running", "done"]);
+});
 
 test("title-only terminal change does not build workspace descriptors or emit workspace_update", async () => {
   const emitted: SessionOutboundMessage[] = [];

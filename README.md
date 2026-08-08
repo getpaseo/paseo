@@ -7,7 +7,8 @@
 <p align="center">
   <a href="README.md">English</a> ·
   <a href="README.zh-CN.md">简体中文</a> ·
-  <a href="README.ja.md">日本語</a>
+  <a href="README.ja.md">日本語</a> ·
+  <a href="README.ko.md">한국어</a>
 </p>
 
 <p align="center">
@@ -80,6 +81,7 @@ Paseo starts locally, then asks whether to enable the end-to-end encrypted relay
 For full setup and configuration, see:
 
 - [Docs](https://paseo.sh/docs)
+- [Connectivity guide](https://paseo.sh/docs/connectivity)
 - [Configuration reference](https://paseo.sh/docs/configuration)
 
 ### Docker

@@ -660,6 +660,19 @@ function expectAtomicIdleToRunningTransition(frames: TurnFrame[]): void {
   ).toEqual([]);
 }
 
+function expectSubmittedMessageHeightStable(frames: TurnFrame[]): void {
+  const first = frames.findIndex((frame) => frame.userRow.visible);
+  const baseline = frames[first]?.userRow.rect?.height;
+  const changes = frames
+    .slice(first)
+    .flatMap((frame, offset) =>
+      geometryChanged(frame.userRow.rect?.height, baseline)
+        ? [`frame ${first + offset}: submitted row height changed`]
+        : [],
+    );
+  expect(changes, `submitted message geometry changed:\n${changes.join("\n")}`).toEqual([]);
+}
+
 function expectAtomicFirstPromptTransition(frames: TurnFrame[]): void {
   expectRowContinuity(frames);
   const first = frames.findIndex((frame) => hasPaintedLayout(frame.userRow));
@@ -826,6 +839,33 @@ test("keeps follow-up activity continuous when turn starts before response", asy
     "turn-before-response",
   );
   expectAtomicIdleToRunningTransition(frames);
+});
+
+test("keeps a submitted message height stable when its canonical echo arrives", async ({
+  page,
+  streamingAgent,
+}) => {
+  const gate = await installDaemonWebSocketGate(page);
+  await openAgentRoute(page, {
+    workspaceId: streamingAgent.workspaceId,
+    agentId: streamingAgent.agentId,
+  });
+  await expectAgentIdle(page);
+
+  const prompt = "Canonical echo must not resize this message.";
+  gate.holdNextAgentStreamItem("user_message");
+  await recordTurnFrames(page, prompt);
+  await submitMessage(page, prompt);
+  await gate.waitForHeldAgentStreamItem("user_message");
+  const submittedRow = page.getByTestId("user-message").filter({ hasText: prompt });
+  await expect(submittedRow).toBeVisible();
+  await recordPaintsFor(page, 80);
+
+  gate.releaseHeldAgentStreamItem("user_message");
+  await expect(submittedRow.getByTestId("rewind-menu-trigger")).toBeVisible();
+  await recordPaintsFor(page, 80);
+
+  expectSubmittedMessageHeightStable(await stopTurnFrameRecording(page));
 });
 
 test("keeps follow-up activity continuous when response arrives before running state", async ({

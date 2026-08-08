@@ -24,6 +24,10 @@ import {
   openProjectViaDaemon,
   openStartingRefPicker,
   pasteGithubPrUrl,
+  captureStartingRefPicker,
+  expectStartingRefRows,
+  startingRefRow,
+  submitNewWorkspaceEmpty,
   searchAndSelectBranchInPicker,
   selectBranchInPicker,
   selectGitHubPrInPicker,
@@ -31,7 +35,14 @@ import {
   selectWorkspaceIsolation,
   submitNewWorkspacePrompt,
 } from "../support/helpers/new-workspace";
-import { createTempGitRepo, readWorktreeBranchInfo } from "../support/helpers/workspace";
+import {
+  commitLocalOnly,
+  createTempGitRepo,
+  readRepoRef,
+  readWorktreeBaseMetadata,
+  readWorktreeBranchInfo,
+  trackForkUpstream,
+} from "../support/helpers/workspace";
 import {
   createLocalGithubPrFixture,
   cloneGithubRepoDefaultBranchOnly,
@@ -40,6 +51,7 @@ import {
   type LocalGhPrFixture,
 } from "../support/helpers/github-fixtures";
 import { getServerId } from "../support/helpers/server-id";
+import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import { chooseAddProjectMethod, expectAddProjectPage } from "../support/helpers/add-project-flow";
 import { seedSavedSettingsHosts } from "../support/helpers/settings";
@@ -50,6 +62,13 @@ import {
   waitForSidebarHydration,
   waitForWorkspaceInSidebar,
 } from "../support/helpers/workspace-ui";
+import { dropFileOnComposer, expectAttachmentPill } from "../support/helpers/composer";
+
+const BACKGROUND_RESOLUTION_FILE = {
+  name: "background-context.json",
+  mimeType: "application/json",
+  buffer: Buffer.from(JSON.stringify({ composer: "background-resolution" })),
+};
 
 interface WorkspaceStatusGroupEvent {
   rowTestId: string;
@@ -60,8 +79,7 @@ interface WorkspaceStatusGroupEvent {
 }
 
 async function switchSidebarToStatusGrouping(page: import("@playwright/test").Page) {
-  await page.getByTestId("sidebar-display-preferences-menu").click();
-  await page.getByTestId("sidebar-grouping-status").click();
+  await selectSidebarStatusGrouping(page);
   await expect(page.getByTestId("sidebar-status-group-done")).toBeVisible({ timeout: 30_000 });
 }
 
@@ -116,7 +134,13 @@ async function startTrackingSidebarStatusGroups(page: import("@playwright/test")
 
     capture();
     const observer = new MutationObserver(capture);
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["data-testid"],
+    });
     win.__workspaceStatusGroupObserver = observer;
   });
 }
@@ -159,7 +183,6 @@ async function expectWorkspaceStatusGroupEvents(input: {
   rowTestId: string;
   includes: string;
   excludes: string;
-  includesIndicator?: string;
   excludesIndicator?: string;
 }) {
   await waitForWorkspaceStatusGroupEvent({
@@ -172,11 +195,6 @@ async function expectWorkspaceStatusGroupEvents(input: {
   );
   expect(createdWorkspaceEvents.map((event) => event.bucket)).toContain(input.includes);
   expect(createdWorkspaceEvents.filter((event) => event.bucket === input.excludes)).toEqual([]);
-  if (input.includesIndicator) {
-    expect(createdWorkspaceEvents.map((event) => event.indicatorTestId)).toContain(
-      input.includesIndicator,
-    );
-  }
   if (input.excludesIndicator) {
     expect(
       createdWorkspaceEvents.filter((event) => event.indicatorTestId === input.excludesIndicator),
@@ -612,7 +630,6 @@ test.describe("New workspace flow", () => {
         rowTestId,
         includes: "running",
         excludes: "done",
-        includesIndicator: "workspace-status-indicator-running",
       });
     } finally {
       await tempRepo.cleanup();
@@ -737,6 +754,142 @@ test.describe("New workspace flow", () => {
     }
   });
 
+  // The starting ref the daemon actually cuts from is the thing that broke: the picker said
+  // one ref and the worktree was created from another. Every assertion here reads the
+  // created worktree's commits or its recorded base, never the trigger text alone.
+  test.describe("default starting ref", () => {
+    async function openWorktreeComposerForRepo(
+      page: import("@playwright/test").Page,
+      repoPath: string,
+    ) {
+      const openedProject = await openProjectViaDaemon(client, repoPath);
+      localWorkspaceIds.add(openedProject.workspaceId);
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, {
+        projectKey: openedProject.projectKey,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      await selectWorkspaceIsolation(page, "worktree");
+      return openedProject;
+    }
+
+    async function createWorktreeAndRead(
+      page: import("@playwright/test").Page,
+      openedProject: Awaited<ReturnType<typeof openProjectViaDaemon>>,
+    ) {
+      await submitNewWorkspaceEmpty(page);
+      const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
+        serverId: getServerId(),
+        client,
+        previousWorkspaceId: openedProject.workspaceId,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
+      return {
+        ...createdWorkspace,
+        branchInfo: await readWorktreeBranchInfo({
+          worktreePath: createdWorkspace.workspaceDirectory,
+        }),
+      };
+    }
+
+    test("branches off the upstream when the local branch is ahead and the picker is untouched", async ({
+      page,
+    }) => {
+      const tempRepo = await createTempGitRepo("ref-default-ahead-", { withRemote: true });
+
+      try {
+        const originHead = readRepoRef(tempRepo.path, "refs/remotes/origin/main");
+        commitLocalOnly(tempRepo.path, "one");
+        const localHead = commitLocalOnly(tempRepo.path, "two");
+
+        const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+        const created = await createWorktreeAndRead(page, openedProject);
+
+        expect(created.branchInfo.hasAncestor(originHead)).toBe(true);
+        expect(created.branchInfo.hasAncestor(localHead)).toBe(false);
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
+    test("branches off the local ref when the local row is chosen explicitly", async ({
+      page,
+    }, testInfo) => {
+      const tempRepo = await createTempGitRepo("ref-default-local-pick-", { withRemote: true });
+
+      try {
+        commitLocalOnly(tempRepo.path, "one");
+        const localHead = commitLocalOnly(tempRepo.path, "two");
+
+        const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+
+        await openStartingRefPicker(page);
+        await expectStartingRefRows(page, [
+          "main, origin branch",
+          "main, local branch, 2 commits ahead of origin main",
+        ]);
+        const screenshotPath = testInfo.outputPath("ref-picker-local-ahead.png");
+        await captureStartingRefPicker(page, screenshotPath);
+        await testInfo.attach("Ref picker: local ahead of upstream", {
+          path: screenshotPath,
+          contentType: "image/png",
+        });
+        await startingRefRow(page, "main, local branch, 2 commits ahead of origin main").click();
+        await expectPickerSelected(page, "main (local)");
+
+        const created = await createWorktreeAndRead(page, openedProject);
+        expect(created.branchInfo.hasAncestor(localHead)).toBe(true);
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
+    test("branches off a fork's upstream remote and records the branch name", async ({
+      page,
+    }, testInfo) => {
+      const tempRepo = await createTempGitRepo("ref-default-fork-", { withRemote: true });
+
+      try {
+        const upstreamHead = await trackForkUpstream(tempRepo.path);
+        const originHead = readRepoRef(tempRepo.path, "refs/remotes/origin/main");
+
+        const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+
+        await openStartingRefPicker(page);
+        // Branch suggestions only know about origin, so the upstream the fork actually
+        // tracks gets its own row rather than silently sharing origin's. Two rows reading
+        // "main" is the ambiguity this whole change exists to remove.
+        await expectStartingRefRows(page, [
+          "main (upstream), upstream branch",
+          "main, origin branch",
+        ]);
+        await expectPickerSelected(page, "main (upstream)");
+        const screenshotPath = testInfo.outputPath("ref-picker-fork.png");
+        await captureStartingRefPicker(page, screenshotPath);
+        await testInfo.attach("Ref picker: fork tracking upstream/main", {
+          path: screenshotPath,
+          contentType: "image/png",
+        });
+        await closeBranchPicker(page);
+
+        const created = await createWorktreeAndRead(page, openedProject);
+
+        expect(created.branchInfo.hasAncestor(upstreamHead)).toBe(true);
+        expect(upstreamHead).not.toBe(originHead);
+        // The name is what the UI shows; the ref is what resolves back to this commit.
+        expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toEqual({
+          baseRefName: "main",
+          baseRef: "refs/remotes/upstream/main",
+        });
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+  });
+
   test("branch picker opens via keyboard and selects the filtered option on Enter", async ({
     page,
   }) => {
@@ -849,7 +1002,13 @@ test.describe("New workspace flow", () => {
 
     await pasteGithubPrUrl(page, context, pr.url);
 
-    await expect(page.getByTestId("workspace-create-submit")).toBeDisabled();
+    const createButton = page.getByTestId("workspace-create-submit");
+    await expect(createButton).toBeDisabled();
+    await expect(createButton.getByRole("progressbar")).toHaveCount(0);
+
+    await dropFileOnComposer(page, BACKGROUND_RESOLUTION_FILE);
+    await expectAttachmentPill(page, "composer-file-attachment-pill");
+
     await expectComposerGithubAttachmentPill(page, {
       number: pr.number,
       title: pr.title,

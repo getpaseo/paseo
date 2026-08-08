@@ -22,12 +22,7 @@ import { SyncedLoader } from "@/components/synced-loader";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
-const workingIndicatorColorMapping = (theme: Theme) => ({
-  color:
-    theme.colorScheme === "light"
-      ? theme.colors.palette.amber[700]
-      : theme.colors.palette.amber[500],
-});
+const workingIndicatorColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 
 export type TurnContentStrategy = StreamStrategy;
 export type AssistantTurnForkHandler = (input: {
@@ -130,6 +125,8 @@ const WorkingIndicator = memo(function WorkingIndicator({
       <View style={stylesheet.workingLoader}>
         <ThemedSyncedLoader size={14} uniProps={workingIndicatorColorMapping} />
       </View>
+      {/* Match the completed-turn footer: actions precede timing metadata. */}
+      {onForkInFlightTurn ? <AssistantForkMenu onFork={onForkInFlightTurn} /> : null}
       {inFlightTurnStartedAt ? (
         <LiveElapsed
           startedAt={inFlightTurnStartedAt}
@@ -138,9 +135,6 @@ const WorkingIndicator = memo(function WorkingIndicator({
           testID="turn-working-elapsed"
         />
       ) : null}
-      {/* Sits in the same 24px gapped row as the loader and elapsed timer, so
-          fork is reachable without waiting for the run to finish. */}
-      {onForkInFlightTurn ? <AssistantForkMenu onFork={onForkInFlightTurn} /> : null}
     </View>
   );
 });

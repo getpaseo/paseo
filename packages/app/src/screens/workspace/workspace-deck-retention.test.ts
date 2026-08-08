@@ -3,6 +3,7 @@ import type { ActiveWorkspaceSelection } from "@/stores/navigation-active-worksp
 import {
   orderWorkspaceSelectionsForStableRender,
   pruneMountedWorkspaceSelections,
+  resolveWorkspaceDeckEntries,
   shouldKeepWorkspaceDeckEntryMounted,
 } from "@/screens/workspace/workspace-deck-retention";
 
@@ -88,6 +89,20 @@ describe("orderWorkspaceSelectionsForStableRender", () => {
     expect(mountedWorkspaceIds(orderWorkspaceSelectionsForStableRender(activeB))).toEqual([
       "A",
       "B",
+    ]);
+  });
+});
+
+describe("resolveWorkspaceDeckEntries", () => {
+  it("keeps retained workspaces rendered but inactive on an app-wide route", () => {
+    expect(
+      resolveWorkspaceDeckEntries({
+        selections: [workspace("A"), workspace("B")],
+        activeSelection: null,
+      }),
+    ).toEqual([
+      { selection: workspace("A"), active: false },
+      { selection: workspace("B"), active: false },
     ]);
   });
 });

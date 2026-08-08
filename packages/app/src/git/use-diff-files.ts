@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { CheckoutCommitFile, ParsedDiffFile } from "@getpaseo/protocol/messages";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useFetchQueries } from "@/data/query";
 import { checkoutCommitFileDiffQueryKey, COMMIT_FILE_DIFF_STALE_TIME } from "@/git/query-keys";
 import { useCheckoutCommitsQuery } from "@/git/use-commits-query";
@@ -57,9 +58,11 @@ export function resolveCommitDiffFiles(
 
 export function useCommitDiffFiles(ctx: CommitDiffFilesContext): CommitDiffFilesResult {
   const { serverId, cwd, sha, enabled = true } = ctx;
+  const retainedPanelActive = useRetainedPanelActive();
+  const queryEnabled = enabled && retainedPanelActive;
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const commitsQuery = useCheckoutCommitsQuery({ serverId, cwd, enabled });
+  const commitsQuery = useCheckoutCommitsQuery({ serverId, cwd, enabled: queryEnabled });
   const commitsData = commitsQuery.status === "loaded" ? commitsQuery.data : null;
   const commitFiles = useMemo(() => {
     if (!sha || !commitsData) {
@@ -69,7 +72,7 @@ export function useCommitDiffFiles(ctx: CommitDiffFilesContext): CommitDiffFiles
   }, [commitsData, sha]);
 
   const fileDiffsEnabled =
-    enabled &&
+    queryEnabled &&
     commitsQuery.status === "loaded" &&
     Boolean(cwd) &&
     Boolean(sha) &&

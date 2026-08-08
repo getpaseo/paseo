@@ -5,6 +5,7 @@ import type {
 import { type Forge, getForgePresentation } from "@/git/forge";
 import { parseClientForgeFacts } from "@/git/forges";
 import type { ForgeSpecificStatusFacts } from "@/git/merge-capability";
+import { deriveIdentityColorName, identityColor } from "@/styles/identity-colors";
 import { type CheckStatus, mapCheckStatus } from "./check-status";
 import { getNativeFallbackChecks } from "./native-data";
 
@@ -101,17 +102,6 @@ type CheckoutPrStatus = CheckoutPrStatusResponse["payload"]["status"];
 type PullRequestTimeline = PullRequestTimelineResponse["payload"];
 type PullRequestTimelineItem = PullRequestTimeline["items"][number];
 
-const AVATAR_COLORS = [
-  "#8b5cf6",
-  "#f97316",
-  "#0ea5e9",
-  "#10b981",
-  "#ef4444",
-  "#eab308",
-  "#ec4899",
-  "#6366f1",
-];
-
 export function mapPrPaneData(
   status: CheckoutPrStatus,
   timeline: PullRequestTimeline | null | undefined,
@@ -156,8 +146,11 @@ function toProviderMetadata(forge: Forge): PullRequestProviderMetadata {
   return { id: forge, label: getForgePresentation(forge).brandLabel };
 }
 
+// Avatars are identity, not status: they draw from the shared identity table so a PR
+// participant square sits at the same weight as a project icon. Logins are matched
+// case-insensitively, so the same person keeps one color across forges.
 export function deriveAvatarColor(login: string): string {
-  return AVATAR_COLORS[hashLogin(login) % AVATAR_COLORS.length];
+  return identityColor(deriveIdentityColorName(login.toLowerCase()));
 }
 
 export function formatAge(createdAtMs: number, nowMs = Date.now()): string {
@@ -306,14 +299,6 @@ function parsePullRequestNumber(url: string): number | null {
   } catch {
     return null;
   }
-}
-
-function hashLogin(login: string): number {
-  let hash = 0;
-  for (const character of login.toLowerCase()) {
-    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  }
-  return hash;
 }
 
 export function getStateLabel(state: PrState): string {

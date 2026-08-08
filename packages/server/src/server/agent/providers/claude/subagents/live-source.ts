@@ -41,19 +41,27 @@ interface TaskStartedMessage {
 
 /** Task-tool subagents. Backgrounded shell commands announce as `local_bash`. */
 const CLAUDE_SUBAGENT_TASK_TYPE = "local_agent";
+/** Workflow executions use the same announced task lifecycle as Task-tool subagents. */
+const CLAUDE_WORKFLOW_TASK_TYPE = "local_workflow";
 
 /**
- * Not every announced task is a subagent. Verified on the wire:
+ * Not every announced task belongs in the subagents track. Verified on the wire:
  *
  *   Task subagent      task_type "local_agent", subagent_type "general-purpose"
+ *   Workflow           task_type "local_workflow", no subagent_type
  *   background shell   task_type "local_bash",  no subagent_type
  *
- * Both carry a `tool_use_id`, so presence of an id is not a discriminator — filtering on it
+ * All three carry a `tool_use_id`, so presence of an id is not a discriminator — filtering on it
  * alone puts `sleep 20` in the subagents track. Releases that predate `task_type` are covered
  * by requiring a subagent type instead.
  */
-function isSubagentTask(message: TaskStartedMessage): boolean {
-  if (message.task_type) return message.task_type === CLAUDE_SUBAGENT_TASK_TYPE;
+function isProviderSubagentTask(message: TaskStartedMessage): boolean {
+  if (message.task_type) {
+    return (
+      message.task_type === CLAUDE_SUBAGENT_TASK_TYPE ||
+      message.task_type === CLAUDE_WORKFLOW_TASK_TYPE
+    );
+  }
   return readString(message.subagent_type) !== undefined;
 }
 
@@ -71,6 +79,7 @@ interface TaskNotificationMessage {
   task_id: string;
   tool_use_id?: string;
   status?: string;
+  output_file?: string;
   usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number };
 }
 
@@ -134,6 +143,8 @@ export interface ClaudeTaskProtocolSourceInput {
    * same place is what keeps one subagent titled identically live and on reopen.
    */
   getToolInput?: (toolUseId: string) => AgentMetadata | null | undefined;
+  /** Reads the safe, provider-owned result from a completed workflow's task output file. */
+  readWorkflowResult?: (outputFile: string) => string | undefined;
 }
 
 export class ClaudeTaskProtocolSource {
@@ -145,6 +156,12 @@ export class ClaudeTaskProtocolSource {
    * nothing to say about it.
    */
   private readonly declaredIds = new Set<string>();
+  /** Task ids declared specifically as workflows; only these may read workflow output files. */
+  private readonly workflowTaskIds = new Set<string>();
+  /** Last result emitted per workflow task, so duplicate terminal notifications stay idempotent. */
+  private readonly lastWorkflowResultByTaskId = new Map<string, string>();
+  /** Workflow invocations already own a real Workflow card in the parent timeline. */
+  private readonly idsWithExistingParentToolCard = new Set<string>();
   /**
    * Declared subagents that were moved to the background. They outlive the turn that spawned
    * them, so a turn ending is not evidence that they stopped.
@@ -158,9 +175,11 @@ export class ClaudeTaskProtocolSource {
   private sawTaskStarted = false;
   private sawAnyTask = false;
   private readonly getToolInput: (toolUseId: string) => AgentMetadata | null | undefined;
+  private readonly readWorkflowResult: (outputFile: string) => string | undefined;
 
   constructor(input: ClaudeTaskProtocolSourceInput = {}) {
     this.getToolInput = input.getToolInput ?? (() => null);
+    this.readWorkflowResult = input.readWorkflowResult ?? (() => undefined);
   }
 
   /**
@@ -194,6 +213,16 @@ export class ClaudeTaskProtocolSource {
     return this.declaredIds.has(subagentId);
   }
 
+  /** Whether Claude's task protocol declared this task as a provider subagent. */
+  isDeclaredTask(taskId: string): boolean {
+    const subagentId = this.subagentIdByTaskId.get(taskId);
+    return subagentId !== undefined && this.declaredIds.has(subagentId);
+  }
+
+  needsSyntheticParentToolCard(subagentId: string): boolean {
+    return !this.idsWithExistingParentToolCard.has(subagentId);
+  }
+
   observe(message: SDKMessage): SubagentObservation[] {
     if (message.type !== "system") return [];
     switch (message.subtype) {
@@ -220,6 +249,9 @@ export class ClaudeTaskProtocolSource {
   reset(): void {
     this.subagentIdByTaskId.clear();
     this.declaredIds.clear();
+    this.workflowTaskIds.clear();
+    this.lastWorkflowResultByTaskId.clear();
+    this.idsWithExistingParentToolCard.clear();
     this.backgroundedIds.clear();
     this.lastStatusById.clear();
     this.presentationById.clear();
@@ -250,6 +282,17 @@ export class ClaudeTaskProtocolSource {
     return observations;
   }
 
+  /** A lost Claude process terminates every task it owned, including backgrounded workflows. */
+  failRunningTasks(): SubagentObservation[] {
+    const observations: SubagentObservation[] = [];
+    for (const id of this.declaredIds) {
+      if (this.lastStatusById.get(id) !== "running") continue;
+      this.lastStatusById.set(id, "failed");
+      observations.push({ kind: "status", id, status: "failed" });
+    }
+    return observations;
+  }
+
   private observeTaskStarted(message: TaskStartedMessage): SubagentObservation[] {
     // Recorded before the filter: what this proves is that the CLI announces its tasks, which is
     // true whether or not this particular one is a subagent.
@@ -257,7 +300,7 @@ export class ClaudeTaskProtocolSource {
 
     const id = readString(message.tool_use_id);
     // skip_transcript marks ambient housekeeping the transcript should not show.
-    if (!id || message.skip_transcript === true || !isSubagentTask(message)) return [];
+    if (!id || message.skip_transcript === true || !isProviderSubagentTask(message)) return [];
 
     this.sawTaskStarted = true;
     this.subagentIdByTaskId.set(message.task_id, id);
@@ -266,7 +309,14 @@ export class ClaudeTaskProtocolSource {
 
     // An explicit `name` on the Task call wins over the agent type, matching how replay titles the
     // same subagent. Without it a fan-out of five Explores reads as five identical rows.
-    const title = readString(this.getToolInput(id)?.name) ?? readString(message.subagent_type);
+    const isWorkflow = message.task_type === CLAUDE_WORKFLOW_TASK_TYPE;
+    if (isWorkflow) {
+      this.idsWithExistingParentToolCard.add(id);
+      this.workflowTaskIds.add(message.task_id);
+    }
+    const title = isWorkflow
+      ? "Workflow"
+      : (readString(this.getToolInput(id)?.name) ?? readString(message.subagent_type));
     const description = readString(message.description);
     const observations: SubagentObservation[] = [
       {
@@ -282,9 +332,11 @@ export class ClaudeTaskProtocolSource {
     const initialSubtitle = buildClaudeSubagentSubtitle(initialPresentation);
     if (initialSubtitle) this.lastSubtitleById.set(id, initialSubtitle);
 
-    // Open the child's timeline with the prompt it was actually given. Without this the pane
-    // starts mid-conversation, showing replies to a question the reader never sees.
-    const prompt = readString(message.prompt);
+    // Open the provider-subagent timeline with the task it was actually given. Without this the
+    // pane starts mid-conversation, showing replies to a question the reader never sees.
+    // A workflow's prompt is its JavaScript source, not a user-authored task. Open its generic
+    // timeline with Claude's summary instead, so the pane is meaningful without exposing source.
+    const prompt = isWorkflow ? description : readString(message.prompt);
     if (prompt) {
       observations.push({ kind: "timeline", id, item: { type: "user_message", text: prompt } });
     }
@@ -302,9 +354,21 @@ export class ClaudeTaskProtocolSource {
   }
 
   private observeTaskNotification(message: TaskNotificationMessage): SubagentObservation[] {
-    const observations = this.observeUsage(message.task_id, message.usage);
+    const observations = this.observeWorkflowResult(message);
+    observations.push(...this.observeUsage(message.task_id, message.usage));
     observations.push(...this.observeStatus(message.task_id, message.status));
     return observations;
+  }
+
+  private observeWorkflowResult(message: TaskNotificationMessage): SubagentObservation[] {
+    if (!this.workflowTaskIds.has(message.task_id)) return [];
+    const id = this.subagentIdByTaskId.get(message.task_id);
+    const outputFile = readString(message.output_file);
+    if (!id || !outputFile) return [];
+    const text = this.readWorkflowResult(outputFile);
+    if (!text || this.lastWorkflowResultByTaskId.get(message.task_id) === text) return [];
+    this.lastWorkflowResultByTaskId.set(message.task_id, text);
+    return [{ kind: "timeline", id, item: { type: "assistant_message", text } }];
   }
 
   /**

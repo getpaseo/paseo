@@ -22,6 +22,7 @@ import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
 import { hashDaemonPassword } from "./auth.js";
 import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
+import { resolveGitProcessPolicy } from "../utils/git-process-scheduler.js";
 
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
@@ -85,6 +86,16 @@ function normalizeLogEnv(value: string | undefined): string | undefined {
   }
 
   return value.trim().toLowerCase();
+}
+
+function resolveGitProcessConfig(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): NonNullable<PaseoDaemonConfig["git"]> {
+  return resolveGitProcessPolicy({
+    env,
+    persisted: persisted.daemon?.git,
+  });
 }
 
 export type CliConfigOverrides = Partial<{
@@ -504,6 +515,7 @@ export function loadConfig(
     mcpEnabled,
     mcpInjectIntoAgents,
     browserToolsEnabled,
+    git: resolveGitProcessConfig(env, persisted),
     autoArchiveAfterMerge,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
     appendSystemPrompt,

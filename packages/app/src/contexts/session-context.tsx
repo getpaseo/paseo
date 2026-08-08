@@ -10,7 +10,6 @@ import {
   createSetAgentInitializing,
   refreshAgentInitializationTimeout,
 } from "@/hooks/use-agent-initialization";
-import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { generateMessageId, type StreamItem } from "@/types/stream";
 import {
   createSessionAgentStreamReducerQueue,
@@ -352,6 +351,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const clearAgentTurnLiveness = useSessionStore((state) => state.clearAgentTurnLiveness);
   const clearAgentStreamHead = useSessionStore((state) => state.clearAgentStreamHead);
   const setAgentTimelineCursor = useSessionStore((state) => state.setAgentTimelineCursor);
+  const setAgentTimelineHasNewer = useSessionStore((state) => state.setAgentTimelineHasNewer);
   const setInitializingAgents = useSessionStore((state) => state.setInitializingAgents);
   const bumpHistorySyncGeneration = useSessionStore((state) => state.bumpHistorySyncGeneration);
   const markAgentHistorySynchronized = useSessionStore(
@@ -494,19 +494,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   }, [client, serverId, updateSessionServerInfo]);
 
   useEffect(() => {
-    if (!isConnected) {
-      return;
-    }
-
-    const serverInfo = client.getLastServerInfoMessage();
-    if (!serverInfo?.features?.providersSnapshot) {
-      return;
-    }
-
-    prefetchProvidersSnapshot(serverId, client);
-  }, [client, isConnected, serverId]);
-
-  useEffect(() => {
     const unregister = voiceRuntime?.registerSession({
       serverId,
       setVoiceMode: async (enabled, agentId) => {
@@ -626,6 +613,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
             acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
           });
         }
+        if (payload.direction !== "before") {
+          setAgentTimelineHasNewer(serverId, (current) => {
+            const next = new Map(current);
+            next.set(agentId, payload.hasNewer);
+            return next;
+          });
+        }
         markAgentHistorySynchronized(serverId, agentId);
       } else {
         applyAgentTimelineResponseState(serverId, agentId, {
@@ -633,6 +627,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           head: result.head,
           range: result.cursorChanged ? (result.cursor ?? null) : (currentCursor ?? null),
           older: result.older,
+          newer:
+            payload.direction === "before"
+              ? timeline.status === "synced" && timeline.newer === "available"
+              : payload.hasNewer,
           synchronized: shouldMarkAuthoritativeHistoryApplied,
           acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
         });
@@ -659,6 +657,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       recoverTimelineGap,
       serverId,
       setAgentStreamState,
+      setAgentTimelineHasNewer,
       setInitializingAgents,
     ],
   );
@@ -725,14 +724,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   useEffect(() => {
     viewedTimelineSyncRef.current?.setConnected(isConnected);
   }, [isConnected]);
-
-  useEffect(
-    () =>
-      getHostRuntimeStore().subscribeAgentStoppedRunning(serverId, (agentId) => {
-        viewedTimelineSyncRef.current?.reconcileAgent(agentId);
-      }),
-    [serverId],
-  );
 
   // Daemon message handlers - directly update Zustand store
   useEffect(() => {

@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
-import type { CheckoutStatusPayload } from "@/git/checkout-status-cache";
 import {
+  type BranchPickerDetail,
   branchPickerOptionId,
   buildBranchPickerItems,
+  buildPickerOptionData,
+  defaultBasePickerItem,
   pickerItemToCheckoutRequest,
-  resolveCheckoutRequest,
   type PickerItem,
 } from "./new-workspace-picker-item";
 
@@ -104,7 +105,7 @@ describe("pickerItemToCheckoutRequest", () => {
 });
 
 describe("buildBranchPickerItems", () => {
-  it("hides the origin duplicate when local and origin match", () => {
+  it("keeps a single origin row when local and origin match", () => {
     expect(
       buildBranchPickerItems([
         {
@@ -120,14 +121,14 @@ describe("buildBranchPickerItems", () => {
       {
         kind: "branch",
         name: "main",
-        refName: "refs/heads/main",
-        accessibilityLabel: "main, local branch, up to date with origin main",
+        refName: "refs/remotes/origin/main",
+        accessibilityLabel: "main, origin branch",
         committerDate: 10,
       },
     ]);
   });
 
-  it("creates compact local and origin rows when the refs differ", () => {
+  it("puts the origin row first and disambiguates the local row when the refs differ", () => {
     expect(
       buildBranchPickerItems([
         {
@@ -143,17 +144,16 @@ describe("buildBranchPickerItems", () => {
       {
         kind: "branch",
         name: "main",
-        refName: "refs/heads/main",
-        divergenceLabel: "+3 −2",
-        accessibilityLabel: "main, local branch, 3 commits ahead and 2 behind origin main",
+        refName: "refs/remotes/origin/main",
+        accessibilityLabel: "main, origin branch",
         committerDate: 10,
       },
       {
         kind: "branch",
-        name: "origin/main",
-        refName: "refs/remotes/origin/main",
-        divergenceLabel: "+2 −3",
-        accessibilityLabel: "origin main, 2 commits ahead and 3 behind local main",
+        name: "main (local)",
+        refName: "refs/heads/main",
+        divergenceLabel: "+3 −2",
+        accessibilityLabel: "main, local branch, 3 commits ahead and 2 behind origin main",
         committerDate: 10,
       },
     ]);
@@ -172,9 +172,30 @@ describe("buildBranchPickerItems", () => {
     ).toEqual([
       {
         kind: "branch",
-        name: "origin/release",
+        name: "release",
         refName: "refs/remotes/origin/release",
-        accessibilityLabel: "origin release, origin branch",
+        accessibilityLabel: "release, origin branch",
+        committerDate: 5,
+      },
+    ]);
+  });
+
+  it("keeps the plain name for a local-only branch", () => {
+    expect(
+      buildBranchPickerItems([
+        {
+          name: "scratch",
+          committerDate: 5,
+          hasLocal: true,
+          hasRemote: false,
+        },
+      ]),
+    ).toEqual([
+      {
+        kind: "branch",
+        name: "scratch",
+        refName: "refs/heads/scratch",
+        accessibilityLabel: "scratch, local branch",
         committerDate: 5,
       },
     ]);
@@ -194,15 +215,15 @@ describe("buildBranchPickerItems", () => {
       {
         kind: "branch",
         name: "main",
-        refName: "refs/heads/main",
-        accessibilityLabel: "main, local branch",
+        refName: "refs/remotes/origin/main",
+        accessibilityLabel: "main, origin branch",
         committerDate: 10,
       },
       {
         kind: "branch",
-        name: "origin/main",
-        refName: "refs/remotes/origin/main",
-        accessibilityLabel: "origin main, origin branch",
+        name: "main (local)",
+        refName: "refs/heads/main",
+        accessibilityLabel: "main, local branch",
         committerDate: 10,
       },
     ]);
@@ -221,38 +242,101 @@ describe("buildBranchPickerItems", () => {
   });
 });
 
-describe("resolveCheckoutRequest", () => {
-  const checkoutStatus = {
-    currentBranch: "feature/current",
-  } as CheckoutStatusPayload;
+const mainRow: BranchPickerDetail = {
+  name: "main",
+  committerDate: 10,
+  hasLocal: true,
+  hasRemote: true,
+  localAhead: 2,
+  localBehind: 0,
+};
 
-  it("branches from the loaded current branch when nothing was picked", () => {
-    expect(resolveCheckoutRequest(null, checkoutStatus)).toEqual({
+describe("buildPickerOptionData", () => {
+  it("marks origin and keeps an ahead local main explicit", () => {
+    const baseItem = defaultBasePickerItem({
+      currentBranch: "main",
+      upstreamRef: "refs/remotes/origin/main",
+    });
+    const data = buildPickerOptionData({ branchDetails: [mainRow], prItems: [], baseItem });
+
+    expect(data.options.map((option) => option.label)).toEqual(["main", "main (local)"]);
+    expect(data.selectedOptionId).toBe(branchPickerOptionId("refs/remotes/origin/main"));
+  });
+
+  it("adds and disambiguates a fork upstream absent from branch suggestions", () => {
+    const baseItem = defaultBasePickerItem({
+      currentBranch: "main",
+      upstreamRef: "refs/remotes/upstream/main",
+    });
+    const data = buildPickerOptionData({
+      branchDetails: [{ ...mainRow, localAhead: 0, localBehind: 0 }],
+      prItems: [],
+      baseItem,
+    });
+
+    expect(data.options.map((option) => option.label)).toEqual(["main (upstream)", "main"]);
+    expect(data.selectedOptionId).toBe(branchPickerOptionId("refs/remotes/upstream/main"));
+  });
+
+  it("marks a visible row on an old daemon when local and origin are in sync", () => {
+    const baseItem = defaultBasePickerItem({ currentBranch: "main" });
+    const data = buildPickerOptionData({
+      branchDetails: [{ ...mainRow, localAhead: 0, localBehind: 0 }],
+      prItems: [],
+      baseItem,
+    });
+
+    expect(data.options.map((option) => option.label)).toEqual(["main (local)", "main"]);
+    expect(data.selectedOptionId).toBe(branchPickerOptionId("refs/heads/main"));
+  });
+
+  it("keeps an explicit local selection marked", () => {
+    const baseItem: PickerItem = {
+      kind: "branch",
+      name: "main (local)",
+      refName: "refs/heads/main",
+      accessibilityLabel: "main, local branch",
+    };
+    const data = buildPickerOptionData({
+      branchDetails: [mainRow],
+      prItems: [],
+      baseItem,
+    });
+    const selected = data.itemById.get(data.selectedOptionId) ?? null;
+    expect(pickerItemToCheckoutRequest(selected)).toEqual({
       action: "branch-off",
-      refName: "feature/current",
+      refName: "refs/heads/main",
+    });
+  });
+});
+
+describe("defaultBasePickerItem", () => {
+  it("uses origin when the current branch tracks origin", () => {
+    expect(
+      defaultBasePickerItem({
+        currentBranch: "main",
+        upstreamRef: "refs/remotes/origin/main",
+      }),
+    ).toMatchObject({ refName: "refs/remotes/origin/main", name: "main" });
+  });
+
+  it("uses the exact non-origin upstream", () => {
+    expect(
+      defaultBasePickerItem({
+        currentBranch: "main",
+        upstreamRef: "refs/remotes/upstream/main",
+      }),
+    ).toMatchObject({ refName: "refs/remotes/upstream/main", name: "main" });
+  });
+
+  it("keeps old-daemon behavior local", () => {
+    expect(defaultBasePickerItem({ currentBranch: "main" })).toMatchObject({
+      refName: "refs/heads/main",
+      name: "main",
     });
   });
 
-  it("prefers an explicit picker selection", () => {
-    expect(
-      resolveCheckoutRequest(
-        {
-          kind: "branch",
-          name: "feature/picked",
-          refName: "refs/heads/feature/picked",
-          accessibilityLabel: "feature/picked, local branch",
-        },
-        checkoutStatus,
-      ),
-    ).toEqual({
-      action: "branch-off",
-      refName: "refs/heads/feature/picked",
-    });
-  });
-
-  it("preserves the server-default intent for a detached checkout", () => {
-    expect(
-      resolveCheckoutRequest(null, { ...checkoutStatus, currentBranch: null }),
-    ).toBeUndefined();
+  it("has no default for detached HEAD", () => {
+    expect(defaultBasePickerItem({ currentBranch: null })).toBeNull();
   });
 });

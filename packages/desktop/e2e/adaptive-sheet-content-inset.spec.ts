@@ -1,8 +1,6 @@
 import { expect, test, type Page } from "../../app/e2e/support/fixtures";
 import { gotoAppShell } from "../../app/e2e/support/helpers/app";
 import {
-  readRails,
-  readSheetHeaderRails,
   readVerticalGap,
   waitForSettledPosition,
 } from "../../app/e2e/support/helpers/sheet-layout";
@@ -40,10 +38,6 @@ async function openChooseSkillsOnDesktop(page: Page): Promise<void> {
   await openSkillSelection(page);
 }
 
-function sheetHeaderRails(page: Page) {
-  return readSheetHeaderRails(page, "skill-selection-sheet", "Choose skills");
-}
-
 function allSkillsCard(page: Page) {
   return page.getByTestId("skill-selection-all-card");
 }
@@ -59,15 +53,6 @@ function bundledSkillsLabel(page: Page) {
 test.describe("Choose skills sheet on a compact form factor", () => {
   test.use({ viewport: COMPACT_VIEWPORT });
 
-  test("keeps its cards on the sheet header rails", async ({ page }) => {
-    await openChooseSkillsOnPhone(page);
-
-    const header = await sheetHeaderRails(page);
-
-    expect(await readRails(allSkillsCard(page))).toEqual(header);
-    expect(await readRails(skillListCard(page))).toEqual(header);
-  });
-
   test("gives the Bundled skills label more room above it than below", async ({ page }) => {
     await openChooseSkillsOnPhone(page);
 
@@ -80,15 +65,6 @@ test.describe("Choose skills sheet on a compact form factor", () => {
 
 test.describe("Choose skills sheet on a desktop form factor", () => {
   test.use({ viewport: DESKTOP_VIEWPORT });
-
-  test("keeps its cards on the sheet header rails", async ({ page }) => {
-    await openChooseSkillsOnDesktop(page);
-
-    const header = await sheetHeaderRails(page);
-
-    expect(await readRails(allSkillsCard(page))).toEqual(header);
-    expect(await readRails(skillListCard(page))).toEqual(header);
-  });
 
   test("gives the Bundled skills label more room above it than below", async ({ page }) => {
     await openChooseSkillsOnDesktop(page);

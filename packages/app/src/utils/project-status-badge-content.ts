@@ -1,29 +1,28 @@
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
-import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
+
+export type ProjectStatusBadgeDotBucket = "failed" | "attention" | "running";
 
 export type ProjectStatusBadgeContent =
-  | { kind: "loader" }
   | { kind: "alert" }
-  | { kind: "dot"; bucket: "failed" | "attention" };
+  | { kind: "dot"; bucket: ProjectStatusBadgeDotBucket };
 
 /**
- * What the collapsed-project status badge should render for a project's aggregate bucket,
- * or null when no badge should show at all. Kept as plain data (no React) so it's testable
- * without JSDOM or component mounting — see docs/testing.md's two test categories.
+ * What the project status badge should render for a project's aggregate bucket, or null when
+ * no badge should show at all. Kept as plain data (no React) so it's testable without JSDOM
+ * or component mounting — see docs/testing.md's two test categories.
  *
- * The "dot" variant is narrowed to failed/attention only: running renders the loader and
- * needs_input renders the alert, so those two buckets can never reach a dot.
+ * Running is a dot like failed and attention rather than its own glyph. The badge is 14pt;
+ * anything with internal detail at that size loses to a solid disc, so the buckets separate
+ * by color and — for running alone — by pulsing. Only needs_input earns a glyph, because
+ * "someone must act" has to survive being the one amber state next to running.
  */
 export function getProjectStatusBadgeContent(
   statusBucket: SidebarStateBucket | null,
 ): ProjectStatusBadgeContent | null {
-  if (shouldRenderSyncedStatusLoader({ bucket: statusBucket })) {
-    return { kind: "loader" };
-  }
   if (statusBucket === "needs_input") {
     return { kind: "alert" };
   }
-  if (statusBucket === "failed" || statusBucket === "attention") {
+  if (statusBucket === "failed" || statusBucket === "attention" || statusBucket === "running") {
     return { kind: "dot", bucket: statusBucket };
   }
   return null;

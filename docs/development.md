@@ -244,6 +244,27 @@ The supervisor rotates `daemon.log`. Persisted `log.file.rotate` settings in
 `PASEO_LOG_ROTATE_SIZE` and `PASEO_LOG_ROTATE_COUNT` env vars override the
 defaults. The default rotation is `10m` x `3` files everywhere.
 
+### Git process pressure
+
+If Git refreshes consume too much CPU, disk, or antivirus capacity, especially on Windows, reduce
+the daemon-global Git process limits in `$PASEO_HOME/config.json`:
+
+```json
+{
+  "daemon": {
+    "git": {
+      "maxProcessesPerSecond": 5,
+      "maxProcessConcurrency": 4
+    }
+  }
+}
+```
+
+Restart the daemon with `paseo daemon restart`. If Paseo Desktop manages the daemon, fully quit and
+reopen the desktop app. Lower values reduce machine pressure but make Git-backed workspace state and
+Git RPCs wait longer. See [Git process limits](data-model.md#git-process-limits) for defaults,
+semantics, and environment-variable overrides.
+
 ### Agent Tool Catalog Measurement
 
 Measure the MCP `tools/list` payload that Paseo injects into agents with:
@@ -259,11 +280,18 @@ for machine-readable output.
 
 ## Worktree starting refs
 
-The New workspace branch picker treats local and `origin/*` refs as distinct starting points when
-they differ. Local `main` is sent as `refs/heads/main`; remote `origin/main` is sent as
-`refs/remotes/origin/main`. Matching local/remote refs collapse to one local row. Unqualified refs
-from older clients resolve local-first, then fall back to `origin`. Worktrees inherit committed Git
-state only; uncommitted source-checkout changes are not copied.
+A new worktree starts from the current branch's upstream, or the local branch when it has no
+upstream. This keeps unpushed local commits out of new workspaces by default. The picker collapses
+identical refs; divergent local or non-origin refs remain explicit, qualified choices.
+
+The daemon sends the exact upstream ref because the remote and branch names cannot be inferred.
+Worktrees retain that ref for comparisons and updates from base while exposing its branch name to
+the UI. Merging into base requires a mutable local target: `origin/main` maps to local `main`, while
+another remote fails closed until the worktree records an explicit local target. Older daemons omit
+the optional field and retain the previous local-first behavior; older worktree metadata without the
+exact ref also resolves through its stored branch name.
+
+Worktrees inherit committed Git state only; uncommitted source-checkout changes are not copied.
 
 ## paseo.json service scripts
 

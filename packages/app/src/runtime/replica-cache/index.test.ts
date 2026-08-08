@@ -189,6 +189,7 @@ describe("ReplicaCache", () => {
     expect(session.agentAuthoritativeHistoryApplied).toEqual(new Map());
     expect(session.agentTimelineCursor).toEqual(new Map());
     expect(session.agentTimelineHasOlder).toEqual(new Map());
+    expect(session.agentTimelineHasNewer).toEqual(new Map());
     expect(session.agentHistorySyncGeneration).toEqual(new Map());
     expect(selectAgentTimelineState(session, "agent-1")).toEqual({
       status: "painted",

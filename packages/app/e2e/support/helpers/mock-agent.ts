@@ -14,6 +14,7 @@ export interface MockAgentWorkspace {
 export interface MockAgentOptions {
   repoPrefix: string;
   title: string;
+  port?: number;
   initialPrompt?: string;
   model?: string;
   modeId?: string;
@@ -28,7 +29,7 @@ export interface MockAgentOptions {
 export async function seedMockAgentWorkspace(
   options: MockAgentOptions,
 ): Promise<MockAgentWorkspace> {
-  const workspace = await seedWorkspace({ repoPrefix: options.repoPrefix });
+  const workspace = await seedWorkspace({ repoPrefix: options.repoPrefix, port: options.port });
   try {
     const agent = await workspace.client.createAgent({
       provider: "mock",
@@ -70,8 +71,12 @@ export async function seedRunningMockAgentWorkspace(
   }
 }
 
-export function buildAgentRoute(workspaceId: string, agentId: string): string {
-  return buildHostAgentDetailRoute(getServerId(), agentId, workspaceId);
+export function buildAgentRoute(
+  workspaceId: string,
+  agentId: string,
+  serverId = getServerId(),
+): string {
+  return buildHostAgentDetailRoute(serverId, agentId, workspaceId);
 }
 
 /** Boots the app directly at the agent's workspace route and waits for the open intent to settle. */

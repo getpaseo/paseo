@@ -45,6 +45,23 @@ describe("resolveProviderDiscoveredModels", () => {
     expect(refreshing.models).toEqual([grokModel]);
   });
 
+  it("excludes compatibility-only models from display and cache", () => {
+    const compatibilityModel: AgentModelDefinition = {
+      ...piModel,
+      id: "pi/model-legacy",
+      label: "Pi Model legacy",
+      isSelectable: false,
+    };
+
+    const result = resolveModels({
+      provider: "pi",
+      currentModels: [piModel, compatibilityModel],
+    });
+
+    expect(result.models).toEqual([piModel]);
+    expect(result.cache?.models).toEqual([piModel]);
+  });
+
   it("does not show one provider's cached models while another provider loads", () => {
     const ready = resolveModels({ provider: "pi", currentModels: [piModel] });
 

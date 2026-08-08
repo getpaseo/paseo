@@ -102,6 +102,7 @@ export class HubExecutionController {
         thinkingOptionId: message.thinkingOptionId,
         featureValues: message.featureValues,
         env: message.env,
+        mcpServers: message.mcpServers,
         worktree: message.worktree,
       });
       if (this.closed) return;

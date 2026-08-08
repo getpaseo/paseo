@@ -28,6 +28,14 @@ const pr101: ForgeSearchItem = {
   headRefName: "feature",
 };
 
+const pr202: ForgeSearchItem = {
+  ...pr101,
+  number: 202,
+  title: "Attach second PR",
+  url: "https://github.com/acme/paseo/pull/202",
+  headRefName: "feature-two",
+};
+
 const issue202: ForgeSearchItem = {
   kind: "issue",
   number: 202,
@@ -51,6 +59,7 @@ interface HarnessInput {
   initialCwd?: string;
   initialText?: string;
   onPullRequestDetected?: () => void;
+  onPullRequestAdded?: (item: ForgeSearchItem) => void;
   remote?: string | null;
 }
 
@@ -112,6 +121,7 @@ function useHarness(client: ForgeSearchClient, input: HarnessInput = {}) {
     cwd: workingDirectory,
     setAttachments,
     onPullRequestDetected: input.onPullRequestDetected,
+    onPullRequestAdded: input.onPullRequestAdded,
   });
 
   return {
@@ -231,7 +241,7 @@ describe("useComposerGithubAutoAttach", () => {
     vi.useRealTimers();
   });
 
-  it("stays resolving while overlapping lookups share a ref", async () => {
+  it("reports pasted pull requests in source order when lookups finish out of order", async () => {
     vi.useFakeTimers();
     const firstLookup = deferred<ForgeSearchPayload>();
     const secondLookup = deferred<ForgeSearchPayload>();
@@ -241,7 +251,10 @@ describe("useComposerGithubAutoAttach", () => {
         .mockReturnValueOnce(firstLookup.promise)
         .mockReturnValueOnce(secondLookup.promise),
     };
-    const { result } = renderHook(() => useHarness(client), { wrapper: createWrapper() });
+    const onPullRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+      wrapper: createWrapper(),
+    });
 
     act(() => {
       result.current.setText(
@@ -250,21 +263,314 @@ describe("useComposerGithubAutoAttach", () => {
     });
     await flushDebounce();
 
+    await act(async () => {
+      secondLookup.resolve(githubPayload([pr202], "search-202"));
+      await Promise.resolve();
+    });
+    expect(onPullRequestAdded).not.toHaveBeenCalled();
+    expect(result.current.attachments).toEqual([]);
+
+    await act(async () => {
+      firstLookup.resolve(githubPayload([pr101], "search-101"));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(onPullRequestAdded.mock.calls).toEqual([[pr101], [pr202]]);
+      expect(result.current.attachments).toEqual([
+        { kind: "forge_change_request", item: pr101 },
+        { kind: "forge_change_request", item: pr202 },
+      ]);
+    });
+    vi.useRealTimers();
+  });
+
+  it("preserves pull request order across lookup batches", async () => {
+    vi.useFakeTimers();
+    const firstLookup = deferred<ForgeSearchPayload>();
+    const secondLookup = deferred<ForgeSearchPayload>();
+    const client: ForgeSearchClient = {
+      searchForge: vi
+        .fn()
+        .mockReturnValueOnce(firstLookup.promise)
+        .mockReturnValueOnce(secondLookup.promise),
+    };
+    const onPullRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      result.current.setText("Review https://github.com/acme/paseo/pull/101");
+    });
+    await flushDebounce();
+    act(() => {
+      result.current.setText(
+        "Review https://github.com/acme/paseo/pull/101 and https://github.com/acme/paseo/pull/202",
+      );
+    });
+    expect(result.current.isResolving).toBe(true);
+    await flushDebounce();
+
+    await act(async () => {
+      secondLookup.resolve(githubPayload([pr202], "search-202"));
+      await Promise.resolve();
+    });
+    expect(onPullRequestAdded).not.toHaveBeenCalled();
+    expect(result.current.attachments).toEqual([]);
+    expect(result.current.isResolving).toBe(true);
+
+    await act(async () => {
+      firstLookup.resolve(githubPayload([pr101], "search-101"));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(onPullRequestAdded.mock.calls).toEqual([[pr101], [pr202]]);
+      expect(result.current.attachments).toEqual([
+        { kind: "forge_change_request", item: pr101 },
+        { kind: "forge_change_request", item: pr202 },
+      ]);
+      expect(result.current.isResolving).toBe(false);
+    });
+    expect(client.searchForge).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it("uses the latest pull request order when URLs are reordered during debounce", async () => {
+    vi.useFakeTimers();
+    const client = createSearchClient([pr101, pr202]);
+    const onPullRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      result.current.setText(
+        "Refs https://github.com/acme/paseo/pull/101 and https://github.com/acme/paseo/pull/202",
+      );
+    });
+    act(() => {
+      result.current.setText(
+        "Refs https://github.com/acme/paseo/pull/202 and https://github.com/acme/paseo/pull/101",
+      );
+    });
+    await flushDebounce();
+
+    expect(onPullRequestAdded.mock.calls).toEqual([[pr202], [pr101]]);
+    expect(client.calls).toEqual([
+      { cwd, query: "202", limit: 20 },
+      { cwd, query: "101", limit: 20 },
+    ]);
+    vi.useRealTimers();
+  });
+
+  it("uses the latest pull request order when active lookups are reordered", async () => {
+    vi.useFakeTimers();
+    const firstLookup = deferred<ForgeSearchPayload>();
+    const secondLookup = deferred<ForgeSearchPayload>();
+    const client: ForgeSearchClient = {
+      searchForge: vi
+        .fn()
+        .mockReturnValueOnce(firstLookup.promise)
+        .mockReturnValueOnce(secondLookup.promise),
+    };
+    const onPullRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      result.current.setText(
+        "Refs https://github.com/acme/paseo/pull/101 and https://github.com/acme/paseo/pull/202",
+      );
+    });
+    await flushDebounce();
+    act(() => {
+      result.current.setText(
+        "Refs https://github.com/acme/paseo/pull/202 and https://github.com/acme/paseo/pull/101",
+      );
+    });
+    await flushDebounce();
+
+    await act(async () => {
+      firstLookup.resolve(githubPayload([pr101], "search-101"));
+      await Promise.resolve();
+    });
+    expect(onPullRequestAdded).not.toHaveBeenCalled();
+    expect(result.current.attachments).toEqual([]);
+    expect(result.current.isResolving).toBe(true);
+
+    await act(async () => {
+      secondLookup.resolve(githubPayload([pr202], "search-202"));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(onPullRequestAdded.mock.calls).toEqual([[pr202], [pr101]]);
+      expect(result.current.attachments).toEqual([
+        { kind: "forge_change_request", item: pr202 },
+        { kind: "forge_change_request", item: pr101 },
+      ]);
+      expect(result.current.isResolving).toBe(false);
+    });
+    expect(client.searchForge).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it("does not report a buffered pull request after its URL is removed", async () => {
+    vi.useFakeTimers();
+    const firstLookup = deferred<ForgeSearchPayload>();
+    const secondLookup = deferred<ForgeSearchPayload>();
+    const client: ForgeSearchClient = {
+      searchForge: vi
+        .fn()
+        .mockReturnValueOnce(firstLookup.promise)
+        .mockReturnValueOnce(secondLookup.promise),
+    };
+    const onPullRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      result.current.setText(
+        "Refs https://github.com/acme/paseo/pull/101 and https://github.com/acme/paseo/pull/202",
+      );
+    });
+    await flushDebounce();
+
+    await act(async () => {
+      secondLookup.resolve(githubPayload([pr202], "search-202"));
+      await Promise.resolve();
+    });
+    act(() => {
+      result.current.setText("Still https://github.com/acme/paseo/pull/101");
+    });
+    await flushDebounce();
+
+    await act(async () => {
+      firstLookup.resolve(githubPayload([pr101], "search-101"));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(onPullRequestAdded.mock.calls).toEqual([[pr101]]);
+    });
+    vi.useRealTimers();
+  });
+
+  it("keeps resolving when a pending pull request URL is removed and re-added", async () => {
+    vi.useFakeTimers();
+    const lookup = deferred<ForgeSearchPayload>();
+    const client: ForgeSearchClient = {
+      searchForge: vi.fn().mockReturnValue(lookup.promise),
+    };
+    const onPullRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      result.current.setText("Review https://github.com/acme/paseo/pull/101");
+    });
+    await flushDebounce();
+
+    act(() => {
+      result.current.setText("");
+    });
+    expect(result.current.isResolving).toBe(false);
+
+    act(() => {
+      result.current.setText("Review https://github.com/acme/paseo/pull/101");
+    });
+    expect(result.current.isResolving).toBe(true);
+    await flushDebounce();
+    expect(client.searchForge).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      lookup.resolve(githubPayload([pr101], "search-101"));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(result.current.attachments).toEqual([{ kind: "forge_change_request", item: pr101 }]);
+      expect(result.current.isResolving).toBe(false);
+      expect(onPullRequestAdded.mock.calls).toEqual([[pr101]]);
+    });
+    vi.useRealTimers();
+  });
+
+  it("releases a removed ref without waiting for its lookup to settle", async () => {
+    vi.useFakeTimers();
+    const firstLookup = deferred<ForgeSearchPayload>();
+    const secondLookup = deferred<ForgeSearchPayload>();
+    const client: ForgeSearchClient = {
+      searchForge: vi
+        .fn()
+        .mockReturnValueOnce(firstLookup.promise)
+        .mockReturnValueOnce(secondLookup.promise),
+    };
+    const onPullRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      result.current.setText(
+        "Refs https://github.com/acme/paseo/pull/101 and https://github.com/acme/paseo/pull/202",
+      );
+    });
+    await flushDebounce();
+
+    await act(async () => {
+      secondLookup.resolve(githubPayload([pr202], "search-202"));
+      await Promise.resolve();
+    });
+    expect(onPullRequestAdded).not.toHaveBeenCalled();
+    expect(result.current.isResolving).toBe(true);
+
     act(() => {
       result.current.setText("Still https://github.com/acme/paseo/pull/202");
     });
     await flushDebounce();
 
+    await vi.waitFor(() => {
+      expect(onPullRequestAdded.mock.calls).toEqual([[pr202]]);
+      expect(result.current.isResolving).toBe(false);
+    });
+
     await act(async () => {
       firstLookup.resolve(githubPayload([], "search-101"));
       await Promise.resolve();
     });
+    vi.useRealTimers();
+  });
+
+  it("stays resolving when an unrelated attachment is added during lookup", async () => {
+    vi.useFakeTimers();
+    const lookup = deferred<ForgeSearchPayload>();
+    const client: ForgeSearchClient = {
+      searchForge: vi.fn().mockReturnValue(lookup.promise),
+    };
+    const { result } = renderHook(() => useHarness(client), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.setText("Review https://github.com/acme/paseo/pull/101");
+    });
+    await flushDebounce();
+
+    act(() => {
+      result.current.setAttachments([{ kind: "forge_issue", item: issue202 }]);
+      result.current.setText("Review https://github.com/acme/paseo/pull/101 please");
+    });
+
     expect(result.current.isResolving).toBe(true);
 
     await act(async () => {
-      secondLookup.resolve(githubPayload([], "search-202"));
+      lookup.resolve(githubPayload([pr101], "search-101"));
       await Promise.resolve();
     });
+
+    expect(result.current.attachments).toEqual([
+      { kind: "forge_issue", item: issue202 },
+      { kind: "forge_change_request", item: pr101 },
+    ]);
     expect(result.current.isResolving).toBe(false);
     vi.useRealTimers();
   });

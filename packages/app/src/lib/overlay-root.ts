@@ -28,13 +28,19 @@ export function getOverlayRoot(): HTMLElement {
   if (!el) {
     el = document.createElement("div");
     el.id = "overlay-root";
-    el.style.position = "fixed";
-    el.style.inset = "0";
-    el.style.pointerEvents = "none";
     document.body.appendChild(el);
   }
+  el.style.position = "fixed";
+  el.style.inset = "0";
+  el.style.pointerEvents = "none";
+  el.style.zIndex = String(WEB_SURFACE_PLANE.overlay);
   return el;
 }
+
+export const WEB_SURFACE_PLANE = {
+  browser: 0,
+  overlay: 1,
+} as const;
 
 export const OVERLAY_Z = {
   floating: 10,

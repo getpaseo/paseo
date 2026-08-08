@@ -65,6 +65,23 @@ describe("passthrough CLI", () => {
     ).toBeNull();
   });
 
+  it("ignores Linux desktop identity arguments injected by the Nix wrapper", () => {
+    expect(
+      parsePassthroughCliArgs({
+        argv: [
+          "/nix/store/electron/bin/electron",
+          "/nix/store/paseo-desktop/share/paseo-desktop/electron-app",
+          "--no-sandbox",
+          "--class=paseo-desktop",
+          "daemon",
+          "status",
+        ],
+        isDefaultApp: true,
+        forceCli: false,
+      }),
+    ).toEqual(["daemon", "status"]);
+  });
+
   it("ignores Electron remote debugging switches", () => {
     expect(
       parsePassthroughCliArgs({

@@ -4,6 +4,7 @@ import {
   isTimelineCatchUpComplete,
   isTimelineResumeSnapshotAuthoritative,
   planTimelineOlderFetch,
+  planTimelinePromptJump,
   planTimelineTailFetch,
 } from "./timeline-sync-plan";
 
@@ -26,6 +27,19 @@ describe("timeline sync planning", () => {
       cursor: { epoch: "epoch-1", seq: 25 },
       limit: TIMELINE_FETCH_PAGE_SIZE,
       projection: "projected",
+    });
+  });
+
+  test("an unloaded prompt jump merges a window with half a page newer than the target", () => {
+    expect(planTimelinePromptJump({ epoch: "epoch-1", seq: 42 })).toEqual({
+      direction: "before",
+      cursor: {
+        epoch: "epoch-1",
+        seq: 42 + Math.floor(TIMELINE_FETCH_PAGE_SIZE / 2) + 1,
+      },
+      limit: TIMELINE_FETCH_PAGE_SIZE,
+      projection: "projected",
+      mergeWindow: true,
     });
   });
 

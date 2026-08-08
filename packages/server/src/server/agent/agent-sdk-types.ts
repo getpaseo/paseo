@@ -75,6 +75,8 @@ export type ProviderStatus = "ready" | "loading" | "error" | "unavailable";
 export interface AgentModelDefinition {
   provider: AgentProvider;
   id: string;
+  aliases?: string[];
+  isSelectable?: boolean;
   label: string;
   description?: string;
   isDefault?: boolean;
@@ -99,6 +101,12 @@ export function normalizeAgentModelDefinition(model: AgentModelDefinition): Agen
     return model;
   }
   return { ...model, defaultThinkingOptionId };
+}
+
+export function filterSelectableAgentModels(
+  models: AgentModelDefinition[] | undefined,
+): AgentModelDefinition[] {
+  return models?.filter((model) => model.isSelectable !== false) ?? [];
 }
 
 export interface ProviderSnapshotEntry {
@@ -703,6 +711,8 @@ export interface AgentClient {
    * The registry is responsible for merging configured model overrides.
    */
   fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog>;
+  /** Apply provider-owned defaults to a model supplied through provider configuration. */
+  resolveConfiguredModel?(model: AgentModelDefinition): AgentModelDefinition;
   resolveDefaultModeId?(input: ResolveAgentDefaultModeInput): Promise<string | undefined>;
   resolveCreateConfig?(input: ResolveAgentCreateConfigInput): ResolveAgentCreateConfigResult;
   isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;
