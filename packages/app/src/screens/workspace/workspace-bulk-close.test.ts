@@ -3,6 +3,7 @@ import {
   buildBulkCloseConfirmationMessage,
   classifyBulkClosableTabs,
   closeBulkWorkspaceTabs,
+  selectWorkspaceEditorTabs,
 } from "@/screens/workspace/workspace-bulk-close";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
@@ -34,6 +35,62 @@ function makeFileTab(path: string): WorkspaceTabDescriptor {
 }
 
 describe("workspace bulk close helpers", () => {
+  it("selects every non-agent, non-terminal tab as an editor tab", () => {
+    const tabs: WorkspaceTabDescriptor[] = [
+      makeAgentTab("a1"),
+      makeTerminalTab("t1"),
+      {
+        key: "draft",
+        tabId: "draft",
+        kind: "draft",
+        target: { kind: "draft", draftId: "draft-1" },
+      },
+      {
+        key: "provider_subagent",
+        tabId: "provider_subagent",
+        kind: "provider_subagent",
+        target: {
+          kind: "provider_subagent",
+          parentAgentId: "agent-1",
+          subagentId: "subagent-1",
+        },
+      },
+      makeFileTab("/repo/README.md"),
+      {
+        key: "working_diff",
+        tabId: "working_diff",
+        kind: "working_diff",
+        target: { kind: "working_diff" },
+      },
+      {
+        key: "commit_diff",
+        tabId: "commit_diff",
+        kind: "commit_diff",
+        target: { kind: "commit_diff", sha: "abc123" },
+      },
+      {
+        key: "browser",
+        tabId: "browser",
+        kind: "browser",
+        target: { kind: "browser", browserId: "browser-1" },
+      },
+      {
+        key: "setup",
+        tabId: "setup",
+        kind: "setup",
+        target: { kind: "setup", workspaceId: "workspace-1" },
+      },
+    ];
+
+    expect(selectWorkspaceEditorTabs(tabs).map((tab) => tab.target.kind)).toEqual([
+      "file",
+      "working_diff",
+      "commit_diff",
+      "browser",
+      "setup",
+    ]);
+  });
+
   it("classifies agent, terminal, and passive tabs for shared bulk close handling", () => {
     const groups = classifyBulkClosableTabs([
       makeAgentTab("a1"),

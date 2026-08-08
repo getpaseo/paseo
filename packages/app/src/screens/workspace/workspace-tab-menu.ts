@@ -16,6 +16,7 @@ export interface WorkspaceTabMenuLabels {
   closeLeft: string;
   closeRight: string;
   closeOthers: string;
+  closeEditorTabs: string;
   reloadAgent: string;
   reloadAgentTooltip: string;
   close: string;
@@ -32,6 +33,7 @@ export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   closeLeft: i18n.t("workspace.tabs.menu.closeLeft"),
   closeRight: i18n.t("workspace.tabs.menu.closeRight"),
   closeOthers: i18n.t("workspace.tabs.menu.closeOthers"),
+  closeEditorTabs: i18n.t("workspace.tabs.menu.closeEditorTabs"),
   reloadAgent: i18n.t("workspace.tabs.menu.reloadAgent"),
   reloadAgentTooltip: i18n.t("workspace.tabs.menu.reloadAgentTooltip"),
   close: i18n.t("workspace.tabs.menu.close"),
@@ -48,6 +50,7 @@ export type WorkspaceTabMenuEntry =
         | "arrow-left-to-line"
         | "arrow-right-to-line"
         | "copy-x"
+        | "panel-top-close"
         | "pencil"
         | "x";
       hint?: string;
@@ -78,6 +81,8 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
   onCloseTabsAfter: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  onCloseEditorTabs: () => Promise<void> | void;
+  canCloseEditorTabs: boolean;
   labels?: WorkspaceTabMenuLabels;
 }
 
@@ -95,6 +100,8 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  onCloseEditorTabs: () => Promise<void> | void;
+  canCloseEditorTabs: boolean;
   labels?: WorkspaceTabMenuLabels;
 }
 
@@ -182,6 +189,8 @@ export function buildWorkspaceTabMenuEntries(
     onCloseTabsBefore,
     onCloseTabsAfter,
     onCloseOtherTabs,
+    onCloseEditorTabs,
+    canCloseEditorTabs,
   } = input;
   const labels = input.labels ?? DEFAULT_WORKSPACE_TAB_MENU_LABELS;
   const isFirstTab = index === 0;
@@ -293,6 +302,17 @@ export function buildWorkspaceTabMenuEntries(
       void onCloseOtherTabs(tab.tabId);
     },
   });
+  entries.push({
+    kind: "item",
+    key: "close-editor-tabs",
+    label: labels.closeEditorTabs,
+    icon: "panel-top-close",
+    disabled: !canCloseEditorTabs,
+    testID: `${menuTestIDBase}-close-editor-tabs`,
+    onSelect: () => {
+      void onCloseEditorTabs();
+    },
+  });
   if (tab.target.kind === "agent") {
     const { agentId } = tab.target;
     entries.push({
@@ -343,6 +363,8 @@ export function buildWorkspaceDesktopTabActions(
       onCloseTabsBefore: input.onCloseTabsToLeft,
       onCloseTabsAfter: input.onCloseTabsToRight,
       onCloseOtherTabs: input.onCloseOtherTabs,
+      onCloseEditorTabs: input.onCloseEditorTabs,
+      canCloseEditorTabs: input.canCloseEditorTabs,
       labels: input.labels,
     }),
     closeButtonTestId: getCloseButtonTestId(input.tab),

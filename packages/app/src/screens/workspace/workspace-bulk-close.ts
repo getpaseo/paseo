@@ -49,6 +49,20 @@ interface CloseBulkWorkspaceTabsInput {
   warn?: (message: string, payload: object) => void;
 }
 
+function isWorkspaceAgentTab(tab: WorkspaceTabDescriptor): boolean {
+  return (
+    tab.target.kind === "agent" ||
+    tab.target.kind === "draft" ||
+    tab.target.kind === "provider_subagent"
+  );
+}
+
+export function selectWorkspaceEditorTabs(
+  tabs: WorkspaceTabDescriptor[],
+): WorkspaceTabDescriptor[] {
+  return tabs.filter((tab) => !isWorkspaceAgentTab(tab) && tab.target.kind !== "terminal");
+}
+
 export function classifyBulkClosableTabs(
   tabs: WorkspaceTabDescriptor[],
   resolveAgentCloseKind: (agentId: string) => "archive" | "layout-only" = () => "archive",

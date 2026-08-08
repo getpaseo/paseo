@@ -25,6 +25,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     const onCloseTabsBefore = vi.fn();
     const onCloseTabsAfter = vi.fn();
     const onCloseOtherTabs = vi.fn();
+    const onCloseEditorTabs = vi.fn();
 
     const entries = buildWorkspaceTabMenuEntries({
       surface: "desktop",
@@ -42,6 +43,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCloseTabsBefore,
       onCloseTabsAfter,
       onCloseOtherTabs,
+      onCloseEditorTabs,
+      canCloseEditorTabs: true,
     });
 
     expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
@@ -51,9 +54,50 @@ describe("buildWorkspaceTabMenuEntries", () => {
       "Close to the left",
       "Close to the right",
       "Close other tabs",
+      "Close editor tabs",
       "Reload agent",
       "Close",
     ]);
+
+    const closeEditorTabsEntry = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "close-editor-tabs",
+    );
+    if (!closeEditorTabsEntry || closeEditorTabsEntry.kind !== "item") {
+      throw new Error("Close editor tabs entry missing");
+    }
+    expect(closeEditorTabsEntry.disabled).toBe(false);
+    closeEditorTabsEntry.onSelect();
+    expect(onCloseEditorTabs).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables close editor tabs when the workspace has no editor tabs", () => {
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+      onCloseEditorTabs: vi.fn(),
+      canCloseEditorTabs: false,
+    });
+
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        kind: "item",
+        key: "close-editor-tabs",
+        disabled: true,
+      }),
+    );
   });
 
   it("uses stacked ordering labels for mobile menus", () => {
@@ -73,6 +117,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
       onCloseOtherTabs: vi.fn(),
+      onCloseEditorTabs: vi.fn(),
+      canCloseEditorTabs: true,
     });
 
     expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
@@ -82,6 +128,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       "Close tabs above",
       "Close tabs below",
       "Close other tabs",
+      "Close editor tabs",
       "Reload agent",
       "Close",
     ]);
@@ -109,6 +156,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
       onCloseOtherTabs: vi.fn(),
+      onCloseEditorTabs: vi.fn(),
+      canCloseEditorTabs: true,
     });
 
     expect(entries.some((entry) => entry.kind === "item" && entry.label === "Copy agent id")).toBe(
@@ -138,6 +187,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
       onCloseOtherTabs: vi.fn(),
+      onCloseEditorTabs: vi.fn(),
+      canCloseEditorTabs: true,
     });
 
     expect(entries).toContainEqual(
@@ -168,6 +219,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
       onCloseOtherTabs: vi.fn(),
+      onCloseEditorTabs: vi.fn(),
+      canCloseEditorTabs: true,
     });
 
     const renameEntry = entries.find((entry) => entry.kind === "item" && entry.label === "Rename");
@@ -204,6 +257,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
       onCloseOtherTabs: vi.fn(),
+      onCloseEditorTabs: vi.fn(),
+      canCloseEditorTabs: true,
     });
 
     const labels = entries.filter((entry) => entry.kind === "item").map((entry) => entry.label);
@@ -255,6 +310,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
       onCloseOtherTabs: vi.fn(),
+      onCloseEditorTabs: vi.fn(),
+      canCloseEditorTabs: true,
     });
 
     const labels = entries.filter((entry) => entry.kind === "item").map((entry) => entry.label);
@@ -298,6 +355,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCloseTabsToLeft: vi.fn(),
       onCloseTabsToRight: vi.fn(),
       onCloseOtherTabs: vi.fn(),
+      onCloseEditorTabs: vi.fn(),
+      canCloseEditorTabs: true,
     });
 
     expect(actions.closeButtonTestId).toMatch(/^workspace-working-diff-close-/);
@@ -329,6 +388,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
       onCloseOtherTabs: vi.fn(),
+      onCloseEditorTabs: vi.fn(),
+      canCloseEditorTabs: true,
     };
 
     const agentEntries = buildWorkspaceTabMenuEntries({ ...sharedInput, tab: createAgentTab() });
