@@ -300,6 +300,8 @@ interface DarkThemeConfig {
   accentBright: string;
   accentForeground?: string;
   destructive: string;
+  terminalBlack: string;
+  terminalBrightBlack: string;
 }
 
 const darkTerminalAnsi = {
@@ -374,9 +376,9 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
       cursorAccent: tint.surface0,
       selectionBackground: "rgba(255, 255, 255, 0.2)",
       selectionForeground: "#fafafa",
-      black: tint.surfaceSidebar,
+      black: tint.terminalBlack,
       ...darkTerminalAnsi,
-      brightBlack: tint.surface3,
+      brightBlack: tint.terminalBrightBlack,
     },
   };
 }
@@ -403,6 +405,8 @@ const paseoDarkColors = buildDarkSemanticColors({
   accent: "#20744A",
   accentBright: "#7ccba0",
   destructive: "#c64f43", // warm red, hue ~7 — reads as red (not pink) against the green tint
+  terminalBlack: "#141716",
+  terminalBrightBlack: "#434645",
 });
 
 // Zinc — neutral gray, no tint
@@ -424,6 +428,8 @@ const zincDarkColors = buildDarkSemanticColors({
   accentBright: "#fafafa",
   accentForeground: "#18181b", // monochrome zinc accent is near-white — needs dark text
   destructive: "#c44a4a", // neutral red, hue 0 — clearly red without screaming
+  terminalBlack: "#131316",
+  terminalBrightBlack: "#3f3f46",
 });
 
 // Midnight — subtle blue tint
@@ -444,6 +450,8 @@ const midnightDarkColors = buildDarkSemanticColors({
   accent: "#3b6fcf",
   accentBright: "#7eaaeb",
   destructive: "#c44a52", // red with a hint of cool lean against the blue tint
+  terminalBlack: "#121420",
+  terminalBrightBlack: "#3c3e4c",
 });
 
 // Claude — warm neutral with subtle orange undertone
@@ -464,6 +472,8 @@ const claudeDarkColors = buildDarkSemanticColors({
   accent: "#d97757",
   accentBright: "#e89a7f",
   destructive: "#cf513e", // warm orange-red, hue ~10 — sits with the Claude orange accent
+  terminalBlack: "#1a1918",
+  terminalBrightBlack: "#4a4745",
 });
 
 // Ghostty — blue-tinted dark based on Ghostty default background
@@ -484,6 +494,8 @@ const ghosttyDarkColors = buildDarkSemanticColors({
   accent: "#89b4fa",
   accentBright: "#b4d0fc",
   destructive: "#c44a55", // red with slight cool lean against the slate-blue surfaces
+  terminalBlack: "#21252d",
+  terminalBrightBlack: "#4a4f5e",
 });
 
 export const SPACING = {
@@ -639,7 +651,7 @@ export const darkMidnightTheme = buildDarkTheme(midnightDarkColors);
 export const darkClaudeTheme = buildDarkTheme(claudeDarkColors);
 export const darkGhosttyTheme = buildDarkTheme(ghosttyDarkColors);
 
-// Pure Black — zero-luminance background with high-contrast surfaces.
+// Pure black — zero-luminance background with high-contrast surfaces.
 const pureBlackDarkColors = buildDarkSemanticColors({
   surface0: "#000000",
   surface1: "#0a0a0a",
@@ -654,9 +666,11 @@ const pureBlackDarkColors = buildDarkSemanticColors({
   scrollbarHandle: "#71717a",
   border: "#1c1c1c",
   borderAccent: "#242424",
-  accent: "#4ade80",
-  accentBright: "#86efac",
+  accent: "#20744A",
+  accentBright: "#7ccba0",
   destructive: "#c44a4a",
+  terminalBlack: "#595959",
+  terminalBrightBlack: "#8a8a8a",
 });
 
 export const darkPureBlackTheme = buildDarkTheme(pureBlackDarkColors);

@@ -71,8 +71,15 @@ export function applyAppearance(input: AppearanceInput): void {
   const ui = input.uiFontFamily.trim() || DEFAULT_UI_FONT_STACK;
   const mono = input.monoFontFamily.trim() || DEFAULT_MONO_FONT_STACK;
   const diffLineHeight = Math.round(input.codeFontSize * 1.5); // couple to code size
+  const activeTheme = UnistylesRuntime.themeName;
+  // Unistyles web emits after each registry patch. Updating the mounted theme
+  // first ensures subscribers receive its new numeric tokens in this render;
+  // updating it last makes Pure black appear one committed value behind.
+  const themeKeys = activeTheme
+    ? [activeTheme, ...ALL_THEME_KEYS.filter((key) => key !== activeTheme)]
+    : ALL_THEME_KEYS;
 
-  for (const key of ALL_THEME_KEYS) {
+  for (const key of themeKeys) {
     UnistylesRuntime.updateTheme(key, (t) => {
       const fontFamily = { ui, mono };
       const fontSize = scaleFontSize(input.uiFontSize, input.codeFontSize);
