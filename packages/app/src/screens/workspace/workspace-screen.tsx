@@ -2306,24 +2306,19 @@ function WorkspaceScreenContent({
     return map;
   }, [tabs]);
 
-  const allTabDescriptors = useMemo<WorkspaceTabDescriptor[]>(
-    () =>
-      uiTabs.map((tab) => ({
-        key: tab.tabId,
-        tabId: tab.tabId,
-        kind: tab.target.kind,
-        target: tab.target,
-      })),
-    [uiTabs],
-  );
-  const allTabDescriptorsById = useMemo(
-    () => new Map(allTabDescriptors.map((tab) => [tab.tabId, tab])),
-    [allTabDescriptors],
-  );
-  const editorTabs = useMemo(
-    () => selectWorkspaceEditorTabs(allTabDescriptors),
-    [allTabDescriptors],
-  );
+  const { allTabDescriptorsById, editorTabs } = useMemo(() => {
+    const tabDescriptors: WorkspaceTabDescriptor[] = uiTabs.map((tab) => ({
+      key: tab.tabId,
+      tabId: tab.tabId,
+      kind: tab.target.kind,
+      target: tab.target,
+    }));
+
+    return {
+      allTabDescriptorsById: new Map(tabDescriptors.map((tab) => [tab.tabId, tab])),
+      editorTabs: selectWorkspaceEditorTabs(tabDescriptors),
+    };
+  }, [uiTabs]);
   const canCloseEditorTabs = editorTabs.length > 0;
   const bulkCloseConfirmationLabels = useMemo<BulkCloseConfirmationLabels>(
     () => ({

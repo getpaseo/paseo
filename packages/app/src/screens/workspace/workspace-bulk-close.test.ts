@@ -35,7 +35,7 @@ function makeFileTab(path: string): WorkspaceTabDescriptor {
 }
 
 describe("workspace bulk close helpers", () => {
-  it("selects every non-agent, non-terminal tab as an editor tab", () => {
+  it("selects file, diff, browser, and setup tabs as editor tabs", () => {
     const tabs: WorkspaceTabDescriptor[] = [
       makeAgentTab("a1"),
       makeTerminalTab("t1"),
