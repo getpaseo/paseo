@@ -70,6 +70,17 @@ export function splitFileSearchMatchContent(
   };
 }
 
+export function filterCollapsedFileSearchRows(
+  rows: readonly FileSearchRow[],
+  collapsedPaths: ReadonlySet<string>,
+): FileSearchRow[] {
+  const visibleRows: FileSearchRow[] = [];
+  for (const row of rows) {
+    if (row.kind === "file" || !collapsedPaths.has(row.path)) visibleRows.push(row);
+  }
+  return visibleRows;
+}
+
 export function buildFileSearchRows(result: FileSearchResult): FileSearchRow[] {
   const rows: FileSearchRow[] = [];
   for (const file of result.files) {

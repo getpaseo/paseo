@@ -20,6 +20,7 @@ import {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { MaterialFileIcon } from "@/components/material-file-icon";
+import { TreeChevron } from "@/components/tree-primitives";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { SearchField } from "@/components/ui/search-field";
 import type { Theme } from "@/styles/theme";
@@ -29,6 +30,7 @@ import {
   createInitialFileSearchState,
   DEFAULT_FILE_SEARCH_OPTIONS,
   fileSearchReducer,
+  filterCollapsedFileSearchRows,
   splitFileSearchMatchContent,
   type FileSearchOptions,
   type FileSearchRow,
@@ -60,6 +62,7 @@ export function FileSearchPane({
   const [query, setQuery] = useState("");
   const [options, setOptions] = useState<FileSearchOptions>(DEFAULT_FILE_SEARCH_OPTIONS);
   const [state, dispatch] = useReducer(fileSearchReducer, undefined, createInitialFileSearchState);
+  const [collapsedPaths, setCollapsedPaths] = useState<ReadonlySet<string>>(() => new Set());
   const requestKeyRef = useRef(0);
 
   useEffect(() => {
@@ -110,10 +113,22 @@ export function FileSearchPane({
     workspaceRoot,
   ]);
 
-  const rows = useMemo(
+  const allRows = useMemo(
     () => (state.status === "success" ? buildFileSearchRows(state.result) : []),
     [state],
   );
+  const rows = useMemo(
+    () => filterCollapsedFileSearchRows(allRows, collapsedPaths),
+    [allRows, collapsedPaths],
+  );
+  const toggleFile = useCallback((path: string) => {
+    setCollapsedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
   const updateOption = useCallback(
     <TKey extends keyof FileSearchOptions>(key: TKey, value: FileSearchOptions[TKey]) => {
       setOptions((current) => ({ ...current, [key]: value }));
@@ -142,9 +157,14 @@ export function FileSearchPane({
   );
   const renderRow = useCallback(
     ({ item }: ListRenderItemInfo<FileSearchRow>) => (
-      <FileSearchResultRow row={item} onOpenMatch={onOpenMatch} />
+      <FileSearchResultRow
+        row={item}
+        collapsed={item.kind === "file" && collapsedPaths.has(item.path)}
+        onToggleFile={toggleFile}
+        onOpenMatch={onOpenMatch}
+      />
     ),
-    [onOpenMatch],
+    [collapsedPaths, onOpenMatch, toggleFile],
   );
 
   return (
@@ -313,23 +333,53 @@ function fileSearchRowKey(row: FileSearchRow): string {
 
 function FileSearchResultRow({
   row,
+  collapsed,
+  onToggleFile,
   onOpenMatch,
 }: {
   row: FileSearchRow;
+  collapsed: boolean;
+  onToggleFile: (path: string) => void;
   onOpenMatch: (path: string, line: number) => void;
 }) {
   if (row.kind === "file") {
-    return (
-      <View style={styles.fileRow}>
-        <MaterialFileIcon fileName={row.path} size={ICON_SIZE.sm} />
-        <Text numberOfLines={1} style={styles.filePath}>
-          {row.path}
-        </Text>
-        <Text style={styles.matchCount}>{row.matchCount}</Text>
-      </View>
-    );
+    return <FileSearchFileRow row={row} collapsed={collapsed} onToggleFile={onToggleFile} />;
   }
   return <FileSearchMatchRow row={row} onOpenMatch={onOpenMatch} />;
+}
+
+function FileSearchFileRow({
+  row,
+  collapsed,
+  onToggleFile,
+}: {
+  row: Extract<FileSearchRow, { kind: "file" }>;
+  collapsed: boolean;
+  onToggleFile: (path: string) => void;
+}) {
+  const handlePress = useCallback(() => onToggleFile(row.path), [onToggleFile, row.path]);
+  const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
+  return (
+    <Pressable
+      onPress={handlePress}
+      style={fileRowStyle}
+      accessibilityRole="button"
+      accessibilityLabel={row.path}
+      accessibilityState={accessibilityState}
+      testID={`files-search-file-${row.path}`}
+    >
+      <TreeChevron expanded={!collapsed} />
+      <MaterialFileIcon fileName={row.path} size={ICON_SIZE.sm} />
+      <Text numberOfLines={1} style={styles.filePath}>
+        {row.path}
+      </Text>
+      <Text style={styles.matchCount}>{row.matchCount}</Text>
+    </Pressable>
+  );
+}
+
+function fileRowStyle({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.fileRow, (Boolean(hovered) || pressed) && styles.fileRowHovered];
 }
 
 function FileSearchMatchRow({
@@ -471,6 +521,9 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     paddingTop: theme.spacing[2],
+  },
+  fileRowHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   filePath: {
     flex: 1,

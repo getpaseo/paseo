@@ -3,6 +3,7 @@ import {
   buildFileSearchRows,
   createInitialFileSearchState,
   fileSearchReducer,
+  filterCollapsedFileSearchRows,
   splitFileSearchMatchContent,
 } from "./search-model";
 
@@ -62,6 +63,36 @@ describe("file search model", () => {
         key: "match:src/search.ts:9:1:1",
         path: "src/search.ts",
         match: { line: 9, column: 1, matchLength: 6, lineContent: "needle();" },
+      },
+    ]);
+  });
+
+  test("keeps file headers visible while hiding matches for collapsed groups", () => {
+    const rows = buildFileSearchRows({
+      cwd: "/workspace",
+      files: [
+        {
+          path: "src/first.ts",
+          matches: [{ line: 1, column: 1, matchLength: 3, lineContent: "one" }],
+        },
+        {
+          path: "src/second.ts",
+          matches: [{ line: 2, column: 1, matchLength: 3, lineContent: "two" }],
+        },
+      ],
+      totalMatches: 2,
+      truncated: false,
+      requestId: "search-collapse",
+    });
+
+    expect(filterCollapsedFileSearchRows(rows, new Set(["src/first.ts"]))).toEqual([
+      { kind: "file", key: "file:src/first.ts", path: "src/first.ts", matchCount: 1 },
+      { kind: "file", key: "file:src/second.ts", path: "src/second.ts", matchCount: 1 },
+      {
+        kind: "match",
+        key: "match:src/second.ts:2:1:0",
+        path: "src/second.ts",
+        match: { line: 2, column: 1, matchLength: 3, lineContent: "two" },
       },
     ]);
   });
