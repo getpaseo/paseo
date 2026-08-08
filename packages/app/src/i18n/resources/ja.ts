@@ -144,7 +144,6 @@ export const ja: TranslationResources = {
       noClipboardImage: "クリップボードに画像がありません",
       pasteImageFailed: "画像を貼り付けられませんでした",
       noClipboardText: "クリップボードにテキストがありません",
-      clipboardTextTooShort: "クリップボードのテキストは{{size}}未満です",
       pasteTextFailed: "テキストをファイルとして貼り付けられませんでした",
       fileTooLarge: "{{fileName}}が大きすぎます（最大{{size}}）",
     },

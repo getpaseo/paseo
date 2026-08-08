@@ -144,7 +144,6 @@ export const ko: TranslationResources = {
       noClipboardImage: "클립보드에 이미지가 없습니다.",
       pasteImageFailed: "이미지를 붙여넣지 못했습니다.",
       noClipboardText: "클립보드에 텍스트가 없습니다.",
-      clipboardTextTooShort: "클립보드 텍스트가 {{size}}보다 짧습니다",
       pasteTextFailed: "텍스트를 파일로 붙여넣지 못했습니다.",
       fileTooLarge: "{{fileName}}이(가) 너무 큽니다 (최대 {{size}})",
     },

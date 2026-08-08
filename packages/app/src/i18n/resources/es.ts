@@ -144,7 +144,6 @@ export const es: TranslationResources = {
       noClipboardImage: "No hay ninguna imagen en el portapapeles",
       pasteImageFailed: "No se pudo pegar la imagen",
       noClipboardText: "No hay texto en el portapapeles",
-      clipboardTextTooShort: "El texto del portapapeles es menor de {{size}}",
       pasteTextFailed: "No se pudo pegar el texto como archivo",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },

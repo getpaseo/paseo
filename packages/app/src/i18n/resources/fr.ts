@@ -146,7 +146,6 @@ export const fr: TranslationResources = {
       noClipboardImage: "Aucune image dans le presse-papiers",
       pasteImageFailed: "Impossible de coller l’image",
       noClipboardText: "Aucun texte dans le presse-papiers",
-      clipboardTextTooShort: "Le texte du presse-papiers est inférieur à {{size}}",
       pasteTextFailed: "Impossible de coller le texte comme fichier",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },

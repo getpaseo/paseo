@@ -142,7 +142,6 @@ export const en = {
       noClipboardImage: "No image in clipboard",
       pasteImageFailed: "Failed to paste image",
       noClipboardText: "No text in clipboard",
-      clipboardTextTooShort: "Clipboard text is shorter than {{size}}",
       pasteTextFailed: "Failed to paste text as file",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },

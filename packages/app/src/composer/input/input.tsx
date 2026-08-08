@@ -37,7 +37,7 @@ import {
 } from "@/utils/image-attachments-from-files";
 import type { ComposerAttachment } from "@/attachments/types";
 import type { PickedFile } from "@/attachments/picked-file";
-import { createPastedTextFile } from "@/composer/clipboard-text";
+import { createAutomaticPastedTextFile, restoreFailedPastedText } from "@/composer/clipboard-text";
 import type { ImageAttachment, MessagePayload } from "@/composer/types";
 import { focusWithRetries } from "@/utils/web-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -107,7 +107,7 @@ export interface MessageInputProps {
   attachmentMenuItems: AttachmentMenuItem[];
   onAttachButtonRef?: (node: View | null) => void;
   onAddImages?: (images: ImageAttachment[]) => void;
-  onPasteTextFile?: (file: PickedFile) => void;
+  onPasteTextFile?: (file: PickedFile) => Promise<boolean>;
   client: DaemonClient | null;
   /** Dictation start gate from host runtime (socket connected + directory ready). */
   isReadyForDictation?: boolean;
@@ -182,6 +182,7 @@ type WebTextInputKeyPressEvent = NativeSyntheticEvent<
 >;
 
 interface TextAreaHandle {
+  value?: string;
   scrollHeight?: number;
   clientHeight?: number;
   offsetHeight?: number;
@@ -411,17 +412,21 @@ function getTextInputNativeElement(
 
 interface PasteAttachmentsEffectArgs {
   getWebTextArea: () => TextAreaHandle | null;
+  getCurrentText: () => string;
+  onChangeText: (text: string) => void;
   isConnected: boolean;
   disabled: boolean;
   isDictating: boolean;
   isRealtimeVoiceForCurrentAgent: boolean;
   onAddImages: ((images: ImageAttachment[]) => void) | undefined;
-  onPasteTextFile: ((file: PickedFile) => void) | undefined;
+  onPasteTextFile: ((file: PickedFile) => Promise<boolean>) | undefined;
 }
 
 function usePasteAttachmentsEffect(args: PasteAttachmentsEffectArgs): void {
   const {
     getWebTextArea,
+    getCurrentText,
+    onChangeText,
     isConnected,
     disabled,
     isDictating,
@@ -469,11 +474,39 @@ function usePasteAttachmentsEffect(args: PasteAttachmentsEffectArgs): void {
       }
 
       if (!onPasteTextFile) return;
-      const file = createPastedTextFile(event.clipboardData?.getData("text/plain") ?? "");
+      const pastedText = event.clipboardData?.getData("text/plain") ?? "";
+      const file = createAutomaticPastedTextFile(pastedText);
       if (!file) return;
 
+      const initialText = getCurrentText();
+      const selectionStart = textarea.selectionStart ?? initialText.length;
+      const selectionEnd = textarea.selectionEnd ?? selectionStart;
       event.preventDefault();
-      onPasteTextFile(file);
+
+      const restorePastedText = () => {
+        if (disposed) return;
+        const restoredText = restoreFailedPastedText({
+          currentText: getCurrentText(),
+          initialText,
+          pastedText,
+          selectionStart,
+          selectionEnd,
+        });
+        if (restoredText !== null) {
+          onChangeText(restoredText);
+        }
+      };
+
+      void onPasteTextFile(file)
+        .then((uploaded) => {
+          if (!uploaded) restorePastedText();
+          return undefined;
+        })
+        .catch((error) => {
+          console.error("[MessageInput] Failed to upload pasted text:", error);
+          restorePastedText();
+          return undefined;
+        });
     };
 
     textarea.addEventListener("paste", handlePaste);
@@ -483,11 +516,13 @@ function usePasteAttachmentsEffect(args: PasteAttachmentsEffectArgs): void {
     };
   }, [
     disabled,
+    getCurrentText,
     getWebTextArea,
     isConnected,
     isDictating,
     isRealtimeVoiceForCurrentAgent,
     onAddImages,
+    onChangeText,
     onPasteTextFile,
   ]);
 }
@@ -1034,7 +1069,7 @@ interface ResolvedMessageInputProps {
   attachmentMenuItems: AttachmentMenuItem[];
   onAttachButtonRef: ((node: View | null) => void) | undefined;
   onAddImages: ((images: ImageAttachment[]) => void) | undefined;
-  onPasteTextFile: ((file: PickedFile) => void) | undefined;
+  onPasteTextFile: ((file: PickedFile) => Promise<boolean>) | undefined;
   client: DaemonClient | null;
   isReadyForDictation: boolean | undefined;
   placeholder: string | undefined;
@@ -1225,6 +1260,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     useEffect(() => {
       valueRef.current = value;
     }, [value]);
+
+    const handleInputChange = useCallback(
+      (nextValue: string) => {
+        valueRef.current = nextValue;
+        onChangeText(nextValue);
+      },
+      [onChangeText],
+    );
 
     useEffect(() => {
       return () => {
@@ -1501,6 +1544,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     usePasteAttachmentsEffect({
       getWebTextArea,
+      getCurrentText: () => valueRef.current,
+      onChangeText: handleInputChange,
       isConnected,
       disabled,
       isDictating,
@@ -1616,14 +1661,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       defaultActionQueues,
       t,
     });
-
-    const handleInputChange = useCallback(
-      (nextValue: string) => {
-        valueRef.current = nextValue;
-        onChangeText(nextValue);
-      },
-      [onChangeText],
-    );
 
     const handleInputFocus = useCallback(() => {
       isInputFocusedRef.current = true;

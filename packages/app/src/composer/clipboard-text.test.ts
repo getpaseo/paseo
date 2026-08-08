@@ -1,25 +1,37 @@
 import { describe, expect, it } from "vitest";
 import {
+  createAutomaticPastedTextFile,
   createPastedTextFile,
   PASTED_TEXT_FILE_NAME,
   PASTED_TEXT_MIME_TYPE,
   PASTED_TEXT_UPLOAD_THRESHOLD_BYTES,
+  restoreFailedPastedText,
 } from "./clipboard-text";
 
 const encoder = new TextEncoder();
 
-describe("createPastedTextFile", () => {
-  it("leaves short text in the composer", () => {
-    expect(createPastedTextFile("a".repeat(PASTED_TEXT_UPLOAD_THRESHOLD_BYTES - 1))).toBeNull();
+describe("pasted text attachments", () => {
+  it("leaves short text in the composer during automatic paste", () => {
+    expect(
+      createAutomaticPastedTextFile("a".repeat(PASTED_TEXT_UPLOAD_THRESHOLD_BYTES - 1)),
+    ).toBeNull();
   });
 
-  it("creates a text attachment at the UTF-8 byte threshold", () => {
+  it("creates a text attachment at the automatic UTF-8 byte threshold", () => {
     const text = "a".repeat(PASTED_TEXT_UPLOAD_THRESHOLD_BYTES);
 
-    expect(createPastedTextFile(text)).toEqual({
+    expect(createAutomaticPastedTextFile(text)).toEqual({
       fileName: PASTED_TEXT_FILE_NAME,
       mimeType: PASTED_TEXT_MIME_TYPE,
       bytes: encoder.encode(text),
+    });
+  });
+
+  it("allows explicit text attachments below the automatic threshold", () => {
+    expect(createPastedTextFile("short text")).toEqual({
+      fileName: PASTED_TEXT_FILE_NAME,
+      mimeType: PASTED_TEXT_MIME_TYPE,
+      bytes: encoder.encode("short text"),
     });
   });
 
@@ -27,7 +39,7 @@ describe("createPastedTextFile", () => {
     const text = "€".repeat(Math.ceil(PASTED_TEXT_UPLOAD_THRESHOLD_BYTES / 3));
 
     expect(text.length).toBeLessThan(PASTED_TEXT_UPLOAD_THRESHOLD_BYTES);
-    expect(createPastedTextFile(text)?.bytes).toEqual(encoder.encode(text));
+    expect(createAutomaticPastedTextFile(text)?.bytes).toEqual(encoder.encode(text));
   });
 
   it("preserves whitespace and line endings without a BOM", () => {
@@ -37,5 +49,29 @@ describe("createPastedTextFile", () => {
 
     expect(result?.bytes).toEqual(encoder.encode(text));
     expect(result?.bytes.slice(0, 3)).not.toEqual(new Uint8Array([0xef, 0xbb, 0xbf]));
+  });
+
+  it("restores failed paste by replacing the original selection", () => {
+    expect(
+      restoreFailedPastedText({
+        currentText: "before selection after",
+        initialText: "before selection after",
+        pastedText: "pasted",
+        selectionStart: 7,
+        selectionEnd: 16,
+      }),
+    ).toBe("before pasted after");
+  });
+
+  it("does not overwrite a draft changed during upload", () => {
+    expect(
+      restoreFailedPastedText({
+        currentText: "user typed while uploading",
+        initialText: "before",
+        pastedText: "pasted",
+        selectionStart: 6,
+        selectionEnd: 6,
+      }),
+    ).toBeNull();
   });
 });

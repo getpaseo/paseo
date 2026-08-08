@@ -121,6 +121,7 @@ export async function pasteTextIntoComposer(page: Page, text: string): Promise<b
   const input = composerInput(page);
   await expect(input).toBeEditable({ timeout: 10_000 });
   return input.evaluate((element, clipboardText) => {
+    const textarea = element as HTMLTextAreaElement;
     const transfer = new DataTransfer();
     transfer.setData("text/plain", clipboardText);
     const event = new ClipboardEvent("paste", {
@@ -129,6 +130,14 @@ export async function pasteTextIntoComposer(page: Page, text: string): Promise<b
       clipboardData: transfer,
     });
     element.dispatchEvent(event);
+    if (!event.defaultPrevented) {
+      const start = textarea.selectionStart ?? textarea.value.length;
+      const end = textarea.selectionEnd ?? start;
+      textarea.value = `${textarea.value.slice(0, start)}${clipboardText}${textarea.value.slice(end)}`;
+      textarea.selectionStart = start + clipboardText.length;
+      textarea.selectionEnd = start + clipboardText.length;
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    }
     return event.defaultPrevented;
   }, text);
 }

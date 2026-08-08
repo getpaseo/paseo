@@ -228,7 +228,6 @@ test.describe("Composer attachments", () => {
     const prevented = await pasteTextIntoComposer(page, text);
 
     expect(prevented).toBe(false);
-    await fillComposerDraft(page, text);
     await expectComposerDraft(page, text);
     await expect(page.getByTestId("composer-file-attachment-pill")).toHaveCount(0);
   });

@@ -144,7 +144,6 @@ export const ar: TranslationResources = {
       noClipboardImage: "لا توجد صورة في الحافظة",
       pasteImageFailed: "تعذر لصق الصورة",
       noClipboardText: "لا يوجد نص في الحافظة",
-      clipboardTextTooShort: "نص الحافظة أقصر من {{size}}",
       pasteTextFailed: "تعذر لصق النص كملف",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },

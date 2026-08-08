@@ -144,7 +144,6 @@ export const ptBR: TranslationResources = {
       noClipboardImage: "Não há imagem na área de transferência",
       pasteImageFailed: "Falha ao colar a imagem",
       noClipboardText: "Não há texto na área de transferência",
-      clipboardTextTooShort: "O texto da área de transferência é menor que {{size}}",
       pasteTextFailed: "Falha ao colar texto como arquivo",
       fileTooLarge: "{{fileName}} é grande demais (máximo {{size}})",
     },

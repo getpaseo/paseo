@@ -144,7 +144,6 @@ export const ru: TranslationResources = {
       noClipboardImage: "В буфере обмена нет изображения",
       pasteImageFailed: "Не удалось вставить изображение",
       noClipboardText: "В буфере обмена нет текста",
-      clipboardTextTooShort: "Текст в буфере обмена меньше {{size}}",
       pasteTextFailed: "Не удалось вставить текст как файл",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },

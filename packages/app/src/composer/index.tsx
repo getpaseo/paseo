@@ -125,7 +125,7 @@ import { getForgePresentation } from "@/git/forge";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { useComposerGithubAutoAttach } from "./github/auto-attach";
 import { readClipboardImage } from "./clipboard-image";
-import { createPastedTextFile, PASTED_TEXT_UPLOAD_THRESHOLD_BYTES } from "./clipboard-text";
+import { createPastedTextFile } from "./clipboard-text";
 import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
 import {
   appendWorkspaceFileAttachment,
@@ -1486,11 +1486,11 @@ export function Composer({
   }, [addImages, t]);
 
   const uploadPickedFiles = useCallback(
-    async (files: PickedFile[]) => {
-      if (files.length === 0) return;
+    async (files: PickedFile[]): Promise<boolean> => {
+      if (files.length === 0) return false;
       if (!client) {
         toastErrorRef.current(t("composer.errors.daemonClientDisconnected"));
-        return;
+        return false;
       }
 
       const oversized = files.find((f) => f.bytes.byteLength > MAX_FILE_SIZE_BYTES);
@@ -1498,18 +1498,20 @@ export function Composer({
         toastErrorRef.current(
           t("composer.errors.fileTooLarge", { size: "50MB", fileName: oversized.fileName }),
         );
-        return;
+        return false;
       }
 
       setIsUploadingFile(true);
       try {
         const uploaded = await uploadFileAttachments({ client, files });
         addFiles(uploaded);
+        return true;
       } catch (error) {
         console.error("[Composer] Failed to upload file:", error);
         toastErrorRef.current(
           error instanceof Error ? error.message : t("composer.errors.uploadFailed"),
         );
+        return false;
       } finally {
         setIsUploadingFile(false);
       }
@@ -1518,9 +1520,7 @@ export function Composer({
   );
 
   const handlePasteTextFile = useCallback(
-    (file: PickedFile) => {
-      void uploadPickedFiles([file]);
-    },
+    (file: PickedFile) => uploadPickedFiles([file]),
     [uploadPickedFiles],
   );
 
@@ -1532,14 +1532,7 @@ export function Composer({
         return;
       }
       const file = createPastedTextFile(text);
-      if (!file) {
-        toastErrorRef.current(
-          t("composer.errors.clipboardTextTooShort", {
-            size: `${PASTED_TEXT_UPLOAD_THRESHOLD_BYTES / 1000} KB`,
-          }),
-        );
-        return;
-      }
+      if (!file) return;
       await uploadPickedFiles([file]);
     } catch (error) {
       console.error("[Composer] Failed to paste clipboard text:", error);
