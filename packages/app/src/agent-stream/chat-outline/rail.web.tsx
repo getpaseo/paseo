@@ -4,6 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { useReducedMotion } from "react-native-reanimated";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
+import { formatMessageTimestamp } from "@/utils/time";
 import { createChatOutlineHoverIntent } from "./hover-intent";
 import { promptTickMagnification } from "./model";
 import type { ChatOutlineRailProps } from "./rail";
@@ -19,7 +20,7 @@ const RESTING_PILL_WIDTH = 10;
 const ACTIVE_PILL_WIDTH = 18;
 const MAGNIFIED_PILL_WIDTH = 26;
 const PREVIEW_WIDTH = 260;
-const PREVIEW_HEIGHT = 48;
+const PREVIEW_HEIGHT = 64;
 const PREVIEW_GAP = 4;
 
 export const ChatOutlineRail = memo(function ChatOutlineRail({
@@ -93,6 +94,7 @@ export const ChatOutlineRail = memo(function ChatOutlineRail({
               index={index}
               seq={prompt.seq}
               preview={prompt.preview}
+              timestamp={prompt.timestamp}
               label={`${index + 1} of ${prompts.length}: ${prompt.preview}`}
               isActive={prompt.seq === activeSeq}
               hasAttention={index === attentionIndex}
@@ -116,6 +118,7 @@ interface ChatOutlineTickProps {
   index: number;
   seq: number;
   preview: string;
+  timestamp: string;
   label: string;
   isActive: boolean;
   hasAttention: boolean;
@@ -129,6 +132,7 @@ const ChatOutlineTick = memo(function ChatOutlineTick({
   index,
   seq,
   preview,
+  timestamp,
   label,
   isActive,
   hasAttention,
@@ -137,6 +141,10 @@ const ChatOutlineTick = memo(function ChatOutlineTick({
   onFocusChange,
   onJumpToPrompt,
 }: ChatOutlineTickProps) {
+  const formattedTimestamp = useMemo(
+    () => formatMessageTimestamp(new Date(timestamp)),
+    [timestamp],
+  );
   const handlePress = useCallback(() => {
     onJumpToPrompt(seq);
     onFocusChange(index, false);
@@ -177,6 +185,13 @@ const ChatOutlineTick = memo(function ChatOutlineTick({
         <View style={styles.preview} pointerEvents="none" aria-hidden testID="chat-outline-preview">
           <Text style={styles.previewText} numberOfLines={2}>
             {preview}
+          </Text>
+          <Text
+            style={styles.previewTimestamp}
+            numberOfLines={1}
+            testID="chat-outline-preview-timestamp"
+          >
+            {formattedTimestamp}
           </Text>
         </View>
       ) : null}
@@ -251,5 +266,10 @@ const styles = StyleSheet.create((theme) => ({
   previewText: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foreground,
+  },
+  previewTimestamp: {
+    marginTop: theme.spacing[1],
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
 }));
