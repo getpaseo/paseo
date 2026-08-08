@@ -13,6 +13,11 @@ const resolvePackageEntry = (packageName: string) => {
 };
 
 export default defineConfig({
+  // Metro compiles the app with the automatic runtime, so no component file
+  // imports `React` for JSX alone. esbuild does not pick that up from the
+  // extended tsconfig and defaults to the classic runtime, which makes every
+  // rendered component throw `React is not defined` here and nowhere else.
+  esbuild: { jsx: "automatic" },
   test: {
     environment: "node",
     exclude: [...configDefaults.exclude, "e2e/**"],
@@ -84,6 +89,14 @@ export default defineConfig({
       {
         find: /^@getpaseo\/relay$/,
         replacement: path.resolve(__dirname, "../relay/src/index.ts"),
+      },
+      // Before the `@` alias, and only for tests: `@/plugins/sandbox` resolves
+      // to `sandbox.web.tsx` in any resolver with no platform to go on, which
+      // leaves the native sandbox with no name a test can ask for. Mirrored in
+      // tsconfig.json.
+      {
+        find: /^@\/plugins\/sandbox-native$/,
+        replacement: path.resolve(__dirname, "src/plugins/sandbox.tsx"),
       },
       { find: "@", replacement: path.resolve(__dirname, "src") },
       // Point to the ESM build so Vite can transform its imports and apply the

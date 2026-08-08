@@ -14,6 +14,7 @@ import {
   providersSnapshotQueryKey,
   providersSnapshotQueryRoot,
 } from "@/data/providers-snapshot";
+import { pluginsQueryKey } from "@/plugins/query-keys";
 
 type ProvidersSnapshotUpdateMessage = Extract<
   SessionOutboundMessage,
@@ -31,7 +32,8 @@ type ServerDataEventType =
   | "checkout_diff_update"
   | "subscribe_checkout_diff_response"
   | "status"
-  | "terminals_changed";
+  | "terminals_changed"
+  | "plugins.changed";
 type CheckoutDiffResponsePayload = SubscribeCheckoutDiffResponseMessage["payload"];
 type CheckoutDiffCachePayload = Omit<CheckoutDiffResponsePayload, "subscriptionId">;
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
@@ -320,6 +322,13 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
       message,
     });
   });
+  // Invalidate rather than seed from the payload: the plugin list key is a
+  // prefix of the entry-HTML keys, so one invalidation also drops entry HTML
+  // that an install or uninstall just made stale. The registry index is keyed
+  // separately on purpose (see plugins/query-keys.ts) and is not dropped here.
+  const unsubscribePluginsChanged = input.client.on("plugins.changed", () => {
+    void input.queryClient.invalidateQueries({ queryKey: pluginsQueryKey(input.serverId) });
+  });
   let reconnectSubscriptionRepairs = reconnectSubscriptionRepairsByServerId.get(input.serverId);
   if (!reconnectSubscriptionRepairs) {
     reconnectSubscriptionRepairs = new Set();
@@ -341,6 +350,7 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     unsubscribeCheckoutDiffUpdate();
     unsubscribeCheckoutDiffResponse();
     unsubscribeTerminalsChanged();
+    unsubscribePluginsChanged();
     for (const subscriptionId of activeCheckoutDiffSubscriptions.keys()) {
       unsubscribeCheckoutDiff(input.client, subscriptionId);
     }

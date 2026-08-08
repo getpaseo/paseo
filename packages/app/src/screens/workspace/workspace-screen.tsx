@@ -2402,11 +2402,11 @@ function WorkspaceScreenContent({
   ]);
 
   const handleOpenFileFromExplorer = useCallback(
-    function handleOpenFileFromExplorer(filePath: string) {
+    function handleOpenFileFromExplorer(target: { path: string; lineStart?: number }) {
       if (!persistenceKey) {
         return;
       }
-      const location = normalizeWorkspaceFileLocation({ path: filePath });
+      const location = normalizeWorkspaceFileLocation(target);
       if (!location) {
         return;
       }

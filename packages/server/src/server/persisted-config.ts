@@ -15,6 +15,8 @@ import { PaseoServicePortAllocationSchema } from "@getpaseo/protocol/paseo-confi
 export const LogLevelSchema = z.enum(["trace", "debug", "info", "warn", "error", "fatal"]);
 export const LogFormatSchema = z.enum(["pretty", "json"]);
 
+const ALLOWED_REGISTRY_PROTOCOLS = new Set(["https:", "file:"]);
+
 const LogConfigSchema = z
   .object({
     // Legacy global log settings (kept for backwards compatibility).
@@ -283,6 +285,32 @@ export const PersistedConfigSchema = z
             enabled: z.boolean().optional(),
             listen: z.string().optional(),
             publicBaseUrl: z.url().optional(),
+          })
+          .strict()
+          .optional(),
+        plugins: z
+          .object({
+            /**
+             * Registry index. Point at a `file://` URL to develop against a
+             * local index.
+             *
+             * `https:` or `file:` only. The index is the trust root — it names
+             * both the download URL and the sha256 it has to match — so serving
+             * it over plaintext hands whoever is on the path the ability to
+             * name both, and the per-file https check below it verifies bytes
+             * against a hash an attacker chose.
+             */
+            registryUrl: z
+              .url()
+              .refine(
+                // Read off the parsed URL, the same way `registry-client.ts`
+                // checks each file's scheme. A string prefix test would reject
+                // `HTTPS://host/i.json` and `file:/tmp/i.json`, both of which
+                // `z.url()` accepts and `new URL` normalises.
+                (value) => ALLOWED_REGISTRY_PROTOCOLS.has(new URL(value).protocol),
+                "must be an https: or file: URL",
+              )
+              .optional(),
           })
           .strict()
           .optional(),

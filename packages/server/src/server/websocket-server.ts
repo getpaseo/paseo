@@ -14,6 +14,7 @@ import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
+import type { PluginService, PluginsChangedListener } from "./plugin/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
 import {
@@ -464,11 +465,48 @@ export class MissingDaemonVersionError extends Error {
   }
 }
 
+/** How the daemon wires plugins in. See {@link PluginRuntime.available}. */
+export interface PluginRuntime {
+  service: PluginService;
+  /**
+   * Whether `$PASEO_HOME/plugins` was creatable at startup. When it was not,
+   * every `plugins.*` RPC would fail on the filesystem, so `features.plugins`
+   * stays off and clients never offer the feature.
+   */
+  available: boolean;
+}
+
+/**
+ * Collapses "no plugin runtime" into the same shape as one that is present but
+ * unavailable, so the constructor can assign its three plugin fields without a
+ * branch. That constructor is already at the lint complexity ceiling, and the
+ * optional runtime would otherwise push it over on its own.
+ */
+function normalizePluginRuntime(runtime: PluginRuntime | undefined): {
+  service: PluginService | undefined;
+  available: boolean;
+  subscribe: (listener: PluginsChangedListener) => () => void;
+} {
+  return {
+    service: runtime?.service,
+    available: runtime?.available ?? false,
+    subscribe: (listener) => runtime?.service.onChanged(listener) ?? (() => {}),
+  };
+}
+
 interface RequiredWebSocketServices {
   chatService: FileBackedChatService;
   loopService: LoopService;
   scheduleService: ScheduleService;
   checkoutDiffManager: CheckoutDiffManager;
+  /**
+   * Optional, unlike the four above: a daemon with no plugin runtime is a
+   * daemon that never advertises `features.plugins`, which is a state the
+   * feature already models. Requiring it here would make every caller that
+   * does not care about plugins — every existing test that constructs this
+   * server, for a start — pass one to get a chat session.
+   */
+  plugins?: PluginRuntime;
 }
 
 function requireWebSocketServices(params: {
@@ -476,8 +514,9 @@ function requireWebSocketServices(params: {
   loopService?: LoopService;
   scheduleService?: ScheduleService;
   checkoutDiffManager?: CheckoutDiffManager;
+  plugins?: PluginRuntime;
 }): RequiredWebSocketServices {
-  const { chatService, loopService, scheduleService, checkoutDiffManager } = params;
+  const { chatService, loopService, scheduleService, checkoutDiffManager, plugins } = params;
   if (!chatService) {
     throw new Error("VoiceAssistantWebSocketServer requires a chat service.");
   }
@@ -490,7 +529,7 @@ function requireWebSocketServices(params: {
   if (!checkoutDiffManager) {
     throw new Error("VoiceAssistantWebSocketServer requires a checkout diff manager.");
   }
-  return { chatService, loopService, scheduleService, checkoutDiffManager };
+  return { chatService, loopService, scheduleService, checkoutDiffManager, plugins };
 }
 
 /**
@@ -513,6 +552,9 @@ export class VoiceAssistantWebSocketServer {
   private readonly chatService: FileBackedChatService;
   private readonly loopService: LoopService;
   private readonly scheduleService: ScheduleService;
+  private readonly pluginService: PluginService | undefined;
+  private readonly pluginsAvailable: boolean;
+  private readonly unsubscribePluginChanges: () => void;
   private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly github: ForgeService;
   private readonly workspaceGitService: WorkspaceGitService;
@@ -607,6 +649,10 @@ export class VoiceAssistantWebSocketServer {
     browserToolsBroker?: BrowserToolsBroker | null,
     hubRelationships?: HubRelationshipManagement | null,
     workspaceSetupRuntime: WorkspaceSetupRuntime = new WorkspaceSetupRuntime(),
+    // Last, after upstream's parameter rather than before it: this is a
+    // positional list thirty arguments long, and taking a slot ahead of an
+    // existing one renumbers every caller silently.
+    plugins?: PluginRuntime,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -629,10 +675,19 @@ export class VoiceAssistantWebSocketServer {
       loopService,
       scheduleService,
       checkoutDiffManager,
+      plugins,
     });
     this.chatService = requiredServices.chatService;
     this.loopService = requiredServices.loopService;
     this.scheduleService = requiredServices.scheduleService;
+    const pluginRuntime = normalizePluginRuntime(requiredServices.plugins);
+    this.pluginService = pluginRuntime.service;
+    this.pluginsAvailable = pluginRuntime.available;
+    this.unsubscribePluginChanges = pluginRuntime.subscribe((installed) => {
+      this.broadcast(
+        wrapSessionMessage({ type: "plugins.changed", payload: { plugins: installed } }),
+      );
+    });
     this.checkoutDiffManager = requiredServices.checkoutDiffManager;
     this.github = github ?? createGitHubService();
     this.workspaceGitService = workspaceGitService ?? createFallbackWorkspaceGitService();
@@ -964,6 +1019,7 @@ export class VoiceAssistantWebSocketServer {
     this.unsubscribeDaemonConfigChange = null;
     this.unsubscribeTerminalActivity?.();
     this.unsubscribeTerminalActivity = null;
+    this.unsubscribePluginChanges();
     if (this.runtimeMetricsInterval) {
       clearInterval(this.runtimeMetricsInterval);
       this.runtimeMetricsInterval = null;
@@ -1335,6 +1391,7 @@ export class VoiceAssistantWebSocketServer {
       chatService: this.chatService,
       loopService: this.loopService,
       scheduleService: this.scheduleService,
+      pluginService: this.pluginService,
       checkoutDiffManager: this.checkoutDiffManager,
       github: this.github,
       workspaceGitService: this.workspaceGitService,
@@ -1535,6 +1592,10 @@ export class VoiceAssistantWebSocketServer {
         ...(this.advertiseDaemonStatusRpc ? { daemonStatusRpc: true } : {}),
         // COMPAT(relayConfig): added in v0.2.6, remove gate after 2027-01-31.
         ...(this.advertiseRelayConfig ? { relayConfig: true } : {}),
+        // COMPAT(plugins): added in v0.2.6, remove gate after 2027-02-05.
+        // Only advertised once the plugin directory is known to be usable;
+        // otherwise every plugins.* RPC would fail on the filesystem.
+        ...(this.pluginsAvailable ? { plugins: true } : {}),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": true,
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.

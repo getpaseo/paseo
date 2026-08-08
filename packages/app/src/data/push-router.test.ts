@@ -24,12 +24,14 @@ type SubscribeCheckoutDiffResponseMessage = Extract<
 >;
 type StatusMessage = Extract<SessionOutboundMessage, { type: "status" }>;
 type TerminalsChangedMessage = Extract<SessionOutboundMessage, { type: "terminals_changed" }>;
+type PluginsChangedMessage = Extract<SessionOutboundMessage, { type: "plugins.changed" }>;
 type RouterMessage =
   | ProvidersSnapshotUpdateMessage
   | CheckoutDiffUpdateMessage
   | SubscribeCheckoutDiffResponseMessage
   | StatusMessage
-  | TerminalsChangedMessage;
+  | TerminalsChangedMessage
+  | PluginsChangedMessage;
 type RouterMessageType = RouterMessage["type"];
 type RouterHandler = (message: RouterMessage) => void;
 type RouterClient = Parameters<typeof mountServerDataPushRouter>[0]["client"];
@@ -63,6 +65,7 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
     subscribe_checkout_diff_response: [],
     status: [],
     terminals_changed: [],
+    "plugins.changed": [],
   };
   const subscribeCheckoutDiffCalls: Array<{
     cwd: string;

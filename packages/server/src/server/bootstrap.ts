@@ -1,7 +1,7 @@
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { constants, existsSync, unlinkSync } from "fs";
-import { open } from "fs/promises";
+import { mkdir, open } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
@@ -148,6 +148,7 @@ import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
+import { PluginService } from "./plugin/service.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
@@ -417,6 +418,9 @@ export interface PaseoDaemonConfig {
   webUi?: {
     enabled: boolean;
     distDir: string | null;
+  };
+  plugins?: {
+    registryUrl: string;
   };
   appBaseUrl?: string;
   auth?: DaemonAuthConfig;
@@ -1234,6 +1238,26 @@ export async function createPaseoDaemon(
     }
   });
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");
+  const pluginsDir = path.join(config.paseoHome, "plugins");
+  const pluginService = new PluginService({
+    dir: pluginsDir,
+    daemonVersion,
+    logger,
+    ...(config.plugins?.registryUrl ? { registryUrl: config.plugins.registryUrl } : {}),
+  });
+  // Probe before advertising features.plugins: on a read-only home every
+  // plugins.* RPC would answer with a filesystem error instead of the client
+  // simply hiding the feature.
+  let pluginsAvailable = true;
+  try {
+    await mkdir(pluginsDir, { recursive: true });
+  } catch (error) {
+    pluginsAvailable = false;
+    logger.warn(
+      { err: error, dir: pluginsDir },
+      "Plugin directory is not usable; plugins are disabled for this daemon",
+    );
+  }
   logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
   const persistedRecords = await agentStorage.list();
   logger.info(
@@ -1573,6 +1597,7 @@ export async function createPaseoDaemon(
               browserToolsBroker,
               hubRelationships,
               workspaceSetupRuntime,
+              { service: pluginService, available: pluginsAvailable },
             );
             relayRuntime = createRelayRuntime({
               config: {
@@ -1640,6 +1665,7 @@ export async function createPaseoDaemon(
     terminalManager.killAll();
     speechService.stop();
     await scheduleService.stop().catch(() => undefined);
+    pluginService.stop();
     await relayRuntime?.stop().catch(() => undefined);
     if (wsServer) {
       await wsServer.close();

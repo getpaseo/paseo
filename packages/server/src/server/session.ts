@@ -163,6 +163,8 @@ import { ProviderCatalogSession } from "./session/provider/provider-catalog-sess
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
+import { PluginSession } from "./session/plugin/plugin-session.js";
+import type { PluginService } from "./plugin/service.js";
 import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import type { DaemonWebSocketRuntimeDiagnosticSnapshot } from "./session/daemon/diagnostics.js";
 import type { HubRelationshipManagement } from "./hub/relationship-controller.js";
@@ -443,6 +445,8 @@ export interface SessionOptions {
   chatService: FileBackedChatService;
   scheduleService: ScheduleService;
   loopService: LoopService;
+  /** Absent when the daemon has no plugin runtime; see RequiredWebSocketServices.plugins. */
+  pluginService?: PluginService;
   checkoutDiffManager: CheckoutDiffManager;
   github?: ForgeService;
   createAgentMcpTransport?: AgentMcpTransportFactory;
@@ -666,6 +670,7 @@ export class Session {
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
   private readonly projectConfigSession: ProjectConfigSession;
+  private readonly pluginSession: PluginSession | null;
   private readonly daemonSession: DaemonSession;
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
@@ -887,6 +892,7 @@ export class Session {
       projectRegistry: this.projectRegistry,
       logger: this.sessionLogger,
     });
+    this.pluginSession = this.createPluginSession(options.pluginService);
     this.daemonSession = new DaemonSession({
       host: {
         emit: (msg) => this.emit(msg),
@@ -1845,6 +1851,7 @@ export class Session {
       this.dispatchProviderMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
       this.dispatchChatScheduleLoopMessage(msg) ??
+      this.dispatchPluginMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
   }
@@ -2289,6 +2296,44 @@ export class Session {
         return this.chatScheduleLoopSession.handleScheduleRunOnceRequest(msg);
       case "schedule/update":
         return this.chatScheduleLoopSession.handleScheduleUpdateRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  /** Hoisted out of the constructor, which is at its lint complexity ceiling. */
+  private createPluginSession(pluginService: PluginService | undefined): PluginSession | null {
+    if (!pluginService) {
+      return null;
+    }
+    return new PluginSession({
+      host: { emit: (msg) => this.emit(msg) },
+      pluginService,
+      logger: this.sessionLogger,
+    });
+  }
+
+  private dispatchPluginMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    // No plugin runtime means `features.plugins` was never advertised, so a
+    // client that respects the gate never sends these. Falling through gives the
+    // one that ignores it the same answer as any unknown RPC, rather than
+    // crashing the session over a message it was told not to send.
+    if (!this.pluginSession) {
+      return undefined;
+    }
+    switch (msg.type) {
+      case "plugins.list.request":
+        return this.pluginSession.handleListRequest(msg);
+      case "plugins.get_entry.request":
+        return this.pluginSession.handleGetEntryRequest(msg);
+      case "plugins.browse.request":
+        return this.pluginSession.handleBrowseRequest(msg);
+      case "plugins.install.request":
+        return this.pluginSession.handleInstallRequest(msg);
+      case "plugins.uninstall.request":
+        return this.pluginSession.handleUninstallRequest(msg);
+      case "plugins.set_enabled.request":
+        return this.pluginSession.handleSetEnabledRequest(msg);
       default:
         return undefined;
     }

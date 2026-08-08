@@ -269,6 +269,16 @@ describe("daemon web UI route module", () => {
     );
   });
 
+  // A plugin's sandboxed frame may always navigate itself out to any origin;
+  // only the *parent* document's frame-src stops it. See docs/plugins.md.
+  test("denies framing on the app document so a plugin frame cannot navigate out", async () => {
+    const app = createApp({ enabled: true, distDir, publicDir });
+
+    const res = await request(app, "GET", "/");
+
+    expect(res.headers["content-security-policy"]).toBe("frame-src 'none'");
+  });
+
   test("sets immutable caching for hashed assets", async () => {
     const app = createApp({ enabled: true, distDir, publicDir });
 

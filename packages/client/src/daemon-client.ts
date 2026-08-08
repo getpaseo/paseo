@@ -553,6 +553,30 @@ type ScheduleUpdatePayload = Extract<
   SessionOutboundMessage,
   { type: "schedule/update/response" }
 >["payload"];
+type PluginsListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "plugins.list.response" }
+>["payload"];
+type PluginsGetEntryPayload = Extract<
+  SessionOutboundMessage,
+  { type: "plugins.get_entry.response" }
+>["payload"];
+type PluginsBrowsePayload = Extract<
+  SessionOutboundMessage,
+  { type: "plugins.browse.response" }
+>["payload"];
+type PluginsInstallPayload = Extract<
+  SessionOutboundMessage,
+  { type: "plugins.install.response" }
+>["payload"];
+type PluginsUninstallPayload = Extract<
+  SessionOutboundMessage,
+  { type: "plugins.uninstall.response" }
+>["payload"];
+type PluginsSetEnabledPayload = Extract<
+  SessionOutboundMessage,
+  { type: "plugins.set_enabled.response" }
+>["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
 export type AgentForkContextPayload = AgentForkContextResponseMessage["payload"];
 
@@ -969,6 +993,8 @@ function toTimeoutError(error: unknown, label: string, timeoutMs: number): Error
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 const DEFAULT_SESSION_RPC_TIMEOUT_MS = 60_000;
+/** Registry browse and install reach the network from the daemon, so they get their own budget. */
+const PLUGIN_REGISTRY_RPC_TIMEOUT_MS = 120_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
 const LIVENESS_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -5173,6 +5199,84 @@ export class DaemonClient {
         ...(typeof options.runOnCreate === "boolean" ? { runOnCreate: options.runOnCreate } : {}),
       },
       responseType: "schedule/create/response",
+    });
+  }
+
+  async pluginsList(requestId?: string): Promise<PluginsListPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "plugins.list.request" },
+      responseType: "plugins.list.response",
+    });
+  }
+
+  async pluginsGetEntry(options: {
+    pluginId: string;
+    entry: string;
+    requestId?: string;
+  }): Promise<PluginsGetEntryPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "plugins.get_entry.request",
+        pluginId: options.pluginId,
+        entry: options.entry,
+      },
+      responseType: "plugins.get_entry.response",
+    });
+  }
+
+  async pluginsBrowse(options?: {
+    refresh?: boolean;
+    requestId?: string;
+  }): Promise<PluginsBrowsePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: {
+        type: "plugins.browse.request",
+        ...(options?.refresh ? { refresh: true } : {}),
+      },
+      responseType: "plugins.browse.response",
+      timeout: PLUGIN_REGISTRY_RPC_TIMEOUT_MS,
+    });
+  }
+
+  async pluginsInstall(options: {
+    pluginId: string;
+    requestId?: string;
+  }): Promise<PluginsInstallPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: { type: "plugins.install.request", pluginId: options.pluginId },
+      responseType: "plugins.install.response",
+      timeout: PLUGIN_REGISTRY_RPC_TIMEOUT_MS,
+    });
+  }
+
+  async pluginsUninstall(options: {
+    pluginId: string;
+    requestId?: string;
+  }): Promise<PluginsUninstallPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: { type: "plugins.uninstall.request", pluginId: options.pluginId },
+      responseType: "plugins.uninstall.response",
+    });
+  }
+
+  async pluginsSetEnabled(options: {
+    pluginId: string;
+    enabled: boolean;
+    requestId?: string;
+  }): Promise<PluginsSetEnabledPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "plugins.set_enabled.request",
+        pluginId: options.pluginId,
+        enabled: options.enabled,
+      },
+      responseType: "plugins.set_enabled.response",
     });
   }
 

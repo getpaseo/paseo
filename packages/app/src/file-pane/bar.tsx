@@ -19,6 +19,7 @@ export function FilePanelBar({
   cursor,
   vimMode,
   conflict,
+  previewLabel,
 }: {
   size: number;
   lineCount?: number;
@@ -28,12 +29,14 @@ export function FilePanelBar({
   cursor?: { line: number; column: number };
   vimMode?: string | null;
   conflict?: FileConflictAlertState;
+  /** A plugin preview names its own tab; the built-in views say "Preview". */
+  previewLabel?: string;
 }) {
   const { t } = useTranslation();
   const previewModes = [
     {
       value: "preview" as const,
-      label: t("panels.file.editor.preview"),
+      label: previewLabel ?? t("panels.file.editor.preview"),
       testID: "file-mode-preview",
     },
     { value: "source" as const, label: t("panels.file.editor.source"), testID: "file-mode-source" },

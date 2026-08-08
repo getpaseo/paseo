@@ -1,0 +1,51 @@
+import { useRef } from "react";
+import type { Theme } from "@/styles/theme";
+import type { PluginSandboxProps, PluginThemeTokens } from "./bridge";
+
+/** What each platform's sandbox actually renders, once `withUnistyles` has injected the theme. */
+export type ThemedPluginSandboxProps = PluginSandboxProps & { themeTokens: PluginThemeTokens };
+
+/**
+ * Resolved tokens sent to a plugin with `init` and again with every `update`.
+ * Deliberately a flat handful: plugins style themselves with plain CSS, so
+ * anything richer than colours, a font stack, and a base size would just be
+ * surface area to keep compatible.
+ *
+ * Feed this the *live* Unistyles theme via `withUnistyles`, never a static
+ * import. The app theme is user-selectable (`auto|light|dark|zinc|midnight|
+ * claude|ghostty`, see `app/_layout.tsx`) and `apply-appearance.ts` patches
+ * fonts through `UnistylesRuntime.updateTheme`, so the OS colour scheme alone
+ * gets both the palette and the fonts wrong.
+ */
+export function resolvePluginThemeTokens(theme: Theme): PluginThemeTokens {
+  return {
+    colorScheme: theme.colorScheme === "light" ? "light" : "dark",
+    background: theme.colors.surface0,
+    foreground: theme.colors.foreground,
+    foregroundMuted: theme.colors.foregroundMuted,
+    border: theme.colors.border,
+    accent: theme.colors.accent,
+    fontFamily: theme.fontFamily.ui,
+    monoFontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.sm,
+  };
+}
+
+/**
+ * `withUnistyles` re-runs its mapper on every render of the wrapper, so
+ * `themeTokens` is a fresh object each time even when nothing changed. The
+ * sandboxes key their `update` postMessage on it, and an `update` is not free:
+ * on native it is a bridge eval, and `docs/plugins.md` tells plugins to re-read
+ * their whole context on every one. Compare by value instead.
+ *
+ * Only the tokens are stabilised, never the context — that carries the file's
+ * full text, and both call sites already memoise it.
+ */
+export function useStableThemeTokens(tokens: PluginThemeTokens): PluginThemeTokens {
+  const key = Object.values(tokens).join("\u0000");
+  const stable = useRef({ key, tokens });
+  if (stable.current.key !== key) {
+    stable.current = { key, tokens };
+  }
+  return stable.current.tokens;
+}

@@ -24,6 +24,11 @@ const testTheme = {
     base: 4,
     md: 6,
   },
+  // A missing scale is not the same as a missing token: a style factory reading
+  // `theme.colors.whatever` gets `undefined` and renders, while
+  // `theme.borderWidth[1]` throws and takes the whole import down with it.
+  borderWidth: { 0: 0, 1: 1, 2: 2 },
+  opacity: { 0: 0, 50: 0.5, 100: 1 },
 };
 
 type StyleFactory<T> = (theme: typeof testTheme) => T;

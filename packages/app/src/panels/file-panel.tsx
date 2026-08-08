@@ -1,5 +1,5 @@
 import { Text, View } from "react-native";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import invariant from "tiny-invariant";
 import { useTranslation } from "react-i18next";
 import { FilePane } from "@/file-pane/pane";
@@ -30,8 +30,14 @@ function useFilePanelDescriptor(target: { kind: "file"; path: string }) {
 
 function FilePanel() {
   const { t } = useTranslation();
-  const { serverId, workspaceId, target, fileNavigationRevision } = usePaneContext();
+  const { serverId, workspaceId, target, fileNavigationRevision, openFileInWorkspace } =
+    usePaneContext();
   const workspaceDirectory = useWorkspaceDirectory(serverId, workspaceId);
+  const openPluginFile = useCallback(
+    (location: { path: string; lineStart?: number }) =>
+      openFileInWorkspace({ location, disposition: "main" }),
+    [openFileInWorkspace],
+  );
   invariant(target.kind === "file", "FilePanel requires file target");
   if (!workspaceDirectory) {
     return (
@@ -46,6 +52,7 @@ function FilePanel() {
       workspaceRoot={workspaceDirectory}
       location={target}
       navigationRevision={fileNavigationRevision ?? 0}
+      onOpenFile={openPluginFile}
     />
   );
 }

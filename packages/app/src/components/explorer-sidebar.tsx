@@ -9,8 +9,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useAnimatedStyle, useSharedValue, runOnJS } from "react-native-reanimated";
 import { Gesture } from "react-native-gesture-handler";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { X } from "lucide-react-native";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
+import { Puzzle, X } from "lucide-react-native";
+import type { Theme } from "@/styles/theme";
 import { useTranslation } from "react-i18next";
 import {
   formatPrTabLabel,
@@ -41,6 +42,15 @@ import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { resolveFocusedChatTarget } from "@/composer/focused-chat-target";
 import { createWorkspaceFileAttachment } from "@/attachments/workspace-file";
 import { useDraftStore } from "@/stores/draft-store";
+import {
+  resolveExplorerTab,
+  resolvePluginSidebarTabs,
+  type PluginSidebarTab,
+} from "@/components/explorer-tab-resolution";
+import { useBoundedPluginListWait } from "@/plugins/plugin-list-wait";
+import { usePluginEntry, usePlugins } from "@/plugins/queries";
+import { PluginSandbox } from "@/plugins/sandbox";
+import { fromPluginRelativePath, type PluginContext } from "@/plugins/bridge";
 
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
 
@@ -49,7 +59,11 @@ interface ExplorerSidebarProps {
   workspaceId?: string | null;
   workspaceRoot: string;
   isGit: boolean;
-  onOpenFile?: (filePath: string) => void;
+  /**
+   * The location shape, not a bare path: a sidebar plugin's `open-file` carries
+   * an optional `lineStart` and dropping it here diverged from the file pane.
+   */
+  onOpenFile?: (location: { path: string; lineStart?: number }) => void;
 }
 
 interface ExplorerSidebarSharedState {
@@ -243,6 +257,8 @@ interface ExplorerTabButtonProps {
   tab: ExplorerTab;
   active: boolean;
   label?: string;
+  /** Untrusted labels (plugin titles) clamp to one line and a bounded width. */
+  clampLabel?: boolean;
   onTabPress: (tab: ExplorerTab) => void;
   testID: string;
   children?: React.ReactNode;
@@ -252,17 +268,25 @@ function ExplorerTabButton({
   tab,
   active,
   label,
+  clampLabel,
   onTabPress,
   testID,
   children,
 }: ExplorerTabButtonProps) {
   const handlePress = useCallback(() => onTabPress(tab), [onTabPress, tab]);
   const tabStyle = useMemo(() => [styles.tab, active && styles.tabActive], [active]);
-  const tabTextStyle = useMemo(() => [styles.tabText, active && styles.tabTextActive], [active]);
+  const tabTextStyle = useMemo(
+    () => [styles.tabText, active && styles.tabTextActive, clampLabel && styles.tabTextClamped],
+    [active, clampLabel],
+  );
   return (
     <Pressable testID={testID} style={tabStyle} onPress={handlePress}>
       {children}
-      {label !== undefined ? <Text style={tabTextStyle}>{label}</Text> : null}
+      {label !== undefined ? (
+        <Text style={tabTextStyle} numberOfLines={clampLabel ? 1 : undefined}>
+          {label}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -276,7 +300,7 @@ interface SidebarContentProps {
   workspaceRoot: string;
   isGit: boolean;
   isOpen: boolean;
-  onOpenFile?: (filePath: string) => void;
+  onOpenFile?: (location: { path: string; lineStart?: number }) => void;
 }
 
 function ExplorerSidebarContent({
@@ -303,9 +327,16 @@ function ExplorerSidebarContent({
   });
   const hasPullRequest = prPane.prNumber !== null;
   const showPrTab = hasPullRequest || (activeTab === "pr" && prPane.isLoading);
-  const requestedTab: ExplorerTab =
-    !isGit && (activeTab === "changes" || activeTab === "pr") ? "files" : activeTab;
-  const resolvedTab: ExplorerTab = requestedTab === "pr" && !showPrTab ? "changes" : requestedTab;
+  const { plugins, isLoading } = usePlugins(serverId);
+  const pluginsLoading = useBoundedPluginListWait({ waiting: isLoading, key: serverId });
+  const pluginTabs = useMemo(() => resolvePluginSidebarTabs(plugins), [plugins]);
+  const { resolvedTab, activePluginTab, pluginTabPending } = resolveExplorerTab({
+    activeTab,
+    isGit,
+    showPrTab,
+    pluginTabs,
+    pluginsLoading,
+  });
   const prTabLabel = formatPrTabLabel(prPane.prNumber);
   const refreshGitActions = useCheckoutGitActionsStore((s) => s.refresh);
   const handlePrRetry = useCallback(() => {
@@ -362,6 +393,11 @@ function ExplorerSidebarContent({
               />
             </ExplorerTabButton>
           )}
+          <PluginTabButtons
+            pluginTabs={pluginTabs}
+            resolvedTab={resolvedTab}
+            onTabPress={onTabPress}
+          />
         </View>
         <View style={styles.headerRightSection}>
           {!hasRightWindowControls && (
@@ -416,8 +452,116 @@ function ExplorerSidebarContent({
             onRetry={handlePrRetry}
           />
         )}
+        {pluginTabPending && (
+          <View style={styles.pluginState}>
+            <Text style={styles.pluginStateText}>{t("plugins.loading")}</Text>
+          </View>
+        )}
+        {/* Gated on isOpen like the PR pane: on compact the sidebar stays
+            mounted under RetainedPanelActivity, and a closed drawer must not
+            keep a WebView running untrusted plugin JS. */}
+        {activePluginTab && isOpen && (
+          <PluginTabContent
+            key={activePluginTab.tab}
+            serverId={serverId}
+            workspaceId={workspaceId ?? null}
+            workspaceRoot={workspaceRoot}
+            panel={activePluginTab}
+            onOpenFile={onOpenFile}
+          />
+        )}
       </View>
     </View>
+  );
+}
+
+const ThemedPuzzle = withUnistyles(Puzzle);
+// Hoisted so the mapper identity is stable across renders.
+const activePuzzleColor = (theme: Theme) => ({ color: theme.colors.foreground });
+const mutedPuzzleColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+function PluginTabButtons({
+  pluginTabs,
+  resolvedTab,
+  onTabPress,
+}: {
+  pluginTabs: readonly PluginSidebarTab[];
+  resolvedTab: ExplorerTab;
+  onTabPress: (tab: ExplorerTab) => void;
+}) {
+  return (
+    <>
+      {pluginTabs.map((panel) => (
+        <ExplorerTabButton
+          key={panel.tab}
+          tab={panel.tab}
+          active={resolvedTab === panel.tab}
+          label={panel.title}
+          clampLabel
+          onTabPress={onTabPress}
+          testID={`explorer-tab-${panel.tab}`}
+        >
+          {/* ponytail: one generic icon for every plugin. Honouring the
+              manifest's Lucide icon name means bundling all of lucide;
+              add a curated name→component map if plugins ask for it. */}
+          <ThemedPuzzle
+            size={13}
+            uniProps={resolvedTab === panel.tab ? activePuzzleColor : mutedPuzzleColor}
+          />
+        </ExplorerTabButton>
+      ))}
+    </>
+  );
+}
+
+function PluginTabContent({
+  serverId,
+  workspaceId,
+  workspaceRoot,
+  panel,
+  onOpenFile,
+}: {
+  serverId: string;
+  workspaceId: string | null;
+  workspaceRoot: string;
+  panel: PluginSidebarTab;
+  onOpenFile?: (location: { path: string; lineStart?: number }) => void;
+}) {
+  const { t } = useTranslation();
+  const entry = usePluginEntry({ serverId, pluginId: panel.pluginId, entry: panel.entry });
+  const context = useMemo<PluginContext>(
+    () => ({ kind: "sidebar-panel", cwd: workspaceRoot, workspaceId }),
+    [workspaceRoot, workspaceId],
+  );
+  // `open-file` only yields workspace-relative paths; host consumers want the
+  // absolute one.
+  const handleOpenFile = useCallback(
+    (input: { path: string; lineStart?: number }) =>
+      onOpenFile?.({ ...input, path: fromPluginRelativePath(workspaceRoot, input.path) }),
+    [onOpenFile, workspaceRoot],
+  );
+  if (entry.data === undefined) {
+    return (
+      <View style={styles.pluginState}>
+        <Text style={styles.pluginStateText}>
+          {entry.error
+            ? t("plugins.errors.panelFailed", {
+                plugin: panel.pluginName,
+                reason: entry.error.message,
+              })
+            : t("plugins.panelLoading")}
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <PluginSandbox
+      html={entry.data}
+      context={context}
+      onOpenFile={handleOpenFile}
+      testID={`plugin-sidebar-${panel.pluginId}`}
+    />
   );
 }
 
@@ -468,13 +612,14 @@ function ChangedFilesPane({
   "serverId" | "workspaceId" | "workspaceRoot" | "isOpen" | "onOpenFile"
 >) {
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
+  const openPath = usePathOpener(onOpenFile);
   return (
     <GitDiffPane
       serverId={serverId}
       workspaceId={workspaceId}
       cwd={workspaceRoot}
       enabled={isOpen}
-      onOpenFile={onOpenFile}
+      onOpenFile={openPath}
       onAddToChat={canAddToChat ? addFile : undefined}
     />
   );
@@ -487,15 +632,21 @@ function FilesPane({
   onOpenFile,
 }: Pick<SidebarContentProps, "serverId" | "workspaceId" | "workspaceRoot" | "onOpenFile">) {
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
+  const openPath = usePathOpener(onOpenFile);
   return (
     <FileExplorerPane
       serverId={serverId}
       workspaceId={workspaceId}
       workspaceRoot={workspaceRoot}
-      onOpenFile={onOpenFile}
+      onOpenFile={openPath}
       onAddToChat={canAddToChat ? addFile : undefined}
     />
   );
+}
+
+/** The file tree and diff panes only ever name a path; plugins also name a line. */
+function usePathOpener(onOpenFile?: (location: { path: string; lineStart?: number }) => void) {
+  return useCallback((path: string) => onOpenFile?.({ path }), [onOpenFile]);
 }
 
 interface PrTabContentProps {
@@ -559,13 +710,21 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
+  // Plugin titles are untrusted and the panel count is unbounded, so the row has
+  // to give way to the close button and window controls instead of running into
+  // them — on iOS an overflowing row is not clipped, it overlaps.
   tabsContainer: {
     flexDirection: "row",
+    flexShrink: 1,
+    minWidth: 0,
+    overflow: "hidden",
     gap: theme.spacing[1],
   },
   tab: {
     flexDirection: "row",
     alignItems: "center",
+    flexShrink: 1,
+    minWidth: 0,
     gap: theme.spacing[2],
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
@@ -585,6 +744,10 @@ const styles = StyleSheet.create((theme) => ({
   tabTextMuted: {
     opacity: 0.8,
   },
+  tabTextClamped: {
+    flexShrink: 1,
+    maxWidth: 120,
+  },
   headerRightSection: {
     flexDirection: "row",
     alignItems: "center",
@@ -597,5 +760,16 @@ const styles = StyleSheet.create((theme) => ({
   contentArea: {
     flex: 1,
     minHeight: 0,
+  },
+  pluginState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: theme.spacing[4],
+  },
+  pluginStateText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
   },
 }));

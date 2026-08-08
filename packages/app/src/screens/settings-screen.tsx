@@ -35,6 +35,7 @@ import {
   SquareTerminal,
   Code2,
   Smartphone,
+  Blocks,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -72,6 +73,8 @@ import { AddHostModal } from "@/components/add-host-modal";
 import { PairLinkModal } from "@/components/pair-link-modal";
 import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-section";
 import { EditorSection } from "@/screens/settings/editor-section";
+import { PluginsSection } from "@/screens/settings/plugins-section";
+import { usePluginsSupport } from "@/plugins/queries";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { CommunityLinks } from "@/components/community-links";
@@ -148,6 +151,7 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "appearance", labelKey: "settings.sections.appearance", icon: Palette },
   { id: "editor", labelKey: "settings.sections.editor", icon: Code2 },
   { id: "shortcuts", labelKey: "settings.sections.shortcuts", icon: Keyboard, desktopOnly: true },
+  { id: "plugins", labelKey: "settings.sections.plugins", icon: Blocks },
   {
     id: "integrations",
     labelKey: "settings.sections.integrations",
@@ -997,7 +1001,15 @@ function SettingsSidebar({
   const hasHosts = sortedHosts.length > 0;
   const enableBuiltInDaemonOption = useEnableBuiltInDaemonOption();
   const isDesktopApp = isElectronRuntime();
-  const items = SIDEBAR_SECTION_ITEMS.filter((item) => !item.desktopOnly || isDesktopApp);
+  // A daemon without the `plugins` capability gets no plugins UI at all
+  // (docs/plugins.md). A host that has not handshaked yet keeps the entry — it
+  // may well support them.
+  const pluginsSupport = usePluginsSupport(activeHostServerId);
+  const items = SIDEBAR_SECTION_ITEMS.filter(
+    (item) =>
+      (!item.desktopOnly || isDesktopApp) &&
+      (item.id !== "plugins" || pluginsSupport !== "unsupported"),
+  );
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
   const outerContainerStyle = useMemo(
@@ -1425,6 +1437,8 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
           return <EditorSection />;
         case "shortcuts":
           return isDesktopApp ? <KeyboardShortcutsSection /> : null;
+        case "plugins":
+          return <PluginsSection serverId={activeHostServerId} />;
         case "integrations":
           return isDesktopApp ? <IntegrationsSection /> : null;
         case "permissions":
