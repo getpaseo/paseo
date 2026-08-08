@@ -231,8 +231,13 @@ export const zhCN: TranslationResources = {
   sessions: {
     title: "历史",
     empty: "还没有会话",
+    noMatches: "没有匹配的会话",
+    tooManyMatches: "匹配过多 — 请缩小搜索范围",
+    hostLoadFailed: "{{host}}：无法加载历史",
+    searchPlaceholder: "搜索历史",
     actions: {
       loadMore: "加载更多",
+      clearSearch: "清除搜索",
     },
   },
   agentList: {
@@ -941,7 +946,7 @@ export const zhCN: TranslationResources = {
       discord: "Discord",
       github: "创建 GitHub Issue",
       whatsNew: "新功能",
-      version: "Paseo {{version}}",
+      appName: "Paseo",
     },
     sections: {
       sessions: "历史",

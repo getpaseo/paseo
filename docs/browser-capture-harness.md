@@ -87,6 +87,14 @@ or parking changes that surface's geometry without reparenting the webview. The 
 uses `left:0`, `top:0`, `width:1px`, `height:1px`, `overflow:hidden`, `opacity:1`, and
 `pointer-events:none`. The webview stays at its resolved logical viewport, defaulting to
 1280x800 before first presentation, with `display:inline-flex` at `left:0`, `top:0`.
+Presentation resolves responsive guests to the pane's exact pixel dimensions after the surface
+has visible bounds. Do not apply percentage guest sizing against the parked surface: Electron
+exposes the 1x1 parking geometry as a real guest resize before expanding it again.
+
+The permanent browser host and `overlay-root` are explicit sibling paint planes. The browser
+plane stays below the overlay plane regardless of body insertion order; menus keep their relative
+layering inside `overlay-root`. Activating a presented browser also focuses its registered guest
+`WebContents` in main so macOS assigns keyboard first-responder ownership to the page.
 
 There is no renderer prep/restore handshake. Main disables guest background throttling
 once when the webview attaches, then screenshot capture uses the shared serialized queue,

@@ -4,6 +4,7 @@ import {
   type DesktopBrowserBridge,
 } from "@/desktop/host";
 import type { BrowserViewport } from "@/desktop/browser/store";
+import { WEB_SURFACE_PLANE } from "@/lib/overlay-root";
 
 const RESIDENT_BROWSER_HOST_ID = "paseo-browser-resident-webviews";
 const BROWSER_ID_ATTRIBUTE = "data-paseo-browser-id";
@@ -108,7 +109,7 @@ function applyResidentHostParkingStyle(host: HTMLElement): void {
   host.style.opacity = "1";
   host.style.pointerEvents = "none";
   host.style.display = "block";
-  host.style.zIndex = "0";
+  host.style.zIndex = String(WEB_SURFACE_PLANE.browser);
   host.style.clipPath = "";
   host.style.visibility = "visible";
   host.style.transform = "";
@@ -220,24 +221,16 @@ export function rememberBrowserWebviewSize(input: {
   return dimensions;
 }
 
-function applyBrowserWebviewDimensions(webview: HTMLElement, viewport: BrowserViewport): void {
+function applyBrowserWebviewDimensions(
+  webview: HTMLElement,
+  dimensions: { width: number; height: number },
+): void {
   webview.style.display = "flex";
   webview.style.border = "0";
   webview.style.background = "transparent";
-  if (viewport.mode === "responsive") {
-    webview.style.flex = "1";
-    webview.style.width = "100%";
-    webview.style.height = "100%";
-    return;
-  }
   webview.style.flex = "0 0 auto";
-  webview.style.width = `${viewport.width}px`;
-  webview.style.height = `${viewport.height}px`;
-}
-
-export function applyBrowserWebviewViewport(webview: HTMLElement, viewport: BrowserViewport): void {
-  clearResidentWebviewParkingStyle(webview);
-  applyBrowserWebviewDimensions(webview, viewport);
+  webview.style.width = `${Math.max(1, Math.round(dimensions.width))}px`;
+  webview.style.height = `${Math.max(1, Math.round(dimensions.height))}px`;
 }
 
 export function applyInactiveBrowserWebviewViewport(
@@ -256,6 +249,7 @@ export function presentBrowserWebview(
   webview: HTMLElement,
   anchor: HTMLElement,
   clip: HTMLElement,
+  viewport: BrowserViewport,
 ): void {
   const normalizedBrowserId = trimNonEmpty(browserId);
   if (!normalizedBrowserId) {
@@ -297,6 +291,13 @@ export function presentBrowserWebview(
   surface.style.pointerEvents = hasVisibleArea ? "auto" : "none";
   surface.style.display = "flex";
   surface.style.visibility = "visible";
+  clearResidentWebviewParkingStyle(webview);
+  applyBrowserWebviewDimensions(
+    webview,
+    viewport.mode === "responsive"
+      ? { width: anchorBounds.width, height: anchorBounds.height }
+      : viewport,
+  );
   webview.style.position = "absolute";
   webview.style.left = `${Math.round(anchorBounds.left - surfaceLeft)}px`;
   webview.style.top = `${Math.round(anchorBounds.top - surfaceTop)}px`;
@@ -432,7 +433,7 @@ export function resizeResidentBrowserWebview(input: {
   const ownerDocument = readDocument();
   const webview = ownerDocument ? findBrowserWebview(normalizedBrowserId, ownerDocument) : null;
   if (webview) {
-    applyBrowserWebviewDimensions(webview, { mode: "fixed", ...dimensions });
+    applyBrowserWebviewDimensions(webview, dimensions);
   }
 
   return dimensions;

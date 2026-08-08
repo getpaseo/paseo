@@ -231,8 +231,13 @@ export const ar: TranslationResources = {
   sessions: {
     title: "السجل",
     empty: "لا توجد جلسات بعد",
+    noMatches: "لا توجد جلسات مطابقة",
+    tooManyMatches: "نتائج كثيرة جدًا — ضيّق نطاق البحث",
+    hostLoadFailed: "{{host}}: تعذر تحميل السجل",
+    searchPlaceholder: "البحث في السجل",
     actions: {
       loadMore: "تحميل المزيد",
+      clearSearch: "مسح البحث",
     },
   },
   agentList: {
@@ -949,7 +954,7 @@ export const ar: TranslationResources = {
       discord: "Discord",
       github: "إنشاء مشكلة على GitHub",
       whatsNew: "ما الجديد",
-      version: "Paseo {{version}}",
+      appName: "Paseo",
     },
     sections: {
       sessions: "السجل",
