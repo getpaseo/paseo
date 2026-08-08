@@ -38,25 +38,39 @@ export function measureElement(element: View): Promise<Rect> {
  * there is more room above. Both conditions matter: flipping into a side that is equally
  * cramped just moves the clipping, so a surface taller than the whole viewport stays put.
  *
- * Only the vertical placements flip. A left/right submenu that doesn't fit is handled by the
- * caller choosing its side up front, because flipping it mid-open would move the surface out
- * from under the pointer that is travelling toward it.
+ * Side placements flip on the same terms. A submenu opens to the right by default, which is
+ * fine until its parent is anchored near the right edge — then there is nowhere to put it and
+ * edge clamping drags it back over the row that opened it. Flipping to the left is the only
+ * placement that fits.
+ *
+ * This is decided once, from the trigger rect and the measured content, and those do not change
+ * while a flyout is open. The hazard the caller-picks-a-side rule guarded against was re-deciding
+ * mid-hover and moving the surface out from under a pointer travelling toward it; a stable
+ * decision taken before the surface is placed cannot do that.
  */
 function flipPlacement(input: {
   placement: Placement;
   triggerRect: Rect;
-  contentHeight: number;
+  contentSize: Size;
   displayArea: Rect;
 }): Placement {
-  const { placement, triggerRect, contentHeight, displayArea } = input;
+  const { placement, triggerRect, contentSize, displayArea } = input;
   const spaceTop = triggerRect.y - displayArea.y;
   const spaceBottom = displayArea.y + displayArea.height - (triggerRect.y + triggerRect.height);
+  const spaceLeft = triggerRect.x - displayArea.x;
+  const spaceRight = displayArea.x + displayArea.width - (triggerRect.x + triggerRect.width);
 
-  if (placement === "bottom" && spaceBottom < contentHeight && spaceTop > spaceBottom) {
+  if (placement === "bottom" && spaceBottom < contentSize.height && spaceTop > spaceBottom) {
     return "top";
   }
-  if (placement === "top" && spaceTop < contentHeight && spaceBottom > spaceTop) {
+  if (placement === "top" && spaceTop < contentSize.height && spaceBottom > spaceTop) {
     return "bottom";
+  }
+  if (placement === "right" && spaceRight < contentSize.width && spaceLeft > spaceRight) {
+    return "left";
+  }
+  if (placement === "left" && spaceLeft < contentSize.width && spaceRight > spaceLeft) {
+    return "right";
   }
   return placement;
 }
@@ -131,7 +145,7 @@ export function computePosition({
   const actualPlacement = flipPlacement({
     placement,
     triggerRect,
-    contentHeight: contentSize.height,
+    contentSize,
     displayArea,
   });
   const anchored = anchorToPlacement({

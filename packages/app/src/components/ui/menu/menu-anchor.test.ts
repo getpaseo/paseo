@@ -48,11 +48,36 @@ describe("computePosition", () => {
   });
 
   it("places side placements flush with the trigger top and ignores alignment", () => {
-    const left = position({ placement: "left", alignment: "end" });
-    expect(left).toEqual({ x: 8, y: 100, actualPlacement: "left" });
+    // Mid-display trigger so both sides fit and neither placement flips; this case is
+    // about the vertical edge and alignment, not about which side wins.
+    const centred = { ...TRIGGER, x: 400 };
 
-    const right = position({ placement: "right", alignment: "end" });
-    expect(right).toEqual({ x: 144, y: 100, actualPlacement: "right" });
+    const left = position({ placement: "left", alignment: "end", triggerRect: centred });
+    expect(left).toEqual({ x: 196, y: 100, actualPlacement: "left" });
+
+    const right = position({ placement: "right", alignment: "end", triggerRect: centred });
+    expect(right).toEqual({ x: 444, y: 100, actualPlacement: "right" });
+  });
+
+  // A submenu opens to the right. Anchored near the right edge there is nowhere to put it,
+  // and clamping alone drags it back over the row that opened it.
+  it("flips a side placement to the other side when its own side has no room", () => {
+    const result = position({
+      placement: "right",
+      triggerRect: { ...TRIGGER, x: 900 },
+    });
+    expect(result.actualPlacement).toBe("left");
+    expect(result.x).toBe(696);
+  });
+
+  it("stays put when the other side is just as cramped", () => {
+    // Wider than the whole display area: flipping only moves the clipping.
+    const result = position({
+      placement: "right",
+      displayArea: { x: 0, y: 0, width: 300, height: 800 },
+      contentSize: { width: 400, height: 100 },
+    });
+    expect(result.actualPlacement).toBe("right");
   });
 
   it("keeps the surface inside a display area that does not start at the origin", () => {
