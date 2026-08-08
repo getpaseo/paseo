@@ -155,15 +155,19 @@ describe("assistant selection copy ranges", () => {
     },
   );
 
-  it("retains strong delimiters when its complete contents are selected", () => {
-    const message = mountFixture();
-    const element = fixtureElement(message, '[data-paseo-markdown-tag="strong"]');
-    const content = createAssistantSelectionClipboardContent(
-      selectText(element, 0, textNode(element).length),
-    );
-    expect(content?.plainText).toBe("**bold text**");
-    expect(content?.html).toContain("<strong>");
-  });
+  it.each(["strong", "em", "s", "h2", "blockquote"])(
+    "copies all content selected from inside a %s element without its syntax",
+    (tag) => {
+      const message = mountFixture();
+      const element = fixtureElement(message, '[data-paseo-markdown-tag="strong"]');
+      element.setAttribute("data-paseo-markdown-tag", tag);
+      const content = createAssistantSelectionClipboardContent(
+        selectText(element, 0, textNode(element).length),
+      );
+      expect(content?.plainText).toBe("bold text");
+      expect(content?.html).not.toContain(`<${tag}>`);
+    },
+  );
 
   it("copies complete inline code without delimiters when the selection stays inside", () => {
     const message = mountFixture();

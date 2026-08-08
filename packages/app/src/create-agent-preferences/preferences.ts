@@ -22,6 +22,11 @@ const providerPreferencesSchema = z.object({
   featureValues: z.record(z.string(), z.unknown()).optional(),
 });
 
+const launchTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("chat") }),
+  z.object({ kind: z.literal("terminal"), profileId: z.string() }),
+]);
+
 const formPreferencesSchema = z.object({
   provider: z.string().optional(),
   providerPreferences: z.record(z.string(), providerPreferencesSchema).optional(),
@@ -34,10 +39,14 @@ const formPreferencesSchema = z.object({
     )
     .optional(),
   isolation: z.enum(["local", "worktree"]).optional(),
+  // What the New workspace composer submits to: the chat agent (default) or a
+  // terminal profile. See `@/new-workspace-launch` for resolution/fallback.
+  launchTarget: launchTargetSchema.optional(),
 });
 
 export type ProviderPreferences = z.infer<typeof providerPreferencesSchema>;
 export type FormPreferences = z.infer<typeof formPreferencesSchema>;
+export type LaunchTarget = z.infer<typeof launchTargetSchema>;
 
 export const DEFAULT_FORM_PREFERENCES: FormPreferences = {};
 

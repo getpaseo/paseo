@@ -162,9 +162,12 @@ function flattenClipboardListMarkup(html: string): string {
     items.forEach((item, index) => {
       const line = document.createElement("div");
       line.append(start === null ? "- " : `${start + index}. `);
+      const nestedLines: HTMLDivElement[] = [];
       let hasParagraph = false;
       for (const child of Array.from(item.childNodes)) {
-        if (child instanceof HTMLParagraphElement) {
+        if (child instanceof HTMLDivElement) {
+          nestedLines.push(child);
+        } else if (child instanceof HTMLParagraphElement) {
           if (hasParagraph) {
             line.append(document.createElement("br"), document.createElement("br"));
           }
@@ -174,7 +177,7 @@ function flattenClipboardListMarkup(html: string): string {
           line.append(child);
         }
       }
-      replacement.append(line);
+      replacement.append(line, ...nestedLines);
     });
     list.replaceWith(replacement);
   }
@@ -275,11 +278,27 @@ function shouldPreserveSemanticElement(range: Range, element: Element): boolean 
   if (tag === "p" || isTableStructure(tag)) {
     return true;
   }
+  const isSelectableSemantic = tag !== null && tag !== "ol" && tag !== "ul";
+  if (
+    (isSelectableSemantic || element.tagName === "A") &&
+    selectionStaysInsideElement(range, element)
+  ) {
+    return false;
+  }
   if (tag === "ol" || tag === "ul") {
     const selectedItems = selectedListItems(element, range);
     return selectedItems.some((item) => hasSelectedAllContents(range, item, true));
   }
   return hasSelectedAllContents(range, element, tag === "li");
+}
+
+function selectionStaysInsideElement(range: Range, element: Element): boolean {
+  return (
+    range.startContainer !== element &&
+    range.endContainer !== element &&
+    element.contains(range.startContainer) &&
+    element.contains(range.endContainer)
+  );
 }
 
 function selectedListItems(list: Element, range: Range): Element[] {
