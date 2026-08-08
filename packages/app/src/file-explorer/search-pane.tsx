@@ -72,6 +72,12 @@ const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMut
 const CASE_SENSITIVE_ICON = (
   <ThemedCaseSensitive size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
 );
+const COLLAPSE_ALL_ICON = (
+  <ThemedListChevronsDownUp size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
+);
+const EXPAND_ALL_ICON = (
+  <ThemedListChevronsUpDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
+);
 const REGEX_ICON = <ThemedRegex size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 const WHOLE_WORD_ICON = <ThemedWholeWord size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 
@@ -281,15 +287,7 @@ function SearchOptionsMenu({
   const groupActionLabel = allGroupsCollapsed
     ? t("workspace.git.diff.expandAll")
     : t("workspace.git.diff.collapseAll");
-  const groupActionIcon = useMemo(
-    () =>
-      allGroupsCollapsed ? (
-        <ThemedListChevronsUpDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
-      ) : (
-        <ThemedListChevronsDownUp size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
-      ),
-    [allGroupsCollapsed],
-  );
+  const groupActionIcon = allGroupsCollapsed ? EXPAND_ALL_ICON : COLLAPSE_ALL_ICON;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger

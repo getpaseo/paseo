@@ -106,14 +106,14 @@ export function buildFileSearchRows(result: FileSearchResult): FileSearchRow[] {
       path: file.path,
       matchCount: file.matches.length,
     });
-    file.matches.forEach((match, index) => {
+    for (const [index, match] of file.matches.entries()) {
       rows.push({
         kind: "match",
         key: `match:${file.path}:${match.line}:${match.column}:${index}`,
         path: file.path,
         match,
       });
-    });
+    }
   }
   return rows;
 }
