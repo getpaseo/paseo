@@ -509,7 +509,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
   },
   matchHighlight: {
-    color: theme.colors.terminal.selectionForeground,
-    backgroundColor: theme.colors.terminal.selectionBackground,
+    color: theme.colors.accentBright,
+    backgroundColor: theme.colors.surface3,
   },
 }));
