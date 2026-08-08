@@ -48,8 +48,11 @@ A project is one set of environments and triggers. Split your work into projects
 3. [Triggers](/docs/hub/triggers)
 4. [Workflows](/docs/hub/workflows)
 5. [Configuration](/docs/hub/configuration)
+6. [Security](/docs/hub/security)
 
 [Quickstart](/docs/hub/quickstart) goes end to end if you would rather start by doing.
+
+If a workflow accepts requests from GitHub, Slack, Discord, or the API, read [Hub security](/docs/hub/security) before giving an agent access to a working directory or output capability.
 
 ## Running it
 

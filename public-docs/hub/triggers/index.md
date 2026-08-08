@@ -55,6 +55,8 @@ Each provider page documents its events and the data they expose:
 
 The allowlist is what keeps a stranger's comment on a public issue from starting an agent on your machine. There is no default, because a safe default differs per repository.
 
+An allowlist is one layer of defense. It does not make a permitted account trustworthy after compromise or make prompt injection harmless. See [Hub security](/docs/hub/security) before choosing the daemon, working directory, provider policy, and outputs for an external trigger.
+
 | Filter       | Applies to     | Matches                                                         |
 | ------------ | -------------- | --------------------------------------------------------------- |
 | `from_users` | all            | GitHub: login. Slack and Discord: **user id**, not display name |
