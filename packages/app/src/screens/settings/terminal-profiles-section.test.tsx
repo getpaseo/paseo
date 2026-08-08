@@ -38,6 +38,7 @@ const { theme, hostState, configState, patchConfigMock, confirmDialogMock } = vi
   hostState: {
     supportsDefaultProfile: true,
     shells: [] as Array<{ id: string; path: string }>,
+    systemShellPath: "C:\\Windows\\System32\\cmd.exe",
   },
   configState: {
     config: null as MutableDaemonConfig | null,
@@ -117,8 +118,9 @@ vi.mock("react-i18next", () => ({
         "settings.host.terminalProfiles.detectedShells": "Detected shells",
         "settings.host.terminalProfiles.setAsDefault": "Set as default",
         "settings.host.terminalProfiles.defaultMarker": "Default profile",
-        "settings.host.terminalProfiles.defaultHint":
-          "New terminal opens the marked profile. With none marked, it opens the system shell.",
+        "settings.host.terminalProfiles.systemShell": "System shell",
+        "settings.host.terminalProfiles.systemShellUnknown": "Resolved by the host",
+        "settings.host.terminalProfiles.defaultHint": "New terminal opens the marked row.",
         "settings.host.terminalProfiles.remove": "Remove",
         "settings.host.terminalProfiles.moveUp": "Move up",
         "settings.host.terminalProfiles.moveDown": "Move down",
@@ -294,7 +296,9 @@ vi.mock("@/stores/session-store", () => ({
 }));
 
 vi.mock("@/data/query", () => ({
-  useFetchQuery: () => ({ data: hostState.shells }),
+  useFetchQuery: () => ({
+    data: { shells: hostState.shells, systemShellPath: hostState.systemShellPath },
+  }),
 }));
 
 vi.mock("@/utils/confirm-dialog", () => ({ confirmDialog: confirmDialogMock }));
@@ -373,6 +377,41 @@ describe("HostTerminalsPage terminal profiles", () => {
     // confirmDialog and patchConfig both settle a microtask after the press.
     await act(async () => {});
   }
+
+  // Without a row of its own the system shell was unreachable: the marker could
+  // only move between profiles, so marking one was a one-way door.
+  it("shows the system shell as a row carrying the mark when no profile is default", () => {
+    render();
+
+    const row = find("terminal-profile-row-system-shell");
+    expect(row).not.toBeNull();
+    expect(row?.textContent).toContain("System shell");
+    expect(row?.textContent).toContain("C:\\Windows\\System32\\cmd.exe");
+    expect(find("terminal-profile-default-system-shell")).not.toBeNull();
+    expect(find("terminal-profile-set-default-system-shell")?.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("returns to the system shell by clearing the default id", async () => {
+    configState.config = makeConfig({ defaultTerminalProfileId: "codex" });
+
+    render();
+
+    expect(find("terminal-profile-default-system-shell")).toBeNull();
+    expect(find("terminal-profile-set-default-system-shell")?.hasAttribute("disabled")).toBe(false);
+
+    await press("terminal-profile-set-default-system-shell");
+
+    expect(patchConfigMock).toHaveBeenCalledTimes(1);
+    expect(patchConfigMock).toHaveBeenCalledWith({ defaultTerminalProfileId: "" });
+  });
+
+  it("hides the system shell row on a host that cannot honor a default", () => {
+    hostState.supportsDefaultProfile = false;
+
+    render();
+
+    expect(find("terminal-profile-row-system-shell")).toBeNull();
+  });
 
   it("marks only the profile the host opens by default", () => {
     configState.config = makeConfig({ defaultTerminalProfileId: "codex" });

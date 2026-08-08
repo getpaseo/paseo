@@ -2180,8 +2180,9 @@ export const fr: TranslationResources = {
         moveDown: "Move down",
         setAsDefault: "Set as default",
         defaultMarker: "Default profile",
-        defaultHint:
-          "New terminal opens the marked profile. With none marked, it opens the system shell.",
+        systemShell: "System shell",
+        systemShellUnknown: "Resolved by the host",
+        defaultHint: "New terminal opens the marked row.",
         save: "Save",
         emptyState: "No profiles yet. Add one to launch terminals with a specific command.",
       },

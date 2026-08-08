@@ -35,7 +35,7 @@ import {
 import type { TerminalSession } from "./terminal.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import { applyTerminalSize } from "./terminal-size-ownership.js";
-import { listAvailableTerminalShells } from "./terminal-shell.js";
+import { listAvailableTerminalShells, resolveDefaultTerminalShell } from "./terminal-shell.js";
 import type { ResolvedCommand } from "@getpaseo/protocol/terminal-profiles";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
@@ -633,7 +633,12 @@ export class TerminalSessionController {
       const shells = await listAvailableTerminalShells();
       this.emit({
         type: "terminal.shells.list.response",
-        payload: { requestId: msg.requestId, shells, error: null },
+        payload: {
+          requestId: msg.requestId,
+          shells,
+          systemShellPath: resolveDefaultTerminalShell(),
+          error: null,
+        },
       });
     } catch (error) {
       this.sessionLogger.error({ err: error }, "Failed to list terminal shells");
@@ -642,6 +647,7 @@ export class TerminalSessionController {
         payload: {
           requestId: msg.requestId,
           shells: [],
+          systemShellPath: "",
           error: error instanceof Error ? error.message : String(error),
         },
       });

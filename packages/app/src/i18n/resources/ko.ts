@@ -2138,8 +2138,9 @@ export const ko: TranslationResources = {
         moveDown: "아래로 이동",
         setAsDefault: "기본값으로 설정",
         defaultMarker: "기본 프로필",
-        defaultHint:
-          "새 터미널은 표시된 프로필을 엽니다. 표시된 프로필이 없으면 시스템 셸을 엽니다.",
+        systemShell: "시스템 셸",
+        systemShellUnknown: "호스트가 결정합니다",
+        defaultHint: "새 터미널은 표시된 항목을 엽니다.",
         save: "저장",
         emptyState: "아직 프로필이 없습니다. 특정 명령으로 터미널을 실행하려면 하나 추가하세요.",
       },

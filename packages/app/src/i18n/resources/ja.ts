@@ -2145,8 +2145,9 @@ export const ja: TranslationResources = {
         moveDown: "下に移動",
         setAsDefault: "デフォルトに設定",
         defaultMarker: "デフォルトのプロファイル",
-        defaultHint:
-          "新しいターミナルはマークしたプロファイルを開きます。マークがない場合はシステムシェルを開きます。",
+        systemShell: "システムシェル",
+        systemShellUnknown: "ホストが解決します",
+        defaultHint: "新しいターミナルは、マークされた行を開きます。",
         save: "保存",
         emptyState:
           "プロファイルがまだありません。特定のコマンドでターミナルを起動するために追加してください。",

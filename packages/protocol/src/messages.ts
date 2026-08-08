@@ -5274,6 +5274,9 @@ export const ListTerminalShellsResponseSchema = z.object({
     // rides along so a profile made from one is self-describing and editable
     // rather than an opaque preset id.
     shells: z.array(z.object({ id: z.string(), path: z.string() })),
+    // What a terminal opens when no profile is marked default. The settings list
+    // shows it as a row so that choice is visible and reversible.
+    systemShellPath: z.string().default(""),
     error: z.string().nullable(),
   }),
 });

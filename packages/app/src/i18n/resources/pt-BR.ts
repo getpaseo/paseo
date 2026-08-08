@@ -2160,8 +2160,9 @@ export const ptBR: TranslationResources = {
         moveDown: "Mover para baixo",
         setAsDefault: "Definir como padrão",
         defaultMarker: "Perfil padrão",
-        defaultHint:
-          "Novo terminal abre o perfil marcado. Sem nenhum marcado, abre o shell do sistema.",
+        systemShell: "Shell do sistema",
+        systemShellUnknown: "Resolvido pelo host",
+        defaultHint: "Um novo terminal abre a linha marcada.",
         save: "Salvar",
         emptyState:
           "Nenhum perfil ainda. Adicione um para abrir terminais com um comando específico.",

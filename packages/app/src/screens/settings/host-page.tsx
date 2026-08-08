@@ -1495,10 +1495,81 @@ function DetectedShellMenuItem({
   );
 }
 
+/**
+ * The system shell as a first-class row.
+ *
+ * Without it the default marker could only ever move between profiles, so once a
+ * profile was marked there was no way back to the plain shell. Making it a row
+ * means exactly one row always carries the mark, and clearing is the same
+ * gesture as choosing.
+ */
+function SystemShellRow({
+  isDefault,
+  systemShellPath,
+  onSetDefault,
+}: {
+  isDefault: boolean;
+  systemShellPath: string;
+  onSetDefault: (id: string) => void;
+}) {
+  const { t } = useTranslation();
+  const handleSetDefault = useCallback(() => onSetDefault(""), [onSetDefault]);
+
+  return (
+    <View
+      style={[settingsStyles.row, terminalProfileStyles.row]}
+      testID="terminal-profile-row-system-shell"
+    >
+      <View style={terminalProfileStyles.iconWrapper}>
+        <ThemedProfileSquareTerminal size={ICON_SIZE.md} uniProps={mutedColorMapping} />
+      </View>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+          {t("settings.host.terminalProfiles.systemShell")}
+        </Text>
+        <Text style={settingsStyles.rowHint} numberOfLines={1}>
+          {systemShellPath || t("settings.host.terminalProfiles.systemShellUnknown")}
+        </Text>
+      </View>
+      <View
+        style={terminalProfileStyles.defaultSlot}
+        accessible={isDefault}
+        accessibilityLabel={
+          isDefault ? t("settings.host.terminalProfiles.defaultMarker") : undefined
+        }
+        testID={isDefault ? "terminal-profile-default-system-shell" : undefined}
+      >
+        {isDefault ? defaultProfileIcon : null}
+      </View>
+      <View style={terminalProfileStyles.rowActions}>
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={setDefaultIcon}
+          onPress={handleSetDefault}
+          disabled={isDefault}
+          accessibilityLabel={t("settings.host.terminalProfiles.setAsDefault")}
+          testID="terminal-profile-set-default-system-shell"
+        />
+        <View style={terminalProfileStyles.rowActionSpacer} />
+        <View style={terminalProfileStyles.rowActionSpacer} />
+        <View style={terminalProfileStyles.rowActionSpacer} />
+        <View style={terminalProfileStyles.rowActionSpacer} />
+      </View>
+    </View>
+  );
+}
+
 interface TerminalProfileRowProps {
   profile: TerminalProfile;
   isFirst: boolean;
   isLast: boolean;
+  /**
+   * Whether to draw the separator above. Not the same as `isFirst`, which is
+   * list position and governs the move buttons: the system shell row can sit
+   * above the first profile, which then needs a border but still cannot move up.
+   */
+  showBorder: boolean;
   /** The host honors a default profile. Without it the row shows no default affordance. */
   canSetDefault: boolean;
   isDefault: boolean;
@@ -1513,6 +1584,7 @@ function TerminalProfileRow({
   profile,
   isFirst,
   isLast,
+  showBorder,
   canSetDefault,
   isDefault,
   onEdit,
@@ -1535,8 +1607,8 @@ function TerminalProfileRow({
       : profile.command;
 
   const rowStyle = useMemo(
-    () => [settingsStyles.row, !isFirst && settingsStyles.rowBorder, terminalProfileStyles.row],
-    [isFirst],
+    () => [settingsStyles.row, showBorder && settingsStyles.rowBorder, terminalProfileStyles.row],
+    [showBorder],
   );
 
   const icon = getTerminalProfileIcon(profile);
@@ -1657,12 +1729,12 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
   const shellsQuery = useFetchQuery({
     queryKey: ["terminal-shells", serverId],
     queryFn: async () => {
-      if (!client) return [] as DetectedShell[];
+      if (!client) return { shells: [] as DetectedShell[], systemShellPath: "" };
       const payload = await client.listTerminalShells();
-      return payload.shells;
+      return { shells: payload.shells, systemShellPath: payload.systemShellPath };
     },
     enabled: Boolean(client) && isConnected && canSetDefault,
-    dataShape: "list",
+    dataShape: "value",
     retry: false,
     staleTimeMs: 60_000,
   });
@@ -1846,10 +1918,12 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
     [profiles, saveProfiles, t],
   );
 
+  const systemShellPath = shellsQuery.data?.systemShellPath ?? "";
+
   // A shell already standing behind a profile is not worth offering twice.
   const offeredShells = useMemo(() => {
     const commands = new Set(profiles?.map((profile) => profile.command));
-    return (shellsQuery.data ?? []).filter((shell) => !commands.has(shell.path));
+    return (shellsQuery.data?.shells ?? []).filter((shell) => !commands.has(shell.path));
   }, [profiles, shellsQuery.data]);
 
   const shellPages = useMemo<MenuPageDefinition[]>(() => {
@@ -1920,6 +1994,13 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
         testID="terminal-profiles-section"
       >
         <View style={settingsStyles.card} testID="terminal-profiles-card">
+          {canSetDefault ? (
+            <SystemShellRow
+              isDefault={defaultProfileId === ""}
+              systemShellPath={systemShellPath}
+              onSetDefault={handleSetDefault}
+            />
+          ) : null}
           {profiles && profiles.length > 0 ? (
             profiles.map((profile, index) => (
               <TerminalProfileRow
@@ -1927,6 +2008,7 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
                 profile={profile}
                 isFirst={index === 0}
                 isLast={index === profiles.length - 1}
+                showBorder={index > 0 || canSetDefault}
                 canSetDefault={canSetDefault}
                 isDefault={profile.id === defaultProfileId}
                 onEdit={handleEditOpen}
@@ -2010,6 +2092,16 @@ const terminalProfileStyles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: 0,
+  },
+  // The system shell row carries only "set as default", so the four actions it
+  // does not have are held open. Same reason as defaultSlot above: the rail has
+  // to land on one rung for every row in the card.
+  //
+  // Width of an icon-only ghost sm Button: the icon, its horizontal padding, and
+  // the 1px transparent border every Button carries (see button.tsx base style).
+  // Measured at 40px; a spacer 2px short walked the rail 8px off the rung.
+  rowActionSpacer: {
+    width: theme.iconSize.sm + theme.spacing[3] * 2 + 2,
   },
   addTrigger: {
     alignItems: "center",
