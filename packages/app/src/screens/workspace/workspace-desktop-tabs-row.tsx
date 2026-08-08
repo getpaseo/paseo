@@ -59,8 +59,10 @@ import {
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
-import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
+import { useShowShortcutBadges } from "@/hooks/use-show-shortcut-badges";
+import { getIsElectronRuntime, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import type { ShortcutKey } from "@/utils/format-shortcut";
+import { getWorkspaceTabIndexBadgeKeys } from "@/keyboard/keyboard-shortcuts";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
 import {
   WorkspaceTabPresentationResolver,
@@ -539,6 +541,7 @@ function TabChip({
   onNavigateTab,
   onCloseTab,
   dragHandleProps,
+  shortcutBadgeKeys,
 }: {
   tab: WorkspaceTabDescriptor;
   isActive: boolean;
@@ -556,6 +559,7 @@ function TabChip({
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   dragHandleProps: DraggableListDragHandleProps | undefined;
+  shortcutBadgeKeys: ShortcutKey[] | null;
 }) {
   const { t } = useTranslation();
   const { closeButtonTestId, contextMenuTestId, menuEntries } = resolvedTab;
@@ -564,7 +568,8 @@ function TabChip({
   );
   const [hovered, setHovered] = useState(false);
   const isHighlighted = isActive || hovered || isCloseHovered;
-  const showTrailingAffordance = showCloseButton || presentation.modified;
+  const showTrailingAffordance =
+    shortcutBadgeKeys !== null || showCloseButton || presentation.modified;
   const closeButtonDragBlockers = isWeb
     ? ({
         onPointerDown: (event: { stopPropagation?: () => void }) => {
@@ -681,7 +686,19 @@ function TabChip({
                 tabLabelStyle={tabLabelStyle}
               />
 
-              {showTrailingAffordance ? (
+              {shortcutBadgeKeys ? (
+                <View
+                  pointerEvents="none"
+                  testID={`workspace-tab-shortcut-${buildDeterministicWorkspaceTabId(tab.target)}`}
+                >
+                  <Shortcut
+                    keys={shortcutBadgeKeys}
+                    style={styles.tabShortcutBadge}
+                    textStyle={styles.tabShortcutBadgeText}
+                  />
+                </View>
+              ) : null}
+              {!shortcutBadgeKeys && showTrailingAffordance ? (
                 <Pressable
                   {...(closeButtonDragBlockers as object | undefined)}
                   testID={closeButtonTestId}
@@ -794,6 +811,9 @@ export function WorkspaceDesktopTabsRow({
   const focusModeKeys = useShortcutKeys("toggle-focus");
   const splitRightKeys = useShortcutKeys("workspace-pane-split-right");
   const splitDownKeys = useShortcutKeys("workspace-pane-split-down");
+  const tabJumpKeys = useShortcutKeys("workspace-tab-jump-index");
+  const showShortcutBadges = useShowShortcutBadges();
+  const isDesktopApp = getIsElectronRuntime();
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [tabsActionsWidth, setTabsActionsWidth] = useState<number>(0);
   const [inlineAddButtonWidth, setInlineAddButtonWidth] = useState<number>(0);
@@ -935,6 +955,14 @@ export function WorkspaceDesktopTabsRow({
         activeDragTabId !== null &&
         tabDropPreviewIndex === tabs.length &&
         index === tabs.length - 1;
+      const shortcutBadgeKeys =
+        showShortcutBadges && isFocused
+          ? getWorkspaceTabIndexBadgeKeys({
+              shortcutKeys: tabJumpKeys,
+              index,
+              isDesktop: isDesktopApp,
+            })
+          : null;
 
       return (
         <ResolvedDesktopTabChip
@@ -965,12 +993,14 @@ export function WorkspaceDesktopTabsRow({
           dragHandleProps={dragHandleProps}
           showDropIndicatorBefore={showDropIndicatorBefore}
           showDropIndicatorAfter={showDropIndicatorAfter}
+          shortcutBadgeKeys={shortcutBadgeKeys}
         />
       );
     },
     [
       activeDragTabId,
       isFocused,
+      isDesktopApp,
       layout.closeButtonPolicy,
       layout.items,
       normalizedServerId,
@@ -987,8 +1017,10 @@ export function WorkspaceDesktopTabsRow({
       onReloadAgent,
       onRenameTab,
       setHoveredCloseTabKey,
+      showShortcutBadges,
       tabMenuLabels,
       tabDropPreviewIndex,
+      tabJumpKeys,
       tabs.length,
     ],
   );
@@ -1119,6 +1151,7 @@ function ResolvedDesktopTabChip({
   dragHandleProps,
   showDropIndicatorBefore,
   showDropIndicatorAfter,
+  shortcutBadgeKeys,
 }: {
   item: WorkspaceDesktopTabRowItem;
   isFocused: boolean;
@@ -1146,6 +1179,7 @@ function ResolvedDesktopTabChip({
   dragHandleProps: DraggableListDragHandleProps | undefined;
   showDropIndicatorBefore: boolean;
   showDropIndicatorAfter: boolean;
+  shortcutBadgeKeys: ShortcutKey[] | null;
 }) {
   const { t } = useTranslation();
   const resolvedTab = useMemo(
@@ -1218,6 +1252,7 @@ function ResolvedDesktopTabChip({
               onNavigateTab={onNavigateTab}
               onCloseTab={onCloseTab}
               dragHandleProps={dragHandleProps}
+              shortcutBadgeKeys={shortcutBadgeKeys}
             />
             {showDropIndicatorAfter ? (
               <View style={[styles.tabDropIndicator, styles.tabDropIndicatorAfter]} />
@@ -1349,6 +1384,24 @@ const styles = StyleSheet.create((theme) => ({
   },
   tabLabelActive: {
     color: theme.colors.foreground,
+  },
+  tabShortcutBadge: {
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: theme.spacing[1],
+    paddingVertical: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.surface2,
+    backgroundColor: theme.colors.surface0,
+    flexShrink: 0,
+  },
+  tabShortcutBadgeText: {
+    color: theme.colors.foregroundMuted,
+    fontWeight: theme.fontWeight.medium,
+    lineHeight: 14,
   },
   tabCloseButton: {
     width: 18,

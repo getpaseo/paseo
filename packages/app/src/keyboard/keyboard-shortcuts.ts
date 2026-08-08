@@ -1435,6 +1435,31 @@ export function getWorkspaceIndexJumpModifierKey(platform: {
   return platform.isMac ? "Meta" : "Control";
 }
 
+/**
+ * Builds the per-tab hint shown while the workspace-index modifier is held.
+ * The held modifier is omitted, so Cmd+Alt+Digit on macOS is presented as
+ * Option+Digit while Cmd is already down.
+ */
+export function getWorkspaceTabIndexBadgeKeys(input: {
+  shortcutKeys: ShortcutKey[][] | null;
+  index: number;
+  isDesktop: boolean;
+}): ShortcutKey[] | null {
+  if (input.index < 0 || input.index >= 9 || input.shortcutKeys?.length !== 1) {
+    return null;
+  }
+
+  const combo = input.shortcutKeys[0];
+  if (!combo?.includes("1-9")) {
+    return null;
+  }
+
+  const heldWorkspaceModifier = input.isDesktop ? "mod" : "alt";
+  return combo
+    .filter((key) => key !== heldWorkspaceModifier)
+    .map((key) => (key === "1-9" ? String(input.index + 1) : key));
+}
+
 export function buildKeyboardShortcutHelpSections(
   input: KeyboardShortcutPlatformContext,
   bindings: readonly ParsedShortcutBinding[] = DEFAULT_BINDINGS,

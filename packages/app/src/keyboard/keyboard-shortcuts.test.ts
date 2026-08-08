@@ -4,6 +4,7 @@ import {
   buildEffectiveBindings,
   getBindingIdForAction,
   getWorkspaceIndexJumpModifierKey,
+  getWorkspaceTabIndexBadgeKeys,
   resolveKeyboardShortcut,
   type ChordState,
   type KeyboardShortcutContext,
@@ -713,5 +714,54 @@ describe("getWorkspaceIndexJumpModifierKey", () => {
 
   it("uses Ctrl on desktop non-Mac, not Meta or Alt", () => {
     expect(getWorkspaceIndexJumpModifierKey({ isMac: false, isDesktop: true })).toBe("Control");
+  });
+});
+
+describe("getWorkspaceTabIndexBadgeKeys", () => {
+  it("shows the remaining Option+number chord while Cmd is held on desktop Mac", () => {
+    expect(
+      getWorkspaceTabIndexBadgeKeys({
+        shortcutKeys: [["mod", "alt", "1-9"]],
+        index: 2,
+        isDesktop: true,
+      }),
+    ).toEqual(["alt", "3"]);
+  });
+
+  it("keeps Alt in the hint when the held desktop workspace modifier is Ctrl", () => {
+    expect(
+      getWorkspaceTabIndexBadgeKeys({
+        shortcutKeys: [["alt", "1-9"]],
+        index: 0,
+        isDesktop: true,
+      }),
+    ).toEqual(["alt", "1"]);
+  });
+
+  it("shows the remaining Shift+number chord while Alt is held on web", () => {
+    expect(
+      getWorkspaceTabIndexBadgeKeys({
+        shortcutKeys: [["alt", "shift", "1-9"]],
+        index: 8,
+        isDesktop: false,
+      }),
+    ).toEqual(["shift", "9"]);
+  });
+
+  it("does not show hints beyond the nine reachable tabs or for a non-index binding", () => {
+    expect(
+      getWorkspaceTabIndexBadgeKeys({
+        shortcutKeys: [["mod", "alt", "1-9"]],
+        index: 9,
+        isDesktop: true,
+      }),
+    ).toBeNull();
+    expect(
+      getWorkspaceTabIndexBadgeKeys({
+        shortcutKeys: [["mod", "alt", "K"]],
+        index: 0,
+        isDesktop: true,
+      }),
+    ).toBeNull();
   });
 });
