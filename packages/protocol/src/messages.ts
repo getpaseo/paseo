@@ -119,9 +119,9 @@ const MutableDaemonProviderModelSchema = z
 
 const MutableDaemonProviderConfigSchema = z
   .object({
+    paseoTools: ProviderPaseoToolsPolicySchema.optional(),
     enabled: z.boolean().optional(),
     additionalModels: z.array(MutableDaemonProviderModelSchema).optional(),
-    paseoTools: ProviderPaseoToolsPolicySchema.optional(),
   })
   .passthrough();
 
@@ -3505,8 +3505,6 @@ export const ServerInfoStatusPayloadSchema = z
         commitBaseClassification: z.boolean().optional(),
         // COMPAT(providerRemoval): added in v0.1.105, drop the gate when floor >= v0.1.105.
         providerRemoval: z.boolean().optional(),
-        // COMPAT(paseoToolPolicies): added in v0.2.6, remove gate after 2027-01-31.
-        paseoToolPolicies: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
         // COMPAT(importSessionSearch): added in v0.7.3, remove gate after 2027-03-02.
@@ -3541,6 +3539,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(paseoToolPolicies): added in v0.2.6, remove gate after 2027-01-31.
+        paseoToolPolicies: z.boolean().optional(),
       })
       .optional(),
   })
