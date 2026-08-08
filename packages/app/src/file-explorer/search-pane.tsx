@@ -121,8 +121,8 @@ export function FileSearchPane({
           caseSensitive: options.caseSensitive,
           wholeWord: options.wholeWord,
           useRegex: options.useRegex,
-          includePattern: normalizePattern(options.includePattern),
-          excludePattern: normalizePattern(options.excludePattern),
+          includePattern: options.includePattern?.trim() || undefined,
+          excludePattern: options.excludePattern?.trim() || undefined,
           maxResults: SEARCH_MAX_RESULTS,
         })
         .then((result) => dispatch({ type: "success", requestKey, result }))
@@ -261,11 +261,6 @@ export function FileSearchPane({
   );
 }
 
-function normalizePattern(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
 function SearchOptionsMenu({
   options,
   allGroupsCollapsed,
@@ -340,6 +335,7 @@ function SearchOptionsMenu({
   );
 }
 
+// Keep this callback stable; the linted React performance rule forbids creating it in JSX.
 function searchOptionsTriggerStyle({
   hovered,
   pressed,
