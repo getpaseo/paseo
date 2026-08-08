@@ -1990,10 +1990,16 @@ describe("a hostile plugin", () => {
     expect(reach.reached).toBeGreaterThan(0);
     expect(reach.nav).toBe("denied");
 
-    const seen = await waitFor<{ accepted: string[]; rejected: string[] }>(
-      () => victim,
-      "the victim's report",
-    );
+    // Both messages, not the first. The victim reports after each one, and the
+    // attacker's own report can reach the host before the forgery reaches the
+    // victim — so reading the first report is a race the CI runner loses.
+    // Counting both buckets rather than waiting on `rejected` keeps a victim
+    // that wrongly *accepts* the forgery failing the assertion below instead of
+    // timing out here.
+    const seen = await waitFor<{ accepted: string[]; rejected: string[] }>(() => {
+      const report: { accepted: string[]; rejected: string[] } | null = victim;
+      return report && report.accepted.length + report.rejected.length >= 2 ? report : null;
+    }, "the victim's report of both messages");
     expect(seen.accepted).toEqual(["update:REAL"]);
     expect(seen.rejected).toEqual(["update:FORGED"]);
 

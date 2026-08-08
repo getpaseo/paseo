@@ -439,7 +439,8 @@ export interface SessionOptions {
   chatService: FileBackedChatService;
   scheduleService: ScheduleService;
   loopService: LoopService;
-  pluginService: PluginService;
+  /** Absent when the daemon has no plugin runtime; see RequiredWebSocketServices.plugins. */
+  pluginService?: PluginService;
   checkoutDiffManager: CheckoutDiffManager;
   github?: ForgeService;
   createAgentMcpTransport?: AgentMcpTransportFactory;
@@ -661,7 +662,7 @@ export class Session {
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
   private readonly projectConfigSession: ProjectConfigSession;
-  private readonly pluginSession: PluginSession;
+  private readonly pluginSession: PluginSession | null;
   private readonly daemonSession: DaemonSession;
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
@@ -882,13 +883,7 @@ export class Session {
       projectRegistry: this.projectRegistry,
       logger: this.sessionLogger,
     });
-    this.pluginSession = new PluginSession({
-      host: {
-        emit: (msg) => this.emit(msg),
-      },
-      pluginService: options.pluginService,
-      logger: this.sessionLogger,
-    });
+    this.pluginSession = this.createPluginSession(options.pluginService);
     this.daemonSession = new DaemonSession({
       host: {
         emit: (msg) => this.emit(msg),
@@ -2296,7 +2291,26 @@ export class Session {
     }
   }
 
+  /** Hoisted out of the constructor, which is at its lint complexity ceiling. */
+  private createPluginSession(pluginService: PluginService | undefined): PluginSession | null {
+    if (!pluginService) {
+      return null;
+    }
+    return new PluginSession({
+      host: { emit: (msg) => this.emit(msg) },
+      pluginService,
+      logger: this.sessionLogger,
+    });
+  }
+
   private dispatchPluginMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    // No plugin runtime means `features.plugins` was never advertised, so a
+    // client that respects the gate never sends these. Falling through gives the
+    // one that ignores it the same answer as any unknown RPC, rather than
+    // crashing the session over a message it was told not to send.
+    if (!this.pluginSession) {
+      return undefined;
+    }
     switch (msg.type) {
       case "plugins.list.request":
         return this.pluginSession.handleListRequest(msg);

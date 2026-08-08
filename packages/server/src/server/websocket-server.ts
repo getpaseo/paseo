@@ -14,7 +14,7 @@ import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
-import type { PluginService } from "./plugin/service.js";
+import type { PluginService, PluginsChangedListener } from "./plugin/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
 import {
@@ -475,12 +475,37 @@ export interface PluginRuntime {
   available: boolean;
 }
 
+/**
+ * Collapses "no plugin runtime" into the same shape as one that is present but
+ * unavailable, so the constructor can assign its three plugin fields without a
+ * branch. That constructor is already at the lint complexity ceiling, and the
+ * optional runtime would otherwise push it over on its own.
+ */
+function normalizePluginRuntime(runtime: PluginRuntime | undefined): {
+  service: PluginService | undefined;
+  available: boolean;
+  subscribe: (listener: PluginsChangedListener) => () => void;
+} {
+  return {
+    service: runtime?.service,
+    available: runtime?.available ?? false,
+    subscribe: (listener) => runtime?.service.onChanged(listener) ?? (() => {}),
+  };
+}
+
 interface RequiredWebSocketServices {
   chatService: FileBackedChatService;
   loopService: LoopService;
   scheduleService: ScheduleService;
   checkoutDiffManager: CheckoutDiffManager;
-  plugins: PluginRuntime;
+  /**
+   * Optional, unlike the four above: a daemon with no plugin runtime is a
+   * daemon that never advertises `features.plugins`, which is a state the
+   * feature already models. Requiring it here would make every caller that
+   * does not care about plugins — every existing test that constructs this
+   * server, for a start — pass one to get a chat session.
+   */
+  plugins?: PluginRuntime;
 }
 
 function requireWebSocketServices(params: {
@@ -502,9 +527,6 @@ function requireWebSocketServices(params: {
   }
   if (!checkoutDiffManager) {
     throw new Error("VoiceAssistantWebSocketServer requires a checkout diff manager.");
-  }
-  if (!plugins) {
-    throw new Error("VoiceAssistantWebSocketServer requires a plugin service.");
   }
   return { chatService, loopService, scheduleService, checkoutDiffManager, plugins };
 }
@@ -529,7 +551,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly chatService: FileBackedChatService;
   private readonly loopService: LoopService;
   private readonly scheduleService: ScheduleService;
-  private readonly pluginService: PluginService;
+  private readonly pluginService: PluginService | undefined;
   private readonly pluginsAvailable: boolean;
   private readonly unsubscribePluginChanges: () => void;
   private readonly checkoutDiffManager: CheckoutDiffManager;
@@ -651,9 +673,10 @@ export class VoiceAssistantWebSocketServer {
     this.chatService = requiredServices.chatService;
     this.loopService = requiredServices.loopService;
     this.scheduleService = requiredServices.scheduleService;
-    this.pluginService = requiredServices.plugins.service;
-    this.pluginsAvailable = requiredServices.plugins.available;
-    this.unsubscribePluginChanges = this.pluginService.onChanged((installed) => {
+    const pluginRuntime = normalizePluginRuntime(requiredServices.plugins);
+    this.pluginService = pluginRuntime.service;
+    this.pluginsAvailable = pluginRuntime.available;
+    this.unsubscribePluginChanges = pluginRuntime.subscribe((installed) => {
       this.broadcast(
         wrapSessionMessage({ type: "plugins.changed", payload: { plugins: installed } }),
       );

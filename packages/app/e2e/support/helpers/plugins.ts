@@ -10,13 +10,17 @@ import { expectAppRoute } from "./route-assertions";
  * daemon restart is needed — which is what makes this usable from a spec that
  * shares one daemon with every other spec.
  */
-const EXAMPLE_PLUGIN_DIR = path.resolve(__dirname, "../../../../examples/plugins/hello-paseo");
+// ponytail: one anchor rather than a `../` count per path. Moving this file
+// deeper (e2e/helpers → e2e/support/helpers) already broke both of them once,
+// silently, because nothing but the Playwright job ever resolves them.
+const REPO_ROOT = path.resolve(__dirname, "../../../../..");
+const EXAMPLE_PLUGIN_DIR = path.join(REPO_ROOT, "examples/plugins/hello-paseo");
 
 export const HELLO_PLUGIN_ID = "hello-paseo";
 export const BROKEN_PLUGIN_ID = "broken-entry";
 
 /** Directory the QA screenshots land in, for the PR body. */
-export const QA_SCREENSHOT_DIR = path.resolve(__dirname, "../../../../.qa/plugins");
+export const QA_SCREENSHOT_DIR = path.join(REPO_ROOT, ".qa/plugins");
 
 function pluginsDir(): string {
   const home = process.env.E2E_PASEO_HOME;
