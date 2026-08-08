@@ -541,6 +541,7 @@ describe("hub deploy", () => {
 
   it.each([
     "ftp://hub.example.com",
+    "http://hub.example.com",
     "https://user:password@hub.example.com",
     "https://hub.example.com/path",
     "https://hub.example.com?debug=true",
@@ -549,7 +550,8 @@ describe("hub deploy", () => {
     await expect(
       runHubDeploy({ hub, apiKey: "unused-secret" }, { cwd: "/unused", env: {} }),
     ).rejects.toMatchObject({
-      message: "Hub URL must be an HTTP or HTTPS origin without credentials, path, query, or hash.",
+      message:
+        "Hub URL must be an HTTPS origin without credentials, path, query, or hash. HTTP is allowed only for localhost, 127.0.0.1, or [::1].",
     });
   });
 
