@@ -2084,6 +2084,7 @@ test("workspace content search is capability-gated and correlates grouped result
   const connectPromise = client.connect();
   mock.triggerOpen({ features: { fileContentSearch: true } });
   await connectPromise;
+  expect(client.getLastServerInfoMessage()?.features).toEqual({ fileContentSearch: true });
 
   const search = client.searchFiles({
     cwd: "/tmp/project",
@@ -2139,7 +2140,6 @@ test("workspace content search is capability-gated and correlates grouped result
     requestId: request.requestId,
   });
 });
-
 
 test("listDirectory sends a list file explorer request and returns directory entries", async () => {
   const logger = createMockLogger();
