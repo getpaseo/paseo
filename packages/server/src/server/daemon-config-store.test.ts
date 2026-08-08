@@ -57,7 +57,6 @@ describe("applyMutableProviderConfigToOverrides", () => {
             enabled: false,
             description: "Gemini ACP",
             env: { GEMINI_AUTO_UPDATE: "0" },
-            paseoTools: { disabledTools: ["list_agents"] },
           },
           claude: {
             additionalModels: [
@@ -77,7 +76,6 @@ describe("applyMutableProviderConfigToOverrides", () => {
         command: ["gemini", "--acp"],
         env: { GEMINI_AUTO_UPDATE: "0" },
         enabled: false,
-        paseoTools: { disabledTools: ["list_agents"] },
       },
       claude: {
         additionalModels: [
