@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import { formatMessageTimestamp } from "../../../src/utils/time";
 import { openSettings } from "./app";
 import { openSettingsSection } from "./settings";
 
@@ -67,10 +68,16 @@ export async function pressEnterOnFocusedPrompt(page: Page): Promise<void> {
   await page.keyboard.press("Enter");
 }
 
-export async function expectChatOutlinePreview(page: Page, preview: string): Promise<void> {
+export async function expectChatOutlinePreview(
+  page: Page,
+  preview: string,
+  timestamp: string,
+): Promise<void> {
   const outlinePreview = page.getByTestId("chat-outline-preview");
   await expect(outlinePreview).toContainText(preview);
-  await expect(outlinePreview.getByTestId("chat-outline-preview-timestamp")).not.toBeEmpty();
+  await expect(outlinePreview.getByTestId("chat-outline-preview-timestamp")).toHaveText(
+    formatMessageTimestamp(new Date(timestamp)),
+  );
 }
 
 export async function expectNoChatOutlinePreview(page: Page): Promise<void> {

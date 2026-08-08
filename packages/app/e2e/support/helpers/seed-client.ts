@@ -137,6 +137,9 @@ export interface SeedDaemonClient {
     timeout?: number,
   ): Promise<{ status: string }>;
   sendAgentMessage(agentId: string, text: string): Promise<void>;
+  listAgentTimelinePrompts(agentId: string): Promise<{
+    prompts: Array<{ seq: number; timestamp: string; preview: string }>;
+  }>;
   waitForFinish(
     agentId: string,
     timeout?: number,
