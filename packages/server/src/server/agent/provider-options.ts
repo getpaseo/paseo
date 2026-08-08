@@ -24,9 +24,13 @@ export class ProviderOptionsValidationError extends Error {
 export class ToolPolicyUnsupportedError extends Error {
   readonly code = "tool_policy_unsupported" as const;
 
-  constructor(readonly provider: string) {
+  constructor(
+    readonly provider: string,
+    reason?: string,
+  ) {
     super(
-      `Provider '${provider}' cannot preapprove exact MCP tools for unattended execution; select Claude, Codex, or OpenCode`,
+      reason ??
+        `Provider '${provider}' cannot preapprove exact MCP tools for unattended execution; select Claude, Codex, or OpenCode`,
     );
     this.name = "ToolPolicyUnsupportedError";
   }

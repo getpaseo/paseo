@@ -121,6 +121,7 @@ export class HubExecutionController {
           agentId: result.agent.id,
           agent: result.agent,
           success: true,
+          ...(message.toolPolicy ? { toolPolicyApplied: true as const } : {}),
           error: null,
         },
       });

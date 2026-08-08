@@ -137,6 +137,7 @@ interface ResolvedProvider {
 interface ProviderContract {
   optionsSchema: z.ZodType<ProviderOptions>;
   supportsExactMcpPreapproval: boolean;
+  applyToolPolicy?: (provider: string, toolPolicy: ToolPolicy) => ToolPolicy;
 }
 
 const EmptyProviderOptionsSchema: z.ZodType<ProviderOptions> = z.object({}).strict();
@@ -150,6 +151,33 @@ const PROVIDER_CONTRACTS: Record<string, ProviderContract> = {
 const UNSUPPORTED_PROVIDER_CONTRACT: ProviderContract = {
   optionsSchema: EmptyProviderOptionsSchema,
   supportsExactMcpPreapproval: false,
+};
+
+const HUB_E2E_PROVIDER_ID = "hub-e2e";
+const HUB_E2E_MCP_SERVER = "hub";
+const HUB_E2E_TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/u;
+// The cross-repository Hub harness owns this synthetic provider ID. It exercises the production
+// registry path without extending exact-preapproval support to user-defined ACP providers.
+const HUB_E2E_PROVIDER_CONTRACT: ProviderContract = {
+  optionsSchema: EmptyProviderOptionsSchema,
+  supportsExactMcpPreapproval: true,
+  applyToolPolicy: (provider, toolPolicy) => {
+    for (const grant of toolPolicy.preapproved) {
+      if (
+        grant.kind !== "mcp" ||
+        grant.server !== HUB_E2E_MCP_SERVER ||
+        !HUB_E2E_TOOL_NAME.test(grant.tool)
+      ) {
+        throw new ToolPolicyUnsupportedError(
+          provider,
+          `Provider '${provider}' accepts only exact MCP tool grants for the injected '${HUB_E2E_MCP_SERVER}' server`,
+        );
+      }
+    }
+    return {
+      preapproved: toolPolicy.preapproved.map((grant) => ({ ...grant })),
+    };
+  },
 };
 
 const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
@@ -580,7 +608,12 @@ function createRegistryEntry(
       if (toolPolicy && !resolved.contract.supportsExactMcpPreapproval) {
         throw new ToolPolicyUnsupportedError(provider);
       }
-      return { ...config, toolPolicy };
+      return {
+        ...config,
+        toolPolicy: toolPolicy
+          ? (resolved.contract.applyToolPolicy?.(provider, toolPolicy) ?? toolPolicy)
+          : undefined,
+      };
     },
     createClient: (providerLogger: Logger) =>
       createResolvedProviderClient(providerLogger, provider, resolved),
@@ -750,7 +783,10 @@ function addDerivedProviders(
           }
           return new GenericACPAgentClient(acpOptions);
         },
-        contract: UNSUPPORTED_PROVIDER_CONTRACT,
+        contract:
+          providerId === HUB_E2E_PROVIDER_ID
+            ? HUB_E2E_PROVIDER_CONTRACT
+            : UNSUPPORTED_PROVIDER_CONTRACT,
       });
       continue;
     }

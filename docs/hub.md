@@ -57,6 +57,8 @@ only those identities into the selected provider's native approval configuration
 cannot name or preapprove native tools such as Bash, Edit, or Write. Explicit local or managed ask
 and deny policy takes precedence. Providers without exact MCP preapproval support reject unattended
 Hub creation instead of broadening access or waiting for an invisible prompt.
+When a create request includes a tool policy, a successful response includes
+`toolPolicyApplied: true`; absence of that acknowledgement is not success for unattended execution.
 
 A Hub workflow may use read-only provider settings for classifier steps. This is defense in depth,
 not a security boundary: classifier labels and prompt intent do not authorize tools. Exact MCP grants
@@ -101,3 +103,5 @@ The consumer implementation lives in Paseo Cloud. Cloud owns its copy of the Hub
 has no Paseo runtime or build dependency. Cross-repository end-to-end verification separately builds
 a Paseo source checkout and exercises the real daemon, CLI, direct WebSocket, Cloud service, and
 Postgres. That compatibility fixture is not a package dependency or fallback implementation.
+Its `hub-e2e` ACP provider accepts only exact tool names on the injected `hub` MCP server. Other
+custom ACP providers remain unsupported for unattended preapproval.

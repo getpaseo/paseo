@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import type { ToolPolicy } from "@getpaseo/protocol/agent-types";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type {
@@ -654,6 +655,76 @@ test("new provider extending acp uses GenericACPAgentClient", () => {
       providerParams: undefined,
     },
   ]);
+});
+
+test("Hub E2E ACP provider applies exact grants for its injected MCP server", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      "hub-e2e": {
+        extends: "acp",
+        label: "Hub E2E",
+        command: ["hub-e2e-agent"],
+      },
+    },
+  });
+  const config = {
+    provider: "hub-e2e",
+    cwd: "/tmp/hub-e2e",
+    mcpServers: { hub: { type: "http" as const, url: "http://127.0.0.1/execution" } },
+  };
+  const toolPolicy = {
+    preapproved: [
+      { kind: "mcp" as const, server: "hub", tool: "reply" },
+      { kind: "mcp" as const, server: "hub", tool: "finish_execution" },
+    ],
+  };
+
+  expect(registry["hub-e2e"].applyToolPolicy(config, toolPolicy)).toEqual({
+    ...config,
+    toolPolicy,
+  });
+});
+
+test.each([
+  { kind: "mcp", server: "hub", tool: "*" },
+  { kind: "mcp", server: "other", tool: "finish_execution" },
+  { kind: "mcp", server: "hub", tool: "" },
+  { kind: "native", server: "hub", tool: "Bash" },
+])("Hub E2E ACP provider rejects unsupported grant $kind:$server:$tool", (grant) => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      "hub-e2e": {
+        extends: "acp",
+        label: "Hub E2E",
+        command: ["hub-e2e-agent"],
+      },
+    },
+  });
+
+  expect(() =>
+    registry["hub-e2e"].applyToolPolicy({ provider: "hub-e2e", cwd: "/tmp/hub-e2e" }, {
+      preapproved: [grant],
+    } as unknown as ToolPolicy),
+  ).toThrow(/accepts only exact MCP tool grants for the injected 'hub' server/u);
+});
+
+test("ordinary custom ACP providers remain fail-closed for exact MCP grants", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      "my-agent": {
+        extends: "acp",
+        label: "My Agent",
+        command: ["my-agent"],
+      },
+    },
+  });
+
+  expect(() =>
+    registry["my-agent"].applyToolPolicy(
+      { provider: "my-agent", cwd: "/tmp/my-agent" },
+      { preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }] },
+    ),
+  ).toThrow(/cannot preapprove exact MCP tools for unattended execution/u);
 });
 
 test("ACP provider params can disable MCP support", () => {

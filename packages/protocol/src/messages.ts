@@ -5334,6 +5334,7 @@ export const HubExecutionAgentCreateResponseSchema = z.object({
     agentId: z.string().nullable(),
     agent: AgentSnapshotPayloadSchema.nullable(),
     success: z.boolean(),
+    toolPolicyApplied: z.literal(true).optional(),
     error: HubExecutionAgentCreateErrorSchema.nullable(),
   }),
 });

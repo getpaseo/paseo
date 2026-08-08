@@ -418,7 +418,10 @@ export class HubRelationshipHarness {
   private observedSockets = 0;
   private readonly codex: ControlledAgentClient;
 
-  private constructor(private readonly mcpEnabled: boolean) {
+  private constructor(
+    private readonly mcpEnabled: boolean,
+    private readonly agentClients?: Partial<Record<AgentProvider, AgentClient>>,
+  ) {
     this.codex = new ControlledAgentClient(
       createTestAgentClients({
         supportsMcpServers: mcpEnabled,
@@ -446,8 +449,17 @@ export class HubRelationshipHarness {
     return this.launch(true);
   }
 
-  private static async launch(mcpEnabled: boolean): Promise<HubRelationshipHarness> {
-    const harness = new HubRelationshipHarness(mcpEnabled);
+  static async startWithRealAgentClients(
+    agentClients: Partial<Record<AgentProvider, AgentClient>>,
+  ): Promise<HubRelationshipHarness> {
+    return this.launch(true, agentClients);
+  }
+
+  private static async launch(
+    mcpEnabled: boolean,
+    agentClients?: Partial<Record<AgentProvider, AgentClient>>,
+  ): Promise<HubRelationshipHarness> {
+    const harness = new HubRelationshipHarness(mcpEnabled, agentClients);
     await harness.createHome();
     await harness.startDaemon();
     return harness;
@@ -634,20 +646,24 @@ export class HubRelationshipHarness {
     requestId: string,
     executionId = "execution-race",
     options: {
+      provider?: AgentProvider;
+      model?: string;
       worktree?: CreateAgentWorktreeTarget;
       prompt?: string;
       modeId?: string;
+      thinkingOptionId?: string;
+      featureValues?: Record<string, unknown>;
       mcpServers?: AgentSessionConfig["mcpServers"];
       providerOptions?: AgentSessionConfig["providerOptions"];
       toolPolicy?: AgentSessionConfig["toolPolicy"];
     } = {},
   ): void {
-    const { prompt = "Create through the Hub", ...requestOptions } = options;
+    const { prompt = "Create through the Hub", provider = "codex", ...requestOptions } = options;
     this.latestSocket().socket.receive({
       type: "hub.execution.agent.create.request",
       requestId,
       executionId,
-      provider: "codex",
+      provider,
       cwd: this.root,
       workspaceId: "hub-workspace",
       prompt,
@@ -871,6 +887,38 @@ export class HubRelationshipHarness {
 
   async allowOwnedPermission(agentId: string, requestId: string): Promise<void> {
     await this.daemon!.agentManager.respondToPermission(agentId, requestId, { behavior: "allow" });
+  }
+
+  async denyOwnedPermission(agentId: string, requestId: string): Promise<void> {
+    await this.daemon!.agentManager.respondToPermission(agentId, requestId, { behavior: "deny" });
+  }
+
+  ownedStreamEvents(agentId: string): HubExecutionAgentStream["payload"]["event"][] {
+    return this.latestSocket().socket.sent.flatMap((message) =>
+      message.type === "hub.execution.agent.stream" && message.payload.agentId === agentId
+        ? [message.payload.event]
+        : [],
+    );
+  }
+
+  ownedAgentDiagnostic(agentId: string): {
+    lifecycle: string;
+    lastError?: string;
+    assistantText?: string;
+    timelineTypes: string[];
+  } {
+    const agent = this.daemon!.agentManager.getAgent(agentId);
+    if (!agent) throw new Error(`Owned agent ${agentId} does not exist`);
+    const timeline = this.daemon!.agentManager.getTimeline(agentId);
+    const assistantText = timeline
+      .flatMap((item) => (item.type === "assistant_message" ? [item.text] : []))
+      .join("");
+    return {
+      lifecycle: agent.lifecycle,
+      ...(agent.lastError ? { lastError: agent.lastError } : {}),
+      ...(assistantText ? { assistantText } : {}),
+      timelineTypes: timeline.map((item) => item.type),
+    };
   }
 
   async listedWorktrees(): Promise<string[]> {
@@ -1209,7 +1257,7 @@ export class HubRelationshipHarness {
       mcpEnabled: this.mcpEnabled,
       staticDir,
       mcpDebug: false,
-      agentClients: {
+      agentClients: this.agentClients ?? {
         ...createTestAgentClients(),
         codex: this.codex,
       },

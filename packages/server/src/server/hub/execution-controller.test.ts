@@ -106,6 +106,41 @@ describe("HubExecutionController", () => {
     expect(messages).toEqual([]);
   });
 
+  test("acknowledges successful application of a requested tool policy", async () => {
+    const agents = new ControlledHubExecutionAgents();
+    const messages: SessionOutboundMessage[] = [];
+    const controller = new HubExecutionController({
+      agents,
+      send: (message) => messages.push(message),
+    });
+
+    const create = controller.createAgent({
+      type: "hub.execution.agent.create.request",
+      requestId: "tool-policy-create",
+      executionId: "execution-shutdown",
+      provider: "hub-e2e",
+      cwd: "/tmp/paseo",
+      prompt: "finish",
+      mcpServers: { hub: { type: "http", url: "http://127.0.0.1/execution" } },
+      toolPolicy: {
+        preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+      },
+    });
+    await agents.creationStarted();
+    agents.finishCreate();
+    await create;
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        type: "hub.execution.agent.create.response",
+        payload: expect.objectContaining({
+          success: true,
+          toolPolicyApplied: true,
+        }),
+      }),
+    ]);
+  });
+
   test.each([
     {
       error: new ProviderOptionsValidationError("codex", [
