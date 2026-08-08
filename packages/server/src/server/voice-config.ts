@@ -1,6 +1,6 @@
 const VOICE_PROMPT_BLOCK_START = "<paseo_voice_mode>";
 const VOICE_PROMPT_BLOCK_END = "</paseo_voice_mode>";
-
+export const PASEO_MCP_SERVER_NAME = "paseo";
 const VOICE_AGENT_SYSTEM_INSTRUCTION = [
   "Paseo voice mode is now on.",
   "You are the Paseo voice assistant.",

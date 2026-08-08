@@ -11,6 +11,20 @@ export interface AgentMetadata {
   [key: string]: unknown;
 }
 
+export type CodexMcpApprovalMode = "auto" | "prompt" | "approve";
+
+/** Native Codex MCP server settings stored under the Codex-specific extra config. */
+export interface CodexMcpServerPolicy {
+  enabled_tools?: string[];
+  disabled_tools?: string[];
+  default_tools_approval_mode?: CodexMcpApprovalMode;
+  tools?: Record<string, { approval_mode?: CodexMcpApprovalMode }>;
+}
+
+export interface CodexAgentExtra extends AgentMetadata {
+  mcpServerPolicies?: Record<string, CodexMcpServerPolicy>;
+}
+
 /**
  * Stdio-based MCP server (spawns a subprocess).
  */
@@ -581,7 +595,7 @@ export interface AgentSessionConfig {
   networkAccess?: boolean;
   webSearch?: boolean;
   extra?: {
-    codex?: AgentMetadata;
+    codex?: CodexAgentExtra;
     claude?: Partial<ClaudeAgentOptions>;
   };
   mcpServers?: Record<string, McpServerConfig>;

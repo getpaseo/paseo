@@ -14,10 +14,14 @@ import {
   type DictationStreamOutboundMessage,
 } from "../../dictation/dictation-stream-manager.js";
 import { createVoiceTurnController, type VoiceTurnController } from "./voice-turn-controller.js";
-import { buildVoiceModeSystemPrompt, stripVoiceModeSystemPrompt } from "../../voice-config.js";
+import {
+  buildVoiceModeSystemPrompt,
+  PASEO_MCP_SERVER_NAME,
+  stripVoiceModeSystemPrompt,
+} from "../../voice-config.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
-import type { AgentSessionConfig } from "../../agent/agent-sdk-types.js";
+import type { AgentSessionConfig, CodexMcpServerPolicy } from "../../agent/agent-sdk-types.js";
 import type { LocalSpeechModelId } from "../../speech/providers/local/models.js";
 import { toResolver, type Resolvable } from "../../speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot, SpeechReadinessState } from "../../speech/speech-runtime.js";
@@ -31,11 +35,17 @@ const MIN_STREAMING_SEGMENT_BYTES = Math.round(
   PCM_BYTES_PER_MS * MIN_STREAMING_SEGMENT_DURATION_MS,
 );
 const AgentIdSchema = z.guid();
+const CODEX_VOICE_MCP_POLICY: CodexMcpServerPolicy = {
+  enabled_tools: ["speak"],
+  default_tools_approval_mode: "prompt",
+  tools: { speak: { approval_mode: "approve" } },
+};
 
 type ProcessingPhase = "idle" | "transcribing";
 
 interface VoiceModeBaseConfig {
   systemPrompt?: string;
+  extra?: AgentSessionConfig["extra"];
 }
 
 interface AudioBufferState {
@@ -482,11 +492,10 @@ export class VoiceSession {
 
     const baseConfig: VoiceModeBaseConfig = {
       systemPrompt: stripVoiceModeSystemPrompt(existing.config.systemPrompt),
+      extra: existing.config.extra,
     };
     this.voiceModeBaseConfig = baseConfig;
-    const refreshOverrides: Partial<AgentSessionConfig> = {
-      systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, true),
-    };
+    const refreshOverrides = this.buildVoiceModeRefreshOverrides(existing.config, baseConfig);
 
     try {
       this.sessionLogger.info(
@@ -507,6 +516,38 @@ export class VoiceSession {
     }
   }
 
+  private buildVoiceModeRefreshOverrides(
+    existingConfig: AgentSessionConfig,
+    baseConfig: VoiceModeBaseConfig,
+  ): Partial<AgentSessionConfig> {
+    const codexVoiceOverrides = this.buildCodexVoiceModeOverrides(existingConfig);
+    return {
+      systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, true),
+      ...codexVoiceOverrides,
+    };
+  }
+
+  private buildCodexVoiceModeOverrides(
+    existingConfig: AgentSessionConfig,
+  ): Partial<AgentSessionConfig> | null {
+    if (!existingConfig.provider.toLowerCase().includes("codex")) {
+      return null;
+    }
+
+    return {
+      extra: {
+        ...existingConfig.extra,
+        codex: {
+          ...existingConfig.extra?.codex,
+          mcpServerPolicies: {
+            ...existingConfig.extra?.codex?.mcpServerPolicies,
+            [PASEO_MCP_SERVER_NAME]: CODEX_VOICE_MCP_POLICY,
+          },
+        },
+      },
+    };
+  }
+
   private async disableVoiceModeForActiveAgent(restoreAgentConfig: boolean): Promise<void> {
     await this.stopVoiceTurnController();
 
@@ -524,6 +565,7 @@ export class VoiceSession {
       try {
         await this.host.reloadAgentSession(agentId, {
           systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, false),
+          extra: baseConfig.extra,
         });
       } catch (error) {
         this.sessionLogger.warn(

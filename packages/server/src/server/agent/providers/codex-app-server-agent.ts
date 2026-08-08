@@ -4,6 +4,8 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
+  type CodexMcpApprovalMode,
+  type CodexMcpServerPolicy,
   type AgentFeature,
   type AgentLaunchContext,
   type AgentResumeSessionOptions,
@@ -796,23 +798,40 @@ interface CodexMcpServerConfig {
   args?: string[];
   env?: Record<string, string>;
   tool_timeout_sec?: number;
+  enabled_tools?: string[];
+  disabled_tools?: string[];
+  default_tools_approval_mode?: CodexMcpApprovalMode;
+  tools?: Record<
+    string,
+    {
+      approval_mode?: CodexMcpApprovalMode;
+    }
+  >;
 }
 
-function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
+function toCodexMcpConfig(
+  config: McpServerConfig,
+  policy?: CodexMcpServerPolicy,
+): CodexMcpServerConfig {
+  const base: Partial<CodexMcpServerConfig> = policy ?? {};
+
   switch (config.type) {
     case "stdio":
       return {
+        ...base,
         command: config.command,
         args: config.args,
         env: config.env,
       };
     case "http":
       return {
+        ...base,
         url: config.url,
         http_headers: config.headers,
       };
     case "sse":
       return {
+        ...base,
         url: config.url,
         http_headers: config.headers,
       };
@@ -4666,15 +4685,18 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private buildCodexInnerConfig(): Record<string, unknown> | null {
     const innerConfig: Record<string, unknown> = {};
+    const codexExtra = this.config.extra?.codex;
+    const mcpServerPolicies = codexExtra?.mcpServerPolicies;
     if (this.config.mcpServers) {
       const mcpServers: Record<string, CodexMcpServerConfig> = {};
       for (const [name, serverConfig] of Object.entries(this.config.mcpServers)) {
-        mcpServers[name] = toCodexMcpConfig(serverConfig);
+        mcpServers[name] = toCodexMcpConfig(serverConfig, mcpServerPolicies?.[name]);
       }
       innerConfig.mcp_servers = mcpServers;
     }
-    if (this.config.extra?.codex) {
-      Object.assign(innerConfig, this.config.extra.codex);
+    if (codexExtra) {
+      const { mcpServerPolicies: _mcpServerPolicies, ...nativeCodexExtra } = codexExtra;
+      Object.assign(innerConfig, nativeCodexExtra);
     }
     if (this.deps.customCodexConfig) {
       Object.assign(innerConfig, this.deps.customCodexConfig);

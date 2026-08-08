@@ -4,6 +4,7 @@ import {
   buildVoiceAgentMcpServerConfig,
   buildVoiceModeSystemPrompt,
   stripVoiceModeSystemPrompt,
+  wrapSpokenInput,
 } from "./voice-config.js";
 
 describe("voice MCP stdio config", () => {
@@ -74,5 +75,11 @@ describe("voice mode prompt instructions", () => {
         ["<paseo_voice_mode>", "legacy voice instruction", "</paseo_voice_mode>"].join("\n\n"),
       ),
     ).toBeUndefined();
+  });
+});
+
+describe("spoken-input wrapping", () => {
+  test("defaults to the generic speak tool", () => {
+    expect(wrapSpokenInput("hello")).toContain("Respond using the speak tool only");
   });
 });

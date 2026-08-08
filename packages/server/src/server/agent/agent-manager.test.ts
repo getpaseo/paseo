@@ -40,6 +40,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import { PASEO_MCP_SERVER_NAME } from "../voice-config.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -4087,6 +4088,54 @@ test("fetchTimeline returns a bounded reset window when cursor epoch is stale", 
   expect(older.rows).toHaveLength(1);
   expect(older.rows[0]?.seq).toBe(2);
   expect(older.hasOlder).toBe(true);
+});
+
+test("Codex voice MCP launch config preserves voice approval and injects Paseo MCP", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-voice-mcp-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+  manager.setMcpBaseUrl("http://127.0.0.1:4123/mcp/agents");
+
+  await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      extra: {
+        codex: {
+          mcpServerPolicies: {
+            [PASEO_MCP_SERVER_NAME]: {
+              enabled_tools: ["speak"],
+              default_tools_approval_mode: "prompt",
+              tools: { speak: { approval_mode: "approve" } },
+            },
+          },
+        },
+      },
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  expect(client.createdConfigs).toHaveLength(1);
+  expect(client.createdConfigs[0]?.extra?.codex?.mcpServerPolicies).toMatchObject({
+    [PASEO_MCP_SERVER_NAME]: {
+      enabled_tools: ["speak"],
+      default_tools_approval_mode: "prompt",
+      tools: { speak: { approval_mode: "approve" } },
+    },
+  });
+  expect(client.createdConfigs[0]?.mcpServers).toMatchObject({
+    [PASEO_MCP_SERVER_NAME]: { type: "http" },
+  });
+  expect(client.createdConfigs[0]?.mcpServers?.[PASEO_MCP_SERVER_NAME]).toHaveProperty(
+    "url",
+    expect.stringMatching(/^http:\/\/127\.0\.0\.1:4123\/mcp\/agents\?callerAgentId=[0-9a-f-]+$/),
+  );
 });
 
 test("getTimelineRows falls back to the in-memory timeline when no durable store is configured", async () => {
