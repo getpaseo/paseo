@@ -263,9 +263,22 @@ function capturedThreadStartConfig(records: CapturedFakeCodexRecord[]): unknown 
   return params?.config;
 }
 
-async function listCommandsFromFakeCodex(skills: unknown[]): Promise<AgentSlashCommand[]> {
+async function listCommandsFromFakeCodex(
+  skills: unknown[],
+  filesystemSkills: Array<{ name: string; description: string }> = [],
+): Promise<AgentSlashCommand[]> {
   const tempDir = await mkdtemp(path.join(tmpdir(), "codex-command-list-"));
+  const projectCwd = path.join(tempDir, "project");
   const fakeCodexPath = path.join(tempDir, "fake-codex.cjs");
+  mkdirSync(projectCwd, { recursive: true });
+  for (const skill of filesystemSkills) {
+    const skillDir = path.join(projectCwd, ".codex", "skills", skill.name);
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      path.join(skillDir, "SKILL.md"),
+      `---\nname: ${skill.name}\ndescription: ${skill.description}\n---\n`,
+    );
+  }
   writeFileSync(
     fakeCodexPath,
     `
@@ -276,7 +289,7 @@ function resultFor(method, params) {
   if (method === "collaborationMode/list") return { data: [] };
   if (method === "skills/list") {
     const cwds = params && params.cwds;
-    const projectCwd = "/tmp/codex-question-test";
+    const projectCwd = ${JSON.stringify(projectCwd)};
     if (!Array.isArray(cwds) || cwds.length !== 1 || cwds[0] !== projectCwd) {
       return { data: [] };
     }
@@ -316,7 +329,7 @@ process.stdin.on("data", (chunk) => {
   const client = new CodexAppServerAgentClient(createTestLogger(), {
     command: { mode: "replace", argv: [process.execPath, fakeCodexPath] },
   });
-  const session = await client.createSession(createConfig());
+  const session = await client.createSession(createConfig({ cwd: projectCwd }));
   try {
     return await session.listCommands();
   } finally {
@@ -1684,6 +1697,53 @@ describe("Codex app-server provider", () => {
         kind: "skill",
       },
     ]);
+  });
+
+  test("omits disabled Codex skills from slash commands", async () => {
+    const commands = await listCommandsFromFakeCodex([
+      {
+        name: "enabled-skill",
+        description: "An enabled skill.",
+        path: "/tmp/skills/enabled-skill/SKILL.md",
+        enabled: true,
+      },
+      {
+        name: "disabled-skill",
+        description: "A disabled skill.",
+        path: "/tmp/skills/disabled-skill/SKILL.md",
+        enabled: false,
+      },
+      {
+        name: "legacy-skill",
+        description: "Skill without enabled field (older Codex).",
+        path: "/tmp/skills/legacy-skill/SKILL.md",
+      },
+    ]);
+
+    const skillCommands = commands.filter((command) => command.kind === "skill");
+    expect(skillCommands.map((command) => command.name).sort()).toEqual([
+      "enabled-skill",
+      "legacy-skill",
+    ]);
+    expect(skillCommands.find((command) => command.name === "disabled-skill")).toBeUndefined();
+  });
+
+  test("does not rediscover disabled Codex skills through filesystem fallback", async () => {
+    const commands = await listCommandsFromFakeCodex(
+      [
+        {
+          name: "disabled-skill",
+          description: "A disabled skill.",
+          path: "/tmp/skills/disabled-skill/SKILL.md",
+          enabled: false,
+        },
+      ],
+      [{ name: "disabled-skill", description: "A disabled skill." }],
+    );
+
+    expect(commands).not.toContainEqual(
+      expect.objectContaining({ name: "disabled-skill", kind: "skill" }),
+    );
   });
 
   test("maps image prompt blocks to Codex localImage input", async () => {

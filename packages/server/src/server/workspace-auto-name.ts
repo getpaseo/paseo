@@ -24,7 +24,7 @@ type CurrentSelection = GenerateBranchNameFromFirstAgentContextOptions["currentS
 
 interface WorkspaceAutoNameOptions {
   agentManager: AgentManager;
-  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "upsert">;
+  workspaceRegistry: Pick<WorkspaceRegistry, "update">;
   workspaceGitService: WorkspaceGitService;
   providerSnapshotManager: ProviderSnapshotManager;
   readDaemonConfig: () => StructuredGenerationDaemonConfig;
@@ -41,7 +41,7 @@ interface ScheduleContext {
 
 export class WorkspaceAutoName {
   private readonly agentManager: AgentManager;
-  private readonly workspaceRegistry: Pick<WorkspaceRegistry, "get" | "upsert">;
+  private readonly workspaceRegistry: Pick<WorkspaceRegistry, "update">;
   private readonly workspaceGitService: WorkspaceGitService;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly readDaemonConfig: () => StructuredGenerationDaemonConfig;
@@ -180,19 +180,17 @@ export class WorkspaceAutoName {
     workspaceId: string,
     input: { title: string; branch?: string | null; promptTitle?: string | null },
   ): Promise<void> {
-    const current = await this.workspaceRegistry.get(workspaceId);
-    if (!current) {
-      return;
-    }
-    let title = current.title;
-    if (!title || (input.promptTitle && title === input.promptTitle)) {
-      title = input.title;
-    }
-    await this.workspaceRegistry.upsert({
-      ...current,
-      title,
-      ...(input.branch ? { branch: input.branch } : {}),
-      updatedAt: new Date().toISOString(),
+    await this.workspaceRegistry.update(workspaceId, (current) => {
+      let title = current.title;
+      if (!title || (input.promptTitle && title === input.promptTitle)) {
+        title = input.title;
+      }
+      return {
+        ...current,
+        title,
+        ...(input.branch ? { branch: input.branch } : {}),
+        updatedAt: new Date().toISOString(),
+      };
     });
   }
 

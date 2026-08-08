@@ -100,7 +100,6 @@ export class HubExecutionController {
         executionId: message.executionId,
         provider: message.provider,
         cwd: message.cwd,
-        workspaceId: message.workspaceId,
         prompt: message.prompt,
         model: message.model,
         modeId: message.modeId,

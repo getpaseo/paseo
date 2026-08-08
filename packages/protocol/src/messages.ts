@@ -2515,6 +2515,7 @@ export const HubExecutionAgentCreateRequestSchema = z.object({
   provider: z.string(),
   cwd: z.string(),
   prompt: z.string(),
+  // COMPAT(hubExecutionWorkspaceSelection): semantics retired in v0.3.1; remove after 2027-08-08 once the Hub floor no longer sends it.
   workspaceId: z.string().optional(),
   model: z.string().optional(),
   modeId: z.string().optional(),

@@ -46,8 +46,10 @@ daemon, execution, and agent identity with that terminal state. Paseo never stor
 replays the original prompt. A duplicate create returns the existing agent without starting another
 turn.
 
-Hub creates use the same agent creation path as trusted clients. They may select any existing
-worktree target shape and carry optional MCP server configuration and provider-native
+Every Hub execution creates a fresh Paseo workspace. The workspace owns the execution's agents and
+terminals. Local checkout and worktree targets select only the workspace backing and isolation; the
+Hub cannot select or reuse an existing workspace. Hub creates use the same agent creation path as
+trusted clients. They may select any worktree target shape and carry optional MCP server configuration and provider-native
 `providerOptions` for the agent session. The daemon keeps that configuration in its private agent
 record so provider sessions can recover after a restart; neither ordinary client snapshots and
 updates nor Hub projections expose session configuration. See [providers.md](providers.md) for the
@@ -77,11 +79,11 @@ If no execution exists for that authenticated daemon and execution ID, interrupt
 success because the requested stopped or archived state already holds. An execution owned by another
 daemon is indistinguishable from a missing execution and is never exposed or affected.
 
-Interrupt uses the ordinary agent cancellation lifecycle. Archive first archives the owned agent.
-When that agent belongs to an active Paseo-owned worktree workspace, the daemon also archives the
-workspace through the shared workspace archive service, so the backing directory is removed only
-after its final active workspace reference disappears. Local and shared checkouts archive only the
-execution-owned agent.
+Interrupt uses the ordinary agent cancellation lifecycle. Archive resolves the execution agent's
+required workspaceId and sends it through the shared workspace archive service. The service archives
+that workspace's agents and terminals, then removes Paseo-owned backing directories only after their
+final active workspace reference disappears. Local checkouts remain on disk; sibling workspaces
+sharing a backing directory remain active.
 
 ## Disconnect and revocation
 

@@ -8,7 +8,11 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { formatShortcut } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
-import { buildKeyboardShortcutHelpSections } from "@/keyboard/keyboard-shortcuts";
+import {
+  buildEffectiveBindings,
+  buildKeyboardShortcutHelpSections,
+} from "@/keyboard/keyboard-shortcuts";
+import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 
 const SNAP_POINTS: string[] = ["70%", "92%"];
 
@@ -42,9 +46,13 @@ export function KeyboardShortcutsDialog() {
   const shortcutOs = getShortcutOs();
   const isMac = shortcutOs === "mac";
   const isDesktopApp = getIsElectronRuntime();
+  const { overrides } = useKeyboardShortcutOverrides();
+  // Effective bindings, so a shortcut the user unassigned lists no keys here
+  // instead of advertising a default that no longer fires.
+  const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
   const sections = useMemo(
-    () => buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp }),
-    [isDesktopApp, isMac],
+    () => buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp }, bindings),
+    [bindings, isDesktopApp, isMac],
   );
   const visibleSections = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();

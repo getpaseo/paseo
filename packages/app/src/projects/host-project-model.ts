@@ -71,7 +71,7 @@ export function hostProjectFromWorkspace(input: {
       serverId: input.serverId,
       projectId,
     }),
-    projectKey: null,
+    projectKey: input.workspace.project?.projectKey ?? null,
     projectName: input.workspace.projectDisplayName || projectId,
     projectKind: input.workspace.projectKind,
     iconWorkingDir,

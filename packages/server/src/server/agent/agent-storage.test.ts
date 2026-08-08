@@ -356,7 +356,7 @@ describe("AgentStorage", () => {
     expect(record?.lastStatus).toBe("running");
   });
 
-  test("applySnapshot waits for in-flight writes before reading existing title", async () => {
+  test("applySnapshot projects metadata after in-flight archival writes", async () => {
     const agentId = "agent-pending-write";
     await storage.applySnapshot(createManagedAgent({ id: agentId }));
     const initialRecord = await storage.get(agentId);
@@ -384,12 +384,14 @@ describe("AgentStorage", () => {
     storageInternals.cache.set(agentId, {
       ...initialRecord!,
       title: "Generated title",
+      archivedAt: "2025-01-03T00:00:00.000Z",
     });
     releasePendingWrite?.();
 
     await applySnapshotPromise;
     const record = await storage.get(agentId);
     expect(record?.title).toBe("Generated title");
+    expect(record?.archivedAt).toBe("2025-01-03T00:00:00.000Z");
   });
 
   test("list returns all agents including internal ones", async () => {
