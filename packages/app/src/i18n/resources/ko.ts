@@ -1885,6 +1885,7 @@ export const ko: TranslationResources = {
           midnight: "Midnight",
           claude: "Claude",
           ghostty: "Ghostty",
+          pureBlack: "순수 검정",
           auto: "시스템",
         },
       },

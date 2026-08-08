@@ -1910,7 +1910,7 @@ export const ru: TranslationResources = {
           midnight: "Полночь",
           claude: "Клод",
           ghostty: "Призрачный",
-          amoled: "AMOLED",
+          pureBlack: "Чистый чёрный",
           auto: "Система",
         },
       },

@@ -16,7 +16,7 @@ const ALL_THEME_KEYS = [
   "darkMidnight",
   "darkClaude",
   "darkGhostty",
-  "darkAmoled",
+  "darkPureBlack",
 ] as const;
 
 // The signature of the updater passed to UnistylesRuntime.updateTheme.

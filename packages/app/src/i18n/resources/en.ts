@@ -1884,7 +1884,7 @@ export const en = {
           midnight: "Midnight",
           claude: "Claude",
           ghostty: "Ghostty",
-          amoled: "AMOLED",
+          pureBlack: "Pure Black",
           auto: "System",
         },
       },

@@ -1889,7 +1889,7 @@ export const ja: TranslationResources = {
           midnight: "Midnight",
           claude: "Claude",
           ghostty: "Ghostty",
-          amoled: "AMOLED",
+          pureBlack: "ピュアブラック",
           auto: "システム",
         },
       },

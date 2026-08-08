@@ -107,15 +107,7 @@ export const baseColors = {
   },
 } as const;
 
-export type ThemeName =
-  | "light"
-  | "dark"
-  | "zinc"
-  | "midnight"
-  | "claude"
-  | "ghostty"
-  // Pure-black OLED-friendly background
-  | "amoled";
+export type ThemeName = "light" | "dark" | "zinc" | "midnight" | "claude" | "ghostty" | "pureBlack";
 
 // Diff colors — the +/- inside a diff view, where the color *is* the signal and has to
 // survive being scanned line by line, so it stays saturated. Light uses muted tones, dark
@@ -647,8 +639,8 @@ export const darkMidnightTheme = buildDarkTheme(midnightDarkColors);
 export const darkClaudeTheme = buildDarkTheme(claudeDarkColors);
 export const darkGhosttyTheme = buildDarkTheme(ghosttyDarkColors);
 
-// AMOLED — pure black background, minimum power draw, maximum contrast.
-const amoledDarkColors = buildDarkSemanticColors({
+// Pure Black — zero-luminance background with high-contrast surfaces.
+const pureBlackDarkColors = buildDarkSemanticColors({
   surface0: "#000000",
   surface1: "#0a0a0a",
   surface2: "#111111",
@@ -667,7 +659,7 @@ const amoledDarkColors = buildDarkSemanticColors({
   destructive: "#c44a4a",
 });
 
-export const darkAmoledTheme = buildDarkTheme(amoledDarkColors);
+export const darkPureBlackTheme = buildDarkTheme(pureBlackDarkColors);
 
 export const lightTheme = {
   colorScheme: "light" as const,
@@ -708,7 +700,7 @@ export type Theme =
   | typeof darkMidnightTheme
   | typeof darkClaudeTheme
   | typeof darkGhosttyTheme
-  | typeof darkAmoledTheme
+  | typeof darkPureBlackTheme
   | typeof lightTheme;
 
 type UnistylesThemeKey =
@@ -718,7 +710,7 @@ type UnistylesThemeKey =
   | "darkMidnight"
   | "darkClaude"
   | "darkGhostty"
-  | "darkAmoled";
+  | "darkPureBlack";
 
 export const THEME_TO_UNISTYLES: Record<ThemeName, UnistylesThemeKey> = {
   light: "light",
@@ -727,7 +719,7 @@ export const THEME_TO_UNISTYLES: Record<ThemeName, UnistylesThemeKey> = {
   midnight: "darkMidnight",
   claude: "darkClaude",
   ghostty: "darkGhostty",
-  amoled: "darkAmoled",
+  pureBlack: "darkPureBlack",
 };
 
 export const THEME_SWATCHES: Record<ThemeName, string> = {
@@ -737,5 +729,5 @@ export const THEME_SWATCHES: Record<ThemeName, string> = {
   midnight: "#4A6BA8",
   claude: "#D97757",
   ghostty: "#8caaee",
-  amoled: "#000000",
+  pureBlack: "#000000",
 };
