@@ -1,10 +1,12 @@
 import type { Command } from "commander";
 import { withOutput, type OutputSchema, type SingleResult } from "../../output/index.js";
 import { addJsonOption } from "../../utils/command-options.js";
-import { resolveHubAuthority } from "./authority.js";
+import { resolveHubCredential, resolveHubOrigin } from "./authority.js";
 import { HubHttpClient, type HubInstallResult, type HubValidationResult } from "./client.js";
 import { PrivateHubCredentialStore, type HubCredentialStore } from "./credentials.js";
 import { resolveHubDeployInput } from "./deploy-input.js";
+import { processHubReporter, reportHubProgress, type HubReporter } from "./reporter.js";
+import { addHubResolutionHelp } from "./help.js";
 
 export interface HubDeployOptions {
   file?: string;
@@ -12,6 +14,7 @@ export interface HubDeployOptions {
   hub?: string;
   apiKey?: string;
   dryRun?: boolean;
+  json?: boolean;
 }
 
 interface HubDeployEnvironment {
@@ -19,23 +22,42 @@ interface HubDeployEnvironment {
   env: Readonly<Record<string, string | undefined>>;
   credentials?: HubCredentialStore;
   hub?: Pick<HubHttpClient, "installConfiguration" | "validateConfiguration">;
+  reporter?: HubReporter;
 }
 
-const resultSchema: OutputSchema<HubInstallResult> = {
+export interface HubDeployCommandDependencies {
+  env: Readonly<Record<string, string | undefined>>;
+  credentials: HubCredentialStore;
+  hub: Pick<HubHttpClient, "installConfiguration" | "validateConfiguration">;
+  reporter: HubReporter;
+  cwd(): string;
+}
+
+interface HubDeployResult extends HubInstallResult {
+  origin: string;
+}
+
+interface HubDryRunResult extends HubValidationResult {
+  origin: string;
+}
+
+const resultSchema: OutputSchema<HubDeployResult> = {
   idField: "versionId",
   columns: [
     { header: "PROJECT", field: "projectSlug" },
     { header: "VERSION", field: "version" },
     { header: "VERSION ID", field: "versionId" },
     { header: "ACTIVE", field: "active" },
+    { header: "HUB", field: "origin" },
   ],
 };
 
-const validationSchema: OutputSchema<HubValidationResult> = {
+const validationSchema: OutputSchema<HubDryRunResult> = {
   idField: "projectSlug",
   columns: [
     { header: "PROJECT", field: "projectSlug" },
     { header: "VALID", field: "valid" },
+    { header: "HUB", field: "origin" },
   ],
 };
 
@@ -47,46 +69,69 @@ export async function runHubDeploy(
     credentials: new PrivateHubCredentialStore(),
     hub: new HubHttpClient(),
   },
-): Promise<SingleResult<HubInstallResult> | SingleResult<HubValidationResult>> {
-  const authority = resolveHubAuthority({
+): Promise<SingleResult<HubDeployResult> | SingleResult<HubDryRunResult>> {
+  const credentials = environment.credentials ?? new PrivateHubCredentialStore(environment.env);
+  const resolution = {
     options: { origin: options.hub, apiKey: options.apiKey },
     env: environment.env,
-    credentials: environment.credentials ?? new PrivateHubCredentialStore(environment.env),
-  });
+    credentials,
+  };
+  const origin = resolveHubOrigin(resolution);
   const deployInput = await resolveHubDeployInput({
     cwd: environment.cwd,
     ...(options.file === undefined ? {} : { file: options.file }),
     ...(options.project === undefined ? {} : { project: options.project }),
   });
+  const action = options.dryRun === true ? "Validating" : "Deploying";
+  reportHubProgress(
+    environment.reporter ?? processHubReporter,
+    options,
+    `${action} ${deployInput.projectSlug} ${options.dryRun === true ? "against" : "to"} ${origin}`,
+  );
+  const credential = resolveHubCredential({ ...resolution, origin });
   const request = {
-    origin: authority.origin,
-    apiKey: authority.credential,
+    origin,
+    apiKey: credential,
     ...deployInput,
   };
   if (options.dryRun === true) {
     const validated = await (environment.hub ?? new HubHttpClient()).validateConfiguration(request);
-    return { type: "single", data: validated, schema: validationSchema };
+    return { type: "single", data: { ...validated, origin }, schema: validationSchema };
   }
   const deployed = await (environment.hub ?? new HubHttpClient()).installConfiguration(request);
 
-  return { type: "single", data: deployed, schema: resultSchema };
+  return { type: "single", data: { ...deployed, origin }, schema: resultSchema };
 }
 
-export function addHubDeployCommand(hub: Command): void {
+export function addHubDeployCommand(
+  hub: Command,
+  dependencies: HubDeployCommandDependencies,
+): void {
   addJsonOption(
-    hub
-      .command("deploy")
-      .description("Install and activate a Hub configuration")
-      .argument("[file]", "Hub configuration YAML", ".paseo/hub.yml")
-      .option("-p, --project <slug>", "Target project slug")
-      .option("--hub <origin>", "Paseo Hub origin")
-      .option("--api-key <secret>", "Organization API key")
-      .option("--dry-run", "Validate without installing or activating"),
+    addHubResolutionHelp(
+      hub
+        .command("deploy")
+        .description("Install and activate a Hub configuration")
+        .argument("[file]", "Hub configuration YAML", ".paseo/hub.yml")
+        .option("-p, --project <slug>", "Target project slug")
+        .option("--hub <origin>", "Paseo Hub origin")
+        .option("--api-key <secret>", "Organization API key")
+        .option("--dry-run", "Validate without installing or activating"),
+    ),
   ).action(
-    withOutput<HubInstallResult | HubValidationResult, unknown[]>(async (...args) => {
+    withOutput<HubDeployResult | HubDryRunResult, unknown[]>(async (...args) => {
       const file = args[0] as string;
       const options = args.at(-2) as HubDeployOptions;
-      return runHubDeploy({ ...options, file });
+      return runHubDeploy(
+        { ...options, file },
+        {
+          cwd: dependencies.cwd(),
+          env: dependencies.env,
+          credentials: dependencies.credentials,
+          hub: dependencies.hub,
+          reporter: dependencies.reporter,
+        },
+      );
     }),
   );
 }

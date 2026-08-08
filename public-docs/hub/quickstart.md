@@ -26,10 +26,10 @@ On the machine that will run agents:
 
 ```sh
 paseo hub login https://your-hub.example.com
-paseo hub connect https://your-hub.example.com
+paseo hub connect
 ```
 
-Approve the CLI login in the browser. `connect` then enrolls the daemon using the stored organization credential. The CLI login and daemon relationship remain separate identities. See [Daemons](/docs/hub/daemons).
+Approve the CLI login in the browser. `connect` selects that active login's origin and enrolls the daemon using the stored organization credential. The CLI login and daemon relationship remain separate identities. See [Daemons](/docs/hub/daemons).
 
 ## 4. Create a project
 
@@ -88,7 +88,7 @@ paseo hub deploy --dry-run
 paseo hub deploy
 ```
 
-The commands use the active stored login. `--dry-run` sends the same YAML, project, and partial bundle to Hub's authoritative validator without recording or activating a revision. The command reads exactly `.paseo/hub.yml` from the current directory. Use `paseo hub deploy path/to/config.yml` for another file, or `-p, --project <slug>` to override the file's project metadata. An explicit `--api-key` or `PASEO_HUB_API_KEY` overrides the stored credential without persisting the key.
+The commands use the active stored login. Origin precedence is explicit command origin or `--hub`, `PASEO_HUB_URL`, active login, then `https://hub.paseo.sh`. `--dry-run` sends the same YAML, project, and partial bundle to Hub's authoritative validator without recording or activating a revision. The command reads exactly `.paseo/hub.yml` from the current directory. Use `paseo hub deploy path/to/config.yml` for another file, or `-p, --project <slug>` to override the file's project metadata. An explicit `--api-key` or `PASEO_HUB_API_KEY` overrides the stored credential without persisting the key.
 
 ## 7. Trigger it
 

@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "vitest";
-import { resolveHubAuthority } from "./authority.js";
+import { DEFAULT_HUB_ORIGIN, resolveHubCredential, resolveHubOrigin } from "./authority.js";
 import { PrivateHubCredentialStore, type HubCredentialStore } from "./credentials.js";
 
 const temporaryDirectories: string[] = [];
@@ -81,34 +81,70 @@ describe("Hub CLI credentials", () => {
     assert.equal(statSync(credentialPath).mode & 0o777, 0o600);
   });
 
-  it("resolves explicit, environment, then exact-origin stored authority", () => {
+  it("resolves origin from explicit, environment, active login, then hosted default", () => {
     const store = new PrivateHubCredentialStore({ PASEO_HOME: temporaryHome() });
     store.save({ origin: "https://stored.example.com", credential: "stored-secret" });
-    store.save({ origin: "https://other.example.com", credential: "other-secret" });
 
-    assert.deepEqual(
-      resolveHubAuthority({
-        options: { origin: "https://explicit.example.com", apiKey: "explicit-secret" },
-        env: { PASEO_HUB_URL: "https://env.example.com", PASEO_HUB_API_KEY: "env-secret" },
+    assert.equal(
+      resolveHubOrigin({
+        options: { origin: "https://explicit.example.com" },
+        env: { PASEO_HUB_URL: "https://env.example.com" },
         credentials: store,
       }),
-      { origin: "https://explicit.example.com", credential: "explicit-secret" },
+      "https://explicit.example.com",
     );
-    assert.deepEqual(
-      resolveHubAuthority({
+    assert.equal(
+      resolveHubOrigin({
         options: {},
-        env: { PASEO_HUB_URL: "https://stored.example.com", PASEO_HUB_API_KEY: "env-secret" },
+        env: { PASEO_HUB_URL: "https://env.example.com" },
         credentials: store,
       }),
-      { origin: "https://stored.example.com", credential: "env-secret" },
+      "https://env.example.com",
     );
-    assert.deepEqual(
-      resolveHubAuthority({
+    assert.equal(
+      resolveHubOrigin({ options: {}, env: {}, credentials: store }),
+      "https://stored.example.com",
+    );
+    assert.equal(
+      resolveHubOrigin({
+        options: {},
+        env: {},
+        credentials: new PrivateHubCredentialStore({ PASEO_HOME: temporaryHome() }),
+      }),
+      DEFAULT_HUB_ORIGIN,
+    );
+  });
+
+  it("resolves credential from explicit, environment, then exact-origin stored login", () => {
+    const store = new PrivateHubCredentialStore({ PASEO_HOME: temporaryHome() });
+    store.save({ origin: "https://stored.example.com", credential: "stored-secret" });
+
+    assert.equal(
+      resolveHubCredential({
+        origin: "https://stored.example.com",
+        options: { origin: "https://stored.example.com", apiKey: "explicit-secret" },
+        env: { PASEO_HUB_API_KEY: "env-secret" },
+        credentials: store,
+      }),
+      "explicit-secret",
+    );
+    assert.equal(
+      resolveHubCredential({
+        origin: "https://stored.example.com",
+        options: { origin: "https://stored.example.com" },
+        env: { PASEO_HUB_API_KEY: "env-secret" },
+        credentials: store,
+      }),
+      "env-secret",
+    );
+    assert.equal(
+      resolveHubCredential({
+        origin: "https://stored.example.com",
         options: { origin: "https://stored.example.com" },
         env: {},
         credentials: store,
       }),
-      { origin: "https://stored.example.com", credential: "stored-secret" },
+      "stored-secret",
     );
   });
 
@@ -118,7 +154,8 @@ describe("Hub CLI credentials", () => {
 
     assert.throws(
       () =>
-        resolveHubAuthority({
+        resolveHubCredential({
+          origin: "https://different.example.com",
           options: { origin: "https://different.example.com" },
           env: {},
           credentials: store,
@@ -139,13 +176,14 @@ describe("Hub CLI credentials", () => {
       logoutActive: () => null,
     };
 
-    assert.deepEqual(
-      resolveHubAuthority({
+    assert.equal(
+      resolveHubCredential({
+        origin: "https://hub.test",
         options: { origin: "https://hub.test", apiKey: "explicit-secret" },
         env: {},
         credentials: unavailableStore,
       }),
-      { origin: "https://hub.test", credential: "explicit-secret" },
+      "explicit-secret",
     );
   });
 });

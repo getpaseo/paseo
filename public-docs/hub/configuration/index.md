@@ -44,7 +44,7 @@ For each prompt `include`, the CLI sends one `{ path, content }` entry whose pat
 
 `--dry-run` sends the identical resolved YAML, project slug, and prompt-partial bundle to `POST /api/v1/configurations/validate`. Hub performs the same compilation and resource resolution as installation but records and activates nothing.
 
-Origin precedence is `--hub`, `PASEO_HUB_URL`, then the active stored login. Credential precedence is `--api-key`, `PASEO_HUB_API_KEY`, then an exact-origin stored login. API keys passed by flag or environment are not stored. A stored credential is organization-scoped and is never reused for a different Hub origin.
+Origin precedence is `--hub`, `PASEO_HUB_URL`, the active stored login, then `https://hub.paseo.sh`. Credential precedence is `--api-key`, `PASEO_HUB_API_KEY`, then an exact-origin stored login. API keys passed by flag or environment are not stored. A stored credential is organization-scoped and is never reused for a different Hub origin. Deploy and dry-run report the normalized destination before sending anything and include it in structured results.
 
 ## Sync
 

@@ -10,11 +10,14 @@ import {
   withHubDaemon,
 } from "./daemon-client.js";
 import { addHubDeployCommand } from "./deploy.js";
+import { addHubDisconnectCommand } from "./disconnect.js";
 import { createCliLoginFlow, type CliLoginFlow } from "./login-flow.js";
 import { addHubLoginCommand } from "./login.js";
 import { addHubLogoutCommand, productionLogoutPrompt } from "./logout.js";
 import { addHubProjectsCommand } from "./projects.js";
+import { processHubReporter, type HubReporter } from "./reporter.js";
 import { hubStatusResult } from "./status-output.js";
+import { addHubResolutionHelp } from "./help.js";
 
 interface HubCommandEnvironment {
   env: Readonly<Record<string, string | undefined>>;
@@ -24,6 +27,8 @@ interface HubCommandEnvironment {
   daemon: HubDaemonConnection;
   isInteractive(): boolean;
   confirmDisconnect(origin: string): Promise<boolean>;
+  reporter: HubReporter;
+  cwd(): string;
 }
 
 function productionEnvironment(): HubCommandEnvironment {
@@ -35,23 +40,28 @@ function productionEnvironment(): HubCommandEnvironment {
     hub,
     login: createCliLoginFlow(hub),
     daemon: productionHubDaemonConnection,
+    reporter: processHubReporter,
+    cwd: () => process.cwd(),
     ...productionLogoutPrompt,
   };
 }
 
 export function createHubCommand(overrides: Partial<HubCommandEnvironment> = {}): Command {
   const environment = { ...productionEnvironment(), ...overrides };
-  const hub = new Command("hub").description("Manage Paseo Hub");
+  const hub = addHubResolutionHelp(new Command("hub").description("Manage Paseo Hub"));
 
   addHubLoginCommand(hub, {
+    env: environment.env,
     credentials: environment.credentials,
     flow: environment.login,
+    reporter: environment.reporter,
   });
   addHubConnectCommand(hub, {
     env: environment.env,
     credentials: environment.credentials,
     hub: environment.hub,
     daemon: environment.daemon,
+    reporter: environment.reporter,
   });
   addJsonAndDaemonHostOptions(hub.command("status")).action(
     withOutput(async (...args) => {
@@ -61,30 +71,29 @@ export function createHubCommand(overrides: Partial<HubCommandEnvironment> = {})
       );
     }),
   );
-  addJsonAndDaemonHostOptions(
-    hub
-      .command("disconnect")
-      .option("--force", "Remove local authority even if the Hub is offline"),
-  ).action(
-    withOutput(async (...args) => {
-      const options = args.at(-2) as { host?: string; force?: boolean };
-      return withHubDaemon(environment.daemon, options.host, async (client) => {
-        const response = await client.disconnectHub(options.force ?? false);
-        return hubStatusResult(response.status, response.warning);
-      });
-    }),
-  );
+  addHubDisconnectCommand(hub, {
+    daemon: environment.daemon,
+    reporter: environment.reporter,
+  });
   addHubProjectsCommand(hub, {
     env: environment.env,
     credentials: environment.credentials,
     hub: environment.hub,
+    reporter: environment.reporter,
   });
-  addHubDeployCommand(hub);
+  addHubDeployCommand(hub, {
+    env: environment.env,
+    credentials: environment.credentials,
+    hub: environment.hub,
+    reporter: environment.reporter,
+    cwd: environment.cwd,
+  });
   addHubLogoutCommand(hub, {
     credentials: environment.credentials,
     daemon: environment.daemon,
     isInteractive: environment.isInteractive,
     confirmDisconnect: environment.confirmDisconnect,
+    reporter: environment.reporter,
   });
   return hub;
 }

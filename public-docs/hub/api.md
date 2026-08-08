@@ -21,7 +21,7 @@ These are the canonical reference endpoints for the hosted Paseo Hub. A self-hos
 
 ## Authentication
 
-Run `paseo hub login <origin>` for interactive CLI access. Hub returns a durable, revocable organization-scoped CLI credential after browser approval, and Paseo stores it privately under `PASEO_HOME` for that exact normalized origin.
+Run `paseo hub login [origin]` for interactive CLI access. Hub returns a durable, revocable organization-scoped CLI credential after browser approval, and Paseo stores it privately under `PASEO_HOME` for that exact normalized origin. Without an explicit origin, the CLI uses `PASEO_HUB_URL`, then the active stored login origin, then `https://hub.paseo.sh`.
 
 For automation, create an organization API key from the Hub dashboard under **API keys**. Both credential types are bearer tokens:
 
@@ -65,7 +65,7 @@ A valid key without the scope required by an endpoint returns `403` in the same 
 
 ## Project list
 
-`GET /api/v1/projects` returns active projects in the bearer credential's organization. `paseo hub projects` renders this as a table, or as an array with `--json`.
+`GET /api/v1/projects` returns active projects in the bearer credential's organization. `paseo hub projects` renders the projects as a table. With `--json`, it returns `{ "origin": "...", "projects": [...] }` so even an empty result records the resolved Hub.
 
 ```json
 {
@@ -232,7 +232,7 @@ Send an empty JSON object as the request body. On success, Hub returns `201`:
 ```
 
 The token expires after 10 minutes and is consumed when the daemon enrolls.
-`paseo hub connect <origin>` performs this request with `--api-key`, `PASEO_HUB_API_KEY`, or the matching stored login, then passes the returned one-time token to the daemon's existing enrollment operation. The daemon generates and retains its own relationship credential.
+`paseo hub connect [origin]` performs this request with `--api-key`, `PASEO_HUB_API_KEY`, or the matching stored login, then passes the returned one-time token to the daemon's existing enrollment operation. Without an origin, it uses `PASEO_HUB_URL`, the active stored login origin, then `https://hub.paseo.sh`. The daemon generates and retains its own relationship credential.
 
 ```bash
 curl --fail-with-body -sS -X POST \

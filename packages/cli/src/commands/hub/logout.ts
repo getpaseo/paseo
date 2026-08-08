@@ -5,6 +5,7 @@ import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
 import type { HubCredentialStore } from "./credentials.js";
 import type { HubDaemonConnection, HubStatus } from "./daemon-client.js";
 import { withHubDaemon } from "./daemon-client.js";
+import { reportHubProgress, type HubReporter } from "./reporter.js";
 
 interface HubLogoutResult {
   origin: string | null;
@@ -33,6 +34,7 @@ interface HubLogoutDependencies {
   daemon: HubDaemonConnection;
   isInteractive(): boolean;
   confirmDisconnect(origin: string): Promise<boolean>;
+  reporter: HubReporter;
 }
 
 export async function runHubLogout(
@@ -43,19 +45,16 @@ export async function runHubLogout(
   if (active === null) {
     return logoutResult({ origin: null, status: "not_logged_in", daemonDisconnected: false });
   }
+  reportHubProgress(dependencies.reporter, options, `Logging out of ${active.origin}`);
 
   const mayPrompt = options.json !== true && dependencies.isInteractive();
   let daemonStatus: HubStatus | null = null;
-  if (options.disconnectDaemon === true) {
+  const shouldInspectDaemon = options.disconnectDaemon === true || mayPrompt;
+  if (shouldInspectDaemon) {
     daemonStatus = await withHubDaemon(dependencies.daemon, options.host, async (daemon) =>
       daemon.getHubStatus().then((response) => response.status),
     );
-  } else if (mayPrompt) {
-    daemonStatus = await withHubDaemon(dependencies.daemon, options.host, async (daemon) =>
-      daemon.getHubStatus().then((response) => response.status),
-    ).catch(() => null);
   }
-  dependencies.credentials.logoutActive();
 
   const sameHub = daemonStatus?.hubOrigin === active.origin;
   let shouldDisconnect = options.disconnectDaemon === true && sameHub;
@@ -63,11 +62,18 @@ export async function runHubLogout(
     shouldDisconnect = await dependencies.confirmDisconnect(active.origin);
   }
   if (!shouldDisconnect) {
+    dependencies.credentials.logoutActive();
     return logoutResult({ origin: active.origin, status: "logged_out", daemonDisconnected: false });
   }
+  reportHubProgress(
+    dependencies.reporter,
+    options,
+    `Disconnecting this daemon from ${active.origin}`,
+  );
   await withHubDaemon(dependencies.daemon, options.host, async (daemon) => {
     await daemon.disconnectHub(options.force ?? false);
   });
+  dependencies.credentials.logoutActive();
   return logoutResult({ origin: active.origin, status: "logged_out", daemonDisconnected: true });
 }
 

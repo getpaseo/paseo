@@ -24,6 +24,7 @@ describe("hub deploy", () => {
     await writeFile(path.join(configurationDirectory, "hub.yml"), yaml);
 
     const hub = await startHub();
+    const progress: string[] = [];
 
     try {
       const result = await runHubDeploy(
@@ -31,6 +32,7 @@ describe("hub deploy", () => {
         {
           cwd,
           env: { PASEO_HUB_URL: hub.origin, PASEO_HUB_API_KEY: "test-operator-secret" },
+          reporter: { progress: (message) => progress.push(message) },
         },
       );
 
@@ -45,7 +47,9 @@ describe("hub deploy", () => {
         version: 7,
         versionId: "2de5b143-1c88-42db-8a8d-71ca2af97830",
         active: true,
+        origin: hub.origin,
       });
+      expect(progress).toEqual([`Deploying studio-api to ${hub.origin}`]);
     } finally {
       await hub.close();
     }
@@ -86,6 +90,7 @@ describe("hub deploy", () => {
       status: 200,
       body: { projectSlug: "flag-project", valid: true },
     });
+    const progress: string[] = [];
 
     try {
       const result = await runHubDeploy(
@@ -94,8 +99,9 @@ describe("hub deploy", () => {
           hub: hub.origin,
           apiKey: "validation-secret",
           dryRun: true,
+          json: true,
         },
-        { cwd, env: {} },
+        { cwd, env: {}, reporter: { progress: (message) => progress.push(message) } },
       );
 
       expect(await hub.received).toEqual({
@@ -108,8 +114,9 @@ describe("hub deploy", () => {
           partials: [{ path: "safety.md", content: "Stay safe." }],
         }),
       });
-      expect(result.data).toEqual({ projectSlug: "flag-project", valid: true });
+      expect(result.data).toEqual({ projectSlug: "flag-project", valid: true, origin: hub.origin });
       expect(hub.requestCount()).toBe(1);
+      expect(progress).toEqual([]);
     } finally {
       await hub.close();
     }
@@ -526,16 +533,24 @@ describe("hub deploy", () => {
     }
   });
 
-  it("requires Hub origin and API key with actionable flag and env guidance", async () => {
-    await expect(runHubDeploy({}, { cwd: "/unused", env: {} })).rejects.toMatchObject({
-      message:
-        "Hub origin is required. Pass --hub <origin>, set PASEO_HUB_URL, or run `paseo hub login <origin>`.",
-    });
+  it("uses the hosted default and requires authority with actionable guidance", async () => {
+    const cwd = await projectFile("project: paseo\n");
+    const progress: string[] = [];
     await expect(
-      runHubDeploy({ hub: "https://hub.example.com" }, { cwd: "/unused", env: {} }),
+      runHubDeploy(
+        {},
+        { cwd, env: {}, reporter: { progress: (message) => progress.push(message) } },
+      ),
     ).rejects.toMatchObject({
       message:
-        "No stored Hub login matches https://hub.example.com. Pass --api-key <secret>, set PASEO_HUB_API_KEY, or run `paseo hub login https://hub.example.com`.",
+        "No stored Hub login matches https://hub.paseo.sh. Run `paseo hub login https://hub.paseo.sh`, pass --api-key <secret>, or set PASEO_HUB_API_KEY.",
+    });
+    expect(progress).toEqual(["Deploying paseo to https://hub.paseo.sh"]);
+    await expect(
+      runHubDeploy({ hub: "https://hub.example.com" }, { cwd, env: {} }),
+    ).rejects.toMatchObject({
+      message:
+        "No stored Hub login matches https://hub.example.com. Run `paseo hub login https://hub.example.com`, pass --api-key <secret>, or set PASEO_HUB_API_KEY.",
     });
   });
 

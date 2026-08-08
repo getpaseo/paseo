@@ -2,9 +2,9 @@
 
 Paseo Hub is an explicit opt-in connection from one Paseo daemon to one Hub. Running a daemon does
 not register it with a Hub. The relationship begins only when a user runs
-`paseo hub connect <url>` from the daemon machine with an explicit API key or matching stored CLI login.
+`paseo hub connect [url]` from the daemon machine with an explicit API key or matching stored CLI login.
 
-The human CLI login and daemon relationship are separate identities. `paseo hub login <url>` stores a durable organization-scoped CLI credential keyed by normalized Hub origin under `PASEO_HOME`. Connect uses that authority to request a one-time enrollment token, then passes only that token to the daemon. The daemon generates and persists its own relationship credential.
+The human CLI login and daemon relationship are separate identities. `paseo hub login [url]` stores a durable organization-scoped CLI credential keyed by normalized Hub origin under `PASEO_HOME`. Origin resolution uses explicit command input, `PASEO_HUB_URL`, active login, then `https://hub.paseo.sh`. Connect uses exact-origin authority to request a one-time enrollment token, then passes only that token to the daemon. The daemon generates and persists its own relationship credential.
 
 ## Connection and authority
 
@@ -83,7 +83,7 @@ opening a Hub socket. This also covers an enrollment whose request may have succ
 response was lost. `--force` removes local authority immediately and warns that remote revocation may
 still be pending.
 
-`paseo hub logout` removes only the active human CLI credential and preserves credentials for other origins. Interactive logout offers to disconnect a daemon related to the same Hub. JSON and noninteractive logout never prompt or disconnect implicitly.
+`paseo hub logout` removes only the active human CLI credential and preserves credentials for other origins. Interactive logout inspects and optionally disconnects a same-origin daemon before deleting the login; a failed requested disconnect preserves the login. JSON and noninteractive logout never prompt or disconnect implicitly.
 
 ## Cross-repository compatibility
 

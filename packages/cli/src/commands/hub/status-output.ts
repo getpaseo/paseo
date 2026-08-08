@@ -24,14 +24,18 @@ const schema: OutputSchema<HubRow> = {
   ],
 };
 
-export function hubStatusResult(status: HubStatus, warning?: string): ListResult<HubRow> {
+export function hubStatusResult(
+  status: HubStatus,
+  warning?: string,
+  reportedHubOrigin: string | null = status.hubOrigin,
+): ListResult<HubRow> {
   return {
     type: "list",
     data: [
       {
         state: status.state,
         daemonId: status.daemonId,
-        hub: status.hubOrigin,
+        hub: reportedHubOrigin,
         scopes: status.scopes.join(", "),
         connectedAt: status.connectedAt,
         error: status.lastError,
