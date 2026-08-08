@@ -34,6 +34,12 @@ export type FileSearchRow =
       match: FileSearchResult["files"][number]["matches"][number];
     };
 
+export interface FileSearchMatchContent {
+  prefix: string;
+  match: string;
+  suffix: string;
+}
+
 export function createInitialFileSearchState(): FileSearchState {
   return { status: "idle", requestKey: 0 };
 }
@@ -49,6 +55,19 @@ export function fileSearchReducer(
     return { status: "success", requestKey: action.requestKey, result: action.result };
   }
   return { status: "error", requestKey: action.requestKey, error: action.error };
+}
+
+export function splitFileSearchMatchContent(
+  match: FileSearchResult["files"][number]["matches"][number],
+): FileSearchMatchContent {
+  const snippetStartColumn = match.lineContentStartColumn ?? 1;
+  const matchStart = Math.max(0, match.column - snippetStartColumn);
+  const matchEnd = Math.min(match.lineContent.length, matchStart + match.matchLength);
+  return {
+    prefix: match.lineContent.slice(0, matchStart),
+    match: match.lineContent.slice(matchStart, matchEnd),
+    suffix: match.lineContent.slice(matchEnd),
+  };
 }
 
 export function buildFileSearchRows(result: FileSearchResult): FileSearchRow[] {

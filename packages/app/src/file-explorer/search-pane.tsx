@@ -29,6 +29,7 @@ import {
   createInitialFileSearchState,
   DEFAULT_FILE_SEARCH_OPTIONS,
   fileSearchReducer,
+  splitFileSearchMatchContent,
   type FileSearchOptions,
   type FileSearchRow,
   type FileSearchState,
@@ -342,6 +343,7 @@ function FileSearchMatchRow({
     () => onOpenMatch(row.path, row.match.line),
     [onOpenMatch, row.match.line, row.path],
   );
+  const content = splitFileSearchMatchContent(row.match);
   return (
     <Pressable
       onPress={handlePress}
@@ -352,7 +354,9 @@ function FileSearchMatchRow({
     >
       <Text style={styles.lineNumber}>{row.match.line}</Text>
       <Text numberOfLines={1} style={styles.lineContent}>
-        {row.match.lineContent}
+        {content.prefix}
+        <Text style={styles.matchHighlight}>{content.match}</Text>
+        {content.suffix}
       </Text>
     </Pressable>
   );
@@ -503,5 +507,9 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.xs,
+  },
+  matchHighlight: {
+    color: theme.colors.terminal.selectionForeground,
+    backgroundColor: theme.colors.terminal.selectionBackground,
   },
 }));

@@ -3,6 +3,7 @@ import {
   buildFileSearchRows,
   createInitialFileSearchState,
   fileSearchReducer,
+  splitFileSearchMatchContent,
 } from "./search-model";
 
 describe("file search model", () => {
@@ -63,6 +64,38 @@ describe("file search model", () => {
         match: { line: 9, column: 1, matchLength: 6, lineContent: "needle();" },
       },
     ]);
+  });
+
+  test("splits ordinary and windowed snippets at the exact match", () => {
+    expect(
+      splitFileSearchMatchContent({
+        line: 1,
+        column: 7,
+        matchLength: 6,
+        lineContent: "const needle = true;",
+      }),
+    ).toEqual({ prefix: "const ", match: "needle", suffix: " = true;" });
+
+    expect(
+      splitFileSearchMatchContent({
+        line: 1,
+        column: 701,
+        matchLength: 6,
+        lineContent: "xxxxneedlezzzz",
+        lineContentStartColumn: 697,
+      }),
+    ).toEqual({ prefix: "xxxx", match: "needle", suffix: "zzzz" });
+  });
+
+  test("clamps a match that extends beyond bounded line content", () => {
+    expect(
+      splitFileSearchMatchContent({
+        line: 1,
+        column: 4,
+        matchLength: 20,
+        lineContent: "abcneedle",
+      }),
+    ).toEqual({ prefix: "abc", match: "needle", suffix: "" });
   });
 
   test("resets results when the query is cleared", () => {
