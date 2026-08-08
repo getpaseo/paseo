@@ -40,6 +40,55 @@ import {
 
 const DEFAULT_OMP_COMMAND: [string, ...string[]] = [process.env.OMP_COMMAND ?? "omp"];
 const DEFAULT_COMMANDS_RPC_NAME = "get_available_commands";
+const OMP_READY_TIMEOUT_MS = 30_000;
+const OMP_MAX_FRAME_BYTES = 1024 * 1024;
+const OMP_MAX_REASSEMBLED_FRAME_BYTES = 64 * 1024 * 1024;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function supportsOmpProtocolV2(ready: Record<string, unknown>): boolean {
+  return (
+    ready.type === "ready" &&
+    Array.isArray(ready.supportedProtocolVersions) &&
+    ready.supportedProtocolVersions.some((version) => version === 2) &&
+    ready.maxFrameBytes === OMP_MAX_FRAME_BYTES &&
+    ready.maxReassembledFrameBytes === OMP_MAX_REASSEMBLED_FRAME_BYTES
+  );
+}
+
+function confirmsOmpProtocolV2(response: unknown): boolean {
+  if (
+    !isRecord(response) ||
+    response.type !== "response" ||
+    response.command !== "negotiate_protocol" ||
+    response.success !== true ||
+    !isRecord(response.data)
+  ) {
+    return false;
+  }
+  return response.data.protocolVersion === 2;
+}
+
+async function awaitOmpReady(process: JsonlRpcProcess): Promise<Record<string, unknown>> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      process.awaitReady(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Timed out waiting for OMP RPC ready frame")),
+          OMP_READY_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
 
 export interface OmpCliRuntimeOptions {
   logger: Logger;
@@ -81,7 +130,28 @@ export class OmpCliRuntime implements OmpRuntime {
       ...(spawn ? { spawn: () => spawn(launch) } : {}),
     };
     const process = new JsonlRpcProcess(processOptions);
-    return new OmpCliRuntimeSession(process, this.commandsRpcName);
+    try {
+      const ready = await awaitOmpReady(process);
+      if (supportsOmpProtocolV2(ready)) {
+        // OMP can emit a post-negotiation frame in the same stdout chunk as its
+        // acknowledgement. Prime decoding before the request so that frame is
+        // never processed as an unnegotiated rpc_chunk; a usable v2 session is
+        // still returned only after the response confirms protocol version 2.
+        process.enableChunkDecoder();
+        const response = await process.requestResponse({
+          type: "negotiate_protocol",
+          protocolVersion: 2,
+        });
+        if (!confirmsOmpProtocolV2(response)) {
+          throw new Error("OMP RPC protocol v2 negotiation failed");
+        }
+      }
+      return new OmpCliRuntimeSession(process, this.commandsRpcName);
+    } catch (error) {
+      const startupError = error instanceof Error ? error : new Error(String(error));
+      await process.close(startupError);
+      throw startupError;
+    }
   }
 }
 

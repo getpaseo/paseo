@@ -57,6 +57,13 @@ export default defineConfig({
     ],
   },
   test: {
+    // Zod 4 ships dual ESM/CJS; vitest's SSR loader resolves the CJS copy and
+    // drops the named `z` export, so inline it to keep the ESM transform.
+    server: {
+      deps: {
+        inline: ["zod"],
+      },
+    },
     // Fake-timer suites freeze p-throttle's clock, so a real per-second cap deadlocks them.
     env: {
       PASEO_GIT_MAX_PROCESSES_PER_SECOND: "10000",
