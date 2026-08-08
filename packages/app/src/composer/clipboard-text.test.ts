@@ -63,7 +63,7 @@ describe("pasted text attachments", () => {
     ).toBe("before pasted after");
   });
 
-  it("does not overwrite a draft changed during upload", () => {
+  it("appends failed paste after a draft changed during upload", () => {
     expect(
       restoreFailedPastedText({
         currentText: "user typed while uploading",
@@ -72,6 +72,18 @@ describe("pasted text attachments", () => {
         selectionStart: 6,
         selectionEnd: 6,
       }),
-    ).toBeNull();
+    ).toBe("user typed while uploadingpasted");
+  });
+
+  it("does not apply stale selection offsets after concurrent draft edits", () => {
+    expect(
+      restoreFailedPastedText({
+        currentText: "before user edit selection after",
+        initialText: "before selection after",
+        pastedText: "pasted",
+        selectionStart: 7,
+        selectionEnd: 16,
+      }),
+    ).toBe("before user edit selection afterpasted");
   });
 });

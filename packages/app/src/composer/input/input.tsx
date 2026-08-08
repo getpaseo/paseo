@@ -492,9 +492,7 @@ function usePasteAttachmentsEffect(args: PasteAttachmentsEffectArgs): void {
           selectionStart,
           selectionEnd,
         });
-        if (restoredText !== null) {
-          onChangeText(restoredText);
-        }
+        onChangeText(restoredText);
       };
 
       void onPasteTextFile(file)

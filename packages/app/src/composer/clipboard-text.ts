@@ -29,8 +29,10 @@ export function restoreFailedPastedText(input: {
   pastedText: string;
   selectionStart: number;
   selectionEnd: number;
-}): string | null {
-  if (input.currentText !== input.initialText) return null;
+}): string {
+  if (input.currentText !== input.initialText) {
+    return input.currentText + input.pastedText;
+  }
   return (
     input.initialText.slice(0, input.selectionStart) +
     input.pastedText +
