@@ -18,8 +18,10 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import {
   WorkspaceFilesSession,
+  type WorkspaceFileSearch,
   type WorkspaceFilesSessionHost,
 } from "./workspace-files-session.js";
+import { WorkspaceFileSearchError } from "../../file-search/service.js";
 import { DownloadTokenStore } from "../../file-download/token-store.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 
@@ -41,6 +43,7 @@ function makeSubsystem(
   options: {
     hasBinaryChannel?: boolean;
     emitBinary?: (frame: Uint8Array) => Promise<void> | void;
+    searchFiles?: WorkspaceFileSearch;
   } = {},
 ) {
   const emitted: SessionOutboundMessage[] = [];
@@ -60,6 +63,7 @@ function makeSubsystem(
     downloadTokenStore: new DownloadTokenStore({ ttlMs: 60_000 }),
     paseoHome,
     logger: pino({ level: "silent" }),
+    searchFiles: options.searchFiles,
   });
   return {
     subsystem,
@@ -597,4 +601,95 @@ describe("WorkspaceFilesSession", () => {
       "hello world",
     );
   });
+  test("searches workspace content and emits grouped matches", async () => {
+    const cwd = makeDir("workspace-files-search-");
+    writeFileSync(join(cwd, "notes.txt"), "hello needle world\n");
+    const { subsystem, emitted } = makeSubsystem();
+
+    await subsystem.handleFileSearchRequest({
+      type: "fs.search.request",
+      cwd,
+      query: "needle",
+      requestId: "req-search",
+    });
+
+    expect(emitted).toEqual([
+      {
+        type: "fs.search.response",
+        payload: {
+          cwd,
+          files: [
+            {
+              path: "notes.txt",
+              matches: [
+                {
+                  line: 1,
+                  column: 7,
+                  matchLength: 6,
+                  lineContent: "hello needle world",
+                },
+              ],
+            },
+          ],
+          totalMatches: 1,
+          truncated: false,
+          requestId: "req-search",
+        },
+      },
+    ]);
+  });
+  test("cancels a stale search when a newer request starts", async () => {
+    let invocation = 0;
+    const searchFiles: WorkspaceFileSearch = async (input) => {
+      invocation += 1;
+      if (invocation === 2) return { files: [], totalMatches: 0, truncated: false };
+      return new Promise((resolve, reject) => {
+        input.signal?.addEventListener(
+          "abort",
+          () => reject(new WorkspaceFileSearchError("cancelled", "Search cancelled")),
+          { once: true },
+        );
+      });
+    };
+    const { subsystem, emitted } = makeSubsystem({ searchFiles });
+    const cwd = makeDir("workspace-files-search-stale-");
+
+    const stale = subsystem.handleFileSearchRequest({
+      type: "fs.search.request",
+      cwd,
+      query: "first",
+      requestId: "req-first",
+    });
+    const current = subsystem.handleFileSearchRequest({
+      type: "fs.search.request",
+      cwd,
+      query: "second",
+      requestId: "req-second",
+    });
+    await Promise.all([stale, current]);
+
+    expect(emitted).toEqual([
+      {
+        type: "fs.search.response",
+        payload: {
+          cwd,
+          files: [],
+          totalMatches: 0,
+          truncated: false,
+          requestId: "req-second",
+        },
+      },
+      {
+        type: "rpc_error",
+        payload: {
+          requestId: "req-first",
+          requestType: "fs.search.request",
+          error: "Search cancelled",
+          code: "search_cancelled",
+        },
+      },
+    ]);
+  });
+
+
 });

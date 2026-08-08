@@ -24,10 +24,11 @@ import {
 } from "react-native";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import * as Clipboard from "expo-clipboard";
-import { ChevronDown, Eye, EyeOff, FilePlus, FolderPlus, RotateCw } from "lucide-react-native";
+import { ChevronDown, Eye, EyeOff, FilePlus, FolderPlus, RotateCw, Search } from "lucide-react-native";
 import { MaterialFileIcon } from "@/components/material-file-icon";
 import {
   TreeChevron,
@@ -50,6 +51,7 @@ import {
   type OverlayFlatListScrollbar,
 } from "@/components/ui/overlay-scrollbar/use-overlay-flat-list-scrollbar";
 import type { Theme } from "@/styles/theme";
+import { FileSearchPane } from "@/file-explorer/search-pane";
 import type {
   AgentFileExplorerState,
   ExplorerDirectory,
@@ -400,7 +402,7 @@ interface FileExplorerPaneProps {
   serverId: string;
   workspaceId?: string | null;
   workspaceRoot: string;
-  onOpenFile?: (filePath: string) => void;
+  onOpenFile?: (filePath: string, lineStart?: number, lineEnd?: number) => void;
   onOpenFileToSide?: (filePath: string) => void;
   onAddToChat?: (path: string) => void;
 }
@@ -426,6 +428,7 @@ export function FileExplorerPane({
     [normalizedWorkspaceRoot, workspaceId],
   );
   const hasWorkspaceScope = Boolean(workspaceStateKey && normalizedWorkspaceRoot);
+  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const explorerState = useSessionStore((state) =>
     workspaceStateKey && state.sessions[serverId]
       ? state.sessions[serverId]?.fileExplorer.get(workspaceStateKey)
@@ -1075,6 +1078,9 @@ export function FileExplorerPane({
         handleBackFromError={handleBackFromError}
         handleRetry={handleRetry}
         sortTriggerStyle={sortTriggerStyle}
+        client={client ?? null}
+        workspaceRoot={normalizedWorkspaceRoot}
+        onOpenFile={onOpenFile}
       />
     </View>
   );
@@ -1149,6 +1155,9 @@ interface FileExplorerPaneContentProps {
   handleBackFromError: () => void;
   handleRetry: () => void;
   sortTriggerStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  client: DaemonClient | null;
+  workspaceRoot: string;
+  onOpenFile?: (filePath: string, lineStart?: number, lineEnd?: number) => void;
 }
 
 function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
@@ -1172,8 +1181,12 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
     handleBackFromError,
     handleRetry,
     sortTriggerStyle: sortTriggerStyleProp,
+    client,
+    workspaceRoot,
+    onOpenFile,
   } = props;
 
+  const [isSearchMode, setIsSearchMode] = useState(false);
   const showHiddenFiles = usePanelStore((state) => state.explorerShowHiddenFiles);
 
   const handleNewFileAtRoot = useCallback(() => {
@@ -1182,6 +1195,12 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
   const handleNewFolderAtRoot = useCallback(() => {
     onNewEntryAtRoot?.(".", "directory");
   }, [onNewEntryAtRoot]);
+  const enterSearchMode = useCallback(() => setIsSearchMode(true), []);
+  const exitSearchMode = useCallback(() => setIsSearchMode(false), []);
+  const handleOpenSearchMatch = useCallback(
+    (path: string, line: number) => onOpenFile?.(path, line, line),
+    [onOpenFile],
+  );
 
   const hiddenFilesToggleAccessibilityLabel = showHiddenFiles
     ? t("workspace.fileExplorer.actions.hideHiddenFiles")
@@ -1263,6 +1282,19 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
             </>
           ) : null}
           <ToolbarButton
+            label={t("common.actions.search")}
+            selected={isSearchMode}
+            compact={isCompact}
+            hitSlop={8}
+            testID="files-search-toggle"
+            onPress={enterSearchMode}
+          >
+            <Search
+              size={paneContentToolbarIconSize(isCompact)}
+              color={theme.colors.foregroundExtraMuted}
+            />
+          </ToolbarButton>
+          <ToolbarButton
             label={hiddenFilesToggleAccessibilityLabel}
             selected={!showHiddenFiles}
             compact={isCompact}
@@ -1310,42 +1342,51 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
           </ToolbarButton>
         </ToolbarControls>
       </PaneContentToolbar>
-      <ContextMenu>
-        <RootCreationContextTarget enabled={Boolean(onNewEntryAtRoot)}>
-          {listRows.length === 0 ? (
-            <View style={styles.centerState}>
-              <Text style={styles.emptyText}>{emptyLabel}</Text>
-            </View>
-          ) : (
-            <FlatList
-              ref={treeListRef}
-              style={styles.treeList}
-              data={listRows}
-              renderItem={renderTreeRow}
-              keyExtractor={listRowKeyExtractor}
-              testID="file-explorer-tree-scroll"
-              contentContainerStyle={styles.entriesContent}
-              onLayout={scrollbar.onLayout}
-              onScroll={scrollbar.onScroll}
-              onContentSizeChange={scrollbar.onContentSizeChange}
-              scrollEventThrottle={16}
-              showsVerticalScrollIndicator={!scrollbar.enabled}
-              initialNumToRender={24}
-              maxToRenderPerBatch={40}
-              windowSize={12}
+      {isSearchMode ? (
+        <FileSearchPane
+          client={client}
+          workspaceRoot={workspaceRoot}
+          onOpenMatch={handleOpenSearchMatch}
+          onExit={exitSearchMode}
+        />
+      ) : (
+        <ContextMenu>
+          <RootCreationContextTarget enabled={Boolean(onNewEntryAtRoot)}>
+            {listRows.length === 0 ? (
+              <View style={styles.centerState}>
+                <Text style={styles.emptyText}>{emptyLabel}</Text>
+              </View>
+            ) : (
+              <FlatList
+                ref={treeListRef}
+                style={styles.treeList}
+                data={listRows}
+                renderItem={renderTreeRow}
+                keyExtractor={listRowKeyExtractor}
+                testID="file-explorer-tree-scroll"
+                contentContainerStyle={styles.entriesContent}
+                onLayout={scrollbar.onLayout}
+                onScroll={scrollbar.onScroll}
+                onContentSizeChange={scrollbar.onContentSizeChange}
+                scrollEventThrottle={16}
+                showsVerticalScrollIndicator={!scrollbar.enabled}
+                initialNumToRender={24}
+                maxToRenderPerBatch={40}
+                windowSize={12}
+              />
+            )}
+            {listRows.length > 0 ? scrollbar.overlay : null}
+          </RootCreationContextTarget>
+          {onNewEntryAtRoot ? (
+            <FileActionsContextMenuContent
+              fileKind="directory"
+              onNewFile={handleNewFileAtRoot}
+              onNewFolder={handleNewFolderAtRoot}
+              testIDPrefix="files-empty-area"
             />
-          )}
-          {listRows.length > 0 ? scrollbar.overlay : null}
-        </RootCreationContextTarget>
-        {onNewEntryAtRoot ? (
-          <FileActionsContextMenuContent
-            fileKind="directory"
-            onNewFile={handleNewFileAtRoot}
-            onNewFolder={handleNewFolderAtRoot}
-            testIDPrefix="files-empty-area"
-          />
-        ) : null}
-      </ContextMenu>
+          ) : null}
+        </ContextMenu>
+      )}
     </View>
   );
 }

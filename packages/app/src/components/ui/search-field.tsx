@@ -25,6 +25,7 @@ export interface SearchFieldProps {
   /** Falls back to `placeholder`, which already names the field. */
   accessibilityLabel?: string;
   clearAccessibilityLabel: string;
+  autoFocus?: boolean;
   testID?: string;
   clearTestID?: string;
 }
@@ -42,6 +43,7 @@ export function SearchField({
   placeholder,
   accessibilityLabel,
   clearAccessibilityLabel,
+  autoFocus = false,
   testID,
   clearTestID,
 }: SearchFieldProps): ReactElement {
@@ -69,6 +71,7 @@ export function SearchField({
         autoCapitalize="none"
         autoCorrect={false}
         returnKeyType="search"
+        autoFocus={autoFocus}
         style={styles.input}
       />
       {value.length > 0 ? (

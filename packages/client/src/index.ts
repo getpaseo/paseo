@@ -42,6 +42,18 @@ import type {
  */
 const DEFAULT_WAIT_FOR_FINISH_MS = 10 * 60_000;
 
+export { DaemonClient };
+export type {
+  DaemonClientConfig,
+  DaemonEvent,
+  BrowserAutomationExecuteRequestMessage,
+  BrowserAutomationExecuteResponseMessage,
+  FileSearchInput,
+  FileSearchResult,
+  WebSocketFactory,
+  WebSocketLike,
+} from "./daemon-client.js";
+
 export type ConnectionState =
   | { status: "idle" }
   | { status: "connecting"; attempt: number }
