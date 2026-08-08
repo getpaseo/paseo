@@ -113,6 +113,7 @@ export const en = {
     attachments: {
       addImage: "Add image",
       pasteImage: "Paste image",
+      pasteTextFile: "Paste text as file",
       addFile: "Upload file",
       addIssueOrPr: "Add issue or PR",
       addIssueOrPr_mr: "Add issue or MR",
@@ -140,6 +141,9 @@ export const en = {
       uploadFailed: "Failed to upload file",
       noClipboardImage: "No image in clipboard",
       pasteImageFailed: "Failed to paste image",
+      noClipboardText: "No text in clipboard",
+      clipboardTextTooShort: "Clipboard text is shorter than {{size}}",
+      pasteTextFailed: "Failed to paste text as file",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {

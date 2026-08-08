@@ -115,6 +115,7 @@ export const zhCN: TranslationResources = {
     attachments: {
       addImage: "添加图片",
       pasteImage: "粘贴图片",
+      pasteTextFile: "将文本作为文件粘贴",
       addFile: "Upload file",
       addIssueOrPr: "添加 issue 或 PR",
       addIssueOrPr_mr: "添加 issue 或 MR",
@@ -142,6 +143,9 @@ export const zhCN: TranslationResources = {
       uploadFailed: "Failed to upload file",
       noClipboardImage: "剪贴板中没有图片",
       pasteImageFailed: "无法粘贴图片",
+      noClipboardText: "剪贴板中没有文本",
+      clipboardTextTooShort: "剪贴板文本少于 {{size}}",
+      pasteTextFailed: "无法将文本作为文件粘贴",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {

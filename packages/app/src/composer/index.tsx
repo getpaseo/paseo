@@ -125,6 +125,7 @@ import { getForgePresentation } from "@/git/forge";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { useComposerGithubAutoAttach } from "./github/auto-attach";
 import { readClipboardImage } from "./clipboard-image";
+import { createPastedTextFile, PASTED_TEXT_UPLOAD_THRESHOLD_BYTES } from "./clipboard-text";
 import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
 import {
   appendWorkspaceFileAttachment,
@@ -1516,6 +1517,36 @@ export function Composer({
     [addFiles, client, t],
   );
 
+  const handlePasteTextFile = useCallback(
+    (file: PickedFile) => {
+      void uploadPickedFiles([file]);
+    },
+    [uploadPickedFiles],
+  );
+
+  const handleNativePasteTextFile = useCallback(async () => {
+    try {
+      const text = await Clipboard.getStringAsync();
+      if (text.length === 0) {
+        toastErrorRef.current(t("composer.errors.noClipboardText"));
+        return;
+      }
+      const file = createPastedTextFile(text);
+      if (!file) {
+        toastErrorRef.current(
+          t("composer.errors.clipboardTextTooShort", {
+            size: `${PASTED_TEXT_UPLOAD_THRESHOLD_BYTES / 1000} KB`,
+          }),
+        );
+        return;
+      }
+      await uploadPickedFiles([file]);
+    } catch (error) {
+      console.error("[Composer] Failed to paste clipboard text:", error);
+      toastErrorRef.current(t("composer.errors.pasteTextFailed"));
+    }
+  }, [t, uploadPickedFiles]);
+
   const handlePickFile = useCallback(async () => {
     if (!client) {
       toastErrorRef.current(t("composer.errors.daemonClientDisconnected"));
@@ -1902,14 +1933,24 @@ export function Composer({
       },
     ];
     if (isNative) {
-      items.push({
-        id: "paste-image",
-        label: t("composer.attachments.pasteImage"),
-        icon: <ThemedClipboardPaste size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
-        onSelect: () => {
-          void handlePasteImage();
+      items.push(
+        {
+          id: "paste-image",
+          label: t("composer.attachments.pasteImage"),
+          icon: <ThemedClipboardPaste size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+          onSelect: () => {
+            void handlePasteImage();
+          },
         },
-      });
+        {
+          id: "paste-text-file",
+          label: t("composer.attachments.pasteTextFile"),
+          icon: <ThemedClipboardPaste size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+          onSelect: () => {
+            void handleNativePasteTextFile();
+          },
+        },
+      );
     }
     items.push(
       {
@@ -1932,7 +1973,14 @@ export function Composer({
       },
     );
     return items;
-  }, [forgePresentation, handlePasteImage, handlePickFile, handlePickImage, t]);
+  }, [
+    forgePresentation,
+    handleNativePasteTextFile,
+    handlePasteImage,
+    handlePickFile,
+    handlePickImage,
+    t,
+  ]);
 
   const handleToggleGithubItem = useCallback(
     (item: ForgeSearchItem) => {
@@ -2142,12 +2190,13 @@ export function Composer({
                 attachmentMenuItems={attachmentMenuItems}
                 onAttachButtonRef={handleAttachButtonRef}
                 onAddImages={addImages}
+                onPasteTextFile={handlePasteTextFile}
                 client={client}
                 isReadyForDictation={isDictationReady}
                 placeholder={messagePlaceholder}
                 autoFocus={messageInputAutoFocus}
                 autoFocusKey={`${serverId}:${agentId}:${autoFocusKey ?? ""}`}
-                disabled={isSubmitLoading}
+                disabled={isSubmitLoadingVisible}
                 isPaneFocused={isPaneFocused}
                 leftContent={leftContent}
                 beforeVoiceContent={beforeVoiceContent}

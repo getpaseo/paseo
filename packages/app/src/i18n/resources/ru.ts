@@ -115,6 +115,7 @@ export const ru: TranslationResources = {
     attachments: {
       addImage: "Добавить изображение",
       pasteImage: "Вставить изображение",
+      pasteTextFile: "Вставить текст как файл",
       addFile: "Upload file",
       addIssueOrPr: "Добавить проблему или PR",
       addIssueOrPr_mr: "Добавить проблему или MR",
@@ -142,6 +143,9 @@ export const ru: TranslationResources = {
       uploadFailed: "Failed to upload file",
       noClipboardImage: "В буфере обмена нет изображения",
       pasteImageFailed: "Не удалось вставить изображение",
+      noClipboardText: "В буфере обмена нет текста",
+      clipboardTextTooShort: "Текст в буфере обмена меньше {{size}}",
+      pasteTextFailed: "Не удалось вставить текст как файл",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {

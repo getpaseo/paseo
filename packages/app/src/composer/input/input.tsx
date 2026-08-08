@@ -36,6 +36,8 @@ import {
   filesToImageAttachments,
 } from "@/utils/image-attachments-from-files";
 import type { ComposerAttachment } from "@/attachments/types";
+import type { PickedFile } from "@/attachments/picked-file";
+import { createPastedTextFile } from "@/composer/clipboard-text";
 import type { ImageAttachment, MessagePayload } from "@/composer/types";
 import { focusWithRetries } from "@/utils/web-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -105,6 +107,7 @@ export interface MessageInputProps {
   attachmentMenuItems: AttachmentMenuItem[];
   onAttachButtonRef?: (node: View | null) => void;
   onAddImages?: (images: ImageAttachment[]) => void;
+  onPasteTextFile?: (file: PickedFile) => void;
   client: DaemonClient | null;
   /** Dictation start gate from host runtime (socket connected + directory ready). */
   isReadyForDictation?: boolean;
@@ -406,16 +409,17 @@ function getTextInputNativeElement(
   return native instanceof HTMLElement ? native : null;
 }
 
-interface PasteImagesEffectArgs {
+interface PasteAttachmentsEffectArgs {
   getWebTextArea: () => TextAreaHandle | null;
   isConnected: boolean;
   disabled: boolean;
   isDictating: boolean;
   isRealtimeVoiceForCurrentAgent: boolean;
   onAddImages: ((images: ImageAttachment[]) => void) | undefined;
+  onPasteTextFile: ((file: PickedFile) => void) | undefined;
 }
 
-function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
+function usePasteAttachmentsEffect(args: PasteAttachmentsEffectArgs): void {
   const {
     getWebTextArea,
     isConnected,
@@ -423,10 +427,11 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
     isDictating,
     isRealtimeVoiceForCurrentAgent,
     onAddImages,
+    onPasteTextFile,
   } = args;
 
   useEffect(() => {
-    if (!isWeb || !onAddImages) return;
+    if (!isWeb || (!onAddImages && !onPasteTextFile)) return;
 
     const textarea = getWebTextArea() as
       | (TextAreaHandle & {
@@ -447,19 +452,28 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
       if (!isConnected || disabled || isDictating || isRealtimeVoiceForCurrentAgent) return;
 
       const imageFiles = collectImageFilesFromClipboardData(event.clipboardData);
-      if (imageFiles.length === 0) return;
+      if (imageFiles.length > 0) {
+        if (!onAddImages) return;
+        event.preventDefault();
+
+        void filesToImageAttachments(imageFiles)
+          .then((pastedAttachments) => {
+            if (disposed || pastedAttachments.length === 0) return undefined;
+            onAddImages(pastedAttachments);
+            return undefined;
+          })
+          .catch((error) => {
+            console.error("[MessageInput] Failed to process pasted images:", error);
+          });
+        return;
+      }
+
+      if (!onPasteTextFile) return;
+      const file = createPastedTextFile(event.clipboardData?.getData("text/plain") ?? "");
+      if (!file) return;
 
       event.preventDefault();
-
-      void filesToImageAttachments(imageFiles)
-        .then((pastedAttachments) => {
-          if (disposed || pastedAttachments.length === 0) return;
-          onAddImages(pastedAttachments);
-          return;
-        })
-        .catch((error) => {
-          console.error("[MessageInput] Failed to process pasted images:", error);
-        });
+      onPasteTextFile(file);
     };
 
     textarea.addEventListener("paste", handlePaste);
@@ -474,6 +488,7 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
     isDictating,
     isRealtimeVoiceForCurrentAgent,
     onAddImages,
+    onPasteTextFile,
   ]);
 }
 
@@ -1019,6 +1034,7 @@ interface ResolvedMessageInputProps {
   attachmentMenuItems: AttachmentMenuItem[];
   onAttachButtonRef: ((node: View | null) => void) | undefined;
   onAddImages: ((images: ImageAttachment[]) => void) | undefined;
+  onPasteTextFile: ((file: PickedFile) => void) | undefined;
   client: DaemonClient | null;
   isReadyForDictation: boolean | undefined;
   placeholder: string | undefined;
@@ -1065,6 +1081,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     attachmentMenuItems: props.attachmentMenuItems,
     onAttachButtonRef: props.onAttachButtonRef,
     onAddImages: props.onAddImages,
+    onPasteTextFile: props.onPasteTextFile,
     client: props.client,
     isReadyForDictation: props.isReadyForDictation,
     placeholder: props.placeholder,
@@ -1119,6 +1136,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       attachmentMenuItems,
       onAttachButtonRef,
       onAddImages,
+      onPasteTextFile,
       client,
       isReadyForDictation,
       placeholder,
@@ -1481,13 +1499,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       }
     }, [getWebTextArea]);
 
-    usePasteImagesEffect({
+    usePasteAttachmentsEffect({
       getWebTextArea,
       isConnected,
       disabled,
       isDictating,
       isRealtimeVoiceForCurrentAgent,
       onAddImages,
+      onPasteTextFile,
     });
 
     const setBoundedInputHeight = useCallback(

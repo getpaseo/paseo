@@ -18,6 +18,7 @@ import {
   expectAttachButtonDisabled,
   fillComposerDraft,
   dropFileOnComposer,
+  pasteTextIntoComposer,
   sendDraftToQueue,
   expectQueuedMessageButton,
   startRunningMockAgent,
@@ -194,6 +195,42 @@ test.describe("Composer attachments", () => {
     await attachImageFromMenu(page, TEST_IMAGE);
 
     await expectAttachmentPill(page, "composer-image-attachment-pill");
+  });
+
+  test("long pasted text becomes a file attachment without filling composer", async ({
+    page,
+    withWorkspace,
+  }) => {
+    test.setTimeout(60_000);
+    const workspace = await withWorkspace({ prefix: "attach-pasted-text-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+
+    const prevented = await pasteTextIntoComposer(page, "a".repeat(10_000));
+
+    expect(prevented).toBe(true);
+    await expectComposerDraft(page, "");
+    await expectAttachmentPill(page, "composer-file-attachment-pill");
+    await expect(page.getByTestId("composer-file-attachment-pill")).toContainText(
+      "pasted-text.txt",
+    );
+  });
+
+  test("short pasted text stays in composer", async ({ page, withWorkspace }) => {
+    test.setTimeout(60_000);
+    const workspace = await withWorkspace({ prefix: "attach-short-paste-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+
+    const text = "short pasted text";
+    const prevented = await pasteTextIntoComposer(page, text);
+
+    expect(prevented).toBe(false);
+    await fillComposerDraft(page, text);
+    await expectComposerDraft(page, text);
+    await expect(page.getByTestId("composer-file-attachment-pill")).toHaveCount(0);
   });
 
   test("dropped JSON file renders as a file attachment in active chat", async ({

@@ -115,6 +115,7 @@ export const ptBR: TranslationResources = {
     attachments: {
       addImage: "Adicionar imagem",
       pasteImage: "Colar imagem",
+      pasteTextFile: "Colar texto como arquivo",
       addFile: "Enviar arquivo",
       addIssueOrPr: "Adicionar issue ou PR",
       addIssueOrPr_mr: "Adicionar issue ou MR",
@@ -142,6 +143,9 @@ export const ptBR: TranslationResources = {
       uploadFailed: "Falha ao enviar arquivo",
       noClipboardImage: "Não há imagem na área de transferência",
       pasteImageFailed: "Falha ao colar a imagem",
+      noClipboardText: "Não há texto na área de transferência",
+      clipboardTextTooShort: "O texto da área de transferência é menor que {{size}}",
+      pasteTextFailed: "Falha ao colar texto como arquivo",
       fileTooLarge: "{{fileName}} é grande demais (máximo {{size}})",
     },
     clientCommands: {

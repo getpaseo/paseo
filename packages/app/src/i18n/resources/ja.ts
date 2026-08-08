@@ -115,6 +115,7 @@ export const ja: TranslationResources = {
     attachments: {
       addImage: "画像を追加",
       pasteImage: "画像を貼り付け",
+      pasteTextFile: "テキストをファイルとして貼り付け",
       addFile: "ファイルをアップロード",
       addIssueOrPr: "イシューまたはPRを追加",
       addIssueOrPr_mr: "イシューまたはMRを追加",
@@ -142,6 +143,9 @@ export const ja: TranslationResources = {
       uploadFailed: "ファイルのアップロードに失敗しました",
       noClipboardImage: "クリップボードに画像がありません",
       pasteImageFailed: "画像を貼り付けられませんでした",
+      noClipboardText: "クリップボードにテキストがありません",
+      clipboardTextTooShort: "クリップボードのテキストは{{size}}未満です",
+      pasteTextFailed: "テキストをファイルとして貼り付けられませんでした",
       fileTooLarge: "{{fileName}}が大きすぎます（最大{{size}}）",
     },
     clientCommands: {

@@ -115,6 +115,7 @@ export const ar: TranslationResources = {
     attachments: {
       addImage: "أضف صورة",
       pasteImage: "لصق صورة",
+      pasteTextFile: "لصق النص كملف",
       addFile: "Upload file",
       addIssueOrPr: "أضف مشكلة أو PR",
       addIssueOrPr_mr: "أضف مشكلة أو MR",
@@ -142,6 +143,9 @@ export const ar: TranslationResources = {
       uploadFailed: "Failed to upload file",
       noClipboardImage: "لا توجد صورة في الحافظة",
       pasteImageFailed: "تعذر لصق الصورة",
+      noClipboardText: "لا يوجد نص في الحافظة",
+      clipboardTextTooShort: "نص الحافظة أقصر من {{size}}",
+      pasteTextFailed: "تعذر لصق النص كملف",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {

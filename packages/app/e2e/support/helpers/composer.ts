@@ -117,6 +117,22 @@ export async function expectAttachmentPill(page: Page, testID: string): Promise<
   await expect(page.getByTestId(testID).first()).toBeVisible({ timeout: 10_000 });
 }
 
+export async function pasteTextIntoComposer(page: Page, text: string): Promise<boolean> {
+  const input = composerInput(page);
+  await expect(input).toBeEditable({ timeout: 10_000 });
+  return input.evaluate((element, clipboardText) => {
+    const transfer = new DataTransfer();
+    transfer.setData("text/plain", clipboardText);
+    const event = new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: transfer,
+    });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  }, text);
+}
+
 export async function dropFileOnComposer(
   page: Page,
   file: { name: string; mimeType: string; buffer: Buffer },
