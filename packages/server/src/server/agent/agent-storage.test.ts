@@ -38,7 +38,9 @@ function buildManagedAgentConfig(
     title: configOverrides.title,
     modeId: configOverrides.modeId ?? "plan",
     model: configOverrides.model ?? "gpt-5.1",
-    extra: configOverrides.extra ?? { claude: { maxThinkingTokens: 1024 } },
+    thinkingOptionId: configOverrides.thinkingOptionId,
+    providerOptions: configOverrides.providerOptions,
+    toolPolicy: configOverrides.toolPolicy,
     systemPrompt: configOverrides.systemPrompt,
     mcpServers: configOverrides.mcpServers,
   };
@@ -157,7 +159,7 @@ describe("AgentStorage", () => {
           modeId: "coding",
           model: "gpt-5.1",
           systemPrompt: "Be terse and explicit.",
-          extra: { claude: { maxThinkingTokens: 1024 } },
+          providerOptions: { allowedTools: ["Read"] },
           mcpServers: {
             paseo: {
               type: "stdio",
@@ -189,7 +191,7 @@ describe("AgentStorage", () => {
     const reloaded = new AgentStorage(storagePath, logger);
     const [persisted] = await reloaded.list();
     expect(persisted.cwd).toBe("/tmp/project");
-    expect(persisted.config?.extra?.claude).toMatchObject({ maxThinkingTokens: 1024 });
+    expect(persisted.config?.providerOptions).toEqual({ allowedTools: ["Read"] });
   });
 
   test("applySnapshot stores and reloads featureValues when present", async () => {

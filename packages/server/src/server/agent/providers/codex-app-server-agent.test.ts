@@ -454,6 +454,141 @@ describe("Codex app-server provider", () => {
     );
   });
 
+  test("omitted mode preserves Codex resolved approval and sandbox config", async () => {
+    const session = createSession({ modeId: undefined });
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") return { data: ["test-thread"] };
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("inherit config");
+
+    const turnStart = request.mock.calls.find(([method]) => method === "turn/start")?.[1];
+    expect(turnStart).not.toHaveProperty("approvalPolicy");
+    expect(turnStart).not.toHaveProperty("sandboxPolicy");
+  });
+
+  test("carries the complete native workspace-write policy including writable roots", async () => {
+    const session = createSession({
+      modeId: undefined,
+      providerOptions: {
+        sandbox_mode: "workspace-write",
+        sandbox_workspace_write: {
+          writable_roots: ["/var/cache/npm", "/tmp/build-cache"],
+          network_access: true,
+          exclude_slash_tmp: true,
+          exclude_tmpdir_env_var: true,
+        },
+      },
+    });
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") return { data: ["test-thread"] };
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("use writable roots");
+
+    const turnStart = request.mock.calls.find(([method]) => method === "turn/start")?.[1];
+    expect(turnStart).toMatchObject({
+      sandboxPolicy: {
+        type: "workspaceWrite",
+        writableRoots: ["/var/cache/npm", "/tmp/build-cache"],
+        networkAccess: true,
+        excludeSlashTmp: true,
+        excludeTmpdirEnvVar: true,
+      },
+      config: {
+        sandbox_mode: "workspace-write",
+        sandbox_workspace_write: {
+          writable_roots: ["/var/cache/npm", "/tmp/build-cache"],
+        },
+      },
+    });
+  });
+
+  test("preserves cwd-resolved Codex writable roots under an explicit workflow mode", async () => {
+    const appServer = createFakeCodexAppServer({
+      "config/read": () => ({
+        config: {
+          sandbox_workspace_write: {
+            writable_roots: ["/var/cache/npm"],
+            network_access: true,
+            exclude_slash_tmp: true,
+            exclude_tmpdir_env_var: true,
+          },
+        },
+      }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ modeId: "auto" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+      await session.startTurn("keep native roots");
+
+      await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+        sandboxPolicy: {
+          type: "workspaceWrite",
+          writableRoots: ["/var/cache/npm"],
+          networkAccess: true,
+          excludeSlashTmp: true,
+          excludeTmpdirEnvVar: true,
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("preapproves only granted tools on the injected Codex MCP server", async () => {
+    const session = createSession({
+      modeId: undefined,
+      providerOptions: { sandbox_mode: "read-only" },
+      mcpServers: {
+        hub: { type: "http", url: "http://127.0.0.1/hub" },
+      },
+      toolPolicy: {
+        preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+      },
+    });
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") return { data: ["test-thread"] };
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("finish");
+
+    const turnStart = request.mock.calls.find(([method]) => method === "turn/start")?.[1];
+    expect(turnStart).toMatchObject({
+      sandboxPolicy: { type: "readOnly" },
+      config: {
+        sandbox_mode: "read-only",
+        mcp_servers: {
+          hub: {
+            enabled_tools: ["finish_execution"],
+            default_tools_approval_mode: "prompt",
+            tools: { finish_execution: { approval_mode: "approve" } },
+          },
+        },
+      },
+    });
+    expect(turnStart).not.toHaveProperty("config.mcp_servers.hub.tools.reply");
+  });
+
   test("passes ephemeral: true to thread/start when constructed as ephemeral", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
     const fakeClient: CodexClientLike = {
@@ -1246,7 +1381,7 @@ describe("Codex app-server provider", () => {
       throw new Error(`resumeSession timed out; thread requests: ${threadRequests.join(", ")}`);
     }
 
-    expect(threadRequests).toEqual(["thread/loaded/list", "thread/resume"]);
+    expect(threadRequests).toEqual(["config/read", "thread/loaded/list", "thread/resume"]);
     expect(outcome).toBe("rejected");
     appServer.assertNoErrors();
   });

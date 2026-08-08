@@ -4,6 +4,7 @@ import type {
   CreateAgentWorktreeTarget,
   HubExecutionControlAction,
 } from "@getpaseo/protocol/messages";
+import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 
 import type { AgentManager, AgentManagerEvent, ManagedAgent } from "../agent/agent-manager.js";
 import type { McpServerConfig } from "../agent/agent-sdk-types.js";
@@ -25,6 +26,8 @@ export interface HubExecutionAgentCreateInput {
   modeId?: string;
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
+  providerOptions?: ProviderOptions;
+  toolPolicy?: ToolPolicy;
   env?: Record<string, string>;
   mcpServers?: Record<string, McpServerConfig>;
   worktree?: CreateAgentWorktreeTarget;
@@ -178,6 +181,7 @@ export class DaemonExecutions implements HubExecutionAgents {
     }
     this.requireAuthority(authorityGeneration);
     requireHubMcpNamespace(input.mcpServers);
+    requireToolPolicyServers(input.toolPolicy, input.mcpServers);
 
     let createdWorktree: CreatePaseoWorktreeWorkflowResult | null = null;
     let createdAgentId: string | null = null;
@@ -195,7 +199,15 @@ export class DaemonExecutions implements HubExecutionAgents {
         thinking: input.thinkingOptionId,
         features: input.featureValues,
         env: input.env,
-        ...(input.mcpServers ? { config: { mcpServers: input.mcpServers } } : {}),
+        ...(input.mcpServers || input.providerOptions || input.toolPolicy
+          ? {
+              config: {
+                ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
+                ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
+                ...(input.toolPolicy ? { toolPolicy: input.toolPolicy } : {}),
+              },
+            }
+          : {}),
         worktree: toCreateAgentWorktree(input.worktree),
         background: true,
         notifyOnFinish: false,
@@ -355,6 +367,21 @@ export class DaemonExecutions implements HubExecutionAgents {
 function requireHubMcpNamespace(mcpServers: Record<string, McpServerConfig> | undefined): void {
   if (mcpServers && Object.hasOwn(mcpServers, "paseo")) {
     throw new Error('Hub execution MCP server name "paseo" is reserved by the daemon');
+  }
+}
+
+function requireToolPolicyServers(
+  toolPolicy: ToolPolicy | undefined,
+  mcpServers: Record<string, McpServerConfig> | undefined,
+): void {
+  if (!toolPolicy) return;
+  const serverNames = new Set(Object.keys(mcpServers ?? {}));
+  for (const grant of toolPolicy.preapproved) {
+    if (!serverNames.has(grant.server)) {
+      throw new Error(
+        `Hub tool preapproval '${grant.server}.${grant.tool}' requires MCP server '${grant.server}' in the same create request`,
+      );
+    }
   }
 }
 

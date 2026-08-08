@@ -638,6 +638,8 @@ export class HubRelationshipHarness {
       prompt?: string;
       modeId?: string;
       mcpServers?: AgentSessionConfig["mcpServers"];
+      providerOptions?: AgentSessionConfig["providerOptions"];
+      toolPolicy?: AgentSessionConfig["toolPolicy"];
     } = {},
   ): void {
     const { prompt = "Create through the Hub", ...requestOptions } = options;

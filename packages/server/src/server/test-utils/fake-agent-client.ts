@@ -79,7 +79,10 @@ function createDeferred<T>(): Deferred<T> {
 
 function isAskMode(config: AgentSessionConfig): boolean {
   const mode = (config.modeId ?? "").toLowerCase();
-  const policy = (config.approvalPolicy ?? "").toLowerCase();
+  const policy =
+    typeof config.providerOptions?.approval_policy === "string"
+      ? config.providerOptions.approval_policy.toLowerCase()
+      : "";
 
   // Default behavior for tests: ask unless explicitly bypassed.
   if (!mode && !policy) {
@@ -1151,7 +1154,10 @@ class FakeAgentSession implements AgentSession {
 
   private needsPermissionForTool(toolName: string, toolInput: Record<string, unknown>): boolean {
     const mode = (this.config.modeId ?? "").toLowerCase();
-    const policy = (this.config.approvalPolicy ?? "").toLowerCase();
+    const policy =
+      typeof this.config.providerOptions?.approval_policy === "string"
+        ? this.config.providerOptions.approval_policy.toLowerCase()
+        : "";
 
     if (policy === "never" || mode.includes("bypass") || mode.includes("full")) {
       return false;

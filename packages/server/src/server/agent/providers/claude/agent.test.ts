@@ -652,6 +652,42 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("preapproves only granted Hub MCP tools while preserving Claude denies", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      providerOptions: {
+        allowedTools: ["Read"],
+        disallowedTools: ["Bash", "mcp__hub__reply"],
+        sandbox: { enabled: true, failIfUnavailable: true },
+      },
+      mcpServers: { hub: { type: "http", url: "http://127.0.0.1/hub" } },
+      toolPolicy: {
+        preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+      },
+    });
+
+    await (
+      session as unknown as {
+        ensureQuery(): Promise<unknown>;
+      }
+    ).ensureQuery();
+
+    expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({
+      allowedTools: ["Read", "mcp__hub__finish_execution"],
+      disallowedTools: ["Bash", "mcp__hub__reply"],
+      sandbox: { enabled: true, failIfUnavailable: true },
+    });
+    expect(queryFactory.mock.calls[0]?.[0].options.allowedTools).not.toContain("mcp__hub__reply");
+    await session.close();
+  });
+
   test("lists fast mode only for supported Opus models", async () => {
     const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
 

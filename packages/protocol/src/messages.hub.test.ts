@@ -108,6 +108,43 @@ describe("Hub session protocol", () => {
     });
   });
 
+  test("round-trips native provider options and structured MCP preapproval", () => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-policy",
+      executionId: "execution-policy",
+      provider: "codex",
+      cwd: "/workspace",
+      prompt: "Classify and finish",
+      providerOptions: {
+        sandbox_mode: "workspace-write",
+        sandbox_workspace_write: { writable_roots: ["/var/cache/npm"] },
+      },
+      mcpServers: {
+        hub: { type: "http", url: "https://hub.example/executions/policy" },
+      },
+      toolPolicy: {
+        preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+      },
+    };
+
+    expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
+  });
+
+  test.each(["Bash", "Edit", "Write"])("cannot encode native %s tool preapproval", (tool) => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-native-tool",
+      executionId: "execution-native-tool",
+      provider: "claude",
+      cwd: "/workspace",
+      prompt: "Do work",
+      toolPolicy: { preapproved: [{ kind: "native", server: "claude", tool }] },
+    };
+
+    expect(SessionInboundMessageSchema.safeParse(message).success).toBe(false);
+  });
+
   test.each([
     undefined,
     { mode: "branch-off", newBranch: "hub-work", base: "main" },

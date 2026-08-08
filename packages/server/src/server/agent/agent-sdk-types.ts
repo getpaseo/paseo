@@ -1,5 +1,8 @@
-import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentProviderNotice,
+  ProviderOptions,
+  ToolPolicy,
+} from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
@@ -576,14 +579,8 @@ export interface AgentSessionConfig {
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
   title?: string | null;
-  approvalPolicy?: string;
-  sandboxMode?: string;
-  networkAccess?: boolean;
-  webSearch?: boolean;
-  extra?: {
-    codex?: AgentMetadata;
-    claude?: Partial<ClaudeAgentOptions>;
-  };
+  providerOptions?: ProviderOptions;
+  toolPolicy?: ToolPolicy;
   mcpServers?: Record<string, McpServerConfig>;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.

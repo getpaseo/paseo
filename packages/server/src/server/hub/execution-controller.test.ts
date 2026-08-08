@@ -11,6 +11,10 @@ import type {
   OwnedAgentSnapshot,
 } from "./daemon-executions.js";
 import { HubExecutionController } from "./execution-controller.js";
+import {
+  ProviderOptionsValidationError,
+  ToolPolicyUnsupportedError,
+} from "../agent/provider-options.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -60,6 +64,22 @@ class ControlledHubExecutionAgents implements HubExecutionAgents {
   }
 }
 
+class RejectingHubExecutionAgents implements HubExecutionAgents {
+  constructor(private readonly error: Error) {}
+
+  async create(): Promise<OwnedAgentSnapshot> {
+    throw this.error;
+  }
+
+  async control(): Promise<void> {}
+
+  subscribe(_listener: (event: OwnedAgentEvent) => void): () => void {
+    return () => undefined;
+  }
+
+  async invalidateAuthority(): Promise<void> {}
+}
+
 describe("HubExecutionController", () => {
   test("cleanup fences in-flight creates before the dead session can receive a response", async () => {
     const agents = new ControlledHubExecutionAgents();
@@ -84,5 +104,52 @@ describe("HubExecutionController", () => {
     await Promise.all([create, cleanup]);
 
     expect(messages).toEqual([]);
+  });
+
+  test.each([
+    {
+      error: new ProviderOptionsValidationError("codex", [
+        { path: ["sandbox_workspace_write", "writable_roots", 0], message: "Expected string" },
+      ]),
+      expected: {
+        code: "provider_options_invalid",
+        provider: "codex",
+        issues: [
+          {
+            path: ["sandbox_workspace_write", "writable_roots", 0],
+            message: "Expected string",
+          },
+        ],
+      },
+    },
+    {
+      error: new ToolPolicyUnsupportedError("pi"),
+      expected: { code: "tool_policy_unsupported", provider: "pi" },
+    },
+  ])("returns structured $expected.code create feedback", async ({ error, expected }) => {
+    const messages: SessionOutboundMessage[] = [];
+    const controller = new HubExecutionController({
+      agents: new RejectingHubExecutionAgents(error),
+      send: (message) => messages.push(message),
+    });
+
+    await controller.createAgent({
+      type: "hub.execution.agent.create.request",
+      requestId: "rejected-create",
+      executionId: "rejected-execution",
+      provider: "codex",
+      cwd: "/tmp/paseo",
+      prompt: "run unattended",
+    });
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        type: "hub.execution.agent.create.response",
+        payload: expect.objectContaining({
+          success: false,
+          error: expect.objectContaining(expected),
+        }),
+      }),
+    ]);
   });
 });

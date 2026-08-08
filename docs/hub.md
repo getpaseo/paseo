@@ -45,11 +45,25 @@ replays the original prompt. A duplicate create returns the existing agent witho
 turn.
 
 Hub creates use the same agent creation path as trusted clients. They may select any existing
-worktree target shape and carry optional MCP server configuration for the agent session. The daemon
-keeps that configuration in its private agent record so provider sessions can recover after a
-restart; neither ordinary client snapshots and updates nor Hub projections expose session
-configuration. Execution completion policy remains outside the daemon: a completed agent turn does
-not imply that the Hub execution is terminal.
+worktree target shape and carry optional MCP server configuration and provider-native
+`providerOptions` for the agent session. The daemon keeps that configuration in its private agent
+record so provider sessions can recover after a restart; neither ordinary client snapshots and
+updates nor Hub projections expose session configuration. See [providers.md](providers.md) for the
+supported provider keys.
+
+Hub tool preapproval is a private, structured list of `{ kind: "mcp", server, tool }` references.
+Every reference must name an MCP server injected by the same create request. The daemon translates
+only those identities into the selected provider's native approval configuration. The protocol
+cannot name or preapprove native tools such as Bash, Edit, or Write. Explicit local or managed ask
+and deny policy takes precedence. Providers without exact MCP preapproval support reject unattended
+Hub creation instead of broadening access or waiting for an invisible prompt.
+
+A Hub workflow may use read-only provider settings for classifier steps. This is defense in depth,
+not a security boundary: classifier labels and prompt intent do not authorize tools. Exact MCP grants
+and the provider's local or managed policy remain the authorization controls.
+
+Execution completion policy remains outside the daemon: a completed agent turn does not imply that
+the Hub execution is terminal.
 
 The Hub ends an execution by sending `hub.execution.control.request` with the durable execution ID
 and either `interrupt` or `archive`. The daemon resolves the agent from the authenticated daemon
