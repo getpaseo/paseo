@@ -97,3 +97,5 @@ Comment `@paseo have a look at this` on an issue in that repository, from the ac
 Open the project's **Activity** tab. You should see the event received and routed, and an execution in **Executions**. The agent itself appears in the Paseo app on that machine.
 
 Nothing happened? [Activity](/docs/hub/activity) has the checklist.
+
+Before enabling the example for broader use, read [Hub security](/docs/hub/security) for trigger allowlists, host boundaries, provider-native controls, and output authority.
