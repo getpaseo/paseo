@@ -288,12 +288,14 @@ describe("JsonlRpcProcess OMP v2 transport", () => {
     const messages: Record<string, unknown>[] = [];
     transport.onMessage((message) => messages.push(message));
     const request = transport.request({ type: "hang" });
+    const exit = nextExit(transport);
 
     child.stdout.write(
       `${JSON.stringify({ type: "rpc_chunk", chunkId: "rpc-1", index: 0, count: 2, byteLength: 1024 * 1024, data: "YQ==" })}\n`,
     );
 
     await expect(request).rejects.toThrow("before the chunk decoder was enabled");
+    await expect(exit).resolves.toMatchObject({ signal: "SIGTERM" });
     child.stdout.write(`${JSON.stringify({ type: "notice", text: "after" })}\n`);
     expect(messages).toEqual([]);
     await transport.close();

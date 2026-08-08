@@ -126,6 +126,49 @@ describe("OMP agent client and session", () => {
     });
   });
 
+  test("records a completed manual compaction when OMP emits no lifecycle events", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.runtime().emitCompactStart = false;
+    omp.runtime().emitCompactEnd = false;
+
+    await omp.runOutOfBand("/compact preserve the API migration summary");
+
+    expect(omp.runtime().compactRequests).toEqual([
+      { customInstructions: "preserve the API migration summary" },
+    ]);
+    expect(omp.timeline()).toEqual([
+      { type: "compaction", status: "completed", trigger: "manual" },
+    ]);
+  });
+
+  test("does not record manual compaction completion when OMP rejects it", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.runtime().emitCompactStart = false;
+    omp.runtime().compactError = new Error("Nothing to compact (session too small)");
+
+    await omp.runOutOfBand("/compact");
+
+    expect(omp.timeline()).toEqual([
+      {
+        type: "assistant_message",
+        text: "[Error] Failed to compact context: Nothing to compact (session too small)",
+      },
+    ]);
+  });
+
+  test("does not duplicate manual compaction completion emitted by OMP", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.runOutOfBand("/compact");
+
+    expect(
+      omp.timeline().filter((item) => item.type === "compaction" && item.status === "completed"),
+    ).toEqual([{ type: "compaction", status: "completed", trigger: "manual" }]);
+  });
+
   test("preserves max as the selected thinking option", async () => {
     const omp = new OmpHarness();
     await omp.start({ thinkingOptionId: "max" });

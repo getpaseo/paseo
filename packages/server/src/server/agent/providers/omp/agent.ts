@@ -1397,13 +1397,10 @@ export class OmpAgentSession implements AgentSession {
     this.outOfBandCompactionCompleted = false;
     try {
       await this.runtimeSession.compact(customInstructions);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (
-        this.outOfBandCompactionEmit === emit &&
-        this.outOfBandCompactionStarted &&
-        !this.outOfBandCompactionCompleted
-      ) {
+      // If the runtime event path did not already emit a completed
+      // compaction item, synthesize one so a successful manual /compact
+      // always records and streams exactly one visible completion.
+      if (this.outOfBandCompactionEmit === emit && !this.outOfBandCompactionCompleted) {
         this.emitCompactionTimeline({
           turnId: undefined,
           item: {
@@ -1412,6 +1409,16 @@ export class OmpAgentSession implements AgentSession {
             trigger: "manual",
           },
         });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // Errors such as "Already compacted" and "Nothing to compact" must
+      // not emit a completion marker. Clear out-of-band state directly so
+      // a subsequent /compact invocation can proceed.
+      if (this.outOfBandCompactionEmit === emit) {
+        this.outOfBandCompactionEmit = null;
+        this.outOfBandCompactionStarted = false;
+        this.outOfBandCompactionCompleted = false;
       }
       emit({
         type: "timeline",

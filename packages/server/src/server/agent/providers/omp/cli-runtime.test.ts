@@ -367,6 +367,11 @@ describe("OMP CLI runtime", () => {
 
   test("keeps the transport usable when negotiation and a chunked frame share stdout data", async () => {
     const child = createOmpChild();
+    const startupEvent = {
+      type: "notice",
+      level: "info",
+      message: "x".repeat(1_100_000),
+    };
     replyToCommands(
       child,
       (command) => {
@@ -396,10 +401,7 @@ describe("OMP CLI runtime", () => {
           return;
         }
 
-        const frame = {
-          type: "notice",
-          message: "x".repeat(1_100_000),
-        };
+        const frame = startupEvent;
         child.stdout.write(
           `${JSON.stringify({
             id: command.id,
@@ -412,7 +414,10 @@ describe("OMP CLI runtime", () => {
       },
     );
     const session = await startSessionWithReady(child, OMP_V2_READY);
+    const events: unknown[] = [];
+    session.onEvent((event) => events.push(event));
 
+    expect(events).toEqual([startupEvent]);
     await expect(session.getState()).resolves.toMatchObject({ sessionId: "session-1" });
   });
 

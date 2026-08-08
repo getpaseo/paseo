@@ -131,6 +131,14 @@ export class OmpCliRuntime implements OmpRuntime {
     };
     const process = new JsonlRpcProcess(processOptions);
     try {
+      // Construct the session before the startup gate so its onMessage
+      // listener is registered before any post-ready frame is read. A valid
+      // provider event that shares the same stdout chunk as the negotiation
+      // response is buffered by the session and replayed once a consumer
+      // subscribes, instead of being lost before the session existed.
+      const session = new OmpCliRuntimeSession(process, this.commandsRpcName, {
+        deferEvents: true,
+      });
       const ready = await awaitOmpReady(process);
       if (supportsOmpProtocolV2(ready)) {
         // OMP can emit a post-negotiation frame in the same stdout chunk as its
@@ -146,7 +154,7 @@ export class OmpCliRuntime implements OmpRuntime {
           throw new Error("OMP RPC protocol v2 negotiation failed");
         }
       }
-      return new OmpCliRuntimeSession(process, this.commandsRpcName);
+      return session;
     } catch (error) {
       const startupError = error instanceof Error ? error : new Error(String(error));
       await process.close(startupError);
@@ -157,15 +165,29 @@ export class OmpCliRuntime implements OmpRuntime {
 
 class OmpCliRuntimeSession implements OmpRuntimeSession {
   private readonly subscribers = new Set<(event: OmpRuntimeEvent) => void>();
+  private readonly deferredEvents: OmpRuntimeEvent[] = [];
+  private deferringEvents: boolean;
   activeBranchEntryId?: string;
 
   constructor(
     private readonly process: JsonlRpcProcess,
     private readonly commandsRpcName: "get_available_commands",
+    options?: { deferEvents?: boolean },
   ) {
+    // When the runtime constructs the session before the OMP v2 negotiation
+    // round-trip completes, a valid provider event coalesced onto the same
+    // stdout chunk as the negotiation response would otherwise be dropped
+    // before any `onEvent` subscriber exists. Buffer such events and replay
+    // them in arrival order once the first subscriber registers.
+    this.deferringEvents = options?.deferEvents ?? false;
     process.onMessage((message) => {
       const event = OmpRuntimeEventSchema.safeParse(message);
-      if (event.success) {
+      if (!event.success) {
+        return;
+      }
+      if (this.deferringEvents) {
+        this.deferredEvents.push(event.data);
+      } else {
         this.emit(event.data);
       }
     });
@@ -176,6 +198,13 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
 
   onEvent(callback: (event: OmpRuntimeEvent) => void): () => void {
     this.subscribers.add(callback);
+    if (this.deferringEvents) {
+      this.deferringEvents = false;
+      const replay = this.deferredEvents.splice(0);
+      for (const event of replay) {
+        callback(event);
+      }
+    }
     return () => {
       this.subscribers.delete(callback);
     };

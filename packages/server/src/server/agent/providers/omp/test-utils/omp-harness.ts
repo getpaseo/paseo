@@ -390,6 +390,12 @@ export class OmpHarness {
     await waitForImmediate();
   }
 
+  async runOutOfBand(input: string): Promise<void> {
+    const handler = this.requireSession().tryHandleOutOfBand?.(input);
+    if (!handler) throw new Error(`OMP did not handle ${input} out of band`);
+    await handler.run({ emit: (event) => this.events.push(event) });
+  }
+
   timeline(): AgentTimelineItem[] {
     return this.events.flatMap((event) => (event.type === "timeline" ? [event.item] : []));
   }

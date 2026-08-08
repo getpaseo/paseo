@@ -23,6 +23,13 @@ const MAX_RPC_FRAME_BYTES = 1024 * 1024;
 const RPC_CHUNK_PAYLOAD_BYTES = 256 * 1024;
 /** Hard cap on chunk-id length to bound pending-state allocations. */
 const RPC_CHUNK_ID_MAX_LENGTH = 128;
+/**
+ * Upper bound on the encoded base64 length of one chunk payload (256 KiB of
+ * raw bytes): `ceil(262144 / 3) * 4 + 4` for the maximum padding. Checking
+ * the encoded length before `Buffer.from` prevents allocating an unbounded
+ * buffer from a hostile or oversized `data` field.
+ */
+const MAX_ENCODED_CHUNK_BYTES = Math.ceil(RPC_CHUNK_PAYLOAD_BYTES / 3) * 4 + 4;
 /** Canonical base64 alphabet used by OMP; equivalent to /^[A-Za-z0-9+/]*={0,2}$/ but faster. */
 const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
@@ -166,11 +173,27 @@ class RpcChunkFrameDecoder {
 }
 
 function decodeBase64(data: unknown): Buffer {
-  if (typeof data !== "string" || data.length === 0 || !CANONICAL_BASE64.test(data)) {
+  if (typeof data !== "string") {
+    throw new Error("invalid rpc chunk data");
+  }
+  if (data.length === 0) {
+    throw new Error("invalid rpc chunk data");
+  }
+  // Bound the encoded length before any Buffer allocation. A single canonical
+  // base64 string cannot represent more than `floor(length * 3 / 4)` raw
+  // bytes, so an encoded length above the cap can never decode into a
+  // payload at or below RPC_CHUNK_PAYLOAD_BYTES.
+  if (data.length > MAX_ENCODED_CHUNK_BYTES) {
+    throw new Error("rpc chunk payload exceeds the transport limit");
+  }
+  if (!CANONICAL_BASE64.test(data)) {
     throw new Error("invalid rpc chunk data");
   }
   const bytes = Buffer.from(data, "base64");
   if (bytes.toString("base64") !== data) throw new Error("invalid rpc chunk data");
+  if (bytes.byteLength > RPC_CHUNK_PAYLOAD_BYTES) {
+    throw new Error("rpc chunk payload exceeds the transport limit");
+  }
   return bytes;
 }
 
@@ -439,7 +462,7 @@ export class JsonlRpcProcess {
       if (line.trim()) {
         this.handleLine(line);
       } else if (this.chunkDecoderEnabled && this.chunkDecoder.hasPendingSequence()) {
-        this.failAll(new Error(`${this.diagnosticName} rpc chunk sequence interrupted`));
+        this.terminate(new Error(`${this.diagnosticName} rpc chunk sequence interrupted`));
       }
     }
   }
@@ -453,7 +476,7 @@ export class JsonlRpcProcess {
       parsed = JSON.parse(line);
     } catch (error) {
       if (this.chunkDecoderEnabled) {
-        this.failAll(
+        this.terminate(
           new Error(`${this.diagnosticName} received invalid JSON stdout frame`, { cause: error }),
         );
         return;
@@ -472,7 +495,7 @@ export class JsonlRpcProcess {
         }
         parsed = decoded;
       } catch (error) {
-        this.failAll(
+        this.terminate(
           error instanceof Error
             ? error
             : new Error(`${this.diagnosticName} rpc chunk decoder failed: ${String(error)}`),
@@ -485,7 +508,7 @@ export class JsonlRpcProcess {
       !Array.isArray(parsed) &&
       (parsed as Record<string, unknown>).type === "rpc_chunk"
     ) {
-      this.failAll(
+      this.terminate(
         new Error(`${this.diagnosticName} received rpc_chunk before the chunk decoder was enabled`),
       );
       return;
@@ -557,6 +580,36 @@ export class JsonlRpcProcess {
       pending.reject(error);
     }
     this.pending.clear();
+  }
+
+  /**
+   * Reject every pending request with `reason`, then terminate the child
+   * process. Used for fatal wire-protocol failures where the child is still
+   * alive but can no longer be trusted: the existing `child.on("exit")`
+   * handler still fires the exit subscribers exactly once with the standard
+   * `{ code, signal, error }` envelope, and `failAll` is a no-op once the
+   * transport is disposed, so exit semantics stay coherent.
+   */
+  private terminate(reason: Error): void {
+    if (this.disposed) {
+      return;
+    }
+    this.failAll(reason);
+    try {
+      this.child.stdin.end();
+    } catch {
+      // Ignore stdin races.
+    }
+    void terminateWithTreeKill(this.child, {
+      gracefulTimeoutMs: GRACEFUL_SHUTDOWN_TIMEOUT_MS,
+      forceTimeoutMs: FORCE_SHUTDOWN_TIMEOUT_MS,
+      onForceSignal: () => {
+        this.options.logger.warn(
+          { timeoutMs: GRACEFUL_SHUTDOWN_TIMEOUT_MS },
+          `${this.diagnosticName} process did not exit after SIGTERM; sending SIGKILL`,
+        );
+      },
+    });
   }
 }
 
