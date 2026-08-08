@@ -17,6 +17,12 @@ export interface KeyboardShortcutContext {
   isDesktop: boolean;
   focusScope: KeyboardFocusScope;
   commandCenterOpen: boolean;
+  /**
+   * A dismissible overlay (dialog/sheet/popover) is open and owns Escape.
+   * Optional: callers that never open overlays (e.g. browser-shortcut policy)
+   * can omit it, and `undefined` reads as "no overlay open".
+   */
+  overlayOpen?: boolean;
 }
 
 export interface KeyboardShortcutInput {
@@ -72,6 +78,8 @@ interface ShortcutWhen {
   terminal?: false;
   /** false = disabled when command center is open */
   commandCenter?: false;
+  /** false = disabled when a dismissible overlay (dialog/sheet/popover) is open */
+  overlay?: false;
   /** Exact focus scope match */
   focusScope?: KeyboardFocusScope;
 }
@@ -1028,7 +1036,9 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "agent-interrupt",
     action: "agent.interrupt",
     combo: "Escape",
-    when: { commandCenter: false, terminal: false },
+    // `overlay: false` keeps Escape from interrupting the agent while a dialog
+    // is open — Escape belongs to the topmost overlay, which closes itself.
+    when: { commandCenter: false, terminal: false, overlay: false },
     preventDefault: false,
     stopPropagation: false,
     help: {
@@ -1171,6 +1181,7 @@ export function matchesKeyboardShortcutContext(
   }
   if (when.terminal === false && context.focusScope === "terminal") return false;
   if (when.commandCenter === false && context.commandCenterOpen) return false;
+  if (when.overlay === false && context.overlayOpen) return false;
   if (when.focusScope !== undefined && context.focusScope !== when.focusScope) return false;
   return true;
 }

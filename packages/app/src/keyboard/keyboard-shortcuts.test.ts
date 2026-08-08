@@ -32,6 +32,7 @@ function shortcutContext(
     isDesktop: false,
     focusScope: "other",
     commandCenterOpen: false,
+    overlayOpen: false,
     ...overrides,
   };
 }
@@ -496,6 +497,11 @@ describe("keyboard-shortcuts", () => {
       name: "does not interrupt agent when command center is open",
       event: { key: "Escape", code: "Escape" },
       context: { commandCenterOpen: true },
+    },
+    {
+      name: "does not interrupt agent when a dismissible overlay is open",
+      event: { key: "Escape", code: "Escape" },
+      context: { focusScope: "message-input", overlayOpen: true },
     },
     {
       name: "does not bind pane shortcuts on non-mac platforms",

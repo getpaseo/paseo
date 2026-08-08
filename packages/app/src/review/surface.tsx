@@ -16,6 +16,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { Shortcut } from "@/components/ui/shortcut";
 import { isWeb } from "@/constants/platform";
+import { pushEscapeDismissHandler } from "@/keyboard/escape-dismiss-stack";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -544,6 +545,16 @@ export function InlineReviewEditor({
     inputRef.current?.focus();
   }, []);
 
+  // Own Escape via the shared stack only while the editor is focused: cancels the
+  // comment and flips hasEscapeDismissHandler() so the global dispatcher suppresses
+  // agent.interrupt. Gating on focus (not just mount) keeps a blurred or
+  // background editor from swallowing Escape meant to interrupt the agent, and
+  // scopes ownership to the active editor when several are mounted.
+  useEffect(() => {
+    if (!isWeb || !isFocused) return;
+    return pushEscapeDismissHandler(onCancel);
+  }, [isFocused, onCancel]);
+
   const handleFocus = useCallback(() => {
     focus.unfocus();
     setIsFocused(true);
@@ -568,14 +579,9 @@ export function InlineReviewEditor({
       return;
     }
 
+    // Escape is owned by the shared escape-dismiss stack (effect above); this
+    // listener only handles Cmd/Ctrl+Enter to save.
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        onCancel();
-        return;
-      }
-
       if (event.key !== "Enter" || event.shiftKey) {
         return;
       }
@@ -594,7 +600,7 @@ export function InlineReviewEditor({
     return () => {
       element.removeEventListener("keydown", handleKeyDown);
     };
-  }, [canSave, handleSave, onCancel]);
+  }, [canSave, handleSave]);
 
   const inputStyle = useMemo<StyleProp<TextStyle>>(
     () => [styles.editorInput, isFocused && styles.editorInputFocused],

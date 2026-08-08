@@ -9,6 +9,7 @@ import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { isWeb } from "@/constants/platform";
 import { WindowChromeRootRegion, WindowChromeSafeArea } from "@/utils/desktop-window";
+import { pushEscapeDismissHandler } from "@/keyboard/escape-dismiss-stack";
 
 interface AttachmentLightboxProps {
   metadata: AttachmentMetadata | null;
@@ -26,17 +27,12 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
     setErrored(false);
   }, [metadata?.id]);
 
+  // Own Escape via the shared stack while open: closes the lightbox and flips
+  // hasEscapeDismissHandler() so the global dispatcher suppresses agent.interrupt
+  // instead of stopping a running agent (see escape-dismiss-stack).
   useEffect(() => {
     if (!isWeb || !metadata) return;
-    function handleKeydown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-    window.addEventListener("keydown", handleKeydown);
-    return () => {
-      window.removeEventListener("keydown", handleKeydown);
-    };
+    return pushEscapeDismissHandler(onClose);
   }, [metadata, onClose]);
 
   const closeButtonRowStyle = useMemo(

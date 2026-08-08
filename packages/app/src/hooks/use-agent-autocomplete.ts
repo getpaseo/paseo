@@ -57,6 +57,8 @@ interface AgentAutocompleteResult {
   emptyText: string;
   onSelectOption: (option: AutocompleteOption) => void;
   onKeyPress: (event: { key: string; preventDefault: () => void }) => boolean;
+  /** Hide the popover until the active mention/command target changes. */
+  dismiss: () => void;
 }
 
 interface DirectorySuggestionEntry {
@@ -319,6 +321,15 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     return () => clearTimeout(timer);
   }, [fileFilterQuery]);
 
+  // Escape dismisses the popover (via the shared escape-dismiss stack in the
+  // composer) without interrupting the agent. Reset whenever the active target
+  // changes so typing more re-opens it.
+  const [dismissed, setDismissed] = useState(false);
+  const dismiss = useCallback(() => setDismissed(true), []);
+  useEffect(() => {
+    setDismissed(false);
+  }, [activeSlashCommand, activeFileMention]);
+
   const normalizedDraftConfig = useMemo(
     () => normalizeDraftCommandConfig(draftConfig),
     [draftConfig],
@@ -361,7 +372,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     draftConfig: queryDraftConfig,
   });
 
-  const isVisible = canShowAutocomplete && !(mode === "command" && isCommandsLoading);
+  const isVisible = canShowAutocomplete && !dismissed && !(mode === "command" && isCommandsLoading);
 
   const fileSuggestionsQuery = useQuery({
     queryKey: [
@@ -473,15 +484,14 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     ],
   );
 
+  // No onEscape: while the popover is open the composer registers `dismiss` with
+  // the shared escape-dismiss stack, which intercepts Escape in the capture phase
+  // (and suppresses agent.interrupt), so an onEscape handler here would never run.
   const { selectedIndex, onKeyPress } = useAutocomplete({
     isVisible,
     options,
     query: mode === "command" ? commandFilterQuery : fileFilterQuery,
     onSelectOption,
-    onEscape:
-      mode === "command" && activeSlashCommand?.position === "start"
-        ? () => setUserInput("")
-        : undefined,
   });
 
   const isLoading = resolveAutocompleteIsLoading({
@@ -516,5 +526,6 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     emptyText,
     onSelectOption,
     onKeyPress,
+    dismiss,
   };
 }

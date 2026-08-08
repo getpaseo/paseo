@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { useReviewDraftStore, type ReviewDraftComment } from "./store";
 import { buildReviewableDiffTargetKey, type ReviewableDiffTarget } from "@/utils/diff-layout";
+import { hasEscapeDismissHandler } from "@/keyboard/escape-dismiss-stack";
 import {
   getInlineReviewThreadState,
   getInlineReviewThreadViewportStyle,
@@ -410,6 +411,39 @@ describe("InlineReviewEditor", () => {
 
     fireEvent.keyDown(input, { key: "Enter", metaKey: true });
     expect(onSave).toHaveBeenCalledWith("ready");
+  });
+
+  // Regression: the editor must own Escape only while focused. A blurred or
+  // background editor that keeps Escape would swallow the agent-interrupt
+  // shortcut and cancel the wrong comment. See escape-dismiss-stack.
+  it("owns Escape only while focused, releasing it on blur", () => {
+    const onCancel = vi.fn();
+    const { getByTestId } = render(
+      <InlineReviewEditor
+        initialBody="ready"
+        onCancel={onCancel}
+        onSave={vi.fn()}
+        testID="editor"
+      />,
+    );
+    const input = getByTestId("editor-input");
+
+    // Blurred: not registered with the shared stack, so Escape is NOT swallowed
+    // (it stays available for the agent-interrupt shortcut).
+    fireEvent.blur(input);
+    expect(hasEscapeDismissHandler()).toBe(false);
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(onCancel).not.toHaveBeenCalled();
+
+    // Focused: registered, so Escape cancels this editor.
+    fireEvent.focus(input);
+    expect(hasEscapeDismissHandler()).toBe(true);
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+
+    // Blur again releases ownership.
+    fireEvent.blur(input);
+    expect(hasEscapeDismissHandler()).toBe(false);
   });
 
   it("shows shared shortcut hints while focused on a fine-pointer screen", () => {

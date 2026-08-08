@@ -95,6 +95,15 @@ let webOverlayOrder = 0;
 let webOverlayListenersAttached = false;
 let webOverlayFocusCheckQueued = false;
 
+/**
+ * True while a registered web overlay is open. Only the topmost overlay receives
+ * keyboard input, so global shortcuts that a closing overlay would also consume
+ * (Escape) must stand down while this is true.
+ */
+export function hasOpenWebOverlay(): boolean {
+  return webOverlayEntries.length > 0;
+}
+
 function getTopWebOverlay(): WebOverlayEntry | undefined {
   return webOverlayEntries.reduce<WebOverlayEntry | undefined>((top, entry) => {
     if (!top) return entry;

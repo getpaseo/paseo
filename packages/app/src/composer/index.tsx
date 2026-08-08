@@ -99,6 +99,7 @@ import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { ComposerKeyboardScopeProvider } from "@/composer/keyboard-scope";
 import { useAppSettings } from "@/hooks/use-settings";
 import { isWeb, isNative } from "@/constants/platform";
+import { pushEscapeDismissHandler } from "@/keyboard/escape-dismiss-stack";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type {
   AttachmentMetadata,
@@ -1213,6 +1214,14 @@ export function Composer({
   });
   const autocompleteOnKeyPressRef = useRef(autocomplete.onKeyPress);
   autocompleteOnKeyPressRef.current = autocomplete.onKeyPress;
+
+  // While the autocomplete popover is open, own Escape via the shared stack: it
+  // dismisses the popover and flips hasEscapeDismissHandler() so the global
+  // dispatcher suppresses agent.interrupt instead of stopping the running agent.
+  useEffect(() => {
+    if (!isWeb || !autocomplete.isVisible || !isPaneFocused) return;
+    return pushEscapeDismissHandler(autocomplete.dismiss);
+  }, [autocomplete.isVisible, autocomplete.dismiss, isPaneFocused]);
 
   // Clear send error when user edits the input
   useEffect(() => {
