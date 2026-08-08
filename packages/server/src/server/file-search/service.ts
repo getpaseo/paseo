@@ -304,7 +304,7 @@ function ingestRipgrepLine(
   accumulator: SearchAccumulator,
 ): "continue" | "stop" {
   if (!line) return "continue";
-  const parsed = JSON.parse(line) as unknown;
+  const parsed = parseRipgrepLine(line);
   if (!isRipgrepMatch(parsed)) return "continue";
 
   const relativePath = normalizeResultPath(cwd, parsed.data.path.text);
@@ -323,6 +323,14 @@ function ingestRipgrepLine(
     if (outcome === "stop") return "stop";
   }
   return "continue";
+}
+
+function parseRipgrepLine(line: string): unknown {
+  try {
+    return JSON.parse(line) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 function isRipgrepMatch(value: unknown): value is {
@@ -536,7 +544,7 @@ async function runSearchCommand(command: SearchCommand): Promise<SearchCommandRe
       if (settled) return;
       settled = true;
       command.signal.removeEventListener("abort", abort);
-      if (!lineError && stdoutBuffer) {
+      if (!lineError && stdoutBuffer && !command.signal.aborted) {
         try {
           command.onStdoutLine(stdoutBuffer);
         } catch (error) {

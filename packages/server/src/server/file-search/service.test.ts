@@ -98,6 +98,22 @@ describe("searchWorkspaceFiles", () => {
     });
   });
 
+  test("ignores a partial ripgrep JSON record left by subprocess cancellation", async () => {
+    const runner: SearchCommandRunner = {
+      async run(command) {
+        command.onStdoutLine('{"type":"match","data":{"path":{"text":"notes.txt"}');
+        return { exitCode: 0, stderr: "" };
+      },
+    };
+    const cwd = makeDir("paseo-file-search-partial-json-");
+
+    await expect(searchWorkspaceFiles({ cwd, query: "needle" }, { runner })).resolves.toEqual({
+      files: [],
+      totalMatches: 0,
+      truncated: false,
+    });
+  });
+
   test("falls back to git grep when ripgrep is unavailable", async () => {
     const calls: string[] = [];
     const runner: SearchCommandRunner = {
