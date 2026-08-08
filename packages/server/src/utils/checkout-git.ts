@@ -61,8 +61,10 @@ export type GitMutationRefreshReason =
   | "create-branch"
   | "stash-push"
   | "stash-pop"
+  | "discard-changes"
   | "create-worktree";
 
+const DISCARD_CHANGES_TIMEOUT_MS = 120_000;
 const DEFAULT_PULL_REQUEST_STATUS_CACHE_TTL_MS = 30_000;
 const PULL_REQUEST_STATUS_CACHE_MAX = 1_000;
 const DEFAULT_SHORTSTAT_CACHE_TTL_MS = 15_000;
@@ -2084,6 +2086,7 @@ function buildPlaceholderParsedDiffFile(
 ): ParsedDiffFile {
   return {
     path: change.path,
+    ...(change.oldPath ? { oldPath: change.oldPath } : {}),
     isNew: change.isNew,
     isDeleted: change.isDeleted,
     additions: options.stat?.additions ?? 0,
@@ -2918,6 +2921,7 @@ async function buildHighlightedTrackedDiffFile(input: {
   return {
     ...highlightedFile,
     path: change.path,
+    ...(change.oldPath ? { oldPath: change.oldPath } : {}),
     isNew: change.isNew,
     isDeleted: change.isDeleted,
     status: "ok",
@@ -2993,6 +2997,7 @@ async function appendStructuredTrackedDiffs(
 
     const file = {
       path: change.path,
+      ...(change.oldPath ? { oldPath: change.oldPath } : {}),
       isNew: change.isNew,
       isDeleted: change.isDeleted,
       additions: stat?.additions ?? 0,
@@ -3319,6 +3324,65 @@ export async function commitChanges(
 
 export async function commitAll(cwd: string, message: string): Promise<void> {
   await commitChanges(cwd, { message, addAll: true });
+}
+
+export async function discardChanges(cwd: string, pathspecs: string[]): Promise<void> {
+  await requireGitRepo(cwd);
+  if (pathspecs.length === 0) {
+    return;
+  }
+  try {
+    await runGitCommand(["reset", "-q", "HEAD", "--", ...pathspecs], {
+      cwd,
+      timeout: DISCARD_CHANGES_TIMEOUT_MS,
+    });
+  } catch {
+    // Why: unborn HEAD has no commit for reset, so remove the paths directly from the index.
+    await runGitCommand(["rm", "--cached", "-r", "-q", "--ignore-unmatch", "--", ...pathspecs], {
+      cwd,
+      timeout: DISCARD_CHANGES_TIMEOUT_MS,
+    });
+  }
+  // With everything unstaged, the remaining state is only worktree
+  // modifications/deletions (restore from the index) and untracked files
+  // (clean). Classify from porcelain so each path gets the command that
+  // actually applies to it.
+  const status = await runGitCommand(["status", "--porcelain=v1", "-z", "--", ...pathspecs], {
+    cwd,
+    timeout: DISCARD_CHANGES_TIMEOUT_MS,
+  });
+  const tracked: string[] = [];
+  const untracked: string[] = [];
+  const tokens = status.stdout.split("\0");
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (token.length < 4) {
+      continue;
+    }
+    const state = token.slice(0, 2);
+    const filePath = token.slice(3);
+    if (state.startsWith("R") || state.startsWith("C")) {
+      // Rename/copy entries carry the source path as the next NUL token.
+      index += 1;
+    }
+    if (state === "??") {
+      untracked.push(filePath);
+      continue;
+    }
+    tracked.push(filePath);
+  }
+  if (tracked.length > 0) {
+    await runGitCommand(["checkout", "-q", "--", ...tracked], {
+      cwd,
+      timeout: DISCARD_CHANGES_TIMEOUT_MS,
+    });
+  }
+  if (untracked.length > 0) {
+    await runGitCommand(["clean", "-fd", "-q", "--", ...untracked], {
+      cwd,
+      timeout: DISCARD_CHANGES_TIMEOUT_MS,
+    });
+  }
 }
 
 interface DetectMergeToBaseConflictInput {

@@ -390,9 +390,32 @@ export const ar: TranslationResources = {
     fileActions: {
       openFile: "افتح الملف",
       copyPath: "نسخ المسار",
+      copyRelativePath: "نسخ المسار النسبي",
+      revealIn: "إظهار في {{target}}",
       download: "تحميل",
       addToChat: "إضافة إلى الدردشة",
       moreActions: "المزيد من الإجراءات",
+      newFile: "ملف جديد",
+      newFolder: "مجلد جديد",
+      collapseFolder: "طي المجلد",
+      rename: "إعادة تسمية",
+      duplicate: "تكرار",
+      revert: "تجاهل التغييرات",
+      delete: "حذف",
+      confirmDelete: {
+        fileTitle: "حذف الملف؟",
+        folderTitle: "حذف المجلد؟",
+        message: 'سيتم حذف "{{name}}" نهائيًا.',
+        confirm: "حذف",
+        cancel: "إلغاء",
+      },
+      confirmRevert: {
+        title: "تجاهل التغييرات؟",
+        message: 'سيتم تجاهل التغييرات في "{{name}}" نهائيًا.',
+        confirm: "تجاهل",
+        cancel: "إلغاء",
+        failed: "فشل تجاهل التغييرات",
+      },
     },
     fileExplorer: {
       sort: {
@@ -422,6 +445,15 @@ export const ar: TranslationResources = {
       },
       errors: {
         failedToListDirectory: "فشل في سرد ​​الدليل",
+        createFailed: "فشل إنشاء العنصر",
+        renameFailed: "فشل إعادة تسمية العنصر",
+        duplicateFailed: "فشل تكرار العنصر",
+        revealFailed: "فشل إظهار العنصر",
+        deleteFailed: "فشل حذف العنصر",
+      },
+      draft: {
+        filePlaceholder: "اسم الملف",
+        folderPlaceholder: "اسم المجلد",
       },
     },
     setup: {

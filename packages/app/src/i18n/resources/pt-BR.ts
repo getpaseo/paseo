@@ -394,9 +394,32 @@ export const ptBR: TranslationResources = {
     fileActions: {
       openFile: "Abrir arquivo",
       copyPath: "Copiar caminho",
+      copyRelativePath: "Copiar caminho relativo",
+      revealIn: "Mostrar no {{target}}",
       download: "Baixar",
       addToChat: "Adicionar ao chat",
       moreActions: "Mais ações",
+      newFile: "Novo arquivo",
+      newFolder: "Nova pasta",
+      collapseFolder: "Recolher pasta",
+      rename: "Renomear",
+      duplicate: "Duplicar",
+      revert: "Descartar alterações",
+      delete: "Excluir",
+      confirmDelete: {
+        fileTitle: "Excluir arquivo?",
+        folderTitle: "Excluir pasta?",
+        message: '"{{name}}" será excluído permanentemente.',
+        confirm: "Excluir",
+        cancel: "Cancelar",
+      },
+      confirmRevert: {
+        title: "Descartar alterações?",
+        message: 'As alterações em "{{name}}" serão descartadas permanentemente.',
+        confirm: "Descartar",
+        cancel: "Cancelar",
+        failed: "Falha ao descartar alterações",
+      },
     },
     fileExplorer: {
       sort: {
@@ -426,6 +449,15 @@ export const ptBR: TranslationResources = {
       },
       errors: {
         failedToListDirectory: "Falha ao listar diretório",
+        createFailed: "Falha ao criar entrada",
+        renameFailed: "Falha ao renomear entrada",
+        duplicateFailed: "Falha ao duplicar entrada",
+        revealFailed: "Falha ao mostrar entrada",
+        deleteFailed: "Falha ao excluir entrada",
+      },
+      draft: {
+        filePlaceholder: "Nome do arquivo",
+        folderPlaceholder: "Nome da pasta",
       },
     },
     setup: {

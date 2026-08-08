@@ -394,9 +394,32 @@ export const ja: TranslationResources = {
     fileActions: {
       openFile: "ファイルを開く",
       copyPath: "パスをコピー",
+      copyRelativePath: "相対パスをコピー",
+      revealIn: "{{target}}で表示",
       download: "ダウンロード",
       addToChat: "チャットに追加",
       moreActions: "その他のアクション",
+      newFile: "新規ファイル",
+      newFolder: "新規フォルダ",
+      collapseFolder: "フォルダを折りたたむ",
+      rename: "名前を変更",
+      duplicate: "複製",
+      revert: "変更を破棄",
+      delete: "削除",
+      confirmDelete: {
+        fileTitle: "ファイルを削除しますか？",
+        folderTitle: "フォルダを削除しますか？",
+        message: "「{{name}}」は完全に削除されます。",
+        confirm: "削除",
+        cancel: "キャンセル",
+      },
+      confirmRevert: {
+        title: "変更を破棄しますか？",
+        message: "「{{name}}」への変更は完全に破棄されます。",
+        confirm: "破棄",
+        cancel: "キャンセル",
+        failed: "変更の破棄に失敗しました",
+      },
     },
     fileExplorer: {
       sort: {
@@ -426,6 +449,15 @@ export const ja: TranslationResources = {
       },
       errors: {
         failedToListDirectory: "ディレクトリの一覧取得に失敗しました",
+        createFailed: "エントリの作成に失敗しました",
+        renameFailed: "エントリの名前変更に失敗しました",
+        duplicateFailed: "エントリの複製に失敗しました",
+        revealFailed: "エントリの表示に失敗しました",
+        deleteFailed: "エントリの削除に失敗しました",
+      },
+      draft: {
+        filePlaceholder: "ファイル名",
+        folderPlaceholder: "フォルダ名",
       },
     },
     setup: {

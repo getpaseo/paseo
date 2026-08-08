@@ -393,9 +393,32 @@ export const ru: TranslationResources = {
     fileActions: {
       openFile: "Открыть файл",
       copyPath: "Копировать путь",
+      copyRelativePath: "Копировать относительный путь",
+      revealIn: "Показать в {{target}}",
       download: "Скачать",
       addToChat: "Добавить в чат",
       moreActions: "Дополнительные действия",
+      newFile: "Новый файл",
+      newFolder: "Новая папка",
+      collapseFolder: "Свернуть папку",
+      rename: "Переименовать",
+      duplicate: "Дублировать",
+      revert: "Отменить изменения",
+      delete: "Удалить",
+      confirmDelete: {
+        fileTitle: "Удалить файл?",
+        folderTitle: "Удалить папку?",
+        message: "«{{name}}» будет удалён безвозвратно.",
+        confirm: "Удалить",
+        cancel: "Отмена",
+      },
+      confirmRevert: {
+        title: "Отменить изменения?",
+        message: "Изменения в «{{name}}» будут безвозвратно отменены.",
+        confirm: "Отменить",
+        cancel: "Отмена",
+        failed: "Не удалось отменить изменения",
+      },
     },
     fileExplorer: {
       sort: {
@@ -425,6 +448,15 @@ export const ru: TranslationResources = {
       },
       errors: {
         failedToListDirectory: "Не удалось указать каталог",
+        createFailed: "Не удалось создать элемент",
+        renameFailed: "Не удалось переименовать элемент",
+        duplicateFailed: "Не удалось дублировать элемент",
+        revealFailed: "Не удалось показать элемент",
+        deleteFailed: "Не удалось удалить элемент",
+      },
+      draft: {
+        filePlaceholder: "Имя файла",
+        folderPlaceholder: "Имя папки",
       },
     },
     setup: {
