@@ -8976,9 +8976,12 @@ test("workspace auto-name keeps a manual title written before the scheduled titl
   const workspaceAutoName = new WorkspaceAutoName({
     agentManager: asAgentManager({}),
     workspaceRegistry: {
-      get: async (workspaceId) => stored.get(workspaceId) ?? null,
-      upsert: async (record) => {
-        stored.set(record.workspaceId, record);
+      update: async (workspaceId, updater) => {
+        const current = stored.get(workspaceId);
+        if (!current) return null;
+        const updated = updater(current);
+        stored.set(workspaceId, updated);
+        return updated;
       },
     },
     workspaceGitService: createNoopWorkspaceGitService(),
@@ -9029,9 +9032,12 @@ test("workspace auto-name replaces the unchanged prompt title", async () => {
   const workspaceAutoName = new WorkspaceAutoName({
     agentManager: asAgentManager({}),
     workspaceRegistry: {
-      get: async (workspaceId) => stored.get(workspaceId) ?? null,
-      upsert: async (record) => {
-        stored.set(record.workspaceId, record);
+      update: async (workspaceId, updater) => {
+        const current = stored.get(workspaceId);
+        if (!current) return null;
+        const updated = updater(current);
+        stored.set(workspaceId, updated);
+        return updated;
       },
     },
     workspaceGitService: createNoopWorkspaceGitService(),
@@ -9101,9 +9107,12 @@ test("workspace auto-name uses the backing root for a nested worktree", async ()
   const workspaceAutoName = new WorkspaceAutoName({
     agentManager: asAgentManager({}),
     workspaceRegistry: {
-      get: async (workspaceId) => stored.get(workspaceId) ?? null,
-      upsert: async (record) => {
-        stored.set(record.workspaceId, record);
+      update: async (workspaceId, updater) => {
+        const current = stored.get(workspaceId);
+        if (!current) return null;
+        const updated = updater(current);
+        stored.set(workspaceId, updated);
+        return updated;
       },
     },
     workspaceGitService: createNoopWorkspaceGitService(),
