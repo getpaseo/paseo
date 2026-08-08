@@ -921,6 +921,97 @@ describe("real provider usage fetchers", () => {
     });
   });
 
+  it("fetches Kimi rate-limit windows from limits[]", async () => {
+    process.env["KIMI_TOKEN"] = "kimi_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.kimi.com/coding/v1/usages",
+          () =>
+            jsonResponse({
+              usage: {
+                limit: "100",
+                remaining: "74",
+                resetTime: "2026-08-11T15:53:05Z",
+              },
+              limits: [
+                {
+                  window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+                  detail: {
+                    limit: "100",
+                    used: "27",
+                    remaining: "73",
+                    resetTime: "2026-08-08T14:53:05Z",
+                  },
+                },
+                {
+                  window: { duration: "soon" },
+                  detail: null,
+                },
+              ],
+            }),
+        ],
+      ]),
+    );
+
+    const kimi = findProvider(await service().listUsage(), "kimi");
+
+    expect(kimi).toMatchObject({
+      status: "available",
+      windows: [
+        expect.objectContaining({
+          id: "coding_usage",
+          usedPct: 26,
+          remainingPct: 74,
+          resetsAt: "2026-08-11T15:53:05Z",
+        }),
+        expect.objectContaining({
+          id: "rate_limit_5_hour",
+          label: "5-hour limit",
+          usedPct: 27,
+          remainingPct: 73,
+          resetsAt: "2026-08-08T14:53:05Z",
+        }),
+      ],
+    });
+  });
+
+  it("derives the Kimi rate-window consumption from used when remaining is omitted", async () => {
+    process.env["KIMI_TOKEN"] = "kimi_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.kimi.com/coding/v1/usages",
+          () =>
+            jsonResponse({
+              usage: { limit: "100", remaining: "74" },
+              limits: [
+                {
+                  window: { duration: 24, timeUnit: "TIME_UNIT_HOUR" },
+                  detail: { limit: "50", used: "25" },
+                },
+              ],
+            }),
+        ],
+      ]),
+    );
+
+    const kimi = findProvider(await service().listUsage(), "kimi");
+
+    expect(kimi).toMatchObject({
+      status: "available",
+      windows: expect.arrayContaining([
+        expect.objectContaining({
+          id: "rate_limit_24_hour",
+          label: "24-hour limit",
+          usedPct: 50,
+          remainingPct: 50,
+          resetsAt: null,
+        }),
+      ]),
+    });
+  });
+
   it("fetches MiniMax usage from MINIMAX_API_KEY against the global endpoint", async () => {
     process.env["MINIMAX_API_KEY"] = "minimax_test_token";
     let requestedUrl: string | null = null;
