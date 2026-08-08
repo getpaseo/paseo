@@ -27,6 +27,53 @@ describe("evaluatePluginClientBundle", () => {
     ]);
   });
 
+  it("collects a declarative attachment source", () => {
+    const plugin = evaluatePluginClientBundle(
+      "linear",
+      bundle(`
+        plugin.addAttachmentSource({
+          id: "issues",
+          title: "Linear issue",
+          icon: "CircleDot",
+          pickerTitle: "Attach Linear issue",
+          searchPlaceholder: "Search by identifier or title",
+          search: { name: "issues.search", input: {}, output: {} },
+        });
+      `),
+    );
+
+    expect(plugin.attachmentSources).toEqual([
+      {
+        id: "issues",
+        title: "Linear issue",
+        icon: "CircleDot",
+        pickerTitle: "Attach Linear issue",
+        searchPlaceholder: "Search by identifier or title",
+        search: { name: "issues.search", input: {}, output: {} },
+      },
+    ]);
+  });
+
+  it("rejects duplicate attachment source ids", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "linear",
+        bundle(`
+          const source = {
+            id: "issues",
+            title: "Linear issue",
+            icon: "CircleDot",
+            pickerTitle: "Attach Linear issue",
+            searchPlaceholder: "Search",
+            search: { name: "issues.search", input: {}, output: {} },
+          };
+          plugin.addAttachmentSource(source);
+          plugin.addAttachmentSource(source);
+        `),
+      ),
+    ).toThrow("Duplicate attachment source: issues");
+  });
+
   it("rejects a sidebar placement whose surface does not exist", () => {
     expect(() =>
       evaluatePluginClientBundle(

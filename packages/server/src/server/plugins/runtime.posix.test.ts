@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 import { PluginRuntime } from "./runtime.js";
@@ -22,6 +23,22 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
+  it("loads the official Linear attachment extension", async () => {
+    const directory = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../../../../extensions/linear",
+    );
+    const runtime = new PluginRuntime(pino({ level: "silent" }));
+
+    await runtime.start({ linear: { source: "directory", path: directory } });
+
+    expect(runtime.catalog().map((plugin) => plugin.id)).toEqual(["linear"]);
+    expect(runtime.catalog()[0]?.clientBundle).toContain("Attach Linear issue");
+    expect(runtime.catalog()[0]?.clientBundle).not.toContain("LINEAR_API_KEY");
+    expect(runtime.catalog()[0]?.clientBundle).not.toContain("api.linear.app");
+    await runtime.stop();
+  });
+
   it("loads one index.tsx, exposes its client bundle, and invokes its server RPC", async () => {
     const directory = await createPlugin(
       "hello",
@@ -29,12 +46,21 @@ describe("PluginRuntime", () => {
 import { platform } from "node:os";
 import { Text } from "react-native";
 import { z } from "zod";
-import { defineRpc } from "@paseo/plugin";
+import { defineAttachmentSource, defineRpc } from "@paseo/plugin";
 
 const greetRpc = defineRpc({
   name: "greet",
   input: z.object({ name: z.string() }),
   output: z.object({ message: z.string(), platform: z.string() }),
+});
+
+const attachments = defineAttachmentSource({
+  id: "issues",
+  title: "Example issue",
+  icon: "CircleDot",
+  pickerTitle: "Attach example issue",
+  searchPlaceholder: "Search issues",
+  search: greetRpc,
 });
 
 function HelloSurface() {
@@ -48,6 +74,7 @@ export default function contribute(plugin: any) {
   }));
   plugin.addSurface("main", HelloSurface);
   plugin.addSidebarItem({ id: "hello", title: "Hello", icon: "Sparkles", surface: "main" });
+  plugin.addAttachmentSource(attachments);
 }`,
     );
     const runtime = new PluginRuntime(pino({ level: "silent" }));
@@ -58,6 +85,7 @@ export default function contribute(plugin: any) {
     expect(catalog).toHaveLength(1);
     expect(catalog[0]?.id).toBe("hello");
     expect(catalog[0]?.clientBundle).toContain("Hello from native UI");
+    expect(catalog[0]?.clientBundle).toContain("Attach example issue");
     expect(catalog[0]?.clientBundle).not.toContain("node:os");
     expect(catalog[0]?.clientBundle).not.toContain("get: () => from[key]");
     await expect(runtime.invoke("hello", "greet", { name: "Paseo" })).resolves.toMatchObject({

@@ -7,7 +7,12 @@ import {
   type ReactNode,
 } from "react";
 import type { ZodType, output as ZodOutput, input as ZodInput } from "zod";
+import {
+  PluginAttachmentSearchPayloadSchema,
+  type PluginAttachmentSearchPayload,
+} from "./attachments/schema";
 import type {
+  PluginAttachmentSourceContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
   PluginSurfaceProps,
@@ -16,6 +21,7 @@ import type {
 interface PluginCollector {
   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): void;
   addSidebarItem(contribution: PluginSidebarContribution): void;
+  addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
 }
 
 interface PluginRpcContextValue {
@@ -40,6 +46,7 @@ export interface PluginContext {
   ): void;
   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): void;
   addSidebarItem(contribution: PluginSidebarContribution): void;
+  addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
 }
 
 interface RpcDefinition<InputSchema extends ZodType, OutputSchema extends ZodType> {
@@ -56,6 +63,14 @@ export function defineRpc<InputSchema extends ZodType, OutputSchema extends ZodT
   const name = definition.name.trim();
   if (!RPC_NAME.test(name)) throw new Error(`Invalid plugin RPC method: ${definition.name}`);
   return { ...definition, name };
+}
+
+export type { PluginAttachmentItem, PluginAttachmentSearchPayload } from "./attachments/schema";
+
+export function defineAttachmentSource(
+  definition: PluginAttachmentSourceContribution,
+): PluginAttachmentSourceContribution {
+  return definition;
 }
 
 const PluginRpcContext = createContext<PluginRpcContextValue | null>(null);
@@ -79,7 +94,19 @@ export function createPluginContext(collector: PluginCollector) {
     addSidebarItem(contribution: PluginSidebarContribution) {
       collector.addSidebarItem(contribution);
     },
+    addAttachmentSource(contribution: PluginAttachmentSourceContribution) {
+      collector.addAttachmentSource(contribution);
+    },
   };
+}
+
+export async function searchPluginAttachments(
+  source: PluginAttachmentSourceContribution,
+  invoke: (method: string, input: unknown) => Promise<unknown>,
+  query: string,
+): Promise<PluginAttachmentSearchPayload> {
+  const output = await callPluginRpc(source.search, invoke, { query });
+  return PluginAttachmentSearchPayloadSchema.parseAsync(output);
 }
 
 export function useRpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
@@ -107,4 +134,5 @@ export async function callPluginRpc<InputSchema extends ZodType, OutputSchema ex
 export interface PluginRegistrationCollector {
   surfaces: PluginSurfaceContribution[];
   sidebarItems: PluginSidebarContribution[];
+  attachmentSources: PluginAttachmentSourceContribution[];
 }

@@ -7,7 +7,7 @@ type PluginBuildTarget = "client" | "server";
 
 const REGISTRATIONS_REMOVED_BY_TARGET: Record<PluginBuildTarget, ReadonlySet<string>> = {
   client: new Set(["handle"]),
-  server: new Set(["addSurface", "addSidebarItem"]),
+  server: new Set(["addSurface", "addSidebarItem", "addAttachmentSource"]),
 };
 
 function registrationName(statement: unknown, contextName: string): string | null {

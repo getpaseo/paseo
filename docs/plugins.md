@@ -1,8 +1,8 @@
 # Local plugins
 
-Local plugins contribute daemon RPCs and native app surfaces from one `index.tsx`. Paseo executes
-the server contribution in a subprocess and evaluates the client contribution in the app runtime.
-Plugin code is trusted code; this first slice does not sandbox it.
+Local plugins contribute daemon RPCs, native app surfaces, and composer attachment sources from one
+`index.tsx`. Paseo executes the server contribution in a subprocess and evaluates the client
+contribution in the app runtime. Plugin code is trusted code; this first slice does not sandbox it.
 
 ## Configure a directory source
 
@@ -86,4 +86,50 @@ When the same plugin contribution exists on multiple hosts, Paseo shows it once 
 adds a host picker to the screen header. The selected host supplies the bundle, RPC transport, and
 query cache. Plugin code cannot address another host.
 
-See `examples/local-plugin` for a runnable plugin.
+## Contribute composer attachments
+
+Register a declarative attachment source backed by a plugin RPC. Paseo owns the attachment menu,
+search picker, drafts, selected pill, and submission. The plugin returns complete text snapshots;
+credentials and vendor API calls stay in the daemon handler.
+
+```tsx
+const searchIssues = defineRpc({
+  name: "issues.search",
+  input: z.object({ query: z.string() }),
+  output: z.object({
+    items: z.array(
+      z.object({
+        id: z.string(),
+        identifier: z.string(),
+        title: z.string(),
+        subtitle: z.string().optional(),
+        url: z.string().url(),
+        text: z.string(),
+        resourceType: z.string(),
+      }),
+    ),
+  }),
+});
+
+const issues = defineAttachmentSource({
+  id: "issues",
+  title: "Acme issue",
+  icon: "CircleDot",
+  pickerTitle: "Attach Acme issue",
+  searchPlaceholder: "Search by identifier or title",
+  search: searchIssues,
+});
+
+export default function contribute(plugin: PluginContext) {
+  plugin.handle(searchIssues, ({ query }) => searchAcmeIssues(query));
+  plugin.addAttachmentSource(issues);
+}
+```
+
+Attachment sources stay scoped to the composer's host. Unlike sidebar contributions, equal sources
+on several hosts are not coalesced. The selected snapshot submits as a text attachment with neutral
+external-resource presentation, so it remains readable if the plugin is removed or an older peer
+drops the optional presentation fields.
+
+See `examples/local-plugin` for a native surface and `extensions/linear` for a complete official
+attachment-source extension.

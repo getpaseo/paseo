@@ -41,6 +41,10 @@ function defineRpc(contract: RpcContract): RpcContract {
   return { ...contract, name: contract.name.trim() };
 }
 
+function defineAttachmentSource<T>(definition: T): T {
+  return definition;
+}
+
 function register(contract: RpcContract, handler: RpcHandler): void {
   if (typeof handler !== "function") {
     throw new Error(`Plugin RPC ${contract.name} must provide a handler`);
@@ -50,7 +54,7 @@ function register(contract: RpcContract, handler: RpcHandler): void {
 }
 
 function runtimeRequire(name: string): unknown {
-  if (name === "@paseo/plugin") return { defineRpc };
+  if (name === "@paseo/plugin") return { defineAttachmentSource, defineRpc };
   return nodeRequire(name);
 }
 

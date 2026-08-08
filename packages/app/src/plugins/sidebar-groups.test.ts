@@ -18,6 +18,7 @@ function installed(serverId: string, contributionId = "main"): InstalledPlugin {
         surface: "surface",
       },
     ],
+    attachmentSources: [],
   };
 }
 
