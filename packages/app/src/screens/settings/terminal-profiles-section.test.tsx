@@ -465,10 +465,7 @@ describe("HostTerminalsPage terminal profiles", () => {
 
     render();
 
-    expect(find("terminal-profiles-add-shell-pwsh")?.getAttribute("data-description")).toBe(
-      PWSH_PATH,
-    );
-
+    // The item shows only the label; the path is what the profile has to carry.
     await press("terminal-profiles-add-shell-pwsh");
 
     expect(patchConfigMock).toHaveBeenCalledTimes(1);

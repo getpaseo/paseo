@@ -1484,12 +1484,13 @@ function DetectedShellMenuItem({
   onSelect: (shell: DetectedShell) => void;
 }) {
   const handleSelect = useCallback(() => onSelect(shell), [onSelect, shell]);
+  // No path here on purpose. A menu surface sizes to its content and side
+  // placements do not flip (menu-anchor.ts), so an absolute path as the
+  // description grew the flyout past the window edge and clamping then dropped it
+  // on top of the parent menu. The label is the decision; the path shows up in
+  // the row the moment the profile exists.
   return (
-    <DropdownMenuItem
-      onSelect={handleSelect}
-      description={shell.path}
-      testID={`terminal-profiles-add-shell-${shell.id}`}
-    >
+    <DropdownMenuItem onSelect={handleSelect} testID={`terminal-profiles-add-shell-${shell.id}`}>
       {TERMINAL_SHELL_LABELS[shell.id] ?? shell.id}
     </DropdownMenuItem>
   );
