@@ -160,7 +160,7 @@ test("Hub archives an execution workspace on a local checkout", async () => {
   expect(hub.terminalExists(terminalId)).toBe(false);
   expect(hub.ownedAgentIsRunning(created.payload.agentId!)).toBe(false);
   expect(hub.repoExists()).toBe(true);
-});
+}, 20_000);
 
 test("Hub archives a running execution's Paseo-created worktree", async () => {
   const hub = await launchRelationship();

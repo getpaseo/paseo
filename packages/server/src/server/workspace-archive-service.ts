@@ -485,6 +485,39 @@ export async function archiveWorkspaceContents(
     }
   }
 
+  // A live agent can close between listAgents() and archiveAgent(). Re-read the
+  // durable workspace records so that a failed live teardown still falls back
+  // to the stored-agent archive boundary instead of leaving the agent active.
+  let currentStoredRecords: StoredAgentRecord[] = [];
+  try {
+    currentStoredRecords = await dependencies.agentStorage.list();
+  } catch (error) {
+    dependencies.sessionLogger?.warn(
+      { err: error, workspaceId },
+      "Failed to re-list stored agents during workspace archive; continuing",
+    );
+  }
+  const fallbackRecords = currentStoredRecords.filter(
+    (record) =>
+      liveAgentIds.has(record.id) && record.workspaceId === workspaceId && !record.archivedAt,
+  );
+  for (const record of fallbackRecords) {
+    archivedAgents.add(record.id);
+  }
+  const fallbackResults = await Promise.allSettled(
+    fallbackRecords.map((record) =>
+      dependencies.agentManager.archiveSnapshot(record.id, archivedAt),
+    ),
+  );
+  for (const result of fallbackResults) {
+    if (result.status === "rejected") {
+      dependencies.sessionLogger?.warn(
+        { err: result.reason, workspaceId },
+        "Stored agent fallback failed during workspace archive; continuing",
+      );
+    }
+  }
+
   return archivedAgents;
 }
 

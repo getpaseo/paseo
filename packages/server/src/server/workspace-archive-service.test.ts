@@ -723,6 +723,38 @@ describe("archiveByScope", () => {
     expect(existsSync(worktree.worktreePath)).toBe(false);
   });
 
+  test("falls back to the stored snapshot when live agent teardown races", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const workspaceId = "ws-live-teardown-race";
+    const agentId = "agent-live-teardown-race";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: repoDir, kind: "local_checkout" }],
+    });
+    deps.agentManager = {
+      listAgents: () => [{ id: agentId, workspaceId }] as ManagedAgent[],
+      archiveAgent: vi.fn(async () => {
+        throw new Error("agent disappeared during live teardown");
+      }),
+      archiveSnapshot: vi.fn(async (id: string) => {
+        deps.archivedSnapshotIds.push(id);
+        return {};
+      }),
+    };
+    deps.agentStorage = {
+      list: async () => [{ id: agentId, workspaceId, archivedAt: null }] as StoredAgentRecord[],
+    } as Pick<AgentStorage, "list">;
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-live-teardown-race",
+    });
+
+    expect(result.archivedAgentIds).toContain(agentId);
+    expect(deps.archivedSnapshotIds).toEqual([agentId]);
+  });
+
   test("worktree scope archives three workspaces on the directory and removes it", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
