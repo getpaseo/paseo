@@ -2,7 +2,9 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpToLine,
+  Check,
   ChevronRight,
+  CircleCheck,
   Globe,
   Monitor,
   Pencil,
@@ -16,7 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
-import type { TerminalProfile } from "@getpaseo/protocol/messages";
+import type { MutableDaemonConfigPatch, TerminalProfile } from "@getpaseo/protocol/messages";
 import {
   getTerminalProfileIcon,
   DEFAULT_TERMINAL_PROFILES,
@@ -25,13 +27,21 @@ import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-moda
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { Alert as InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+  type MenuPageDefinition,
+} from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import {
   ProfileDraft,
   TerminalProfileEditModal,
 } from "@/screens/settings/terminal-profile-edit-modal";
-import { TerminalShellCard } from "@/screens/settings/terminal-shell-card";
 import { getIsElectron } from "@/constants/platform";
+import { useFetchQuery } from "@/data/query";
 import {
   getDesktopDaemonStatus,
   restartDesktopDaemon,
@@ -79,6 +89,8 @@ const ThemedProfilePencil = withUnistyles(Pencil);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedProfileSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedPlus = withUnistyles(Plus);
+const ThemedCheck = withUnistyles(Check);
+const ThemedCircleCheck = withUnistyles(CircleCheck);
 
 interface DynamicProviderIconProps {
   iconKey: string;
@@ -101,6 +113,8 @@ const moveDownIcon = <ThemedArrowDown size={ICON_SIZE.sm} uniProps={mutedColorMa
 const editProfileIcon = <ThemedProfilePencil size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 const removeProfileIcon = <ThemedTrash2 size={ICON_SIZE.sm} uniProps={destructiveColorMapping} />;
 const addProfileIcon = <ThemedPlus size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
+const defaultProfileIcon = <ThemedCheck size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
+const setDefaultIcon = <ThemedCircleCheck size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 
 function formatHostConnectionLabel(connection: HostConnection, t: TFunction): string {
   if (connection.type === "relay") {
@@ -1439,24 +1453,73 @@ function parseArgsString(raw: string): string[] | undefined {
 
 const EMPTY_PROFILE_DRAFT: ProfileDraft = { name: "", command: "", args: "" };
 
+// Human names for the shell ids `terminal.shells.list` reports. A detected shell
+// becomes a profile pre-filled with its resolved path, so this is the profile's
+// name rather than a picker label.
+const TERMINAL_SHELL_LABELS: Record<string, string> = {
+  pwsh: "PowerShell 7 (pwsh)",
+  powershell: "Windows PowerShell",
+  cmd: "Command Prompt (cmd.exe)",
+  wsl: "WSL (Linux)",
+  "git-bash": "Git Bash",
+  zsh: "Zsh",
+  bash: "Bash",
+  fish: "Fish",
+  nu: "Nushell (nu)",
+  elvish: "Elvish",
+};
+
+const DETECTED_SHELLS_PAGE_ID = "detected-shells";
+
+interface DetectedShell {
+  id: string;
+  path: string;
+}
+
+function DetectedShellMenuItem({
+  shell,
+  onSelect,
+}: {
+  shell: DetectedShell;
+  onSelect: (shell: DetectedShell) => void;
+}) {
+  const handleSelect = useCallback(() => onSelect(shell), [onSelect, shell]);
+  return (
+    <DropdownMenuItem
+      onSelect={handleSelect}
+      description={shell.path}
+      testID={`terminal-profiles-add-shell-${shell.id}`}
+    >
+      {TERMINAL_SHELL_LABELS[shell.id] ?? shell.id}
+    </DropdownMenuItem>
+  );
+}
+
 interface TerminalProfileRowProps {
   profile: TerminalProfile;
   isFirst: boolean;
   isLast: boolean;
+  /** The host honors a default profile. Without it the row shows no default affordance. */
+  canSetDefault: boolean;
+  isDefault: boolean;
   onEdit: (id: string) => void;
   onRemove: (id: string) => void;
   onMoveUp: (id: string) => void;
   onMoveDown: (id: string) => void;
+  onSetDefault: (id: string) => void;
 }
 
 function TerminalProfileRow({
   profile,
   isFirst,
   isLast,
+  canSetDefault,
+  isDefault,
   onEdit,
   onRemove,
   onMoveUp,
   onMoveDown,
+  onSetDefault,
 }: TerminalProfileRowProps) {
   const { t } = useTranslation();
 
@@ -1464,6 +1527,7 @@ function TerminalProfileRow({
   const handleRemove = useCallback(() => onRemove(profile.id), [onRemove, profile.id]);
   const handleMoveUp = useCallback(() => onMoveUp(profile.id), [onMoveUp, profile.id]);
   const handleMoveDown = useCallback(() => onMoveDown(profile.id), [onMoveDown, profile.id]);
+  const handleSetDefault = useCallback(() => onSetDefault(profile.id), [onSetDefault, profile.id]);
 
   const commandText =
     profile.args && profile.args.length > 0
@@ -1498,7 +1562,30 @@ function TerminalProfileRow({
           {commandText}
         </Text>
       </View>
+      {canSetDefault ? (
+        <View
+          style={terminalProfileStyles.defaultSlot}
+          accessible={isDefault}
+          accessibilityLabel={
+            isDefault ? t("settings.host.terminalProfiles.defaultMarker") : undefined
+          }
+          testID={isDefault ? `terminal-profile-default-${profile.id}` : undefined}
+        >
+          {isDefault ? defaultProfileIcon : null}
+        </View>
+      ) : null}
       <View style={terminalProfileStyles.rowActions}>
+        {canSetDefault ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            leftIcon={setDefaultIcon}
+            onPress={handleSetDefault}
+            disabled={isDefault}
+            accessibilityLabel={t("settings.host.terminalProfiles.setAsDefault")}
+            testID={`terminal-profile-set-default-${profile.id}`}
+          />
+        ) : null}
         <Button
           variant="ghost"
           size="sm"
@@ -1542,6 +1629,13 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
+  const client = useHostRuntimeClient(serverId);
+  // COMPAT(defaultTerminalProfile): hosts before v0.3.0 always open the system
+  // shell and have no shell listing, so both are hidden rather than shown and
+  // silently ignored.
+  const canSetDefault = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.defaultTerminalProfile === true,
+  );
   const [editingProfile, setEditingProfile] = useState<{
     id: string;
     draft: ProfileDraft;
@@ -1555,6 +1649,23 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
     () => (config ? (config.terminalProfiles ?? DEFAULT_TERMINAL_PROFILES) : null),
     [config],
   );
+
+  const defaultProfileId = config?.defaultTerminalProfileId ?? "";
+
+  // A query rather than an effect: the runtime client is a fresh object after
+  // every reconnect, so an effect depending on it re-fires forever.
+  const shellsQuery = useFetchQuery({
+    queryKey: ["terminal-shells", serverId],
+    queryFn: async () => {
+      if (!client) return [] as DetectedShell[];
+      const payload = await client.listTerminalShells();
+      return payload.shells;
+    },
+    enabled: Boolean(client) && isConnected && canSetDefault,
+    dataShape: "list",
+    retry: false,
+    staleTimeMs: 60_000,
+  });
 
   const saveProfiles = useCallback(
     async (next: TerminalProfile[]) => {
@@ -1635,8 +1746,16 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
         destructive: true,
       }).then(async (confirmed) => {
         if (!confirmed || !profiles) return;
+        // Dropping the default clears the pointer in the same write, so the host
+        // is never left aiming at a profile that no longer exists.
+        const patch: MutableDaemonConfigPatch = {
+          terminalProfiles: profiles.filter((p) => p.id !== id),
+        };
+        if (defaultProfileId === id) {
+          patch.defaultTerminalProfileId = "";
+        }
         try {
-          await saveProfiles(profiles.filter((p) => p.id !== id));
+          await patchConfig(patch);
         } catch (error) {
           Alert.alert(
             t("common.errors.unableToSave"),
@@ -1646,7 +1765,7 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
         return;
       });
     },
-    [profiles, saveProfiles, t],
+    [defaultProfileId, patchConfig, profiles, t],
   );
 
   const handleMoveUp = useCallback(
@@ -1689,18 +1808,96 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
     [profiles, saveProfiles, t],
   );
 
-  const addButton = useMemo(
+  const handleSetDefault = useCallback(
+    async (id: string) => {
+      try {
+        await patchConfig({ defaultTerminalProfileId: id });
+      } catch (error) {
+        Alert.alert(
+          t("common.errors.unableToSave"),
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    },
+    [patchConfig, t],
+  );
+
+  const handleAddShell = useCallback(
+    async (shell: DetectedShell) => {
+      const current = profiles ? [...profiles] : [];
+      const next: TerminalProfile[] = [
+        ...current,
+        {
+          id: generateProfileId(),
+          name: TERMINAL_SHELL_LABELS[shell.id] ?? shell.id,
+          command: shell.path,
+          args: [],
+        },
+      ];
+      try {
+        await saveProfiles(next);
+      } catch (error) {
+        Alert.alert(
+          t("common.errors.unableToSave"),
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    },
+    [profiles, saveProfiles, t],
+  );
+
+  // A shell already standing behind a profile is not worth offering twice.
+  const offeredShells = useMemo(() => {
+    const commands = new Set(profiles?.map((profile) => profile.command));
+    return (shellsQuery.data ?? []).filter((shell) => !commands.has(shell.path));
+  }, [profiles, shellsQuery.data]);
+
+  const shellPages = useMemo<MenuPageDefinition[]>(() => {
+    if (offeredShells.length === 0) return [];
+    return [
+      {
+        id: DETECTED_SHELLS_PAGE_ID,
+        title: t("settings.host.terminalProfiles.detectedShells"),
+        content: offeredShells.map((shell) => (
+          <DetectedShellMenuItem key={shell.id} shell={shell} onSelect={handleAddShell} />
+        )),
+      },
+    ];
+  }, [handleAddShell, offeredShells, t]);
+
+  const addMenu = useMemo(
     () => (
-      <Button
-        variant="ghost"
-        size="sm"
-        leftIcon={addProfileIcon}
-        onPress={handleAddOpen}
-        disabled={!isConnected || !profiles}
-        testID="terminal-profiles-add-button"
-      />
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          accessibilityRole="button"
+          accessibilityLabel={t("settings.host.terminalProfiles.addProfileTitle")}
+          disabled={!profiles}
+          style={terminalProfileStyles.addTrigger}
+          testID="terminal-profiles-add-button"
+        >
+          {addProfileIcon}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          minWidth={220}
+          pages={shellPages}
+          sheetTitle={t("settings.host.terminalProfiles.sectionTitle")}
+        >
+          <DropdownMenuItem onSelect={handleAddOpen} testID="terminal-profiles-add-profile">
+            {t("settings.host.terminalProfiles.addProfile")}
+          </DropdownMenuItem>
+          {shellPages.length > 0 ? (
+            <DropdownMenuSubTrigger
+              id={DETECTED_SHELLS_PAGE_ID}
+              testID="terminal-profiles-detected-shells"
+            >
+              {t("settings.host.terminalProfiles.detectedShells")}
+            </DropdownMenuSubTrigger>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
     ),
-    [handleAddOpen, isConnected, profiles],
+    [handleAddOpen, profiles, shellPages, t],
   );
 
   if (!isConnected) {
@@ -1719,7 +1916,7 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
     <>
       <SettingsSection
         title={t("settings.host.terminalProfiles.sectionTitle")}
-        trailing={addButton}
+        trailing={addMenu}
         testID="terminal-profiles-section"
       >
         <View style={settingsStyles.card} testID="terminal-profiles-card">
@@ -1730,10 +1927,13 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
                 profile={profile}
                 isFirst={index === 0}
                 isLast={index === profiles.length - 1}
+                canSetDefault={canSetDefault}
+                isDefault={profile.id === defaultProfileId}
                 onEdit={handleEditOpen}
                 onRemove={handleRemove}
                 onMoveUp={handleMoveUp}
                 onMoveDown={handleMoveDown}
+                onSetDefault={handleSetDefault}
               />
             ))
           ) : (
@@ -1744,6 +1944,11 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
             </View>
           )}
         </View>
+        {canSetDefault ? (
+          <Text style={terminalProfileStyles.cardHint}>
+            {t("settings.host.terminalProfiles.defaultHint")}
+          </Text>
+        ) : null}
       </SettingsSection>
 
       <TerminalProfileEditModal
@@ -1780,9 +1985,6 @@ export function HostTerminalsPage({ serverId }: { serverId: string }) {
       <SettingsSection title="Terminal agents">
         <EnableTerminalAgentHooksCard serverId={serverId} />
       </SettingsSection>
-      <SettingsSection title="Shell">
-        <TerminalShellCard serverId={serverId} />
-      </SettingsSection>
       <TerminalProfilesSection serverId={serverId} />
     </View>
   );
@@ -1798,10 +2000,22 @@ const terminalProfileStyles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  // A fixed slot so the action rail sits on the same rung whether or not the
+  // row carries the default check.
+  defaultSlot: {
+    width: theme.iconSize.sm,
+    alignItems: "center",
+  },
   rowActions: {
     flexDirection: "row",
     alignItems: "center",
     gap: 0,
+  },
+  addTrigger: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
   },
   emptyCard: {
     padding: theme.spacing[4],
@@ -1811,6 +2025,11 @@ const terminalProfileStyles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     textAlign: "center",
+  },
+  cardHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    marginLeft: theme.spacing[1],
   },
 }));
 

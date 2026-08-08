@@ -158,25 +158,6 @@ export async function resolveTerminalShellExecutable(
   return resolved;
 }
 
-/**
- * Turn the daemon's stored setting into the `shell` a spawn takes, or undefined
- * for the platform default. The only place the stored shape is interpreted, so
- * the RPC, the settings UI and the spawn cannot drift apart.
- */
-export function resolveConfiguredTerminalShell(config: {
-  terminalShell?: string;
-  customTerminalShellPath?: string;
-}): string | undefined {
-  const selected = config.terminalShell?.trim();
-  if (!selected || selected === "default") {
-    return undefined;
-  }
-  if (selected === "custom") {
-    return config.customTerminalShellPath?.trim() || undefined;
-  }
-  return selected;
-}
-
 // Offered in this order. Windows lists `wsl` and `git-bash` instead of a single
 // `bash`, because the `bash.exe` on PATH is the WSL launcher.
 const OFFERED_SHELL_PRESETS: Record<"win32" | "posix", readonly string[]> = {
@@ -184,10 +165,18 @@ const OFFERED_SHELL_PRESETS: Record<"win32" | "posix", readonly string[]> = {
   posix: ["zsh", "bash", "fish", "nu", "elvish", "pwsh"],
 };
 
+export interface InstalledTerminalShell {
+  /** Preset id (`pwsh`, `nu`, `git-bash`, …). */
+  id: string;
+  /** Absolute path the preset resolved to on this host. */
+  path: string;
+}
+
 /**
  * The shells installed on this host, found with the same resolver the spawn path
- * uses so the list and the launch agree on what a preset id means.
- * `default` and `custom` always bracket the result.
+ * uses so the list and the launch agree on what a preset id means. The resolved
+ * path rides along because the caller turns a pick into a terminal profile,
+ * which spawns a binary rather than re-interpreting a preset id.
  *
  * Presence here means the binary exists, not that it will run — confirming that
  * would mean executing every candidate on every settings mount. A shell that is
@@ -196,12 +185,13 @@ const OFFERED_SHELL_PRESETS: Record<"win32" | "posix", readonly string[]> = {
  */
 export async function listAvailableTerminalShells(
   options: TerminalShellLookupOptions = {},
-): Promise<string[]> {
+): Promise<InstalledTerminalShell[]> {
   const platformKey = (options.platform ?? process.platform) === "win32" ? "win32" : "posix";
   const found = await Promise.all(
-    OFFERED_SHELL_PRESETS[platformKey].map(async (id) =>
-      (await findTerminalShellBinary(id, options)) ? id : null,
-    ),
+    OFFERED_SHELL_PRESETS[platformKey].map(async (id) => {
+      const path = await findTerminalShellBinary(id, options);
+      return path === null ? null : { id, path };
+    }),
   );
-  return ["default", ...found.filter((id): id is string => id !== null), "custom"];
+  return found.filter((shell): shell is InstalledTerminalShell => shell !== null);
 }

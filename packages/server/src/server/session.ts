@@ -27,7 +27,7 @@ import type {
   TerminalWorkspaceContributionChangedEvent,
 } from "../terminal/terminal-manager.js";
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
-import { resolveConfiguredTerminalShell } from "../terminal/terminal-shell.js";
+import { resolveDefaultTerminalLaunch } from "../terminal/terminal-default-profile.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import { CursorError } from "./pagination/cursor.js";
@@ -935,8 +935,7 @@ export class Session {
       clientSupportsWrapReflow: () =>
         this.clientCapabilities.has(CLIENT_CAPS.terminalReflowableSnapshot),
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
-      getConfiguredTerminalShell: () =>
-        resolveConfiguredTerminalShell(this.daemonConfigStore?.get() ?? {}),
+      getDefaultTerminalLaunch: () => resolveDefaultTerminalLaunch(this.daemonConfigStore.get()),
     });
     this.agentUpdates = createAgentUpdatesService({
       emit: (message) => this.emit(message),

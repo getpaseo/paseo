@@ -36,6 +36,7 @@ import type { TerminalSession } from "./terminal.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import { applyTerminalSize } from "./terminal-size-ownership.js";
 import { listAvailableTerminalShells } from "./terminal-shell.js";
+import type { ResolvedCommand } from "@getpaseo/protocol/terminal-profiles";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
 
@@ -85,9 +86,9 @@ export interface TerminalSessionControllerOptions {
   // Bytes queued on the client transport but not yet sent, or null when the
   // transport exposes no backpressure signal (e.g. the multiplexed relay socket).
   getClientBufferedAmount?: () => number | null;
-  // The daemon's configured shell for plain terminals, applied when a request
-  // does not name one. The host owns this, not the client.
-  getConfiguredTerminalShell?: () => string | undefined;
+  // The host's default terminal profile, applied when a request asks for a
+  // plain terminal. The host owns this, not the client.
+  getDefaultTerminalLaunch?: () => ResolvedCommand | undefined;
 }
 
 interface TerminalWorkspaceRef {
@@ -138,7 +139,7 @@ export class TerminalSessionController {
   private readonly listTerminalWorkspaceRoots: () => Promise<readonly string[]>;
   private readonly clientSupportsWrapReflow: () => boolean;
   private readonly getClientBufferedAmount: () => number | null;
-  private readonly getConfiguredTerminalShell: () => string | undefined;
+  private readonly getDefaultTerminalLaunch: () => ResolvedCommand | undefined;
   private readonly terminalSizeOwner = {};
 
   // A subscription is scoped to a (cwd, workspaceId) pair, keyed by
@@ -168,7 +169,7 @@ export class TerminalSessionController {
       (async () => (await this.listTerminalWorkspaceRefs()).map((workspace) => workspace.cwd));
     this.clientSupportsWrapReflow = options.clientSupportsWrapReflow ?? (() => false);
     this.getClientBufferedAmount = options.getClientBufferedAmount ?? (() => 0);
-    this.getConfiguredTerminalShell = options.getConfiguredTerminalShell ?? (() => undefined);
+    this.getDefaultTerminalLaunch = options.getDefaultTerminalLaunch ?? (() => undefined);
   }
 
   start(): void {
@@ -556,15 +557,20 @@ export class TerminalSessionController {
         return;
       }
 
+      // A plain terminal — the client named neither a command nor a shell —
+      // opens the host's default profile. An explicit profile launch carries its
+      // own command and is untouched, and with no default profile nothing is
+      // passed so the spawn falls back to the system shell.
+      const isPlainTerminal = msg.command === undefined && msg.shell === undefined;
+      const defaultLaunch = isPlainTerminal ? this.getDefaultTerminalLaunch() : undefined;
+
       const session = await this.terminalManager.createTerminal({
         cwd: msg.cwd,
         workspaceId,
         name: msg.name,
-        command: msg.command,
-        args: msg.args,
-        // A profile carries its own command and never runs through a shell, so the
-        // configured shell only applies to a plain terminal.
-        shell: msg.shell ?? (msg.command ? undefined : this.getConfiguredTerminalShell?.()),
+        command: msg.command ?? defaultLaunch?.command,
+        args: msg.args ?? defaultLaunch?.args,
+        shell: msg.shell,
         rows: msg.size?.rows,
         cols: msg.size?.cols,
       });

@@ -43,8 +43,7 @@ const daemonConfig: MutableDaemonConfig = {
   autoArchiveAfterMerge: false,
   enableTerminalAgentHooks: false,
   appendSystemPrompt: "",
-  terminalShell: "default",
-  customTerminalShellPath: "",
+  defaultTerminalProfileId: "",
 };
 
 function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}): {

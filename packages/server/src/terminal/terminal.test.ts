@@ -14,6 +14,7 @@ import {
   resolveZshShellIntegrationDir,
   type TerminalSession,
 } from "./terminal.js";
+import { listAvailableTerminalShells } from "./terminal-shell.js";
 import {
   chmodSync,
   cpSync,
@@ -347,6 +348,26 @@ describe("createTerminal", () => {
     await expect(
       findTerminalShellBinary("fish", { platform: "win32", findOnPath: finder }),
     ).resolves.toBeNull();
+  });
+
+  // The list feeds profile creation, so it carries the resolved path and holds
+  // only shells that are actually installed — an id the caller would then have
+  // to interpret, or a placeholder entry, would produce an unspawnable profile.
+  it("lists installed shells with their resolved paths", async () => {
+    const installed: Record<string, string> = {
+      zsh: "/opt/homebrew/bin/zsh",
+      pwsh: "/usr/local/bin/pwsh",
+    };
+
+    await expect(
+      listAvailableTerminalShells({
+        platform: "darwin",
+        findOnPath: async (name) => installed[name] ?? null,
+      }),
+    ).resolves.toEqual([
+      { id: "zsh", path: "/opt/homebrew/bin/zsh" },
+      { id: "pwsh", path: "/usr/local/bin/pwsh" },
+    ]);
   });
 
   // Shell integration is keyed on the spawned binary's base name, and selecting a

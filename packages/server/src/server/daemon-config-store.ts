@@ -359,8 +359,7 @@ function mergeMutableConfigIntoPersistedConfig(params: {
       ...(mutable.terminalProfiles !== undefined
         ? { terminalProfiles: mutable.terminalProfiles }
         : {}),
-      terminalShell: mutable.terminalShell,
-      customTerminalShellPath: mutable.customTerminalShellPath,
+      defaultTerminalProfileId: mutable.defaultTerminalProfileId,
     },
     agents: nextAgents,
   } as PersistedConfig;

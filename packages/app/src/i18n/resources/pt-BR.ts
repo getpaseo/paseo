@@ -2140,6 +2140,8 @@ export const ptBR: TranslationResources = {
         sectionTitle: "Perfis de terminal",
         editProfile: "Editar perfil",
         addProfileTitle: "Adicionar perfil de terminal",
+        addProfile: "Adicionar perfil...",
+        detectedShells: "Shells detectados",
         editProfileTitle: "Editar perfil de terminal",
         namePlaceholder: "Claude Code",
         commandPlaceholder: "claude",
@@ -2156,6 +2158,10 @@ export const ptBR: TranslationResources = {
         removeConfirmMessage: 'Remover "{{name}}"?',
         moveUp: "Mover para cima",
         moveDown: "Mover para baixo",
+        setAsDefault: "Definir como padrão",
+        defaultMarker: "Perfil padrão",
+        defaultHint:
+          "Novo terminal abre o perfil marcado. Sem nenhum marcado, abre o shell do sistema.",
         save: "Salvar",
         emptyState:
           "Nenhum perfil ainda. Adicione um para abrir terminais com um comando específico.",

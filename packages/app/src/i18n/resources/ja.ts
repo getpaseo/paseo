@@ -2125,6 +2125,8 @@ export const ja: TranslationResources = {
         sectionTitle: "ターミナルプロファイル",
         editProfile: "プロファイルを編集",
         addProfileTitle: "ターミナルプロファイルを追加",
+        addProfile: "プロファイルを追加...",
+        detectedShells: "検出されたシェル",
         editProfileTitle: "ターミナルプロファイルを編集",
         namePlaceholder: "Claude Code",
         commandPlaceholder: "claude",
@@ -2141,6 +2143,10 @@ export const ja: TranslationResources = {
         removeConfirmMessage: '"{{name}}"を削除しますか？',
         moveUp: "上に移動",
         moveDown: "下に移動",
+        setAsDefault: "デフォルトに設定",
+        defaultMarker: "デフォルトのプロファイル",
+        defaultHint:
+          "新しいターミナルはマークしたプロファイルを開きます。マークがない場合はシステムシェルを開きます。",
         save: "保存",
         emptyState:
           "プロファイルがまだありません。特定のコマンドでターミナルを起動するために追加してください。",

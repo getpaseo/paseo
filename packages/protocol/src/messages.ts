@@ -160,10 +160,10 @@ export const MutableDaemonConfigSchema = z
     enableTerminalAgentHooks: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
-    // A preset id (`pwsh`, `nu`, `git-bash`, `wsl`, …) or an absolute path. The
-    // daemon resolves it, because which shells exist is a property of the host.
-    terminalShell: z.string().default("default"),
-    customTerminalShellPath: z.string().default(""),
+    // Which profile a plain new terminal opens. Empty means the system shell.
+    // Profiles are host state, so the daemon owns the choice and every client
+    // sees the same one.
+    defaultTerminalProfileId: z.string().default(""),
   })
   .passthrough();
 
@@ -181,8 +181,7 @@ export const MutableDaemonConfigPatchSchema = z
     enableTerminalAgentHooks: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
-    terminalShell: z.string().optional(),
-    customTerminalShellPath: z.string().optional(),
+    defaultTerminalProfileId: z.string().optional(),
   })
   .partial()
   .passthrough();
@@ -3001,10 +3000,10 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceScriptManagement: z.boolean().optional(),
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: z.boolean().optional(),
-        // COMPAT(terminalShell): added in v0.3.0, remove gate after 2027-08-08. The
-        // daemon resolves a configured shell for new terminals; the client hides the
-        // Host setting when the host cannot honor it.
-        terminalShell: z.boolean().optional(),
+        // COMPAT(defaultTerminalProfile): added in v0.3.0, remove gate after 2027-08-08.
+        // The daemon opens a chosen profile for a plain new terminal; the client hides
+        // the Host setting when the host cannot honor it.
+        defaultTerminalProfile: z.boolean().optional(),
       })
       .optional(),
   })
@@ -5271,9 +5270,10 @@ export const ListTerminalShellsResponseSchema = z.object({
   type: z.literal("terminal.shells.list.response"),
   payload: z.object({
     requestId: z.string(),
-    // Preset ids the daemon found installed, in display order, always including
-    // "default" first and "custom" last.
-    shells: z.array(z.string()),
+    // Shells found installed on the host, in display order. The resolved path
+    // rides along so a profile made from one is self-describing and editable
+    // rather than an opaque preset id.
+    shells: z.array(z.object({ id: z.string(), path: z.string() })),
     error: z.string().nullable(),
   }),
 });

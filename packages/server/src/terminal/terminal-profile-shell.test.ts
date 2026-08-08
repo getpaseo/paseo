@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import type * as TerminalShellModule from "./terminal-shell.js";
 import { isPlatform } from "../test-utils/platform.js";
 
-// Counts calls at the module boundary rather than timing the launch, because the
-// cost being guarded is an external process (`--version`) whose duration varies.
+// Counts calls at the module boundary: what is guarded is that the resolver is
+// never consulted for a profile, not how long a lookup takes.
 const resolveTerminalShellExecutable = vi.hoisted(() =>
   vi.fn(async (_shell?: string) => "/bin/sh"),
 );
@@ -37,10 +37,9 @@ function platformCommand(): string {
     : "/bin/sh";
 }
 
-// A profile launches its own binary as the PTY process, so the shell never runs.
-// Resolving it anyway cost a PATH lookup plus a `--version` execution on every
-// profile launch — about 2s for cmd.exe, whose probe can only ever time out —
-// and the result was then discarded.
+// A profile supplies its own binary as the PTY process, so there is no shell
+// setting to interpret. Resolving one anyway would spend a PATH lookup on a
+// result the spawn then discards.
 it("does not resolve the shell when launching a profile command", async () => {
   const session = await createTerminal({
     cwd: realpathSync(tmpdir()),

@@ -934,11 +934,9 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
 
   ensureNodePtySpawnHelperExecutableForCurrentPlatform();
 
-  // A profile launches its own binary as the PTY process, so the shell setting
-  // does not apply and must not be resolved: probing a preset costs a PATH
-  // lookup plus a `--version` execution (~2s for cmd.exe, which has no
-  // `--version` and only resolves once the probe times out), and the result
-  // would be discarded here.
+  // A profile supplies its own binary, so shell *resolution* is skipped: there
+  // is no preset id to look up and no default to fall back to. Shell
+  // *environment* still applies below, keyed on whatever binary is spawned.
   const { command: spawnCommand, args: spawnArgs } = command
     ? await resolveTerminalSpawnCommand(command, args)
     : { command: await resolveTerminalShellExecutable(shell), args: [] as string[] };
