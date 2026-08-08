@@ -12,6 +12,7 @@ import { useHasFinePointer } from "@/hooks/use-fine-pointer";
 interface SidebarResizeHandleProps {
   edge: SidebarResizeEdge;
   gesture: GestureType;
+  pressed: boolean;
   testID: string;
 }
 
@@ -27,13 +28,13 @@ function edgeOffsetStyle(edge: SidebarResizeEdge, edgeOffset: number) {
   return edge === "left" ? { left: edgeOffset } : { right: edgeOffset };
 }
 
-export function SidebarResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps) {
+export function SidebarResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHandleProps) {
   const finePointer = useHasFinePointer();
 
   if (finePointer) {
-    return <PointerResizeHandle edge={edge} gesture={gesture} testID={testID} />;
+    return <PointerResizeHandle edge={edge} gesture={gesture} pressed={pressed} testID={testID} />;
   }
-  return <TouchResizeHandle edge={edge} gesture={gesture} testID={testID} />;
+  return <TouchResizeHandle edge={edge} gesture={gesture} pressed={pressed} testID={testID} />;
 }
 
 function PointerResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps) {
@@ -84,10 +85,10 @@ function PointerResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps
   );
 }
 
-function TouchResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps) {
+function TouchResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHandleProps) {
   const geometry = resolveSidebarResizeHandleGeometry(false);
   // `box-none` keeps the full-height column out of hit-testing so only the
-  // centered grab target steals taps from the rows behind it.
+  // grab target steals taps from the rows behind it.
   const layerStyle = [
     styles.touchLayer,
     { width: geometry.width },
@@ -96,6 +97,11 @@ function TouchResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps) 
   const targetStyle = [
     styles.touchTarget,
     { width: geometry.width, height: geometry.height ?? undefined },
+  ];
+  const gripStyle = [
+    styles.grip,
+    edge === "left" ? styles.leftEdgeGrip : styles.rightEdgeGrip,
+    pressed ? styles.visibleGrip : styles.hiddenGrip,
   ];
 
   return (
@@ -108,7 +114,7 @@ function TouchResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps) 
           collapsable={false}
           style={targetStyle}
         >
-          <View pointerEvents="none" testID={`${testID}-grip`} style={styles.grip} />
+          <View pointerEvents="none" testID={`${testID}-grip`} style={gripStyle} />
         </View>
       </GestureDetector>
     </View>
@@ -148,6 +154,19 @@ const styles = StyleSheet.create((theme) => ({
     height: 36,
     borderRadius: 2,
     backgroundColor: theme.colors.foreground,
+  },
+  hiddenGrip: {
+    opacity: 0,
+  },
+  visibleGrip: {
     opacity: 0.3,
+  },
+  leftEdgeGrip: {
+    alignSelf: "flex-start",
+    marginLeft: theme.spacing[0.5],
+  },
+  rightEdgeGrip: {
+    alignSelf: "flex-end",
+    marginRight: theme.spacing[0.5],
   },
 }));
