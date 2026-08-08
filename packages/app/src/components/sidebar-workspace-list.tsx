@@ -33,9 +33,9 @@ import {
 } from "@/stores/navigation-active-workspace-store";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
+import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop";
 import { type GestureType } from "react-native-gesture-handler";
 import * as Clipboard from "expo-clipboard";
-import { DiffStat } from "@/components/diff-stat";
 import {
   ExternalLink,
   GitPullRequest,
@@ -111,7 +111,14 @@ import {
   SidebarWorkspaceTrailingActionOverlay,
   SidebarWorkspaceTrailingActionSlot,
 } from "@/components/sidebar/sidebar-workspace-row-content";
+import { useOpenKebabMenuVisibility } from "@/components/sidebar/use-open-kebab-menu-visibility";
+import { selectWorkspaceServiceSummary } from "@/components/sidebar/workspace-meta-row";
+import {
+  SidebarWorkspaceTrailingContent,
+  useSidebarWorkspaceTrailing,
+} from "@/components/sidebar/workspace-trailing";
 import { Button } from "@/components/ui/button";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -140,8 +147,10 @@ import {
 } from "@/constants/platform";
 import { getDesktopHost } from "@/desktop/host";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
-import { useLocalDaemonServerId, useLocalDaemonServerIdState } from "@/hooks/use-is-local-daemon";
-import { selectHostBadges, type HostBadgeModel } from "@/hosts/appearance";
+import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
+import type { HostBadgeModel } from "@/hosts/appearance";
+import { useHostBadges } from "@/hosts/use-host-badges";
+import { useSidebarRowItems } from "@/components/sidebar/display-preferences/model";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
@@ -163,13 +172,13 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
 const redColorMapping = (theme: Theme) => ({
-  color: theme.colors.palette.red[500],
+  color: theme.colors.statusDanger,
 });
 const greenColorMapping = (theme: Theme) => ({
-  color: theme.colors.palette.green[500],
+  color: theme.colors.statusSuccess,
 });
 const purpleColorMapping = (theme: Theme) => ({
-  color: theme.colors.palette.purple[500],
+  color: theme.colors.statusMerged,
 });
 
 function getPrIconUniMapping(state: PrHint["state"]) {
@@ -353,7 +362,6 @@ export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewS
         <ThemedGitPullRequest size={12} uniProps={iconUniProps} />
       )}
       <Text style={textStyle} numberOfLines={1}>
-        {presentation.numberPrefix}
         {hint.number}
       </Text>
     </Pressable>
@@ -490,7 +498,7 @@ function ProjectKebabMenu({
 }) {
   const { t } = useTranslation();
   return (
-    <DropdownMenu>
+    <DropdownMenu compactMode="sheet">
       <DropdownMenuTrigger
         hitSlop={8}
         style={projectKebabStyle}
@@ -500,7 +508,7 @@ function ProjectKebabMenu({
       >
         {renderKebabTriggerIcon}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" width={220}>
+      <DropdownMenuContent align="end" width={220} sheetTitle={t("sidebar.project.actions.menu")}>
         <ProjectMenuItems
           surface="dropdown"
           projectViewKey={projectViewKey}
@@ -642,38 +650,38 @@ function WorkspaceRowRightGroup({
 }) {
   const workspacePath = workspace.workspaceDirectory ?? workspace.projectRootPath;
   const { t } = useTranslation();
+  const trailing = useSidebarWorkspaceTrailing();
   const showShortcut = showShortcutBadge && shortcutNumber !== null;
   const {
-    showDiffStat,
+    showTrailing,
     showKebab: showKebabInSlot,
     showScrim,
+    renderSlot,
+    reserveSlotWidth,
   } = resolveTrailingActionVisibility({
-    hasDiffStat: Boolean(workspace.diffStat),
+    workspace,
+    trailing,
     hasArchiveAction: Boolean(onArchive),
     isHovered,
     isTouchPlatform,
     showShortcut,
   });
-  const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat);
+  const kebab = useOpenKebabMenuVisibility(showKebabInSlot);
 
   return (
     <>
       {isCreating ? (
         <Text style={styles.workspaceCreatingText}>{t("sidebar.workspace.status.creating")}</Text>
       ) : null}
-      {shouldRenderActionSlot ? (
-        <SidebarWorkspaceTrailingActionSlot>
-          <SidebarWorkspaceTrailingActionBase visible={showDiffStat}>
-            {workspace.diffStat ? (
-              <DiffStat
-                additions={workspace.diffStat.additions}
-                deletions={workspace.diffStat.deletions}
-              />
-            ) : null}
+      {renderSlot ? (
+        <SidebarWorkspaceTrailingActionSlot reserveWidth={reserveSlotWidth}>
+          <SidebarWorkspaceTrailingActionBase visible={showTrailing}>
+            <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
           </SidebarWorkspaceTrailingActionBase>
-          <SidebarWorkspaceTrailingActionOverlay visible={showKebabInSlot} scrim={showScrim}>
+          <SidebarWorkspaceTrailingActionOverlay visible={kebab.showKebab} scrim={showScrim}>
             {onArchive ? (
               <SidebarWorkspaceMenu
+                {...kebab.menuProps}
                 workspaceKey={workspace.workspaceKey}
                 onCopyPath={onCopyPath}
                 onCopyBranchName={onCopyBranchName}
@@ -800,7 +808,8 @@ function NewWorkspaceGhostRow({
   const rowStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.newWorkspaceGhostRow,
-      (Boolean(hovered) || pressed) && styles.newWorkspaceGhostRowHovered,
+      hovered && !pressed && styles.newWorkspaceGhostRowHovered,
+      pressed && styles.newWorkspaceGhostRowPressed,
     ],
     [],
   );
@@ -928,6 +937,7 @@ function ProjectHeaderRow({
           iconDataUri={iconDataUri}
           statusBucket={statusBucket}
           projectViewKey={project.viewKey}
+          backdrop={getSidebarRowBackdrop({ isDragging, selected, isHovered })}
           chevron={chevron}
           showChevron={isHovered && chevron !== null}
           isArchiving={isArchiving}
@@ -969,9 +979,10 @@ function ProjectHeaderRow({
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
       >
-        <Pressable
+        <PressHighlight
           accessibilityRole="button"
           style={projectRowStyle}
+          highlightStyle={styles.projectRowHovered}
           onPressIn={interaction.handlePressIn}
           onTouchMove={interaction.handleTouchMove}
           onPressOut={interaction.handlePressOut}
@@ -979,7 +990,7 @@ function ProjectHeaderRow({
           testID={`sidebar-project-row-${project.viewKey}`}
         >
           {rowChildren}
-        </Pressable>
+        </PressHighlight>
       </View>
     );
   }
@@ -997,6 +1008,7 @@ function ProjectHeaderRow({
           enabledOnMobile={false}
           accessibilityRole="button"
           style={projectRowStyle}
+          highlightStyle={styles.projectRowHovered}
           onPressIn={interaction.handlePressIn}
           onTouchMove={interaction.handleTouchMove}
           onPressOut={interaction.handlePressOut}
@@ -1078,14 +1090,7 @@ function WorkspaceRowInner({
     <SidebarWorkspaceRowFrame workspace={workspace} isDragging={isDragging}>
       {({ isHovered, contextMenuOpen, onContextMenuOpenChange, hoverHandlers }) => {
         const isDesktop = !isTouchPlatform;
-        const showScriptsIcon = isDesktop && workspace.hasRunningScripts;
-        const hasRunningService = workspace.scripts.some(
-          (s) => s.lifecycle === "running" && (s.type ?? "service") === "service",
-        );
-        let scriptIconKind: "service" | "command" | null = null;
-        if (showScriptsIcon) {
-          scriptIconKind = hasRunningService ? "service" : "command";
-        }
+        const serviceSummary = isDesktop ? selectWorkspaceServiceSummary(workspace.scripts) : null;
         const workspaceRowStyle = getProjectWorkspaceRowStyle({
           isDragging,
           selected,
@@ -1122,6 +1127,7 @@ function WorkspaceRowInner({
               accessibilityRole="button"
               accessibilityState={accessibilityState}
               style={workspaceRowStyle}
+              highlightStyle={styles.workspaceRowHovered}
               onPressIn={interaction.handlePressIn}
               onTouchMove={interaction.handleTouchMove}
               onPressOut={interaction.handlePressOut}
@@ -1133,7 +1139,8 @@ function WorkspaceRowInner({
                 hostBadge={hostBadge}
                 leadingProjectName={leadingProjectName}
                 leadingProjectIconDataUri={leadingProjectIconDataUri}
-                scriptIconKind={scriptIconKind}
+                serviceSummary={serviceSummary}
+                backdrop={getSidebarRowBackdrop({ isDragging, selected, isHovered })}
                 isHovered={isHovered}
                 isLoading={isArchiving || isCreating}
                 isCreating={isCreating}
@@ -1781,7 +1788,11 @@ function ProjectBlock({
   }
 
   return (
-    <View role="group" accessibilityLabel={displayName} style={styles.projectBlock}>
+    <View
+      role="group"
+      accessibilityLabel={displayName}
+      style={projectChildren ? styles.projectBlockExpanded : undefined}
+    >
       <ProjectHeaderRow
         project={project}
         displayName={displayName}
@@ -1890,18 +1901,14 @@ export function SidebarWorkspaceList({
 }: SidebarWorkspaceListProps) {
   const pathname = usePathname();
   const hosts = useHosts();
-  const localServerId = useLocalDaemonServerId();
-  const localDaemon = useLocalDaemonServerIdState();
-  const hostBadgeByServerId = useMemo(
-    () =>
-      selectHostBadges({
-        hosts,
-        localServerId,
-        localHostResolutionPending: localDaemon.status !== "resolved",
-        enabled: shouldShowSidebarHostLabels(projects),
-      }),
-    [hosts, localDaemon.status, localServerId, projects],
-  );
+  const rowItems = useSidebarRowItems();
+  // Host badge visibility is a lattice, not three competing switches: this gate is the global
+  // "off", `shouldShowSidebarHostLabels` is the automatic "there is only one host so it says
+  // nothing", and each host's own `badgeDisplay` decides name vs icon vs hidden. Turning the
+  // item off here removes the badge everywhere; leaving it on defers to the per-host setting.
+  const hostBadgeByServerId = useHostBadges({
+    enabled: rowItems.host && shouldShowSidebarHostLabels(projects),
+  });
   const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const supportsMultiplicityByServerId = useHostFeatureMap(serverIds, "workspaceMultiplicity");
   const supportsPinningByServerId = useHostFeatureMap(serverIds, "workspacePinning");
@@ -2395,17 +2402,30 @@ const styles = StyleSheet.create((theme) => ({
   pinnedSection: {
     marginBottom: theme.spacing[1],
   },
-  projectBlock: {
-    marginBottom: theme.spacing[1],
+  // Three times the gap a row keeps from its neighbour, so the break between two groups reads as
+  // a break rather than as one more row of pitch. Kept equal to `statusGroupBlockExpanded` — the
+  // two groupings are the same list under a different heading and must not breathe differently.
+  //
+  // Padding on the block rather than margin, and only while it has children: the gap belongs to
+  // the rows underneath the header, so a collapsed project gives it back and a column of collapsed
+  // headers closes up to the pitch of a list instead of staying spaced for content that is gone.
+  projectBlockExpanded: {
+    paddingBottom: theme.spacing[3],
   },
   workspaceListContainer: {},
+  // Kept in step with `workspaceRow` above. It stands in a project's list where a workspace row
+  // would be, so it takes that row's geometry and both of its fills.
+  //
+  // The one departure is the extra left padding: it only ever renders under its project header, so
+  // the step in reads as belonging to that project. Padding rather than margin, so the hover and
+  // pressed fills stay the same box as every other row in the sidebar.
   newWorkspaceGhostRow: {
-    minHeight: 32,
-    marginLeft: theme.spacing[6],
-    marginRight: theme.spacing[1],
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
+    minHeight: 36,
+    marginBottom: theme.spacing[0.5],
+    paddingVertical: theme.spacing[2],
+    paddingLeft: theme.spacing[4],
+    paddingRight: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
@@ -2414,9 +2434,14 @@ const styles = StyleSheet.create((theme) => ({
   newWorkspaceGhostRowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
+  newWorkspaceGhostRowPressed: {
+    backgroundColor: theme.colors.surface2,
+  },
+  // The width of a workspace row's status slot, so the label lands on the same rail as the
+  // titles above it.
   newWorkspaceGhostIconSlot: {
-    width: theme.iconSize.sm,
-    height: theme.iconSize.sm,
+    width: theme.iconSize.md,
+    height: theme.iconSize.md,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
@@ -2497,7 +2522,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   projectTitle: {
-    color: theme.colors.foreground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontWeight: "400",
     minWidth: 0,
@@ -2538,6 +2563,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: 2,
     flexShrink: 0,
+    // MoreVertical paints only around the center of its 14px SVG. Keep the 24px controls,
+    // but pull their painted edge through the unused view-box space onto the row rail.
+    marginRight: -6,
   },
   projectKebabButton: {
     width: 24,
@@ -2577,7 +2605,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   workspaceRow: {
     minHeight: 36,
-    marginBottom: theme.spacing[1],
+    marginBottom: theme.spacing[0.5],
     paddingVertical: theme.spacing[2],
     paddingLeft: theme.spacing[2],
     paddingRight: theme.spacing[3],

@@ -3373,6 +3373,7 @@ describe("session checkout status handling", () => {
         aheadBehind: { ahead: 2, behind: 1 },
         aheadOfOrigin: 2,
         behindOfOrigin: 1,
+        upstreamRef: null,
         hasRemote: true,
         remoteUrl: "https://github.com/getpaseo/paseo.git",
         isPaseoOwnedWorktree: false,

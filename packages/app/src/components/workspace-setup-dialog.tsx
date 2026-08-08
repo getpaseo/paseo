@@ -29,6 +29,7 @@ import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { MessagePayload } from "@/composer/types";
+import { projectIconRadius } from "@/components/project-icon-view";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -460,15 +461,15 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
+  // A user's uploaded mark is sized, never clipped — see projectIconRadius.
   projectIcon: {
     width: theme.iconSize.md,
     height: theme.iconSize.md,
-    borderRadius: theme.borderRadius.sm,
   },
   projectIconFallback: {
     width: theme.iconSize.md,
     height: theme.iconSize.md,
-    borderRadius: theme.borderRadius.sm,
+    borderRadius: projectIconRadius(theme.iconSize.md),
     borderWidth: 1,
     borderColor: theme.colors.border,
     alignItems: "center",

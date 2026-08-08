@@ -160,8 +160,14 @@ export interface SeedDaemonClient {
   ): Promise<{ terminalId: string; slot: number; error: null } | { error: string }>;
   sendTerminalInput(
     terminalId: string,
-    message: { type: "input"; data: string } | { type: "resize"; rows: number; cols: number },
+    message:
+      | { type: "input"; data: string }
+      | { type: "resize"; rows: number; cols: number; intent?: "claim" | "update" },
   ): void;
+  captureTerminal(
+    terminalId: string,
+    options?: { start?: number; end?: number; stripAnsi?: boolean },
+  ): Promise<{ terminalId: string; lines: string[]; totalLines: number; requestId: string }>;
   onTerminalStreamEvent(
     handler: (event: { terminalId: string; type: string; data?: Uint8Array }) => void,
   ): () => void;

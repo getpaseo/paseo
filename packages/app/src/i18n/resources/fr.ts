@@ -83,9 +83,11 @@ export const fr: TranslationResources = {
       desktop: "Envoyez un message à l'agent, marquez@filesou utilisez/commandset/skills",
       mobile: "Message,@files,/commands",
       fallback: "Message...",
+      terminal: "Prompt",
     },
     input: {
       accessibilityLabel: "Agent de messagerie...",
+      terminalAccessibilityLabel: "Terminal prompt",
       focusHint: "{{shortcut}}pour se concentrer",
       addAttachment: "Ajouter une pièce jointe",
       interruptAgent: "Agent d'interruption",
@@ -207,7 +209,7 @@ export const fr: TranslationResources = {
     states: {
       notFound: "Agentintrouvable",
       failedToLoad: "Échec du chargement de l'agent",
-      reconnecting: "Reconnexion...",
+      reconnecting: "Reconnexion",
       timelineSyncFailed: "Impossible d’actualiser l’historique de l’agent. Nouvelle tentative…",
       archivingTitle: "Agent d'archivage...",
       archivingSubtitle: "Veuillez patienter pendant que nous archivons cet agent.",
@@ -233,8 +235,13 @@ export const fr: TranslationResources = {
   sessions: {
     title: "Historique",
     empty: "Aucune séance pour l'instant",
+    noMatches: "Aucune séance correspondante",
+    tooManyMatches: "Trop de résultats — affinez la recherche",
+    hostLoadFailed: "{{host}} : Impossible de charger l'historique",
+    searchPlaceholder: "Rechercher dans l'historique",
     actions: {
       loadMore: "Charger plus",
+      clearSearch: "Effacer la recherche",
     },
   },
   agentList: {
@@ -388,7 +395,7 @@ export const fr: TranslationResources = {
       openFile: "Ouvrir le fichier",
       copyPath: "Copier le chemin",
       download: "Télécharger",
-      addToChat: "Ajouter au chat…",
+      addToChat: "Ajouter au chat",
       moreActions: "Plus de propositions",
     },
     fileExplorer: {
@@ -485,6 +492,7 @@ export const fr: TranslationResources = {
     },
     terminal: {
       hostDisconnected: "Hostn'est pas connecté",
+      updateHost: "Mettez à jour l’hôte pour utiliser le terminal natif.",
       unableToSubscribe: "Impossible de s'abonner au terminal",
     },
     tabs: {
@@ -864,6 +872,14 @@ export const fr: TranslationResources = {
           viewPullRequest: "Voir",
           openOn: "Ouvrir sur {{brand}}",
         },
+        checksSummary: {
+          passedLabel: "succès",
+          failedLabel: "échec",
+          runningLabel: "en cours",
+          passedAccessible: "Vérifications réussies",
+          failedAccessible: "Vérifications en échec",
+          runningAccessible: "Vérifications en cours",
+        },
         sections: {
           checks: "Chèques",
           pipeline: "Pipeline",
@@ -911,6 +927,38 @@ export const fr: TranslationResources = {
     },
   },
   sidebar: {
+    display: {
+      trigger: "Préférences d'affichage",
+      heading: "Affichage",
+      grouping: {
+        label: "Regroupement",
+        project: "Projet",
+        status: "Statut",
+      },
+      titleSource: {
+        label: "Titre",
+        title: "Titre",
+        branch: "Nom de branche",
+      },
+      show: {
+        label: "Afficher",
+        host: "Hôte",
+        changeRequest: "Pull request",
+        checks: "Vérifications",
+        services: "Services",
+        diff: "Statistiques de diff",
+        timestamp: "Dernière activité",
+      },
+      checks: {
+        iconAndText: "Icône et texte",
+        icon: "Icône seule",
+        none: "Masqué",
+      },
+      hostFilter: {
+        label: "Hôte",
+        all: "Tous les hôtes",
+      },
+    },
     pinned: {
       title: "Épinglés",
     },
@@ -936,7 +984,7 @@ export const fr: TranslationResources = {
       discord: "Discord",
       github: "Créer un ticket GitHub",
       whatsNew: "Nouveautés",
-      version: "Paseo {{version}}",
+      appName: "Paseo",
     },
     sections: {
       sessions: "Historique",
@@ -978,7 +1026,8 @@ export const fr: TranslationResources = {
     },
     workspace: {
       status: {
-        scriptsAvailable: "Scripts disponibles",
+        serviceRunning: "Service {{name}} en cours",
+        serviceUnhealthy: "Service {{name}} en échec",
         creating: "Création...",
       },
       actions: {
@@ -1040,14 +1089,29 @@ export const fr: TranslationResources = {
       composerStateRequired: "L'état du compositeur est requis",
       selectModel: "Sélectionnez un modèle",
     },
+    tooltips: {
+      project: "Choose the project",
+      host: "Choose the host",
+      isolation: "Choose the isolation level",
+      startingRef: "Choisissez par où commencer",
+      launch: "Choose what to launch",
+    },
     refPicker: {
       startingRef: "Réf de départ",
-      chooseStart: "Choisissez par où commencer",
       intoBase: "dans {{baseRef}}",
       searching: "Recherche...",
       noMatchingRefs: "Aucune référence correspondante.",
       searchPlaceholder: "Rechercher des succursales et des PR",
       title: "Commencer à partir de",
+    },
+    launch: {
+      title: "What to launch",
+      chat: "Chat",
+      terminal: "Terminal",
+      manageProfiles: "Manage profiles",
+      submit: "Launch",
+      promptPlaceholder: "Prompt {{name}}",
+      commandPlaceholder: "Run a command, or leave empty for a blank terminal",
     },
   },
   desktop: {
@@ -1408,6 +1472,19 @@ export const fr: TranslationResources = {
         show: "Afficher avancé",
         hide: "Masquer avancé",
       },
+      headers: {
+        title: "En-têtes personnalisés",
+        add: "Ajouter un en-tête",
+        name: "Nom",
+        value: "Valeur",
+        remove: "Supprimer l'en-tête",
+        errors: {
+          missingName: "Saisissez un nom pour chaque en-tête",
+          invalidName: "{{name}} n'est pas un nom d'en-tête valide",
+          invalidValue: "{{name}} contient un saut de ligne non valide",
+          duplicateName: "{{name}} est saisi plusieurs fois",
+        },
+      },
       passwordVisibility: {
         show: "Afficher le mot de passe",
         hide: "Masquer le mot de passe",
@@ -1757,6 +1834,7 @@ export const fr: TranslationResources = {
           es: "Español",
           fr: "Français",
           ja: "日本語",
+          ko: "한국어",
           ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",
@@ -1765,6 +1843,11 @@ export const fr: TranslationResources = {
     },
     diagnostics: {
       title: "Diagnostic",
+      legacyTerminalRenderer: {
+        label: "Utiliser l’ancien rendu du terminal",
+        description: "Utilise l’ancien terminal WebView après la réouverture d’un terminal",
+        accessibilityLabel: "Utiliser l’ancien rendu du terminal",
+      },
       testAudio: "Tester le son",
       playTest: "Jouer à l'essai",
       playing: "Jouant...",

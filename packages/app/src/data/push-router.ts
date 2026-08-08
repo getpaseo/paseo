@@ -8,7 +8,12 @@ import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
-import { providersSnapshotQueryKey, providersSnapshotQueryRoot } from "@/data/providers-snapshot";
+import { providerSnapshotCache, type ProviderSnapshotCache } from "@/data/provider-snapshot-cache";
+import {
+  normalizeProvidersSnapshotCwd,
+  providersSnapshotQueryKey,
+  providersSnapshotQueryRoot,
+} from "@/data/providers-snapshot";
 
 type ProvidersSnapshotUpdateMessage = Extract<
   SessionOutboundMessage,
@@ -184,6 +189,7 @@ export function applyProvidersSnapshotUpdate(input: {
   serverId: string;
   queryClient: QueryClient;
   message: ProvidersSnapshotUpdate;
+  cache?: ProviderSnapshotCache;
 }): void {
   if (input.message.type !== "providers_snapshot_update") {
     return;
@@ -194,6 +200,16 @@ export function applyProvidersSnapshotUpdate(input: {
     generatedAt: input.message.payload.generatedAt,
     requestId: "providers_snapshot_update",
   });
+  const { compactSnapshot, snapshotHash } = input.message.payload;
+  if (compactSnapshot && snapshotHash) {
+    void (input.cache ?? providerSnapshotCache).write({
+      serverId: input.serverId,
+      cwd: normalizeProvidersSnapshotCwd(input.message.payload.cwd),
+      hash: snapshotHash,
+      generatedAt: input.message.payload.generatedAt,
+      compactSnapshot,
+    });
+  }
   void input.queryClient.invalidateQueries({
     queryKey: agentCommandsQueryRoot(input.serverId),
     exact: false,

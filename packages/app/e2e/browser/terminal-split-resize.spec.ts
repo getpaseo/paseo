@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
 import { TerminalE2EHarness, withTerminalInApp } from "../support/helpers/terminal-dsl";
-import { getTerminalBufferText, waitForTerminalContent } from "../support/helpers/terminal-perf";
+import { waitForTerminalContent } from "../support/helpers/terminal-perf";
 
 interface TerminalSize {
   rows: number | null;
@@ -24,8 +24,12 @@ async function readXtermSize(page: Page): Promise<TerminalSize> {
 // The PTY's own view of its size, reported by an `stty size` loop running in the
 // shell. This needs no focus or click, so it observes whether the daemon-side PTY
 // actually received the resize frame after the split.
-async function readLatestPtySize(page: Page): Promise<TerminalSize | null> {
-  const text = await getTerminalBufferText(page);
+async function readLatestPtySize(
+  harness: TerminalE2EHarness,
+  terminalId: string,
+): Promise<TerminalSize | null> {
+  const capture = await harness.client.captureTerminal(terminalId, { stripAnsi: true });
+  const text = capture.lines.join("\n");
   const matches = [...text.matchAll(/PTYSIZE (\d+) (\d+)/g)];
   const last = matches.at(-1);
   if (!last) {
@@ -42,16 +46,20 @@ async function readXtermRows(page: Page): Promise<number | null> {
   return (await readXtermSize(page)).rows;
 }
 
-async function ptyRowsMatchXtermRows(page: Page): Promise<boolean> {
+async function ptyRowsMatchXtermRows(
+  page: Page,
+  harness: TerminalE2EHarness,
+  terminalId: string,
+): Promise<boolean> {
   const xterm = await readXtermSize(page);
-  const pty = await readLatestPtySize(page);
+  const pty = await readLatestPtySize(harness, terminalId);
   return pty?.rows === xterm.rows;
 }
 
 async function verifySplitDownResizesPty(page: Page, harness: TerminalE2EHarness): Promise<void> {
   await page.setViewportSize({ width: 1280, height: 900 });
 
-  await withTerminalInApp(page, harness, { name: "split-resize" }, async () => {
+  await withTerminalInApp(page, harness, { name: "split-resize" }, async (terminalInstance) => {
     await harness.setupPrompt(page);
 
     const terminal = harness.terminalSurface(page);
@@ -65,7 +73,7 @@ async function verifySplitDownResizesPty(page: Page, harness: TerminalE2EHarness
     await waitForTerminalContent(page, hasPtySizeReport, 10_000);
 
     const beforeXterm = await readXtermSize(page);
-    const beforePty = await readLatestPtySize(page);
+    const beforePty = await readLatestPtySize(harness, terminalInstance.id);
     expect(beforePty, "the PTY should report its size before splitting").not.toBeNull();
     expect(beforeXterm.rows, "xterm should report its row count before splitting").not.toBeNull();
     expect(beforePty?.rows, "while focused, the PTY size should already match the xterm size").toBe(
@@ -89,7 +97,7 @@ async function verifySplitDownResizesPty(page: Page, harness: TerminalE2EHarness
     // new pane. Today it stays stuck at the pre-split size until the terminal is
     // clicked back into focus. This poll fails without the fix.
     await expect
-      .poll(() => ptyRowsMatchXtermRows(page), {
+      .poll(() => ptyRowsMatchXtermRows(page, harness, terminalInstance.id), {
         message: "the PTY rows should match the resized terminal after split-down",
         timeout: 8_000,
       })

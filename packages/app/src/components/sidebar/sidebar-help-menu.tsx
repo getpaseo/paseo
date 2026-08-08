@@ -15,9 +15,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative } from "@/constants/platform";
 import { useAppDiagnosticStore } from "@/diagnostics/store";
+import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useSessionStore } from "@/stores/session-store";
@@ -69,20 +68,20 @@ function HostVersionHint({ host }: { host: HostProfile }) {
   return (
     <DropdownMenuHint
       style={styles.versionHint}
+      trailing={version}
       testID={`sidebar-help-host-version-${host.serverId}`}
     >
-      {host.label} {version}
+      {host.label}
     </DropdownMenuHint>
   );
 }
 
 export function SidebarHelpMenu() {
   const { t } = useTranslation();
-  const isCompactLayout = useIsCompactFormFactor();
+  const shortcutsAvailable = useKeyboardShortcutsAvailable();
   const openAppDiagnostic = useAppDiagnosticStore((state) => state.open);
   const setShortcutsDialogOpen = useKeyboardShortcutsStore((state) => state.setShortcutsDialogOpen);
   const [open, setOpen] = useState(false);
-  const showKeyboardShortcuts = !isNative && !isCompactLayout;
   const version = formatVersionWithPrefix(resolveAppVersion());
   const hosts = useHosts();
 
@@ -128,7 +127,7 @@ export function SidebarHelpMenu() {
       </Tooltip>
       <DropdownMenuContent side="top" align="end" offset={8} width={280} testID="sidebar-help-menu">
         <DropdownMenuLabel>{t("sidebar.help.sectionHelp")}</DropdownMenuLabel>
-        {showKeyboardShortcuts ? (
+        {shortcutsAvailable ? (
           <DropdownMenuItem
             testID="sidebar-help-shortcuts"
             leading={shortcutsLeadingIcon}
@@ -169,8 +168,12 @@ export function SidebarHelpMenu() {
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <View style={styles.versionList}>
-          <DropdownMenuHint style={styles.versionHint} testID="sidebar-help-version">
-            {t("sidebar.help.version", { version })}
+          <DropdownMenuHint
+            style={styles.versionHint}
+            trailing={version}
+            testID="sidebar-help-version"
+          >
+            {t("sidebar.help.appName")}
           </DropdownMenuHint>
           {hosts.map((host) => (
             <HostVersionHint key={host.serverId} host={host} />

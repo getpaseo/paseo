@@ -74,7 +74,7 @@ describe("terminal-session-controller restore", () => {
       getSize: () => ({ rows: 1, cols: 80 }),
       getState: () => terminalState("restore-before"),
       getStateSnapshot: () => ({ state: terminalState("restore-before"), revision: 1 }),
-      getReplayPreamble: () => "",
+      getReplayPreamble: () => "\x1b[?1h\x1b[?2004h",
       getTitle: () => undefined,
       getActivity: () => null,
       setActivity: vi.fn(),
@@ -146,7 +146,9 @@ describe("terminal-session-controller restore", () => {
       TerminalStreamOpcode.Output,
     ]);
     expect(new TextDecoder().decode(binaryFrames[0]?.payload)).toContain("restore-before");
-    expect(new TextDecoder().decode(binaryFrames[1]?.payload)).toBe("restore-after\n");
+    expect(new TextDecoder().decode(binaryFrames[1]?.payload)).toBe(
+      "\x1b[?1h\x1b[?2004hrestore-after\n",
+    );
   });
 });
 

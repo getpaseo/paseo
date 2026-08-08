@@ -994,6 +994,7 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
   return (
     <IsolatedBottomSheetModal
       ref={props.bottomSheetRef}
+      contextBridge={null}
       snapPoints={props.snapPoints}
       index={0}
       enableDynamicSizing={false}

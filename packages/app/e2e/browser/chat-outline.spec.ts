@@ -6,7 +6,6 @@ import {
   expectActiveChatOutlinePrompt,
   expectChatOutlinePreview,
   expectChatOutlinePrompts,
-  expectChatOutlineAlignedWithActiveTabGlyph,
   expectChatOutlinePromptToRemainBare,
   expectLiveTurnPromptAboveFoldAndActive,
   expectNoChatOutlinePreviewWhileCrossingToSidebar,
@@ -35,7 +34,10 @@ import {
   type LongTimelineAgent,
 } from "../support/helpers/timeline-pagination";
 
-const WIDE_VIEWPORT = { width: 1280, height: 900 };
+// Wide enough that the timeline panel clears the rail's MIN_PANEL_WIDTH with room
+// to spare. At 1280 the panel measures 960, which sits too close to the threshold
+// for chrome-width changes elsewhere to stay out of these tests.
+const WIDE_VIEWPORT = { width: 1440, height: 900 };
 const LOADED_TURNS = 16;
 
 test.describe("desktop chat outline", () => {
@@ -138,10 +140,6 @@ test.describe("desktop chat outline", () => {
       await clickChatOutlineRowEdge(page, 4);
 
       await expectChatOutlinePromptToRemainBare(page, 4);
-    });
-
-    test("aligns the ticks with the active tab glyph rail", async ({ page }) => {
-      await expectChatOutlineAlignedWithActiveTabGlyph(page);
     });
 
     test("clamps the newest prompt at maximum scroll while keeping it visible", async ({

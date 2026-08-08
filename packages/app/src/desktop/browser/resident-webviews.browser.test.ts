@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  applyInactiveBrowserWebviewViewport,
   type BrowserWebviewProfileHost,
   clearResidentBrowserWebviewsForTests,
   ensureResidentBrowserWebview,
   getResidentBrowserWebview,
+  isResidentBrowserWebviewReady,
   prepareBrowserWebview,
+  presentBrowserWebview,
+  rememberBrowserWebviewSize,
   releaseResidentBrowserWebview,
   removeResidentBrowserWebview,
+  resizeResidentBrowserWebview,
   takeResidentBrowserWebview,
 } from "./resident-webviews";
 import {
@@ -54,14 +59,28 @@ function expectPermanentHostParking(host: HTMLElement): void {
   expect(host.style.position).toBe("fixed");
   expect(host.style.left).toBe("0px");
   expect(host.style.top).toBe("0px");
-  expect(host.style.width).toBe("1px");
-  expect(host.style.height).toBe("1px");
-  expect(host.style.overflow).toBe("hidden");
+  expect(host.style.width).toBe("100vw");
+  expect(host.style.height).toBe("100vh");
+  expect(host.style.overflow).toBe("visible");
   expect(host.style.opacity).toBe("1");
   expect(host.style.pointerEvents).toBe("none");
   expect(host.style.display).toBe("block");
-  expect(host.style.visibility).toBe("visible");
-  expect(host.style.transform).toBe("");
+  expect(host.style.zIndex).toBe("0");
+}
+
+function expectParkedSurface(surface: HTMLElement): void {
+  expect(surface.getAttribute("aria-hidden")).toBe("true");
+  expect(surface.style.position).toBe("fixed");
+  expect(surface.style.left).toBe("0px");
+  expect(surface.style.top).toBe("0px");
+  expect(surface.style.width).toBe("1px");
+  expect(surface.style.height).toBe("1px");
+  expect(surface.style.overflow).toBe("hidden");
+  expect(surface.style.opacity).toBe("1");
+  expect(surface.style.pointerEvents).toBe("none");
+  expect(surface.style.display).toBe("block");
+  expect(surface.style.visibility).toBe("visible");
+  expect(surface.style.transform).toBe("");
 }
 
 function expectResidentWebviewParking(webview: HTMLElement): void {
@@ -94,10 +113,118 @@ describe("resident browser webviews", () => {
 
     const host = residentHost();
     expect(visibleHost.children).toHaveLength(0);
-    expect(Array.from(host.children)).toEqual([webview]);
+    const surface = host.firstElementChild as HTMLElement;
+    expect(Array.from(surface.children)).toEqual([webview]);
     expect(webview.isConnected).toBe(true);
     expectPermanentHostParking(host);
+    expectParkedSurface(surface);
     expectResidentWebviewParking(webview);
+  });
+
+  it("presents and parks a browser without changing its webview parent", () => {
+    const webview = ensureTestBrowser({
+      browserId: "browser-stable-parent",
+      workspaceId: "workspace-stable-parent",
+      url: "https://example.com",
+    });
+    const anchor = document.createElement("div");
+    const clip = document.createElement("div");
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      value: () => ({ left: 40, top: 60, width: 640, height: 480 }),
+    });
+    Object.defineProperty(clip, "getBoundingClientRect", {
+      value: () => ({ left: 40, top: 60, width: 640, height: 480 }),
+    });
+    if (!webview?.parentElement) {
+      throw new Error("Expected resident browser surface");
+    }
+    const permanentParent = webview.parentElement;
+
+    presentBrowserWebview("browser-stable-parent", webview, anchor, clip, {
+      mode: "responsive",
+    });
+    expect(webview.parentElement).toBe(permanentParent);
+    expect(permanentParent.style.left).toBe("40px");
+    expect(permanentParent.style.top).toBe("60px");
+    expect(permanentParent.style.width).toBe("640px");
+    expect(permanentParent.style.height).toBe("480px");
+    expect(permanentParent.style.pointerEvents).toBe("auto");
+    expect(permanentParent.getAttribute("aria-hidden")).toBe("false");
+    expect(webview.style.flex).toBe("0 0 auto");
+    expect(webview.style.width).toBe("640px");
+    expect(webview.style.height).toBe("480px");
+
+    releaseResidentBrowserWebview("browser-stable-parent", webview);
+    expect(webview.parentElement).toBe(permanentParent);
+    expectParkedSurface(permanentParent);
+
+    presentBrowserWebview("browser-stable-parent", webview, anchor, clip, {
+      mode: "responsive",
+    });
+    expect(webview.parentElement).toBe(permanentParent);
+  });
+
+  it("clips an oversized fixed viewport to its pane without resizing the webview", () => {
+    const webview = ensureTestBrowser({
+      browserId: "browser-oversized",
+      workspaceId: "workspace-oversized",
+      url: "https://example.com",
+    });
+    if (!webview?.parentElement) {
+      throw new Error("Expected resident browser surface");
+    }
+    const anchor = document.createElement("div");
+    const clip = document.createElement("div");
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      value: () => ({ left: -800, top: -300, width: 2560, height: 1440 }),
+    });
+    Object.defineProperty(clip, "getBoundingClientRect", {
+      value: () => ({ left: 100, top: 150, width: 800, height: 600 }),
+    });
+
+    presentBrowserWebview("browser-oversized", webview, anchor, clip, {
+      mode: "fixed",
+      width: 2560,
+      height: 1440,
+    });
+
+    expect(webview.parentElement.style.left).toBe("100px");
+    expect(webview.parentElement.style.top).toBe("150px");
+    expect(webview.parentElement.style.width).toBe("800px");
+    expect(webview.parentElement.style.height).toBe("600px");
+    expect(webview.style.left).toBe("-900px");
+    expect(webview.style.top).toBe("-450px");
+    expect(webview.style.width).toBe("2560px");
+    expect(webview.style.height).toBe("1440px");
+
+    resizeResidentBrowserWebview({ browserId: "browser-oversized", width: 2560, height: 1440 });
+
+    expect(webview.style.left).toBe("-900px");
+    expect(webview.style.top).toBe("-450px");
+    expect(webview.parentElement.style.width).toBe("800px");
+    expect(webview.parentElement.style.height).toBe("600px");
+  });
+
+  it("retains document readiness with the resident webview", () => {
+    const webview = ensureTestBrowser({
+      browserId: "browser-ready",
+      workspaceId: "workspace-ready",
+      url: "https://example.com",
+    });
+    if (!webview) {
+      throw new Error("Expected resident browser webview");
+    }
+
+    expect(isResidentBrowserWebviewReady(webview)).toBe(false);
+    webview.dispatchEvent(new Event("dom-ready"));
+    releaseResidentBrowserWebview("browser-ready", webview);
+
+    const reusedWebview = takeResidentBrowserWebview("browser-ready");
+    expect(reusedWebview).toBe(webview);
+    expect(isResidentBrowserWebviewReady(reusedWebview as HTMLElement)).toBe(true);
+
+    webview.dispatchEvent(new Event("did-start-loading"));
+    expect(isResidentBrowserWebviewReady(webview)).toBe(false);
   });
 
   it("creates a resident webview for an agent-created unfocused tab", () => {
@@ -197,8 +324,10 @@ describe("resident browser webviews", () => {
     });
 
     expect(webview).toBe(staleWebview);
-    expect(Array.from(staleHost.children)).toEqual([staleWebview]);
+    const surface = staleHost.firstElementChild as HTMLElement;
+    expect(Array.from(surface.children)).toEqual([staleWebview]);
     expectPermanentHostParking(staleHost);
+    expectParkedSurface(surface);
     expectResidentWebviewParking(staleWebview);
   });
 
@@ -215,27 +344,85 @@ describe("resident browser webviews", () => {
     });
 
     const host = residentHost();
-    expect(firstWebview?.parentElement).toBe(host);
-    expect(secondWebview?.parentElement).toBe(host);
+    expect(firstWebview?.parentElement?.parentElement).toBe(host);
+    expect(secondWebview?.parentElement?.parentElement).toBe(host);
+    expect(firstWebview?.parentElement).not.toBe(secondWebview?.parentElement);
     expectResidentWebviewParking(firstWebview as HTMLElement);
     expectResidentWebviewParking(secondWebview as HTMLElement);
   });
 
-  it("moves a resident webview into a visible pane without recreating the node", () => {
+  it("returns a resident webview without detaching it from its permanent surface", () => {
     const webview = ensureTestBrowser({
       browserId: "browser-visible",
       workspaceId: "workspace-visible",
       url: "https://example.com",
     });
 
+    const permanentParent = webview?.parentElement;
     const visibleWebview = takeResidentBrowserWebview("browser-visible");
 
     expect(visibleWebview).toBe(webview);
-    expect(webview?.style.position).toBe("");
-    expect(webview?.style.left).toBe("");
-    expect(webview?.style.top).toBe("");
-    expect(webview?.style.zIndex).toBe("");
-    expect(takeResidentBrowserWebview("browser-visible")).toBeNull();
+    expect(webview?.parentElement).toBe(permanentParent);
+    expect(takeResidentBrowserWebview("browser-visible")).toBe(webview);
+  });
+
+  it("applies an exact fixed viewport without a flex width override", () => {
+    const webview = document.createElement("webview");
+    const anchor = document.createElement("div");
+    const clip = document.createElement("div");
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      value: () => ({ left: 0, top: 0, width: 640, height: 480 }),
+    });
+    Object.defineProperty(clip, "getBoundingClientRect", {
+      value: () => ({ left: 0, top: 0, width: 640, height: 480 }),
+    });
+
+    presentBrowserWebview("browser-fixed", webview, anchor, clip, {
+      mode: "fixed",
+      width: 640,
+      height: 480,
+    });
+
+    expect(webview.style.flex).toBe("0 0 auto");
+    expect(webview.style.width).toBe("640px");
+    expect(webview.style.height).toBe("480px");
+  });
+
+  it("parks a browser at its last resolved viewport dimensions", () => {
+    const visibleHost = document.createElement("div");
+    const webview = document.createElement("webview");
+    visibleHost.appendChild(webview);
+    document.body.appendChild(visibleHost);
+    rememberBrowserWebviewSize({ browserId: "browser-sized", width: 640, height: 480 });
+
+    releaseResidentBrowserWebview("browser-sized", webview);
+
+    expect(webview.style.width).toBe("640px");
+    expect(webview.style.height).toBe("480px");
+  });
+
+  it("keeps an inactive in-place browser at its last resolved viewport dimensions", () => {
+    const webview = document.createElement("webview");
+    rememberBrowserWebviewSize({ browserId: "browser-inactive", width: 640, height: 480 });
+
+    applyInactiveBrowserWebviewViewport("browser-inactive", webview, { mode: "responsive" });
+
+    expect(webview.style.flex).toBe("0 0 auto");
+    expect(webview.style.width).toBe("640px");
+    expect(webview.style.height).toBe("480px");
+  });
+
+  it("parks a cold inactive browser at its canonical fixed viewport", () => {
+    const webview = document.createElement("webview");
+
+    applyInactiveBrowserWebviewViewport("browser-restored-fixed", webview, {
+      mode: "fixed",
+      width: 800,
+      height: 600,
+    });
+
+    expect(webview.style.width).toBe("800px");
+    expect(webview.style.height).toBe("600px");
   });
 
   it("returns an existing visible pane webview instead of creating a resident duplicate", () => {

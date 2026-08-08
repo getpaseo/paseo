@@ -28,7 +28,7 @@ import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
 import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
-import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/sidebar-display-preferences-menu";
+import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { Shortcut } from "@/components/ui/shortcut";
@@ -988,11 +988,11 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     gap: theme.spacing[2],
-    // Rendered inside the scroll's listContent (paddingHorizontal spacing[2]), so the
-    // title lands at spacing[2] left to align with project icons, and the trailing
-    // pill sits flush with the list edge on the right.
+    // Rendered inside the scroll's listContent (paddingHorizontal spacing[2]). The title
+    // lands at spacing[2] left to align with project icons. Settings2's painted path stops
+    // inside its 14px SVG, so 4px aligns the ink rather than the SVG box to the row rail.
     paddingLeft: theme.spacing[2],
-    paddingRight: 0,
+    paddingRight: 4,
     paddingTop: theme.spacing[1],
     paddingBottom: theme.spacing[1],
   },
@@ -1030,7 +1030,9 @@ const styles = StyleSheet.create((theme) => ({
     pointerEvents: "box-none",
   },
   mobileCloseButton: {
-    marginRight: theme.spacing[4],
+    // The 16px X paints farther inside its 32px hit target than the 14px Settings2 glyph.
+    // This optical inset puts their painted right edges on the same sidebar rail.
+    marginRight: theme.spacing[2] + 1.5,
     width: 32,
     height: 32,
     alignItems: "center",

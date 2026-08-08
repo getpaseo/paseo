@@ -53,6 +53,28 @@ describe("normalizeModelId", () => {
 });
 
 describe("resolveAgentModelSelection", () => {
+  it("resolves a configured model alias to its canonical catalog model", () => {
+    const selection = resolveAgentModelSelection({
+      models: [
+        {
+          provider: "claude",
+          id: "claude-fable-5",
+          aliases: ["claude-fable-5[1m]"],
+          label: "Fable 5",
+          thinkingOptions: [{ id: "high", label: "High" }],
+          defaultThinkingOptionId: "high",
+        },
+      ],
+      runtimeModelId: null,
+      configuredModelId: "claude-fable-5[1m]",
+      explicitThinkingOptionId: null,
+    });
+
+    expect(selection.activeModelId).toBe("claude-fable-5");
+    expect(selection.displayModel).toBe("Fable 5");
+    expect(selection.selectedThinkingId).toBe("high");
+  });
+
   it("prefers runtime model over configured model", () => {
     const selection = resolveAgentModelSelection({
       models: [

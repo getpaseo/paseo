@@ -19,6 +19,7 @@ import type {
   WorkspaceRegistry,
 } from "./workspace-registry.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
+import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 
 export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
@@ -37,6 +38,7 @@ export interface ArchiveDependencies {
   // path uniquely identifies a worktree workspace; this is a directory lookup for
   // the archive target, not status/ownership.
   findWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
+  getWorkspace?: (workspaceId: string) => Promise<PersistedWorkspaceRecord | null>;
   // Active (non-archived) workspaces, used to decide whether the workspace being
   // archived is the last reference to its backing worktree directory, and to
   // break a same-cwd tie in favor of the worktree-kind record when archiving by
@@ -47,6 +49,7 @@ export interface ArchiveDependencies {
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
   killTerminalsForWorkspace: (workspaceId: string) => Promise<void>;
+  stopWorkspaceSetup?: (workspaceId: string) => Promise<void>;
   sessionLogger?: Logger;
 }
 
@@ -94,6 +97,7 @@ interface BackingDirectory {
 interface ArchiveTarget {
   backing: BackingDirectory | null;
   teardownTargets: Array<{ workspaceId: string | null; cwd: string }>;
+  setupWorkspaceIds: string[];
   workspaceIds: string[];
 }
 
@@ -118,8 +122,17 @@ export async function archiveByScope(
   dependencies: ArchiveDependencies,
   request: ArchiveByScopeRequest,
 ): Promise<ArchiveResult> {
+  return runWithGitCommandPriority("high", () => archiveByScopeWithPriority(dependencies, request));
+}
+
+async function archiveByScopeWithPriority(
+  dependencies: ArchiveDependencies,
+  request: ArchiveByScopeRequest,
+): Promise<ArchiveResult> {
   const target = await resolveArchiveTarget(dependencies, request.scope);
   const targetWorkspaceIds = target.workspaceIds;
+
+  await stopWorkspaceSetups(dependencies, target.setupWorkspaceIds, request.requestId);
 
   if (targetWorkspaceIds.length > 0) {
     dependencies.markWorkspaceArchiving(targetWorkspaceIds, new Date().toISOString());
@@ -182,18 +195,22 @@ async function resolveArchiveTarget(
 
   if (scope.kind === "workspace") {
     const workspaceId = scope.workspaceId;
-    const record = activeWorkspaces.find((workspace) => workspace.workspaceId === workspaceId);
+    const record =
+      (await dependencies.getWorkspace?.(workspaceId)) ??
+      activeWorkspaces.find((workspace) => workspace.workspaceId === workspaceId);
     if (!record) {
       dependencies.sessionLogger?.warn(
         { workspaceId },
         "Workspace not found for archive-by-scope; skipping",
       );
-      return { backing: null, teardownTargets: [], workspaceIds: [] };
+      return { backing: null, teardownTargets: [], setupWorkspaceIds: [], workspaceIds: [] };
     }
+    const isArchived = "archivedAt" in record && Boolean(record.archivedAt);
     return {
       backing: await resolveWorkspaceBackingDirectory(record, dependencies),
-      teardownTargets: [{ workspaceId, cwd: record.cwd }],
-      workspaceIds: [workspaceId],
+      teardownTargets: isArchived ? [] : [{ workspaceId, cwd: record.cwd }],
+      setupWorkspaceIds: [workspaceId],
+      workspaceIds: isArchived ? [] : [workspaceId],
     };
   }
 
@@ -222,8 +239,30 @@ async function resolveArchiveTarget(
             cwd: workspace.cwd,
           }))
         : [{ workspaceId: null, cwd: scope.targetPath }],
+    setupWorkspaceIds: targetWorkspaces.map((workspace) => workspace.workspaceId),
     workspaceIds: targetWorkspaces.map((workspace) => workspace.workspaceId),
   };
+}
+
+async function stopWorkspaceSetups(
+  dependencies: ArchiveDependencies,
+  workspaceIds: string[],
+  requestId: string,
+): Promise<void> {
+  if (!dependencies.stopWorkspaceSetup) {
+    return;
+  }
+  const results = await Promise.allSettled(
+    workspaceIds.map((workspaceId) => dependencies.stopWorkspaceSetup!(workspaceId)),
+  );
+  for (const [index, result] of results.entries()) {
+    if (result?.status === "rejected") {
+      dependencies.sessionLogger?.warn(
+        { err: result.reason, workspaceId: workspaceIds[index], requestId },
+        "Failed to stop workspace setup during archive; continuing",
+      );
+    }
+  }
 }
 
 async function resolveWorkspaceBackingDirectory(
@@ -371,14 +410,11 @@ async function maybeRemoveDirectory(
     dependencies.github.invalidate({ cwd: backing.path });
     return true;
   } catch (error) {
-    if (error instanceof WorktreeTeardownError) {
-      dependencies.sessionLogger?.warn(
-        { err: error, targetPath: backing.path, requestId: request.requestId },
-        "Worktree disk removal failed during archive; workspace already archived",
-      );
-      return false;
-    }
-    throw error;
+    dependencies.sessionLogger?.warn(
+      { err: error, targetPath: backing.path, requestId: request.requestId },
+      "Worktree disk removal failed during archive; workspace already archived",
+    );
+    return false;
   }
 }
 

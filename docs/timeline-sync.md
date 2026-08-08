@@ -58,7 +58,8 @@ The daemon validates that the epoch is current and the exact source sequence sti
 
 ## Resume behavior
 
-Opening, reconnecting, or revisiting after selective-delivery grace fetches the latest tail page.
+Opening, reconnecting, or revisiting after a selective-delivery coverage gap fetches the latest tail
+page.
 Focus alone does not mutate timeline state; the tail response is compared with the local
 authoritative range first.
 
@@ -106,13 +107,14 @@ replica cache.
 
 The app chooses one delivery policy from `server_info.features.selectiveAgentTimeline`:
 
-- Selective daemons receive the union of agents visible in every pane. Additions subscribe and
-  catch up immediately. Every visibility-driven removal, including app backgrounding, stays
-  subscribed for a 30-second grace period so brief tab, pane, route, and app switches do not repeatedly
-  unsubscribe and catch up. Losing window keyboard focus does not make a selected pane invisible.
-  Disconnecting and disposal clear pending grace because the subscription itself no longer exists.
-  After grace has expired, revisiting a retained timeline displays its cached state immediately and
-  authoritative catch-up advances it to the current tail.
+- Selective daemons receive every agent visible in any pane plus the most recently viewed hidden
+  agents, up to five subscribed agents. Visible agents always win: if more than five are visible,
+  they all remain subscribed and no hidden agent does. Switching and app backgrounding preserve
+  this connection-scoped hot set, so returning to an agent still covered by it needs no catch-up.
+  Losing window keyboard focus does not make a selected pane invisible. Disconnecting clears hidden
+  hot agents; reconnect restores the currently visible set before authoritative catch-up. Revisiting
+  an evicted retained timeline displays its cached state immediately while authoritative catch-up
+  advances it to the current tail.
 - Legacy daemons keep globally streaming agent timelines. Visibility still triggers the existing
   authoritative catch-up, but the app does not issue selective-subscription RPCs.
 
