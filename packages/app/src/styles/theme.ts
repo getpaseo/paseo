@@ -313,6 +313,7 @@ interface DarkThemeConfig {
   accentBright: string;
   accentForeground?: string;
   destructive: string;
+  terminalAnsi?: TerminalAnsiColors;
   // Optional overrides for light surfaces (e.g. Catppuccin Latte). The dark
   // defaults keep the monochrome foreground on the existing dark themes
   // byte-for-byte identical; a light variant flips these only.
@@ -321,7 +322,24 @@ interface DarkThemeConfig {
   selectionBackground?: string;
 }
 
-const darkTerminalAnsi = {
+interface TerminalAnsiColors {
+  red: string;
+  green: string;
+  yellow: string;
+  blue: string;
+  magenta: string;
+  cyan: string;
+  white: string;
+  brightRed: string;
+  brightGreen: string;
+  brightYellow: string;
+  brightBlue: string;
+  brightMagenta: string;
+  brightCyan: string;
+  brightWhite: string;
+}
+
+const darkTerminalAnsi: TerminalAnsiColors = {
   red: "#e07070",
   green: "#5dba80",
   yellow: "#d4a44a",
@@ -336,7 +354,24 @@ const darkTerminalAnsi = {
   brightMagenta: "#c49ae0",
   brightCyan: "#6ec2cc",
   brightWhite: "#f0f0f2",
-} as const;
+};
+
+const lightTerminalAnsi: TerminalAnsiColors = {
+  red: "#d20f39",
+  green: "#40a02b",
+  yellow: "#df8e1d",
+  blue: "#1e66f5",
+  magenta: "#8839ef",
+  cyan: "#179299",
+  white: "#6c6f85",
+  brightRed: "#d20f39",
+  brightGreen: "#40a02b",
+  brightYellow: "#df8e1d",
+  brightBlue: "#1e66f5",
+  brightMagenta: "#8839ef",
+  brightCyan: "#179299",
+  brightWhite: "#4c4f69",
+};
 
 function buildDarkSemanticColors(tint: DarkThemeConfig) {
   const foreground = tint.foreground ?? "#fafafa";
@@ -397,7 +432,7 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
       selectionBackground,
       selectionForeground: foreground,
       black: tint.surfaceSidebar,
-      ...darkTerminalAnsi,
+      ...(tint.terminalAnsi ?? darkTerminalAnsi),
       brightBlack: tint.surface3,
     },
   };
@@ -666,9 +701,7 @@ export const darkMidnightTheme = buildDarkTheme(midnightDarkColors);
 export const darkClaudeTheme = buildDarkTheme(claudeDarkColors);
 export const darkGhosttyTheme = buildDarkTheme(ghosttyDarkColors);
 
-// ---------------------------------------------------------------------------
-// AMOLED — pure black background, minimum power draw, maximum contrast
-// ---------------------------------------------------------------------------
+// AMOLED — pure black background, minimum power draw, maximum contrast.
 const amoledDarkColors = buildDarkSemanticColors({
   surface0: "#000000",
   surface1: "#0a0a0a",
@@ -690,12 +723,10 @@ const amoledDarkColors = buildDarkSemanticColors({
 
 export const darkAmoledTheme = buildDarkTheme(amoledDarkColors);
 
-// ---------------------------------------------------------------------------
 // Catppuccin — all four official flavors (Mocha / Macchiato / Frappé dark,
 // Latte light). Surfaces map the Catppuccin base/surface scales onto the
 // semantic layers; the signature lavender accent (or mauve on light Latte)
 // keeps the brand recognizable.
-// ---------------------------------------------------------------------------
 const catppuccinMochaColors = buildDarkSemanticColors({
   surface0: "#1e1e2e",
   surface1: "#29293a",
@@ -774,6 +805,7 @@ const catppuccinLatteColors = buildDarkSemanticColors({
   accentBright: "#a05ef2",
   accentForeground: "#ffffff",
   destructive: "#d20f39",
+  terminalAnsi: lightTerminalAnsi,
   foreground: "#4c4f69",
   foregroundInverted: "#eff1f5",
   selectionBackground: "rgba(0, 0, 0, 0.15)",
@@ -817,10 +849,6 @@ export const lightTheme = {
 // Keep compatibility with existing code
 export const theme = darkTheme;
 
-// Export a union type that works for all registered themes. Must cover every
-// theme registered in `@/styles/unistyles` — `withUnistyles`/`useUnistyles`
-// consumers type their mapping callbacks as `(theme: Theme)`, and the runtime
-// hands them any registered theme, so the union drives which shapes are legal.
 export type Theme =
   | typeof darkTheme
   | typeof darkZincTheme

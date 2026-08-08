@@ -1,4 +1,4 @@
-import { UnistylesRuntime, type UnistylesThemes } from "react-native-unistyles";
+import { UnistylesRuntime } from "react-native-unistyles";
 import { resolveSyntaxColors, type SyntaxThemeId } from "@getpaseo/highlight";
 import {
   DEFAULT_UI_FONT_STACK,
@@ -8,9 +8,9 @@ import {
 } from "@/styles/theme";
 import { applyRootUiFont } from "./apply-root-font";
 
-// All six registered Unistyles keys — pinned literal (greppable, type-checked).
-// The `as const` element types are exactly `keyof UnistylesThemes`, so each key
-// is assignable to `UnistylesRuntime.updateTheme`'s first argument with no cast.
+// All registered Unistyles keys — pinned literal (greppable, type-checked).
+// The `as const` element types stay assignable to
+// `UnistylesRuntime.updateTheme`'s first argument as themes are added.
 const ALL_THEME_KEYS = [
   "light",
   "dark",
@@ -60,42 +60,44 @@ function scaleFontSize(uiSize: number, codeSize: number): Theme["fontSize"] {
   };
 }
 
+function patchTheme<T extends Theme>(
+  theme: T,
+  fontFamily: Theme["fontFamily"],
+  fontSize: Theme["fontSize"],
+  diffLineHeight: number,
+  syntaxTheme: SyntaxThemeId,
+): T {
+  const lineHeight = { ...theme.lineHeight, diff: diffLineHeight };
+  return {
+    ...theme,
+    fontFamily,
+    fontSize,
+    lineHeight,
+    colors: { ...theme.colors, syntax: resolveSyntaxColors(syntaxTheme, theme.colorScheme) },
+  };
+}
+
 /**
  * Patch every registered Unistyles theme with the user's appearance choices.
  * All keys in `ALL_THEME_KEYS` are patched because the active theme can change
  * and adaptive mode can flip light/dark — patching all keys keeps the active key
  * always current and makes ordering vs `setTheme`/`setAdaptiveThemes` irrelevant.
  *
- * The updater is `(currentTheme: AppTheme) => AppTheme`. We want to preserve the
- * active theme wholesale (surfaces, accents, terminal) and only patch the font
- * ramp and the syntax palette. `updateTheme` replaces the stored theme rather
- * than merging, so we spread `...t` first.
+ * The updater preserves the active theme wholesale (surfaces, accents,
+ * terminal) and only patches the font ramp and syntax palette.
+ * `updateTheme` replaces the stored theme rather than merging, so we spread
+ * `...t` first.
  */
 export function applyAppearance(input: AppearanceInput): void {
   const ui = input.uiFontFamily.trim() || DEFAULT_UI_FONT_STACK;
   const mono = input.monoFontFamily.trim() || DEFAULT_MONO_FONT_STACK;
   const diffLineHeight = Math.round(input.codeFontSize * 1.5); // couple to code size
 
-  // `UnistylesThemes` is augmented in `@/styles/unistyles` to include every
-  // registered key, so this collapses to the full theme union (all variants,
-  // both light and dark). A spread of the union widens leaf literals (e.g.
-  // `terminal.red` differs across the light themes) into unions that no single
-  // member accepts, so no matter what theme `t` is, the returned object is only
-  // “assignable back to the union” via a typed cast. The cast is honest — the
-  // object is `t` with two fields replaced — and robust as new themes are added.
-  type AppTheme = UnistylesThemes[keyof UnistylesThemes];
   for (const key of ALL_THEME_KEYS) {
     UnistylesRuntime.updateTheme(key, (t) => {
       const fontFamily = { ui, mono };
       const fontSize = scaleFontSize(input.uiFontSize, input.codeFontSize);
-      const lineHeight = { ...t.lineHeight, diff: diffLineHeight };
-      return {
-        ...t,
-        fontFamily,
-        fontSize,
-        lineHeight,
-        colors: { ...t.colors, syntax: resolveSyntaxColors(input.syntaxTheme, t.colorScheme) },
-      } as AppTheme;
+      return patchTheme(t, fontFamily, fontSize, diffLineHeight, input.syntaxTheme);
     });
   }
 
