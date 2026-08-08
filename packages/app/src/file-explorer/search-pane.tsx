@@ -201,14 +201,16 @@ export function FileSearchPane({
     [updateOption],
   );
   const renderRow = useCallback(
-    ({ item }: ListRenderItemInfo<FileSearchRow>) => (
-      <FileSearchResultRow
-        row={item}
-        collapsed={item.kind === "file" && collapsedPaths.has(item.path)}
-        onToggleFile={toggleFile}
-        onOpenMatch={onOpenMatch}
-      />
-    ),
+    ({ item }: ListRenderItemInfo<FileSearchRow>) =>
+      item.kind === "file" ? (
+        <FileSearchFileRow
+          row={item}
+          collapsed={collapsedPaths.has(item.path)}
+          onToggleFile={toggleFile}
+        />
+      ) : (
+        <FileSearchMatchRow row={item} onOpenMatch={onOpenMatch} />
+      ),
     [collapsedPaths, onOpenMatch, toggleFile],
   );
 
@@ -383,7 +385,6 @@ function FileSearchStateContent({
       <FlatList
         data={rows}
         renderItem={renderRow}
-        keyExtractor={fileSearchRowKey}
         keyboardShouldPersistTaps="handled"
         style={styles.resultsList}
         contentContainerStyle={styles.resultsContent}
@@ -399,27 +400,6 @@ function SearchStateLabel({ label, error = false }: { label: string; error?: boo
       <Text style={error ? styles.errorText : styles.stateText}>{label}</Text>
     </View>
   );
-}
-
-function fileSearchRowKey(row: FileSearchRow): string {
-  return row.key;
-}
-
-function FileSearchResultRow({
-  row,
-  collapsed,
-  onToggleFile,
-  onOpenMatch,
-}: {
-  row: FileSearchRow;
-  collapsed: boolean;
-  onToggleFile: (path: string) => void;
-  onOpenMatch: (path: string, line: number) => void;
-}) {
-  if (row.kind === "file") {
-    return <FileSearchFileRow row={row} collapsed={collapsed} onToggleFile={onToggleFile} />;
-  }
-  return <FileSearchMatchRow row={row} onOpenMatch={onOpenMatch} />;
 }
 
 function FileSearchFileRow({

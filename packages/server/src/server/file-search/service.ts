@@ -282,20 +282,17 @@ function splitGlobPatterns(patterns: string): string[] {
     } else if (character === "\\") {
       escaping = true;
     } else if (character === ",") {
-      appendGlobPattern(result, current);
+      const pattern = current.trim();
+      if (pattern) result.push(pattern);
       current = "";
     } else {
       current += character;
     }
   }
   if (escaping) current += "\\";
-  appendGlobPattern(result, current);
+  const pattern = current.trim();
+  if (pattern) result.push(pattern);
   return result;
-}
-
-function appendGlobPattern(patterns: string[], candidate: string): void {
-  const pattern = candidate.trim();
-  if (pattern) patterns.push(pattern);
 }
 
 function ingestRipgrepLine(
