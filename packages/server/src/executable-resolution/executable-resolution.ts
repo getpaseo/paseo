@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { existsSync } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import { execCommand } from "../utils/spawn.js";
 import { isWindowsCommandScript } from "../utils/windows-command.js";
 import { windowsExecutableResolution } from "./windows.js";
@@ -124,6 +124,15 @@ function classifyProbeError(error: unknown): boolean {
   return false;
 }
 
+function isExecutable(executablePath: string): boolean {
+  try {
+    accessSync(executablePath, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Check a literal executable path. PATH search is handled by findExecutable().
  */
@@ -134,7 +143,7 @@ export function executableExists(
   if (process.platform === "win32") {
     return windowsExecutableResolution.exists(executablePath, { exists });
   }
-  return exists(executablePath) ? executablePath : null;
+  return exists(executablePath) && isExecutable(executablePath) ? executablePath : null;
 }
 
 async function findWith(

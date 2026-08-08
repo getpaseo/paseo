@@ -174,10 +174,14 @@ describe("findExecutable", () => {
 });
 
 describe("executableExists", () => {
-  test("returns the path when it already exists", () => {
-    const exists = (candidate: string) => candidate === "/usr/local/bin/codex";
+  test("returns an executable path", () => {
+    expect(executableExists(process.execPath)).toBe(process.execPath);
+  });
 
-    expect(executableExists("/usr/local/bin/codex", exists)).toBe("/usr/local/bin/codex");
+  test.skipIf(isPlatform("win32"))("rejects a path without execute permission", () => {
+    const fixture = writeBrokenAbsoluteFixture(makeTempDir());
+
+    expect(executableExists(fixture)).toBeNull();
   });
 
   test("on Windows, falls back to .exe, then .cmd for extensionless paths", () => {
