@@ -587,6 +587,14 @@ class DaemonClientSession {
     return this.client.getLastLivenessRttMs();
   }
 
+  setBackgrounded(backgrounded: boolean): void {
+    this.client.setBackgrounded(backgrounded);
+  }
+
+  forceLivenessCheck(): Promise<boolean> {
+    return this.client.forceLivenessCheck();
+  }
+
   measureLatency(input: { timeoutMs: number }): Promise<number> {
     return this.client.measureLatency(input);
   }
@@ -1631,6 +1639,52 @@ test("stops pinging once the connection is gone", async () => {
   await session.advance(30_000);
 
   expect(session.pingTimestamps()).toEqual(["10s"]);
+});
+
+test("stops the liveness heartbeat while backgrounded and resumes it on foreground", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonAnswersPingsAfter("fast");
+
+  await session.connect();
+  await session.advance(10_000);
+  expect(session.pingTimestamps()).toEqual(["10s"]);
+
+  session.setBackgrounded(true);
+  await session.advance(60_000);
+  expect(session.pingTimestamps()).toEqual(["10s"]);
+
+  session.setBackgrounded(false);
+  await session.advance(10_000);
+  expect(session.pingTimestamps()).toEqual(["10s", "80s"]);
+});
+
+test("forceLivenessCheck returns true when the socket is live", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonAnswersPingsAfter("fast");
+
+  await session.connect();
+  expect(await session.forceLivenessCheck()).toBe(true);
+  expect(session.state()).toEqual({ status: "connected" });
+});
+
+test("forceLivenessCheck tears down a silently-dead socket and reports it disconnected", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonGoesSilent();
+
+  await session.connect();
+  const check = session.forceLivenessCheck();
+  await session.advance(5_000);
+  expect(await check).toBe(false);
+  expect(session.state()).toEqual({
+    status: "disconnected",
+    reason: "Liveness check timed out (5000ms)",
+  });
+  expect(session.closesFromClient()).toEqual([
+    { code: 1001, reason: "Liveness check timed out (5000ms)" },
+  ]);
 });
 
 test("sends only one ping while a slow pong is still outstanding", async () => {
@@ -3082,6 +3136,49 @@ test("requires non-empty clientId", () => {
     });
     void _client;
   }).toThrow("Daemon client requires a non-empty clientId");
+});
+
+test("backgrounding defers reconnects and foreground resume reconnects immediately", async () => {
+  useHeartbeatClock();
+  try {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+    let factoryCalls = 0;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_bg_reconnect_test",
+      logger,
+      reconnect: { enabled: true, baseDelayMs: 1000, maxDelayMs: 1000 },
+      transportFactory: () => {
+        factoryCalls += 1;
+        return mock.transport;
+      },
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+    expect(client.getConnectionState().status).toBe("connected");
+    expect(factoryCalls).toBe(1);
+
+    // Backgrounded: the transport dies but the reconnect timer must not fire.
+    client.setBackgrounded(true);
+    mock.triggerClose({ code: 1006, reason: "backgrounded socket kill" });
+    expect(client.getConnectionState().status).toBe("disconnected");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(factoryCalls).toBe(1);
+
+    // Foreground resume reconnects immediately.
+    client.setBackgrounded(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.getConnectionState().status).toBe("connecting");
+    expect(factoryCalls).toBe(2);
+    mock.triggerOpen();
+    expect(client.getConnectionState().status).toBe("connected");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("requires non-empty clientId for direct connections", () => {

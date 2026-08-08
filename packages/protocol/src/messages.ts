@@ -1087,6 +1087,13 @@ export const FetchAgentsRequestMessageSchema = z.object({
       subscriptionId: z.string().optional(),
     })
     .optional(),
+  // COMPAT(agentDirectoryIncremental): added in v0.3.0-beta.2, remove after 2027-01-06.
+  // Optional incremental directory sync. When present with a matching `directoryGeneration`,
+  // the daemon returns only agents whose records changed after `afterSequence`, plus the
+  // `deletedIds` removed from the active directory since then. Older daemons strip the
+  // unknown field and return a full page, which clients detect via `incremental: true`.
+  afterSequence: z.number().int().nonnegative().optional(),
+  directoryGeneration: z.string().optional(),
 });
 
 const WorkspaceStateBucketSchema = z.enum([
@@ -3325,6 +3332,16 @@ export const FetchAgentsResponseMessageSchema = z.object({
     subscriptionId: z.string().nullable().optional(),
     entries: z.array(AgentDirectoryResponseEntrySchema),
     pageInfo: AgentDirectoryPageInfoSchema,
+    // COMPAT(agentDirectoryIncremental): added in v0.3.0-beta.2, remove after 2027-01-06.
+    // Present on every fetch_agents_response. When `incremental: true` the response is a
+    // partial diff: `entries` are agents that changed after `afterSequence`, `deletedIds`
+    // are agents removed from the active directory since then, and the page is complete
+    // (no cursor). Older clients ignore these unknown fields and treat the response as a
+    // full page.
+    sequence: z.number().int().nonnegative().optional(),
+    directoryGeneration: z.string().optional(),
+    deletedIds: z.array(z.string()).optional(),
+    incremental: z.boolean().optional(),
   }),
 });
 

@@ -24,6 +24,7 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createTerminalManager } from "../terminal/terminal-manager.js";
 import { AgentManager, type AgentManagerEvent, type ManagedAgent } from "./agent/agent-manager.js";
 import type { ProviderSubagentDescriptor } from "./agent/provider-subagents/store.js";
+import { AgentDirectorySequenceTracker } from "./agent/agent-directory-sequence.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
 import type {
   AgentClient,
@@ -670,6 +671,7 @@ function createSessionForWorkspaceTests(
               })
             : null,
         upsert: async () => {},
+        getDirectorySequenceTracker: () => new AgentDirectorySequenceTracker(),
         ...options.agentStorage,
       }),
       projectRegistry: options.projectRegistry ?? {

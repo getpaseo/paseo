@@ -168,6 +168,19 @@ class FakeDaemonClient {
 
   setReconnectEnabled(_enabled: boolean): void {}
 
+  public backgroundedValues: boolean[] = [];
+
+  setBackgrounded(backgrounded: boolean): void {
+    this.backgroundedValues.push(backgrounded);
+  }
+
+  public forceLivenessCheckCalls = 0;
+
+  forceLivenessCheck(): Promise<boolean> {
+    this.forceLivenessCheckCalls += 1;
+    return Promise.resolve(true);
+  }
+
   getLastLivenessRttMs(): number | null {
     return this.heartbeatRttMs;
   }
@@ -1380,6 +1393,44 @@ describe("HostRuntimeController", () => {
     expect(controller.getSnapshot().client).toBe(activeClientBeforeProbes);
     expect(controller.getSnapshot().clientGeneration).toBe(generationBeforeProbes);
     expect(createdClients).toHaveLength(0);
+  });
+
+  it("delegates background pause/resume and forced liveness checks to the active client", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "directTcp",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const activeClient = new FakeDaemonClient();
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => activeClient as unknown as DaemonClient,
+        connectToDaemon: async () => {
+          throw new Error("probe unavailable");
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await controller.start();
+    await controller.activateConnection({ connectionId: "direct:lan:6767" });
+    expect(controller.getSnapshot().client).toBe(activeClient);
+
+    controller.setBackgrounded(true);
+    expect(activeClient.backgroundedValues).toEqual([true]);
+
+    controller.setBackgrounded(false);
+    expect(activeClient.backgroundedValues).toEqual([true, false]);
+
+    controller.forceLivenessCheck();
+    await Promise.resolve();
+    expect(activeClient.forceLivenessCheckCalls).toBe(1);
   });
 });
 

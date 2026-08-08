@@ -1164,6 +1164,7 @@ export class DaemonClient {
   private livenessHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private lastLivenessRttMs: number | null = null;
   private consecutiveLivenessFailures = 0;
+  private backgrounded = false;
 
   constructor(private config: DaemonClientConfig) {
     this.logger = config.logger ?? consoleLogger;
@@ -1455,6 +1456,66 @@ export class DaemonClient {
       return;
     }
     void this.connect();
+  }
+
+  /**
+   * Pause connection keep-alive work while the app is backgrounded. Stops the liveness
+   * heartbeat and any pending reconnect timer. Native OSes freeze or throttle the JS
+   * thread in the background, and letting heartbeat pings and reconnect attempts keep
+   * firing just wakes the radio for nothing — background delivery goes through push
+   * notifications, not this socket. Resuming clears the reconnect backoff so the first
+   * foreground reconnect uses the shortest delay.
+   */
+  setBackgrounded(backgrounded: boolean): void {
+    if (this.backgrounded === backgrounded) {
+      return;
+    }
+    this.backgrounded = backgrounded;
+    if (backgrounded) {
+      this.stopLivenessHeartbeat();
+      if (this.reconnectTimeout) {
+        clearTimeout(this.reconnectTimeout);
+        this.reconnectTimeout = null;
+      }
+      return;
+    }
+    this.reconnectAttempt = 0;
+    if (
+      this.connectionState.status === "connected" ||
+      this.connectionState.status === "connecting"
+    ) {
+      this.startLivenessHeartbeat();
+    }
+    if (this.connectionState.status === "disconnected" || this.connectionState.status === "idle") {
+      void this.connect();
+    }
+  }
+
+  /**
+   * Force an immediate liveness probe of the current connection. Used when the app
+   * returns to the foreground to detect a silently-dead socket (backgrounded iOS/Android
+   * often tears the WebSocket down without the client noticing) instead of waiting for
+   * the next liveness heartbeat timeout. Returns true when the connection answered. A
+   * failed probe tears the transport down and schedules a reconnect immediately.
+   */
+  async forceLivenessCheck(params?: { timeoutMs?: number }): Promise<boolean> {
+    if (this.backgrounded || this.connectionState.status !== "connected" || !this.transport) {
+      return false;
+    }
+    try {
+      await this.livenessPing({ timeoutMs: params?.timeoutMs ?? DEFAULT_LIVENESS_TIMEOUT_MS });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Forced liveness check failed";
+      this.lastErrorValue = message;
+      this.disposeTransport(1001, message);
+      this.scheduleReconnect({
+        reason: message,
+        event: "FORCED_LIVENESS_FAILED",
+        reasonCode: "liveness_timeout",
+      });
+      return false;
+    }
   }
 
   getConnectionState(): ConnectionState {
@@ -2082,6 +2143,8 @@ export class DaemonClient {
       ...(options?.sort ? { sort: options.sort } : {}),
       ...(options?.page ? { page: options.page } : {}),
       ...(options?.subscribe ? { subscribe: options.subscribe } : {}),
+      ...(options?.afterSequence !== undefined ? { afterSequence: options.afterSequence } : {}),
+      ...(options?.directoryGeneration ? { directoryGeneration: options.directoryGeneration } : {}),
     });
     return this.sendRequest({
       requestId: resolvedRequestId,
@@ -5754,6 +5817,11 @@ export class DaemonClient {
   }
 
   private armReconnectTimer(): void {
+    if (this.backgrounded) {
+      // Do not wake the radio to reconnect while backgrounded; the app reconnects
+      // explicitly on foreground resume (see setBackgrounded).
+      return;
+    }
     const attempt = this.reconnectAttempt;
     const baseDelay = this.config.reconnect?.baseDelayMs ?? DEFAULT_RECONNECT_BASE_DELAY_MS;
     const maxDelay = this.config.reconnect?.maxDelayMs ?? DEFAULT_RECONNECT_MAX_DELAY_MS;

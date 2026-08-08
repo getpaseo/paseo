@@ -6,6 +6,7 @@ import type { Logger } from "pino";
 import { writeJsonFileAtomic } from "../atomic-file.js";
 import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
+import { AgentDirectorySequenceTracker } from "./agent-directory-sequence.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
@@ -96,6 +97,7 @@ export class AgentStorage {
   private baseDir: string;
   private loadPromise: Promise<StoredAgentRecord[]> | null = null;
   private logger: Logger;
+  private readonly sequenceTracker = new AgentDirectorySequenceTracker();
 
   constructor(baseDir: string, logger: Logger) {
     this.baseDir = baseDir;
@@ -169,6 +171,7 @@ export class AgentStorage {
     this.cache.set(agentId, record);
     this.indexOwner(record);
     this.pathById.set(agentId, nextPath);
+    this.sequenceTracker.recordChange(agentId, record.archivedAt != null ? "delete" : "upsert");
   }
 
   beginDelete(agentId: string): void {
@@ -200,6 +203,11 @@ export class AgentStorage {
     this.removeOwnerIndex(agentId);
     this.pathById.delete(agentId);
     this.pathsById.delete(agentId);
+    this.sequenceTracker.recordChange(agentId, "delete");
+  }
+
+  getDirectorySequenceTracker(): AgentDirectorySequenceTracker {
+    return this.sequenceTracker;
   }
 
   async applySnapshot(

@@ -21,10 +21,14 @@ import {
 import { isSessionRpcAllowed, Session } from "./session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
-import type { StoredAgentRecord } from "./agent/agent-storage.js";
+import { AgentDirectorySequenceTracker } from "./agent/agent-directory-sequence.js";
+import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
-import { createPersistedProjectRecord } from "./workspace-registry.js";
+import {
+  createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
+} from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
 import type { SessionOptions } from "./session.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "./messages.js";
@@ -377,6 +381,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     agentStorage: asAgentStorage({
       get: vi.fn().mockResolvedValue(undefined),
       list: vi.fn().mockResolvedValue([]),
+      getDirectorySequenceTracker: () => new AgentDirectorySequenceTracker(),
       ...options.agentStorage,
     }),
     projectRegistry: {
@@ -1161,6 +1166,263 @@ describe("agent detach RPC", () => {
         error: null,
       },
     });
+  });
+});
+
+describe("agent directory incremental sync", () => {
+  async function setupIncrementalSession(
+    messages: SessionOutboundMessage[],
+  ): Promise<{ session: Session; storage: AgentStorage }> {
+    const home = mkdtempSync(join(tmpdir(), "paseo-incr-"));
+    const storage = new AgentStorage(home, pino({ level: "silent" }));
+    await storage.initialize();
+    const project = createPersistedProjectRecord({
+      projectId: "project-1",
+      rootPath: "/tmp/ws1",
+      kind: "git",
+      displayName: "Project",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "ws-1",
+      projectId: project.projectId,
+      cwd: "/tmp/ws1",
+      kind: "worktree",
+      displayName: "WS1",
+      branch: "main",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const providerSnapshotManagerStub = createProviderSnapshotManagerStub();
+    providerSnapshotManagerStub.listRegisteredProviderIds.mockReturnValue(["codex"]);
+    const session = createSessionForTest({
+      messages,
+      agentManager: { getAgent: vi.fn(() => null) },
+      agentStorage: {
+        get: storage.get.bind(storage),
+        list: storage.list.bind(storage),
+        upsert: storage.upsert.bind(storage),
+        remove: storage.remove.bind(storage),
+        getDirectorySequenceTracker: storage.getDirectorySequenceTracker.bind(storage),
+      } as unknown as SessionOptions["agentStorage"],
+      workspaceRegistry: {
+        get: vi.fn().mockResolvedValue(workspace),
+        list: vi.fn().mockResolvedValue([workspace]),
+      },
+      projectRegistry: {
+        get: vi.fn().mockResolvedValue(project),
+        list: vi.fn().mockResolvedValue([project]),
+      },
+      providerSnapshotManager: providerSnapshotManagerStub.manager,
+    });
+    afterEach(() => {
+      rmSync(home, { recursive: true, force: true });
+    });
+    return { session, storage };
+  }
+
+  function fetchAgentsResponse(messages: SessionOutboundMessage[]): {
+    type: "fetch_agents_response";
+    payload: Record<string, unknown>;
+  } {
+    const message = messages.find((m): m is { type: string } => m.type === "fetch_agents_response");
+    if (!message) {
+      throw new Error("no fetch_agents_response emitted");
+    }
+    return message as unknown as {
+      type: "fetch_agents_response";
+      payload: Record<string, unknown>;
+    };
+  }
+
+  test("returns only the mutations after the sequence cursor", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const { session, storage } = await setupIncrementalSession(messages);
+    const agentA = createStoredAgentRecord({ id: "agent-a", cwd: "/tmp/ws1", workspaceId: "ws-1" });
+    await storage.upsert(agentA);
+    const generation = storage.getDirectorySequenceTracker().getGeneration();
+
+    await session.handleMessage({
+      type: "fetch_agents_request",
+      requestId: "full-1",
+      scope: "active",
+    });
+    const full = fetchAgentsResponse(messages);
+    expect(full.payload.sequence).toBe(1);
+    expect(full.payload.directoryGeneration).toBe(generation);
+    expect((full.payload.entries as { agent: { id: string } }[]).map((e) => e.agent.id)).toEqual([
+      "agent-a",
+    ]);
+    messages.splice(0);
+
+    const agentB = createStoredAgentRecord({ id: "agent-b", cwd: "/tmp/ws1", workspaceId: "ws-1" });
+    await storage.upsert(agentB);
+    await storage.remove(agentA.id);
+
+    await session.handleMessage({
+      type: "fetch_agents_request",
+      requestId: "incr-1",
+      scope: "active",
+      afterSequence: 1,
+      directoryGeneration: generation,
+    });
+    const incr = fetchAgentsResponse(messages);
+    expect(incr.payload.incremental).toBe(true);
+    expect((incr.payload.entries as { agent: { id: string } }[]).map((e) => e.agent.id)).toEqual([
+      "agent-b",
+    ]);
+    expect(incr.payload.deletedIds).toEqual(["agent-a"]);
+    expect(incr.payload.sequence).toBe(3);
+    expect(incr.payload.directoryGeneration).toBe(generation);
+  });
+
+  test("falls back to a full snapshot when the daemon generation does not match", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const { session, storage } = await setupIncrementalSession(messages);
+    const agentA = createStoredAgentRecord({ id: "agent-a", cwd: "/tmp/ws1", workspaceId: "ws-1" });
+    await storage.upsert(agentA);
+
+    await session.handleMessage({
+      type: "fetch_agents_request",
+      requestId: "incr-stale",
+      scope: "active",
+      afterSequence: 1,
+      directoryGeneration: "a-different-generation",
+    });
+    const response = fetchAgentsResponse(messages);
+    expect(response.payload.incremental).toBeUndefined();
+    expect(
+      (response.payload.entries as { agent: { id: string } }[]).map((e) => e.agent.id),
+    ).toEqual(["agent-a"]);
+  });
+
+  test("reports archived agents through deletedIds", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const { session, storage } = await setupIncrementalSession(messages);
+    const agentA = createStoredAgentRecord({ id: "agent-a", cwd: "/tmp/ws1", workspaceId: "ws-1" });
+    await storage.upsert(agentA);
+    const generation = storage.getDirectorySequenceTracker().getGeneration();
+
+    await session.handleMessage({
+      type: "fetch_agents_request",
+      requestId: "full-1",
+      scope: "active",
+    });
+    messages.splice(0);
+
+    const archivedAgent = createStoredAgentRecord({
+      id: "agent-a",
+      cwd: "/tmp/ws1",
+      workspaceId: "ws-1",
+      archivedAt: "2026-01-02T00:00:00.000Z",
+    });
+    await storage.upsert(archivedAgent);
+
+    await session.handleMessage({
+      type: "fetch_agents_request",
+      requestId: "incr-archived",
+      scope: "active",
+      afterSequence: 1,
+      directoryGeneration: generation,
+    });
+    const response = fetchAgentsResponse(messages);
+    expect(response.payload.incremental).toBe(true);
+    expect(response.payload.deletedIds).toEqual(["agent-a"]);
+    expect(response.payload.entries).toEqual([]);
+  });
+
+  test("snapshots the sequence before async work so concurrent changes stay catchable", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const { session, storage } = await setupIncrementalSession(messages);
+    const agentA = createStoredAgentRecord({ id: "agent-a", cwd: "/tmp/ws1", workspaceId: "ws-1" });
+    await storage.upsert(agentA);
+    const tracker = storage.getDirectorySequenceTracker();
+    const generation = tracker.getGeneration();
+
+    await session.handleMessage({
+      type: "fetch_agents_request",
+      requestId: "full-1",
+      scope: "active",
+    });
+    messages.splice(0);
+
+    // Fire an incremental request without awaiting: handleMessage synchronously
+    // reaches the sequence snapshot, then suspends on async I/O. A change
+    // recorded during that window must not advance the cursor the client gets —
+    // the snapshot keeps the cursor conservative so the follow-up request below
+    // re-catches anything added in between.
+    const requestPromise = session.handleMessage({
+      type: "fetch_agents_request",
+      requestId: "incr-1",
+      scope: "active",
+      afterSequence: 1,
+      directoryGeneration: generation,
+    });
+    tracker.recordChange("agent-b", "upsert");
+    await requestPromise;
+
+    const incr = fetchAgentsResponse(messages);
+    expect(incr.payload.incremental).toBe(true);
+    expect(incr.payload.sequence).toBe(1);
+    expect(incr.payload.directoryGeneration).toBe(generation);
+    expect((incr.payload.entries as { agent: { id: string } }[]).map((e) => e.agent.id)).toEqual(
+      [],
+    );
+
+    // A follow-up request from the snapshot cursor catches the in-flight change.
+    messages.splice(0);
+    const agentB = createStoredAgentRecord({ id: "agent-b", cwd: "/tmp/ws1", workspaceId: "ws-1" });
+    await storage.upsert(agentB);
+    await session.handleMessage({
+      type: "fetch_agents_request",
+      requestId: "incr-2",
+      scope: "active",
+      afterSequence: 1,
+      directoryGeneration: generation,
+    });
+    const followUp = fetchAgentsResponse(messages);
+    expect(
+      (followUp.payload.entries as { agent: { id: string } }[]).map((e) => e.agent.id),
+    ).toEqual(["agent-b"]);
+    expect(followUp.payload.deletedIds).toEqual([]);
+  });
+
+  test("does not report a restored agent in both entries and deletedIds", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const { session, storage } = await setupIncrementalSession(messages);
+    const agentA = createStoredAgentRecord({ id: "agent-a", cwd: "/tmp/ws1", workspaceId: "ws-1" });
+    await storage.upsert(agentA);
+    const generation = storage.getDirectorySequenceTracker().getGeneration();
+
+    await session.handleMessage({
+      type: "fetch_agents_request",
+      requestId: "full-1",
+      scope: "active",
+    });
+    messages.splice(0);
+
+    // Archiving writes a "delete" change for the id; unarchiving writes an
+    // "upsert". Together they form an interleaved [delete, upsert] window where
+    // the agent's final state is active. It must be delivered as an entry and
+    // must NOT also appear in deletedIds — the client applies entries then
+    // deletes, and the overlap would make the agent vanish client-side.
+    await storage.upsert({ ...agentA, archivedAt: "2026-01-02T00:00:00.000Z" });
+    await storage.upsert(agentA);
+
+    await session.handleMessage({
+      type: "fetch_agents_request",
+      requestId: "incr-1",
+      scope: "active",
+      afterSequence: 1,
+      directoryGeneration: generation,
+    });
+    const incr = fetchAgentsResponse(messages);
+    expect(incr.payload.incremental).toBe(true);
+    expect((incr.payload.entries as { agent: { id: string } }[]).map((e) => e.agent.id)).toEqual([
+      "agent-a",
+    ]);
+    expect(incr.payload.deletedIds).toEqual([]);
   });
 });
 

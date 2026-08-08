@@ -40,6 +40,7 @@ interface AgentSnapshot {
   entries: FetchAgentsEntry[];
   subscriptionId: string | null;
   legacy: boolean;
+  directoryCursor: { generation: string; sequence: number } | null;
 }
 
 export interface DirectoryConnection {
@@ -77,6 +78,11 @@ export class DirectorySync {
   };
   private unsubscribe: (() => void) | null = null;
   private readonly abortSessionWaits = new Set<() => void>();
+  // Last agent-directory sequence this client applied, keyed by the daemon's
+  // generation. On reconnect we ask the daemon for only the mutations after it,
+  // avoiding the full paginated snapshot. A null cursor or a generation change
+  // (daemon restart) forces the full path.
+  private agentDirectoryCursor: { generation: string; sequence: number } | null = null;
 
   constructor(
     private readonly serverId: string,
@@ -170,10 +176,19 @@ export class DirectorySync {
     input: RefreshAgentDirectoryInput = {},
   ): Promise<RefreshAgentDirectoryResult> {
     const { client, source } = this.requireOnline();
+
+    // Incremental fast path: with a live sequence cursor we ask the daemon for
+    // only the mutations since the last sync instead of the full snapshot. The
+    // daemon decides whether a delta is still reconstructible; anything else
+    // falls through to the full paginated path below.
+    const incremental = await this.tryRefreshIncrementally(client, source, input);
+    if (incremental) return incremental;
+
     const transaction = this.agentTransactions.begin(source, () => ({
       entries: [],
       subscriptionId: null,
       legacy: false,
+      directoryCursor: null,
     }));
     this.callbacks.markAgentLoading();
     try {
@@ -223,6 +238,13 @@ export class DirectorySync {
           )
         : completion.deltas;
       const agents = this.agents.commitSnapshot(completion.snapshot.entries, deltas);
+      // Advance the cursor only after the whole paginated snapshot committed. A
+      // mid-pagination failure leaves the cursor at its previous value, so the
+      // next sync resumes incrementally from a state the client actually
+      // applied — not from a sequence whose entries were discarded.
+      if (completion.snapshot.directoryCursor) {
+        this.agentDirectoryCursor = completion.snapshot.directoryCursor;
+      }
       this.callbacks.markAgentReady();
       return { agents, subscriptionId: completion.snapshot.subscriptionId };
     } catch (error) {
@@ -336,6 +358,12 @@ export class DirectorySync {
       this.assertAgentTransactionCurrent(client, source, transaction);
       transaction.snapshot.entries.push(...payload.entries);
       transaction.snapshot.subscriptionId ??= payload.subscriptionId ?? null;
+      if (payload.sequence !== undefined && payload.directoryGeneration !== undefined) {
+        transaction.snapshot.directoryCursor = {
+          generation: payload.directoryGeneration,
+          sequence: payload.sequence,
+        };
+      }
       const pageInfo = payload.pageInfo as {
         hasMore?: boolean;
         hasMoreAfter?: boolean;
@@ -348,6 +376,69 @@ export class DirectorySync {
       cursor = nextCursor;
       subscribe = undefined;
     }
+  }
+
+  /**
+   * Runs the incremental fast path only when a live sequence cursor is present
+   * and no filter is active; returns null otherwise so the caller falls through
+   * to the full paginated snapshot.
+   */
+  private async tryRefreshIncrementally(
+    client: DaemonClient,
+    source: DirectorySourceToken,
+    input: RefreshAgentDirectoryInput,
+  ): Promise<RefreshAgentDirectoryResult | null> {
+    if (input.filter || !this.agentDirectoryCursor) return null;
+    return this.tryIncrementalAgentDirectory(client, source, input);
+  }
+
+  /**
+   * Incremental agent-directory sync. Requests only the mutations since the
+   * last applied sequence; applies them through the same delta path as live
+   * `agent_update` events. Returns `null` when the daemon could not produce a
+   * delta (generation changed, cursor aged out, too many changes) or the
+   * connection moved underneath us — the caller then runs the full snapshot.
+   */
+  private async tryIncrementalAgentDirectory(
+    client: DaemonClient,
+    source: DirectorySourceToken,
+    input: RefreshAgentDirectoryInput,
+  ): Promise<RefreshAgentDirectoryResult | null> {
+    const cursor = this.agentDirectoryCursor;
+    if (!cursor) return null;
+    let payload: Awaited<ReturnType<DaemonClient["fetchAgents"]>>;
+    try {
+      payload = await client.fetchAgents({
+        scope: "active",
+        afterSequence: cursor.sequence,
+        directoryGeneration: cursor.generation,
+        ...(input.subscribe ? { subscribe: input.subscribe } : {}),
+      });
+    } catch {
+      return null;
+    }
+    if (!this.isCurrent(client, source) || payload.incremental !== true) return null;
+
+    for (const entry of payload.entries ?? []) {
+      this.agents.applyDelta({
+        kind: "upsert",
+        agent: entry.agent,
+        project: entry.project ?? null,
+      });
+    }
+    for (const agentId of payload.deletedIds ?? []) {
+      this.agents.applyDelta({ kind: "remove", agentId });
+    }
+
+    if (payload.sequence !== undefined && payload.directoryGeneration !== undefined) {
+      this.agentDirectoryCursor = {
+        generation: payload.directoryGeneration,
+        sequence: payload.sequence,
+      };
+    }
+    const agents = useSessionStore.getState().sessions[this.serverId]?.agents ?? new Map();
+    this.callbacks.markAgentReady();
+    return { agents, subscriptionId: payload.subscriptionId ?? null };
   }
 
   private assertAgentTransactionCurrent(

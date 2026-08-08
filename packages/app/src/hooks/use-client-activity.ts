@@ -129,7 +129,12 @@ export function useClientActivity({
     const start = () => {
       if (intervalId) clearInterval(intervalId);
       tracker.sendHeartbeat();
-      intervalId = setInterval(() => tracker.sendHeartbeat(), HEARTBEAT_INTERVAL_MS);
+      intervalId = setInterval(() => {
+        // Skip sending while backgrounded — the socket may be gone and the radio
+        // wake-up would be wasted; foreground resume triggers an immediate probe.
+        if (AppState.currentState !== "active") return;
+        tracker.sendHeartbeat();
+      }, HEARTBEAT_INTERVAL_MS);
     };
 
     const stop = () => {
