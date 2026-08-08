@@ -17,7 +17,6 @@ import {
   type ListRenderItemInfo,
   type PressableStateCallbackType,
 } from "react-native";
-import { X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { MaterialFileIcon } from "@/components/material-file-icon";
@@ -38,7 +37,6 @@ import {
 const SEARCH_DEBOUNCE_MS = 300;
 const SEARCH_MAX_RESULTS = 2000;
 
-const ThemedX = withUnistyles(X);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedTextInput = withUnistyles(TextInput, (theme: Theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
@@ -50,14 +48,12 @@ export interface FileSearchPaneProps {
   client: DaemonClient | null;
   workspaceRoot: string;
   onOpenMatch: (path: string, line: number) => void;
-  onExit: () => void;
 }
 
 export function FileSearchPane({
   client,
   workspaceRoot,
   onOpenMatch,
-  onExit,
 }: FileSearchPaneProps): ReactElement {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -162,16 +158,6 @@ export function FileSearchPane({
           testID="files-search-input"
           clearTestID="files-search-clear"
         />
-        <Pressable
-          onPress={onExit}
-          accessibilityRole="button"
-          accessibilityLabel={t("common.actions.close")}
-          hitSlop={8}
-          style={styles.closeButton}
-          testID="files-search-close"
-        >
-          <ThemedX size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
-        </Pressable>
       </View>
       <View style={styles.optionsRow}>
         <SearchOptionButton
@@ -387,13 +373,6 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
     paddingHorizontal: theme.spacing[2],
     paddingTop: theme.spacing[2],
-  },
-  closeButton: {
-    width: 28,
-    height: 28,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: theme.borderRadius.md,
   },
   optionsRow: {
     flexDirection: "row",
