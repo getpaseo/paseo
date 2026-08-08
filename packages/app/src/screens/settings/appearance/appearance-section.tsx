@@ -60,6 +60,11 @@ function getThemeLabel(t: TFunction, value: AppSettings["theme"]): string {
     midnight: "settings.appearance.theme.options.midnight",
     claude: "settings.appearance.theme.options.claude",
     ghostty: "settings.appearance.theme.options.ghostty",
+    amoled: "settings.appearance.theme.options.amoled",
+    "catppuccin-latte": "settings.appearance.theme.options.catppuccin-latte",
+    "catppuccin-frappe": "settings.appearance.theme.options.catppuccin-frappe",
+    "catppuccin-macchiato": "settings.appearance.theme.options.catppuccin-macchiato",
+    "catppuccin-mocha": "settings.appearance.theme.options.catppuccin-mocha",
     auto: "settings.appearance.theme.options.auto",
   };
   return t(labelKeys[value]);
@@ -71,6 +76,11 @@ const DARK_VARIANT_THEMES: readonly AppSettings["theme"][] = [
   "midnight",
   "claude",
   "ghostty",
+  "amoled",
+  "catppuccin-latte",
+  "catppuccin-frappe",
+  "catppuccin-macchiato",
+  "catppuccin-mocha",
 ];
 
 // Platform default stacks can be the bare native tokens ("normal"/"monospace");

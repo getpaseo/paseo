@@ -107,7 +107,20 @@ export const baseColors = {
   },
 } as const;
 
-export type ThemeName = "light" | "dark" | "zinc" | "midnight" | "claude" | "ghostty";
+export type ThemeName =
+  | "light"
+  | "dark"
+  | "zinc"
+  | "midnight"
+  | "claude"
+  | "ghostty"
+  // Pure-black OLED-friendly background
+  | "amoled"
+  // Catppuccin flavors (all four official variants)
+  | "catppuccin-latte"
+  | "catppuccin-frappe"
+  | "catppuccin-macchiato"
+  | "catppuccin-mocha";
 
 // Diff colors — the +/- inside a diff view, where the color *is* the signal and has to
 // survive being scanned line by line, so it stays saturated. Light uses muted tones, dark
@@ -300,6 +313,12 @@ interface DarkThemeConfig {
   accentBright: string;
   accentForeground?: string;
   destructive: string;
+  // Optional overrides for light surfaces (e.g. Catppuccin Latte). The dark
+  // defaults keep the monochrome foreground on the existing dark themes
+  // byte-for-byte identical; a light variant flips these only.
+  foreground?: string;
+  foregroundInverted?: string;
+  selectionBackground?: string;
 }
 
 const darkTerminalAnsi = {
@@ -320,6 +339,9 @@ const darkTerminalAnsi = {
 } as const;
 
 function buildDarkSemanticColors(tint: DarkThemeConfig) {
+  const foreground = tint.foreground ?? "#fafafa";
+  const foregroundInverted = tint.foregroundInverted ?? tint.surface0;
+  const selectionBackground = tint.selectionBackground ?? "rgba(255, 255, 255, 0.2)";
   return {
     surface0: tint.surface0,
     surface1: tint.surface1,
@@ -331,7 +353,7 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     surfaceSidebarHover: tint.surfaceSidebarHover,
     surfaceWorkspace: tint.surface1,
 
-    foreground: "#fafafa",
+    foreground,
     foregroundMuted: tint.foregroundMuted,
     foregroundExtraMuted: tint.foregroundExtraMuted,
 
@@ -352,11 +374,11 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     // Legacy aliases (for gradual migration)
     background: tint.surface0,
     popover: tint.surface2,
-    popoverForeground: "#fafafa",
-    primary: "#fafafa",
-    primaryForeground: tint.surface0,
+    popoverForeground: foreground,
+    primary: foreground,
+    primaryForeground: foregroundInverted,
     secondary: tint.surface2,
-    secondaryForeground: "#fafafa",
+    secondaryForeground: foreground,
     muted: tint.surface2,
     mutedForeground: tint.foregroundMuted,
     accentBorder: tint.borderAccent,
@@ -369,11 +391,11 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
 
     terminal: {
       background: tint.surface0,
-      foreground: "#fafafa",
-      cursor: "#fafafa",
-      cursorAccent: tint.surface0,
-      selectionBackground: "rgba(255, 255, 255, 0.2)",
-      selectionForeground: "#fafafa",
+      foreground,
+      cursor: foreground,
+      cursorAccent: foregroundInverted,
+      selectionBackground,
+      selectionForeground: foreground,
       black: tint.surfaceSidebar,
       ...darkTerminalAnsi,
       brightBlack: tint.surface3,
@@ -620,13 +642,18 @@ const darkShadow = {
   },
 } as const;
 
-function buildDarkTheme(semanticColors: ReturnType<typeof buildDarkSemanticColors>) {
+function buildDarkTheme<C extends "light" | "dark" = "dark">(
+  semanticColors: ReturnType<typeof buildDarkSemanticColors>,
+  colorScheme: C = "dark" as C,
+) {
   return {
-    colorScheme: "dark" as const,
+    colorScheme,
     colors: {
       ...semanticColors,
       palette: baseColors,
-      syntax: darkHighlightColors,
+      // A Catppuccin-flavored light theme (Latte) keys its syntax palette off
+      // the light axis, matching how the built-in light theme resolves syntax.
+      syntax: colorScheme === "light" ? lightHighlightColors : darkHighlightColors,
     },
     shadow: darkShadow,
     ...commonTheme,
@@ -638,6 +665,124 @@ export const darkZincTheme = buildDarkTheme(zincDarkColors);
 export const darkMidnightTheme = buildDarkTheme(midnightDarkColors);
 export const darkClaudeTheme = buildDarkTheme(claudeDarkColors);
 export const darkGhosttyTheme = buildDarkTheme(ghosttyDarkColors);
+
+// ---------------------------------------------------------------------------
+// AMOLED — pure black background, minimum power draw, maximum contrast
+// ---------------------------------------------------------------------------
+const amoledDarkColors = buildDarkSemanticColors({
+  surface0: "#000000",
+  surface1: "#0a0a0a",
+  surface2: "#111111",
+  surface3: "#202020",
+  surface4: "#2d2d2d",
+  surfaceDiffEmpty: "#0c0c0c",
+  surfaceSidebar: "#000000",
+  surfaceSidebarHover: "#0d0d0d",
+  foregroundMuted: "#a1a1aa",
+  foregroundExtraMuted: "#71717a",
+  scrollbarHandle: "#71717a",
+  border: "#1c1c1c",
+  borderAccent: "#242424",
+  accent: "#4ade80",
+  accentBright: "#86efac",
+  destructive: "#c44a4a",
+});
+
+export const darkAmoledTheme = buildDarkTheme(amoledDarkColors);
+
+// ---------------------------------------------------------------------------
+// Catppuccin — all four official flavors (Mocha / Macchiato / Frappé dark,
+// Latte light). Surfaces map the Catppuccin base/surface scales onto the
+// semantic layers; the signature lavender accent (or mauve on light Latte)
+// keeps the brand recognizable.
+// ---------------------------------------------------------------------------
+const catppuccinMochaColors = buildDarkSemanticColors({
+  surface0: "#1e1e2e",
+  surface1: "#29293a",
+  surface2: "#313244",
+  surface3: "#45475a",
+  surface4: "#585b70",
+  surfaceDiffEmpty: "#26262f",
+  surfaceSidebar: "#181825",
+  surfaceSidebarHover: "#232334",
+  foregroundMuted: "#a6adc8",
+  foregroundExtraMuted: "#7f849c",
+  scrollbarHandle: "#7f849c",
+  border: "#313244",
+  borderAccent: "#3a3a4f",
+  accent: "#b4befe",
+  accentBright: "#cdd4fa",
+  accentForeground: "#11111b", // dark text on lavender accent
+  destructive: "#f38ba8",
+});
+
+const catppuccinMacchiatoColors = buildDarkSemanticColors({
+  surface0: "#24273a",
+  surface1: "#2e3147",
+  surface2: "#363a4f",
+  surface3: "#494d64",
+  surface4: "#5b6078",
+  surfaceDiffEmpty: "#2c2f44",
+  surfaceSidebar: "#1e2030",
+  surfaceSidebarHover: "#282b40",
+  foregroundMuted: "#b8c0e0",
+  foregroundExtraMuted: "#8a91b3",
+  scrollbarHandle: "#8a91b3",
+  border: "#363a4f",
+  borderAccent: "#41465e",
+  accent: "#b4befe",
+  accentBright: "#cdd4fa",
+  accentForeground: "#181926",
+  destructive: "#f38ba8",
+});
+
+const catppuccinFrappeColors = buildDarkSemanticColors({
+  surface0: "#303446",
+  surface1: "#3a4051",
+  surface2: "#414559",
+  surface3: "#51576d",
+  surface4: "#626880",
+  surfaceDiffEmpty: "#383d4f",
+  surfaceSidebar: "#292c3c",
+  surfaceSidebarHover: "#34394a",
+  foregroundMuted: "#c6d0f5",
+  foregroundExtraMuted: "#9499b8",
+  scrollbarHandle: "#9499b8",
+  border: "#414559",
+  borderAccent: "#4a5064",
+  accent: "#b4befe",
+  accentBright: "#cdd4fa",
+  accentForeground: "#292c3c",
+  destructive: "#f38ba8",
+});
+
+const catppuccinLatteColors = buildDarkSemanticColors({
+  surface0: "#eff1f5",
+  surface1: "#e8eaf0",
+  surface2: "#ccd0da",
+  surface3: "#bcc0cc",
+  surface4: "#acb0be",
+  surfaceDiffEmpty: "#eef0f4",
+  surfaceSidebar: "#dce0e8",
+  surfaceSidebarHover: "#e2e5ec",
+  foregroundMuted: "#6c6f85",
+  foregroundExtraMuted: "#8c8fa1",
+  scrollbarHandle: "#8c8fa1",
+  border: "#ccd0da",
+  borderAccent: "#d5d9e2",
+  accent: "#8839ef", // mauve — reads on the light Latte surfaces where lavender would wash out
+  accentBright: "#a05ef2",
+  accentForeground: "#ffffff",
+  destructive: "#d20f39",
+  foreground: "#4c4f69",
+  foregroundInverted: "#eff1f5",
+  selectionBackground: "rgba(0, 0, 0, 0.15)",
+});
+
+export const darkCatppuccinMochaTheme = buildDarkTheme(catppuccinMochaColors);
+export const darkCatppuccinMacchiatoTheme = buildDarkTheme(catppuccinMacchiatoColors);
+export const darkCatppuccinFrappeTheme = buildDarkTheme(catppuccinFrappeColors);
+export const lightCatppuccinLatteTheme = buildDarkTheme(catppuccinLatteColors, "light");
 
 export const lightTheme = {
   colorScheme: "light" as const,
@@ -672,8 +817,22 @@ export const lightTheme = {
 // Keep compatibility with existing code
 export const theme = darkTheme;
 
-// Export a union type that works for both themes
-export type Theme = typeof darkTheme | typeof lightTheme;
+// Export a union type that works for all registered themes. Must cover every
+// theme registered in `@/styles/unistyles` — `withUnistyles`/`useUnistyles`
+// consumers type their mapping callbacks as `(theme: Theme)`, and the runtime
+// hands them any registered theme, so the union drives which shapes are legal.
+export type Theme =
+  | typeof darkTheme
+  | typeof darkZincTheme
+  | typeof darkMidnightTheme
+  | typeof darkClaudeTheme
+  | typeof darkGhosttyTheme
+  | typeof darkAmoledTheme
+  | typeof lightTheme
+  | typeof lightCatppuccinLatteTheme
+  | typeof darkCatppuccinFrappeTheme
+  | typeof darkCatppuccinMacchiatoTheme
+  | typeof darkCatppuccinMochaTheme;
 
 type UnistylesThemeKey =
   | "light"
@@ -681,7 +840,12 @@ type UnistylesThemeKey =
   | "darkZinc"
   | "darkMidnight"
   | "darkClaude"
-  | "darkGhostty";
+  | "darkGhostty"
+  | "darkAmoled"
+  | "catppuccinLatte"
+  | "catppuccinFrappe"
+  | "catppuccinMacchiato"
+  | "catppuccinMocha";
 
 export const THEME_TO_UNISTYLES: Record<ThemeName, UnistylesThemeKey> = {
   light: "light",
@@ -690,6 +854,11 @@ export const THEME_TO_UNISTYLES: Record<ThemeName, UnistylesThemeKey> = {
   midnight: "darkMidnight",
   claude: "darkClaude",
   ghostty: "darkGhostty",
+  amoled: "darkAmoled",
+  "catppuccin-latte": "catppuccinLatte",
+  "catppuccin-frappe": "catppuccinFrappe",
+  "catppuccin-macchiato": "catppuccinMacchiato",
+  "catppuccin-mocha": "catppuccinMocha",
 };
 
 export const THEME_SWATCHES: Record<ThemeName, string> = {
@@ -699,4 +868,9 @@ export const THEME_SWATCHES: Record<ThemeName, string> = {
   midnight: "#4A6BA8",
   claude: "#D97757",
   ghostty: "#8caaee",
+  amoled: "#000000",
+  "catppuccin-latte": "#eff1f5",
+  "catppuccin-frappe": "#303446",
+  "catppuccin-macchiato": "#24273a",
+  "catppuccin-mocha": "#1e1e2e",
 };
