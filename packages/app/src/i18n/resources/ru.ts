@@ -233,8 +233,13 @@ export const ru: TranslationResources = {
   sessions: {
     title: "История",
     empty: "Сеансов пока нет",
+    noMatches: "Нет подходящих сеансов",
+    tooManyMatches: "Слишком много совпадений — уточните запрос",
+    hostLoadFailed: "{{host}}: Не удалось загрузить историю",
+    searchPlaceholder: "Поиск по истории",
     actions: {
       loadMore: "Загрузить больше",
+      clearSearch: "Очистить поиск",
     },
   },
   agentList: {
@@ -971,7 +976,7 @@ export const ru: TranslationResources = {
       discord: "Discord",
       github: "Создать issue в GitHub",
       whatsNew: "Что нового",
-      version: "Paseo {{version}}",
+      appName: "Paseo",
     },
     sections: {
       sessions: "История",
