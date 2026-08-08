@@ -246,6 +246,16 @@ describe("createTerminal", () => {
     ).toBe("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
   });
 
+  it("uses $SHELL as the default on macOS and Linux, falling back to /bin/sh", () => {
+    for (const platform of ["darwin", "linux"] as const) {
+      expect(
+        resolveDefaultTerminalShell({ platform, env: { SHELL: "/opt/homebrew/bin/fish" } }),
+      ).toBe("/opt/homebrew/bin/fish");
+      // A login shell with no SHELL exported still has to land somewhere runnable.
+      expect(resolveDefaultTerminalShell({ platform, env: {} })).toBe("/bin/sh");
+    }
+  });
+
   it("resolves preset and custom terminal shell executables dynamically via PATH", async () => {
     const mockFinder = vi.fn(async (name: string) => {
       if (name === "pwsh.exe")
