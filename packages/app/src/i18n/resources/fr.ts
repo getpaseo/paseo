@@ -2183,7 +2183,7 @@ export const fr: TranslationResources = {
         moreActions: "More actions",
         systemShell: "System shell",
         systemShellUnknown: "Resolved by the host",
-        defaultHint: "New terminal opens the marked row.",
+        defaultHint: "Select a row to choose what a new terminal opens.",
         save: "Save",
         emptyState: "No profiles yet. Add one to launch terminals with a specific command.",
       },

@@ -4,7 +4,6 @@ import {
   ArrowUpToLine,
   Check,
   ChevronRight,
-  CircleCheck,
   Globe,
   Monitor,
   MoreVertical,
@@ -92,7 +91,6 @@ const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedProfileSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedPlus = withUnistyles(Plus);
 const ThemedCheck = withUnistyles(Check);
-const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 
 interface DynamicProviderIconProps {
@@ -117,7 +115,6 @@ const editProfileIcon = <ThemedProfilePencil size={ICON_SIZE.sm} uniProps={muted
 const removeProfileIcon = <ThemedTrash2 size={ICON_SIZE.sm} uniProps={destructiveColorMapping} />;
 const addProfileIcon = <ThemedPlus size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 const defaultProfileIcon = <ThemedCheck size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
-const setDefaultIcon = <ThemedCircleCheck size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 const kebabIcon = <ThemedMoreVertical size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 
 function formatHostConnectionLabel(connection: HostConnection, t: TFunction): string {
@@ -1520,43 +1517,44 @@ function SystemShellRow({
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
   const handleSetDefault = useCallback(() => onSetDefault(""), [onSetDefault]);
+  const selectionState = useMemo(() => ({ selected: isDefault }), [isDefault]);
 
   return (
     <View
       style={[settingsStyles.row, terminalProfileStyles.row]}
       testID="terminal-profile-row-system-shell"
     >
-      <View style={terminalProfileStyles.iconWrapper}>
-        <ThemedProfileSquareTerminal size={ICON_SIZE.md} uniProps={mutedColorMapping} />
-      </View>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
-          {t("settings.host.terminalProfiles.systemShell")}
-        </Text>
-        <Text style={settingsStyles.rowHint} numberOfLines={1}>
-          {systemShellPath || t("settings.host.terminalProfiles.systemShellUnknown")}
-        </Text>
-      </View>
-      <View
-        style={terminalProfileStyles.defaultSlot}
-        accessible={isDefault}
-        accessibilityLabel={
-          isDefault ? t("settings.host.terminalProfiles.defaultMarker") : undefined
-        }
-        testID={isDefault ? "terminal-profile-default-system-shell" : undefined}
+      <Pressable
+        style={terminalProfileStyles.selectArea}
+        onPress={handleSetDefault}
+        accessibilityRole="radio"
+        accessibilityState={selectionState}
+        accessibilityLabel={t("settings.host.terminalProfiles.systemShell")}
+        testID="terminal-profile-select-system-shell"
       >
-        {isDefault ? defaultProfileIcon : null}
-      </View>
+        <View style={terminalProfileStyles.iconWrapper}>
+          <ThemedProfileSquareTerminal size={ICON_SIZE.md} uniProps={mutedColorMapping} />
+        </View>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+            {t("settings.host.terminalProfiles.systemShell")}
+          </Text>
+          <Text style={settingsStyles.rowHint} numberOfLines={1}>
+            {systemShellPath || t("settings.host.terminalProfiles.systemShellUnknown")}
+          </Text>
+        </View>
+        <View
+          style={terminalProfileStyles.defaultSlot}
+          accessible={isDefault}
+          accessibilityLabel={
+            isDefault ? t("settings.host.terminalProfiles.defaultMarker") : undefined
+          }
+          testID={isDefault ? "terminal-profile-default-system-shell" : undefined}
+        >
+          {isDefault ? defaultProfileIcon : null}
+        </View>
+      </Pressable>
       <View style={terminalProfileStyles.rowActions}>
-        <Button
-          variant="ghost"
-          size="sm"
-          leftIcon={setDefaultIcon}
-          onPress={handleSetDefault}
-          disabled={isDefault}
-          accessibilityLabel={t("settings.host.terminalProfiles.setAsDefault")}
-          testID="terminal-profile-set-default-system-shell"
-        />
         {/* One spacer per action a profile row has and this row does not, so the
             rail lands on the same rung. Compact collapses those four into one
             kebab, so one spacer covers it. */}
@@ -1621,52 +1619,55 @@ function TerminalProfileRow({
   );
 
   const icon = getTerminalProfileIcon(profile);
+  const selectionState = useMemo(
+    () => (canSetDefault ? { selected: isDefault } : undefined),
+    [canSetDefault, isDefault],
+  );
 
   return (
     <View style={rowStyle} testID={`terminal-profile-row-${profile.id}`}>
-      <View style={terminalProfileStyles.iconWrapper}>
-        {icon ? (
-          <ThemedDynamicProviderIcon
-            iconKey={icon}
-            size={ICON_SIZE.md}
-            uniProps={mutedColorMapping}
-          />
-        ) : (
-          <ThemedProfileSquareTerminal size={ICON_SIZE.md} uniProps={mutedColorMapping} />
-        )}
-      </View>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
-          {profile.name}
-        </Text>
-        <Text style={settingsStyles.rowHint} numberOfLines={1}>
-          {commandText}
-        </Text>
-      </View>
-      {canSetDefault ? (
-        <View
-          style={terminalProfileStyles.defaultSlot}
-          accessible={isDefault}
-          accessibilityLabel={
-            isDefault ? t("settings.host.terminalProfiles.defaultMarker") : undefined
-          }
-          testID={isDefault ? `terminal-profile-default-${profile.id}` : undefined}
-        >
-          {isDefault ? defaultProfileIcon : null}
+      <Pressable
+        style={terminalProfileStyles.selectArea}
+        onPress={canSetDefault ? handleSetDefault : undefined}
+        disabled={!canSetDefault}
+        accessibilityRole={canSetDefault ? "radio" : undefined}
+        accessibilityState={selectionState}
+        accessibilityLabel={profile.name}
+        testID={`terminal-profile-select-${profile.id}`}
+      >
+        <View style={terminalProfileStyles.iconWrapper}>
+          {icon ? (
+            <ThemedDynamicProviderIcon
+              iconKey={icon}
+              size={ICON_SIZE.md}
+              uniProps={mutedColorMapping}
+            />
+          ) : (
+            <ThemedProfileSquareTerminal size={ICON_SIZE.md} uniProps={mutedColorMapping} />
+          )}
         </View>
-      ) : null}
-      <View style={terminalProfileStyles.rowActions}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+            {profile.name}
+          </Text>
+          <Text style={settingsStyles.rowHint} numberOfLines={1}>
+            {commandText}
+          </Text>
+        </View>
         {canSetDefault ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            leftIcon={setDefaultIcon}
-            onPress={handleSetDefault}
-            disabled={isDefault}
-            accessibilityLabel={t("settings.host.terminalProfiles.setAsDefault")}
-            testID={`terminal-profile-set-default-${profile.id}`}
-          />
+          <View
+            style={terminalProfileStyles.defaultSlot}
+            accessible={isDefault}
+            accessibilityLabel={
+              isDefault ? t("settings.host.terminalProfiles.defaultMarker") : undefined
+            }
+            testID={isDefault ? `terminal-profile-default-${profile.id}` : undefined}
+          >
+            {isDefault ? defaultProfileIcon : null}
+          </View>
         ) : null}
+      </Pressable>
+      <View style={terminalProfileStyles.rowActions}>
         {isCompact ? (
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -2155,6 +2156,16 @@ const terminalProfileStyles = StyleSheet.create((theme) => ({
   // Measured at 40px; a spacer 2px short walked the rail 8px off the rung.
   rowActionSpacer: {
     width: theme.iconSize.sm + theme.spacing[3] * 2 + 2,
+  },
+  // The row body is the control: pressing it chooses what a new terminal opens.
+  // The action rail stays outside it so a nested Pressable never has to fight
+  // the outer one for the press (docs/hover.md).
+  selectArea: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    minWidth: 0,
   },
   addTrigger: {
     alignItems: "center",

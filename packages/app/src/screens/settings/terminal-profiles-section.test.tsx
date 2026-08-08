@@ -74,11 +74,31 @@ vi.mock("react-native", () => ({
     children,
     onPress,
     testID,
+    accessibilityRole,
+    accessibilityState,
+    disabled,
   }: {
     children?: React.ReactNode;
     onPress?: () => void;
     testID?: string;
-  }) => React.createElement("div", { "data-testid": testID, onClick: onPress }, children),
+    accessibilityRole?: string;
+    accessibilityState?: { selected?: boolean };
+    disabled?: boolean;
+  }) =>
+    React.createElement(
+      "div",
+      {
+        "data-testid": testID,
+        onClick: disabled ? undefined : onPress,
+        role: accessibilityRole,
+        // RN maps accessibilityState.selected onto aria-selected on web.
+        "aria-selected":
+          accessibilityState?.selected === undefined
+            ? undefined
+            : String(accessibilityState.selected),
+      },
+      children,
+    ),
 }));
 
 vi.mock("react-native-unistyles", () => ({
@@ -394,7 +414,9 @@ describe("HostTerminalsPage terminal profiles", () => {
     expect(row?.textContent).toContain("System shell");
     expect(row?.textContent).toContain("C:\\Windows\\System32\\cmd.exe");
     expect(find("terminal-profile-default-system-shell")).not.toBeNull();
-    expect(find("terminal-profile-set-default-system-shell")?.hasAttribute("disabled")).toBe(true);
+    expect(find("terminal-profile-select-system-shell")?.getAttribute("aria-selected")).toBe(
+      "true",
+    );
   });
 
   it("returns to the system shell by clearing the default id", async () => {
@@ -403,9 +425,8 @@ describe("HostTerminalsPage terminal profiles", () => {
     render();
 
     expect(find("terminal-profile-default-system-shell")).toBeNull();
-    expect(find("terminal-profile-set-default-system-shell")?.hasAttribute("disabled")).toBe(false);
 
-    await press("terminal-profile-set-default-system-shell");
+    await press("terminal-profile-select-system-shell");
 
     expect(patchConfigMock).toHaveBeenCalledTimes(1);
     expect(patchConfigMock).toHaveBeenCalledWith({ defaultTerminalProfileId: "" });
@@ -428,7 +449,7 @@ describe("HostTerminalsPage terminal profiles", () => {
     render();
 
     expect(find("terminal-profile-kebab-claude")).not.toBeNull();
-    expect(find("terminal-profile-set-default-claude")).not.toBeNull();
+    expect(find("terminal-profile-select-claude")).not.toBeNull();
     for (const action of ["move-up", "move-down", "edit", "remove"]) {
       expect(find(`terminal-profile-${action}-claude`)).toBeNull();
       expect(find(`terminal-profile-menu-${action}-claude`)).not.toBeNull();
@@ -454,15 +475,16 @@ describe("HostTerminalsPage terminal profiles", () => {
     expect(find("terminal-profile-default-codex")?.getAttribute("aria-label")).toBe(
       "Default profile",
     );
-    // The row that already is the default has nothing left to set.
-    expect(find("terminal-profile-set-default-codex")?.hasAttribute("disabled")).toBe(true);
-    expect(find("terminal-profile-set-default-claude")?.hasAttribute("disabled")).toBe(false);
+    // Selection is the check and nothing else: there is no second tick-shaped
+    // control competing with it.
+    expect(find("terminal-profile-select-codex")?.getAttribute("aria-selected")).toBe("true");
+    expect(find("terminal-profile-select-claude")?.getAttribute("aria-selected")).toBe("false");
   });
 
-  it("patches defaultTerminalProfileId when a row is set as default", async () => {
+  it("patches defaultTerminalProfileId when a row is selected", async () => {
     render();
 
-    await press("terminal-profile-set-default-claude");
+    await press("terminal-profile-select-claude");
 
     expect(patchConfigMock).toHaveBeenCalledTimes(1);
     expect(patchConfigMock).toHaveBeenCalledWith({ defaultTerminalProfileId: "claude" });
@@ -537,7 +559,7 @@ describe("HostTerminalsPage terminal profiles", () => {
 
     expect(find("terminal-profile-row-codex")).not.toBeNull();
     expect(find("terminal-profile-default-codex")).toBeNull();
-    expect(find("terminal-profile-set-default-codex")).toBeNull();
+    expect(find("terminal-profile-select-codex")?.getAttribute("role")).not.toBe("radio");
     expect(find("terminal-profiles-add-profile")).not.toBeNull();
   });
 });

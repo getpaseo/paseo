@@ -2148,7 +2148,7 @@ export const ja: TranslationResources = {
         moreActions: "その他の操作",
         systemShell: "システムシェル",
         systemShellUnknown: "ホストが解決します",
-        defaultHint: "新しいターミナルは、マークされた行を開きます。",
+        defaultHint: "行を選択すると、新しいターミナルで開くものを変更できます。",
         save: "保存",
         emptyState:
           "プロファイルがまだありません。特定のコマンドでターミナルを起動するために追加してください。",
