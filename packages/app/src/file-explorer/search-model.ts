@@ -70,6 +70,22 @@ export function splitFileSearchMatchContent(
   };
 }
 
+export function areAllFileSearchGroupsCollapsed(
+  filePaths: readonly string[],
+  collapsedPaths: ReadonlySet<string>,
+): boolean {
+  return filePaths.length > 0 && filePaths.every((path) => collapsedPaths.has(path));
+}
+
+export function toggleAllFileSearchGroups(
+  filePaths: readonly string[],
+  collapsedPaths: ReadonlySet<string>,
+): ReadonlySet<string> {
+  return areAllFileSearchGroupsCollapsed(filePaths, collapsedPaths)
+    ? new Set()
+    : new Set(filePaths);
+}
+
 export function filterCollapsedFileSearchRows(
   rows: readonly FileSearchRow[],
   collapsedPaths: ReadonlySet<string>,

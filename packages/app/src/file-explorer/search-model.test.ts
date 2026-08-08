@@ -1,10 +1,12 @@
 import { describe, expect, test } from "vitest";
 import {
+  areAllFileSearchGroupsCollapsed,
   buildFileSearchRows,
   createInitialFileSearchState,
   fileSearchReducer,
   filterCollapsedFileSearchRows,
   splitFileSearchMatchContent,
+  toggleAllFileSearchGroups,
 } from "./search-model";
 
 describe("file search model", () => {
@@ -95,6 +97,17 @@ describe("file search model", () => {
         match: { line: 2, column: 1, matchLength: 3, lineContent: "two" },
       },
     ]);
+  });
+
+  test("collapses all groups, then expands all groups", () => {
+    const filePaths = ["src/first.ts", "src/second.ts"];
+    const collapsed = toggleAllFileSearchGroups(filePaths, new Set());
+    expect([...collapsed]).toEqual(filePaths);
+    expect(areAllFileSearchGroupsCollapsed(filePaths, collapsed)).toBe(true);
+
+    const expanded = toggleAllFileSearchGroups(filePaths, collapsed);
+    expect([...expanded]).toEqual([]);
+    expect(areAllFileSearchGroupsCollapsed(filePaths, expanded)).toBe(false);
   });
 
   test("splits ordinary and windowed snippets at the exact match", () => {

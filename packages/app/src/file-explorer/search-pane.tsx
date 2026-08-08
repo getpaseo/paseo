@@ -18,20 +18,37 @@ import {
   type PressableStateCallbackType,
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import {
+  CaseSensitive,
+  ListChevronsDownUp,
+  ListChevronsUpDown,
+  Regex,
+  SlidersHorizontal,
+  WholeWord,
+} from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { MaterialFileIcon } from "@/components/material-file-icon";
 import { TreeChevron } from "@/components/tree-primitives";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { SearchField } from "@/components/ui/search-field";
 import type { Theme } from "@/styles/theme";
 import { ICON_SIZE } from "@/styles/theme";
 import {
+  areAllFileSearchGroupsCollapsed,
   buildFileSearchRows,
   createInitialFileSearchState,
   DEFAULT_FILE_SEARCH_OPTIONS,
   fileSearchReducer,
   filterCollapsedFileSearchRows,
   splitFileSearchMatchContent,
+  toggleAllFileSearchGroups,
   type FileSearchOptions,
   type FileSearchRow,
   type FileSearchState,
@@ -40,12 +57,23 @@ import {
 const SEARCH_DEBOUNCE_MS = 300;
 const SEARCH_MAX_RESULTS = 2000;
 
+const ThemedCaseSensitive = withUnistyles(CaseSensitive);
+const ThemedListChevronsDownUp = withUnistyles(ListChevronsDownUp);
+const ThemedListChevronsUpDown = withUnistyles(ListChevronsUpDown);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const ThemedRegex = withUnistyles(Regex);
+const ThemedSlidersHorizontal = withUnistyles(SlidersHorizontal);
+const ThemedWholeWord = withUnistyles(WholeWord);
 const ThemedTextInput = withUnistyles(TextInput, (theme: Theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
   selectionColor: theme.colors.foreground,
 }));
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const CASE_SENSITIVE_ICON = (
+  <ThemedCaseSensitive size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
+);
+const REGEX_ICON = <ThemedRegex size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
+const WHOLE_WORD_ICON = <ThemedWholeWord size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 
 export interface FileSearchPaneProps {
   client: DaemonClient | null;
@@ -121,6 +149,14 @@ export function FileSearchPane({
     () => filterCollapsedFileSearchRows(allRows, collapsedPaths),
     [allRows, collapsedPaths],
   );
+  const filePaths = useMemo(
+    () => (state.status === "success" ? state.result.files.map((file) => file.path) : []),
+    [state],
+  );
+  const allGroupsCollapsed = useMemo(
+    () => areAllFileSearchGroupsCollapsed(filePaths, collapsedPaths),
+    [collapsedPaths, filePaths],
+  );
   const toggleFile = useCallback((path: string) => {
     setCollapsedPaths((current) => {
       const next = new Set(current);
@@ -147,6 +183,9 @@ export function FileSearchPane({
     () => updateOption("useRegex", !options.useRegex),
     [options.useRegex, updateOption],
   );
+  const toggleAllGroups = useCallback(() => {
+    setCollapsedPaths((current) => toggleAllFileSearchGroups(filePaths, current));
+  }, [filePaths]);
   const updateIncludePattern = useCallback(
     (value: string) => updateOption("includePattern", value),
     [updateOption],
@@ -181,27 +220,6 @@ export function FileSearchPane({
         />
       </View>
       <View style={styles.optionsRow}>
-        <SearchOptionButton
-          label="Aa"
-          accessibilityLabel="Match case"
-          selected={options.caseSensitive === true}
-          onPress={toggleCase}
-          testID="files-search-case"
-        />
-        <SearchOptionButton
-          label="W"
-          accessibilityLabel="Match whole word"
-          selected={options.wholeWord === true}
-          onPress={toggleWord}
-          testID="files-search-word"
-        />
-        <SearchOptionButton
-          label=".*"
-          accessibilityLabel="Use regular expression"
-          selected={options.useRegex === true}
-          onPress={toggleRegex}
-          testID="files-search-regex"
-        />
         <ThemedTextInput
           value={options.includePattern ?? ""}
           onChangeText={updateIncludePattern}
@@ -222,6 +240,15 @@ export function FileSearchPane({
           style={styles.patternInput}
           testID="files-search-exclude"
         />
+        <SearchOptionsMenu
+          options={options}
+          allGroupsCollapsed={allGroupsCollapsed}
+          hasFileGroups={filePaths.length > 0}
+          onToggleCase={toggleCase}
+          onToggleWord={toggleWord}
+          onToggleRegex={toggleRegex}
+          onToggleAllGroups={toggleAllGroups}
+        />
       </View>
       <FileSearchStateContent state={state} rows={rows} renderRow={renderRow} />
     </View>
@@ -233,40 +260,93 @@ function normalizePattern(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-function SearchOptionButton({
-  label,
-  accessibilityLabel,
-  selected,
-  onPress,
-  testID,
+function SearchOptionsMenu({
+  options,
+  allGroupsCollapsed,
+  hasFileGroups,
+  onToggleCase,
+  onToggleWord,
+  onToggleRegex,
+  onToggleAllGroups,
 }: {
-  label: string;
-  accessibilityLabel: string;
-  selected: boolean;
-  onPress: () => void;
-  testID: string;
+  options: FileSearchOptions;
+  allGroupsCollapsed: boolean;
+  hasFileGroups: boolean;
+  onToggleCase: () => void;
+  onToggleWord: () => void;
+  onToggleRegex: () => void;
+  onToggleAllGroups: () => void;
 }) {
-  const accessibilityState = useMemo(() => ({ selected }), [selected]);
-  const optionStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.optionButton,
-      selected && styles.optionButtonSelected,
-      (Boolean(hovered) || pressed) && styles.optionButtonHovered,
-    ],
-    [selected],
+  const { t } = useTranslation();
+  const groupActionLabel = allGroupsCollapsed
+    ? t("workspace.git.diff.expandAll")
+    : t("workspace.git.diff.collapseAll");
+  const groupActionIcon = useMemo(
+    () =>
+      allGroupsCollapsed ? (
+        <ThemedListChevronsUpDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
+      ) : (
+        <ThemedListChevronsDownUp size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
+      ),
+    [allGroupsCollapsed],
   );
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      accessibilityState={accessibilityState}
-      style={optionStyle}
-      testID={testID}
-    >
-      <Text style={[styles.optionLabel, selected && styles.optionLabelSelected]}>{label}</Text>
-    </Pressable>
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        accessibilityRole="button"
+        accessibilityLabel="Search options"
+        style={searchOptionsTriggerStyle}
+        testID="files-search-options"
+      >
+        <ThemedSlidersHorizontal size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" width={240} testID="files-search-options-content">
+        <DropdownMenuItem
+          leading={CASE_SENSITIVE_ICON}
+          selected={options.caseSensitive === true}
+          closeOnSelect={false}
+          onSelect={onToggleCase}
+          testID="files-search-case"
+        >
+          Match case
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          leading={WHOLE_WORD_ICON}
+          selected={options.wholeWord === true}
+          closeOnSelect={false}
+          onSelect={onToggleWord}
+          testID="files-search-word"
+        >
+          Match whole word
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          leading={REGEX_ICON}
+          selected={options.useRegex === true}
+          closeOnSelect={false}
+          onSelect={onToggleRegex}
+          testID="files-search-regex"
+        >
+          Use regular expression
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          leading={groupActionIcon}
+          disabled={!hasFileGroups}
+          onSelect={onToggleAllGroups}
+          testID="files-search-toggle-all"
+        >
+          {groupActionLabel}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
+}
+
+function searchOptionsTriggerStyle({
+  hovered,
+  pressed,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.optionsTrigger, (Boolean(hovered) || pressed) && styles.optionsTriggerHovered];
 }
 
 function FileSearchStateContent({
@@ -437,27 +517,15 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
   },
-  optionButton: {
+  optionsTrigger: {
+    width: 26,
     height: 26,
-    minWidth: 26,
-    paddingHorizontal: theme.spacing[1],
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.borderRadius.base,
   },
-  optionButtonSelected: {
-    backgroundColor: theme.colors.surface3,
-  },
-  optionButtonHovered: {
+  optionsTriggerHovered: {
     backgroundColor: theme.colors.surface2,
-  },
-  optionLabel: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontFamily: theme.fontFamily.mono,
-  },
-  optionLabelSelected: {
-    color: theme.colors.foreground,
   },
   patternInput: {
     flex: 1,
