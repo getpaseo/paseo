@@ -306,9 +306,10 @@ function ingestRipgrepLine(
 
   const relativePath = normalizeResultPath(cwd, parsed.data.path.text);
   const lineContent = parsed.data.lines.text.replace(/\r?\n$/, "");
+  const lineBuffer = Buffer.from(lineContent);
   for (const submatch of parsed.data.submatches) {
-    const start = byteOffsetToStringOffset(lineContent, submatch.start);
-    const end = byteOffsetToStringOffset(lineContent, submatch.end);
+    const start = lineBuffer.subarray(0, submatch.start).toString("utf8").length;
+    const end = lineBuffer.subarray(0, submatch.end).toString("utf8").length;
     const outcome = addMatch(
       accumulator,
       relativePath,
@@ -352,18 +353,16 @@ function isRipgrepMatch(value: unknown): value is {
     typeof lines?.text === "string" &&
     typeof data.line_number === "number" &&
     Array.isArray(data.submatches) &&
-    data.submatches.every(isRipgrepSubmatch)
+    data.submatches.every(
+      (submatch: unknown) =>
+        typeof submatch === "object" &&
+        submatch !== null &&
+        "start" in submatch &&
+        typeof submatch.start === "number" &&
+        "end" in submatch &&
+        typeof submatch.end === "number",
+    )
   );
-}
-
-function isRipgrepSubmatch(value: unknown): value is { start: number; end: number } {
-  if (typeof value !== "object" || value === null) return false;
-  const match = value as Record<string, unknown>;
-  return typeof match.start === "number" && typeof match.end === "number";
-}
-
-function byteOffsetToStringOffset(value: string, byteOffset: number): number {
-  return Buffer.from(value).subarray(0, byteOffset).toString("utf8").length;
 }
 
 function ingestGitGrepLine(
