@@ -1,17 +1,19 @@
 import { type Dirent, type FSWatcher, watch } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 
 const DEFAULT_MAX_WATCHED_DIRECTORIES = 5_000;
-const DEFAULT_MAX_TRACKED_NATIVE_FILES = 250_000;
+const DEFAULT_MAX_TRACKED_NATIVE_ENTRIES = 250_000;
 const EVENT_BATCH_DELAY_MS = 10;
 const RECONCILIATION_DELAY_MS = 50;
-const NATIVE_AUDIT_QUIET_MS = 250;
-const NATIVE_AUDIT_MAX_DIRTY_MS = 6_000;
-const NATIVE_AUDIT_MIN_INTERVAL_MS = 6_000;
+const NATIVE_AUDIT_QUIET_MS = 100;
+const NATIVE_AUDIT_MAX_DIRTY_MS = 1_000;
+const NATIVE_FULL_AUDIT_INTERVAL_MS = 30_000;
 
 const activeObservers = new Set<RecursiveFileObserver>();
 let reconciliationCount = 0;
+let scopedReconciliationCount = 0;
+let fullReconciliationCount = 0;
 let reconciliationFailureCount = 0;
 let observerFailureCount = 0;
 let directoryLimitFailureCount = 0;
@@ -45,6 +47,8 @@ export interface FileObserverDiagnostics {
   pendingEventCount: number;
   reconciliationInFlightCount: number;
   reconciliationCount: number;
+  scopedReconciliationCount: number;
+  fullReconciliationCount: number;
   reconciliationFailureCount: number;
   observerFailureCount: number;
   directoryLimitFailureCount: number;
@@ -74,6 +78,8 @@ export function getFileObserverDiagnostics(): FileObserverDiagnostics {
     pendingEventCount,
     reconciliationInFlightCount,
     reconciliationCount,
+    scopedReconciliationCount,
+    fullReconciliationCount,
     reconciliationFailureCount,
     observerFailureCount,
     directoryLimitFailureCount,
@@ -85,6 +91,17 @@ export function getFileObserverDiagnostics(): FileObserverDiagnostics {
 interface DirectorySnapshot {
   directories: Set<string>;
   filesDiscoveredBeforeCoverage: Set<string>;
+}
+
+interface NativeDirectoryEntry {
+  directories: Set<string>;
+  files: Set<string>;
+}
+
+interface NativeInventory {
+  directories: Set<string>;
+  entries: Map<string, NativeDirectoryEntry>;
+  files: Set<string>;
 }
 
 /**
@@ -116,12 +133,19 @@ class RecursiveFileObserver {
   private reconcileTimer: NodeJS.Timeout | null = null;
   private readonly pendingReconciliationScopes = new Set<string>();
   private nativeFiles = new Set<string>();
+  private nativeDirectories = new Set<string>();
+  private nativeEntries = new Map<string, NativeDirectoryEntry>();
   private nativeAuditTimer: NodeJS.Timeout | null = null;
+  private nativeFullAuditTimer: NodeJS.Timeout | null = null;
+  private readonly pendingNativeAuditScopes = new Set<string>();
+  private readonly pendingNativeRecursiveAuditScopes = new Set<string>();
+  private nativeFullAuditRequested = false;
   private nativeAuditDirty = false;
   private nativeAuditDirtySince: number | null = null;
   private nativeAuditQueued = false;
   private nativeAuditRunning = false;
-  private lastNativeAuditAt = Number.NEGATIVE_INFINITY;
+  private nativeSafetyAuditPending = false;
+  private lastNativeFullAuditAt = Number.NEGATIVE_INFINITY;
   private nativeInventoryGeneration = 0;
   private readonly pathClassifications = new Set<Promise<void>>();
   private flushTimer: NodeJS.Timeout | null = null;
@@ -143,6 +167,7 @@ class RecursiveFileObserver {
 
     if (supportsNativeRecursiveWatch(process.platform)) {
       this.watchNativeRecursive();
+      this.nativeFullAuditRequested = true;
       this.nativeAuditQueued = true;
       try {
         await this.enqueueNativeAudit(false, this.nativeInventoryGeneration);
@@ -182,6 +207,7 @@ class RecursiveFileObserver {
     if (supportsNativeRecursiveWatch(process.platform)) {
       this.nativeInventoryGeneration += 1;
       this.cancelNativeAudit();
+      this.nativeFullAuditRequested = true;
       this.nativeAuditQueued = true;
       try {
         await this.enqueueNativeAudit(true, this.nativeInventoryGeneration);
@@ -238,6 +264,8 @@ class RecursiveFileObserver {
     for (const watcher of this.watchers.values()) watcher.close();
     this.watchers.clear();
     this.nativeFiles.clear();
+    this.nativeDirectories.clear();
+    this.nativeEntries.clear();
     activeObservers.delete(this);
   }
 
@@ -246,14 +274,15 @@ class RecursiveFileObserver {
       if (this.closed || this.failed) return;
       if (!filename) {
         this.queueEvent("update", this.root);
-        this.requestNativeAudit();
+        this.requestNativeAudit(this.root, true);
         return;
       }
       const path = resolve(this.root, filename.toString());
       if (this.isIgnored(path)) return;
       if (eventType === "change") this.queueEvent("update", path);
       else this.classifyRenameEvent(path);
-      this.requestNativeAudit();
+      this.requestNativeAudit(dirname(path));
+      if (this.nativeDirectories.has(path)) this.requestNativeAudit(path, false, true);
     });
     this.attachWatcher(this.root, watcher);
   }
@@ -313,17 +342,37 @@ class RecursiveFileObserver {
 
   private async runNativeAudit(emitDiff: boolean, generation: number): Promise<void> {
     this.nativeAuditQueued = false;
-    if (this.closed || this.failed || generation !== this.nativeInventoryGeneration) return;
+    if (!this.canCommitNativeAudit(generation)) return;
+    const fullAudit = this.nativeFullAuditRequested;
+    const localScopes = [...this.pendingNativeAuditScopes];
+    const recursiveScopes = [...this.pendingNativeRecursiveAuditScopes];
+    this.nativeFullAuditRequested = false;
+    this.pendingNativeAuditScopes.clear();
+    this.pendingNativeRecursiveAuditScopes.clear();
+    if (fullAudit) {
+      this.nativeSafetyAuditPending = false;
+      if (this.nativeFullAuditTimer) {
+        clearTimeout(this.nativeFullAuditTimer);
+        this.nativeFullAuditTimer = null;
+      }
+    }
     this.nativeAuditRunning = true;
     this.nativeAuditDirty = false;
     this.nativeAuditDirtySince = null;
     this.reconcileInFlight = true;
     const startedAt = performance.now();
     try {
-      const nextFiles = await this.scanNativeFiles();
-      if (this.closed || this.failed || generation !== this.nativeInventoryGeneration) return;
-      if (emitDiff) this.queueNativeInventoryDiff(nextFiles);
-      this.nativeFiles = nextFiles;
+      if (fullAudit) {
+        const nextInventory = await this.scanNativeTree(this.root);
+        if (!this.canCommitNativeAudit(generation)) return;
+        if (emitDiff) this.queueNativeInventoryDiff(nextInventory.files, this.nativeFiles);
+        this.replaceNativeInventory(nextInventory);
+        this.lastNativeFullAuditAt = performance.now();
+        fullReconciliationCount += 1;
+      } else {
+        await this.reconcileNativeScopes(localScopes, recursiveScopes, generation);
+        scopedReconciliationCount += 1;
+      }
     } catch (error) {
       reconciliationFailureCount += 1;
       throw error;
@@ -332,16 +381,19 @@ class RecursiveFileObserver {
       reconciliationCount += 1;
       lastReconciliationDurationMs = durationMs;
       maxReconciliationDurationMs = Math.max(maxReconciliationDurationMs, durationMs);
-      if (emitDiff) this.lastNativeAuditAt = performance.now();
       this.reconcileInFlight = false;
       this.nativeAuditRunning = false;
+      if (this.nativeSafetyAuditPending && !this.closed && !this.failed)
+        this.scheduleNativeFullAudit();
       if (this.nativeAuditDirty && !this.closed && !this.failed) this.scheduleNativeAudit();
     }
   }
 
-  private async scanNativeFiles(): Promise<Set<string>> {
+  private async scanNativeTree(root: string): Promise<NativeInventory> {
     const files = new Set<string>();
-    const pending = [this.root];
+    const directories = new Set<string>();
+    const entries = new Map<string, NativeDirectoryEntry>();
+    const pending = [root];
     while (pending.length > 0 && !this.closed && !this.failed) {
       const directory = pending.pop();
       if (!directory) continue;
@@ -349,35 +401,200 @@ class RecursiveFileObserver {
       try {
         children = await readdir(directory, { withFileTypes: true });
       } catch (error) {
-        if (isMissingPathError(error) && this.closed) return files;
+        if (isMissingPathError(error) && this.closed) return { directories, entries, files };
         if (!isMissingPathError(error) || directory === this.root) throw error;
         continue;
       }
+      directories.add(directory);
+      if (files.size + directories.size > DEFAULT_MAX_TRACKED_NATIVE_ENTRIES) {
+        throw new Error(
+          `Recursive file observation exceeded ${DEFAULT_MAX_TRACKED_NATIVE_ENTRIES} entries under ${this.root}`,
+        );
+      }
+      const entry: NativeDirectoryEntry = { directories: new Set(), files: new Set() };
       for (const child of children) {
         const path = join(directory, child.name);
         if (this.isIgnored(path)) continue;
         if (child.isDirectory()) {
+          entry.directories.add(path);
           pending.push(path);
           continue;
         }
+        entry.files.add(path);
         files.add(path);
-        if (files.size > DEFAULT_MAX_TRACKED_NATIVE_FILES) {
+        if (files.size + directories.size > DEFAULT_MAX_TRACKED_NATIVE_ENTRIES) {
           throw new Error(
-            `Recursive file observation exceeded ${DEFAULT_MAX_TRACKED_NATIVE_FILES} files under ${this.root}`,
+            `Recursive file observation exceeded ${DEFAULT_MAX_TRACKED_NATIVE_ENTRIES} entries under ${this.root}`,
           );
         }
       }
+      entries.set(directory, entry);
     }
-    return files;
+    return { directories, entries, files };
   }
 
-  private queueNativeInventoryDiff(nextFiles: Set<string>): void {
+  private queueNativeInventoryDiff(nextFiles: Set<string>, previousFiles: Set<string>): void {
     for (const path of nextFiles) {
-      if (!this.nativeFiles.has(path)) this.queueEvent("create", path);
+      if (!previousFiles.has(path)) this.queueEvent("create", path);
     }
-    for (const path of this.nativeFiles) {
+    for (const path of previousFiles) {
       if (!nextFiles.has(path)) this.queueEvent("delete", path);
     }
+  }
+
+  private replaceNativeInventory(inventory: NativeInventory): void {
+    this.nativeFiles = inventory.files;
+    this.nativeDirectories = inventory.directories;
+    this.nativeEntries = inventory.entries;
+  }
+
+  private async reconcileNativeScopes(
+    localScopes: string[],
+    recursiveScopes: string[],
+    generation: number,
+  ): Promise<void> {
+    for (const directory of new Set(localScopes)) {
+      await this.reconcileNativeDirectory(directory, generation);
+      if (!this.canCommitNativeAudit(generation)) return;
+    }
+    for (const directory of new Set(recursiveScopes)) {
+      await this.reconcileNativeSubtree(directory, generation);
+      if (!this.canCommitNativeAudit(generation)) return;
+    }
+  }
+
+  private async reconcileNativeDirectory(directory: string, generation: number): Promise<void> {
+    if (this.isIgnored(directory)) {
+      this.removeNativeSubtree(directory, false);
+      return;
+    }
+    if (directory !== this.root && !this.nativeDirectories.has(directory)) {
+      await this.reconcileUnknownNativeSubtree(directory, generation);
+      return;
+    }
+    const next = await this.readNativeDirectoryEntry(directory);
+    if (!this.canCommitNativeAudit(generation)) return;
+    if (!next) {
+      this.removeNativeSubtree(directory, true);
+      return;
+    }
+
+    const previous = this.nativeEntries.get(directory) ?? {
+      directories: new Set<string>(),
+      files: new Set<string>(),
+    };
+
+    for (const path of previous.files) {
+      if (!next.files.has(path)) {
+        this.nativeFiles.delete(path);
+        this.queueEvent("delete", path);
+      }
+    }
+    for (const path of previous.directories) {
+      if (!next.directories.has(path)) this.removeNativeSubtree(path, true);
+    }
+    for (const path of next.files) {
+      if (!previous.files.has(path)) {
+        this.nativeFiles.add(path);
+        this.queueEvent("create", path);
+      }
+    }
+    for (const path of next.directories) {
+      if (previous.directories.has(path)) continue;
+      const inventory = await this.scanNativeTree(path);
+      if (!this.canCommitNativeAudit(generation)) return;
+      if (!inventory.directories.has(path)) {
+        next.directories.delete(path);
+        continue;
+      }
+      this.mergeNativeInventory(inventory, true);
+    }
+    this.nativeDirectories.add(directory);
+    this.nativeEntries.set(directory, next);
+    this.assertNativeInventoryWithinLimit();
+  }
+
+  private async reconcileUnknownNativeSubtree(
+    directory: string,
+    generation: number,
+  ): Promise<void> {
+    const inventory = await this.scanNativeTree(directory);
+    if (!this.canCommitNativeAudit(generation)) return;
+    if (!inventory.directories.has(directory)) {
+      this.removeNativeSubtree(directory, true);
+      return;
+    }
+    this.nativeEntries.get(dirname(directory))?.directories.add(directory);
+    this.mergeNativeInventory(inventory, true);
+  }
+
+  private async readNativeDirectoryEntry(directory: string): Promise<NativeDirectoryEntry | null> {
+    let children: Dirent[];
+    try {
+      children = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (!isMissingPathError(error) || directory === this.root) throw error;
+      return null;
+    }
+    const entry: NativeDirectoryEntry = { directories: new Set(), files: new Set() };
+    for (const child of children) {
+      const path = join(directory, child.name);
+      if (this.isIgnored(path)) continue;
+      if (child.isDirectory()) entry.directories.add(path);
+      else entry.files.add(path);
+    }
+    return entry;
+  }
+
+  private async reconcileNativeSubtree(directory: string, generation: number): Promise<void> {
+    if (!this.nativeDirectories.has(directory) || this.isIgnored(directory)) return;
+    const inventory = await this.scanNativeTree(directory);
+    if (!this.canCommitNativeAudit(generation)) return;
+    const previousFiles = new Set(
+      [...this.nativeFiles].filter((path) => isPathInside(directory, path)),
+    );
+    this.queueNativeInventoryDiff(inventory.files, previousFiles);
+    this.removeNativeSubtree(directory, false);
+    this.mergeNativeInventory(inventory, false);
+  }
+
+  private mergeNativeInventory(inventory: NativeInventory, emitCreates: boolean): void {
+    for (const directory of inventory.directories) this.nativeDirectories.add(directory);
+    for (const [directory, entry] of inventory.entries) this.nativeEntries.set(directory, entry);
+    for (const path of inventory.files) {
+      const added = !this.nativeFiles.has(path);
+      this.nativeFiles.add(path);
+      if (emitCreates && added) this.queueEvent("create", path);
+    }
+    this.assertNativeInventoryWithinLimit();
+  }
+
+  private removeNativeSubtree(root: string, emitDeletes: boolean): void {
+    for (const path of this.nativeFiles) {
+      if (!isPathInside(root, path)) continue;
+      this.nativeFiles.delete(path);
+      if (emitDeletes) this.queueEvent("delete", path);
+    }
+    for (const directory of this.nativeDirectories) {
+      if (!isPathInside(root, directory)) continue;
+      this.nativeDirectories.delete(directory);
+      this.nativeEntries.delete(directory);
+    }
+    const parentEntry = this.nativeEntries.get(dirname(root));
+    parentEntry?.directories.delete(root);
+    parentEntry?.files.delete(root);
+  }
+
+  private assertNativeInventoryWithinLimit(): void {
+    if (this.nativeFiles.size + this.nativeDirectories.size <= DEFAULT_MAX_TRACKED_NATIVE_ENTRIES)
+      return;
+    throw new Error(
+      `Recursive file observation exceeded ${DEFAULT_MAX_TRACKED_NATIVE_ENTRIES} entries under ${this.root}`,
+    );
+  }
+
+  private canCommitNativeAudit(generation: number): boolean {
+    return !this.closed && !this.failed && generation === this.nativeInventoryGeneration;
   }
 
   private async runQueuedReconcile(scopes: string[]): Promise<void> {
@@ -509,8 +726,17 @@ class RecursiveFileObserver {
     this.reconcileTimer.unref();
   }
 
-  private requestNativeAudit(): void {
+  private requestNativeAudit(scope: string, fullAudit = false, recursiveAudit = false): void {
     if (this.closed || this.failed) return;
+    if (fullAudit) {
+      this.nativeSafetyAuditPending = true;
+      this.scheduleNativeFullAudit();
+      return;
+    }
+    if (recursiveAudit) this.pendingNativeRecursiveAuditScopes.add(scope);
+    else this.pendingNativeAuditScopes.add(scope);
+    this.nativeSafetyAuditPending = true;
+    this.scheduleNativeFullAudit();
     const now = performance.now();
     this.nativeAuditDirty = true;
     this.nativeAuditDirtySince ??= now;
@@ -531,8 +757,7 @@ class RecursiveFileObserver {
     const dirtySince = this.nativeAuditDirtySince ?? now;
     const quietDeadline = now + NATIVE_AUDIT_QUIET_MS;
     const starvationDeadline = dirtySince + NATIVE_AUDIT_MAX_DIRTY_MS;
-    const intervalDeadline = this.lastNativeAuditAt + NATIVE_AUDIT_MIN_INTERVAL_MS;
-    const deadline = Math.max(intervalDeadline, Math.min(quietDeadline, starvationDeadline));
+    const deadline = Math.min(quietDeadline, starvationDeadline);
     if (this.nativeAuditTimer) clearTimeout(this.nativeAuditTimer);
     this.nativeAuditTimer = setTimeout(
       () => {
@@ -545,6 +770,32 @@ class RecursiveFileObserver {
       Math.max(0, deadline - performance.now()),
     );
     this.nativeAuditTimer.unref();
+  }
+
+  private scheduleNativeFullAudit(): void {
+    if (this.closed || this.failed || !this.nativeSafetyAuditPending || this.nativeFullAuditTimer)
+      return;
+    this.nativeFullAuditTimer = setTimeout(
+      () => {
+        this.nativeFullAuditTimer = null;
+        if (this.closed || this.failed || !this.nativeSafetyAuditPending) return;
+        if (this.nativeAuditRunning) return;
+        this.nativeSafetyAuditPending = false;
+        this.nativeFullAuditRequested = true;
+        this.nativeAuditDirty = true;
+        this.nativeAuditDirtySince ??= performance.now();
+        this.scheduleNativeAudit();
+      },
+      Math.max(
+        0,
+        (Number.isFinite(this.lastNativeFullAuditAt)
+          ? this.lastNativeFullAuditAt
+          : performance.now()) +
+          NATIVE_FULL_AUDIT_INTERVAL_MS -
+          performance.now(),
+      ),
+    );
+    this.nativeFullAuditTimer.unref();
   }
 
   private cancelQueuedReconciliation(): void {
@@ -560,6 +811,14 @@ class RecursiveFileObserver {
       clearTimeout(this.nativeAuditTimer);
       this.nativeAuditTimer = null;
     }
+    if (this.nativeFullAuditTimer) {
+      clearTimeout(this.nativeFullAuditTimer);
+      this.nativeFullAuditTimer = null;
+    }
+    this.pendingNativeAuditScopes.clear();
+    this.pendingNativeRecursiveAuditScopes.clear();
+    this.nativeFullAuditRequested = false;
+    this.nativeSafetyAuditPending = false;
     this.nativeAuditDirty = false;
     this.nativeAuditDirtySince = null;
   }
@@ -646,7 +905,8 @@ function mergeChange(previous: FileChange | undefined, next: FileChange): FileCh
 }
 
 function isMissingPathError(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException).code === "ENOENT";
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 function isExpectedWatchDisappearance(error: unknown): boolean {

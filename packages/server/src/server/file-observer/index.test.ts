@@ -175,12 +175,8 @@ test("observes files moved into the tree with their directory", async () => {
   const movedTo = join(root, "prepared");
   await rename(movedFrom, movedTo);
   await expect
-    .poll(() =>
-      events.some(
-        (event) => event.path === movedTo || event.path === join(movedTo, "already-written.txt"),
-      ),
-    )
-    .toBe(true);
+    .poll(() => events.map((event) => event.path))
+    .toContain(join(movedTo, "already-written.txt"));
   await subscription.unsubscribe();
 });
 
@@ -218,6 +214,16 @@ test("observes a thousand concurrent writes and remains healthy after delete and
   const paths = Array.from({ length: 1_000 }, (_, index) =>
     join(directories[index % directories.length], `file-${index}.txt`),
   );
+
+  const populatedDirectory = join(root, "populated", "nested");
+  await mkdir(populatedDirectory, { recursive: true });
+  const populatedPaths = Array.from({ length: 200 }, (_, index) =>
+    join(populatedDirectory, `nested-${index}.txt`),
+  );
+  await Promise.all(populatedPaths.map((path, index) => writeFile(path, `${index}`)));
+  await expect
+    .poll(() => populatedPaths.filter((path) => !observed.has(path)), { timeout: 10_000 })
+    .toEqual([]);
 
   await Promise.all(paths.map((path, index) => writeFile(path, `${index}`)));
   await expect

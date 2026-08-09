@@ -260,6 +260,8 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
         pendingEventCount: 0,
         reconciliationInFlightCount: 0,
         reconciliationCount: 0,
+        scopedReconciliationCount: 0,
+        fullReconciliationCount: 0,
         reconciliationFailureCount: 0,
         observerFailureCount: 0,
         directoryLimitFailureCount: 0,

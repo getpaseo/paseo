@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import {
   type FileChange,
   type SubscribeToFileChanges,
+  getFileObserverDiagnostics,
   subscribeToFileChanges,
 } from "../src/server/file-observer/index.js";
 import { subscribeToFileChangesWithParcel } from "./support/parcel-file-observer.js";
@@ -46,6 +47,8 @@ interface Measurement {
   eventLoopDelayP99Ms: number;
   eventLoopDelayMaxMs: number;
   kernelWatchCount: number | null;
+  scopedReconciliationCount: number | null;
+  fullReconciliationCount: number | null;
 }
 
 interface FixtureRoot {
@@ -124,6 +127,7 @@ async function measure(
   }
   const rssBefore = process.memoryUsage().rss;
   const cpuBefore = process.cpuUsage();
+  const diagnosticsBefore = getFileObserverDiagnostics();
   const eventLoopDelay = monitorEventLoopDelay({ resolution: 10 });
   eventLoopDelay.enable();
   const delivered: FileChange[] = [];
@@ -202,6 +206,7 @@ async function measure(
     const teardownStarted = performance.now();
     await Promise.all(subscriptions.map((subscription) => subscription.unsubscribe()));
     const teardownMs = performance.now() - teardownStarted;
+    const diagnosticsAfter = getFileObserverDiagnostics();
     const cpu = process.cpuUsage(cpuBefore);
     eventLoopDelay.disable();
     return {
@@ -232,6 +237,14 @@ async function measure(
       eventLoopDelayP99Ms: eventLoopDelay.percentile(99) / 1_000_000,
       eventLoopDelayMaxMs: eventLoopDelay.max / 1_000_000,
       kernelWatchCount,
+      scopedReconciliationCount:
+        backend === "node"
+          ? diagnosticsAfter.scopedReconciliationCount - diagnosticsBefore.scopedReconciliationCount
+          : null,
+      fullReconciliationCount:
+        backend === "node"
+          ? diagnosticsAfter.fullReconciliationCount - diagnosticsBefore.fullReconciliationCount
+          : null,
     };
   } finally {
     await Promise.all(subscriptions.map((subscription) => subscription.unsubscribe()));
@@ -286,6 +299,15 @@ function evaluate(results: Measurement[]): {
     }
     if (result.teardownMs >= 1_000) {
       failures.push(`${result.backend} teardown took ${result.teardownMs.toFixed(1)}ms`);
+    }
+    if (
+      result.backend === "node" &&
+      (process.platform === "darwin" || process.platform === "win32") &&
+      (result.fullReconciliationCount ?? 0) > ROOT_COUNT * 2
+    ) {
+      failures.push(
+        `node ran ${result.fullReconciliationCount} full reconciliations for ${ROOT_COUNT} roots`,
+      );
     }
   }
   const nodeRuns = results.filter((result) => result.backend === "node");

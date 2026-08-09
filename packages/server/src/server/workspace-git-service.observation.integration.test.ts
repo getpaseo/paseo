@@ -109,17 +109,31 @@ test("recursive observation updates tracked state and prunes ignored storms", as
       },
     };
   };
-  const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => createFacts(cwd));
-  const getCheckoutStatus = vi.fn(async (cwd: string) => createStatus(cwd));
-  const getCheckoutShortstat = vi.fn(async () => ({ additions: 0, deletions: 0 }));
   let observedPath = trackedPath;
   let observedRelativePath = "src/tracked.txt";
+  const readObservedState = () => {
+    const contents = readFileSync(observedPath, "utf8");
+    const isDirty = contents !== "base\n";
+    return {
+      isDirty,
+      additions: isDirty ? contents.trim().split("\n").length : 0,
+    };
+  };
+  const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => createFacts(cwd));
+  const getCheckoutStatus = vi.fn(async (cwd: string) => ({
+    ...createStatus(cwd),
+    isDirty: readObservedState().isDirty,
+  }));
+  const getCheckoutShortstat = vi.fn(async () => ({
+    additions: readObservedState().additions,
+    deletions: 0,
+  }));
   const getCheckoutWorktreeState = vi.fn(async () => {
-    const additions = readFileSync(observedPath, "utf8").trim().split("\n").length;
+    const additions = readObservedState().additions;
     return { isDirty: true, diffStat: { additions, deletions: 0 } };
   });
   const getCheckoutDiff = vi.fn(async () => {
-    const additions = readFileSync(observedPath, "utf8").trim().split("\n").length;
+    const additions = readObservedState().additions;
     return {
       diff: "",
       structured: [
