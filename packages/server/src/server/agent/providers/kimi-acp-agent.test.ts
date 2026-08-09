@@ -240,7 +240,7 @@ describe("KimiACPAgentClient per-model thinking options", () => {
     expect(setSessionConfigOption).not.toHaveBeenCalled();
   });
 
-  test("omits thinking options when a model's probe fails", async () => {
+  test("omits thinking options when a non-current model's probe fails", async () => {
     const setSessionConfigOption = vi.fn(async ({ value }: { value: string }) => {
       if (value === "kimi-k3") {
         throw new Error("probe rejected model switch");
@@ -272,6 +272,41 @@ describe("KimiACPAgentClient per-model thinking options", () => {
     const kimiForCoding = catalog.models.find((model) => model.id === "kimi-for-coding");
     const kimiK3 = catalog.models.find((model) => model.id === "kimi-k3");
     // Successful probe still gets its own options; failed K3 must not inherit K2.7's "on".
+    expect(kimiForCoding?.thinkingOptions).toEqual([
+      expect.objectContaining({ id: "on", isDefault: true }),
+    ]);
+    expect(kimiK3?.thinkingOptions).toBeUndefined();
+    expect(kimiK3?.defaultThinkingOptionId).toBeUndefined();
+  });
+
+  test("keeps current-model thinking options when that model's probe fails", async () => {
+    const setSessionConfigOption = vi.fn(async () => {
+      throw new Error("probe rejected model switch");
+    });
+
+    const client = createKimiClient(
+      async () =>
+        ({
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "session-1",
+              configOptions: [modelConfigOption("kimi-for-coding"), booleanThinkingConfigOption()],
+            }),
+            setSessionConfigOption,
+          },
+          initialize: { agentCapabilities: {} },
+        }) as unknown as SpawnedACPProcess,
+    );
+
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-kimi-current-probe-error",
+      force: false,
+    });
+
+    const kimiForCoding = catalog.models.find((model) => model.id === "kimi-for-coding");
+    const kimiK3 = catalog.models.find((model) => model.id === "kimi-k3");
     expect(kimiForCoding?.thinkingOptions).toEqual([
       expect.objectContaining({ id: "on", isDefault: true }),
     ]);

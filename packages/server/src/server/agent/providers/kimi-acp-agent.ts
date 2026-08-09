@@ -116,17 +116,26 @@ export async function resolveKimiCatalogModels({
         defaultThinkingOptionId,
       });
     } catch (error) {
+      // Inherited options are only trustworthy for the session-current model. Other models must
+      // not keep another model's toggle (e.g. K3 inheriting K2.7's "on") when their probe fails.
+      const keepInheritedOptions =
+        model.id === modelOption.currentValue ||
+        (modelOption.currentValue == null && model.isDefault === true);
       logger.warn(
         { modelId: model.id, error: toDiagnosticErrorMessage(error) },
-        `${provider} catalog probe could not resolve thinking options for model "${model.id}"; omitting inherited options`,
+        keepInheritedOptions
+          ? `${provider} catalog probe could not resolve thinking options for model "${model.id}"; keeping current model options`
+          : `${provider} catalog probe could not resolve thinking options for model "${model.id}"; omitting inherited options`,
       );
-      // Pre-probe models share the session-default model's thinking options. Keeping those on
-      // failure can leave K3 with another model's legacy "on" toggle as a fake default.
-      resolved.push({
-        ...model,
-        thinkingOptions: undefined,
-        defaultThinkingOptionId: undefined,
-      });
+      resolved.push(
+        keepInheritedOptions
+          ? withNormalizedKimiThinkingOptions(model)
+          : {
+              ...model,
+              thinkingOptions: undefined,
+              defaultThinkingOptionId: undefined,
+            },
+      );
     }
   }
   return resolved;
