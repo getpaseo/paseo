@@ -12,50 +12,134 @@ These examples use the durable step syntax. Replace the daemon, paths, provider 
 
 Each prompt names the Hub tool its step should call and keeps the triggering message in its own `<user-prompt>` block. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).
 
-## Model and provider selection
+## Let the classifier pick the repository and the model
 
-Use finite choices when caller input selects an agent provider or model.
+One read-only classifier reads the request and decides two things: which repository the work belongs to, and how big a model it needs. A caller who already knows either answer can supply it and skip the guess.
 
 ```yaml
 environments:
-  - name: development
+  - name: triage
     kind: daemon
     daemon: my-macbook
     cwd: /Users/you/code/project
 
+  - name: project
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/project
+    worktree:
+      mode: branch-off
+      newBranch: hub/work
+      base: origin/main
+
+  - name: paseo
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/paseo
+    worktree:
+      mode: branch-off
+      newBranch: hub/work
+      base: origin/main
+
 triggers:
-  - name: selectable-agent
-    on: manual.run
+  - name: request
+    on: slack.mention
     max_runtime: 2h
     filters:
-      from_users: [automation]
+      workspace: T01234567
+      channels: [C01234567]
+      from_users: [U01234567]
     inputs:
-      provider:
+      repo:
         type: string
-        default: codex
-        choices: [codex, claude]
+        choices: [project, paseo]
       model:
         type: string
-        default: standard
-        choices: [standard, fast]
+        choices: [gpt-5.5, gpt-5.4-mini]
+    values:
+      selected_repo: ${{ paseo.inputs.repo ?? steps.classify.outputs.repo }}
+      selected_model: ${{ paseo.inputs.model ?? steps.classify.outputs.model }}
     steps:
-      - id: work
-        environment: development
-        max_runtime: 90m
-        idle_timeout: 10m
+      - id: classify
+        environment: triage
+        max_runtime: 2m
+        idle_timeout: 30s
         agent:
-          provider: ${{ paseo.inputs.provider }}
-          model: ${{ paseo.inputs.model }}
-          mode: full-access
+          provider: codex
+          options:
+            approval_policy: never
+            sandbox_mode: read-only
+            web_search: disabled
         prompt:
-          - text: Call hub.finish_execution when the step is complete.
+          - text: Decide which repository this request belongs to, and pick gpt-5.4-mini for a small question or gpt-5.5 for real work.
+          - text: Call hub.finish_execution with the classification as the structured result.
           - text: |
               <user-prompt>
               ${{ paseo.prompt }}
               </user-prompt>
+        output:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [repo, model]
+            properties:
+              repo:
+                enum: [project, paseo]
+              model:
+                enum: [gpt-5.5, gpt-5.4-mini]
+
+      - id: project-work
+        if: ${{ values.selected_repo == 'project' }}
+        environment: project
+        max_runtime: 90m
+        idle_timeout: 10m
+        agent:
+          provider: codex
+          model: ${{ values.selected_model }}
+          mode: full-access
+        prompt:
+          - text: |
+              Do the work in this repository.
+
+              Call hub.reply to send your response to the originating conversation.
+              Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+        allow_outputs:
+          - type: slack.reply
+            max: 5
+
+      - id: paseo-work
+        if: ${{ values.selected_repo == 'paseo' }}
+        environment: paseo
+        max_runtime: 90m
+        idle_timeout: 10m
+        agent:
+          provider: codex
+          model: ${{ values.selected_model }}
+          mode: full-access
+        prompt:
+          - text: |
+              Do the work in this repository.
+
+              Call hub.reply to send your response to the originating conversation.
+              Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+        allow_outputs:
+          - type: slack.reply
+            max: 5
 ```
 
-Invoke it with `provider=claude model=fast investigate the sync`. An undeclared leading key stops header parsing and becomes prompt text.
+The classifier runs, then exactly one worker does. The conditions are exclusive, so the YAML lists a step per repository while a run only ever executes one of them.
+
+The two axes reach their step differently. A model is a value, so `${{ values.selected_model }}` goes straight into `agent.model`. A repository is a configured environment with its own `cwd` and worktree, so it cannot come from an expression: each repository gets its own predeclared environment and its own conditional step. Both routes stay finite, which is what lets an agent-produced value choose them at all — `choices` on the inputs, `enum` in the output schema.
+
+Invoke it with `repo=paseo investigate the failed sync` to pin the repository and let the classifier still choose the model. An undeclared leading key stops header parsing and becomes prompt text.
 
 ## Repository routing
 
@@ -67,6 +151,7 @@ environments:
     kind: daemon
     daemon: my-macbook
     cwd: /Users/you/code/project
+
   - name: paseo
     kind: daemon
     daemon: my-macbook

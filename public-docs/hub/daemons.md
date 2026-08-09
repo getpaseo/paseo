@@ -70,7 +70,7 @@ To keep executions off your working tree, add a worktree:
 worktree:
   mode: branch-off
   newBranch: hub/investigation
-  base: main
+  base: origin/main
 ```
 
 See [Git worktrees](/docs/worktrees) for setup hooks and scripts.

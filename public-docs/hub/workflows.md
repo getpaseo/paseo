@@ -246,7 +246,9 @@ Choose based on where the decision comes from:
 | Classifier output   | The route depends on the request and the caller should not have to label it.          | A read-only agent decides whether a request is an answer or implementation. |
 | Both                | Give experienced callers an explicit override and use classification as the fallback. | Supplied `repo` skips classification; absent `repo` runs it.                |
 
-An agent-produced value cannot grant arbitrary authority. If an output selects a provider, model, mode, or environment, the configuration must prove the possible choices are finite.
+An agent-produced value cannot grant arbitrary authority. If an output selects a provider, model, or mode, the configuration must prove the possible choices are finite: `choices` on the input, `enum` or `const` in the output schema.
+
+An environment is stricter. `environment` takes a literal environment name or `${{ paseo.inputs.<name> }}`, and nothing else, so no output and no composed value can name one. Give each destination its own environment and its own conditional step instead.
 
 The namespaces stay separate:
 
@@ -259,20 +261,15 @@ Compose an override and fallback with `??`:
 ```yaml
 values:
   selected_repo: ${{ paseo.inputs.repo ?? steps.classify.outputs.repo }}
-
-steps:
-  - id: classify
-    if: ${{ paseo.inputs.repo == null }}
-    # ...
 ```
 
-When `repo` is supplied, the classifier is skipped and its output is not read. When it is absent, classification must succeed before a downstream route can run.
+A supplied `repo` wins and the classifier's answer is ignored. Add `if: ${{ paseo.inputs.repo == null }}` to the classifier to skip the run entirely when the caller already decided. [Let the classifier pick the repository and the model](/docs/hub/configuration/examples#let-the-classifier-pick-the-repository-and-the-model) is the worked configuration.
 
 ## Common patterns
 
 Once the basic workflow makes sense, use these complete examples:
 
-- [Model and provider selection](/docs/hub/configuration/examples#model-and-provider-selection)
+- [Classifier-chosen repository and model](/docs/hub/configuration/examples#let-the-classifier-pick-the-repository-and-the-model)
 - [Repository and project routing](/docs/hub/configuration/examples#repository-routing)
 - [Safety gate and direct answer](/docs/hub/configuration/examples#safety-gate-and-direct-answer)
 - [PR progress and final updates](/docs/hub/configuration/examples#pr-progress-and-final-updates)
