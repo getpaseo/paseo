@@ -3,7 +3,12 @@ import { runGitCommand } from "../utils/run-git-command.js";
 export interface WorkspaceGitFetchResult {
   changes: WorkspaceGitRemoteRefChange[] | null;
   nonRemoteRefsChanged?: boolean;
+  remoteRefs?: ReadonlySet<string>;
   error: unknown | null;
+}
+
+export interface WorkspaceGitFetchObserver {
+  onRefSnapshot(phase: "before" | "after"): void;
 }
 
 export type WorkspaceGitRemoteRefChange =
@@ -11,12 +16,16 @@ export type WorkspaceGitRemoteRefChange =
   | { kind: "added"; ref: string; afterOid: string }
   | { kind: "deleted"; ref: string; beforeOid: string };
 
-export async function fetchWorkspaceGitRemote(cwd: string): Promise<WorkspaceGitFetchResult> {
+export async function fetchWorkspaceGitRemote(
+  cwd: string,
+  observer: WorkspaceGitFetchObserver,
+): Promise<WorkspaceGitFetchResult> {
   let before: Map<string, string> | null = null;
   let after: Map<string, string> | null = null;
   let error: unknown | null = null;
   try {
     before = await readWorkspaceGitRefs(cwd);
+    observer.onRefSnapshot("before");
   } catch (caught) {
     error = caught;
   }
@@ -38,7 +47,23 @@ export async function fetchWorkspaceGitRemote(cwd: string): Promise<WorkspaceGit
     return { changes: null, error };
   }
   const diff = diffWorkspaceGitRefs(before, after);
-  return { changes: diff.remoteChanges, nonRemoteRefsChanged: diff.nonRemoteRefsChanged, error };
+  const result = {
+    changes: diff.remoteChanges,
+    nonRemoteRefsChanged: diff.nonRemoteRefsChanged,
+    remoteRefs: collectWorkspaceGitRemoteRefs(after),
+    error,
+  } satisfies WorkspaceGitFetchResult;
+  observer.onRefSnapshot("after");
+  return result;
+}
+
+function collectWorkspaceGitRemoteRefs(refs: ReadonlyMap<string, string>): Set<string> {
+  const remotePrefix = "refs/remotes/";
+  return new Set(
+    [...refs.keys()]
+      .filter((ref) => ref.startsWith(remotePrefix))
+      .map((ref) => ref.slice(remotePrefix.length)),
+  );
 }
 
 async function readWorkspaceGitRefs(cwd: string): Promise<Map<string, string>> {

@@ -54,6 +54,7 @@ import { classifyGitMetadataPath, getPrunedGitMetadataPaths } from "./git-metada
 import {
   fetchWorkspaceGitRemote,
   type WorkspaceGitFetchResult,
+  type WorkspaceGitFetchObserver,
   type WorkspaceGitRemoteRefChange,
 } from "./workspace-git-fetch.js";
 import { deriveProjectSlug } from "./workspace-git-metadata.js";
@@ -337,7 +338,10 @@ interface WorkspaceGitServiceDependencies {
   forgeOverrides?: Record<string, ForgeService>;
   resolveAbsoluteGitDir: (cwd: string) => Promise<string | null>;
   hasOriginRemote: (cwd: string) => Promise<boolean>;
-  runGitFetch: (cwd: string) => Promise<WorkspaceGitFetchResult>;
+  runGitFetch: (
+    cwd: string,
+    observer: WorkspaceGitFetchObserver,
+  ) => Promise<WorkspaceGitFetchResult>;
   runGitCommand: typeof runGitCommand;
   getWorkspaceGitSelfHealPhaseMs: typeof getWorkspaceGitSelfHealPhaseMs;
   now: () => Date;
@@ -436,6 +440,7 @@ interface RepoGitTarget {
     string,
     { change: WorkspaceGitRemoteRefChange; expiresAtMs: number }
   >;
+  knownRemoteRefs: Set<string> | null;
   closed: boolean;
 }
 
@@ -465,6 +470,10 @@ interface WorkingTreeWatchTarget {
 interface WatchRecoveryState {
   attemptCount: number;
   timer: NodeJS.Timeout | null;
+}
+
+function setsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  return left.size === right.size && [...left].every((value) => right.has(value));
 }
 
 type WorkingTreeWatchFallbackReason =
@@ -1781,6 +1790,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       fetchInFlight: false,
       bufferedFetchMetadataEvents: [],
       recentFetchRemoteRefChanges: new Map(),
+      knownRemoteRefs: null,
       closed: false,
     };
     this.repoTargets.set(repoGitRoot, repoTarget);
@@ -2004,6 +2014,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         if (effect.namespace === "local") {
           this.routeLocalBranchRef(target, effect.ref, refreshes);
         } else {
+          if (event.type === "delete") {
+            target.recentFetchRemoteRefChanges.delete(effect.ref);
+            target.knownRemoteRefs = null;
+            return false;
+          }
           const recent = target.recentFetchRemoteRefChanges.get(effect.ref);
           if (recent && recent.expiresAtMs >= this.deps.now().getTime()) {
             this.routeRemoteBranchRef(target, effect.ref, refreshes, {
@@ -2011,14 +2026,27 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
             });
           } else {
             target.recentFetchRemoteRefChanges.delete(effect.ref);
-            if (event.type !== "update") {
+            if (target.knownRemoteRefs?.has(effect.ref)) {
+              this.routeRemoteBranchRef(target, effect.ref, refreshes, { narrow: true });
+            } else if (
+              event.type === "create" &&
+              target.knownRemoteRefs &&
+              [...target.knownRemoteRefs].some((ref) => ref.startsWith(`${effect.ref}/`))
+            ) {
+              return true;
+            } else {
               return false;
             }
-            this.routeRemoteBranchRef(target, effect.ref, refreshes);
           }
         }
         return true;
       case "all":
+        if (
+          commonRelativePath === "packed-refs" ||
+          commonRelativePath?.startsWith("reftable/") === true
+        ) {
+          target.knownRemoteRefs = null;
+        }
         return false;
     }
   }
@@ -3079,8 +3107,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     );
 
     let result: WorkspaceGitFetchResult | null = null;
+    const eventsBeforeFetchSnapshot: parcelWatcher.Event[] = [];
     try {
-      result = await this.deps.runGitFetch(target.cwd);
+      result = await this.deps.runGitFetch(target.cwd, {
+        onRefSnapshot: (phase) => {
+          const events = target.bufferedFetchMetadataEvents.splice(0);
+          if (phase === "before") {
+            eventsBeforeFetchSnapshot.push(...events);
+          }
+        },
+      });
     } catch (error) {
       this.logger.warn(
         { err: error, repoGitRoot: target.repoGitRoot, cwd: target.cwd },
@@ -3089,8 +3125,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     } finally {
       target.fetchInFlight = false;
     }
+    this.flushFetchMetadataEvents(target, eventsBeforeFetchSnapshot);
     if (!result || result.changes === null) {
       target.recentFetchRemoteRefChanges.clear();
+      target.knownRemoteRefs = null;
       this.flushBufferedFetchMetadataEvents(target);
       if (result) {
         this.logger.warn(
@@ -3108,6 +3146,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       );
     }
     const expiresAtMs = this.deps.now().getTime() + FETCH_METADATA_ECHO_TTL_MS;
+    const remoteRefShapeChanged =
+      target.knownRemoteRefs !== null &&
+      result.remoteRefs !== undefined &&
+      !setsEqual(target.knownRemoteRefs, result.remoteRefs);
+    if (result.remoteRefs) {
+      target.knownRemoteRefs = new Set(result.remoteRefs);
+    }
     target.recentFetchRemoteRefChanges.clear();
     for (const change of result.changes) {
       target.recentFetchRemoteRefChanges.set(change.ref, { change, expiresAtMs });
@@ -3115,6 +3160,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.flushBufferedFetchMetadataEvents(target);
     if (
       result.nonRemoteRefsChanged === true ||
+      remoteRefShapeChanged ||
       result.changes.some((change) => change.kind !== "moved")
     ) {
       this.scheduleRepoMetadataRefresh(target, "repo-fetch-ref-shape", false);
@@ -3131,7 +3177,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private flushBufferedFetchMetadataEvents(target: RepoGitTarget): void {
-    const events = target.bufferedFetchMetadataEvents.splice(0);
+    this.flushFetchMetadataEvents(target, target.bufferedFetchMetadataEvents.splice(0));
+  }
+
+  private flushFetchMetadataEvents(target: RepoGitTarget, events: parcelWatcher.Event[]): void {
     if (events.length === 0) {
       return;
     }

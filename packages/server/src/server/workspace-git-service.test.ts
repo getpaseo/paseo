@@ -906,6 +906,58 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
+  test("remote ref name drift outside the fetch interval takes the structural fallback", async () => {
+    const runGitFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        changes: [],
+        nonRemoteRefsChanged: false,
+        remoteRefs: new Set(["origin/main"]),
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        changes: [],
+        nonRemoteRefsChanged: false,
+        remoteRefs: new Set(["origin/main", "origin/new"]),
+        error: null,
+      });
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      gitCommonDir: join(REPO_CWD, ".git"),
+      absoluteGitDir: join(REPO_CWD, ".git"),
+    }));
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      resolveAbsoluteGitDir: vi.fn(async () => join(REPO_CWD, ".git")),
+      hasOriginRemote: vi.fn(async () => true),
+      runGitFetch,
+    });
+    const first = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    const second = service.registerWorkspace(
+      { cwd: join(REPO_CWD, "packages", "server") },
+      vi.fn(),
+    );
+    await vi.waitFor(() => {
+      expect(runGitFetch).toHaveBeenCalledTimes(1);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+    });
+    getCheckoutSnapshotFacts.mockClear();
+
+    await vi.advanceTimersByTimeAsync(180_000);
+    await vi.waitFor(() => {
+      expect(runGitFetch).toHaveBeenCalledTimes(2);
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+    });
+
+    first.unsubscribe();
+    second.unsubscribe();
+    service.dispose();
+  });
+
   test.each([
     {
       name: "an added remote ref",
