@@ -303,7 +303,7 @@ function evaluate(results: Measurement[]): {
     if (
       result.backend === "node" &&
       (process.platform === "darwin" || process.platform === "win32") &&
-      (result.fullReconciliationCount ?? 0) > ROOT_COUNT * 2
+      (result.fullReconciliationCount ?? 0) > ROOT_COUNT
     ) {
       failures.push(
         `node ran ${result.fullReconciliationCount} full reconciliations for ${ROOT_COUNT} roots`,

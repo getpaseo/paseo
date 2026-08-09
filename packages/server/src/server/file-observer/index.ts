@@ -8,7 +8,9 @@ const EVENT_BATCH_DELAY_MS = 10;
 const RECONCILIATION_DELAY_MS = 50;
 const NATIVE_AUDIT_QUIET_MS = 100;
 const NATIVE_AUDIT_MAX_DIRTY_MS = 1_000;
-const NATIVE_FULL_AUDIT_INTERVAL_MS = 30_000;
+const NATIVE_FULL_AUDIT_QUIET_MS = 2_000;
+const NATIVE_FULL_AUDIT_MIN_INTERVAL_MS = 30_000;
+const NATIVE_FULL_AUDIT_MAX_DIRTY_MS = 5 * 60_000;
 
 const activeObservers = new Set<RecursiveFileObserver>();
 let reconciliationCount = 0;
@@ -145,6 +147,7 @@ class RecursiveFileObserver {
   private nativeAuditQueued = false;
   private nativeAuditRunning = false;
   private nativeSafetyAuditPending = false;
+  private nativeSafetyAuditDirtySince: number | null = null;
   private lastNativeFullAuditAt = Number.NEGATIVE_INFINITY;
   private nativeInventoryGeneration = 0;
   private readonly pathClassifications = new Set<Promise<void>>();
@@ -351,6 +354,7 @@ class RecursiveFileObserver {
     this.pendingNativeRecursiveAuditScopes.clear();
     if (fullAudit) {
       this.nativeSafetyAuditPending = false;
+      this.nativeSafetyAuditDirtySince = null;
       if (this.nativeFullAuditTimer) {
         clearTimeout(this.nativeFullAuditTimer);
         this.nativeFullAuditTimer = null;
@@ -728,16 +732,18 @@ class RecursiveFileObserver {
 
   private requestNativeAudit(scope: string, fullAudit = false, recursiveAudit = false): void {
     if (this.closed || this.failed) return;
+    const now = performance.now();
     if (fullAudit) {
       this.nativeSafetyAuditPending = true;
+      this.nativeSafetyAuditDirtySince ??= now;
       this.scheduleNativeFullAudit();
       return;
     }
     if (recursiveAudit) this.pendingNativeRecursiveAuditScopes.add(scope);
     else this.pendingNativeAuditScopes.add(scope);
     this.nativeSafetyAuditPending = true;
+    this.nativeSafetyAuditDirtySince ??= now;
     this.scheduleNativeFullAudit();
-    const now = performance.now();
     this.nativeAuditDirty = true;
     this.nativeAuditDirtySince ??= now;
     if (this.nativeAuditQueued || this.nativeAuditRunning) return;
@@ -773,8 +779,15 @@ class RecursiveFileObserver {
   }
 
   private scheduleNativeFullAudit(): void {
-    if (this.closed || this.failed || !this.nativeSafetyAuditPending || this.nativeFullAuditTimer)
+    if (this.closed || this.failed || !this.nativeSafetyAuditPending || this.nativeAuditRunning)
       return;
+    if (this.nativeFullAuditTimer) clearTimeout(this.nativeFullAuditTimer);
+    const now = performance.now();
+    const dirtySince = this.nativeSafetyAuditDirtySince ?? now;
+    const quietDeadline = now + NATIVE_FULL_AUDIT_QUIET_MS;
+    const intervalDeadline = this.lastNativeFullAuditAt + NATIVE_FULL_AUDIT_MIN_INTERVAL_MS;
+    const starvationDeadline = dirtySince + NATIVE_FULL_AUDIT_MAX_DIRTY_MS;
+    const deadline = Math.min(starvationDeadline, Math.max(intervalDeadline, quietDeadline));
     this.nativeFullAuditTimer = setTimeout(
       () => {
         this.nativeFullAuditTimer = null;
@@ -786,14 +799,7 @@ class RecursiveFileObserver {
         this.nativeAuditDirtySince ??= performance.now();
         this.scheduleNativeAudit();
       },
-      Math.max(
-        0,
-        (Number.isFinite(this.lastNativeFullAuditAt)
-          ? this.lastNativeFullAuditAt
-          : performance.now()) +
-          NATIVE_FULL_AUDIT_INTERVAL_MS -
-          performance.now(),
-      ),
+      Math.max(0, deadline - performance.now()),
     );
     this.nativeFullAuditTimer.unref();
   }
@@ -819,6 +825,7 @@ class RecursiveFileObserver {
     this.pendingNativeRecursiveAuditScopes.clear();
     this.nativeFullAuditRequested = false;
     this.nativeSafetyAuditPending = false;
+    this.nativeSafetyAuditDirtySince = null;
     this.nativeAuditDirty = false;
     this.nativeAuditDirtySince = null;
   }
