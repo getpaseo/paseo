@@ -13,6 +13,7 @@ import {
   createDesktopLocalDaemonTransportFactory,
   createDesktopWebSocketTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
+import { shouldRouteDirectTcpThroughHeaderBridge } from "@/runtime/direct-transport";
 
 export interface DaemonProbeClient {
   readonly lastError: string | null;
@@ -44,10 +45,24 @@ const defaultDaemonConnectionDependencies: DaemonConnectionDependencies<DaemonCl
   createClient: (config) => new DaemonClient(config),
 };
 
-function resolveWebSocketTransportFactory(
+function resolveDirectTcpTransportFactory(
+  connection: Extract<HostConnection, { type: "directTcp" }>,
   deps: Pick<DaemonConnectionDependencies<DaemonProbeClient>, "createWebSocketTransportFactory">,
 ): DaemonClientConfig["transportFactory"] {
-  return deps.createWebSocketTransportFactory?.() ?? undefined;
+  // Mirror host-runtime.ts createClient: only header-bearing direct
+  // connections use the main-process bridge. Headerless ones return undefined
+  // so the client falls back to the renderer WebSocket. See
+  // shouldRouteDirectTcpThroughHeaderBridge for why.
+  const factory = deps.createWebSocketTransportFactory?.() ?? undefined;
+  if (
+    !shouldRouteDirectTcpThroughHeaderBridge({
+      headers: connection.headers,
+      hasWebSocketTransportFactory: factory !== undefined,
+    })
+  ) {
+    return undefined;
+  }
+  return factory;
 }
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -148,7 +163,7 @@ export async function buildClientConfig(
   if (connection.type === "directTcp") {
     return {
       ...base,
-      transportFactory: resolveWebSocketTransportFactory(deps),
+      transportFactory: resolveDirectTcpTransportFactory(connection, deps),
       url: buildDaemonWebSocketUrl(connection.endpoint, { useTls: connection.useTls ?? false }),
       ...(connection.password ? { password: connection.password } : {}),
       ...(connection.headers ? { headers: connection.headers } : {}),

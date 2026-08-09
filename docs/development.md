@@ -66,6 +66,8 @@ PASEO_DEV_RESET_HOME=1 npm run dev            # clear and reseed the derived wor
 
 In Paseo-managed worktree services, use the injected service environment rather than hardcoded root checkout ports.
 
+**Desktop dev connects with a different WebSocket `Origin` than the packaged app.** The dev renderer is served over `http://localhost:808x`; the packaged renderer runs on `paseo://app`, which the daemon allowlists. A remote daemon rejects the dev origin on the `/ws` upgrade with `403 Origin not allowed`, which the renderer reports as close code `1006`. The desktop dev daemon works because its launcher sets `PASEO_CORS_ORIGINS=*`. To test a dev desktop build against another daemon, set `PASEO_CORS_ORIGINS` on that daemon to include your dev origin, or test with a packaged build. Direct transport selection (renderer vs main-process bridge) lives in `packages/app/src/runtime/direct-transport.ts`.
+
 ### Expo Router
 
 Route ownership, startup restore, and native blank-screen gotchas live in

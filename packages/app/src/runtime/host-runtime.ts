@@ -59,6 +59,7 @@ import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/direc
 import { ReplicaCache } from "@/runtime/replica-cache";
 import { nativePerformanceTrace } from "@/performance/native-trace";
 import { createAppWebSocketFactory } from "./websocket-factory";
+import { shouldRouteDirectTcpThroughHeaderBridge } from "./direct-transport";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
 export type HostRegistryStatus = "loading" | "ready";
@@ -480,7 +481,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
     createClient: ({ host, connection, clientId, runtimeGeneration }) => {
       const localTransportFactory = createDesktopLocalDaemonTransportFactory();
       const webSocketTransportFactory = createDesktopWebSocketTransportFactory();
-      const webSocketConfig = webSocketTransportFactory
+      const relayWebSocketConfig = webSocketTransportFactory
         ? { transportFactory: webSocketTransportFactory }
         : { webSocketFactory: createAppWebSocketFactory() };
       const base = {
@@ -503,9 +504,22 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         });
       }
       if (connection.type === "directTcp") {
+        // See shouldRouteDirectTcpThroughHeaderBridge: headerless direct
+        // connections stay on the renderer WebSocket (works on macOS LAN,
+        // paseo://app origin is allowlisted); header-bearing ones use the
+        // main-process bridge so the custom headers can be sent.
+        const useHeaderBridge =
+          webSocketTransportFactory !== null &&
+          shouldRouteDirectTcpThroughHeaderBridge({
+            headers: connection.headers,
+            hasWebSocketTransportFactory: true,
+          });
+        const directWebSocketConfig = useHeaderBridge
+          ? { transportFactory: webSocketTransportFactory }
+          : { webSocketFactory: createAppWebSocketFactory() };
         return new DaemonClient({
           ...base,
-          ...webSocketConfig,
+          ...directWebSocketConfig,
           url: buildDaemonWebSocketUrl(connection.endpoint, {
             useTls: connection.useTls ?? false,
           }),
@@ -515,7 +529,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       }
       return new DaemonClient({
         ...base,
-        ...webSocketConfig,
+        ...relayWebSocketConfig,
         url: buildRelayWebSocketUrl({
           endpoint: connection.relayEndpoint,
           useTls: connection.useTls ?? shouldUseTlsForDefaultHostedRelay(connection.relayEndpoint),
