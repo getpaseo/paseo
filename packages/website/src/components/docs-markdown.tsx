@@ -1,5 +1,6 @@
 import * as React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
+import { openEnclosingExamples } from "~/docs-example-target";
 import { getDocsHighlighter, docsRehypePlugins, docsRemarkPlugins } from "~/docs-rehype";
 
 function getCodeText(children: React.ReactNode): string {
@@ -68,7 +69,31 @@ const docsMarkdownComponents: Components = {
   pre: DocsPre,
 };
 
+// A collapsed example hides everything inside it, so a link to one scrolls to
+// nothing until the block is open.
+function revealHashTarget(): void {
+  const id = window.location.hash.slice(1);
+  if (!id) return;
+  const target = document.getElementById(decodeURIComponent(id));
+  if (!target) return;
+  openEnclosingExamples(target);
+  target.scrollIntoView();
+}
+
+function useHashTarget(content: string): void {
+  React.useEffect(() => {
+    const frame = window.requestAnimationFrame(revealHashTarget);
+    window.addEventListener("hashchange", revealHashTarget);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("hashchange", revealHashTarget);
+    };
+  }, [content]);
+}
+
 export function DocsMarkdown({ children }: { children: string }) {
+  useHashTarget(children);
+
   return (
     <div className="docs-prose">
       <ReactMarkdown
