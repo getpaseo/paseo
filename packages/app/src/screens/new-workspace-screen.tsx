@@ -78,6 +78,7 @@ import {
   getWorktreeSupportForHostProject,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
+  resolveHostProjectCandidate,
   useHostProjects,
   type HostProjectListItem,
 } from "@/projects/host-projects";
@@ -1201,6 +1202,7 @@ interface NewWorkspaceInitialContextState {
   openHostPicker: () => void;
   projects: HostProjectListItem[];
   routeProject: HostProjectListItem | null;
+  routeProjectContextViewKey: string | null;
   lastActiveProject: HostProjectListItem | null;
 }
 
@@ -1214,7 +1216,7 @@ function useNewWorkspaceInitialContext({
   const allServerIds = useMemo(() => allHosts.map((h) => h.serverId), [allHosts]);
   const projects = useHostProjects(allServerIds);
   const routeDisplayName = displayNameProp?.trim() ?? "";
-  const routeProject = useMemo(
+  const routePlacement = useMemo(
     () =>
       hostProjectFromRoute({
         serverId,
@@ -1224,6 +1226,16 @@ function useNewWorkspaceInitialContext({
       }),
     [projectId, routeDisplayName, serverId, sourceDirectoryProp],
   );
+  const routeProject = useMemo(() => {
+    if (!routePlacement) return null;
+    return (
+      resolveHostProjectCandidate({
+        candidate: routePlacement,
+        projects,
+        serverId,
+      }) ?? routePlacement
+    );
+  }, [projects, routePlacement, serverId]);
   const lastWorkspaceSelection = useLastWorkspaceSelection();
   const lastWorkspaceServerId = useMemo(
     () =>
@@ -1267,6 +1279,7 @@ function useNewWorkspaceInitialContext({
     openHostPicker,
     projects,
     routeProject,
+    routeProjectContextViewKey: routePlacement?.viewKey ?? null,
     lastActiveProject,
   };
 }
@@ -1350,8 +1363,10 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     [isPending],
   );
 
+  const desktopControlStyle = isCompact ? undefined : styles.desktopControl;
+
   const projectControl = (
-    <View>
+    <View style={desktopControlStyle}>
       <ProjectPickerTrigger
         pickerAnchorRef={project.anchorRef}
         onPress={project.open}
@@ -1388,7 +1403,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   );
 
   const hostControl = showHostControl ? (
-    <View>
+    <View style={desktopControlStyle}>
       <HostPicker
         hosts={host.allHosts}
         value={host.selectedServerId}
@@ -1431,7 +1446,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   ) : null;
 
   const isolationControl = isolation.canCreateWorktree ? (
-    <View>
+    <View style={desktopControlStyle}>
       <IsolationPickerTrigger
         pickerAnchorRef={isolation.anchorRef}
         onPress={isolation.open}
@@ -1458,7 +1473,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   ) : null;
 
   const baseControl = base.showRefPicker ? (
-    <View>
+    <View style={desktopControlStyle}>
       <RefPickerTrigger
         pickerAnchorRef={base.anchorRef}
         onPress={base.open}
@@ -1546,6 +1561,7 @@ export function NewWorkspaceScreen({
     openHostPicker,
     projects,
     routeProject,
+    routeProjectContextViewKey,
     lastActiveProject,
   } = useNewWorkspaceInitialContext({
     serverId,
@@ -1626,6 +1642,7 @@ export function NewWorkspaceScreen({
     selectedServerId,
     projects,
     routeProject,
+    routeProjectContextViewKey,
     lastActiveProject,
     allowAllProjects: supportsWorkspaceMultiplicity,
   });
@@ -2391,6 +2408,10 @@ const styles = StyleSheet.create((theme) => ({
     paddingLeft: theme.spacing[4],
     paddingRight: theme.spacing[4],
     gap: theme.spacing[2],
+  },
+  desktopControl: {
+    minWidth: 0,
+    flexShrink: 1,
   },
   // The row's left inset matches the heading's text x (composerTitleContainer
   // paddingLeft) so the control aligns with the "New workspace" glyph. The badge

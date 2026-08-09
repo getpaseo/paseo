@@ -246,8 +246,13 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
       workingTreeWatchSetupInFlightCount: 0,
       workspaceRefreshInFlightCount: 0,
       workspaceRefreshQueuedCount: 0,
+      workspaceRefreshAdmissionActiveCount: 0,
+      workspaceRefreshAdmissionPendingCount: 0,
+      workspaceObservationSetupAdmissionActiveCount: 0,
+      workspaceObservationSetupAdmissionPendingCount: 0,
       fetchInFlightCount: 0,
       snapshotUpdatedListenerCount: 0,
+      watcherErrorCallbackCount: 0,
     }),
     dispose: () => {},
   };
@@ -1545,6 +1550,8 @@ export class VoiceAssistantWebSocketServer {
         rewind: true,
         // COMPAT(agentTimelinePromptIndex): added in v0.2.X, drop the gate when floor >= v0.2.X.
         agentTimelinePromptIndex: true,
+        // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
+        agentHistorySearch: true,
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: true,
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97

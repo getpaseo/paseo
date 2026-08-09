@@ -61,4 +61,6 @@ If activation fails, Hub keeps the previous active revision. The Configuration t
 
 Triggers require a non-empty `from_users` allowlist for externally sourced events. Protect the configuration repository because anyone who can change the active configuration can choose which connections, daemons, and agent capabilities a project uses.
 
+These controls do not sandbox the agent or make input safe. See [Hub security](/docs/hub/security) for the host boundary, provider-native policy, and defense-in-depth guidance.
+
 GitHub-triggered steps receive a scoped GitHub credential for the triggering repository. Slack and Discord do not implicitly choose a GitHub connection.

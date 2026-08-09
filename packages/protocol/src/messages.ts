@@ -362,6 +362,22 @@ const McpServerConfigSchema = z.discriminatedUnion("type", [
   McpSseServerConfigSchema,
 ]);
 
+const ProviderOptionsSchema = z.record(z.string(), z.json());
+
+const McpToolRefSchema = z
+  .object({
+    kind: z.literal("mcp"),
+    server: z.string().trim().min(1),
+    tool: z.string().trim().min(1),
+  })
+  .strict();
+
+const ToolPolicySchema = z
+  .object({
+    preapproved: z.array(McpToolRefSchema),
+  })
+  .strict();
+
 const AgentSessionConfigSchema = z.object({
   provider: AgentProviderSchema,
   cwd: z.string(),
@@ -370,17 +386,8 @@ const AgentSessionConfigSchema = z.object({
   thinkingOptionId: z.string().optional(),
   featureValues: z.record(z.string(), z.unknown()).optional(),
   title: z.string().trim().min(1).max(MAX_EXPLICIT_AGENT_TITLE_CHARS).optional().nullable(),
-  approvalPolicy: z.string().optional(),
-  sandboxMode: z.string().optional(),
-  networkAccess: z.boolean().optional(),
-  webSearch: z.boolean().optional(),
-  extra: z
-    .object({
-      codex: z.record(z.string(), z.unknown()).optional(),
-      claude: z.record(z.string(), z.unknown()).optional(),
-    })
-    .partial()
-    .optional(),
+  providerOptions: ProviderOptionsSchema.optional(),
+  toolPolicy: ToolPolicySchema.optional(),
   systemPrompt: z.string().optional(),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
 });
@@ -1138,6 +1145,10 @@ export const FetchAgentHistoryRequestMessageSchema = z.object({
   type: z.literal("fetch_agent_history_request"),
   requestId: z.string(),
   filter: AgentDirectoryFilterSchema.optional(),
+  // A ranked free-text query over agent title, workspace name, branch, and
+  // project name. Present only on history: agent subscriptions filter on
+  // structure, not on relevance. Ranking replaces `sort` when it is set.
+  search: z.string().optional(),
   sort: z
     .array(
       z.object({
@@ -2504,17 +2515,45 @@ export const HubExecutionAgentCreateRequestSchema = z.object({
   provider: z.string(),
   cwd: z.string(),
   prompt: z.string(),
+  // COMPAT(hubExecutionWorkspaceSelection): semantics retired in v0.3.1; remove after 2027-08-08 once the Hub floor no longer sends it.
   workspaceId: z.string().optional(),
   model: z.string().optional(),
   modeId: z.string().optional(),
   thinkingOptionId: z.string().optional(),
   featureValues: z.record(z.string(), z.unknown()).optional(),
+  providerOptions: ProviderOptionsSchema.optional(),
+  toolPolicy: ToolPolicySchema.optional(),
   env: z.record(z.string(), z.string()).optional(),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
   worktree: CreateAgentWorktreeTargetSchema.optional(),
 });
 
 export type HubExecutionAgentCreateRequest = z.infer<typeof HubExecutionAgentCreateRequestSchema>;
+
+const HubExecutionAgentCreateErrorSchema = z.discriminatedUnion("code", [
+  z.object({
+    code: z.literal("provider_options_invalid"),
+    provider: z.string(),
+    issues: z.array(
+      z.object({
+        path: z.array(z.union([z.string(), z.number()])),
+        message: z.string(),
+      }),
+    ),
+    message: z.string(),
+  }),
+  z.object({
+    code: z.literal("tool_policy_unsupported"),
+    provider: z.string(),
+    message: z.string(),
+  }),
+  z.object({
+    code: z.literal("create_failed"),
+    message: z.string(),
+  }),
+]);
+
+export type HubExecutionAgentCreateError = z.infer<typeof HubExecutionAgentCreateErrorSchema>;
 
 export const HubExecutionControlActionSchema = z.enum(["interrupt", "archive"]);
 export type HubExecutionControlAction = z.infer<typeof HubExecutionControlActionSchema>;
@@ -2880,6 +2919,8 @@ export const ServerInfoStatusPayloadSchema = z
         rewind: z.boolean().optional(),
         // COMPAT(agentTimelinePromptIndex): added in v0.2.X, drop the gate when floor >= v0.2.X.
         agentTimelinePromptIndex: z.boolean().optional(),
+        // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
+        agentHistorySearch: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
@@ -3307,9 +3348,31 @@ export const AgentListMessageSchema = z.object({
   }),
 });
 
+export const AgentSearchMatchFieldSchema = z.enum(["workspace", "title", "branch", "project"]);
+
+export const AgentSearchMatchSchema = z.object({
+  field: AgentSearchMatchFieldSchema,
+  ranges: z.array(
+    z.object({
+      start: z.number().int().nonnegative(),
+      length: z.number().int().positive(),
+    }),
+  ),
+});
+
+export type AgentSearchMatch = z.infer<typeof AgentSearchMatchSchema>;
+
 const AgentDirectoryResponseEntrySchema = z.object({
   agent: AgentSnapshotPayloadSchema,
   project: ProjectPlacementPayloadSchema,
+  // Relevance of this entry to the request's `search`, lower being better.
+  // Set only when the request carried a query; a client merging results from
+  // several hosts needs it to interleave their separately ranked pages.
+  searchScore: z.number().optional(),
+  // Where the query matched, so the row can mark it. The ranker computes this
+  // anyway; sending it keeps the client from re-deriving a second opinion that
+  // could disagree with the ranking it is explaining.
+  searchMatches: z.array(AgentSearchMatchSchema).optional(),
 });
 
 const AgentDirectoryPageInfoSchema = z.object({
@@ -3334,6 +3397,10 @@ export const FetchAgentHistoryResponseMessageSchema = z.object({
     requestId: z.string(),
     entries: z.array(AgentDirectoryResponseEntrySchema),
     pageInfo: AgentDirectoryPageInfoSchema,
+    // More sessions matched the request's `search` than the page could hold.
+    // Distinct from `pageInfo.hasMore`, which promises a fetchable next page —
+    // a ranked result set has none, and the way on is a narrower query.
+    searchTruncated: z.boolean().optional(),
   }),
 });
 
@@ -5268,7 +5335,8 @@ export const HubExecutionAgentCreateResponseSchema = z.object({
     agentId: z.string().nullable(),
     agent: AgentSnapshotPayloadSchema.nullable(),
     success: z.boolean(),
-    error: z.string().nullable(),
+    toolPolicyApplied: z.literal(true).optional(),
+    error: HubExecutionAgentCreateErrorSchema.nullable(),
   }),
 });
 
