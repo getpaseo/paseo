@@ -26,7 +26,11 @@ triggers:
         idle_timeout: 10m
         agent: { provider: codex, mode: full-access }
         prompt:
-          - text: ${{ paseo.prompt }}
+          - text: Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
 ```
 
 Field-by-field detail is in the [`hub.yml` reference](/docs/hub/configuration/hub-yml). This page covers matching.

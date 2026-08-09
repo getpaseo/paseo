@@ -47,11 +47,14 @@ triggers:
           mode: read-only
         prompt:
           - text: |
-              Help with this request:
-              ${{ paseo.prompt }}
+              Help with this request.
 
               Call hub.reply to send your response to the originating conversation.
               Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
         allow_outputs:
           - type: slack.reply
 ```
@@ -63,6 +66,8 @@ Mention the bot in the configured channel:
 ```
 
 Hub removes the mention and gives the agent `how do I run the project locally?` as `${{ paseo.prompt }}`. The prompt tells it to call `hub.reply`, which posts in the thread through the step's `slack.reply` capability.
+
+The last block wraps the triggering message in `<user-prompt>` tags and keeps it as its own prompt item, so the agent can tell the request apart from your instructions. Tags are a formatting convention; [Hub security](/docs/hub/security) covers the allowlists, provider policy, and output authority that decide what an agent may do with the request.
 
 What happens next:
 
@@ -161,8 +166,11 @@ steps:
       mode: read-only
     prompt:
       - text: Classify the request as answer or implementation.
-      - text: ${{ paseo.prompt }}
       - text: Call hub.finish_execution with the classification as the structured result.
+      - text: |
+          <user-prompt>
+          ${{ paseo.prompt }}
+          </user-prompt>
     output:
       schema:
         type: object
@@ -182,8 +190,11 @@ steps:
       mode: read-only
     prompt:
       - text: Answer the request without changing files.
-      - text: ${{ paseo.prompt }}
       - text: Call hub.finish_execution when the step is complete.
+      - text: |
+          <user-prompt>
+          ${{ paseo.prompt }}
+          </user-prompt>
 
   - id: implementation
     if: ${{ steps.classify.outputs.kind == 'implementation' }}
@@ -195,8 +206,11 @@ steps:
       mode: full-access
     prompt:
       - text: Implement the request and verify the result.
-      - text: ${{ paseo.prompt }}
       - text: Call hub.finish_execution when the step is complete.
+      - text: |
+          <user-prompt>
+          ${{ paseo.prompt }}
+          </user-prompt>
 ```
 
 The classifier calls `hub.finish_execution` with:

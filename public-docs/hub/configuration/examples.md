@@ -10,7 +10,7 @@ category: Hub
 
 These examples use the durable step syntax. Replace the daemon, paths, provider identifiers, and provider filters with resources in your organization. The shared workflow page explains the contract behind each pattern.
 
-Each prompt names the Hub tool its step should call. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).
+Each prompt names the Hub tool its step should call and keeps the triggering message in its own `<user-prompt>` block. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).
 
 ## Model and provider selection
 
@@ -48,10 +48,11 @@ triggers:
           model: ${{ paseo.inputs.model }}
           mode: full-access
         prompt:
+          - text: Call hub.finish_execution when the step is complete.
           - text: |
+              <user-prompt>
               ${{ paseo.prompt }}
-
-              Call hub.finish_execution when the step is complete.
+              </user-prompt>
 ```
 
 Invoke it with `provider=claude model=fast investigate the sync`. An undeclared leading key stops header parsing and becomes prompt text.
@@ -93,10 +94,12 @@ triggers:
           mode: full-access
         prompt:
           - text: |
-              ${{ paseo.prompt }}
-
               Call hub.reply to send your response to the originating conversation.
               Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
         allow_outputs:
           - type: slack.reply
             max: 5
@@ -122,10 +125,12 @@ triggers:
           mode: full-access
         prompt:
           - text: |
-              ${{ paseo.prompt }}
-
               Call hub.reply to send your response to the originating conversation.
               Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
         allow_outputs:
           - type: slack.reply
             max: 5
@@ -167,8 +172,11 @@ triggers:
           mode: read-only
         prompt:
           - text: Classify this request as answer or implementation.
-          - text: ${{ paseo.prompt }}
           - text: Call hub.finish_execution with the classification as the structured result.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
         output:
           schema:
             type: object
@@ -188,8 +196,11 @@ triggers:
           mode: read-only
         prompt:
           - text: Answer the request. Do not change files.
-          - text: ${{ paseo.prompt }}
           - text: Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
 
       - id: implementation
         if: ${{ paseo.inputs.kind == 'implementation' || steps.classify.outputs.kind == 'implementation' }}
@@ -201,9 +212,12 @@ triggers:
           mode: full-access
         prompt:
           - text: Implement the request, verify it, and report the result.
-          - text: ${{ paseo.prompt }}
           - text: Post the result as an issue comment with `gh`.
           - text: Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
 ```
 
 The answer and implementation conditions cannot both be true for one classification. The workflow ends after the answer step because there is no later matching step.
@@ -241,10 +255,13 @@ triggers:
         prompt:
           - text: |
               Address the review request.
-              Request: ${{ paseo.prompt }}
 
               Post progress and the final result as pull request comments with `gh`.
               Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
 ```
 
 GitHub-triggered agents receive the scoped GitHub credential for the triggering repository, so they comment, push, and open pull requests with `gh`. For Slack and Discord, grant `slack.reply` or `discord.reply` on the step with the `max` it needs, and tell the agent to call `hub.reply` for each update.

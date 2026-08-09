@@ -34,7 +34,11 @@ triggers:
           provider: codex
           mode: full-access
         prompt:
-          - text: ${{ paseo.prompt }}
+          - text: Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
 ```
 
 `project` is an optional bare project slug. The deploy CLI uses it to choose the target project when `-p, --project` is absent. The flag takes precedence over this metadata without rewriting the YAML. `project` is not available to triggers, expressions, or agents.
@@ -114,9 +118,14 @@ Prompt blocks are objects, not a scalar prompt:
 
 ```yaml
 prompt:
-  - text: "Request: ${{ paseo.prompt }}"
   - include: developer.md
+  - text: |
+      <user-prompt>
+      ${{ paseo.prompt }}
+      </user-prompt>
 ```
+
+Keep the triggering message in its own final block, wrapped in `<user-prompt>` tags, as [the first workflow](/docs/hub/workflows#your-first-workflow) does.
 
 Use `${{ paseo.prompt }}`, `${{ paseo.inputs.* }}`, `${{ steps.*.outputs.* }}`, and `${{ values.* }}` in prompts, conditions, and agent selection fields. Provider event payloads are not part of this workflow expression namespace; provider adapters put the normalized request into the prompt and preserve the raw event as evidence.
 
