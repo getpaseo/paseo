@@ -2004,9 +2004,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         if (effect.namespace === "local") {
           this.routeLocalBranchRef(target, effect.ref, refreshes);
         } else {
-          if (event.type !== "update") {
-            return false;
-          }
           const recent = target.recentFetchRemoteRefChanges.get(effect.ref);
           if (recent && recent.expiresAtMs >= this.deps.now().getTime()) {
             this.routeRemoteBranchRef(target, effect.ref, refreshes, {
@@ -2015,6 +2012,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
             });
           } else {
             target.recentFetchRemoteRefChanges.delete(effect.ref);
+            if (event.type !== "update") {
+              return false;
+            }
             this.routeRemoteBranchRef(target, effect.ref, refreshes);
           }
         }

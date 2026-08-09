@@ -445,7 +445,7 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
-  test("a remote-ref watcher echo during fetch coalesces into the narrow refresh", async () => {
+  test("a loose remote-ref watcher echo during fetch coalesces into the narrow refresh", async () => {
     const watcher = createWatcherHarness();
     const releaseFetch = createDeferred<void>();
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
@@ -490,7 +490,7 @@ describe("WorkspaceGitService checkout observation", () => {
     watcher.records
       .find((record) => record.directory === GIT_DIR)
       ?.callback(null, [
-        { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "update" },
+        { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "create" },
       ]);
     releaseFetch.resolve();
     await flushPromises();
