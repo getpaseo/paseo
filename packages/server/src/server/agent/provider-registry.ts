@@ -726,16 +726,33 @@ function buildResolvedBuiltinProviders(
 
 const SPECIALIZED_ACP_VARIANTS = ["cursor", "kimi", "kiro", "traecli"] as const;
 
-const AcpVariantParamsSchema = z
-  .object({
-    acpVariant: z.enum(SPECIALIZED_ACP_VARIANTS).optional(),
-  })
-  .passthrough();
-
 // Custom profiles have their own id; params.acpVariant opts them into a specialized ACP adapter.
+// Absent → fall back to provider id. Present but invalid → throw at registry build.
 function resolveAcpVariant(providerId: string, params: unknown): string {
-  const parsed = AcpVariantParamsSchema.safeParse(params ?? {});
-  return parsed.success && parsed.data.acpVariant ? parsed.data.acpVariant : providerId;
+  if (params == null || typeof params !== "object" || Array.isArray(params)) {
+    return providerId;
+  }
+  if (!Object.hasOwn(params, "acpVariant")) {
+    return providerId;
+  }
+  const acpVariant = Reflect.get(params, "acpVariant");
+  if (
+    typeof acpVariant === "string" &&
+    (SPECIALIZED_ACP_VARIANTS as readonly string[]).includes(acpVariant)
+  ) {
+    return acpVariant;
+  }
+  let rendered: string;
+  if (typeof acpVariant === "string") {
+    rendered = `'${acpVariant}'`;
+  } else if (acpVariant === undefined) {
+    rendered = "undefined";
+  } else {
+    rendered = JSON.stringify(acpVariant);
+  }
+  throw new Error(
+    `ACP provider '${providerId}' has invalid params.acpVariant ${rendered}; expected one of ${SPECIALIZED_ACP_VARIANTS.join(", ")}`,
+  );
 }
 
 function addDerivedProviders(
@@ -758,6 +775,7 @@ function addDerivedProviders(
       }
       // Capture command in const for closure - TypeScript can't track type refinement inside closures
       const command = override.command;
+      const acpVariant = resolveAcpVariant(providerId, override.params);
 
       resolvedProviders.set(providerId, {
         definition: createDerivedDefinition(
@@ -787,7 +805,6 @@ function addDerivedProviders(
             label: override.label ?? providerId,
             providerParams: override.params,
           };
-          const acpVariant = resolveAcpVariant(providerId, override.params);
           if (acpVariant === "cursor") {
             return new CursorACPAgentClient(acpOptions);
           }

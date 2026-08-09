@@ -985,6 +985,23 @@ test("custom ACP profile opts into the Kimi adapter via params.acpVariant", asyn
   expect(genericCatalog.models.map((model) => model.id)).not.toContain("kimi-adapter-probe");
 });
 
+test("custom ACP profile with invalid params.acpVariant throws", () => {
+  expect(() =>
+    buildProviderRegistry(logger, {
+      providerOverrides: {
+        "kimi-work": {
+          extends: "acp",
+          label: "Kimi (Work)",
+          command: ["kimi", "acp"],
+          params: { acpVariant: "Kimi" },
+        },
+      },
+    }),
+  ).toThrowError(
+    "ACP provider 'kimi-work' has invalid params.acpVariant 'Kimi'; expected one of cursor, kimi, kiro, traecli",
+  );
+});
+
 test('extends: "acp" without command throws', () => {
   expect(() =>
     buildProviderRegistry(logger, {

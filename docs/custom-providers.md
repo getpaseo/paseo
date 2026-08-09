@@ -539,8 +539,9 @@ without losing per-model thinking:
 }
 ```
 
-Valid values: `cursor`, `kimi`, `kiro`, `traecli`. Any other value falls back to the generic ACP
-adapter. The profile keeps its own id, label, credentials, and models.
+Valid values: `cursor`, `kimi`, `kiro`, `traecli`. Omit the key to keep the generic ACP adapter.
+An unrecognized value fails provider registry startup. The profile keeps its own id, label,
+credentials, and models.
 
 ### Generic ACP diagnostics
 
