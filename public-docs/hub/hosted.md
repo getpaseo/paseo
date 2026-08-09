@@ -2,7 +2,7 @@
 title: Hosted Hub
 description: The managed Paseo Hub, not available yet.
 nav: Hosted
-order: 72
+order: 73
 category: Hub
 ---
 
