@@ -706,7 +706,7 @@ export function CommandCenter() {
       >
         <View style={[styles.bottomSheetHeader, styles.searchRow]} testID="command-center-header">
           {state.scope === "files" ? (
-            <ScopeSegment label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
+            <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
           ) : null}
           <ThemedBottomSheetTextInput
             testID="command-center-input"
@@ -743,7 +743,7 @@ export function CommandCenter() {
           <View ref={setWebOverlayScope} testID="command-center-panel" style={styles.panel}>
             <View style={[styles.header, styles.searchRow]} testID="command-center-header">
               {state.scope === "files" ? (
-                <ScopeSegment label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
+                <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
               ) : null}
               <ThemedTextInput
                 testID="command-center-input"
@@ -789,20 +789,20 @@ function FileSearchLoadingIndicator({ loading, label }: { loading: boolean; labe
   );
 }
 
-// The segment is a leading cell of the search row, not a badge floating inside it. It stretches to
-// the row's cross size and bleeds through the header padding with negative margins, so its height is
-// driven entirely by the input and toggling the scope can never resize the header.
-function ScopeSegment({ label, onRemove }: { label: string; onRemove(): void }) {
+// The chip sits at the input's own height and type size so it reads as the scope of the field
+// rather than a badge dropped into the query. Its 28px matches the input's line box, so showing or
+// dropping the scope cannot resize the header.
+function ScopeChip({ label, onRemove }: { label: string; onRemove(): void }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onRemove}
-      style={styles.scopeSegment}
+      style={styles.scopeChip}
       testID="command-center-files-scope"
     >
       <ThemedFolder size={14} strokeWidth={2.2} />
-      <Text style={styles.scopeSegmentLabel}>{label}</Text>
+      <Text style={styles.scopeChipLabel}>{label}</Text>
       <ThemedX size={12} strokeWidth={2.2} />
     </Pressable>
   );
@@ -849,20 +849,21 @@ const styles = StyleSheet.create((theme) => ({
   growingInput: { flex: 1, minWidth: 0 },
   searchRow: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
   fileSearchStatus: { width: 14, height: 14, alignItems: "center", justifyContent: "center" },
-  scopeSegment: {
+  scopeChip: {
+    // Stretching to the row rather than setting a height keeps the chip exactly as tall as the
+    // input's line box, so showing or dropping the scope can never resize the header.
     alignSelf: "stretch",
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1.5],
-    marginVertical: -theme.spacing[3],
-    marginLeft: -theme.spacing[4],
-    paddingLeft: theme.spacing[4],
-    paddingRight: theme.spacing[2],
+    marginRight: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.borderAccent,
     backgroundColor: theme.colors.surface2,
-    borderRightWidth: 1,
-    borderRightColor: theme.colors.border,
   },
-  scopeSegmentLabel: {
+  scopeChipLabel: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: "500",

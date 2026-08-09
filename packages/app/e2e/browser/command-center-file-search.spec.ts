@@ -79,7 +79,7 @@ test("workspace file search stays geometrically stable through delayed loading a
 test("dropping the files scope leaves the search row the same height", async ({ page }) => {
   const seeded = await seedWorkspace({
     repoPrefix: "command-center-file-search-scope-",
-    title: "Scope segment height",
+    title: "Scope chip height",
   });
 
   try {
