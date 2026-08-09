@@ -675,6 +675,13 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
     reason: z.string(),
   }),
   z.object({
+    type: z.literal("prompt_suggestion"),
+    provider: AgentProviderSchema,
+    turnId: z.string(),
+    suggestion: z.string(),
+    messageId: z.string(),
+  }),
+  z.object({
     type: z.literal("timeline"),
     provider: AgentProviderSchema,
     item: AgentTimelineItemPayloadSchema,
@@ -2921,6 +2928,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentTimelinePromptIndex: z.boolean().optional(),
         // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
         agentHistorySearch: z.boolean().optional(),
+        // COMPAT(promptSuggestions): added in v0.3.X, remove gate after 2027-02-09.
+        promptSuggestions: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
@@ -6039,6 +6048,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.providerSubagents]: z.boolean().optional(),
       [CLIENT_CAPS.projectUpdates]: z.boolean().optional(),
       [CLIENT_CAPS.compactProviderSnapshots]: z.boolean().optional(),
+      [CLIENT_CAPS.promptSuggestions]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()

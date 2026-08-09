@@ -1102,6 +1102,12 @@ export class Session {
     serializedEvent: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"]["event"],
   ): void {
     if (this.clientCapabilitiesBySource.size === 0 || !this.onMessageToSource) {
+      if (
+        serializedEvent.type === "prompt_suggestion" &&
+        !this.supports(CLIENT_CAPS.promptSuggestions)
+      ) {
+        return;
+      }
       if (this.usesSelectiveTimelineDelivery() && serializedEvent.type === "attention_required") {
         this.emit({
           type: "agent_attention_required",
@@ -1126,6 +1132,12 @@ export class Session {
     }
 
     for (const [source, capabilities] of this.clientCapabilitiesBySource) {
+      if (
+        serializedEvent.type === "prompt_suggestion" &&
+        !capabilities.has(CLIENT_CAPS.promptSuggestions)
+      ) {
+        continue;
+      }
       const supportsSelectiveDelivery = capabilities.has(CLIENT_CAPS.selectiveAgentTimeline);
       if (supportsSelectiveDelivery && serializedEvent.type === "attention_required") {
         this.onMessageToSource(source, {

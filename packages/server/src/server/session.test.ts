@@ -4926,6 +4926,61 @@ test("sends project updates only to capable sockets in a retained session", () =
   ]);
 });
 
+test("sends prompt suggestions only to capable sockets in a retained session", () => {
+  const messages: SessionOutboundMessage[] = [];
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const agentEventListeners: Array<(event: AgentManagerEvent) => void> = [];
+  const session = createSessionForTest({
+    messages,
+    targetedMessages,
+    agentManager: {
+      subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
+        agentEventListeners.push(listener);
+        return () => {};
+      }),
+    },
+  });
+  const legacySocket = {};
+  const capableSocket = {};
+  session.updateClientCapabilities(null, legacySocket);
+  session.updateClientCapabilities({ [CLIENT_CAPS.promptSuggestions]: true }, capableSocket);
+
+  const listener = agentEventListeners[0];
+  if (!listener) throw new Error("Agent event listener was not installed");
+  listener({
+    type: "agent_stream",
+    agentId: "agent-with-suggestion",
+    event: {
+      type: "prompt_suggestion",
+      provider: "claude",
+      turnId: "foreground-turn-7",
+      suggestion: "Run the focused tests, then ship it.",
+      messageId: "suggestion-message-1",
+    },
+  });
+
+  expect(messages).toEqual([]);
+  expect(targetedMessages).toEqual([
+    {
+      source: capableSocket,
+      message: {
+        type: "agent_stream",
+        payload: {
+          agentId: "agent-with-suggestion",
+          timestamp: expect.any(String),
+          event: {
+            type: "prompt_suggestion",
+            provider: "claude",
+            turnId: "foreground-turn-7",
+            suggestion: "Run the focused tests, then ship it.",
+            messageId: "suggestion-message-1",
+          },
+        },
+      },
+    },
+  ]);
+});
+
 test("project.list returns every active project descriptor", async () => {
   const messages: SessionOutboundMessage[] = [];
   const active = createPersistedProjectRecord({

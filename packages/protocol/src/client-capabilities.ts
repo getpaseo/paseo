@@ -24,6 +24,9 @@ export const CLIENT_CAPS = {
   // provider catalogs with shared thinking sets and may revalidate by content hash.
   // Remove the legacy snapshot encoding after 2027-02-04.
   compactProviderSnapshots: "compact_provider_snapshots",
+  // COMPAT(promptSuggestions): added in v0.3.X. The event is a new discriminated-union
+  // variant, so only clients that advertise support may receive it. Remove after 2027-02-09.
+  promptSuggestions: "prompt_suggestions",
   browserHost: "browser_host",
 } as const;
 

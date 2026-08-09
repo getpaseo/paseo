@@ -414,6 +414,13 @@ export type AgentStreamEvent =
     }
   | { type: "turn_canceled"; provider: AgentProvider; reason: string; turnId?: string }
   | {
+      type: "prompt_suggestion";
+      provider: AgentProvider;
+      turnId: string;
+      suggestion: string;
+      messageId: string;
+    }
+  | {
       type: "timeline";
       item: AgentTimelineItem;
       provider: AgentProvider;

@@ -48,6 +48,7 @@ export const ClaudeProviderOptionsSchema = z
     allowedTools: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional(),
     additionalDirectories: z.array(z.string()).optional(),
+    promptSuggestions: z.boolean().optional(),
     sandbox: z
       .object({
         enabled: z.boolean().optional(),

@@ -4,6 +4,18 @@ import type { AgentStreamEvent } from "./agent/agent-sdk-types.js";
 import { SessionInboundMessageSchema, serializeAgentStreamEvent } from "./messages.js";
 
 describe("serializeAgentStreamEvent", () => {
+  test("preserves prompt suggestions without changing their text", () => {
+    const event: AgentStreamEvent = {
+      type: "prompt_suggestion",
+      provider: "claude",
+      turnId: "foreground-turn-7",
+      suggestion: "Run the focused tests, then ship it.",
+      messageId: "suggestion-message-1",
+    };
+
+    expect(serializeAgentStreamEvent(event)).toEqual(event);
+  });
+
   test("preserves daemon turn identity on lifecycle events", () => {
     expect(
       serializeAgentStreamEvent({
