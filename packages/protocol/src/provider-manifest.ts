@@ -100,6 +100,24 @@ const CODEX_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+const SENPI_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "auto",
+    label: "Auto",
+    description: "Uses Senpi's default approval flow.",
+    icon: "Shield",
+    colorTier: "moderate",
+  },
+  {
+    id: "full-access",
+    label: "Full Access",
+    description: "Runs Senpi tools without approval prompts.",
+    icon: "ShieldOff",
+    colorTier: "dangerous",
+    isUnattended: true,
+  },
+];
+
 const COPILOT_MODES: AgentProviderModeDefinition[] = [
   {
     id: "https://agentclientprotocol.com/protocol/session-modes#agent",
@@ -253,7 +271,7 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     description:
       "Senpi via the Codex app-server protocol with session persistence and tool streaming",
     defaultModeId: null,
-    modes: [],
+    modes: SENPI_MODES,
   },
   {
     id: "omp",

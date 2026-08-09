@@ -1858,4 +1858,61 @@ describe("fetchCatalog", () => {
     expect(catalog.models.map((model) => model.id)).toEqual(["catalog-model"]);
     expect(catalog.modes.map((mode) => mode.id)).toEqual(["ask"]);
   });
+
+  test("marks Senpi full access as unattended for delegated runs", async () => {
+    const injectedClient = {
+      provider: "codex",
+      capabilities: {},
+      fetchCatalog: vi.fn(async () => ({
+        models: [],
+        modes: [
+          { id: "auto", label: "Auto", icon: "Shield", colorTier: "moderate" },
+          {
+            id: "full-access",
+            label: "Full Access",
+            icon: "ShieldOff",
+            colorTier: "dangerous",
+          },
+        ],
+      })),
+      isAvailable: vi.fn(async () => true),
+    } satisfies Partial<AgentClient> as AgentClient;
+    const registry = buildProviderRegistry(logger);
+    const catalog = await registry.senpi.fetchCatalog(
+      { cwd: "/tmp/catalog", force: false },
+      injectedClient,
+    );
+
+    expect(catalog.modes).toContainEqual({
+      id: "full-access",
+      label: "Full Access",
+      icon: "ShieldOff",
+      colorTier: "dangerous",
+      isUnattended: true,
+    });
+    expect(
+      registry.senpi.resolveCreateConfig({
+        provider: "senpi",
+        requestedMode: undefined,
+        featureValues: undefined,
+        parent: {
+          provider: "claude",
+          modeId: "bypassPermissions",
+          isUnattended: true,
+        },
+        unattended: true,
+        availableModes: catalog.modes,
+      }),
+    ).toEqual({
+      modeId: "full-access",
+      featureValues: undefined,
+    });
+    expect(
+      registry.senpi.isCreateConfigUnattended({
+        modeId: "full-access",
+        config: { provider: "senpi", cwd: "/tmp/catalog" },
+        availableModes: catalog.modes,
+      }),
+    ).toBe(true);
+  });
 });
