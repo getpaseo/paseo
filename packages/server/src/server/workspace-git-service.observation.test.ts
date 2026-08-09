@@ -556,6 +556,38 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
+  test("origin/main refreshes a main checkout without configured upstream", async () => {
+    const watcher = createWatcherHarness();
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutFacts(cwd),
+      currentBranch: "main",
+      remoteUrl: "https://example.com/repo.git",
+      resolvedBaseRef: "main",
+      comparisonBaseRef: null,
+      branchRemoteName: null,
+      branchMergeRef: null,
+      upstreamStatus: null,
+    }));
+    const service = createService(watcher, { getCheckoutSnapshotFacts });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await vi.waitFor(() => {
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
+    });
+
+    watcher.records
+      .find((record) => record.directory === GIT_DIR)
+      ?.callback(null, [
+        { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "update" },
+      ]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+    });
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("routes private worktree metadata to its owner and shared base refs to dependents", async () => {
     const watcher = createWatcherHarness();
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => createLinkedCheckoutFacts(cwd));
@@ -650,7 +682,7 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
-  test("routes a newly created remote tracking ref to its configured workspace", async () => {
+  test("a newly created remote tracking ref refreshes every repository workspace", async () => {
     const watcher = createWatcherHarness();
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => {
       const facts = createLinkedCheckoutFacts(cwd);
@@ -692,7 +724,7 @@ describe("WorkspaceGitService checkout observation", () => {
       ]);
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
-      expect(getCalledCwds(getCheckoutStatus)).toEqual([WORKTREE_A]);
+      expect(getCalledCwds(getCheckoutStatus)).toEqual([WORKTREE_A, WORKTREE_B]);
     });
 
     first.unsubscribe();

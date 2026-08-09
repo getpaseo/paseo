@@ -47,6 +47,7 @@ import {
   isRealpathInsideRoot,
 } from "../utils/path.js";
 import { runGitCommand } from "../utils/run-git-command.js";
+import { branchNameFromRef } from "../utils/worktree-metadata.js";
 import { listPaseoWorktrees, type PaseoWorktreeInfo } from "../utils/worktree.js";
 import { READ_ONLY_GIT_ENV } from "./checkout-git-utils.js";
 import { classifyGitMetadataPath, getPrunedGitMetadataPaths } from "./git-metadata-event-rules.js";
@@ -2003,6 +2004,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         if (effect.namespace === "local") {
           this.routeLocalBranchRef(target, effect.ref, refreshes);
         } else {
+          if (event.type !== "update") {
+            return false;
+          }
           const recent = target.recentFetchRemoteRefChanges.get(effect.ref);
           if (recent && recent.expiresAtMs >= this.deps.now().getTime()) {
             this.routeRemoteBranchRef(target, effect.ref, refreshes, {
@@ -2099,12 +2103,18 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         facts.branchRemoteName && facts.branchRemoteName !== "." && trackedBranch
           ? `${facts.branchRemoteName}/${trackedBranch}`
           : null;
+      const shortstatRemoteRef =
+        facts.currentBranch &&
+        (!facts.resolvedBaseRef || branchNameFromRef(facts.resolvedBaseRef) === facts.currentBranch)
+          ? `origin/${facts.currentBranch}`
+          : null;
       const refs = [
         facts.storedBaseRef,
         facts.resolvedBaseRef,
         facts.comparisonBaseRef,
         facts.upstreamStatus?.ref,
         configuredRemoteRef,
+        shortstatRemoteRef,
       ];
       const usesRemoteRef = refs.some((ref) => ref === remoteRef || ref === qualifiedRemoteRef);
       if (usesRemoteRef) {

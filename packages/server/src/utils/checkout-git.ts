@@ -2754,6 +2754,45 @@ function checkoutFactsConfiguredRemoteRef(
     : null;
 }
 
+function getCheckoutRefMovement(
+  facts: Extract<CheckoutSnapshotFacts, { isGit: true }>,
+  movedRemoteRefs: ReadonlySet<string>,
+): {
+  baseMoved: boolean;
+  comparisonRef: string | null;
+  currentBranch: string | null;
+  normalizedResolvedBase: string | null;
+  upstreamMoved: boolean;
+  upstreamRef: string | null;
+} {
+  const currentBranch = facts.currentBranch;
+  const comparisonRef = facts.comparisonBaseRef;
+  const normalizedMoves = new Set([...movedRemoteRefs].map(normalizeRemoteTrackingRef));
+  const normalizedResolvedBase = facts.resolvedBaseRef
+    ? branchNameFromRef(facts.resolvedBaseRef)
+    : null;
+  const shortstatRemoteRef =
+    currentBranch && (!normalizedResolvedBase || normalizedResolvedBase === currentBranch)
+      ? `origin/${currentBranch}`
+      : null;
+  const baseMoved = [facts.storedBaseRef, facts.resolvedBaseRef, comparisonRef, shortstatRemoteRef]
+    .filter((ref): ref is string => Boolean(ref))
+    .map(normalizeRemoteTrackingRef)
+    .some((ref) => normalizedMoves.has(ref));
+  const upstreamRef = facts.upstreamStatus?.ref ?? checkoutFactsConfiguredRemoteRef(facts);
+  const upstreamMoved = upstreamRef
+    ? normalizedMoves.has(normalizeRemoteTrackingRef(upstreamRef))
+    : false;
+  return {
+    baseMoved,
+    comparisonRef,
+    currentBranch,
+    normalizedResolvedBase,
+    upstreamMoved,
+    upstreamRef,
+  };
+}
+
 export async function getCheckoutRefDerivedState(
   cwd: string,
   facts: Extract<CheckoutSnapshotFacts, { isGit: true }>,
@@ -2761,18 +2800,14 @@ export async function getCheckoutRefDerivedState(
   movedRemoteRefs: ReadonlySet<string>,
   context?: CheckoutContext,
 ): Promise<CheckoutRefDerivedState> {
-  const currentBranch = facts.currentBranch;
-  const comparisonRef = facts.comparisonBaseRef;
-  const normalizedMoves = new Set([...movedRemoteRefs].map(normalizeRemoteTrackingRef));
-  const baseRefs = [facts.storedBaseRef, facts.resolvedBaseRef, comparisonRef]
-    .filter((ref): ref is string => Boolean(ref))
-    .map(normalizeRemoteTrackingRef);
-  const baseMoved = baseRefs.some((ref) => normalizedMoves.has(ref));
-  const configuredRemoteRef = checkoutFactsConfiguredRemoteRef(facts);
-  const upstreamRef = facts.upstreamStatus?.ref ?? configuredRemoteRef;
-  const upstreamMoved = upstreamRef
-    ? normalizedMoves.has(normalizeRemoteTrackingRef(upstreamRef))
-    : false;
+  const {
+    baseMoved,
+    comparisonRef,
+    currentBranch,
+    normalizedResolvedBase,
+    upstreamMoved,
+    upstreamRef,
+  } = getCheckoutRefMovement(facts, movedRemoteRefs);
 
   let aheadBehind = current.aheadBehind;
   let diffStat = current.diffStat;
@@ -2782,7 +2817,7 @@ export async function getCheckoutRefDerivedState(
       facts,
     });
   }
-  if (baseMoved || (upstreamMoved && currentBranch === facts.resolvedBaseRef)) {
+  if (baseMoved || (upstreamMoved && currentBranch === normalizedResolvedBase)) {
     diffStat = await getCheckoutShortstatUncached(
       cwd,
       { ...context, facts },

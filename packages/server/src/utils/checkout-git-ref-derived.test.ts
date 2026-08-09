@@ -159,3 +159,27 @@ test("an upstream move refreshes the main checkout shortstat", async () => {
     },
   });
 });
+
+test("an origin move refreshes an untracked main checkout shortstat", async () => {
+  const seeded = seedMainCheckout();
+  const facts = {
+    ...seeded.facts,
+    branchRemoteName: null,
+    branchMergeRef: null,
+    upstreamStatus: null,
+  };
+  git(seeded.cwd, [
+    "update-ref",
+    "refs/remotes/origin/main",
+    git(seeded.cwd, ["rev-parse", "HEAD"]),
+  ]);
+
+  expect(
+    await getCheckoutRefDerivedState(
+      seeded.cwd,
+      facts,
+      { aheadBehind: null, diffStat: { additions: 1, deletions: 0 } },
+      new Set(["origin/main"]),
+    ),
+  ).toEqual({ aheadBehind: null, diffStat: null, upstreamStatus: null });
+});
