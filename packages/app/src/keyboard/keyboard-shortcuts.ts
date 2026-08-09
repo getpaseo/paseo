@@ -992,7 +992,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "message-input-model-cycle-cmd-shift-m-mac",
     action: "message-input.action",
-    combo: "Cmd+Shift+M",
+    combo: "Ctrl+Shift+M",
     repeat: false,
     when: { mac: true, commandCenter: false, focusScope: "message-input" },
     payload: { type: "message-input", kind: "model-cycle" },

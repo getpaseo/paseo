@@ -33,6 +33,7 @@ import {
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
+import { resolveModelThinkingOptionId } from "@/provider-selection/resolve-agent-form";
 import { useSessionStore } from "@/stores/session-store";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
@@ -1630,6 +1631,15 @@ export const AgentControls = memo(function AgentControls({
       }
       try {
         await client.setAgentModel(agentId, modelId);
+        const thinkingOptionId = resolveModelThinkingOptionId({
+          availableModels: models,
+          providerPrefs: preferences.providerPreferences?.[agentProvider],
+          modelId,
+        });
+        if (thinkingOptionId) {
+          const notice = await client.setAgentThinkingOption(agentId, thinkingOptionId);
+          showProviderNoticeToast(toast, notice);
+        }
         await updatePreferences((current) =>
           mergeProviderPreferences({
             preferences: current,
@@ -1638,11 +1648,19 @@ export const AgentControls = memo(function AgentControls({
           }),
         );
       } catch (error) {
-        console.warn("[AgentControls] setAgentModel or persist preference failed", error);
+        console.warn("[AgentControls] select model failed", error);
         toast.error(toErrorMessage(error));
       }
     },
-    [agentId, agentProvider, client, toast, updatePreferences],
+    [
+      agentId,
+      agentProvider,
+      client,
+      models,
+      preferences.providerPreferences,
+      toast,
+      updatePreferences,
+    ],
   );
   const handleSelectCommandCenterModel = useCallback(
     (_provider: AgentProvider, modelId: string) => handleSelectModel(modelId),
