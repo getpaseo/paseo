@@ -40,6 +40,16 @@ interface KimiACPAgentClientOptions {
 const THINKING_TOGGLE_OPTION_IDS = new Set(["on", "off"]);
 const KIMI_DEFAULT_EFFORT_OPTION_ID = "high";
 
+// Used when a non-current model's probe fails and the session only exposed an on/off toggle.
+// Prefer this over inheriting "on" (invalid for K3) or clearing options (K3 becomes unconfigurable).
+function kimiFallbackEffortOptions(): ConfigOptionSelector[] {
+  return [
+    { id: "low", label: "Thinking Low", isDefault: false },
+    { id: "high", label: "Thinking High", isDefault: true },
+    { id: "max", label: "Thinking Max", isDefault: false },
+  ];
+}
+
 function normalizeKimiThinkingOptions(options: ConfigOptionSelector[]): {
   options: ConfigOptionSelector[];
   defaultThinkingOptionId: string | undefined;
@@ -75,6 +85,30 @@ function withNormalizedKimiThinkingOptions(model: AgentModelDefinition): AgentMo
     ...model,
     thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
     defaultThinkingOptionId,
+  };
+}
+
+function hasOnlyThinkingToggles(options: ConfigOptionSelector[] | undefined): boolean {
+  return (
+    !!options?.length &&
+    options.every((option) => THINKING_TOGGLE_OPTION_IDS.has(option.id.trim().toLowerCase()))
+  );
+}
+
+function thinkingOptionsForFailedNonCurrentProbe(
+  model: AgentModelDefinition,
+): AgentModelDefinition {
+  if (hasOnlyThinkingToggles(model.thinkingOptions)) {
+    return {
+      ...model,
+      thinkingOptions: kimiFallbackEffortOptions(),
+      defaultThinkingOptionId: KIMI_DEFAULT_EFFORT_OPTION_ID,
+    };
+  }
+  return {
+    ...model,
+    thinkingOptions: undefined,
+    defaultThinkingOptionId: undefined,
   };
 }
 
@@ -116,26 +150,28 @@ export async function resolveKimiCatalogModels({
         defaultThinkingOptionId,
       });
     } catch (error) {
-      // Inherited options are only trustworthy for the session-current model. Other models must
-      // not keep another model's toggle (e.g. K3 inheriting K2.7's "on") when their probe fails.
+      // Inherited options are only trustworthy for the session-current model. For others:
+      // - toggle-only inheritance (K2.7 → K3) gets the standard effort fallback, not "on"
+      // - effort inheritance onto an unknown model is cleared rather than guessed as always-on
       const keepInheritedOptions =
         model.id === modelOption.currentValue ||
         (modelOption.currentValue == null && model.isDefault === true);
+      let fallback: AgentModelDefinition;
+      let warnSuffix: string;
+      if (keepInheritedOptions) {
+        fallback = withNormalizedKimiThinkingOptions(model);
+        warnSuffix = "keeping current model options";
+      } else {
+        fallback = thinkingOptionsForFailedNonCurrentProbe(model);
+        warnSuffix = fallback.thinkingOptions
+          ? "using effort fallback"
+          : "omitting inherited options";
+      }
       logger.warn(
         { modelId: model.id, error: toDiagnosticErrorMessage(error) },
-        keepInheritedOptions
-          ? `${provider} catalog probe could not resolve thinking options for model "${model.id}"; keeping current model options`
-          : `${provider} catalog probe could not resolve thinking options for model "${model.id}"; omitting inherited options`,
+        `${provider} catalog probe could not resolve thinking options for model "${model.id}"; ${warnSuffix}`,
       );
-      resolved.push(
-        keepInheritedOptions
-          ? withNormalizedKimiThinkingOptions(model)
-          : {
-              ...model,
-              thinkingOptions: undefined,
-              defaultThinkingOptionId: undefined,
-            },
-      );
+      resolved.push(fallback);
     }
   }
   return resolved;
