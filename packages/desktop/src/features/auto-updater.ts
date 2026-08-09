@@ -115,7 +115,14 @@ export type ElectronUpdaterRuntime = Pick<
 export class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   private configured = false;
 
-  constructor(private readonly updater: ElectronUpdaterRuntime = autoUpdater) {}
+  constructor(private readonly injectedUpdater?: ElectronUpdaterRuntime) {}
+
+  private get updater(): ElectronUpdaterRuntime {
+    // electron-updater constructs its platform updater on first access. Keep
+    // that access lazy so importing Paseo's update service does not require a
+    // fully initialized Electron app.
+    return this.injectedUpdater ?? autoUpdater;
+  }
 
   configure(input: AppUpdateRuntimeConfiguration): void {
     this.updater.autoDownload = true;

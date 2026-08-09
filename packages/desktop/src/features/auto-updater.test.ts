@@ -11,7 +11,9 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("electron-updater", () => ({
-  autoUpdater: {},
+  get autoUpdater() {
+    throw new Error("autoUpdater accessed before the update runtime is configured");
+  },
 }));
 
 import {
