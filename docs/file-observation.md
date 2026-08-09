@@ -10,7 +10,9 @@ Closing an observation must remain safe after its root is renamed or removed. Wo
 
 Linux topology repair is trailing-debounced and scoped to the renamed path. A file rename needs one classification stat; a new or moved directory scans only its subtree. Full-tree scans are reserved for startup and ignore-set replacement. The initial Linux scan conservatively emits existing files discovered before their directory watcher was installed; WorkspaceGit batches these into one refresh. Benchmark this startup cost with pre-populated trees.
 
-Read aggregate health with `getFileObserverDiagnostics()`. Runtime metrics include active observations, native handles, pending events, reconciliation activity and latency, and failure counts. Do not add path lists, watcher handles, or platform-specific controls to this interface.
+Windows and macOS use one native recursive watcher plus an ignored-pruned file inventory. Native events deliver immediately. A quiet, serialized inventory audit recovers create and delete paths omitted by coalescing; emitted settle audits run no more than once every two seconds and cannot be starved by continuous writes. The inventory starts from a silent baseline and is diffed when exclusions change, so unrelated concurrent changes are not absorbed. Observation fails into polling rather than retaining more than 250,000 file paths per root.
+
+Read aggregate health with `getFileObserverDiagnostics()`. Runtime metrics include active observations, native handles, tracked native files, pending events, reconciliation activity and latency, and failure counts. Do not add path lists, watcher handles, or platform-specific controls to this interface.
 
 Git owns Git-ignore evaluation. The observer accepts absolute excluded roots and applies updates without replacing the observation or exposing its watcher topology. This keeps tracked files inside otherwise ignored directories observable and keeps Git policy out of the filesystem module.
 

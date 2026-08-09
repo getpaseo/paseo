@@ -3,8 +3,12 @@ import { readdir, stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 
 const DEFAULT_MAX_WATCHED_DIRECTORIES = 5_000;
+const DEFAULT_MAX_TRACKED_NATIVE_FILES = 250_000;
 const EVENT_BATCH_DELAY_MS = 10;
 const RECONCILIATION_DELAY_MS = 50;
+const NATIVE_AUDIT_QUIET_MS = 250;
+const NATIVE_AUDIT_MAX_DIRTY_MS = 2_000;
+const NATIVE_AUDIT_MIN_INTERVAL_MS = 2_000;
 
 const activeObservers = new Set<RecursiveFileObserver>();
 let reconciliationCount = 0;
@@ -37,6 +41,7 @@ export interface FileObserverSubscription {
 export interface FileObserverDiagnostics {
   activeObservationCount: number;
   nativeHandleCount: number;
+  nativeTrackedFileCount: number;
   pendingEventCount: number;
   reconciliationInFlightCount: number;
   reconciliationCount: number;
@@ -52,17 +57,20 @@ export type SubscribeToFileChanges = typeof subscribeToFileChanges;
 /** Aggregate health without exposing watched paths or platform topology. */
 export function getFileObserverDiagnostics(): FileObserverDiagnostics {
   let nativeHandleCount = 0;
+  let nativeTrackedFileCount = 0;
   let pendingEventCount = 0;
   let reconciliationInFlightCount = 0;
   for (const observer of activeObservers) {
     const diagnostics = observer.getDiagnostics();
     nativeHandleCount += diagnostics.nativeHandleCount;
+    nativeTrackedFileCount += diagnostics.nativeTrackedFileCount;
     pendingEventCount += diagnostics.pendingEventCount;
     reconciliationInFlightCount += diagnostics.reconciliationInFlight ? 1 : 0;
   }
   return {
     activeObservationCount: activeObservers.size,
     nativeHandleCount,
+    nativeTrackedFileCount,
     pendingEventCount,
     reconciliationInFlightCount,
     reconciliationCount,
@@ -107,6 +115,14 @@ class RecursiveFileObserver {
   private reconcileInFlight = false;
   private reconcileTimer: NodeJS.Timeout | null = null;
   private readonly pendingReconciliationScopes = new Set<string>();
+  private nativeFiles = new Set<string>();
+  private nativeAuditTimer: NodeJS.Timeout | null = null;
+  private nativeAuditDirty = false;
+  private nativeAuditDirtySince: number | null = null;
+  private nativeAuditQueued = false;
+  private nativeAuditRunning = false;
+  private lastNativeAuditAt = Number.NEGATIVE_INFINITY;
+  private nativeInventoryGeneration = 0;
   private readonly pathClassifications = new Set<Promise<void>>();
   private flushTimer: NodeJS.Timeout | null = null;
   private readonly pendingEvents = new Map<string, FileChange>();
@@ -127,6 +143,13 @@ class RecursiveFileObserver {
 
     if (supportsNativeRecursiveWatch(process.platform)) {
       this.watchNativeRecursive();
+      this.nativeAuditQueued = true;
+      try {
+        await this.enqueueNativeAudit(false, this.nativeInventoryGeneration);
+      } catch (error) {
+        await this.close();
+        throw error;
+      }
       return;
     }
 
@@ -156,7 +179,17 @@ class RecursiveFileObserver {
         this.watchers.delete(directory);
       }
     }
-    if (!supportsNativeRecursiveWatch(process.platform)) {
+    if (supportsNativeRecursiveWatch(process.platform)) {
+      this.nativeInventoryGeneration += 1;
+      this.cancelNativeAudit();
+      this.nativeAuditQueued = true;
+      try {
+        await this.enqueueNativeAudit(true, this.nativeInventoryGeneration);
+      } catch (error) {
+        this.fail(toError(error));
+        throw error;
+      }
+    } else {
       try {
         this.cancelQueuedReconciliation();
         await this.enqueueReconcile([this.root]);
@@ -175,6 +208,7 @@ class RecursiveFileObserver {
       this.flushTimer = null;
     }
     this.cancelQueuedReconciliation();
+    this.cancelNativeAudit();
     this.pendingEvents.clear();
     this.closePromise = this.finishClose();
     return this.closePromise;
@@ -182,11 +216,13 @@ class RecursiveFileObserver {
 
   getDiagnostics(): {
     nativeHandleCount: number;
+    nativeTrackedFileCount: number;
     pendingEventCount: number;
     reconciliationInFlight: boolean;
   } {
     return {
       nativeHandleCount: this.watchers.size,
+      nativeTrackedFileCount: this.nativeFiles.size,
       pendingEventCount: this.pendingEvents.size,
       reconciliationInFlight: this.reconcileInFlight,
     };
@@ -201,6 +237,7 @@ class RecursiveFileObserver {
     // handle defensively before resolving the lifecycle barrier.
     for (const watcher of this.watchers.values()) watcher.close();
     this.watchers.clear();
+    this.nativeFiles.clear();
     activeObservers.delete(this);
   }
 
@@ -209,12 +246,14 @@ class RecursiveFileObserver {
       if (this.closed || this.failed) return;
       if (!filename) {
         this.queueEvent("update", this.root);
+        this.requestNativeAudit();
         return;
       }
       const path = resolve(this.root, filename.toString());
       if (this.isIgnored(path)) return;
       if (eventType === "change") this.queueEvent("update", path);
       else this.classifyRenameEvent(path);
+      this.requestNativeAudit();
     });
     this.attachWatcher(this.root, watcher);
   }
@@ -264,6 +303,81 @@ class RecursiveFileObserver {
     const result = this.reconcileTail.then(() => this.runQueuedReconcile(scopes));
     this.reconcileTail = result.catch(() => undefined);
     return result;
+  }
+
+  private enqueueNativeAudit(emitDiff: boolean, generation: number): Promise<void> {
+    const result = this.reconcileTail.then(() => this.runNativeAudit(emitDiff, generation));
+    this.reconcileTail = result.catch(() => undefined);
+    return result;
+  }
+
+  private async runNativeAudit(emitDiff: boolean, generation: number): Promise<void> {
+    this.nativeAuditQueued = false;
+    if (this.closed || this.failed || generation !== this.nativeInventoryGeneration) return;
+    this.nativeAuditRunning = true;
+    this.nativeAuditDirty = false;
+    this.nativeAuditDirtySince = null;
+    this.reconcileInFlight = true;
+    const startedAt = performance.now();
+    try {
+      const nextFiles = await this.scanNativeFiles();
+      if (this.closed || this.failed || generation !== this.nativeInventoryGeneration) return;
+      if (emitDiff) this.queueNativeInventoryDiff(nextFiles);
+      this.nativeFiles = nextFiles;
+    } catch (error) {
+      reconciliationFailureCount += 1;
+      throw error;
+    } finally {
+      const durationMs = performance.now() - startedAt;
+      reconciliationCount += 1;
+      lastReconciliationDurationMs = durationMs;
+      maxReconciliationDurationMs = Math.max(maxReconciliationDurationMs, durationMs);
+      if (emitDiff) this.lastNativeAuditAt = performance.now();
+      this.reconcileInFlight = false;
+      this.nativeAuditRunning = false;
+      if (this.nativeAuditDirty && !this.closed && !this.failed) this.scheduleNativeAudit();
+    }
+  }
+
+  private async scanNativeFiles(): Promise<Set<string>> {
+    const files = new Set<string>();
+    const pending = [this.root];
+    while (pending.length > 0 && !this.closed && !this.failed) {
+      const directory = pending.pop();
+      if (!directory) continue;
+      let children: Dirent[];
+      try {
+        children = await readdir(directory, { withFileTypes: true });
+      } catch (error) {
+        if (isMissingPathError(error) && this.closed) return files;
+        if (!isMissingPathError(error) || directory === this.root) throw error;
+        continue;
+      }
+      for (const child of children) {
+        const path = join(directory, child.name);
+        if (this.isIgnored(path)) continue;
+        if (child.isDirectory()) {
+          pending.push(path);
+          continue;
+        }
+        files.add(path);
+        if (files.size > DEFAULT_MAX_TRACKED_NATIVE_FILES) {
+          throw new Error(
+            `Recursive file observation exceeded ${DEFAULT_MAX_TRACKED_NATIVE_FILES} files under ${this.root}`,
+          );
+        }
+      }
+    }
+    return files;
+  }
+
+  private queueNativeInventoryDiff(nextFiles: Set<string>): void {
+    for (const path of nextFiles) {
+      if (!this.nativeFiles.has(path)) this.queueEvent("create", path);
+    }
+    for (const path of this.nativeFiles) {
+      if (!nextFiles.has(path)) this.queueEvent("delete", path);
+    }
   }
 
   private async runQueuedReconcile(scopes: string[]): Promise<void> {
@@ -395,12 +509,59 @@ class RecursiveFileObserver {
     this.reconcileTimer.unref();
   }
 
+  private requestNativeAudit(): void {
+    if (this.closed || this.failed) return;
+    const now = performance.now();
+    this.nativeAuditDirty = true;
+    this.nativeAuditDirtySince ??= now;
+    if (this.nativeAuditQueued || this.nativeAuditRunning) return;
+    this.scheduleNativeAudit();
+  }
+
+  private scheduleNativeAudit(): void {
+    if (
+      this.closed ||
+      this.failed ||
+      !this.nativeAuditDirty ||
+      this.nativeAuditQueued ||
+      this.nativeAuditRunning
+    )
+      return;
+    const now = performance.now();
+    const dirtySince = this.nativeAuditDirtySince ?? now;
+    const quietDeadline = now + NATIVE_AUDIT_QUIET_MS;
+    const starvationDeadline = dirtySince + NATIVE_AUDIT_MAX_DIRTY_MS;
+    const intervalDeadline = this.lastNativeAuditAt + NATIVE_AUDIT_MIN_INTERVAL_MS;
+    const deadline = Math.max(intervalDeadline, Math.min(quietDeadline, starvationDeadline));
+    if (this.nativeAuditTimer) clearTimeout(this.nativeAuditTimer);
+    this.nativeAuditTimer = setTimeout(
+      () => {
+        this.nativeAuditTimer = null;
+        this.nativeAuditQueued = true;
+        void this.enqueueNativeAudit(true, this.nativeInventoryGeneration).catch((error: unknown) =>
+          this.fail(toError(error)),
+        );
+      },
+      Math.max(0, deadline - performance.now()),
+    );
+    this.nativeAuditTimer.unref();
+  }
+
   private cancelQueuedReconciliation(): void {
     if (this.reconcileTimer) {
       clearTimeout(this.reconcileTimer);
       this.reconcileTimer = null;
     }
     this.pendingReconciliationScopes.clear();
+  }
+
+  private cancelNativeAudit(): void {
+    if (this.nativeAuditTimer) {
+      clearTimeout(this.nativeAuditTimer);
+      this.nativeAuditTimer = null;
+    }
+    this.nativeAuditDirty = false;
+    this.nativeAuditDirtySince = null;
   }
 
   private classifyRenameEvent(path: string): void {
@@ -431,6 +592,7 @@ class RecursiveFileObserver {
       this.flushTimer = null;
     }
     this.cancelQueuedReconciliation();
+    this.cancelNativeAudit();
     for (const watcher of this.watchers.values()) watcher.close();
     this.watchers.clear();
     this.pendingEvents.clear();

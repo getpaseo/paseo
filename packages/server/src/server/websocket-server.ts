@@ -256,6 +256,7 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
       fileObserver: {
         activeObservationCount: 0,
         nativeHandleCount: 0,
+        nativeTrackedFileCount: 0,
         pendingEventCount: 0,
         reconciliationInFlightCount: 0,
         reconciliationCount: 0,
