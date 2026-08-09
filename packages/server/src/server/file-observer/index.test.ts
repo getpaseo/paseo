@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { type FileChange, getFileObserverDiagnostics, subscribeToFileChanges } from "./index.js";
 
@@ -100,9 +100,15 @@ test("an ignore update is a barrier for later delivery", async () => {
       writeFile(join(ignored, `after-${index}.txt`), `${index}`),
     ),
   );
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  const sentinel = join(root, "still-observed.txt");
+  await writeFile(sentinel, "observed");
+  await expect.poll(() => delivered.some((event) => event.path === sentinel)).toBe(true);
 
-  expect(delivered).toHaveLength(deliveredAtBarrier);
+  expect(
+    delivered
+      .slice(deliveredAtBarrier)
+      .filter((event) => event.path === ignored || event.path.startsWith(`${ignored}${sep}`)),
+  ).toEqual([]);
   await subscription.unsubscribe();
 });
 
