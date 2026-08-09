@@ -2450,6 +2450,20 @@ export class AgentManager {
       this.touchUpdatedAt(agent);
       this.emitState(agent);
     }
+
+    // A foreground run that has not been assigned a turn id yet cannot be canceled:
+    // settleTerminalRun ignores it (there is no turn id to match), so only its own
+    // stream generator can clear it. Reporting "settled" while the run is still
+    // tracked makes replaceAgentRun continue into streamAgent, which then rejects
+    // the prompt with "already has an active run". Report the cancellation as
+    // refused instead, so callers surface a typed AgentRunCancellationError.
+    if (this.runs.hasRun(agentId)) {
+      this.logger.warn(
+        { agentId, kind: run.kind, turnId: run.turnId },
+        "cancelAgentRun: run still tracked after cancellation, reporting refused",
+      );
+      return { status: "refused" };
+    }
     return { status: "settled" };
   }
 
