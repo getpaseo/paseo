@@ -517,7 +517,14 @@ vi.mock("./providers/kimi-acp-agent.js", () => ({
 
     async fetchCatalog(): Promise<ProviderCatalog> {
       return {
-        models: mockState.runtimeModels.get(this.provider) ?? [],
+        models: mockState.runtimeModels.get(this.provider) ?? [
+          {
+            provider: this.provider,
+            id: "kimi-adapter-probe",
+            label: "Kimi Adapter Probe",
+            ...CLAUDE_CUSTOM_THINKING_FIELDS,
+          },
+        ],
         modes: [],
       };
     }
@@ -946,6 +953,36 @@ test("kimi provider extending acp uses KimiACPAgentClient", () => {
     },
   ]);
   expect(mockState.constructorArgs.genericAcp).toEqual([]);
+});
+
+test("custom ACP profile opts into the Kimi adapter via params.acpVariant", async () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      "kimi-work": {
+        extends: "acp",
+        label: "Kimi (Work)",
+        command: ["kimi", "acp"],
+        params: { acpVariant: "kimi" },
+      },
+      "kimi-generic": {
+        extends: "acp",
+        label: "Kimi (Generic)",
+        command: ["kimi", "acp"],
+      },
+    },
+  });
+
+  const catalogOptions = { scope: "workspace", cwd: "/tmp/kimi-work", force: false } as const;
+  const kimiClient = registry["kimi-work"].createClient(logger);
+  const genericClient = registry["kimi-generic"].createClient(logger);
+
+  expect(kimiClient.provider).toBe("kimi-work");
+
+  const kimiCatalog = await kimiClient.fetchCatalog(catalogOptions);
+  const genericCatalog = await genericClient.fetchCatalog(catalogOptions);
+
+  expect(kimiCatalog.models.map((model) => model.id)).toContain("kimi-adapter-probe");
+  expect(genericCatalog.models.map((model) => model.id)).not.toContain("kimi-adapter-probe");
 });
 
 test('extends: "acp" without command throws', () => {
