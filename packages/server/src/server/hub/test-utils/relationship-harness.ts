@@ -203,7 +203,10 @@ class ControlledAgentClient implements AgentClient {
   resumes = 0;
   createdConfigs: AgentSessionConfig[] = [];
 
-  constructor(private readonly client: AgentClient) {
+  constructor(
+    private readonly client: AgentClient,
+    private readonly internalClient: AgentClient,
+  ) {
     this.provider = client.provider;
     this.capabilities = client.capabilities;
   }
@@ -230,6 +233,9 @@ class ControlledAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
+    if (config.internal) {
+      return this.internalClient.createSession(config, launchContext, options);
+    }
     this.creations++;
     this.createdConfigs.push({ ...config });
     this.creationObserved.resolve();
@@ -242,6 +248,9 @@ class ControlledAgentClient implements AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    if (overrides?.internal) {
+      return this.internalClient.resumeSession(handle, overrides, launchContext);
+    }
     this.resumes++;
     return this.client.resumeSession(handle, overrides, launchContext);
   }
@@ -438,6 +447,7 @@ export class HubRelationshipHarness {
           this.providerPrompts.push(prompt);
         },
       }).codex,
+      createTestAgentClients({ supportsMcpServers: mcpEnabled }).codex,
     );
   }
 

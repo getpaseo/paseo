@@ -22,6 +22,18 @@ function createRealAgentManager(storage: AgentStorage): AgentManager {
   });
 }
 
+async function removeRealAgentManagerWorkdir(
+  agentManager: AgentManager,
+  storage: AgentStorage,
+  workdir: string,
+): Promise<void> {
+  agentManager.prepareForShutdown();
+  await Promise.all(agentManager.listAgents().map((agent) => agentManager.closeAgent(agent.id)));
+  await agentManager.flushForShutdown();
+  await storage.flush();
+  rmSync(workdir, { recursive: true, force: true });
+}
+
 // Creates a worktree directory under repoRoot and reports it back as a fresh
 // workspace so the command can stamp the agent with it (mirrors the production
 // worktree service).
@@ -238,7 +250,7 @@ test("session create stamps the requested workspaceId when no worktree setup run
     const stored = await storage.get(snapshot.id);
     expect(stored?.workspaceId).toBe("ws-source");
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    await removeRealAgentManagerWorkdir(agentManager, storage, workdir);
   }
 });
 
@@ -273,7 +285,7 @@ test("session create stamps the new worktree's workspaceId when a setup continua
     const stored = await storage.get(snapshot.id);
     expect(stored?.workspaceId).toBe("ws-new-worktree");
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    await removeRealAgentManagerWorkdir(agentManager, storage, workdir);
   }
 });
 
@@ -324,7 +336,7 @@ test("mcp create stamps the new worktree's workspaceId, not the parent's", async
     expect(storedChild?.workspaceId).toBe("ws-new-worktree");
     expect(child.cwd).toBe(join(workdir, "worktree", "packages", "app"));
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    await removeRealAgentManagerWorkdir(agentManager, storage, workdir);
   }
 });
 
@@ -376,7 +388,7 @@ test("mcp create exposes the created worktree before dispatching the initial pro
 
     expect(observed).toEqual({ createdWorktree, lifecycle: "idle" });
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    await removeRealAgentManagerWorkdir(agentManager, storage, workdir);
   }
 });
 
@@ -414,7 +426,7 @@ test("session create keeps the prompt title after the initial prompt settles", a
     const settled = await storage.get(snapshot.id);
     expect(settled?.title).toBe(title);
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    await removeRealAgentManagerWorkdir(agentManager, storage, workdir);
   }
 });
 
@@ -452,6 +464,6 @@ test("session create keeps an explicit title after the initial prompt settles", 
     const settled = await storage.get(snapshot.id);
     expect(settled?.title).toBe(title);
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    await removeRealAgentManagerWorkdir(agentManager, storage, workdir);
   }
 });
