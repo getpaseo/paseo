@@ -2,7 +2,7 @@
 title: Slack for Hub
 description: Create the Slack app your Hub uses, connect a workspace, and write Slack triggers.
 nav: Slack app
-order: 75
+order: 76
 category: Hub
 ---
 
