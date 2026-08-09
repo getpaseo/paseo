@@ -10,7 +10,7 @@ import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { createAgentCommand } from "./create.js";
-import type { ManagedAgent } from "../agent-manager.js";
+import type { AgentManagerEvent, ManagedAgent } from "../agent-manager.js";
 
 const logger = createTestLogger();
 
@@ -470,4 +470,122 @@ test("session create keeps an explicit title after the initial prompt settles", 
   } finally {
     await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
+});
+
+// notifyOnFinish for an agent-created child: drives the real finish watcher so
+// the assertion is "did the caller actually get woken", not "which flag was
+// passed". A detached child has no parent label by construction, which is the
+// case that used to be silenced.
+function createNotifyOnFinishScenario(options: { detached: boolean }) {
+  let subscriber: ((event: AgentManagerEvent) => void) | null = null;
+  const callerPrompts: string[] = [];
+
+  const child = {
+    id: "child-agent",
+    provider: "codex",
+    cwd: "/tmp/paseo-create-test",
+    lifecycle: "idle",
+    config: { title: "Child Agent" },
+    runtimeInfo: null,
+  } as unknown as ManagedAgent;
+  const caller = {
+    id: "caller-agent",
+    provider: "codex",
+    cwd: "/tmp/paseo-create-test",
+    workspaceId: "ws-create-test",
+    lifecycle: "idle",
+    runtimeInfo: null,
+  } as unknown as ManagedAgent;
+
+  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  Reflect.set(agentManager, "createAgent", async () => child);
+  Reflect.set(agentManager, "getAgent", (agentId: string) =>
+    agentId === "caller-agent" ? caller : child,
+  );
+  Reflect.set(agentManager, "subscribe", (callback: (event: AgentManagerEvent) => void) => {
+    subscriber = callback;
+    return () => {
+      subscriber = null;
+    };
+  });
+  Reflect.set(agentManager, "waitForAgentRunStart", async () => {});
+  Reflect.set(agentManager, "tryRunOutOfBand", () => false);
+  Reflect.set(agentManager, "hasInFlightRun", () => false);
+  Reflect.set(agentManager, "getLastAssistantMessage", async () => "child done");
+  Reflect.set(agentManager, "streamAgent", (agentId: string, prompt: string) => {
+    if (agentId === "caller-agent") {
+      callerPrompts.push(prompt);
+    }
+    return (async function* noop() {})();
+  });
+
+  const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
+  Reflect.set(agentStorage, "get", async (agentId: string) => {
+    if (agentId === "child-agent") {
+      return {
+        title: "Child Agent",
+        // resolveCreateAgentIntent strips the parent label for a detached child.
+        labels: options.detached ? {} : { "paseo.parent-agent-id": "caller-agent" },
+      };
+    }
+    return { title: "Caller Agent", labels: {} };
+  });
+
+  return {
+    async createChild() {
+      await createAgentCommand(
+        {
+          agentManager,
+          agentStorage,
+          logger: createTestLogger(),
+          providerSnapshotManager: {
+            resolveCreateConfig: vi.fn(async () => ({})),
+          } as unknown as Parameters<typeof createAgentCommand>[0]["providerSnapshotManager"],
+        } as Parameters<typeof createAgentCommand>[0],
+        {
+          kind: "mcp",
+          provider: "codex",
+          cwd: "/tmp/paseo-create-test",
+          workspaceId: "ws-create-test",
+          title: "child",
+          initialPrompt: "go",
+          background: true,
+          notifyOnFinish: true,
+          callerAgentId: "caller-agent",
+          detached: options.detached,
+        },
+      );
+    },
+    finishChild() {
+      for (const lifecycle of ["running", "idle"] as const) {
+        Reflect.set(child, "lifecycle", lifecycle);
+        subscriber?.({ type: "agent_state", agent: child });
+      }
+    },
+    async flush() {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    },
+    callerPrompts,
+  };
+}
+
+test("a detached child still notifies the caller that created it", async () => {
+  const scenario = createNotifyOnFinishScenario({ detached: true });
+
+  await scenario.createChild();
+  scenario.finishChild();
+  await scenario.flush();
+
+  expect(scenario.callerPrompts).toHaveLength(1);
+  expect(scenario.callerPrompts[0]).toContain("child done");
+});
+
+test("a parented child notifies the caller that created it", async () => {
+  const scenario = createNotifyOnFinishScenario({ detached: false });
+
+  await scenario.createChild();
+  scenario.finishChild();
+  await scenario.flush();
+
+  expect(scenario.callerPrompts).toHaveLength(1);
 });
