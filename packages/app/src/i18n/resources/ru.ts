@@ -1953,10 +1953,10 @@ export const ru: TranslationResources = {
         resetAll: "Сбросить все",
       },
       sections: {
-        navigation: "Навигация",
+        general: "Общие",
+        workspaces: "Проекты и рабочие пространства",
         tabsPanes: "Вкладки и панели",
-        projects: "Проекты",
-        panels: "Панели",
+        layout: "Макет",
         agentInput: "Вход Agent",
       },
       help: {

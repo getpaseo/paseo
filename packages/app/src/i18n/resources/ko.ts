@@ -1926,10 +1926,10 @@ export const ko: TranslationResources = {
         resetAll: "모두 재설정",
       },
       sections: {
-        navigation: "탐색",
+        general: "일반",
+        workspaces: "프로젝트 및 워크스페이스",
         tabsPanes: "탭 및 창",
-        projects: "프로젝트",
-        panels: "패널",
+        layout: "레이아웃",
         agentInput: "에이전트 입력",
       },
       help: {

@@ -1966,10 +1966,10 @@ export const fr: TranslationResources = {
         resetAll: "Tout réinitialiser",
       },
       sections: {
-        navigation: "Navigation",
+        general: "Général",
+        workspaces: "Projets et espaces de travail",
         tabsPanes: "Onglets et volets",
-        projects: "Projets",
-        panels: "Panneaux",
+        layout: "Disposition",
         agentInput: "EntréeAgent",
       },
       help: {

@@ -1963,10 +1963,10 @@ export const es: TranslationResources = {
         resetAll: "Restablecer todo",
       },
       sections: {
-        navigation: "Navegación",
+        general: "General",
+        workspaces: "Proyectos y espacios de trabajo",
         tabsPanes: "Pestañas y paneles",
-        projects: "Proyectos",
-        panels: "Paneles",
+        layout: "Diseño",
         agentInput: "EntradaAgent",
       },
       help: {

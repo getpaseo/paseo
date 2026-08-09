@@ -1893,10 +1893,10 @@ export const zhCN: TranslationResources = {
         resetAll: "全部重置",
       },
       sections: {
-        navigation: "导航",
+        general: "通用",
+        workspaces: "项目和工作区",
         tabsPanes: "标签和窗格",
-        projects: "项目",
-        panels: "面板",
+        layout: "布局",
         agentInput: "Agent 输入",
       },
       help: {
