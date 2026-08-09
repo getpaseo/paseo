@@ -434,7 +434,7 @@ describe("Hub relationship", () => {
     });
     expect(relationship.relationshipFile()?.relationship.daemonId).toBe(daemonId);
     expect(durableAgentIds).toEqual([created.payload.agentId]);
-    expect(relationship.providerCreations()).toBe(1);
+    expect(relationship.executionProviderCreations()).toBe(1);
     expect(relationship.providerResumes()).toBe(0);
     expect(relationship.providerPromptTexts()).toEqual([prompt]);
     expect(relationship.latestOwnedTurnCompletions(created.payload.agentId!)).toBe(0);
@@ -599,7 +599,7 @@ describe("Hub relationship", () => {
         agentId: durableAgentIds[0],
       },
     });
-    expect(relationship.providerCreations()).toBe(1);
+    expect(relationship.executionProviderCreations()).toBe(1);
     expect(durableAgentIds).toHaveLength(1);
   });
 
@@ -624,7 +624,7 @@ describe("Hub relationship", () => {
         agent: { id: expect.any(String) },
       },
     });
-    expect(relationship.providerCreations()).toBe(1);
+    expect(relationship.executionProviderCreations()).toBe(1);
     expect(await relationship.durableOwnedAgentIds()).toHaveLength(1);
   });
 

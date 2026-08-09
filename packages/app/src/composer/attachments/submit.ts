@@ -10,6 +10,7 @@ import {
   buildLegacyGitHubAttachmentFromSearchItem,
 } from "@/utils/review-attachments";
 import { workspaceFileAttachmentToAgentAttachment } from "@/attachments/workspace-file";
+import { pluginResourceAttachmentToAgentAttachment } from "@/plugins/attachments/model";
 
 export type ComposerAttachmentSubmitFormat = "forge" | "legacy-github";
 
@@ -52,6 +53,11 @@ export function splitComposerAttachmentsForSubmit(
 
     if (attachment.kind === "workspace_file") {
       agentAttachments.push(workspaceFileAttachmentToAgentAttachment(attachment));
+      continue;
+    }
+
+    if (attachment.kind === "plugin_resource") {
+      agentAttachments.push(pluginResourceAttachmentToAgentAttachment(attachment));
       continue;
     }
 

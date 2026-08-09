@@ -9,6 +9,7 @@ import {
   GitHubSearchItemSchema,
   UploadedFileAttachmentSchema,
 } from "@getpaseo/protocol/messages";
+import { PluginResourceComposerAttachmentSchema } from "@/plugins/attachments/model";
 
 export const DRAFT_STORE_VERSION = 5;
 export const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
@@ -93,6 +94,9 @@ export function isUserComposerAttachment(value: unknown): value is UserComposerA
   }
   if (record.kind === "file") {
     return UploadedFileAttachmentSchema.safeParse(record.attachment).success;
+  }
+  if (record.kind === "plugin_resource") {
+    return PluginResourceComposerAttachmentSchema.safeParse(record).success;
   }
   if (
     record.kind !== "forge_issue" &&

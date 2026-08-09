@@ -335,6 +335,7 @@ function mergeMutableConfigIntoPersistedConfig(params: {
 
   return {
     ...persisted,
+    plugins: mutable.plugins,
     daemon: {
       ...persisted.daemon,
       ...(persistRelayEnabled
