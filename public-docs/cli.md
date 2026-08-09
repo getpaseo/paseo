@@ -31,7 +31,7 @@ Use `paseo run` to start a new agent with a task:
 paseo run "implement user authentication"
 paseo run --provider codex "refactor the API layer"
 paseo run --background "run the focused test suite"
-paseo run --new-workspace worktree --worktree-mode branch-off --new-branch feature/x --base main "implement feature X"
+paseo run --new-workspace worktree --worktree-mode branch-off --new-branch feature/x --base origin/main "implement feature X"
 paseo run --workspace <workspace-id> "review the current diff"
 paseo run --output-schema schema.json "extract release notes"
 paseo run --output-schema '{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}' "summarize release notes"
@@ -60,7 +60,7 @@ paseo workspace create \
   --mode branch-off \
   --new-branch feature/auth \
   --worktree-slug feature-auth \
-  --base main
+  --base origin/main
 
 paseo workspace create \
   --isolation worktree \
