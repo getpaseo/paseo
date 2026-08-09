@@ -6,7 +6,6 @@ import {
   moveAddProjectActiveIndex,
   moveAddProjectSelection,
   openAddProjectFlow,
-  openDirectorySearchPage,
   openGithubLocationPage,
   openNewDirectoryNamePage,
   openNewDirectoryParentPage,
@@ -16,10 +15,11 @@ import {
   type AddProjectHost,
 } from "./model";
 import {
-  addProjectMethodEmptyText,
-  buildAddProjectMethods,
+  buildAddProjectSourceOptions,
   buildCloneLocationOptions,
   buildManualGithubRepositoryChoices,
+  canUseGithubSource,
+  resolveAddProjectSourceFilter,
 } from "./options";
 
 const HOST: AddProjectHost = {
@@ -37,11 +37,12 @@ describe("Add Project navigation", () => {
     const state = openAddProjectFlow({ hosts: [HOST] });
 
     expect(currentAddProjectPage(state)).toEqual({
-      kind: "method",
+      kind: "search",
       hostId: "host-1",
       query: "",
       activeIndex: 0,
       error: null,
+      isSubmitting: false,
     });
     expect(backAddProjectPage(state)).toBeNull();
   });
@@ -52,7 +53,7 @@ describe("Add Project navigation", () => {
     state = setAddProjectPageInput(state, "rem");
     state = setAddProjectActiveIndex(state, 1);
     state = chooseAddProjectHost(state, secondHost.serverId);
-    state = openDirectorySearchPage(state, secondHost.serverId);
+    state = openNewDirectoryParentPage(state, secondHost.serverId);
 
     state = backAddProjectPage(state) ?? state;
     state = backAddProjectPage(state) ?? state;
@@ -110,42 +111,36 @@ describe("Add Project navigation", () => {
   });
 });
 
-describe("Add Project options", () => {
-  it("hides every mutating method when the host lacks stable project identity", () => {
+describe("Add Project source filters", () => {
+  it("hides the GitHub source when the host cannot clone repositories", () => {
     const outdatedHost = { ...HOST, canAddProject: false };
 
-    expect(buildAddProjectMethods(outdatedHost)).toEqual([]);
-    expect(addProjectMethodEmptyText(outdatedHost)).toBe("Update the host to use Add Project.");
+    expect(canUseGithubSource(outdatedHost)).toBe(false);
+    expect(buildAddProjectSourceOptions(outdatedHost)).toEqual([
+      { id: "all", label: "All" },
+      { id: "local", label: "Local" },
+    ]);
   });
 
-  it("keeps host-upgrade methods discoverable while hiding local-only Browse", () => {
+  it("offers the GitHub source whenever cloning works, even without account search", () => {
     expect(
-      buildAddProjectMethods({
+      buildAddProjectSourceOptions({
         ...HOST,
-        canBrowse: false,
-        canCloneGithubRepositories: false,
         canSearchGithubRepositories: false,
-        canCreateDirectory: false,
       }),
     ).toEqual([
-      {
-        id: "directory-search",
-        label: "Search for directory",
-        description: "Find a directory on Local",
-      },
-      {
-        id: "github",
-        label: "Clone from GitHub",
-        description: "Update this host to clone GitHub repositories",
-        disabled: true,
-      },
-      {
-        id: "new-directory",
-        label: "New directory",
-        description: "Update this host to create directories",
-        disabled: true,
-      },
+      { id: "all", label: "All" },
+      { id: "local", label: "Local" },
+      { id: "github", label: "GitHub" },
     ]);
+  });
+
+  it("falls back to All when a stored filter outlives its capability", () => {
+    expect(
+      resolveAddProjectSourceFilter({ ...HOST, canCloneGithubRepositories: false }, "github"),
+    ).toBe("all");
+    expect(resolveAddProjectSourceFilter(HOST, "github")).toBe("github");
+    expect(resolveAddProjectSourceFilter(HOST, "local")).toBe("local");
   });
 
   it("offers manual URL and protocol-specific owner/repo clone choices", () => {
