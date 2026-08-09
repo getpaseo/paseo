@@ -3082,7 +3082,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     if (!result || result.changes === null) {
       target.recentFetchRemoteRefChanges.clear();
-      this.flushBufferedFetchMetadataEvents(target, false);
+      this.flushBufferedFetchMetadataEvents(target);
       if (result) {
         this.logger.warn(
           { err: result.error, repoGitRoot: target.repoGitRoot, cwd: target.cwd },
@@ -3103,7 +3103,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     for (const change of result.changes) {
       target.recentFetchRemoteRefChanges.set(change.ref, { change, expiresAtMs });
     }
-    this.flushBufferedFetchMetadataEvents(target, true);
+    this.flushBufferedFetchMetadataEvents(target);
     if (
       result.nonRemoteRefsChanged === true ||
       result.changes.some((change) => change.kind !== "moved")
@@ -3121,19 +3121,17 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.scheduleRepoMetadataRefresh(target, "repo-fetch", false, refreshes);
   }
 
-  private flushBufferedFetchMetadataEvents(
-    target: RepoGitTarget,
-    classifiedRemoteRefs: boolean,
-  ): void {
+  private flushBufferedFetchMetadataEvents(target: RepoGitTarget): void {
     const events = target.bufferedFetchMetadataEvents.splice(0);
-    if (events.length === 0 || classifiedRemoteRefs) {
+    if (events.length === 0) {
       return;
     }
     const routedRefreshes = this.routeRepoMetadataEvents(target, events);
     this.scheduleRepoMetadataRefresh(
       target,
       "git-metadata-watch-after-fetch",
-      true,
+      routedRefreshes === null ||
+        [...routedRefreshes.values()].some((refresh) => refresh.structural),
       routedRefreshes,
     );
   }

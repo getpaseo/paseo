@@ -131,110 +131,128 @@ function advanceOriginMain(originRoot: string): void {
   git(originRoot, ["update-ref", "refs/heads/main", next, previous]);
 }
 
-test.each([
-  {
-    advanceMain: false,
-    expectedGitCommands: 3,
-    expectedSnapshotUpdates: 0,
-    name: "a no-op fetch",
-  },
-  {
-    advanceMain: true,
-    expectedGitCommands: 239,
-    expectedSnapshotUpdates: 59,
-    name: "an origin/main update",
-  },
-])(
-  "$name routes refreshes across 59 sibling worktrees",
-  async ({ advanceMain, expectedGitCommands, expectedSnapshotUpdates, name }) => {
-    const fetchStarted = createDeferred<void>();
-    const releaseFetch = createDeferred<void>();
-    let fetchCount = 0;
-    let fetchChangedNonRemoteRefs: boolean | undefined;
+async function measureFetchScenario(
+  name: string,
+  beforeFetch: () => void,
+): Promise<{
+  fetchCount: number;
+  gitCommands: number;
+  nonRemoteRefsChanged: boolean | undefined;
+  operations: Record<string, number>;
+  snapshotUpdates: number;
+}> {
+  const fetchStarted = createDeferred<void>();
+  const releaseFetch = createDeferred<void>();
+  let fetchCount = 0;
+  let fetchChangedNonRemoteRefs: boolean | undefined;
 
-    const service = new WorkspaceGitServiceImpl({
-      logger: pino({ level: "silent" }),
-      paseoHome: fixture.paseoHome,
-      deps: {
-        runGitFetch: async (cwd) => {
-          fetchStarted.resolve();
-          await releaseFetch.promise;
-          const result = await fetchWorkspaceGitRemote(cwd);
-          fetchChangedNonRemoteRefs = result.nonRemoteRefsChanged;
-          fetchCount += 1;
-          return result;
-        },
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ level: "silent" }),
+    paseoHome: fixture.paseoHome,
+    deps: {
+      runGitFetch: async (cwd) => {
+        fetchStarted.resolve();
+        await releaseFetch.promise;
+        const result = await fetchWorkspaceGitRemote(cwd);
+        fetchChangedNonRemoteRefs = result.nonRemoteRefsChanged;
+        fetchCount += 1;
+        return result;
       },
-    });
-    const snapshotCounts = new Map(fixture.worktrees.map((cwd) => [cwd, 0]));
-    const subscriptions = fixture.worktrees.map((cwd) =>
-      service.registerWorkspace({ cwd }, () => {
-        snapshotCounts.set(cwd, (snapshotCounts.get(cwd) ?? 0) + 1);
+    },
+  });
+  const snapshotCounts = new Map(fixture.worktrees.map((cwd) => [cwd, 0]));
+  const subscriptions = fixture.worktrees.map((cwd) =>
+    service.registerWorkspace({ cwd }, () => {
+      snapshotCounts.set(cwd, (snapshotCounts.get(cwd) ?? 0) + 1);
+    }),
+  );
+
+  try {
+    await fetchStarted.promise;
+    await waitForCondition(
+      "all sibling workspace snapshots to warm before the measured fetch runs",
+      () =>
+        [...snapshotCounts.values()].every((count) => count >= 1) &&
+        service.getMetrics().repositoryWorkspaceLinkCount === SIBLING_COUNT &&
+        service.getMetrics().workspaceRefreshInFlightCount === 0 &&
+        service.getMetrics().workspaceRefreshQueuedCount === 0,
+    );
+
+    beforeFetch();
+
+    const snapshotBaseline = new Map(snapshotCounts);
+    const fetchCycleStartedAt = Date.now();
+    startGitCommandMetrics();
+    releaseFetch.resolve();
+    await waitForGitCommandMetricsIdle({ quietMs: 1_500, timeoutMs: 120_000 });
+    const postFetch = stopGitCommandMetrics();
+    const snapshotUpdatesAfterFetch = [...snapshotCounts].reduce(
+      (total, [cwd, count]) => total + Math.max(0, count - (snapshotBaseline.get(cwd) ?? 0)),
+      0,
+    );
+
+    const operations = Object.fromEntries(
+      [...Map.groupBy(postFetch.submissions, (command) => command.args[0] ?? "").entries()]
+        .map(([operation, commands]) => [operation, commands.length] as const)
+        .sort(([left], [right]) => left.localeCompare(right)),
+    );
+    console.info(
+      "[workspace-git-fetch]",
+      JSON.stringify({
+        scenario: name,
+        siblingCount: SIBLING_COUNT,
+        remoteRefCount: REMOTE_REF_COUNT,
+        fetchCount,
+        durationMs: Date.now() - fetchCycleStartedAt,
+        gitCommands: postFetch.submitted,
+        maxConcurrentGitCommands: postFetch.maxConcurrent,
+        operations,
+        snapshotUpdates: snapshotUpdatesAfterFetch,
       }),
     );
 
-    try {
-      await fetchStarted.promise;
-      await waitForCondition(
-        "all sibling workspace snapshots to warm before the measured fetch runs",
-        () =>
-          [...snapshotCounts.values()].every((count) => count >= 1) &&
-          service.getMetrics().repositoryWorkspaceLinkCount === SIBLING_COUNT &&
-          service.getMetrics().workspaceRefreshInFlightCount === 0 &&
-          service.getMetrics().workspaceRefreshQueuedCount === 0,
-      );
-
-      if (advanceMain) {
-        advanceOriginMain(fixture.originRoot);
-      }
-
-      const snapshotBaseline = new Map(snapshotCounts);
-      const fetchCycleStartedAt = Date.now();
-      startGitCommandMetrics();
-      releaseFetch.resolve();
-      await waitForGitCommandMetricsIdle({ quietMs: 1_500, timeoutMs: 120_000 });
-      const postFetch = stopGitCommandMetrics();
-      const snapshotUpdatesAfterFetch = [...snapshotCounts].reduce(
-        (total, [cwd, count]) => total + Math.max(0, count - (snapshotBaseline.get(cwd) ?? 0)),
-        0,
-      );
-
-      console.info(
-        "[workspace-git-fetch]",
-        JSON.stringify({
-          scenario: name,
-          siblingCount: SIBLING_COUNT,
-          remoteRefCount: REMOTE_REF_COUNT,
-          fetchCount,
-          durationMs: Date.now() - fetchCycleStartedAt,
-          gitCommands: postFetch.submitted,
-          maxConcurrentGitCommands: postFetch.maxConcurrent,
-          operations: Object.fromEntries(
-            [...Map.groupBy(postFetch.submissions, (command) => command.args[0] ?? "").entries()]
-              .map(([operation, commands]) => [operation, commands.length] as const)
-              .sort(([left], [right]) => left.localeCompare(right)),
-          ),
-          snapshotUpdates: snapshotUpdatesAfterFetch,
-        }),
-      );
-
-      expect(fetchCount).toBe(1);
-      expect(fetchChangedNonRemoteRefs).toBe(false);
-      expect(postFetch.submitted).toBe(expectedGitCommands);
-      expect(snapshotUpdatesAfterFetch).toBe(expectedSnapshotUpdates);
-      if (!advanceMain) {
-        expect(postFetch.submissions.map((command) => command.args[0]).sort()).toEqual([
-          "fetch",
-          "for-each-ref",
-          "for-each-ref",
-        ]);
-      }
-    } finally {
-      for (const subscription of subscriptions) {
-        subscription.unsubscribe();
-      }
-      service.dispose();
+    return {
+      fetchCount,
+      gitCommands: postFetch.submitted,
+      nonRemoteRefsChanged: fetchChangedNonRemoteRefs,
+      operations,
+      snapshotUpdates: snapshotUpdatesAfterFetch,
+    };
+  } finally {
+    for (const subscription of subscriptions) {
+      subscription.unsubscribe();
     }
-  },
-  240_000,
-);
+    service.dispose();
+  }
+}
+
+test("a no-op fetch does not refresh sibling worktrees", async () => {
+  expect(await measureFetchScenario("a no-op fetch", () => {})).toEqual({
+    fetchCount: 1,
+    gitCommands: 3,
+    nonRemoteRefsChanged: false,
+    operations: { fetch: 1, "for-each-ref": 2 },
+    snapshotUpdates: 0,
+  });
+}, 240_000);
+
+test("an origin/main update narrowly refreshes 59 sibling worktrees", async () => {
+  expect(
+    await measureFetchScenario("an origin/main update", () => {
+      advanceOriginMain(fixture.originRoot);
+    }),
+  ).toEqual({
+    fetchCount: 1,
+    gitCommands: 239,
+    nonRemoteRefsChanged: false,
+    operations: {
+      diff: 59,
+      fetch: 1,
+      "for-each-ref": 2,
+      "ls-files": 59,
+      "merge-base": 59,
+      "rev-list": 59,
+    },
+    snapshotUpdates: 59,
+  });
+}, 240_000);

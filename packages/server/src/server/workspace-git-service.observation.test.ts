@@ -506,6 +506,56 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
+  test("an unmatched remote-ref event buffered after the fetch snapshot is refreshed", async () => {
+    const watcher = createWatcherHarness();
+    const fetchSnapshotRead = createDeferred<void>();
+    const releaseFetch = createDeferred<void>();
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutFacts(cwd),
+      currentBranch: "feature",
+      remoteUrl: "https://example.com/repo.git",
+      resolvedBaseRef: "main",
+      comparisonBaseRef: "origin/main",
+    }));
+    const service = createService(watcher, {
+      getCheckoutSnapshotFacts,
+      getCheckoutStatus: vi.fn(async (cwd: string) =>
+        createCheckoutStatus(cwd, {
+          currentBranch: "feature",
+          baseRef: "main",
+          hasRemote: true,
+          remoteUrl: "https://example.com/repo.git",
+        }),
+      ),
+      hasOriginRemote: vi.fn(async () => true),
+      runGitFetch: vi.fn(async () => {
+        fetchSnapshotRead.resolve();
+        await releaseFetch.promise;
+        return { changes: [], nonRemoteRefsChanged: false, error: null };
+      }),
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await fetchSnapshotRead.promise;
+    await vi.waitFor(() => {
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
+    });
+
+    watcher.records
+      .find((record) => record.directory === GIT_DIR)
+      ?.callback(null, [
+        { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "update" },
+      ]);
+    releaseFetch.resolve();
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+    });
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("routes private worktree metadata to its owner and shared base refs to dependents", async () => {
     const watcher = createWatcherHarness();
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => createLinkedCheckoutFacts(cwd));
