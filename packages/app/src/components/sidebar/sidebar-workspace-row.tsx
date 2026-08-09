@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
-import { View, Text } from "react-native";
+import { View, Text, type GestureResponderEvent } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation } from "@tanstack/react-query";
 import * as Clipboard from "expo-clipboard";
@@ -264,6 +264,7 @@ function WorkspaceRowBody({
   archiveShortcutKeys,
 }: WorkspaceRowBodyProps) {
   const isTouchPlatform = platformIsNative;
+  const [isPressed, setIsPressed] = useState(false);
   const trailing = useSidebarWorkspaceTrailing();
   const draggable = Boolean(drag);
   const interaction = useLongPressDragInteraction({
@@ -284,6 +285,17 @@ function WorkspaceRowBody({
     }
     onPress();
   }, [interaction.didLongPressRef, onPress]);
+  const handleWorkspacePressIn = useCallback(
+    (event: GestureResponderEvent) => {
+      setIsPressed(true);
+      if (draggable) interaction.handlePressIn(event);
+    },
+    [draggable, interaction],
+  );
+  const handleWorkspacePressOut = useCallback(() => {
+    setIsPressed(false);
+    if (draggable) interaction.handlePressOut();
+  }, [draggable, interaction]);
 
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
 
@@ -292,7 +304,12 @@ function WorkspaceRowBody({
       {({ isHovered, contextMenuOpen, onContextMenuOpenChange, hoverHandlers }) => {
         const isDesktop = !isTouchPlatform;
         const serviceSummary = isDesktop ? selectWorkspaceServiceSummary(workspace.scripts) : null;
-        const workspaceRowStyle = getWorkspaceRowStyle({ isDragging, selected, isHovered });
+        const workspaceRowStyle = getWorkspaceRowStyle({
+          isDragging,
+          isPressed,
+          selected,
+          isHovered,
+        });
         return (
           <View
             {...(draggable ? dragAttributes : {})}
@@ -325,10 +342,10 @@ function WorkspaceRowBody({
               accessibilityRole="button"
               accessibilityState={accessibilityState}
               style={workspaceRowStyle}
-              highlightStyle={styles.workspaceRowHovered}
-              onPressIn={draggable ? interaction.handlePressIn : undefined}
+              highlightStyle={styles.workspaceRowPressed}
+              onPressIn={handleWorkspacePressIn}
               onTouchMove={draggable ? interaction.handleTouchMove : undefined}
-              onPressOut={draggable ? interaction.handlePressOut : undefined}
+              onPressOut={handleWorkspacePressOut}
               onPress={handlePress}
               testID={`sidebar-workspace-row-${workspace.workspaceKey}`}
             >
@@ -336,7 +353,7 @@ function WorkspaceRowBody({
                 workspace={workspace}
                 hostBadge={hostBadge}
                 serviceSummary={serviceSummary}
-                backdrop={getSidebarRowBackdrop({ isDragging, selected, isHovered })}
+                backdrop={getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered })}
                 isHovered={isHovered}
                 isLoading={isArchiving || isCreating}
                 isCreating={isCreating}
@@ -458,18 +475,21 @@ function WorkspaceRowTrailingActions({
 
 function getWorkspaceRowStyle({
   isDragging,
+  isPressed,
   selected,
   isHovered,
 }: {
   isDragging: boolean;
+  isPressed: boolean;
   selected: boolean;
   isHovered: boolean;
 }) {
   return [
     styles.workspaceRow,
-    isDragging && styles.workspaceRowDragging,
     selected && styles.sidebarRowSelected,
     isHovered && styles.workspaceRowHovered,
+    isDragging && styles.workspaceRowDragging,
+    isPressed && styles.workspaceRowPressed,
   ];
 }
 
@@ -494,6 +514,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   workspaceRowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  workspaceRowPressed: {
+    backgroundColor: theme.colors.surface2,
   },
   workspaceRowDragging: {
     backgroundColor: theme.colors.surface2,
