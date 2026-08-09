@@ -41,13 +41,27 @@ const KimiUsageLimitSchema = z
   })
   .passthrough();
 
+const KimiMembershipSchema = z
+  .object({
+    level: ApiOptionalStringSchema,
+  })
+  .passthrough();
+
+const KimiUserSchema = z
+  .object({
+    membership: KimiMembershipSchema.nullish(),
+  })
+  .passthrough();
+
 const KimiUsageResponseSchema = z.object({
   usage: z.unknown().nullish(),
   limits: z.unknown().nullish(),
+  user: KimiUserSchema.nullish(),
 });
 
 type KimiUsageFields = z.infer<typeof KimiUsageFieldsSchema>;
 type KimiUsageLimit = z.infer<typeof KimiUsageLimitSchema>;
+type KimiUsageResponse = z.infer<typeof KimiUsageResponseSchema>;
 
 function parseUsageFields(value: unknown): KimiUsageFields | null {
   const parsed = KimiUsageFieldsSchema.safeParse(value);
@@ -191,10 +205,9 @@ function uniqueWindowId(baseId: string, seenIds: Set<string>): string {
 }
 
 function kimiUsageWindowsFromPayload(
-  payload: unknown,
+  response: KimiUsageResponse,
   logger: Pick<Logger, "debug">,
 ): ProviderUsageWindow[] {
-  const response = KimiUsageResponseSchema.parse(payload);
   const windows: ProviderUsageWindow[] = [];
   const seenWindowIds = new Set<string>();
   const usage = parseUsageFields(response.usage);
@@ -236,6 +249,18 @@ function kimiUsageWindowsFromPayload(
   }
 
   return windows;
+}
+
+// Kimi reports the subscription tier as an enum like "LEVEL_INTERMEDIATE". Strip the prefix and
+// title-case it so the UI shows a plan name instead of the raw enum; unknown future tiers still
+// render legibly rather than being dropped.
+function planLabelFromMembershipLevel(level: string | null | undefined): string | null {
+  const words = (level ?? "")
+    .replace(/^LEVEL_/i, "")
+    .split(/[_\s]+/)
+    .filter((word) => word.length > 0);
+  if (words.length === 0) return null;
+  return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(" ");
 }
 
 const KimiAuthSchema = z
@@ -302,13 +327,14 @@ export class KimiQuotaProvider implements ProviderUsageFetcher {
       return unavailableUsage(this);
     }
 
-    const windows = kimiUsageWindowsFromPayload(await res.json(), this.logger);
+    const response = KimiUsageResponseSchema.parse(await res.json());
+    const windows = kimiUsageWindowsFromPayload(response, this.logger);
 
     return {
       providerId: this.providerId,
       displayName: this.displayName,
       status: "available",
-      planLabel: null,
+      planLabel: planLabelFromMembershipLevel(response.user?.membership?.level),
       windows,
       balances: [],
       details: [],

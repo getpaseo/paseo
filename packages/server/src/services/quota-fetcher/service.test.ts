@@ -1842,6 +1842,31 @@ describe("KimiQuotaProvider usage windows", () => {
     ]);
   });
 
+  it("surfaces the membership level as the plan label", async () => {
+    process.env["KIMI_TOKEN"] = "kimi_test_token";
+    const fetchApi = vi.fn(async () =>
+      jsonResponse({
+        usage: { limit: "100", remaining: "74", resetTime: "2026-02-11T17:32:50Z" },
+        user: { membership: { level: "LEVEL_INTERMEDIATE" } },
+      }),
+    );
+    const provider = new KimiQuotaProvider({ logger: createLogger(), fetch: fetchApi });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.planLabel).toBe("Intermediate");
+  });
+
+  it("omits the plan label when Kimi returns no membership level", async () => {
+    process.env["KIMI_TOKEN"] = "kimi_test_token";
+    const fetchApi = vi.fn(async () => jsonResponse({ usage: { limit: "100", remaining: "74" } }));
+    const provider = new KimiQuotaProvider({ logger: createLogger(), fetch: fetchApi });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.planLabel).toBeNull();
+  });
+
   it("keeps window ids unique when Kimi returns duplicate limit descriptors", async () => {
     process.env["KIMI_TOKEN"] = "kimi_test_token";
     const duplicate = {
