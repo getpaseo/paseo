@@ -96,20 +96,38 @@ export function shouldInstallAppUpdateOnQuit(input: {
   return !(input.platform === "linux" && input.isAppImage);
 }
 
-class ElectronAppUpdateRuntime implements AppUpdateRuntime {
+export type ElectronUpdaterRuntime = Pick<
+  typeof autoUpdater,
+  | "allowDowngrade"
+  | "allowPrerelease"
+  | "autoDownload"
+  | "autoInstallOnAppQuit"
+  | "autoRunAppAfterInstall"
+  | "channel"
+  | "checkForUpdates"
+  | "downloadUpdate"
+  | "isUserWithinRollout"
+  | "logger"
+  | "on"
+  | "quitAndInstall"
+>;
+
+export class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   private configured = false;
 
+  constructor(private readonly updater: ElectronUpdaterRuntime = autoUpdater) {}
+
   configure(input: AppUpdateRuntimeConfiguration): void {
-    autoUpdater.autoDownload = true;
-    autoUpdater.autoRunAppAfterInstall = true;
+    this.updater.autoDownload = true;
+    this.updater.autoRunAppAfterInstall = true;
     // Paseo revalidates the current manifest before explicitly installing on quit.
     // Electron's built-in handler would install an older download without checking
     // whether a newer release has superseded it.
-    autoUpdater.autoInstallOnAppQuit = false;
-    autoUpdater.allowPrerelease = input.releaseChannel === "beta";
-    autoUpdater.channel = input.releaseChannel === "beta" ? "beta" : "latest";
-    autoUpdater.allowDowngrade = false;
-    autoUpdater.isUserWithinRollout = async (info) => {
+    this.updater.autoInstallOnAppQuit = false;
+    this.updater.allowPrerelease = input.releaseChannel === "beta";
+    this.updater.channel = input.releaseChannel === "beta" ? "beta" : "latest";
+    this.updater.allowDowngrade = false;
+    this.updater.isUserWithinRollout = async (info) => {
       try {
         return await input.shouldAdmitUpdate(info as RuntimeUpdateInfo);
       } catch {
@@ -124,24 +142,24 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     // Paseo reports genuine check, runtime, and install failures through the
     // callbacks below, so leave internal error logging disabled to avoid both
     // duplicate logs and expected missing-channel noise.
-    const updaterLogger = autoUpdater.logger;
-    autoUpdater.logger = {
+    const updaterLogger = this.updater.logger;
+    this.updater.logger = {
       debug: updaterLogger?.debug ? (message) => updaterLogger.debug?.(message) : undefined,
       error: () => undefined,
       info: (message) => updaterLogger?.info(message),
       warn: (message) => updaterLogger?.warn(message),
     };
 
-    autoUpdater.on("update-available", (info) => {
+    this.updater.on("update-available", (info) => {
       input.onUpdateAvailable(info as RuntimeUpdateInfo);
     });
-    autoUpdater.on("update-downloaded", (info) => {
+    this.updater.on("update-downloaded", (info) => {
       input.onUpdateDownloaded(info as RuntimeUpdateInfo);
     });
-    autoUpdater.on("update-not-available", () => {
+    this.updater.on("update-not-available", () => {
       input.onUpdateNotAvailable();
     });
-    autoUpdater.on("error", (error) => {
+    this.updater.on("error", (error) => {
       if (isUpdateChannelNotPublished(error)) return;
       input.onError(error);
     });
@@ -149,7 +167,7 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
 
   async checkForUpdates(): Promise<RuntimeUpdateCheckResult | null> {
     try {
-      const result = await autoUpdater.checkForUpdates();
+      const result = await this.updater.checkForUpdates();
       if (!result) return null;
       return {
         isUpdateAvailable: result.isUpdateAvailable,
@@ -162,12 +180,12 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   }
 
   downloadUpdate(): Promise<unknown> {
-    return autoUpdater.downloadUpdate();
+    return this.updater.downloadUpdate();
   }
 
   quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void {
-    autoUpdater.autoRunAppAfterInstall = isForceRunAfter;
-    autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+    this.updater.autoRunAppAfterInstall = isForceRunAfter;
+    this.updater.quitAndInstall(isSilent, isForceRunAfter);
   }
 }
 
