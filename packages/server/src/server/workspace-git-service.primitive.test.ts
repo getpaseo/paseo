@@ -334,6 +334,10 @@ function buildDefaultServiceDeps() {
   return {
     subscribe: vi.fn(async () => ({ unsubscribe: vi.fn(async () => {}) })),
     getCheckoutSnapshotFacts: vi.fn(async (cwd: string) => createCheckoutFacts(cwd)),
+    getCheckoutRefDerivedState: vi.fn(async (_cwd, facts, current) => ({
+      ...current,
+      upstreamStatus: facts.upstreamStatus,
+    })),
     getCheckoutStatus: vi.fn(async (cwd: string) => createCheckoutStatus(cwd)),
     getCheckoutShortstat: vi.fn(async () => ({
       additions: 1,
@@ -349,7 +353,10 @@ function buildDefaultServiceDeps() {
     forgeOverrides: { github: createGitHubServiceStub() },
     resolveAbsoluteGitDir: vi.fn(async () => join(REPO_CWD, ".git")),
     hasOriginRemote: vi.fn(async () => false),
-    runGitFetch: vi.fn(() => createDeferred<void>().promise),
+    runGitFetch: vi.fn(async () => {
+      await createDeferred<void>().promise;
+      return { changes: [], error: null };
+    }),
     runGitCommand: vi.fn(async () => ({
       stdout: `${REPO_CWD}\n`,
       stderr: "",
