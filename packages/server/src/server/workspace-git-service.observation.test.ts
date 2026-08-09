@@ -506,6 +506,71 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
+  test("a second remote-ref move during a narrow refresh queues a final calculation", async () => {
+    const watcher = createWatcherHarness();
+    const firstRefRefresh = createDeferred<CheckoutStatusGit>();
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutFacts(cwd),
+      currentBranch: "feature",
+      remoteUrl: "https://example.com/repo.git",
+      resolvedBaseRef: "main",
+      comparisonBaseRef: "origin/main",
+    }));
+    const getCheckoutRefDerivedState = vi
+      .fn<
+        (
+          cwd: string,
+          facts: CheckoutSnapshotFacts,
+          current: CheckoutStatusGit,
+        ) => Promise<CheckoutStatusGit>
+      >()
+      .mockImplementationOnce(() => firstRefRefresh.promise)
+      .mockImplementation(async (_cwd, facts, current) => ({
+        ...current,
+        upstreamStatus: facts.upstreamStatus,
+      }));
+    const service = createService(watcher, {
+      getCheckoutSnapshotFacts,
+      getCheckoutRefDerivedState,
+      getCheckoutStatus: vi.fn(async (cwd: string) =>
+        createCheckoutStatus(cwd, {
+          currentBranch: "feature",
+          baseRef: "main",
+          hasRemote: true,
+          remoteUrl: "https://example.com/repo.git",
+        }),
+      ),
+      hasOriginRemote: vi.fn(async () => true),
+      runGitFetch: vi.fn(async () => ({
+        changes: [{ kind: "moved" as const, ref: "origin/main", beforeOid: "a", afterOid: "b" }],
+        error: null,
+      })),
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(1);
+    });
+
+    watcher.records
+      .find((record) => record.directory === GIT_DIR)
+      ?.callback(null, [
+        { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "update" },
+      ]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(1);
+
+    firstRefRefresh.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "feature" }));
+    await vi.waitFor(() => {
+      expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(2);
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+    });
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("an unmatched remote-ref event buffered after the fetch snapshot is refreshed", async () => {
     const watcher = createWatcherHarness();
     const fetchSnapshotRead = createDeferred<void>();

@@ -2008,7 +2008,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           if (recent && recent.expiresAtMs >= this.deps.now().getTime()) {
             this.routeRemoteBranchRef(target, effect.ref, refreshes, {
               narrow: recent.change.kind === "moved",
-              queueIfBusy: false,
             });
           } else {
             target.recentFetchRemoteRefChanges.delete(effect.ref);
