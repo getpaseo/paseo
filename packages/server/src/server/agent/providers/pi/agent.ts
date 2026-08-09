@@ -2237,14 +2237,18 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     if (event.message.role === "custom") {
-      const text = getUserMessageText(event.message.content);
-      if (text) {
-        this.emit({
-          type: "timeline",
-          provider: this.provider,
-          turnId,
-          item: { type: "assistant_message", text },
-        });
+      // `display: false` marks model-only context. Skip only the timeline emit — the turn must
+      // still be completed, or a hidden message would leave it open.
+      if (event.message.display !== false) {
+        const text = getUserMessageText(event.message.content);
+        if (text) {
+          this.emit({
+            type: "timeline",
+            provider: this.provider,
+            turnId,
+            item: { type: "assistant_message", text },
+          });
+        }
       }
       this.completeTurn(turnId, []);
       return;

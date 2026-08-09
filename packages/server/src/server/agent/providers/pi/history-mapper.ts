@@ -116,6 +116,9 @@ export class PiHistoryMapper {
   private mapCustomMessage(
     message: Extract<PiAgentMessage, { role: "custom" }>,
   ): AgentStreamEvent[] {
+    if (message.display === false) {
+      return [];
+    }
     const text = getUserMessageText(message.content);
     const mappedEvent = text ? this.hooks.mapCustomMessage?.(text, this.provider) : null;
     if (mappedEvent) {

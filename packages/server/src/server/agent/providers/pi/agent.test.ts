@@ -793,6 +793,23 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("hides display:false custom messages but still completes the turn", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("/show-status");
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        content: [{ type: "text", text: "model-only context" }],
+        display: false,
+      },
+    });
+
+    expect(events.timelineAndCompletionEvents()).toEqual([{ type: "turn_completed" }]);
+  });
+
   test("canceling a silent Pi extension command leaves the session usable", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

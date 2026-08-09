@@ -140,6 +140,27 @@ describe("Pi history mapper", () => {
     ]);
   });
 
+  test("omits replayed custom messages only when display is false", async () => {
+    await expect(
+      collectHistory([
+        { role: "custom", content: "hidden model-only context", display: false },
+        { role: "custom", content: "visible explicit custom", display: true },
+        { role: "custom", content: "visible legacy custom" },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "assistant_message", text: "visible explicit custom" },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "assistant_message", text: "visible legacy custom" },
+      },
+    ]);
+  });
+
   test("uses Pi tree entry ids for replayed user messages", async () => {
     await expect(
       collectHistory(
