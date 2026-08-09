@@ -140,7 +140,8 @@ test.describe("Schedules", () => {
     await expectSettled(projectTrigger);
     await expect(modelTrigger).toContainText("Ten second stream", { timeout: 30_000 });
     await expectSettled(modelTrigger);
-    await expect(thinkingTrigger).toHaveCount(0);
+    await expect(thinkingTrigger).toContainText("Low");
+    await expectSettled(thinkingTrigger);
     await expect(modeTrigger).toBeVisible({ timeout: 30_000 });
     await expectSettled(modeTrigger);
     await expect(page.getByTestId("cadence-mode")).toHaveCount(0);

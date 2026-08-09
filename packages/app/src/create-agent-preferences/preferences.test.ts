@@ -49,6 +49,25 @@ describe("create agent preferences", () => {
     });
   });
 
+  it("does not commit a failed write or leak it into the next update", async () => {
+    const storage = new FakeCreateAgentPreferenceStorage();
+    const preferences = new CreateAgentPreferencesService(storage);
+
+    const failedWrite = preferences.update({ provider: "claude" });
+    await storage.nextWrite();
+    storage.failOldestWrite(new Error("disk full"));
+    await expect(failedWrite).rejects.toThrow("disk full");
+
+    expect(await preferences.load()).toEqual({});
+
+    const successfulWrite = preferences.update({ isolation: "worktree" });
+    await storage.nextWrite();
+    storage.finishOldestWrite();
+    await successfulWrite;
+
+    expect(storage.savedPreferences()).toEqual({ isolation: "worktree" });
+  });
+
   it("flushes the full create-agent selection into provider preferences", async () => {
     const storage = new FakeCreateAgentPreferenceStorage();
     const preferences = new CreateAgentPreferencesService(storage);
@@ -139,5 +158,34 @@ describe("create agent preferences", () => {
 
   it("rejects an unknown isolation value as invalid stored preferences", () => {
     expect(parseFormPreferences({ provider: "codex", isolation: "sandbox" })).toEqual({});
+  });
+
+  it("persists and reloads a terminal launch target", async () => {
+    const storage = new FakeCreateAgentPreferenceStorage();
+    const preferences = new CreateAgentPreferencesService(storage);
+
+    const save = preferences.update({ launchTarget: { kind: "terminal", profileId: "claude" } });
+    await storage.nextWrite();
+    storage.finishOldestWrite();
+    await save;
+
+    expect(storage.savedPreferences()).toEqual({
+      launchTarget: { kind: "terminal", profileId: "claude" },
+    });
+    expect(await new CreateAgentPreferencesService(storage).load()).toEqual({
+      launchTarget: { kind: "terminal", profileId: "claude" },
+    });
+  });
+
+  it("treats stored preferences without a launch target as undefined, defaulting to chat", () => {
+    expect(parseFormPreferences({ provider: "codex" }).launchTarget).toBeUndefined();
+  });
+
+  it("rejects a terminal launch target missing a profileId as invalid stored preferences", () => {
+    expect(parseFormPreferences({ launchTarget: { kind: "terminal" } })).toEqual({});
+  });
+
+  it("rejects an unknown launch target kind as invalid stored preferences", () => {
+    expect(parseFormPreferences({ launchTarget: { kind: "shell" } })).toEqual({});
   });
 });

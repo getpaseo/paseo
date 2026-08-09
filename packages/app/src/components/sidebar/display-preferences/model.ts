@@ -5,6 +5,7 @@ import {
   type WorkspaceTitleSource,
 } from "@/hooks/use-settings";
 import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
+import { DEFAULT_SIDEBAR_CHECKS_DISPLAY, type SidebarChecksDisplay } from "./checks-display";
 import { DEFAULT_SIDEBAR_ROW_ITEMS, type SidebarRowItem, type SidebarRowItems } from "./row-items";
 
 /** The trailing slot holds one thing, so these are a choice rather than toggles. */
@@ -17,6 +18,8 @@ export interface SidebarDisplayPreferences {
   setTitleSource: (source: WorkspaceTitleSource) => void;
   rowItems: SidebarRowItems;
   toggleRowItem: (item: SidebarRowItem) => void;
+  checksDisplay: SidebarChecksDisplay;
+  setChecksDisplay: (display: SidebarChecksDisplay) => void;
   trailing: SidebarWorkspaceTrailing;
   /** Picking the choice that is already showing clears the slot. */
   toggleTrailing: (choice: SidebarTrailingChoice) => void;
@@ -41,7 +44,12 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
   const clearHostFilters = useSidebarViewStore((state) => state.clearHostFilters);
 
   const {
-    settings: { workspaceTitleSource, sidebarWorkspaceTrailing, sidebarRowItems },
+    settings: {
+      workspaceTitleSource,
+      sidebarWorkspaceTrailing,
+      sidebarRowItems,
+      sidebarChecksDisplay,
+    },
     updateSettings,
   } = useAppSettings();
 
@@ -61,6 +69,13 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
     [updateSettings, sidebarRowItems],
   );
 
+  const setChecksDisplay = useCallback(
+    (display: SidebarChecksDisplay) => {
+      void updateSettings({ sidebarChecksDisplay: display });
+    },
+    [updateSettings],
+  );
+
   const toggleTrailing = useCallback(
     (choice: SidebarTrailingChoice) => {
       void updateSettings({
@@ -78,6 +93,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       setTitleSource,
       rowItems: sidebarRowItems,
       toggleRowItem,
+      checksDisplay: sidebarChecksDisplay,
+      setChecksDisplay,
       trailing: sidebarWorkspaceTrailing,
       toggleTrailing,
       hostFilters,
@@ -91,6 +108,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       setTitleSource,
       sidebarRowItems,
       toggleRowItem,
+      sidebarChecksDisplay,
+      setChecksDisplay,
       sidebarWorkspaceTrailing,
       toggleTrailing,
       hostFilters,
@@ -109,4 +128,25 @@ export function useSidebarRowItems(): SidebarRowItems {
     settings: { sidebarRowItems },
   } = useAppSettings();
   return sidebarRowItems ?? DEFAULT_SIDEBAR_ROW_ITEMS;
+}
+
+/**
+ * Everything the line under a workspace title needs to know, in one read. The two settings are
+ * answered together by `selectMetaRowItems`, so asking for them separately would only mean two
+ * subscriptions per row for one decision.
+ */
+export function useSidebarMetaPreferences(): {
+  rowItems: SidebarRowItems;
+  checksDisplay: SidebarChecksDisplay;
+} {
+  const {
+    settings: { sidebarRowItems, sidebarChecksDisplay },
+  } = useAppSettings();
+  return useMemo(
+    () => ({
+      rowItems: sidebarRowItems ?? DEFAULT_SIDEBAR_ROW_ITEMS,
+      checksDisplay: sidebarChecksDisplay ?? DEFAULT_SIDEBAR_CHECKS_DISPLAY,
+    }),
+    [sidebarRowItems, sidebarChecksDisplay],
+  );
 }

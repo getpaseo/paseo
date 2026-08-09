@@ -37,6 +37,7 @@ import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import { expandTilde, getRealpathAwareRelativePath, isPathInsideRoot } from "./path.js";
+import { terminateWithTreeKill } from "./tree-kill.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
@@ -449,6 +450,7 @@ async function execSetupCommandStreamed(options: {
   env: NodeJS.ProcessEnv;
   index: number;
   total: number;
+  signal?: AbortSignal;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
 }): Promise<WorktreeSetupCommandResult> {
   return new Promise((resolvePromise) => {
@@ -456,6 +458,7 @@ async function execSetupCommandStreamed(options: {
     const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];
     let settled = false;
+    let termination: Promise<unknown> | null = null;
 
     const emitOutput = (stream: "stdout" | "stderr", chunk: string) => {
       const text = stripAnsi(chunk);
@@ -478,11 +481,13 @@ async function execSetupCommandStreamed(options: {
       });
     };
 
-    const finish = (exitCode: number | null) => {
+    const finish = async (exitCode: number | null) => {
       if (settled) {
         return;
       }
       settled = true;
+      options.signal?.removeEventListener("abort", abort);
+      await termination;
       const result: WorktreeSetupCommandResult = {
         command: options.command,
         cwd: options.cwd,
@@ -521,6 +526,18 @@ async function execSetupCommandStreamed(options: {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
+    const abort = () => {
+      termination ??= terminateWithTreeKill(child, {
+        gracefulTimeoutMs: 1000,
+        forceTimeoutMs: 1000,
+      });
+    };
+    if (options.signal?.aborted) {
+      abort();
+    } else {
+      options.signal?.addEventListener("abort", abort, { once: true });
+    }
+
     child.stdout?.on("data", (chunk: Buffer | string) => {
       emitOutput("stdout", chunk.toString());
     });
@@ -531,11 +548,11 @@ async function execSetupCommandStreamed(options: {
 
     child.on("error", (error) => {
       emitOutput("stderr", error instanceof Error ? error.message : String(error));
-      finish(null);
+      void finish(null);
     });
 
     child.on("close", (code) => {
-      finish(typeof code === "number" ? code : null);
+      void finish(typeof code === "number" ? code : null);
     });
   });
 }
@@ -621,6 +638,7 @@ export async function runWorktreeSetupCommands(options: {
   cleanupOnFailure: boolean;
   repoRootPath?: string;
   runtimeEnv?: WorktreeRuntimeEnv;
+  signal?: AbortSignal;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
 }): Promise<WorktreeSetupCommandResult[]> {
   // Read paseo.json from the worktree (it will have the same content as the source repo)
@@ -647,6 +665,7 @@ export async function runWorktreeSetupCommands(options: {
           env: setupEnv,
           index: index + 1,
           total: setupCommands.length,
+          signal: options.signal,
           onEvent: options.onEvent,
         })
       : await execSetupCommand(cmd, {

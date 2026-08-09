@@ -28,6 +28,7 @@ import {
   Keyboard,
   Stethoscope,
   Info,
+  Bell,
   Shield,
   Puzzle,
   Plus,
@@ -78,6 +79,7 @@ import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
+import { DesktopNotificationsSection } from "@/desktop/components/desktop-notifications-section";
 import { BrowserDataSection } from "@/desktop/browser/settings/browser-data-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { isElectronRuntime } from "@/desktop/host";
@@ -121,7 +123,10 @@ import {
   type HostSectionSlug,
   type SettingsSectionSlug,
 } from "@/utils/host-routes";
-import { navigateToLastWorkspace } from "@/stores/navigation-active-workspace-store";
+import {
+  navigateToLastWorkspace,
+  useLastWorkspaceSelection,
+} from "@/stores/navigation-active-workspace-store";
 
 // ---------------------------------------------------------------------------
 // View model
@@ -149,6 +154,12 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     id: "integrations",
     labelKey: "settings.sections.integrations",
     icon: Puzzle,
+    desktopOnly: true,
+  },
+  {
+    id: "notifications",
+    labelKey: "settings.sections.notifications",
+    icon: Bell,
     desktopOnly: true,
   },
   {
@@ -1140,14 +1151,19 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   const hosts = useHosts();
   const localServerId = useLocalDaemonServerId();
   const sortedHosts = useSortedHosts(hosts, localServerId);
+  const lastWorkspaceSelection = useLastWorkspaceSelection();
+  const routedSettingsHostServerId =
+    view.kind === "host" || view.kind === "project" ? view.serverId : null;
   const [selectedSettingsHostServerId, setSelectedSettingsHostServerId] = useState<string | null>(
-    view.kind === "host" || view.kind === "project" ? view.serverId : null,
+    routedSettingsHostServerId ?? lastWorkspaceSelection?.serverId ?? null,
   );
-  useEffect(() => {
-    if (view.kind === "host" || view.kind === "project") {
-      setSelectedSettingsHostServerId(view.serverId);
-    }
-  }, [view]);
+  useFocusEffect(
+    useCallback(() => {
+      setSelectedSettingsHostServerId(
+        routedSettingsHostServerId ?? lastWorkspaceSelection?.serverId ?? null,
+      );
+    }, [lastWorkspaceSelection?.serverId, routedSettingsHostServerId]),
+  );
 
   // The host the four sections scope to: the host on the active view, otherwise
   // the picker choice, otherwise the connected local daemon, otherwise the first host.
@@ -1419,6 +1435,8 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
           return isDesktopApp ? <KeyboardShortcutsSection /> : null;
         case "integrations":
           return isDesktopApp ? <IntegrationsSection /> : null;
+        case "notifications":
+          return isDesktopApp ? <DesktopNotificationsSection /> : null;
         case "permissions":
           return isDesktopApp ? <DesktopPermissionsSection /> : null;
         case "diagnostics":

@@ -42,9 +42,13 @@ Only the users listed in a trigger's `from_users`. It is required and cannot be 
 
 Dispatch fails and the event is recorded as failed. Nothing is queued, so trigger it again once the daemon is back.
 
+## Does logging out disconnect my daemon?
+
+No. The stored CLI login is a human organization credential; the enrolled daemon has its own relationship credential. Interactive `paseo hub logout` offers to disconnect a daemon related to the same Hub. Declining is normal, and JSON or noninteractive logout never disconnects unless you pass `--disconnect-daemon`.
+
 ## Can an agent reply back to Slack or Discord?
 
-Yes, with `allow_outputs`. It gets one plain-text thread reply per execution. On GitHub, agents reply through the scoped `GH_TOKEN` they already have, so `gh issue comment` works.
+Yes, with `allow_outputs`. See the [`hub.yml` output capability reference](/docs/hub/configuration/hub-yml#output-capabilities) for reply limits and required outputs. On GitHub, agents reply through the scoped `GH_TOKEN` they already have, so `gh issue comment` works.
 
 ## Can I use it without GitHub?
 

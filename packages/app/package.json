@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/app",
-  "version": "0.3.0-beta.1",
+  "version": "0.3.0",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -23,6 +23,7 @@
     "test:browser": "vitest run --project browser",
     "test:e2e": "playwright test --project=browser",
     "test:e2e:real": "cross-env E2E_FORK_PASEO_HOME_FROM=../../.dev/paseo-home playwright test --project=real-provider",
+    "test:e2e:relay-deployment": "npm --prefix ../.. run build:server && npm --prefix ../.. run build:daemon-web-ui && cross-env E2E_FORK_PASEO_HOME_FROM=../../.dev/paseo-home playwright test --project=relay-deployment e2e/browser/relay-deployment-reconnect.real.spec.ts",
     "test:e2e:ui": "playwright test --ui",
     "build": "npm run build:web",
     "build:web": "npm --prefix ../.. run build:app-deps && expo export --platform web",

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
@@ -11,6 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
+import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
 import {
   searchDirectoryEntries,
   WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
@@ -51,6 +53,7 @@ async function searchRelativeDirectoryEntries(options: {
   matchMode?: "fuzzy" | "suffix";
   maxDepth?: number;
   maxEntriesScanned?: number;
+  respectGitIgnore?: boolean;
 }) {
   return searchDirectoryEntries({
     root: options.cwd,
@@ -65,7 +68,13 @@ async function searchRelativeDirectoryEntries(options: {
     limit: options.limit,
     maxDepth: options.maxDepth,
     maxEntriesScanned: options.maxEntriesScanned,
+    respectGitIgnore: options.respectGitIgnore,
   });
+}
+
+function initGitRepo(directory: string, ignorePatterns: string): void {
+  execFileSync("git", ["init", "-q"], { cwd: directory });
+  writeFileSync(path.join(directory, ".gitignore"), ignorePatterns);
 }
 
 describe("searchDirectoryEntries", () => {
@@ -115,6 +124,49 @@ describe("searchDirectoryEntries", () => {
         },
       ],
     });
+  });
+
+  it("prunes directories ignored by Git and caches concurrent lookups", async () => {
+    execFileSync("git", ["init", "-q"], { cwd: searchRoot });
+    writeFileSync(path.join(searchRoot, ".gitignore"), "data/\n");
+    mkdirSync(path.join(searchRoot, "data", "matching-ignored-directory"), {
+      recursive: true,
+    });
+    mkdirSync(path.join(searchRoot, "visible", "matching-visible-directory"), {
+      recursive: true,
+    });
+
+    startGitCommandMetrics();
+    const results = await Promise.all([
+      searchDirectoryEntries({
+        root: searchRoot,
+        query: "matching",
+        pathFormat: "relative",
+        includeFiles: false,
+        includeDirectories: true,
+        respectGitIgnore: true,
+      }),
+      searchDirectoryEntries({
+        root: searchRoot,
+        query: "visible",
+        pathFormat: "relative",
+        includeFiles: false,
+        includeDirectories: true,
+        respectGitIgnore: true,
+      }),
+    ]);
+    const gitMetrics = stopGitCommandMetrics();
+
+    expect(results).toEqual([
+      [{ path: "visible/matching-visible-directory", kind: "directory" }],
+      [
+        { path: "visible", kind: "directory" },
+        { path: "visible/matching-visible-directory", kind: "directory" },
+      ],
+    ]);
+    expect(gitMetrics.commands.filter((command) => command.args.includes("ls-files"))).toHaveLength(
+      1,
+    );
   });
 
   it("configures raw blank queries independently from explicit root aliases", async () => {
@@ -745,6 +797,68 @@ describe("relative typed-entry configuration", () => {
 
     expect(results).toEqual([{ path: ".dev/paseo-home/daemon.log", kind: "file" }]);
   });
+
+  it("resolves an exact gitignored path while keeping it out of discovery results", async () => {
+    initGitRepo(workspaceDir, "generated/\n");
+    mkdirSync(path.join(workspaceDir, "generated"), { recursive: true });
+    writeFileSync(path.join(workspaceDir, "generated", "notes.md"), "generated notes\n");
+
+    const exactResults = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "generated/notes.md",
+      limit: 1,
+      includeFiles: true,
+      includeDirectories: false,
+      matchMode: "suffix",
+      respectGitIgnore: true,
+    });
+    const fuzzyResults = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "notes",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: false,
+      respectGitIgnore: true,
+    });
+
+    expect({ exactResults, fuzzyResults }).toEqual({
+      exactResults: [{ path: "generated/notes.md", kind: "file" }],
+      fuzzyResults: [{ path: "docs/notes.md", kind: "file" }],
+    });
+  });
+
+  it.skipIf(isWindows)(
+    "refuses an exact path that escapes the root through a symlink",
+    async () => {
+      const outsideDir = path.join(tempRoot, "outside-workspace");
+      mkdirSync(outsideDir, { recursive: true });
+      writeFileSync(path.join(outsideDir, "secret.md"), "outside\n");
+      symlinkSync(outsideDir, path.join(workspaceDir, "escape-link"));
+      symlinkSync(path.join(workspaceDir, "docs"), path.join(workspaceDir, "inside-link"));
+
+      const escaping = await searchRelativeDirectoryEntries({
+        cwd: workspaceDir,
+        query: "escape-link/secret.md",
+        limit: 1,
+        includeFiles: true,
+        includeDirectories: false,
+        matchMode: "suffix",
+      });
+      const staysInside = await searchRelativeDirectoryEntries({
+        cwd: workspaceDir,
+        query: "inside-link/notes.md",
+        limit: 1,
+        includeFiles: true,
+        includeDirectories: false,
+        matchMode: "suffix",
+      });
+
+      expect({ escaping, staysInside }).toEqual({
+        escaping: [],
+        staysInside: [{ path: "inside-link/notes.md", kind: "file" }],
+      });
+    },
+  );
 
   it("traverses only allowlisted hidden directories without suggesting the directories", async () => {
     mkdirSync(path.join(workspaceDir, ".claude"), { recursive: true });

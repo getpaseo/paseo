@@ -3,16 +3,18 @@ import { useTranslation } from "react-i18next";
 import { View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
+  Captions,
   CircleCheck,
   CircleDashed,
   Clock,
   Diff,
+  EyeOff,
   Folder,
   GitBranch,
   GitPullRequest,
+  Globe,
   Server,
   Settings2,
-  SquareTerminal,
   Type,
 } from "lucide-react-native";
 import {
@@ -30,12 +32,15 @@ import { useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import type { SidebarGroupMode } from "@/stores/sidebar-view-store";
 import type { WorkspaceTitleSource } from "@/hooks/use-settings";
+import { SIDEBAR_CHECKS_DISPLAYS, type SidebarChecksDisplay } from "./checks-display";
 import { useSidebarDisplayPreferences, type SidebarTrailingChoice } from "./model";
 import { SIDEBAR_ROW_ITEMS, type SidebarRowItem } from "./row-items";
 
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const ThemedSettings2 = withUnistyles(Settings2);
+/** CI's mark: the subject of the checks row, and the shape the icon-only option leaves behind. */
+const ThemedCircleCheck = withUnistyles(CircleCheck);
 
 /** Fits the item's 16pt leading slot with a hair of room, matching the trailing check. */
 const OPTION_ICON_SIZE = 14;
@@ -63,8 +68,15 @@ const TITLE_SOURCE_ICONS: Record<WorkspaceTitleSource, OptionIcon> = {
 const ROW_ITEM_ICONS: Record<SidebarRowItem, OptionIcon> = {
   host: withUnistyles(Server),
   changeRequest: withUnistyles(GitPullRequest),
-  checks: withUnistyles(CircleCheck),
-  scripts: withUnistyles(SquareTerminal),
+  services: withUnistyles(Globe),
+};
+
+// These mark how much of the row an option spends, not what CI is, so they are the shapes each
+// answer produces: a glyph with words beside it, the glyph on its own, nothing.
+const CHECKS_DISPLAY_ICONS: Record<SidebarChecksDisplay, OptionIcon> = {
+  iconAndText: withUnistyles(Captions),
+  icon: ThemedCircleCheck,
+  none: withUnistyles(EyeOff),
 };
 
 const TRAILING_ICONS: Record<SidebarTrailingChoice, OptionIcon> = {
@@ -89,8 +101,13 @@ const TITLE_SOURCE_LABEL_KEYS: Record<WorkspaceTitleSource, string> = {
 const ROW_ITEM_LABEL_KEYS: Record<SidebarRowItem, string> = {
   host: "sidebar.display.show.host",
   changeRequest: "sidebar.display.show.changeRequest",
-  checks: "sidebar.display.show.checks",
-  scripts: "sidebar.display.show.scripts",
+  services: "sidebar.display.show.services",
+};
+
+const CHECKS_DISPLAY_LABEL_KEYS: Record<SidebarChecksDisplay, string> = {
+  iconAndText: "sidebar.display.checks.iconAndText",
+  icon: "sidebar.display.checks.icon",
+  none: "sidebar.display.checks.none",
 };
 
 const TRAILING_LABEL_KEYS: Record<SidebarTrailingChoice, string> = {
@@ -154,6 +171,20 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
         id: "show",
         title: t("sidebar.display.show.label"),
         content: <ShowPage preferences={preferences} />,
+      },
+      {
+        id: "checks",
+        title: t("sidebar.display.show.checks"),
+        content: (
+          <OptionList
+            values={SIDEBAR_CHECKS_DISPLAYS}
+            icons={CHECKS_DISPLAY_ICONS}
+            labelKeys={CHECKS_DISPLAY_LABEL_KEYS}
+            selectedValue={preferences.checksDisplay}
+            onSelect={preferences.setChecksDisplay}
+            testIDPrefix="sidebar-checks-display"
+          />
+        ),
       },
     ];
 
@@ -292,6 +323,10 @@ function OptionList<Value extends string>({
  * Two groups, split by the separator. Above it, what a row may say about a workspace — each one
  * independent. Below it, the one thing the slot to the right of the title holds, so picking the
  * one already showing empties the slot and gives the width back to the title.
+ *
+ * CI is the one item above the separator with three answers rather than two, so it opens a page
+ * instead of ticking, and it goes last: a row that navigates does not belong in the middle of a
+ * column you are running down with your eyes ticking things on and off.
  */
 function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
   const { t } = useTranslation();
@@ -309,6 +344,7 @@ function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
           testID={`sidebar-row-item-${item}`}
         />
       ))}
+      <ChecksSubTrigger />
       <MenuSeparator />
       {TRAILING_CHOICES.map((choice) => (
         <OptionItem
@@ -323,6 +359,24 @@ function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
         />
       ))}
     </>
+  );
+}
+
+/**
+ * No value on the row, only the chevron. The three answers are all long enough that the value
+ * fills the row and stops reading as an answer sitting at the right edge — it turns into a second
+ * line of label. The chevron alone says there is a decision in here, and the page says what it is.
+ */
+function ChecksSubTrigger(): ReactElement {
+  const { t } = useTranslation();
+  const leading = useMemo(
+    () => <ThemedCircleCheck size={OPTION_ICON_SIZE} uniProps={mutedIconMapping} />,
+    [],
+  );
+  return (
+    <MenuSubTrigger id="checks" leading={leading} testID="sidebar-display-checks">
+      {t("sidebar.display.show.checks")}
+    </MenuSubTrigger>
   );
 }
 

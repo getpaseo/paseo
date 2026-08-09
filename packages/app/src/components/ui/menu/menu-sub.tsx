@@ -31,6 +31,7 @@ export function MenuSubTrigger({
   id,
   value,
   indicator = false,
+  leading,
   disabled,
   testID,
   children,
@@ -41,6 +42,12 @@ export function MenuSubTrigger({
   value?: string;
   /** Marks the branch as holding a non-default setting, e.g. an active filter. */
   indicator?: boolean;
+  /**
+   * A mark for the leading slot. Root rows go without one — see docs/menus.md — but a trigger
+   * standing in a list of options has to keep their rail, or it reads as a row that slipped out
+   * of the column.
+   */
+  leading?: ReactElement | null;
   disabled?: boolean;
   testID?: string;
 }>): ReactElement {
@@ -87,6 +94,7 @@ export function MenuSubTrigger({
         closeOnSelect={false}
         disabled={disabled}
         onSelect={handleSelect}
+        leading={leading}
         trailing={trailing}
         testID={testID}
       >

@@ -1639,6 +1639,50 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
+  it("tracks connection status transitions independently of agent panels", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "directTcp",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const fakeClient = new FakeDaemonClient();
+    fakeClient.setConnectionState({ status: "connected" });
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async ({ host: hostProfile }) => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: hostProfile.serverId,
+          hostname: hostProfile.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    store.syncHosts([host]);
+    await fakeClient.waitForFetches(1);
+    await waitForDirectoryReady(store, host.serverId);
+    await vi.advanceTimersByTimeAsync(1_500);
+
+    const outageStartedAt = Date.now();
+    fakeClient.setConnectionState({ status: "disconnected", reason: "transport closed" });
+    expect(store.getConnectionStatusSince(host.serverId)).toBe(outageStartedAt);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(store.getConnectionStatusSince(host.serverId)).toBe(outageStartedAt);
+
+    const reconnectStartedAt = Date.now();
+    fakeClient.setConnectionState({ status: "connected" });
+    expect(store.getConnectionStatusSince(host.serverId)).toBe(reconnectStartedAt);
+
+    store.syncHosts([]);
+  });
+
   it("bootstraps agent directory subscription when host transitions online", async () => {
     const host = makeHost({
       connections: [
@@ -2998,7 +3042,7 @@ describe("HostRuntimeStore", () => {
     }
   });
 
-  it("upsertDirectConnection stores SSL and password settings", async () => {
+  it("upsertDirectConnection stores SSL, password, and custom header settings", async () => {
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
@@ -3016,6 +3060,7 @@ describe("HostRuntimeStore", () => {
       endpoint: "example.paseo.test:7443",
       useTls: true,
       password: "shared-secret",
+      headers: { "X-Tenant": "acme" },
       label: "tls host",
     });
 
@@ -3027,6 +3072,7 @@ describe("HostRuntimeStore", () => {
         endpoint: "example.paseo.test:7443",
         useTls: true,
         password: "shared-secret",
+        headers: { "X-Tenant": "acme" },
       },
     ]);
 

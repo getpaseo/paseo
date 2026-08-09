@@ -2,7 +2,6 @@ import { ActivityIndicator, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
-import { PulsingStatusDot } from "@/components/sidebar/pulsing-status-dot";
 import { STATUS_BUCKET_LABELS } from "@/hooks/sidebar-status-view-model";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
@@ -13,6 +12,7 @@ import {
 } from "@/utils/project-status-badge-content";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { getStatusDotColor } from "@/utils/status-dot-color";
+import { STATUS_INDICATOR_ALERT_SIZE } from "@/utils/status-indicator-geometry";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 
 // Every surfaced status shares one badge shell, so the badge never changes size or position
@@ -27,11 +27,9 @@ const STATUS_BADGE_OFFSET = -4;
 // odd size measured 1.5 device px right and down at 3x, ~3px of asymmetry between opposite gaps).
 // Even sizes divide the shell into whole pixels and land dead center with no correction.
 //
-// Lucide's circle-alert paints ~83% of its nominal size, so an alert of 8 draws a ~6.6pt circle
-// against the 6pt dot — the two states read as the same-diameter disc. 8 is the closest even
-// size to the exact match (6 / 0.83 = 7.2); 6 would undershoot the dot rather than meet it.
+// The filled alert occupies the full badge shell so needs-input remains more prominent than
+// the passive status dots.
 const STATUS_BADGE_DOT_SIZE = 6;
-const STATUS_BADGE_ALERT_SIZE = 8;
 // Matches the workspace title's lineHeight (sidebar-workspace-row-content's
 // workspaceBranchText) so the icon centers on the title rather than floating above it.
 const LEADING_SLOT_HEIGHT = 20;
@@ -42,8 +40,9 @@ const ThemedCircleAlert = withUnistyles(CircleAlert);
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
-const amberColorMapping = (theme: Theme) => ({
-  color: theme.colors.palette.amber[500],
+const needsInputColorMapping = (theme: Theme) => ({
+  color: theme.colors.surface0,
+  fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
 });
 
 /**
@@ -175,7 +174,7 @@ function ProjectStatusBadge({
       testID="project-status-badge"
     >
       {content.kind === "alert" ? (
-        <ThemedCircleAlert size={STATUS_BADGE_ALERT_SIZE} uniProps={amberColorMapping} />
+        <ThemedCircleAlert size={STATUS_INDICATOR_ALERT_SIZE} uniProps={needsInputColorMapping} />
       ) : (
         <ProjectStatusDot bucket={content.bucket} />
       )}
@@ -195,10 +194,7 @@ function getStatusBadgeBackdropStyle(backdrop: SurfaceBackdrop): ViewStyle {
 }
 
 function ProjectStatusDot({ bucket }: { bucket: ProjectStatusBadgeDotBucket }) {
-  if (bucket !== "running") {
-    return <View testID="project-status-dot" style={getStatusDotColorStyle(bucket)} />;
-  }
-  return <PulsingStatusDot testID="project-status-dot" style={styles.statusDotRunning} />;
+  return <View testID="project-status-dot" style={getStatusDotColorStyle(bucket)} />;
 }
 
 function ProjectIcon({
@@ -231,10 +227,10 @@ function ProjectInlineChevron({ chevron }: { chevron: "expand" | "collapse" | nu
   return <ChevronRight size={14} color="#9ca3af" />;
 }
 
-function getStatusDotColorStyle(
-  bucket: Exclude<ProjectStatusBadgeDotBucket, "running">,
-): ViewStyle {
-  return bucket === "failed" ? styles.statusDotFailed : styles.statusDotAttention;
+function getStatusDotColorStyle(bucket: ProjectStatusBadgeDotBucket): ViewStyle {
+  if (bucket === "failed") return styles.statusDotFailed;
+  if (bucket === "running") return styles.statusDotRunning;
+  return styles.statusDotAttention;
 }
 
 const styles = StyleSheet.create((theme) => {

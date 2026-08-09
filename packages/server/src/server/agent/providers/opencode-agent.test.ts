@@ -1936,6 +1936,52 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("sends exact Hub MCP permission grants without approving unrelated tools", async () => {
+    const promptAsync = vi.fn(async () => ({ data: {}, error: undefined }));
+    const fakeClient = {
+      global: {
+        event: vi.fn().mockImplementation(async ({ signal }: { signal: AbortSignal }) => ({
+          stream: {
+            async *[Symbol.asyncIterator](): AsyncGenerator<OpenCodeEvent> {
+              yield { type: "server.connected", properties: {} } as OpenCodeEvent;
+              await waitForAbort(signal);
+            },
+          },
+        })),
+      },
+      session: { promptAsync },
+    } as never;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      {
+        provider: "opencode",
+        cwd: "/tmp/test",
+        providerOptions: { permission: { bash: "ask", hub_reply: "deny" } },
+        toolPolicy: {
+          preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+        },
+      },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    await session.startTurn("finish");
+
+    expect(promptAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        permission: [
+          { permission: "hub_finish_execution", pattern: "*", action: "allow" },
+          { permission: "bash", pattern: "*", action: "ask" },
+          { permission: "hub_reply", pattern: "*", action: "deny" },
+        ],
+      }),
+    );
+    expect(promptAsync.mock.calls[0]?.[0].permission).not.toContainEqual(
+      expect.objectContaining({ permission: "bash", action: "allow" }),
+    );
+    await session.close();
+  });
+
   test("waits for the stop abort and provider idle before starting the next prompt", async () => {
     const { parent: session, openCode } = await createParentSession("ses_unit_test");
     const retryStarted = createTestDeferred<void>();
@@ -3249,7 +3295,7 @@ describe("OpenCode provider subagent contract", () => {
       event: {
         type: "upsert",
         id: "ses_child_registry",
-        title: "Live child",
+        description: "Live child",
         status: "running",
       },
     });
@@ -4046,7 +4092,7 @@ describe("OpenCode provider subagent contract", () => {
       event: {
         type: "upsert",
         id: "ses_child_background",
-        title: "Plugin child",
+        description: "Plugin child",
         status: "running",
       },
     });
@@ -4094,11 +4140,537 @@ describe("OpenCode provider subagent contract", () => {
         event: {
           type: "upsert",
           id: "ses_child_plugin",
-          title: "Background plugin child",
+          description: "Background plugin child",
           status: "running",
         },
       },
     ]);
+  });
+
+  test("folds child assistant facts into deduped presentation upserts without status", async () => {
+    const releaseEvents = createTestDeferred<void>();
+    const eventsConsumed = createTestDeferred<void>();
+    const fakeClient = {
+      global: {
+        event: vi.fn().mockResolvedValue({
+          stream: (async function* () {
+            yield { type: "server.connected", properties: {} };
+            await releaseEvents.promise;
+            yield {
+              type: "session.created",
+              properties: {
+                info: { id: "ses_child_facts", parentID: "ses_parent", title: "Fact child" },
+              },
+            };
+            // Streaming frame: model facts, no completion yet.
+            yield {
+              type: "message.updated",
+              properties: {
+                info: {
+                  id: "msg_child_facts",
+                  sessionID: "ses_child_facts",
+                  role: "assistant",
+                  agent: "general",
+                  providerID: "anthropic",
+                  modelID: "claude-sonnet-5",
+                  variant: "high",
+                  time: { created: 1 },
+                },
+              },
+            };
+            // Same facts again: must not re-emit an identical subtitle upsert.
+            yield {
+              type: "message.updated",
+              properties: {
+                info: {
+                  id: "msg_child_facts",
+                  sessionID: "ses_child_facts",
+                  role: "assistant",
+                  agent: "general",
+                  providerID: "anthropic",
+                  modelID: "claude-sonnet-5",
+                  variant: "high",
+                  time: { created: 1 },
+                },
+              },
+            };
+            // Completion carries the token sums.
+            yield {
+              type: "message.updated",
+              properties: {
+                info: {
+                  id: "msg_child_facts",
+                  sessionID: "ses_child_facts",
+                  role: "assistant",
+                  agent: "general",
+                  providerID: "anthropic",
+                  modelID: "claude-sonnet-5",
+                  variant: "high",
+                  time: { created: 1, completed: 2 },
+                  tokens: {
+                    input: 10_000,
+                    output: 5_000,
+                    reasoning: 1_000,
+                    cache: { read: 400, write: 100 },
+                  },
+                },
+              },
+            };
+            yield { type: "session.idle", properties: { sessionID: "ses_child_facts" } };
+            eventsConsumed.resolve();
+          })(),
+        }),
+      },
+      session: {
+        abort: vi.fn().mockResolvedValue({ error: null }),
+        update: vi.fn().mockResolvedValue({ error: null }),
+      },
+    } as never;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_parent",
+      createTestLogger(),
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    releaseEvents.resolve();
+    await eventsConsumed.promise;
+    await session.close();
+
+    const subtitleUpserts = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "upsert" &&
+      event.event.subtitle !== undefined
+        ? [event.event]
+        : [],
+    );
+    expect(subtitleUpserts).toEqual([
+      {
+        type: "upsert",
+        id: "ses_child_facts",
+        title: "general",
+        subtitle: "general · claude-sonnet-5 · High",
+      },
+      {
+        type: "upsert",
+        id: "ses_child_facts",
+        subtitle: "general · claude-sonnet-5 · High · 16.5k tokens",
+      },
+    ]);
+    // Presentation upserts must not carry status: they can never revert a finished child.
+    for (const upsert of subtitleUpserts) {
+      expect(upsert).not.toHaveProperty("status");
+    }
+    expect(subtitleUpserts.filter((upsert) => upsert.title !== undefined)).toHaveLength(1);
+    expect(events.at(-1)).toEqual({
+      type: "provider_subagent",
+      provider: "opencode",
+      event: { type: "upsert", id: "ses_child_facts", status: "completed" },
+    });
+  });
+
+  test("does not overwrite a link-set title with the assistant-frame agent", async () => {
+    const { parent, openCode } = await createParentSession("ses_parent_link_title");
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    openCode.emitEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "prt_link_title_task",
+          sessionID: "ses_parent_link_title",
+          messageID: "msg_parent_link_title",
+          type: "tool",
+          tool: "task",
+          callID: "call_link_title",
+          state: {
+            status: "running",
+            input: { subagent_type: "explore", description: "Inspect title precedence" },
+          },
+        },
+      },
+    });
+    openCode.emitEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_child_link_title",
+          parentID: "ses_parent_link_title",
+          title: "Inspect title precedence",
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "provider_subagent",
+        provider: "opencode",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "ses_child_link_title",
+          title: "explore",
+          toolCallId: "call_link_title",
+        }),
+      }),
+    );
+
+    openCode.emitEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "msg_child_link_title",
+          sessionID: "ses_child_link_title",
+          role: "assistant",
+          agent: "general",
+          providerID: "anthropic",
+          modelID: "claude-sonnet-5",
+          time: { created: 1 },
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "provider_subagent",
+        provider: "opencode",
+        event: {
+          type: "upsert",
+          id: "ses_child_link_title",
+          subtitle: "general · claude-sonnet-5",
+        },
+      }),
+    );
+
+    const childTitles = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "upsert" &&
+      event.event.id === "ses_child_link_title" &&
+      event.event.title !== undefined
+        ? [event.event.title]
+        : [],
+    );
+    expect(childTitles).toEqual(["explore"]);
+    await parent.close();
+  });
+
+  test("maps child detection facts onto title, description, and subtitle", () => {
+    const state = createOpenCodeTranslationState("ses_parent");
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "session.updated",
+        properties: {
+          info: {
+            id: "ses_child_rich",
+            parentID: "ses_parent",
+            title: "Investigate flaky test",
+            agent: "explore",
+            model: { providerID: "anthropic", id: "claude-sonnet-5", variant: "high" },
+          },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "opencode",
+        event: {
+          type: "upsert",
+          id: "ses_child_rich",
+          title: "explore",
+          description: "Investigate flaky test",
+          status: "running",
+          subtitle: "explore · claude-sonnet-5 · High",
+        },
+      },
+    ]);
+  });
+
+  test("leaves title and description unset when the child session carries no facts", () => {
+    const state = createOpenCodeTranslationState("ses_parent");
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "session.created",
+        properties: {
+          info: { id: "ses_child_bare", parentID: "ses_parent" },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "opencode",
+        event: { type: "upsert", id: "ses_child_bare", status: "running" },
+      },
+    ]);
+  });
+
+  test("links a waiting task tool call to a child detected afterwards", () => {
+    const state = createOpenCodeTranslationState("ses_parent");
+    const events: AgentStreamEvent[] = [];
+
+    events.push(
+      ...translateOpenCodeEvent(
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "prt_parent_task",
+              sessionID: "ses_parent",
+              messageID: "msg_parent",
+              type: "tool",
+              tool: "task",
+              callID: "call_task",
+              state: {
+                status: "running",
+                input: { subagent_type: "explore", description: "Inspect repo" },
+              },
+            },
+          },
+        } as OpenCodeEvent,
+        state,
+      ),
+      ...translateOpenCodeEvent(
+        {
+          type: "session.created",
+          properties: {
+            info: { id: "ses_child_linked", parentID: "ses_parent", title: "Inspect repo" },
+          },
+        } as OpenCodeEvent,
+        state,
+      ),
+    );
+
+    expect(events).toContainEqual({
+      type: "provider_subagent",
+      provider: "opencode",
+      event: {
+        type: "upsert",
+        id: "ses_child_linked",
+        toolCallId: "call_task",
+        title: "explore",
+        description: "Inspect repo",
+        subtitle: "explore",
+      },
+    });
+  });
+
+  test("links a task tool call whose metadata resolves the child session id after detection", () => {
+    const state = createOpenCodeTranslationState("ses_parent");
+    const events: AgentStreamEvent[] = [];
+
+    events.push(
+      ...translateOpenCodeEvent(
+        {
+          type: "session.created",
+          properties: {
+            info: { id: "ses_childlatelink", parentID: "ses_parent", title: "Late link" },
+          },
+        } as OpenCodeEvent,
+        state,
+      ),
+      // No task call was waiting at detection time; the link arrives via the tool output.
+      ...translateOpenCodeEvent(
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "prt_parent_task_late",
+              sessionID: "ses_parent",
+              messageID: "msg_parent",
+              type: "tool",
+              tool: "task",
+              callID: "call_task_late",
+              state: {
+                status: "completed",
+                input: { subagent_type: "plan", description: "Draft the plan" },
+                output: '<task id="ses_childlatelink">Done.</task>',
+                metadata: { sessionId: "ses_childlatelink" },
+              },
+            },
+          },
+        } as OpenCodeEvent,
+        state,
+      ),
+    );
+
+    expect(events).toContainEqual({
+      type: "provider_subagent",
+      provider: "opencode",
+      event: {
+        type: "upsert",
+        id: "ses_childlatelink",
+        toolCallId: "call_task_late",
+        title: "plan",
+        description: "Draft the plan",
+        subtitle: "plan",
+      },
+    });
+  });
+
+  test("links parallel task calls from their canonical child session metadata", () => {
+    const state = createOpenCodeTranslationState("ses_parent");
+    const events: AgentStreamEvent[] = [];
+
+    for (const task of [
+      { callId: "call_alpha", description: "Inspect alpha" },
+      { callId: "call_beta", description: "Inspect beta" },
+    ]) {
+      events.push(
+        ...translateOpenCodeEvent(
+          {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: `prt_${task.callId}`,
+                sessionID: "ses_parent",
+                messageID: "msg_parent",
+                type: "tool",
+                tool: "task",
+                callID: task.callId,
+                state: {
+                  status: "running",
+                  input: { subagent_type: "explore", description: task.description },
+                },
+              },
+            },
+          } as OpenCodeEvent,
+          state,
+        ),
+      );
+    }
+
+    for (const childSessionId of ["ses_child_alpha", "ses_child_beta"]) {
+      events.push(
+        ...translateOpenCodeEvent(
+          {
+            type: "session.created",
+            properties: {
+              info: { id: childSessionId, parentID: "ses_parent", title: "Child session" },
+            },
+          } as OpenCodeEvent,
+          state,
+        ),
+      );
+    }
+
+    for (const task of [
+      { callId: "call_alpha", childSessionId: "ses_child_alpha", description: "Inspect alpha" },
+      { callId: "call_beta", childSessionId: "ses_child_beta", description: "Inspect beta" },
+    ]) {
+      events.push(
+        ...translateOpenCodeEvent(
+          {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: `prt_${task.callId}`,
+                sessionID: "ses_parent",
+                messageID: "msg_parent",
+                type: "tool",
+                tool: "task",
+                callID: task.callId,
+                state: {
+                  status: "completed",
+                  input: { subagent_type: "explore", description: task.description },
+                  output: `<task id="${task.childSessionId}">Done.</task>`,
+                  metadata: { sessionId: task.childSessionId },
+                },
+              },
+            },
+          } as OpenCodeEvent,
+          state,
+        ),
+      );
+    }
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "upsert",
+            id: "ses_child_alpha",
+            toolCallId: "call_alpha",
+            title: "explore",
+            description: "Inspect alpha",
+            subtitle: "explore",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "upsert",
+            id: "ses_child_beta",
+            toolCallId: "call_beta",
+            title: "explore",
+            description: "Inspect beta",
+            subtitle: "explore",
+          },
+        },
+      ]),
+    );
+  });
+
+  test("linking after detection keeps the task description over the session title", () => {
+    const state = createOpenCodeTranslationState("ses_parent");
+
+    const detection = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "prt_parent_task",
+            sessionID: "ses_parent",
+            messageID: "msg_parent",
+            type: "tool",
+            tool: "task",
+            callID: "call_task",
+            state: {
+              status: "running",
+              input: { subagent_type: "explore", description: "Audit configs" },
+            },
+          },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+    const linked = translateOpenCodeEvent(
+      {
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_child_dup",
+            parentID: "ses_parent",
+            title: "OpenCode session title",
+          },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    const upserts = [...detection, ...linked].flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+    );
+    // Detection precedes the link inside the same translation batch; the link's description
+    // (task input) lands last, so the sticky store keeps the task as the row label.
+    expect(upserts.at(-1)).toMatchObject({
+      id: "ses_child_dup",
+      toolCallId: "call_task",
+      title: "explore",
+      description: "Audit configs",
+    });
+    for (const upsert of upserts) {
+      expect(upsert.title).not.toBe("OpenCode session title");
+    }
   });
 
   test("translates provider deletion of a known child session", () => {
@@ -4159,12 +4731,12 @@ describe("OpenCode provider subagent contract", () => {
       {
         type: "provider_subagent",
         provider: "opencode",
-        event: { type: "upsert", id: "ses_child_a", title: "Child A", status: "completed" },
+        event: { type: "upsert", id: "ses_child_a", description: "Child A", status: "completed" },
       },
       {
         type: "provider_subagent",
         provider: "opencode",
-        event: { type: "upsert", id: "ses_child_b", title: "Child B", status: "completed" },
+        event: { type: "upsert", id: "ses_child_b", description: "Child B", status: "completed" },
       },
       {
         type: "provider_subagent",
@@ -4172,7 +4744,7 @@ describe("OpenCode provider subagent contract", () => {
         event: {
           type: "upsert",
           id: "ses_grandchild_a",
-          title: "Grandchild A",
+          description: "Grandchild A",
           status: "completed",
         },
       },
@@ -4234,7 +4806,7 @@ describe("OpenCode provider subagent contract", () => {
       event: {
         type: "upsert",
         id: "ses_child_with_history",
-        title: "Historical child",
+        description: "Historical child",
         status: "completed",
         cwd: "/workspace/child",
       },
@@ -4258,6 +4830,86 @@ describe("OpenCode provider subagent contract", () => {
     expect(openCodeClient.calls.sessionMessages).toEqual([
       { sessionID: "ses_child_with_history", directory: "/workspace/child" },
     ]);
+    await session.close();
+  });
+
+  test("derives hydrated child presentation facts from the session record and last assistant message", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionCreateResponse = { data: { id: "ses_parent_facts" } };
+    openCodeClient.sessionChildrenResponses = [
+      {
+        data: [
+          {
+            id: "ses_child_hydrated_facts",
+            parentID: "ses_parent_facts",
+            title: "Chase the regression",
+            model: { providerID: "anthropic", id: "claude-sonnet-5", variant: "max" },
+          },
+        ],
+      },
+      { data: [] },
+    ];
+    openCodeClient.sessionMessagesResponse = {
+      data: [
+        {
+          info: {
+            id: "msg_child_hydrated",
+            sessionID: "ses_child_hydrated_facts",
+            role: "assistant",
+            agent: "explore",
+            providerID: "anthropic",
+            modelID: "claude-sonnet-5",
+            variant: "max",
+            time: { created: 2, completed: 3 },
+            tokens: { input: 800, output: 150, reasoning: 30, cache: { read: 15, write: 5 } },
+          },
+          parts: [
+            {
+              id: "prt_child_hydrated",
+              sessionID: "ses_child_hydrated_facts",
+              messageID: "msg_child_hydrated",
+              type: "text",
+              text: "Found it.",
+              time: { start: 2, end: 3 },
+            },
+          ],
+        },
+      ],
+    };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/workspace/repo" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await vi.waitFor(() => expect(openCodeClient.calls.sessionChildren).toHaveLength(2));
+    expect(events).toContainEqual({
+      type: "provider_subagent",
+      provider: "opencode",
+      event: {
+        type: "upsert",
+        id: "ses_child_hydrated_facts",
+        description: "Chase the regression",
+        status: "completed",
+        subtitle: "claude-sonnet-5 · Max",
+      },
+    });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "provider_subagent",
+        provider: "opencode",
+        event: {
+          type: "upsert",
+          id: "ses_child_hydrated_facts",
+          title: "explore",
+          subtitle: "explore · claude-sonnet-5 · Max · 1k tokens",
+        },
+      }),
+    );
     await session.close();
   });
 

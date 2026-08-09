@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "../support/fixtures";
-import { TerminalE2EHarness } from "../support/helpers/terminal-dsl";
+import { TerminalE2EHarness, withTerminalInApp } from "../support/helpers/terminal-dsl";
+import { getTerminalBufferText } from "../support/helpers/terminal-perf";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 import { getServerId } from "../support/helpers/server-id";
 
@@ -97,6 +98,15 @@ async function captureTerminalText(
   return capture.lines.join("\n");
 }
 
+async function waitForTerminalMarker(page: Page, marker: string): Promise<void> {
+  await expect
+    .poll(() => getTerminalBufferText(page), {
+      message: "terminal stream should deliver PTY output after focus returns",
+      timeout: 10_000,
+    })
+    .toContain(marker);
+}
+
 test.describe("terminal PTY size claim under lost window focus", () => {
   let harness: TerminalE2EHarness;
 
@@ -173,5 +183,23 @@ test.describe("terminal PTY size claim under lost window focus", () => {
         { timeout: 15_000, intervals: [100, 250, 500] },
       )
       .toEqual({ rows: rendered.rows, cols: rendered.cols });
+  });
+
+  test("terminal output remains subscribed after window focus returns", async ({ page }) => {
+    await withTerminalInApp(page, harness, { name: "focus-return-output" }, async (terminal) => {
+      const marker = `OUTPUT_AFTER_FOCUS_${Date.now()}`;
+
+      await setWindowFocused(page, false);
+      await page.waitForTimeout(50);
+      await setWindowFocused(page, true);
+      await page.waitForTimeout(50);
+
+      harness.client.sendTerminalInput(terminal.id, {
+        type: "input",
+        data: `printf "\\n${marker}\\n"\n`,
+      });
+
+      await waitForTerminalMarker(page, marker);
+    });
   });
 });
