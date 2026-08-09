@@ -1443,19 +1443,6 @@ export const ja: TranslationResources = {
         show: "詳細設定を表示",
         hide: "詳細設定を非表示",
       },
-      headers: {
-        title: "カスタムヘッダー",
-        add: "ヘッダーを追加",
-        name: "名前",
-        value: "値",
-        remove: "ヘッダーを削除",
-        errors: {
-          missingName: "各ヘッダーの名前を入力してください",
-          invalidName: "{{name}} は有効なヘッダー名ではありません",
-          invalidValue: "{{name}} に無効な改行が含まれています",
-          duplicateName: "{{name}} が複数回入力されています",
-        },
-      },
       passwordVisibility: {
         show: "パスワードを表示",
         hide: "パスワードを非表示",

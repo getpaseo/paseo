@@ -1412,19 +1412,6 @@ export const zhCN: TranslationResources = {
         show: "显示高级选项",
         hide: "隐藏高级选项",
       },
-      headers: {
-        title: "自定义请求头",
-        add: "添加请求头",
-        name: "名称",
-        value: "值",
-        remove: "删除请求头",
-        errors: {
-          missingName: "请为每个请求头输入名称",
-          invalidName: "{{name}} 不是有效的请求头名称",
-          invalidValue: "{{name}} 包含无效换行符",
-          duplicateName: "{{name}} 输入了多次",
-        },
-      },
       passwordVisibility: {
         show: "显示密码",
         hide: "隐藏密码",
