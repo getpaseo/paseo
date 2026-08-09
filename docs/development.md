@@ -458,6 +458,8 @@ Use `npm run cli` to run the in-repo CLI from source (`npx tsx packages/cli/src/
 
 Canonical automation uses `paseo workspace create/ls/archive`, `paseo heartbeat create/update/delete`, and the full `paseo schedule` group. MCP heartbeat automation is intentionally smaller: create and delete only. Detach remains an explicit user lifecycle action rather than an agent tool. `paseo run --new-workspace local|worktree` composes workspace creation with agent creation. The old `paseo worktree` and `paseo run --worktree` forms are hidden compatibility aliases.
 
+`paseo run --provider-options <json-or-path>` forwards provider-native settings through the daemon's provider schema before provider discovery or process creation. Use it when automation must request an exact execution policy. For example, Codex workspace-only writes with network disabled use `{"sandbox_mode":"workspace-write","sandbox_workspace_write":{"network_access":false}}`. Unsupported keys and values fail before the provider starts; this flag does not create a cross-provider sandbox guarantee. Prefer a permission-restricted file for sensitive values because inline JSON is visible in shell history and process arguments; validated options are also persisted with the agent configuration.
+
 ```bash
 npm run cli -- ls -a -g              # List all agents globally
 npm run cli -- ls -a -g --json       # Same, as JSON

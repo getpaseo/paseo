@@ -996,6 +996,45 @@ test("normalizeConfig injects the provider default model while leaving mode omit
   expect(snapshot.config.modeId).toBeUndefined();
 });
 
+test("normalizeConfig rejects provider options before default model discovery", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-options-test-"));
+  class CatalogRecordingClient extends TestAgentClient {
+    fetchCatalogCalls = 0;
+
+    override async fetchCatalog() {
+      this.fetchCatalogCalls += 1;
+      return super.fetchCatalog();
+    }
+  }
+  const client = new CatalogRecordingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    providerDefinitions: {
+      codex: {
+        enabled: true,
+        validateOptions: () => {
+          throw new Error("invalid provider options");
+        },
+      },
+    },
+    logger,
+  });
+
+  await expect(
+    manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        providerOptions: { sandbox_mode: "not-a-mode" },
+      },
+      undefined,
+      { workspaceId: undefined },
+    ),
+  ).rejects.toThrow("invalid provider options");
+  expect(client.fetchCatalogCalls).toBe(0);
+  expect(client.createdConfigs).toEqual([]);
+});
+
 test("normalizeConfig leaves Claude mode omitted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-claude-default-test-"));
   const manager = new AgentManager({
