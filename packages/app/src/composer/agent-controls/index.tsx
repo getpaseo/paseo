@@ -61,6 +61,7 @@ import {
   getFeatureHighlightColor,
   getFeatureTooltip,
   getAgentControlHintKey,
+  resolveRelativeAgentControlId,
   resolveAgentModelSelection,
 } from "@/composer/agent-controls/utils";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -81,6 +82,9 @@ import { ComposerControlLayoutProvider } from "@/composer/agent-controls/layout-
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { CompactModelSheet } from "@/composer/agent-controls/model-sheet";
+import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
+import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 
 interface AgentControlOption {
   id: string;
@@ -401,6 +405,106 @@ function buildOpenChangeHandler(
   };
 }
 
+function useModelCycleShortcut(input: {
+  disabled: boolean;
+  favoriteKeys: ReadonlySet<string>;
+  isActiveComposer: boolean;
+  modelOptions: AgentControlOption[] | undefined;
+  onSelectModel: ((modelId: string) => void) | undefined;
+  provider: string;
+  selectedModelId: string | undefined;
+}) {
+  const handlerIdRef = useRef(`model-control:${Math.random().toString(36).slice(2)}`);
+  const favoriteModelOptions = input.modelOptions?.filter((model) =>
+    input.favoriteKeys.has(buildFavoriteModelKey({ provider: input.provider, modelId: model.id })),
+  );
+  const handle = useCallback(
+    (action: KeyboardActionDefinition): boolean => {
+      let delta: 1 | -1 | null = null;
+      if (action.id === "message-input.favorite-model-previous") {
+        delta = -1;
+      } else if (
+        action.id === "message-input.favorite-model-next" ||
+        action.id === "message-input.model-cycle"
+      ) {
+        delta = 1;
+      }
+      if (delta === null) return false;
+      if (input.disabled || !input.isActiveComposer || !input.onSelectModel) return false;
+      const nextModelId = resolveRelativeAgentControlId({
+        options: favoriteModelOptions ?? [],
+        selectedId: input.selectedModelId,
+        delta,
+      });
+      if (!nextModelId) return false;
+      input.onSelectModel(nextModelId);
+      return true;
+    },
+    [favoriteModelOptions, input],
+  );
+
+  useKeyboardActionHandler({
+    handlerId: handlerIdRef.current,
+    actions: [
+      "message-input.model-cycle",
+      "message-input.favorite-model-previous",
+      "message-input.favorite-model-next",
+    ],
+    enabled:
+      input.isActiveComposer &&
+      !input.disabled &&
+      Boolean(input.onSelectModel) &&
+      (favoriteModelOptions?.length ?? 0) > 1,
+    priority: 200,
+    handle,
+  });
+}
+
+function useThinkingStrengthShortcut(input: {
+  disabled: boolean;
+  isActiveComposer: boolean;
+  thinkingOptions: AgentControlOption[] | undefined;
+  onSelectThinkingOption: ((thinkingOptionId: string) => void) | undefined;
+  selectedThinkingOptionId: string | undefined;
+}) {
+  const handlerIdRef = useRef(`thinking-control:${Math.random().toString(36).slice(2)}`);
+  const handle = useCallback(
+    (action: KeyboardActionDefinition): boolean => {
+      let delta: 1 | -1 | null = null;
+      if (action.id === "message-input.thinking-decrease") {
+        delta = -1;
+      } else if (action.id === "message-input.thinking-increase") {
+        delta = 1;
+      }
+      if (delta === null) return false;
+      if (input.disabled || !input.isActiveComposer || !input.onSelectThinkingOption) {
+        return false;
+      }
+      const nextThinkingId = resolveRelativeAgentControlId({
+        options: input.thinkingOptions ?? [],
+        selectedId: input.selectedThinkingOptionId,
+        delta,
+      });
+      if (!nextThinkingId) return false;
+      input.onSelectThinkingOption(nextThinkingId);
+      return true;
+    },
+    [input],
+  );
+
+  useKeyboardActionHandler({
+    handlerId: handlerIdRef.current,
+    actions: ["message-input.thinking-decrease", "message-input.thinking-increase"],
+    enabled:
+      input.isActiveComposer &&
+      !input.disabled &&
+      Boolean(input.onSelectThinkingOption) &&
+      (input.thinkingOptions?.length ?? 0) > 1,
+    priority: 200,
+    handle,
+  });
+}
+
 function ControlledAgentControls({
   provider,
   providerOptions,
@@ -431,6 +535,7 @@ function ControlledAgentControls({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isCompactFormFactor = useIsCompactFormFactor();
+  const { isActiveComposer } = useComposerKeyboardScope();
   const isCompact = isCompactLayout ?? isCompactFormFactor;
   const { fontScale } = useWindowDimensions();
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
@@ -608,6 +713,23 @@ function ControlledAgentControls({
     },
     [onSelectModel, onSelectProviderAndModel, provider],
   );
+
+  useModelCycleShortcut({
+    disabled,
+    favoriteKeys,
+    isActiveComposer,
+    modelOptions,
+    onSelectModel,
+    provider,
+    selectedModelId,
+  });
+  useThinkingStrengthShortcut({
+    disabled,
+    isActiveComposer,
+    thinkingOptions,
+    onSelectThinkingOption,
+    selectedThinkingOptionId,
+  });
 
   const providerPressableStyle = useMemo(
     () =>
