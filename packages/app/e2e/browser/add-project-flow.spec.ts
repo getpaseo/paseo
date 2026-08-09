@@ -13,6 +13,7 @@ import {
   expectAddProjectPage,
   expectNewWorkspaceForAddedProject,
   openAddProjectFlow,
+  openAddProjectHostSelection,
 } from "../support/helpers/add-project-flow";
 import { gotoAppShell } from "../support/helpers/app";
 import {
@@ -65,12 +66,13 @@ async function expectProjectHasNoWorkspaces(projectId: string): Promise<void> {
 test.describe("Add Project command-center flow", () => {
   test.describe.configure({ timeout: 180_000 });
 
-  test("a single connected host opens directly on method selection", async ({ page }) => {
+  test("method selection has no search field", async ({ page }) => {
     await gotoAppShell(page);
 
     await openAddProjectFlow(page);
 
     await expect(addProjectFlowMethod(page, "directory-search")).toBeVisible();
+    await expect(addProjectFlowInput(page)).toHaveCount(0);
     await expect(page.getByTestId("add-project-flow-page-host")).toHaveCount(0);
   });
 
@@ -146,7 +148,7 @@ test.describe("Add Project command-center flow", () => {
         serverId: SECONDARY_HOST_ID,
         endpoint: `localhost:${secondaryHost.port}`,
       });
-      await openAddProjectFlow(page, "host");
+      await openAddProjectHostSelection(page);
 
       await page.keyboard.press("ArrowDown");
       await page.keyboard.press("Enter");
@@ -155,7 +157,7 @@ test.describe("Add Project command-center flow", () => {
       await expect(addProjectFlow(page)).toContainText(SECONDARY_HOST_LABEL);
     });
 
-    test("Escape and Back restore page input and active selection before closing at the root", async ({
+    test("Escape and Back restore searchable page input before closing at the root", async ({
       page,
     }) => {
       await gotoAppShell(page);
@@ -168,21 +170,20 @@ test.describe("Add Project command-center flow", () => {
         serverId: SECONDARY_HOST_ID,
         endpoint: `localhost:${secondaryHost.port}`,
       });
-      await openAddProjectFlow(page, "host");
+      await openAddProjectHostSelection(page);
 
       await addProjectFlowInput(page).fill("o");
       await page.keyboard.press("ArrowDown");
       await page.keyboard.press("Enter");
       await expectAddProjectPage(page, "method");
 
-      await addProjectFlowInput(page).fill("new");
-      await page.keyboard.press("Enter");
+      await chooseAddProjectMethod(page, "new-directory");
       await expectAddProjectPage(page, "new-directory-parent");
       await page.keyboard.press("Escape");
 
       await expectAddProjectPage(page, "method");
-      await expect(addProjectFlowInput(page)).toHaveValue("new");
-      await page.keyboard.press("Enter");
+      await expect(addProjectFlowInput(page)).toHaveCount(0);
+      await chooseAddProjectMethod(page, "new-directory");
       await expectAddProjectPage(page, "new-directory-parent");
       await addProjectFlowBack(page).click();
 
@@ -216,7 +217,7 @@ test.describe("Add Project command-center flow", () => {
           serverId: SECONDARY_HOST_ID,
           endpoint: `localhost:${secondaryHost.port}`,
         });
-        await openAddProjectFlow(page, "host");
+        await openAddProjectHostSelection(page);
         await addProjectFlowHost(page, SECONDARY_HOST_ID).click();
         await expectAddProjectPage(page, "method");
 

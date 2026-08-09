@@ -222,12 +222,12 @@ function pageTitle(page: AddProjectPage): string {
   }
 }
 
-function pagePlaceholder(page: AddProjectPage): string {
+type AddProjectInputPage = Exclude<AddProjectPage, { kind: "method" }>;
+
+function pagePlaceholder(page: AddProjectInputPage): string {
   switch (page.kind) {
     case "host":
       return "Search hosts...";
-    case "method":
-      return "Search methods...";
     case "directory-search":
       return "Search directories or enter a path...";
     case "github-search":
@@ -240,7 +240,7 @@ function pagePlaceholder(page: AddProjectPage): string {
   }
 }
 
-function pageInput(page: AddProjectPage): string {
+function pageInput(page: AddProjectInputPage): string {
   return page.kind === "new-directory-name" ? page.name : page.query;
 }
 
@@ -374,7 +374,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const inputRef = useRef<TextInput>(null);
   const submissionInFlightRef = useRef(false);
   const browseInFlightRef = useRef(false);
-  const query = page.kind === "new-directory-name" ? "" : page.query;
+  const query = page.kind === "new-directory-name" || page.kind === "method" ? "" : page.query;
   const [debouncedQuery, setDebouncedQuery] = useState(query);
 
   useEffect(() => {
@@ -389,6 +389,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   }, [query]);
 
   useEffect(() => {
+    if (page.kind === "method") return;
     const timer = setTimeout(() => inputRef.current?.focus(), 0);
     return () => clearTimeout(timer);
   }, [page.kind]);
@@ -599,23 +600,15 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     }
     if (page.kind === "method") {
       if (!host) return [];
-      const normalized = page.query.trim().toLowerCase();
-      return buildAddProjectMethods(host)
-        .filter(
-          (method) =>
-            !normalized ||
-            method.label.toLowerCase().includes(normalized) ||
-            method.description.toLowerCase().includes(normalized),
-        )
-        .map((method) => ({
-          id: method.id,
-          title: method.label,
-          subtitle: method.description,
-          icon: methodIcon(method.id),
-          disabled: method.disabled,
-          testID: `add-project-flow-method-${method.id}`,
-          select: () => selectMethod(method.id),
-        }));
+      return buildAddProjectMethods(host).map((method) => ({
+        id: method.id,
+        title: method.label,
+        subtitle: method.description,
+        icon: methodIcon(method.id),
+        disabled: method.disabled,
+        testID: `add-project-flow-method-${method.id}`,
+        select: () => selectMethod(method.id),
+      }));
     }
     if (page.kind === "directory-search") {
       return pathOptions.map((option) => {
@@ -863,21 +856,23 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
                 ) : null}
               </View>
             </View>
-            <ThemedTextInput
-              key={page.kind}
-              ref={inputRef}
-              value={pageInput(page)}
-              onChangeText={handleInputChange}
-              onKeyPress={isWeb ? undefined : handleNativeKeyPress}
-              onSubmitEditing={isWeb ? undefined : submitActive}
-              placeholder={pagePlaceholder(page)}
-              style={styles.input}
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={!isSubmitting}
-              returnKeyType="go"
-              testID="add-project-flow-input"
-            />
+            {page.kind === "method" ? null : (
+              <ThemedTextInput
+                key={page.kind}
+                ref={inputRef}
+                value={pageInput(page)}
+                onChangeText={handleInputChange}
+                onKeyPress={isWeb ? undefined : handleNativeKeyPress}
+                onSubmitEditing={isWeb ? undefined : submitActive}
+                placeholder={pagePlaceholder(page)}
+                style={styles.input}
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!isSubmitting}
+                returnKeyType="go"
+                testID="add-project-flow-input"
+              />
+            )}
           </View>
           <ScrollView
             style={styles.results}
