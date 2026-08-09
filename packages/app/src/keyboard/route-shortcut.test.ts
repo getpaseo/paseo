@@ -351,6 +351,21 @@ describe("routeKeyboardShortcut — callbacks and pickers", () => {
 });
 
 describe("routeKeyboardShortcut — toggle dialogs", () => {
+  it("opens the command center scoped to files from a workspace", () => {
+    expect(
+      routeKeyboardShortcut({ action: "command-center.files", payload: null }, makeCtx()),
+    ).toEqual<ShortcutAction>({ kind: "command-center-toggle", nextOpen: true, scope: "files" });
+  });
+
+  it("leaves the file-search shortcut to the host outside a workspace", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "command-center.files", payload: null },
+        makeCtx({ pathname: "/settings" }),
+      ),
+    ).toEqual<ShortcutAction>({ kind: "none" });
+  });
+
   it("opens the command center when closed", () => {
     expect(
       routeKeyboardShortcut(

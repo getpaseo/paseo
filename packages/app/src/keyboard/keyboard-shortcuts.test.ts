@@ -149,16 +149,16 @@ describe("keyboard-shortcuts", () => {
       action: "workspace.new",
     },
     {
-      name: "matches Cmd+P to switch project on mac",
+      name: "matches Cmd+P to search workspace files on mac",
       event: { key: "p", code: "KeyP", metaKey: true },
       context: { isMac: true, commandCenterOpen: false },
-      action: "workspace.project.pick",
+      action: "command-center.files",
     },
     {
-      name: "matches Ctrl+P to switch project on non-mac",
+      name: "matches Ctrl+P to search workspace files on non-mac",
       event: { key: "p", code: "KeyP", ctrlKey: true },
       context: { isMac: false, commandCenterOpen: false, focusScope: "other" },
-      action: "workspace.project.pick",
+      action: "command-center.files",
     },
     {
       name: "matches question-mark shortcut to toggle the shortcuts dialog",

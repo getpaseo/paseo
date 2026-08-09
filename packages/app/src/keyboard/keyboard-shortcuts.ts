@@ -165,6 +165,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-pane-move-tab-down": "settings.shortcuts.help.moveTabDown",
   "workspace-pane-close": "settings.shortcuts.help.closePane",
   "workspace-terminal-new": "settings.shortcuts.help.newTerminal",
+  "search-files": "settings.shortcuts.help.searchFiles",
   "toggle-command-center": "settings.shortcuts.help.toggleCommandCenter",
   "show-shortcuts": "settings.shortcuts.help.showKeyboardShortcuts",
   "toggle-left-sidebar": "settings.shortcuts.help.toggleLeftSidebar",
@@ -244,7 +245,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-project-pick-cmd-p-mac",
     action: "workspace.project.pick",
-    combo: "Cmd+P",
+    combo: "",
     when: { mac: true, commandCenter: false },
     help: {
       id: "switch-project",
@@ -255,7 +256,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-project-pick-ctrl-p-non-mac",
     action: "workspace.project.pick",
-    combo: "Ctrl+P",
+    combo: "",
     when: { mac: false, commandCenter: false, terminal: false },
     help: {
       id: "switch-project",
@@ -703,6 +704,28 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   },
 
   // --- Command center ---
+  {
+    id: "command-center-files-cmd-p-mac",
+    action: "command-center.files",
+    combo: "Cmd+P",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "search-files",
+      section: "panels",
+      label: "Search files",
+    },
+  },
+  {
+    id: "command-center-files-ctrl-p-non-mac",
+    action: "command-center.files",
+    combo: "Ctrl+P",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "search-files",
+      section: "panels",
+      label: "Search files",
+    },
+  },
   {
     id: "command-center-toggle-cmd-k-mac",
     action: "command-center.toggle",

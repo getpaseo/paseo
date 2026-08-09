@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, ChevronRight, Folder } from "lucide-react-native";
+import { Check, ChevronRight, Folder, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   BottomSheetBackdrop,
@@ -22,6 +22,7 @@ import {
   type BottomSheetFlatListMethods,
 } from "@gorhom/bottom-sheet";
 import { AgentStatusDot } from "@/components/agent-status-dot";
+import { MaterialFileIcon } from "@/components/material-file-icon";
 import { Shortcut } from "@/components/ui/shortcut";
 import {
   IsolatedBottomSheetModal,
@@ -37,7 +38,10 @@ import {
   useWebOverlayRegistration,
 } from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
-import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
+import {
+  useKeyboardShortcutsStore,
+  type CommandCenterScope,
+} from "@/stores/keyboard-shortcuts-store";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import {
@@ -56,11 +60,13 @@ import {
   preserveActiveResultId,
   projectCommandCenterRows,
   type CommandCenterAgentResult,
+  type CommandCenterFileResult,
   type CommandCenterListRow,
   type CommandCenterResult,
   type CommandCenterResultSection,
   type CommandCenterWorkspaceResult,
 } from "./results";
+import { useWorkspaceFileSearch } from "./workspace-file-search";
 
 const ThemedBottomSheetTextInput = withUnistyles(BottomSheetTextInput, (theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
@@ -73,6 +79,7 @@ const ThemedCheck = withUnistyles(Check, (theme) => ({ color: theme.colors.foreg
 const ThemedChevronRight = withUnistyles(ChevronRight, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
+const ThemedX = withUnistyles(X, (theme) => ({ color: theme.colors.foregroundMuted }));
 const COMMAND_CENTER_SNAP_POINTS = ["60%", "90%"];
 const KEYBOARD_SHOULD_PERSIST_TAPS = "always" as const;
 const DEFAULT_CATEGORY_RESULT_LIMIT = 5;
@@ -191,6 +198,8 @@ function useBuiltInSections(open: boolean, query: string): CommandCenterResultSe
 
 interface CommandCenterState {
   open: boolean;
+  scope: CommandCenterScope;
+  clearScope(): void;
   query: string;
   setQuery(query: string): void;
   activeId: string | null;
@@ -199,27 +208,56 @@ interface CommandCenterState {
   rowIndexByResultId: ReadonlyMap<string, number>;
   offsets: readonly number[];
   inputRef: React.RefObject<TextInput | null>;
+  fileSearchLoading: boolean;
   close(): void;
   select(result: CommandCenterResult): void;
   key(key: string): boolean;
 }
 
 function useCommandCenterState(): CommandCenterState {
+  const { t } = useTranslation();
   const open = useKeyboardShortcutsStore((state) => state.commandCenterOpen);
+  const scope = useKeyboardShortcutsStore((state) => state.commandCenterScope);
   const setOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
+  const setScope = useKeyboardShortcutsStore((state) => state.setCommandCenterScope);
   const snapshot = useCommandCenterContributions();
   const inputRef = useRef<TextInput>(null);
   const previousOpenRef = useRef(open);
   const [query, setQuery] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const builtInSections = useBuiltInSections(open, query);
+  const {
+    entries: fileSearchEntries,
+    loading: fileSearchLoading,
+    openFile,
+  } = useWorkspaceFileSearch({
+    enabled: open && (scope === "files" || Boolean(query.trim())),
+    query,
+  });
+  const fileSections = useMemo<CommandCenterResultSection[]>(() => {
+    const results = fileSearchEntries.map<CommandCenterFileResult>((entry) => ({
+      kind: "file",
+      id: `file:${entry.path}`,
+      filePath: entry.path,
+      title: entry.name,
+      subtitle: entry.directory,
+      searchText: entry.path.toLowerCase(),
+      run: () => openFile(entry.path),
+    }));
+    return [{ id: "files", rank: 1, title: t("shell.commandCenter.files"), results }];
+  }, [fileSearchEntries, openFile, t]);
   const contributionSections = useMemo(
     () => buildContributionSections(snapshot.contributions, query),
     [query, snapshot.contributions],
   );
   const projection = useMemo(
-    () => projectCommandCenterRows([...contributionSections, ...builtInSections]),
-    [builtInSections, contributionSections],
+    () =>
+      projectCommandCenterRows(
+        scope === "files"
+          ? fileSections
+          : [...contributionSections, ...fileSections, ...builtInSections],
+      ),
+    [builtInSections, contributionSections, fileSections, scope],
   );
   const resolvedActiveId = preserveActiveResultId(activeId, projection.selectableResults);
 
@@ -239,6 +277,10 @@ function useCommandCenterState(): CommandCenterState {
         close();
         return true;
       }
+      if (pressed === "Backspace" && !query && scope) {
+        setScope(null);
+        return true;
+      }
       if (pressed === "Enter") {
         const selected = results.find((result) => result.id === resolvedActiveId);
         if (!selected) return false;
@@ -251,7 +293,7 @@ function useCommandCenterState(): CommandCenterState {
       setActiveId(moveActiveResultId(resolvedActiveId, results, direction));
       return true;
     },
-    [close, open, projection.selectableResults, resolvedActiveId, select],
+    [close, open, projection.selectableResults, query, resolvedActiveId, scope, select, setScope],
   );
 
   useEffect(() => {
@@ -277,6 +319,8 @@ function useCommandCenterState(): CommandCenterState {
 
   return {
     open,
+    scope,
+    clearScope: () => setScope(null),
     query,
     setQuery,
     activeId: resolvedActiveId,
@@ -285,6 +329,7 @@ function useCommandCenterState(): CommandCenterState {
     rowIndexByResultId: projection.rowIndexByResultId,
     offsets: projection.offsets,
     inputRef,
+    fileSearchLoading,
     close,
     select,
     key,
@@ -337,6 +382,27 @@ const ResultRow = memo(function ResultRow({ result, active, onSelect }: ResultRo
 });
 
 function ResultContent({ result }: { result: CommandCenterResult }) {
+  if (result.kind === "file") {
+    return (
+      <View style={styles.rowContent} testID={`command-center-file-${result.filePath}`}>
+        <View style={styles.rowMain}>
+          <View style={styles.iconSlot}>
+            <MaterialFileIcon fileName={result.title} size={16} />
+          </View>
+          <View style={styles.textContent}>
+            <Text style={styles.title} numberOfLines={1}>
+              {result.title}
+            </Text>
+            {result.subtitle ? (
+              <Text style={styles.subtitle} numberOfLines={1}>
+                {result.subtitle}
+              </Text>
+            ) : null}
+          </View>
+        </View>
+      </View>
+    );
+  }
   if (result.kind === "agent") {
     const agent = result.agent;
     return (
@@ -545,8 +611,14 @@ export function CommandCenter() {
   );
   const keyExtractor = useCallback((row: CommandCenterListRow) => row.key, []);
   const empty = useMemo(
-    () => <Text style={styles.emptyText}>{t("shell.commandCenter.noMatches")}</Text>,
-    [t],
+    () => (
+      <Text style={styles.emptyText}>
+        {state.fileSearchLoading
+          ? t("shell.commandCenter.searchingFiles")
+          : t("shell.commandCenter.noMatches")}
+      </Text>
+    ),
+    [state.fileSearchLoading, t],
   );
   const commonListProps = {
     data: state.rows,
@@ -606,7 +678,10 @@ export function CommandCenter() {
         keyboardBlurBehavior="restore"
         accessible={false}
       >
-        <View style={styles.bottomSheetHeader}>
+        <View style={[styles.bottomSheetHeader, styles.searchRow]}>
+          {state.scope === "files" ? (
+            <ScopePill label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
+          ) : null}
           <ThemedBottomSheetTextInput
             testID="command-center-input"
             ref={bottomSheetInputRef}
@@ -614,8 +689,12 @@ export function CommandCenter() {
             onChangeText={state.setQuery}
             onKeyPress={keyPress}
             onSubmitEditing={submit}
-            placeholder={t("shell.commandCenter.placeholder")}
-            style={styles.input}
+            placeholder={
+              state.scope === "files"
+                ? t("shell.commandCenter.filePlaceholder")
+                : t("shell.commandCenter.placeholder")
+            }
+            style={[styles.input, styles.growingInput]}
             autoCapitalize="none"
             autoCorrect={false}
             autoFocus
@@ -632,14 +711,21 @@ export function CommandCenter() {
         <View style={styles.overlay}>
           <Pressable style={styles.backdrop} onPress={state.close} />
           <View ref={setWebOverlayScope} testID="command-center-panel" style={styles.panel}>
-            <View style={styles.header}>
+            <View style={[styles.header, styles.searchRow]}>
+              {state.scope === "files" ? (
+                <ScopePill label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
+              ) : null}
               <ThemedTextInput
                 testID="command-center-input"
                 ref={state.inputRef}
                 value={state.query}
                 onChangeText={state.setQuery}
-                placeholder={t("shell.commandCenter.placeholder")}
-                style={styles.input}
+                placeholder={
+                  state.scope === "files"
+                    ? t("shell.commandCenter.filePlaceholder")
+                    : t("shell.commandCenter.placeholder")
+                }
+                style={[styles.input, styles.growingInput]}
                 autoCapitalize="none"
                 autoCorrect={false}
                 autoFocus
@@ -650,6 +736,21 @@ export function CommandCenter() {
         </View>
       </Modal>
     </OverlayLayerProvider>
+  );
+}
+
+function ScopePill({ label, onRemove }: { label: string; onRemove(): void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onRemove}
+      style={styles.scopePill}
+      testID="command-center-files-scope"
+    >
+      <Text style={styles.scopePillText}>{label}</Text>
+      <ThemedX size={12} strokeWidth={2.2} />
+    </Pressable>
   );
 }
 
@@ -690,6 +791,18 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     outlineWidth: 0,
   },
+  growingInput: { flex: 1, minWidth: 0 },
+  searchRow: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
+  scopePill: {
+    height: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface2,
+  },
+  scopePillText: { color: theme.colors.foreground, fontSize: theme.fontSize.xs },
   results: { flexGrow: 0 },
   sectionLabel: {
     paddingHorizontal: theme.spacing[4],
