@@ -1615,8 +1615,22 @@ async function getAheadBehind(
   if (!comparisonBaseRef) {
     return null;
   }
+  return getAheadBehindForComparisonRef(cwd, comparisonBaseRef, currentBranch, context);
+}
+
+export interface UpstreamStatus {
+  ref: string;
+  aheadBehind: AheadBehind;
+}
+
+async function getAheadBehindForComparisonRef(
+  cwd: string,
+  comparisonRef: string,
+  currentBranch: string,
+  context?: CheckoutContext,
+): Promise<AheadBehind | null> {
   const { stdout } = await runGitCommand(
-    ["rev-list", "--left-right", "--count", `${comparisonBaseRef}...${currentBranch}`],
+    ["rev-list", "--left-right", "--count", `${comparisonRef}...${currentBranch}`],
     { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
   );
   const [behindRaw, aheadRaw] = stdout.trim().split(/\s+/);
@@ -1626,11 +1640,6 @@ async function getAheadBehind(
     return null;
   }
   return { ahead, behind };
-}
-
-interface UpstreamStatus {
-  ref: string;
-  aheadBehind: AheadBehind;
 }
 
 async function getUpstreamStatus(
@@ -2554,7 +2563,7 @@ function parseCheckoutShortstat(text: string): CheckoutShortstat | null {
 
 const UNTRACKED_SHORTSTAT_MAX_FILES = 500;
 
-async function countUntrackedAdditions(cwd: string): Promise<number> {
+async function countUntrackedAdditions(cwd: string, throwOnGitError = false): Promise<number> {
   try {
     const { stdout } = await runGitCommand(["ls-files", "--others", "--exclude-standard"], {
       cwd,
@@ -2582,14 +2591,25 @@ async function countUntrackedAdditions(cwd: string): Promise<number> {
       }
     }
     return additions;
-  } catch {
+  } catch (error) {
+    if (throwOnGitError) {
+      throw error;
+    }
     return 0;
   }
+}
+
+function handleShortstatGitError(error: unknown, throwOnGitError = false): null {
+  if (throwOnGitError) {
+    throw error;
+  }
+  return null;
 }
 
 async function getCheckoutShortstatUncached(
   cwd: string,
   context?: CheckoutContext,
+  options?: { throwOnGitError?: boolean },
 ): Promise<CheckoutShortstat | null> {
   if (context?.facts?.isGit === false) {
     return null;
@@ -2632,7 +2652,7 @@ async function getCheckoutShortstatUncached(
         cwd,
         envOverlay: READ_ONLY_GIT_ENV,
       }),
-      countUntrackedAdditions(cwd),
+      countUntrackedAdditions(cwd, options?.throwOnGitError),
     ]);
 
     const tracked = parseCheckoutShortstat(stdout);
@@ -2644,8 +2664,8 @@ async function getCheckoutShortstatUncached(
       return { additions: untrackedAdditions, deletions: 0 };
     }
     return null;
-  } catch {
-    return null;
+  } catch (error) {
+    return handleShortstatGitError(error, options?.throwOnGitError);
   }
 }
 
@@ -2711,6 +2731,117 @@ export async function getCheckoutShortstat(
   options?: CheckoutReadCacheOptions,
 ): Promise<CheckoutShortstat | null> {
   return getOrLoadCheckoutShortstat(cwd, context, options);
+}
+
+export interface CheckoutRefDerivedState {
+  aheadBehind: AheadBehind | null;
+  diffStat: CheckoutShortstat | null;
+  upstreamStatus: UpstreamStatus | null;
+}
+
+function normalizeRemoteTrackingRef(ref: string): string {
+  return ref.startsWith("refs/remotes/") ? ref.slice("refs/remotes/".length) : ref;
+}
+
+function checkoutFactsConfiguredRemoteRef(
+  facts: Extract<CheckoutSnapshotFacts, { isGit: true }>,
+): string | null {
+  const trackedBranch = facts.branchMergeRef?.startsWith("refs/heads/")
+    ? facts.branchMergeRef.slice("refs/heads/".length)
+    : null;
+  return facts.branchRemoteName && facts.branchRemoteName !== "." && trackedBranch
+    ? `${facts.branchRemoteName}/${trackedBranch}`
+    : null;
+}
+
+function getCheckoutRefMovement(
+  facts: Extract<CheckoutSnapshotFacts, { isGit: true }>,
+  movedRemoteRefs: ReadonlySet<string>,
+): {
+  baseMoved: boolean;
+  comparisonRef: string | null;
+  currentBranch: string | null;
+  normalizedResolvedBase: string | null;
+  upstreamMoved: boolean;
+  upstreamRef: string | null;
+} {
+  const currentBranch = facts.currentBranch;
+  const comparisonRef = facts.comparisonBaseRef;
+  const normalizedMoves = new Set([...movedRemoteRefs].map(normalizeRemoteTrackingRef));
+  const normalizedResolvedBase = facts.resolvedBaseRef
+    ? branchNameFromRef(facts.resolvedBaseRef)
+    : null;
+  const shortstatRemoteRef =
+    currentBranch && (!normalizedResolvedBase || normalizedResolvedBase === currentBranch)
+      ? `origin/${currentBranch}`
+      : null;
+  const baseMoved = [facts.storedBaseRef, facts.resolvedBaseRef, comparisonRef, shortstatRemoteRef]
+    .filter((ref): ref is string => Boolean(ref))
+    .map(normalizeRemoteTrackingRef)
+    .some((ref) => normalizedMoves.has(ref));
+  const upstreamRef = facts.upstreamStatus?.ref ?? checkoutFactsConfiguredRemoteRef(facts);
+  const upstreamMoved = upstreamRef
+    ? normalizedMoves.has(normalizeRemoteTrackingRef(upstreamRef))
+    : false;
+  return {
+    baseMoved,
+    comparisonRef,
+    currentBranch,
+    normalizedResolvedBase,
+    upstreamMoved,
+    upstreamRef,
+  };
+}
+
+export async function getCheckoutRefDerivedState(
+  cwd: string,
+  facts: Extract<CheckoutSnapshotFacts, { isGit: true }>,
+  current: Pick<CheckoutRefDerivedState, "aheadBehind" | "diffStat">,
+  movedRemoteRefs: ReadonlySet<string>,
+  context?: CheckoutContext,
+): Promise<CheckoutRefDerivedState> {
+  const {
+    baseMoved,
+    comparisonRef,
+    currentBranch,
+    normalizedResolvedBase,
+    upstreamMoved,
+    upstreamRef,
+  } = getCheckoutRefMovement(facts, movedRemoteRefs);
+
+  let aheadBehind = current.aheadBehind;
+  let diffStat = current.diffStat;
+  if (baseMoved && currentBranch && facts.resolvedBaseRef) {
+    aheadBehind = await getAheadBehind(cwd, facts.resolvedBaseRef, currentBranch, {
+      ...context,
+      facts,
+    });
+  }
+  if (baseMoved || (upstreamMoved && currentBranch === normalizedResolvedBase)) {
+    diffStat = await getCheckoutShortstatUncached(
+      cwd,
+      { ...context, facts },
+      { throwOnGitError: true },
+    );
+  }
+
+  let upstreamStatus = facts.upstreamStatus;
+  if (upstreamMoved && currentBranch && upstreamRef) {
+    const normalizedUpstream = normalizeRemoteTrackingRef(upstreamRef);
+    const normalizedComparison = comparisonRef ? normalizeRemoteTrackingRef(comparisonRef) : null;
+    const upstreamAheadBehind =
+      baseMoved && normalizedComparison === normalizedUpstream
+        ? aheadBehind
+        : await getAheadBehindForComparisonRef(cwd, upstreamRef, currentBranch, context);
+    upstreamStatus = upstreamAheadBehind
+      ? {
+          ref: facts.upstreamStatus?.ref ?? `refs/remotes/${normalizedUpstream}`,
+          aheadBehind: upstreamAheadBehind,
+        }
+      : null;
+  }
+
+  return { aheadBehind, diffStat, upstreamStatus };
 }
 
 export interface CheckoutWorktreeState {
