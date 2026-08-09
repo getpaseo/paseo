@@ -24,6 +24,7 @@ const SURFACE_SELECTORS = {
   panel: '[data-testid="command-center-panel"]',
   header: '[data-testid="command-center-header"]',
   input: '[data-testid="command-center-input"]',
+  fileSearchStatus: '[data-testid="command-center-file-search-status"]',
   results: '[data-testid="command-center-results"]',
   scope: '[data-testid="command-center-files-scope"]',
   fileRow: '[data-testid^="command-center-file-row-"]',

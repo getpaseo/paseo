@@ -20,6 +20,7 @@ const FILE_SEARCH_DEBOUNCE_MS = 100;
 const FILE_SEARCH_LIMIT = 100;
 
 interface WorkspaceFileSearchState {
+  sourceKey: string | null;
   requestKey: string | null;
   entries: readonly WorkspaceFileSearchEntry[];
   loading: boolean;
@@ -27,6 +28,7 @@ interface WorkspaceFileSearchState {
 }
 
 const EMPTY_STATE: WorkspaceFileSearchState = {
+  sourceKey: null,
   requestKey: null,
   entries: [],
   loading: false,
@@ -59,12 +61,13 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
     serverId ? (state.sessions[serverId]?.client ?? null) : null,
   );
   const [state, setState] = useState<WorkspaceFileSearchState>(EMPTY_STATE);
+  const sourceKey = useMemo(
+    () => (serverId && workspaceId && cwd && client ? `${serverId}\0${workspaceId}\0${cwd}` : null),
+    [client, cwd, serverId, workspaceId],
+  );
   const requestKey = useMemo(
-    () =>
-      input.enabled && serverId && workspaceId && cwd && client
-        ? `${serverId}\0${cwd}\0${input.query}`
-        : null,
-    [client, cwd, input.enabled, input.query, serverId, workspaceId],
+    () => (input.enabled && sourceKey ? `${sourceKey}\0${input.query}` : null),
+    [input.enabled, input.query, sourceKey],
   );
 
   useEffect(() => {
@@ -76,7 +79,13 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
     const activeCwd = cwd;
 
     let cancelled = false;
-    setState({ requestKey, entries: [], loading: true, error: null });
+    setState((previous) => ({
+      sourceKey,
+      requestKey,
+      entries: previous.sourceKey === sourceKey ? previous.entries : [],
+      loading: true,
+      error: null,
+    }));
     async function search(): Promise<void> {
       try {
         const payload = await activeClient.getDirectorySuggestions({
@@ -88,6 +97,7 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
         });
         if (cancelled) return;
         setState({
+          sourceKey,
           requestKey,
           entries: payload.error ? [] : describeFileEntries(payload.entries),
           loading: false,
@@ -95,7 +105,13 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
         });
       } catch (error) {
         if (!cancelled) {
-          setState({ requestKey, entries: [], loading: false, error: errorMessage(error) });
+          setState({
+            sourceKey,
+            requestKey,
+            entries: [],
+            loading: false,
+            error: errorMessage(error),
+          });
         }
       }
     }
@@ -106,7 +122,7 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [client, cwd, input.query, requestKey]);
+  }, [client, cwd, input.query, requestKey, sourceKey]);
 
   const openFile = useCallback(
     (path: string) => {
@@ -124,7 +140,7 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
   );
 
   return {
-    entries: state.requestKey === requestKey ? state.entries : [],
+    entries: requestKey && state.sourceKey === sourceKey ? state.entries : [],
     loading: Boolean(requestKey) && (state.requestKey !== requestKey || state.loading),
     error: state.requestKey === requestKey ? state.error : null,
     openFile,

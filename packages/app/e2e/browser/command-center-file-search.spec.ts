@@ -42,7 +42,7 @@ test("workspace file search stays geometrically stable through delayed loading a
   });
 
   try {
-    await delayDirectorySuggestionResponses(page);
+    await delayDirectorySuggestionResponses(page, 800);
     await gotoWorkspace(page, seeded.workspaceId);
     await page.keyboard.press("Meta+P");
 
@@ -60,6 +60,13 @@ test("workspace file search stays geometrically stable through delayed loading a
       filename: FILE_NAME,
       path: FILE_DIRECTORY,
     });
+
+    await panel.getByTestId("command-center-input").fill("needle-layout");
+    await page.waitForTimeout(150);
+    expect(await row.isVisible()).toBe(true);
+    await expect(panel.getByTestId("command-center-file-search-loading")).toBeVisible();
+    await expect(panel.getByText("Searching files...", { exact: true })).toHaveCount(0);
+    await expect(panel.getByTestId("command-center-file-search-loading")).toBeHidden();
     await expectStableCommandCenterLayout(page);
 
     await row.click();

@@ -23,6 +23,7 @@ import {
 } from "@gorhom/bottom-sheet";
 import { AgentStatusDot } from "@/components/agent-status-dot";
 import { MaterialFileIcon } from "@/components/material-file-icon";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Shortcut } from "@/components/ui/shortcut";
 import {
   IsolatedBottomSheetModal,
@@ -80,6 +81,9 @@ const ThemedChevronRight = withUnistyles(ChevronRight, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
 const ThemedX = withUnistyles(X, (theme) => ({ color: theme.colors.foregroundMuted }));
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
 const COMMAND_CENTER_SNAP_POINTS = ["60%", "90%"];
 const KEYBOARD_SHOULD_PERSIST_TAPS = "always" as const;
 const DEFAULT_CATEGORY_RESULT_LIMIT = 5;
@@ -621,12 +625,8 @@ export function CommandCenter() {
   const keyExtractor = useCallback((row: CommandCenterListRow) => row.key, []);
   const empty = useMemo(
     () =>
-      state.fileSearchError ? null : (
-        <Text style={styles.emptyText}>
-          {state.fileSearchLoading
-            ? t("shell.commandCenter.searchingFiles")
-            : t("shell.commandCenter.noMatches")}
-        </Text>
+      state.fileSearchError || state.fileSearchLoading ? null : (
+        <Text style={styles.emptyText}>{t("shell.commandCenter.noMatches")}</Text>
       ),
     [state.fileSearchError, state.fileSearchLoading, t],
   );
@@ -725,6 +725,10 @@ export function CommandCenter() {
             autoCorrect={false}
             autoFocus
           />
+          <FileSearchLoadingIndicator
+            loading={state.fileSearchLoading}
+            label={t("shell.commandCenter.searchingFiles")}
+          />
         </View>
         <BottomSheetFlatList ref={bottomSheetListRef} {...commonListProps} />
       </IsolatedBottomSheetModal>
@@ -756,12 +760,32 @@ export function CommandCenter() {
                 autoCorrect={false}
                 autoFocus
               />
+              <FileSearchLoadingIndicator
+                loading={state.fileSearchLoading}
+                label={t("shell.commandCenter.searchingFiles")}
+              />
             </View>
             <FlatList ref={listRef} {...commonListProps} />
           </View>
         </View>
       </Modal>
     </OverlayLayerProvider>
+  );
+}
+
+function FileSearchLoadingIndicator({ loading, label }: { loading: boolean; label: string }) {
+  return (
+    <View style={styles.fileSearchStatus} testID="command-center-file-search-status">
+      {loading ? (
+        <View
+          accessibilityLabel={label}
+          accessibilityRole="progressbar"
+          testID="command-center-file-search-loading"
+        >
+          <ThemedLoadingSpinner size={14} />
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -820,6 +844,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   growingInput: { flex: 1, minWidth: 0 },
   searchRow: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
+  fileSearchStatus: { width: 14, height: 14, alignItems: "center", justifyContent: "center" },
   scopePill: {
     height: 24,
     flexDirection: "row",
