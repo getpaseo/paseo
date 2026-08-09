@@ -145,13 +145,24 @@ allow_outputs:
     required: true
 ```
 
-Hub counts an actual capability emission; ordinary assistant text does not satisfy a required output. A required declaration must resolve to a registered, available Hub capability for that execution context, or dispatch rejects the step with an actionable configuration error. If delivery fails, the attempt is retryable; if the agent tries to finish first, Hub keeps the execution recoverable and names the concrete output tool before retrying `hub.finish_execution`. A required output must have an effective `max` of at least `1`, or activation rejects the configuration. Omitting `required` preserves optional-output behavior and does not change the agent's permission mode. GitHub has no reply capability; a step acts through the `gh` CLI with the token its [`github` block](/docs/hub/github) grants.
+`required: true` means the step must actually emit the capability. Assistant text does not count.
+
+- A required output must resolve to a registered, available capability for the execution, or dispatch rejects the step.
+- A required output needs an effective `max` of at least `1`, or activation rejects the configuration.
+- Failed delivery is retryable. An agent that tries to finish first is told the concrete output tool to call, then `hub.finish_execution` is retried.
+
+Omitting `required` keeps the output optional. GitHub has no reply capability; a step acts through the `gh` CLI with the token its [`github` block](/docs/hub/github) grants.
 
 A declaration grants the tool. The step's prompt still has to tell the agent to call `hub.reply`, and to call `hub.finish_execution` when it is done. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).
 
 ## Prompt partials
 
-`include` paths are relative to `.paseo/partials/`. For GitHub configuration, Hub reads them at the exact configuration commit and stores the resolved content and SHA-256 hash in the immutable revision. For `paseo hub deploy`, the CLI reads the referenced files from the local project root and sends them in the optional `partials` bundle; the bundle path omits the `.paseo/partials/` prefix. Missing files, unsafe paths, symlinks, submodules, directories, duplicate or unexpected bundle entries, and nested includes are rejected. Manual configurations cannot use repository partials.
+`include` paths are relative to `.paseo/partials/`.
+
+- GitHub configuration: Hub reads each file at the exact configuration commit and stores the resolved content and SHA-256 hash in the immutable revision.
+- `paseo hub deploy`: the CLI reads the referenced files from the local project root and sends them in the optional `partials` bundle. The bundle path omits the `.paseo/partials/` prefix.
+- Missing files, unsafe paths, symlinks, submodules, directories, duplicate or unexpected bundle entries, and nested includes are rejected.
+- Manual configurations cannot use repository partials.
 
 ## Deadlines
 

@@ -45,13 +45,19 @@ allow_outputs:
 
 Keep the configuration repository protected. Push access to `.paseo/hub.yml` can change which connections, daemons, working directories, provider options, and outputs a project uses.
 
-Keep secrets and sensitive repositories outside the agent's reachable cwd, filesystem, and network boundary. Set `cwd` to the smallest working directory the step needs, do not mount unrelated repositories, and do not place provider credentials or deployment secrets inside that directory. Use a dedicated OS user, container, VM, or provider-native containment when the host boundary needs to be stronger than a working-directory convention.
+Keep secrets and sensitive repositories outside the agent's reachable cwd, filesystem, and network boundary.
+
+- Set `cwd` to the smallest working directory the step needs.
+- Do not mount unrelated repositories or place provider credentials and deployment secrets inside it.
+- Use a dedicated OS user, container, VM, or provider-native containment when the host boundary needs to be stronger than a working-directory convention.
 
 Allowlists reduce accidental exposure. They do not prevent a permitted account from being compromised, and they do not make prompt injection harmless. Review the input path, host boundary, provider policy, and output authority together.
 
 ## Add a classifier as defense in depth
 
-A read-only classifier, including one using a frontier model, with narrow instructions can reduce exposure by deciding whether downstream work should run. Use a short deadline, a finite output schema, and no reply or implementation output on that step. Treat the request as untrusted data in the classifier prompt, and keep it in its own `<user-prompt>` block. The tags mark where the request starts and ends; the limits come from the trigger filters, provider policy, and output authority on this page.
+A read-only classifier — even one using a frontier model — with narrow instructions can reduce exposure by deciding whether downstream work should run. Give it a short deadline, a finite output schema, and no reply or implementation output.
+
+Treat the request as untrusted data in the classifier prompt, and keep it in its own `<user-prompt>` block. The tags mark where the request starts and ends; the limits come from the trigger filters, provider policy, and output authority on this page.
 
 The classifier is a useful layer, not a security boundary or a silver bullet. Keep it separate from the privileged worker. Only a final branch should receive reply, pull-request, or other output authority when it needs it.
 
@@ -175,7 +181,9 @@ Paseo translates those structured identities into each provider's native exact g
 | Codex    | The exact names in `mcp_servers.hub.enabled_tools`, with each exact tool set to `approval_mode: "approve"` while the server default remains `prompt` |
 | OpenCode | `permission` rules named `hub_finish_execution` and, when materialized, `hub_reply`, with pattern `*` and action `allow`                             |
 
-The daemon requires every preapproval to name an MCP server included in the same request. Provider definitions own the mapping and advertise whether they support exact MCP preapproval. Unsupported providers fail closed with `tool_policy_unsupported`; they do not receive a broad fallback. Hub also requires the daemon to acknowledge that the policy was applied before treating a create as successful.
+- Every preapproval must name an MCP server included in the same request.
+- Provider definitions own the mapping and advertise whether they support exact MCP preapproval. Unsupported providers fail closed with `tool_policy_unsupported`; there is no broad fallback.
+- The daemon must acknowledge the applied policy before Hub treats a create as successful.
 
 `allowedTools` is Claude's application-layer MCP preapproval. It is not an OS containment mechanism. Do not add `Bash`, `Edit`, or `Write` to Hub's tool policy to try to control the filesystem; configure the provider's native permission and sandbox settings, and use an external host boundary when required.
 
