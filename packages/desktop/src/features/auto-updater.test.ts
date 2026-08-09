@@ -4,116 +4,96 @@ import path from "node:path";
 import { UUID } from "builder-util-runtime";
 import { describe, expect, it, vi } from "vitest";
 
+const { autoUpdaterMock } = vi.hoisted(() => {
+  const handlers = new Map<string, (value: unknown) => void>();
+  return {
+    autoUpdaterMock: {
+      handlers,
+      logger: {
+        debug: vi.fn(),
+        error: vi.fn((message: unknown) => console.error(message)),
+        info: vi.fn(),
+        warn: vi.fn(),
+      },
+      checkForUpdates: vi.fn(),
+      downloadUpdate: vi.fn(),
+      on: vi.fn((event: string, handler: (value: unknown) => void) => {
+        handlers.set(event, handler);
+      }),
+      quitAndInstall: vi.fn(),
+    },
+  };
+});
+
 vi.mock("electron", () => ({
   app: {
     getPath: vi.fn(),
+    isPackaged: true,
   },
 }));
 
 vi.mock("electron-updater", () => ({
-  get autoUpdater() {
-    throw new Error("autoUpdater accessed before the update runtime is configured");
-  },
+  autoUpdater: autoUpdaterMock,
 }));
 
 import {
   bucketFromStagingUserId,
-  ElectronAppUpdateRuntime,
-  type ElectronUpdaterRuntime,
+  checkForAppUpdate,
   resolveStagingUserId,
   rolloutManifestSchema,
   shouldAdmitToRollout,
   shouldInstallAppUpdateOnQuit,
 } from "./auto-updater";
 
-class FakeElectronUpdater implements ElectronUpdaterRuntime {
-  allowDowngrade = false;
-  allowPrerelease = false;
-  autoDownload = false;
-  autoInstallOnAppQuit = true;
-  autoRunAppAfterInstall = true;
-  channel: string | null = null;
-  isUserWithinRollout: ElectronUpdaterRuntime["isUserWithinRollout"] = async () => true;
-  loggedErrors: unknown[] = [];
-  logger: ElectronUpdaterRuntime["logger"] = {
-    debug: () => undefined,
-    error: (message) => this.loggedErrors.push(message),
-    info: () => undefined,
-    warn: () => undefined,
-  };
-
-  private readonly handlers = new Map<string, unknown>();
-  private nextCheckError: Error | null = null;
-
-  on: ElectronUpdaterRuntime["on"] = ((event: string, handler: unknown) => {
-    this.handlers.set(event, handler);
-    return this;
-  }) as ElectronUpdaterRuntime["on"];
-
-  checkForUpdates: ElectronUpdaterRuntime["checkForUpdates"] = async () => {
-    if (this.nextCheckError) {
-      const error = this.nextCheckError;
-      this.nextCheckError = null;
-      throw error;
-    }
-    return null;
-  };
-
-  downloadUpdate: ElectronUpdaterRuntime["downloadUpdate"] = async () => [];
-  quitAndInstall: ElectronUpdaterRuntime["quitAndInstall"] = () => undefined;
-
-  emitError(error: Error): void {
-    const handler = this.handlers.get("error") as ((value: Error) => void) | undefined;
-    handler?.(error);
-  }
-
-  logInternalError(error: Error): void {
-    this.logger?.error(error);
-  }
-
-  rejectNextCheck(error: Error): void {
-    this.nextCheckError = error;
-  }
-}
-
-function createElectronRuntime() {
-  const updater = new FakeElectronUpdater();
-  const runtime = new ElectronAppUpdateRuntime(updater);
-  const onError = vi.fn();
-  runtime.configure({
-    releaseChannel: "stable",
-    shouldAdmitUpdate: () => true,
-    onUpdateAvailable: vi.fn(),
-    onUpdateDownloaded: vi.fn(),
-    onUpdateNotAvailable: vi.fn(),
-    onError,
-  });
-  return { onError, runtime, updater };
-}
-
-describe("ElectronAppUpdateRuntime", () => {
+describe("checkForAppUpdate", () => {
   it("treats an unpublished channel manifest as an unavailable update", async () => {
-    const { onError, runtime, updater } = createElectronRuntime();
     const error = Object.assign(new Error("Cannot find latest-mac.yml"), {
       code: "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND",
     });
-    updater.logInternalError(error);
-    updater.emitError(error);
-    updater.rejectNextCheck(error);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    autoUpdaterMock.checkForUpdates.mockImplementationOnce(async () => {
+      autoUpdaterMock.logger.error(error);
+      autoUpdaterMock.handlers.get("error")?.(error);
+      throw error;
+    });
 
-    await expect(runtime.checkForUpdates()).resolves.toBeNull();
-    expect(updater.loggedErrors).toEqual([]);
-    expect(onError).not.toHaveBeenCalled();
+    const result = await checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+
+    expect(result).toEqual({
+      hasUpdate: false,
+      readyToInstall: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.3",
+      body: null,
+      date: null,
+      errorMessage: null,
+    });
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it("keeps genuine updater failures visible", async () => {
-    const { onError, runtime, updater } = createElectronRuntime();
     const error = new Error("network down");
-    updater.emitError(error);
-    updater.rejectNextCheck(error);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    autoUpdaterMock.checkForUpdates.mockImplementationOnce(async () => {
+      autoUpdaterMock.logger.error(error);
+      autoUpdaterMock.handlers.get("error")?.(error);
+      throw error;
+    });
 
-    await expect(runtime.checkForUpdates()).rejects.toBe(error);
-    expect(onError).toHaveBeenCalledWith(error);
+    const result = await checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+
+    expect(result.errorMessage).toBe("network down");
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 });
 
