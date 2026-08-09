@@ -480,7 +480,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
     createClient: ({ host, connection, clientId, runtimeGeneration }) => {
       const localTransportFactory = createDesktopLocalDaemonTransportFactory();
       const webSocketTransportFactory = createDesktopWebSocketTransportFactory();
-      const webSocketConfig = webSocketTransportFactory
+      const relayWebSocketConfig = webSocketTransportFactory
         ? { transportFactory: webSocketTransportFactory }
         : { webSocketFactory: createAppWebSocketFactory() };
       const base = {
@@ -503,9 +503,22 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         });
       }
       if (connection.type === "directTcp") {
+        // The main-process Node `ws` bridge is only needed to send custom
+        // request headers, which the renderer browser WebSocket can't set. On
+        // macOS the main process lacks the Local Network privacy grant, so
+        // routing headerless LAN connections through it fails with
+        // EHOSTUNREACH. Keep headerless direct connections on the renderer
+        // WebSocket and only use the bridge when headers are configured.
+        const useHeaderBridge =
+          webSocketTransportFactory &&
+          connection.headers &&
+          Object.keys(connection.headers).length > 0;
+        const directWebSocketConfig = useHeaderBridge
+          ? { transportFactory: webSocketTransportFactory }
+          : { webSocketFactory: createAppWebSocketFactory() };
         return new DaemonClient({
           ...base,
-          ...webSocketConfig,
+          ...directWebSocketConfig,
           url: buildDaemonWebSocketUrl(connection.endpoint, {
             useTls: connection.useTls ?? false,
           }),
@@ -515,7 +528,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       }
       return new DaemonClient({
         ...base,
-        ...webSocketConfig,
+        ...relayWebSocketConfig,
         url: buildRelayWebSocketUrl({
           endpoint: connection.relayEndpoint,
           useTls: connection.useTls ?? shouldUseTlsForDefaultHostedRelay(connection.relayEndpoint),

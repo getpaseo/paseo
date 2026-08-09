@@ -44,9 +44,17 @@ const defaultDaemonConnectionDependencies: DaemonConnectionDependencies<DaemonCl
   createClient: (config) => new DaemonClient(config),
 };
 
-function resolveWebSocketTransportFactory(
+function resolveDirectTcpTransportFactory(
+  connection: Extract<HostConnection, { type: "directTcp" }>,
   deps: Pick<DaemonConnectionDependencies<DaemonProbeClient>, "createWebSocketTransportFactory">,
 ): DaemonClientConfig["transportFactory"] {
+  // Only route through the main-process bridge when custom headers are set;
+  // headerless direct connections must stay on the renderer WebSocket so LAN
+  // targets aren't blocked by the macOS Local Network privacy gate. See
+  // host-runtime.ts createClient for the matching runtime decision.
+  if (!connection.headers || Object.keys(connection.headers).length === 0) {
+    return undefined;
+  }
   return deps.createWebSocketTransportFactory?.() ?? undefined;
 }
 
@@ -148,7 +156,7 @@ export async function buildClientConfig(
   if (connection.type === "directTcp") {
     return {
       ...base,
-      transportFactory: resolveWebSocketTransportFactory(deps),
+      transportFactory: resolveDirectTcpTransportFactory(connection, deps),
       url: buildDaemonWebSocketUrl(connection.endpoint, { useTls: connection.useTls ?? false }),
       ...(connection.password ? { password: connection.password } : {}),
       ...(connection.headers ? { headers: connection.headers } : {}),

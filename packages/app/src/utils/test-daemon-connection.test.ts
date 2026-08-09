@@ -174,6 +174,28 @@ describe("test-daemon-connection connectToDaemon", () => {
     expect(probe.createdConfigs()[0]?.transportFactory).toBe(transportFactory);
   });
 
+  it("skips the main-process WebSocket bridge for headerless direct connections", async () => {
+    const { connectToDaemon } = await import("./test-daemon-connection");
+    const transportFactory: NonNullable<DaemonClientConfig["transportFactory"]> = () => {
+      throw new Error("Headerless direct connections must not use the bridge.");
+    };
+    const result = await connectToDaemon(
+      {
+        id: "direct:lan:6767",
+        type: "directTcp",
+        endpoint: "lan:6767",
+      },
+      undefined,
+      {
+        ...probe.deps,
+        createWebSocketTransportFactory: () => transportFactory,
+      },
+    );
+    await result.client.close();
+
+    expect(probe.createdConfigs()[0]?.transportFactory).toBeUndefined();
+  });
+
   it("passes performance tracing into the connected client", async () => {
     const { connectToDaemon } = await import("./test-daemon-connection");
     const trace = {
