@@ -80,6 +80,30 @@ describe("createSidebarWorkspaceEntry activity", () => {
     expect(entry.statusEnteredAt).toEqual(new Date("2026-05-12T09:30:00.000Z"));
     expect(entry.activityAt).toEqual(new Date("2026-05-12T10:30:00.000Z"));
   });
+
+  it("uses live agent activity when the daemon omits workspace activity", () => {
+    const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
+    descriptor.statusEnteredAt = new Date("2026-05-12T09:30:00.000Z");
+    descriptor.activityAt = null;
+
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: descriptor,
+      workspaceAgentActivity: new Map([
+        [
+          descriptor.id,
+          {
+            agentId: "agent-1",
+            status: "done",
+            enteredAt: descriptor.statusEnteredAt,
+            activityAt: new Date("2026-05-12T10:30:00.000Z"),
+          },
+        ],
+      ]),
+    });
+
+    expect(entry.activityAt).toEqual(new Date("2026-05-12T10:30:00.000Z"));
+  });
 });
 
 describe("createSidebarWorkspaceEntry workspace directory label", () => {

@@ -145,6 +145,20 @@ function normalizeCurrentBranch(currentBranch: string | null | undefined): strin
   return trimmed.length === 0 || trimmed === "HEAD" ? null : trimmed;
 }
 
+function resolveWorkspaceActivityAt(
+  workspace: WorkspaceDescriptor,
+  agentActivity: WorkspaceAgentActivity | undefined,
+): Date | null {
+  const candidates = [workspace.activityAt, agentActivity?.activityAt, workspace.statusEnteredAt];
+  let latest: Date | null = null;
+  for (const candidate of candidates) {
+    if (candidate && (!latest || candidate > latest)) {
+      latest = candidate;
+    }
+  }
+  return latest;
+}
+
 export function createSidebarWorkspaceEntry(input: {
   serverId: string;
   workspace: WorkspaceDescriptor;
@@ -154,6 +168,7 @@ export function createSidebarWorkspaceEntry(input: {
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
+  const agentActivity = input.workspaceAgentActivity?.get(input.workspace.id);
   return {
     workspaceKey: `${input.serverId}:${input.workspace.id}`,
     serverId: input.serverId,
@@ -173,7 +188,7 @@ export function createSidebarWorkspaceEntry(input: {
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
-    activityAt: input.workspace.activityAt ?? input.workspace.statusEnteredAt,
+    activityAt: resolveWorkspaceActivityAt(input.workspace, agentActivity),
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
     prHint: selectPrHintFromStatus(

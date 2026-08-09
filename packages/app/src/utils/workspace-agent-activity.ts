@@ -6,6 +6,34 @@ export interface WorkspaceAgentActivity {
   agentId: string;
   status: WorkspaceDescriptor["status"];
   enteredAt: Date | null;
+  activityAt: Date;
+}
+
+function isActiveWorkspaceRootAgent(agent: Agent, agents: ReadonlyMap<string, Agent>): boolean {
+  const parentAgent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
+  return Boolean(
+    !agent.archivedAt && agent.workspaceId && isWorkspaceRootAgent(agent, parentAgent),
+  );
+}
+
+function reconcileWorkspaceAgentActivity(
+  activity: WorkspaceAgentActivity,
+  latestActivityAt: Date,
+  previous: WorkspaceAgentActivity | undefined,
+): WorkspaceAgentActivity {
+  const enteredAt =
+    previous?.agentId === activity.agentId && previous.status === activity.status
+      ? previous.enteredAt
+      : activity.enteredAt;
+  if (
+    previous?.agentId === activity.agentId &&
+    previous.status === activity.status &&
+    previous.enteredAt === enteredAt &&
+    previous.activityAt.getTime() === latestActivityAt.getTime()
+  ) {
+    return previous;
+  }
+  return { ...activity, enteredAt, activityAt: latestActivityAt };
 }
 
 export function buildWorkspaceAgentActivityIndex(
@@ -13,20 +41,25 @@ export function buildWorkspaceAgentActivityIndex(
   previous?: ReadonlyMap<string, WorkspaceAgentActivity>,
 ): Map<string, WorkspaceAgentActivity> {
   const activityByWorkspaceId = new Map<string, WorkspaceAgentActivity>();
+  const latestStatusAtByWorkspaceId = new Map<string, Date>();
   const latestActivityAtByWorkspaceId = new Map<string, Date>();
 
   for (const agent of agents.values()) {
-    const parentAgent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
-    if (agent.archivedAt || !agent.workspaceId || !isWorkspaceRootAgent(agent, parentAgent)) {
+    if (!isActiveWorkspaceRootAgent(agent, agents) || !agent.workspaceId) {
       continue;
     }
 
-    const enteredAt = agent.attentionTimestamp ?? agent.updatedAt;
     const latestActivityAt = latestActivityAtByWorkspaceId.get(agent.workspaceId);
-    if (latestActivityAt && enteredAt <= latestActivityAt) {
+    if (!latestActivityAt || agent.lastActivityAt > latestActivityAt) {
+      latestActivityAtByWorkspaceId.set(agent.workspaceId, agent.lastActivityAt);
+    }
+
+    const enteredAt = agent.attentionTimestamp ?? agent.updatedAt;
+    const latestStatusAt = latestStatusAtByWorkspaceId.get(agent.workspaceId);
+    if (latestStatusAt && enteredAt <= latestStatusAt) {
       continue;
     }
-    latestActivityAtByWorkspaceId.set(agent.workspaceId, enteredAt);
+    latestStatusAtByWorkspaceId.set(agent.workspaceId, enteredAt);
 
     const status = deriveSidebarStateBucket({
       status: agent.status,
@@ -38,17 +71,19 @@ export function buildWorkspaceAgentActivityIndex(
       agentId: agent.id,
       status,
       enteredAt,
+      activityAt: agent.lastActivityAt,
     });
   }
 
   for (const [workspaceId, activity] of activityByWorkspaceId) {
-    const previousActivity = previous?.get(workspaceId);
-    if (
-      previousActivity?.agentId === activity.agentId &&
-      previousActivity.status === activity.status
-    ) {
-      activityByWorkspaceId.set(workspaceId, previousActivity);
-    }
+    activityByWorkspaceId.set(
+      workspaceId,
+      reconcileWorkspaceAgentActivity(
+        activity,
+        latestActivityAtByWorkspaceId.get(workspaceId) ?? activity.activityAt,
+        previous?.get(workspaceId),
+      ),
+    );
   }
 
   if (previous && areWorkspaceAgentActivityIndexesIdentical(previous, activityByWorkspaceId)) {
