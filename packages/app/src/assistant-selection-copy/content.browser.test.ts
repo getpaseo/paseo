@@ -5,8 +5,8 @@ const fixture = `
   <div data-testid="assistant-message">
     <div data-paseo-markdown-tag="p">Prefix <span data-paseo-markdown-tag="strong">bold text</span> and <span data-paseo-markdown-tag="code">inline code</span> suffix.</div>
     <div data-paseo-markdown-tag="ul">
-      <div data-paseo-markdown-tag="li"><span data-paseo-markdown-ignore="true">•</span><div><span>First bullet text</span></div></div>
-      <div data-paseo-markdown-tag="li"><span data-paseo-markdown-ignore="true">•</span><div><span>Second bullet text</span></div></div>
+      <div data-paseo-markdown-tag="li"><span data-paseo-markdown-ignore="true" data-paseo-markdown-list-marker="true">•</span><div><span>First bullet text</span></div></div>
+      <div data-paseo-markdown-tag="li"><span data-paseo-markdown-ignore="true" data-paseo-markdown-list-marker="true">•</span><div><span>Second bullet text</span></div></div>
     </div>
     <div data-paseo-markdown-tag="pre" data-paseo-markdown-language="ts"><span data-paseo-markdown-tag="code">const answer = true;</span></div>
   </div>
@@ -201,6 +201,97 @@ describe("assistant selection copy ranges", () => {
     const message = mountFixture();
     const item = fixtureElement(message, '[data-paseo-markdown-tag="li"]');
     expect(copiedMarkdown(selectNodeContents(item))).toBe("- First bullet text");
+  });
+
+  it("retains a bullet when a drag selects from the rendered marker through the item text", () => {
+    const message = mountFixture();
+    const marker = fixtureElement(message, '[data-paseo-markdown-list-marker="true"]');
+    const itemText = fixtureElement(message, '[data-paseo-markdown-tag="li"] div span');
+
+    const content = createAssistantSelectionClipboardContent(
+      selectRange(marker, 0, itemText, textNode(itemText).length),
+    );
+    expect(content?.plainText).toBe("- First bullet text");
+    expect(content?.html).toContain("<div>- First bullet text</div>");
+    expect(content?.html).not.toContain("<ul>");
+    expect(content?.html).not.toContain("<li>");
+  });
+
+  it("retains a bullet when a drag includes the marker and part of the item text", () => {
+    const message = mountFixture();
+    const marker = fixtureElement(message, '[data-paseo-markdown-list-marker="true"]');
+    const itemText = fixtureElement(message, '[data-paseo-markdown-tag="li"] div span');
+
+    expect(copiedMarkdown(selectRange(marker, 0, itemText, 5))).toBe("- First");
+  });
+
+  it("does not invent a bullet when a drag starts after the rendered marker", () => {
+    const message = mountFixture();
+    const marker = fixtureElement(message, '[data-paseo-markdown-list-marker="true"]');
+    const itemText = fixtureElement(message, '[data-paseo-markdown-tag="li"] div span');
+
+    expect(
+      copiedMarkdown(
+        selectRange(marker, textNode(marker).length, itemText, textNode(itemText).length),
+      ),
+    ).toBe("First bullet text");
+  });
+
+  it("retains every selected marker across a partial multi-item drag", () => {
+    const message = mountFixture();
+    const markerSelector = '[data-paseo-markdown-list-marker="true"]';
+    const textSelector = '[data-paseo-markdown-tag="li"] div span';
+    const firstMarker = fixtureElement(message, markerSelector);
+    const secondText = fixtureElement(message, textSelector, 1);
+
+    expect(copiedMarkdown(selectRange(firstMarker, 0, secondText, 6))).toBe(
+      "- First bullet text\n- Second",
+    );
+  });
+
+  it("retains the original number when a marker drag starts mid-list", () => {
+    const message = mountFixture();
+    const list = fixtureElement(message, '[data-paseo-markdown-tag="ul"]');
+    list.setAttribute("data-paseo-markdown-tag", "ol");
+    list.setAttribute("data-paseo-markdown-list-start", "5");
+    const markers = list.querySelectorAll<HTMLElement>('[data-paseo-markdown-list-marker="true"]');
+    markers.item(0).textContent = "5.";
+    markers.item(1).textContent = "6.";
+    const secondMarker = fixtureElement(list, '[data-paseo-markdown-list-marker="true"]', 1);
+    const secondText = fixtureElement(list, '[data-paseo-markdown-tag="li"] div span', 1);
+
+    expect(
+      copiedMarkdown(selectRange(secondMarker, 0, secondText, textNode(secondText).length)),
+    ).toBe("6. Second bullet text");
+  });
+
+  it("retains nested markers when a drag includes the complete outer item", () => {
+    const message = mountFixture();
+    const firstItem = fixtureElement(message, '[data-paseo-markdown-tag="li"]');
+    firstItem.innerHTML = [
+      '<span data-paseo-markdown-ignore="true" data-paseo-markdown-list-marker="true">•</span>',
+      "<div>",
+      "<span>Outer text</span>",
+      '<div data-paseo-markdown-tag="ul">',
+      '<div data-paseo-markdown-tag="li">',
+      '<span data-paseo-markdown-ignore="true" data-paseo-markdown-list-marker="true">•</span>',
+      "<div><span>Inner text</span></div>",
+      "</div>",
+      "</div>",
+      "</div>",
+    ].join("");
+    const outerMarker = fixtureElement(
+      firstItem,
+      ':scope > [data-paseo-markdown-list-marker="true"]',
+    );
+    const innerText = fixtureElement(
+      firstItem,
+      ':scope [data-paseo-markdown-tag="ul"] > [data-paseo-markdown-tag="li"] > div > span',
+    );
+
+    expect(copiedMarkdown(selectRange(outerMarker, 0, innerText, textNode(innerText).length))).toBe(
+      "- Outer text\n    - Inner text",
+    );
   });
 
   it("preserves paragraph breaks when rich HTML flattens a loose list item", () => {

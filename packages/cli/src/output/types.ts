@@ -65,7 +65,7 @@ export interface ListResult<T> {
 }
 
 /** Union type for all command results */
-export type AnyCommandResult<T> = SingleResult<T> | ListResult<T>;
+export type AnyCommandResult<T> = T extends unknown ? SingleResult<T> | ListResult<T> : never;
 
 /** Base interface for command results (deprecated, use SingleResult or ListResult) */
 export type CommandResult<T> = SingleResult<T> | ListResult<T>;

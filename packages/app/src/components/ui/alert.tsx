@@ -31,10 +31,11 @@ export function Alert({
 }: AlertProps) {
   const { theme } = useUnistyles();
   const accentColor = resolveAccentColor(variant, theme);
+  const borderColor = variant === "success" ? theme.colors.border : accentColor;
 
   const containerStyle = useMemo(
-    () => [styles.container, accentColor ? { borderColor: accentColor } : null],
-    [accentColor],
+    () => [styles.container, borderColor ? { borderColor } : null],
+    [borderColor],
   );
 
   const titleStyle = useMemo(
@@ -73,7 +74,7 @@ function resolveAccentColor(
   theme: ReturnType<typeof useUnistyles>["theme"],
 ): string | null {
   if (variant === "info") return theme.colors.palette.blue[300];
-  if (variant === "success") return theme.colors.palette.green[400];
+  if (variant === "success") return theme.colors.statusSuccess;
   if (variant === "warning") return theme.colors.palette.amber[500];
   if (variant === "error") return theme.colors.destructive;
   return null;

@@ -103,7 +103,7 @@ The grammar supports paths, JSON literals, parentheses, `!`, `==`, `!=`, `&&`, `
 | `environment`   | yes      | Environment name or a finite input expression resolving to one.                                                   |
 | `max_runtime`   | yes      | Positive step hard limit, up to 24h.                                                                              |
 | `idle_timeout`  | yes      | Positive idle limit, no longer than the step hard limit.                                                          |
-| `agent`         | yes      | `provider`, optional `model`, `mode`, and `thinkingOptionId`.                                                     |
+| `agent`         | yes      | `provider`, optional `model`, `mode`, `thinkingOptionId`, and provider-native `options`.                          |
 | `prompt`        | yes      | Non-empty list of `text` and GitHub-only `include` blocks.                                                        |
 | `if`            | no       | Expression deciding whether this ordered step runs.                                                               |
 | `output`        | no       | `{ schema: <JSON Schema> }` for structured `finish_execution`.                                                    |
@@ -119,6 +119,8 @@ prompt:
 ```
 
 Use `${{ paseo.prompt }}`, `${{ paseo.inputs.* }}`, `${{ steps.*.outputs.* }}`, and `${{ values.* }}` in prompts, conditions, and agent selection fields. Provider event payloads are not part of this workflow expression namespace; provider adapters put the normalized request into the prompt and preserve the raw event as evidence.
+
+`agent.options` carries JSON-safe options using the selected provider's native names and nesting. Paseo validates them with that provider's strict schema before starting the session. See [Hub security](/docs/hub/security) for the trust boundary and copyable provider examples.
 
 #### Output capabilities
 

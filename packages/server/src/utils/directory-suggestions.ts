@@ -119,6 +119,11 @@ const IGNORED_DIRECTORY_NAMES = new Set([
 const directoryListCache = new Map<string, DirectoryListCacheEntry>();
 const gitIgnoredPathsCache = new Map<string, GitIgnoredPathsCacheEntry>();
 
+// Discovery and retrieval filter differently, on purpose. Discovery — anything that ranks or
+// browses candidates the caller has not named — drops gitignored and hidden entries, so pickers
+// do not offer build output. Retrieval of a path the caller named exactly applies no ignore or
+// hidden filtering; the only question is whether the path stays inside the root. Clicking a file
+// reference an agent wrote must open it whether or not Git tracks it.
 export async function searchDirectoryEntries(
   options: SearchDirectoryEntriesOptions,
 ): Promise<DirectorySuggestionEntry[]> {
@@ -188,7 +193,8 @@ async function findExactEntry(input: SearchInput): Promise<DirectorySuggestionEn
   const visiblePath = path.resolve(input.root, input.plan.normalizedQuery);
   const resolvedPath = await realpath(visiblePath).catch(() => null);
   if (!resolvedPath || !isPathInsideRoot(input.root, resolvedPath)) return null;
-  if (isGitIgnoredPath(resolvedPath, input)) return null;
+  // No ignore filtering here: the caller named this exact path, so containment above is the
+  // only question left to answer. Filtering belongs to discovery, not retrieval.
   const info = await stat(resolvedPath).catch(() => null);
   const kind = getEntryKind(info);
   if (

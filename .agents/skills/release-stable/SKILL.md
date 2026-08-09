@@ -6,8 +6,4 @@ user-invocable: true
 
 # Release stable
 
-Read `docs/release.md` in the Paseo repo and follow the **Standard release (stable)** flow if cutting fresh, or the **Beta flow** promotion step if promoting an existing beta. Run the **Stable release (or promotion)** completion checklist at the bottom of that doc.
-
-For a fresh release, classify the previous-stable-to-`HEAD` diff as patch or minor and show the target version and rationale to the user. Agents never select a major version autonomously.
-
-The doc covers the changelog, pre-release sanity check, and post-release babysit pattern. Don't skip steps.
+Follow the applicable flow and the **Stable release (or promotion)** completion checklist in `docs/release.md` end-to-end.
