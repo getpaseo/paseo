@@ -241,27 +241,27 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
 
-  // --- Switch project (New Workspace screen) ---
+  // --- Search files (switch project on the New Workspace screen) ---
   {
     id: "workspace-project-pick-cmd-p-mac",
-    action: "workspace.project.pick",
-    combo: "",
+    action: "command-center.files",
+    combo: "Cmd+P",
     when: { mac: true, commandCenter: false },
     help: {
-      id: "switch-project",
-      section: "projects",
-      label: "Switch project",
+      id: "search-files",
+      section: "panels",
+      label: "Search files",
     },
   },
   {
     id: "workspace-project-pick-ctrl-p-non-mac",
-    action: "workspace.project.pick",
-    combo: "",
+    action: "command-center.files",
+    combo: "Ctrl+P",
     when: { mac: false, commandCenter: false, terminal: false },
     help: {
-      id: "switch-project",
-      section: "projects",
-      label: "Switch project",
+      id: "search-files",
+      section: "panels",
+      label: "Search files",
     },
   },
 
@@ -704,28 +704,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   },
 
   // --- Command center ---
-  {
-    id: "command-center-files-cmd-p-mac",
-    action: "command-center.files",
-    combo: "Cmd+P",
-    when: { mac: true, commandCenter: false },
-    help: {
-      id: "search-files",
-      section: "panels",
-      label: "Search files",
-    },
-  },
-  {
-    id: "command-center-files-ctrl-p-non-mac",
-    action: "command-center.files",
-    combo: "Ctrl+P",
-    when: { mac: false, commandCenter: false, terminal: false },
-    help: {
-      id: "search-files",
-      section: "panels",
-      label: "Search files",
-    },
-  },
   {
     id: "command-center-toggle-cmd-k-mac",
     action: "command-center.toggle",

@@ -795,6 +795,19 @@ describe("keyboard-shortcut help sections", () => {
     expect(showShortcuts?.noteKey).toBe("settings.shortcuts.helpNotes.showKeyboardShortcuts");
   });
 
+  it("reuses the project-picker binding ids for rebindable file search", () => {
+    expect(getBindingIdForAction("search-files", { isMac: true, isDesktop: true })).toBe(
+      "workspace-project-pick-cmd-p-mac",
+    );
+    expect(getBindingIdForAction("search-files", { isMac: false, isDesktop: true })).toBe(
+      "workspace-project-pick-ctrl-p-non-mac",
+    );
+    expect(
+      findRow(buildKeyboardShortcutHelpSections({ isMac: true, isDesktop: true }), "search-files")
+        ?.chord,
+    ).not.toBeNull();
+  });
+
   it("does not expose Enter send behavior as rebindable shortcut rows", () => {
     const sections = buildKeyboardShortcutHelpSections({ isMac: true, isDesktop: true });
 

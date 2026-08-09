@@ -199,9 +199,10 @@ export function routeKeyboardShortcut(
     case "command-center.toggle":
       return { kind: "command-center-toggle", nextOpen: !ctx.commandCenterOpen };
     case "command-center.files":
-      return parseHostWorkspaceRouteFromPathname(ctx.pathname)
-        ? { kind: "command-center-toggle", nextOpen: true, scope: "files" }
-        : NONE;
+      if (parseHostWorkspaceRouteFromPathname(ctx.pathname)) {
+        return { kind: "command-center-toggle", nextOpen: true, scope: "files" };
+      }
+      return dispatch({ id: "workspace.project.pick", scope: "workspace" });
     case "shortcuts.dialog.toggle":
       return { kind: "shortcuts-dialog-toggle", nextOpen: !ctx.shortcutsDialogOpen };
     default:
