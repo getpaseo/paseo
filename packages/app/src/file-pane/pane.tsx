@@ -27,6 +27,7 @@ import { persistAttachmentFromBytes } from "@/attachments/service";
 import { createPreviewAttachmentId, getFileNameFromPath } from "@/attachments/utils";
 import { explorerFileFromReadResult } from "@/file-explorer/read-result";
 import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
+import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useAppActivelyVisible } from "@/hooks/use-app-visible";
@@ -425,6 +426,16 @@ export function FilePane({
   );
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
   const normalizedFilePath = useMemo(() => trimNonEmpty(location.path), [location.path]);
+  const absoluteFilePath = useMemo(
+    () =>
+      normalizedFilePath
+        ? buildAbsoluteExplorerPath({
+            workspaceRoot: normalizedWorkspaceRoot,
+            entryPath: normalizedFilePath,
+          })
+        : "",
+    [normalizedFilePath, normalizedWorkspaceRoot],
+  );
   const readTarget = useMemo(
     () =>
       normalizedFilePath
@@ -494,6 +505,7 @@ export function FilePane({
       onRetryRead={liveFile.refresh}
       retryingRead={liveFile.isRetrying}
       retryLabel={t("common.actions.retry")}
+      filePath={absoluteFilePath}
       filename={getFileNameFromPath(location.path) ?? location.path}
       previewMode={canTogglePreviewMode ? previewMode : undefined}
       onPreviewModeChange={canTogglePreviewMode ? setPreviewMode : undefined}
@@ -541,6 +553,7 @@ function FilePanePresentation({
   onRetryRead,
   retryingRead,
   retryLabel,
+  filePath,
   filename,
   previewMode,
   onPreviewModeChange,
@@ -562,6 +575,7 @@ function FilePanePresentation({
   onRetryRead: () => void;
   retryingRead: boolean;
   retryLabel: string;
+  filePath: string;
   filename: string;
   previewMode?: "preview" | "source";
   onPreviewModeChange?: (mode: "preview" | "source") => void;
@@ -596,6 +610,7 @@ function FilePanePresentation({
         liveFile={liveFile}
         onRetryRead={onRetryRead}
         retryingRead={retryingRead}
+        filePath={filePath}
         filename={filename}
         mode={previewMode}
         onModeChange={onPreviewModeChange}
@@ -624,6 +639,7 @@ function FilePanePresentation({
     <View style={styles.container} testID="workspace-file-pane">
       {preview ? (
         <FilePanelBar
+          filePath={filePath}
           size={preview.size}
           lineCount={lineCount}
           mode={previewMode}
@@ -651,6 +667,7 @@ function EditableFilePane({
   liveFile,
   onRetryRead,
   retryingRead,
+  filePath,
   filename,
   mode,
   onModeChange,
@@ -666,6 +683,7 @@ function EditableFilePane({
   liveFile: LiveFileModel;
   onRetryRead: () => void;
   retryingRead: boolean;
+  filePath: string;
   filename: string;
   mode?: "preview" | "source";
   onModeChange?: (mode: "preview" | "source") => void;
@@ -780,6 +798,7 @@ function EditableFilePane({
   return (
     <View style={styles.container} testID="workspace-file-pane">
       <FilePanelBar
+        filePath={filePath}
         size={
           snapshot.observedVersion.status === "ready" ? snapshot.observedVersion.size : preview.size
         }

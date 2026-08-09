@@ -227,7 +227,13 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(page.getByTestId(`workspace-tab-tooltip-file_${relativePath}`)).toHaveText(
       relativePath,
     );
-    await expect(page.getByTestId("file-panel-bar")).not.toContainText("visuals.md");
+    const filePath = page.getByTestId("file-panel-path");
+    await expect(filePath).toHaveText(sourcePath);
+    const filePathBox = await filePath.boundingBox();
+    const fileSizeBox = await page.getByLabel(/File size/).boundingBox();
+    expect(filePathBox).not.toBeNull();
+    expect(fileSizeBox).not.toBeNull();
+    expect(filePathBox!.x + filePathBox!.width).toBeLessThan(fileSizeBox!.x);
     const modeControl = page.getByTestId("file-preview-mode");
     await expect(modeControl).toBeVisible();
     await selectFileView(page, "Source");
