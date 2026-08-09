@@ -110,6 +110,7 @@ The grammar supports paths, JSON literals, parentheses, `!`, `==`, `!=`, `&&`, `
 | `agent`         | yes      | `provider`, optional `model`, `mode`, `thinkingOptionId`, and provider-native `options`.                          |
 | `prompt`        | yes      | Non-empty list of `text` and GitHub-only `include` blocks.                                                        |
 | `if`            | no       | Expression deciding whether this ordered step runs.                                                               |
+| `env`           | no       | Environment variables populated from connection values. See [GitHub access](/docs/hub/github#other-integrations). |
 | `output`        | no       | `{ schema: <JSON Schema> }` for the structured result the agent passes to `hub.finish_execution`.                 |
 | `allow_outputs` | no       | Registered output capabilities such as `slack.reply` or `discord.reply`, each with optional `max` and `required`. |
 | `auto_archive`  | no       | Archives the step's agent when it ends.                                                                           |

@@ -88,6 +88,32 @@ Call hub.finish_execution when the step is complete.
 
 A step that only feeds a later step names `hub.finish_execution` alone. Most classifiers never reply.
 
+## Share prompt text between steps
+
+Put shared instructions in `.paseo/partials/base.md`:
+
+```markdown
+Follow the repository's conventions.
+Keep the work focused on the request.
+```
+
+Include the file in each step that needs it:
+
+```yaml
+steps:
+  - id: review
+    prompt:
+      - include: base.md
+      - text: Review the request and call hub.finish_execution when complete.
+
+  - id: implement
+    prompt:
+      - include: base.md
+      - text: Implement the request and call hub.finish_execution when complete.
+```
+
+See [prompt partials](/docs/hub/configuration/hub-yml#prompt-partials) for path resolution, deployment, and validation.
+
 ## Scenarios
 
 :::example[Make a change instead of answering]

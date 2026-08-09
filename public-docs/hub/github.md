@@ -44,12 +44,12 @@ Nothing else grants GitHub authority. A run triggered from a GitHub event has no
 
 ## The block
 
-| Field          | Notes                                                                                                     |
-| -------------- | --------------------------------------------------------------------------------------------------------- |
-| `connection`   | The project's GitHub connection slug.                                                                     |
-| `repositories` | The repositories the token can reach.                                                                     |
-| `permissions`  | GitHub installation-token permission names, such as `contents`, `pull_requests`, `issues`.                |
-| `duration`     | How long the token lives. Defaults to `1h`, the GitHub maximum. Shorter revokes early; longer is invalid. |
+| Field          | Notes                                                                                                                                     |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `connection`   | The project's GitHub connection slug.                                                                                                     |
+| `repositories` | The repositories the token can reach. On a GitHub-triggered run, this defaults to the triggering repository. Required for other triggers. |
+| `permissions`  | GitHub installation-token permission names, such as `contents`, `pull_requests`, `issues`. Defaults to `contents: read`.                  |
+| `duration`     | How long the token lives. Defaults to `1h`, the GitHub maximum. Shorter revokes early; longer is invalid.                                 |
 
 Permissions cannot exceed what the GitHub App installation was granted. A block asking for `contents: write` on an installation that only has read fails.
 
@@ -180,11 +180,13 @@ The classifier and the answer step read untrusted text with no GitHub authority.
 
 ## Other integrations
 
-Any connection credential can be supplied explicitly as an environment variable:
+Any connection value can be supplied explicitly through a step's environment:
 
 ```yaml
-env:
-  SOME_TOKEN: "${{ paseo.connections.some-connection.token }}"
+steps:
+  - id: use-connection
+    env:
+      SOME_TOKEN: "${{ paseo.connections.some-connection.token }}"
 ```
 
-The `github` block is the ergonomic form of this for GitHub: it adds the repository and permission restriction and the git setup on top of the raw token.
+Hub resolves the value when it launches the step and does not persist it. The `github` block adds repository and permission restrictions plus the git setup needed for GitHub work.
