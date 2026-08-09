@@ -68,6 +68,10 @@ function stripTrailingSlashes(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
+function isWindowsPath(value: string): boolean {
+  return /^[A-Za-z]:/.test(value) || /^\/\/[^/]+\/[^/]+(?:\/|$)/.test(value);
+}
+
 function matchWorktreesRoot(cwd: string, worktreesRoot: string): PaseoWorktreePlacement | null {
   const normalizedRoot = stripTrailingSlashes(toForwardSlashes(worktreesRoot));
   if (!normalizedRoot) {
@@ -75,9 +79,9 @@ function matchWorktreesRoot(cwd: string, worktreesRoot: string): PaseoWorktreePl
   }
 
   const normalizedCwd = toForwardSlashes(cwd);
-  const isWindowsPath = /^[A-Za-z]:/.test(normalizedRoot) || /^[A-Za-z]:/.test(normalizedCwd);
-  const comparableRoot = isWindowsPath ? normalizedRoot.toLowerCase() : normalizedRoot;
-  const comparableCwd = isWindowsPath ? normalizedCwd.toLowerCase() : normalizedCwd;
+  const usesWindowsPaths = isWindowsPath(normalizedRoot) || isWindowsPath(normalizedCwd);
+  const comparableRoot = usesWindowsPaths ? normalizedRoot.toLowerCase() : normalizedRoot;
+  const comparableCwd = usesWindowsPaths ? normalizedCwd.toLowerCase() : normalizedCwd;
   if (!comparableCwd.startsWith(`${comparableRoot}/`)) {
     return null;
   }

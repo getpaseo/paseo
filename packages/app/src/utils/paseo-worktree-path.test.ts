@@ -84,6 +84,28 @@ describe("resolvePaseoWorktreePlacement with a daemon-reported root", () => {
       worktreePath: "c:\\users\\ME\\.PASEO\\WORKTREES\\a1b2c3d4\\brave-otter",
     });
   });
+
+  it("matches UNC paths without regard to server, share, or directory casing", () => {
+    expect(
+      resolvePaseoWorktreePlacement(
+        "\\\\SERVER\\SHARE\\PASEO\\TREES\\a1b2c3d4\\brave-otter\\src",
+        "//server/share/paseo/trees",
+      ),
+    ).toEqual({
+      worktreePath: "\\\\SERVER\\SHARE\\PASEO\\TREES\\a1b2c3d4\\brave-otter",
+      projectWorktreesRoot: "\\\\SERVER\\SHARE\\PASEO\\TREES\\a1b2c3d4",
+      mainRepoRoot: null,
+    });
+  });
+
+  it("keeps POSIX path comparison case-sensitive", () => {
+    expect(
+      resolvePaseoWorktreePlacement(
+        "/mnt/Scratch/paseo-trees/a1b2c3d4/brave-otter",
+        "/mnt/scratch/paseo-trees",
+      ),
+    ).toBeNull();
+  });
 });
 
 // COMPAT(worktreesRoot): delete this block together with the fallback it covers.
