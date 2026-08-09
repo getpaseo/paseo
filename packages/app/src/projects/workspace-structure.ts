@@ -52,25 +52,45 @@ export function buildWorkspaceStructureProjects(input: {
   for (const session of input.sessions) {
     for (const project of session.projects) {
       projectEntries.push({ serverId: session.serverId, project });
-      const sharedKey = project.projectKey ?? null;
-      if (sharedKey) {
-        const counts = getOrCreate(keyCountsByServer, session.serverId, () => new Map());
-        counts.set(sharedKey, (counts.get(sharedKey) ?? 0) + 1);
-      }
     }
   }
 
+  const legacyMergeKeys = buildLegacyNestedProjectMergeKeys(projectEntries);
+  const sharedKeyByPlacement = new Map<string, string | null>();
+  for (const { serverId, project } of projectEntries) {
+    const placementKey = createProjectViewKey({
+      kind: "placement",
+      serverId,
+      projectId: project.projectId,
+    });
+    const sharedKey =
+      legacyMergeKeys.get(placementKey) ??
+      project.projectKey ??
+      canonicalLegacyRemoteProjectKey(project.projectId);
+    sharedKeyByPlacement.set(placementKey, sharedKey);
+    if (!sharedKey) continue;
+    const counts = getOrCreate(keyCountsByServer, serverId, () => new Map());
+    counts.set(sharedKey, (counts.get(sharedKey) ?? 0) + 1);
+  }
+
   const allocatedViewKeys = new Set(
-    projectEntries.flatMap(({ project }) => (project.projectKey ? [project.projectKey] : [])),
+    Array.from(sharedKeyByPlacement.values()).filter((key): key is string => key !== null),
   );
 
   for (const { serverId, project } of projectEntries) {
+    const placementKey = createProjectViewKey({
+      kind: "placement",
+      serverId,
+      projectId: project.projectId,
+    });
     const viewKey = addProjectToView({
       byProject,
       keyCountsByServer,
       allocatedViewKeys,
       serverId,
       project,
+      sharedKey: sharedKeyByPlacement.get(placementKey) ?? null,
+      forceSharedKey: legacyMergeKeys.has(placementKey),
     });
     getOrCreate(viewKeyByServerProjectId, serverId, () => new Map()).set(
       project.projectId,
@@ -97,7 +117,7 @@ export function buildWorkspaceStructureProjects(input: {
       projectName: draft.projectName,
       projectKind: draft.projectKind,
       iconWorkingDir: draft.iconWorkingDir,
-      hosts: Array.from(draft.hosts.values()),
+      hosts: Array.from(draft.hosts.values()).sort(compareHostPlacements),
       workspaceKeys: draft.workspaces
         .sort(compareWorkspaceStructureItems)
         .map((workspace) => workspace.workspaceKey),
@@ -146,11 +166,14 @@ function addProjectToView(input: {
   allocatedViewKeys: Set<string>;
   serverId: string;
   project: ProjectDescriptor;
+  sharedKey: string | null;
+  forceSharedKey: boolean;
 }): string {
   const { byProject, keyCountsByServer, serverId, project } = input;
-  const sharedKey = project.projectKey ?? null;
+  const sharedKey = input.sharedKey;
   const canUseSharedKey =
-    sharedKey !== null && keyCountsByServer.get(serverId)?.get(sharedKey) === 1;
+    sharedKey !== null &&
+    (input.forceSharedKey || keyCountsByServer.get(serverId)?.get(sharedKey) === 1);
   const viewKey = canUseSharedKey
     ? createProjectViewKey({ kind: "equivalence", projectKey: sharedKey })
     : allocatePlacementViewKey(input.allocatedViewKeys, serverId, project.projectId);
@@ -173,7 +196,7 @@ function addProjectToView(input: {
       hasCustomName: Boolean(project.projectCustomName),
       projectKind: project.projectKind,
       iconWorkingDir: project.projectRootPath,
-      hosts: new Map([[serverId, placement]]),
+      hosts: new Map([[hostPlacementKey(placement), placement]]),
       workspaces: [],
     });
   } else {
@@ -181,9 +204,102 @@ function addProjectToView(input: {
       draft.projectName = project.projectCustomName;
       draft.hasCustomName = true;
     }
-    draft.hosts.set(serverId, placement);
+    if (project.projectKind === "git" && draft.projectKind !== "git") {
+      draft.projectKind = "git";
+    }
+    draft.hosts.set(hostPlacementKey(placement), placement);
   }
   return viewKey;
+}
+
+// COMPAT(legacyNestedRemoteProjectGrouping): added in v0.3.0, remove after 2027-02-09 once legacy path/remote project records are retired.
+function buildLegacyNestedProjectMergeKeys(
+  entries: Array<{ serverId: string; project: ProjectDescriptor }>,
+): Map<string, string> {
+  const result = new Map<string, string>();
+  for (const local of entries) {
+    if (local.project.projectKind !== "non_git") continue;
+    const matches = entries.filter((candidate) => {
+      if (candidate.serverId !== local.serverId || candidate === local) return false;
+      const remoteKey =
+        candidate.project.projectKey ??
+        canonicalLegacyRemoteProjectKey(candidate.project.projectId);
+      if (!remoteKey?.startsWith("remote:")) return false;
+      if (!isPathInside(local.project.projectRootPath, candidate.project.projectRootPath)) {
+        return false;
+      }
+      return projectNameTail(local.project) === projectNameTail(candidate.project);
+    });
+    if (matches.length !== 1) continue;
+    const remote = matches[0]!;
+    const remoteKey =
+      remote.project.projectKey ?? canonicalLegacyRemoteProjectKey(remote.project.projectId);
+    if (!remoteKey) continue;
+    result.set(
+      createProjectViewKey({
+        kind: "placement",
+        serverId: local.serverId,
+        projectId: local.project.projectId,
+      }),
+      remoteKey,
+    );
+    result.set(
+      createProjectViewKey({
+        kind: "placement",
+        serverId: remote.serverId,
+        projectId: remote.project.projectId,
+      }),
+      remoteKey,
+    );
+  }
+  return result;
+}
+
+function canonicalLegacyRemoteProjectKey(projectId: string): string | null {
+  if (!projectId.startsWith("remote:")) return null;
+  const separator = projectId.indexOf("/", "remote:".length);
+  if (separator < 0) return null;
+  const host = projectId.slice("remote:".length, separator).toLowerCase();
+  const remotePath = projectId
+    .slice(separator + 1)
+    .replace(/\.git$/iu, "")
+    .replace(/^\/+|\/+$/gu, "");
+  if (!host || !remotePath) return null;
+  const canonicalPath = host === "github.com" ? remotePath.toLowerCase() : remotePath;
+  return `remote:${host}/${canonicalPath}`;
+}
+
+function projectNameTail(project: ProjectDescriptor): string {
+  const displayName =
+    project.projectDisplayName ?? projectDisplayNameFromProjectId(project.projectId);
+  return displayName.match(/[^\\/]+$/u)?.[0]?.toLocaleLowerCase() ?? "";
+}
+
+function normalizePathForContainment(projectPath: string): string {
+  const normalized = projectPath.replaceAll("\\", "/").replace(/\/+$/u, "");
+  return /^[a-z]:\//iu.test(normalized) ? normalized.toLowerCase() : normalized;
+}
+
+function isPathInside(parentPath: string, childPath: string): boolean {
+  const parent = normalizePathForContainment(parentPath);
+  const child = normalizePathForContainment(childPath);
+  return child === parent || child.startsWith(`${parent}/`);
+}
+
+function hostPlacementKey(placement: WorkspaceStructureHostPlacement): string {
+  return JSON.stringify([placement.serverId, placement.projectId]);
+}
+
+function compareHostPlacements(
+  left: WorkspaceStructureHostPlacement,
+  right: WorkspaceStructureHostPlacement,
+): number {
+  const supportOrder = { supported: 0, unknown: 1, unsupported: 2 } as const;
+  return (
+    supportOrder[left.worktreeSupport] - supportOrder[right.worktreeSupport] ||
+    left.serverId.localeCompare(right.serverId) ||
+    left.projectId.localeCompare(right.projectId)
+  );
 }
 
 function getOrCreate<K, V>(map: Map<K, V>, key: K, create: () => V): V {
