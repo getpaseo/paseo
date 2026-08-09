@@ -1,0 +1,600 @@
+import { readFileSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
+import { expect, type Page } from "@playwright/test";
+import { openSettings } from "../../../app/e2e/support/helpers/app";
+import { getE2EDaemonPort } from "../../../app/e2e/support/helpers/daemon-port";
+import { escapeRegex } from "../../../app/e2e/support/helpers/regex";
+import {
+  openSettingsHost,
+  openSettingsHostSection,
+  openSettingsSection,
+} from "../../../app/e2e/support/helpers/settings";
+
+interface DaemonApiStatus {
+  version: string;
+  serverId: string;
+  hostname: string;
+}
+
+interface PidFileContent {
+  pid: number;
+  desktopManaged: boolean;
+}
+
+export interface RealDaemonState {
+  version: string;
+  pid: number | null;
+  logPath: string;
+}
+
+/**
+ * Reads live state from the running E2E test daemon: version from the HTTP
+ * status endpoint, PID from the paseo.pid lock file, log path from the
+ * E2E_PASEO_HOME directory. Call this in Node test code (not in the browser).
+ */
+export async function loadRealDaemonState(): Promise<RealDaemonState> {
+  const port = getE2EDaemonPort();
+  const paseoHome = process.env.E2E_PASEO_HOME;
+  if (!paseoHome) throw new Error("E2E_PASEO_HOME not set — the worker fixture must run first");
+
+  const resp = await fetch(`http://127.0.0.1:${port}/api/status`);
+  const data: DaemonApiStatus = await resp.json();
+
+  let pid: number | null = null;
+  try {
+    const raw = readFileSync(`${paseoHome}/paseo.pid`, "utf8");
+    const pidContent: PidFileContent = JSON.parse(raw);
+    pid = pidContent.pid ?? null;
+  } catch (err) {
+    // PID file may not be present yet on a very fresh daemon start
+    console.warn("[desktop-updates] paseo.pid not found:", err);
+  }
+
+  return { version: data.version, pid, logPath: `${paseoHome}/daemon.log` };
+}
+
+export interface DesktopRuntimeConfig {
+  serverId: string;
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateReadyToInstall?: boolean;
+  slowInstall?: boolean;
+  /** Initial PID reported by desktop_daemon_status. Defaults to null. */
+  daemonPid?: number | null;
+  daemonVersion?: string | null;
+  daemonLogPath?: string;
+  /** Initial manageBuiltInDaemon setting. Defaults to false. */
+  manageBuiltInDaemon?: boolean;
+  /** Daemon listen address reported by desktop_daemon_status. Defaults to 127.0.0.1:6767. */
+  daemonListen?: string;
+  /** Keep start_desktop_daemon pending to hold the desktop startup blocker open. */
+  hangDaemonStart?: boolean;
+  /** Delay the desktop settings IPC response to exercise startup ordering. */
+  desktopSettingsDelayMs?: number;
+  /**
+   * Controls what dialog.ask returns when the daemon management confirm dialog
+   * fires. True = confirm (proceed with the action), false = cancel. Defaults to
+   * false so tests that only assert copy don't inadvertently trigger state changes.
+   */
+  confirmShouldAccept?: boolean;
+  dialogOpenResult?: string | string[] | null;
+  editorTargets?: DesktopEditorTargetConfig[];
+  editorRecordPath?: string;
+}
+
+interface DesktopEditorTargetConfig {
+  id: string;
+  label: string;
+  kind: "editor" | "file-manager";
+  icon: { kind: "image"; dataUrl: string } | { kind: "symbol"; name: "folder" | "terminal" };
+}
+
+interface DesktopEditorOpenRecord {
+  editorId: string;
+  workspacePath: string;
+  filePath?: string;
+  line?: number;
+  column?: number;
+}
+
+export interface ConfirmDialogCall {
+  message: string;
+  title: string | undefined;
+}
+
+declare global {
+  interface Window {
+    __capturedDialogCall: ConfirmDialogCall | undefined;
+    __capturedDialogOpenCalls: Array<Record<string, unknown> | undefined>;
+    __recordDesktopEditorOpen?: (input: DesktopEditorOpenRecord) => Promise<void>;
+    __desktopDaemonStartRequested?: boolean;
+  }
+}
+
+/**
+ * Injects window.paseoDesktop before app load so all Electron-gated code
+ * activates. The update-check IPC is mocked at the boundary so the real
+ * auto-updater never fires. Daemon start/stop commands are stateful: the mock
+ * tracks running state and assigns a fresh PID on each start, letting tests
+ * observe PID changes without touching the real E2E daemon process.
+ * dialog.ask captures call arguments on window.__capturedDialogCall so tests
+ * can assert dialog copy without depending on window.confirm concatenation.
+ */
+export async function installDesktopRuntime(
+  page: Page,
+  config: DesktopRuntimeConfig,
+): Promise<void> {
+  if (config.editorRecordPath) {
+    await page.exposeFunction(
+      "__recordDesktopEditorOpen",
+      async (input: DesktopEditorOpenRecord) => {
+        await appendFile(config.editorRecordPath as string, `${JSON.stringify(input)}\n`, "utf8");
+      },
+    );
+  }
+
+  await page.addInitScript((cfg) => {
+    // Mutable state shared across IPC calls within this page
+    let manageDaemon = cfg.manageBuiltInDaemon ?? false;
+    let daemonRunning = true;
+    let currentPid: number | null = cfg.daemonPid ?? null;
+    let startCount = 0;
+    let nextTransportSessionId = 0;
+    const transportSessions = new Map<string, WebSocket>();
+    const desktopEventHandlers = new Map<string, Set<(payload: unknown) => void>>();
+    window.__desktopDaemonStartRequested = false;
+
+    function emitDesktopEvent(event: string, payload: unknown) {
+      for (const handler of desktopEventHandlers.get(event) ?? []) {
+        handler(payload);
+      }
+    }
+
+    function bytesToBase64(bytes: Uint8Array): string {
+      let binary = "";
+      for (const byte of bytes) {
+        binary += String.fromCharCode(byte);
+      }
+      return btoa(binary);
+    }
+
+    function base64ToBytes(base64: string): Uint8Array {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return bytes;
+    }
+
+    function parseWebSocketTransportTarget(args?: Record<string, unknown>): {
+      url: string;
+      protocols: string[];
+    } {
+      const url = typeof args?.url === "string" ? args.url : "";
+      const protocols = Array.isArray(args?.protocols)
+        ? args.protocols.filter((protocol): protocol is string => typeof protocol === "string")
+        : [];
+      const headers =
+        args?.headers && typeof args.headers === "object"
+          ? Object.entries(args.headers as Record<string, unknown>)
+          : [];
+      const passwordProtocol = protocols.find((protocol) => protocol.startsWith("paseo.bearer."));
+      const supportsHeaders =
+        headers.length === 0 ||
+        (headers.length === 1 &&
+          headers[0][0].toLowerCase() === "authorization" &&
+          typeof headers[0][1] === "string" &&
+          passwordProtocol !== undefined &&
+          headers[0][1] === `Bearer ${passwordProtocol.slice("paseo.bearer.".length)}`);
+
+      if (!url || !supportsHeaders) {
+        throw new Error("The browser-backed desktop E2E transport cannot attach custom headers.");
+      }
+      return { url, protocols };
+    }
+
+    async function openWebSocketTransport(args?: Record<string, unknown>): Promise<string> {
+      const target = parseWebSocketTransportTarget(args);
+      const sessionId = `e2e-websocket-session-${++nextTransportSessionId}`;
+      const socket = new WebSocket(target.url, target.protocols);
+      socket.binaryType = "arraybuffer";
+      transportSessions.set(sessionId, socket);
+
+      return await new Promise<string>((resolve, reject) => {
+        let opened = false;
+
+        socket.addEventListener("open", () => {
+          opened = true;
+          resolve(sessionId);
+          emitDesktopEvent("local-daemon-transport-event", { sessionId, kind: "open" });
+        });
+        socket.addEventListener("message", async (event) => {
+          if (typeof event.data === "string") {
+            emitDesktopEvent("local-daemon-transport-event", {
+              sessionId,
+              kind: "message",
+              text: event.data,
+            });
+            return;
+          }
+          const buffer =
+            event.data instanceof ArrayBuffer
+              ? event.data
+              : await (event.data as Blob).arrayBuffer();
+          emitDesktopEvent("local-daemon-transport-event", {
+            sessionId,
+            kind: "message",
+            binaryBase64: bytesToBase64(new Uint8Array(buffer)),
+          });
+        });
+        socket.addEventListener("close", (event) => {
+          transportSessions.delete(sessionId);
+          if (!opened) {
+            reject(new Error("Desktop E2E WebSocket closed before opening."));
+            return;
+          }
+          emitDesktopEvent("local-daemon-transport-event", {
+            sessionId,
+            kind: "close",
+            code: event.code,
+            reason: event.reason,
+          });
+        });
+        socket.addEventListener("error", () => {
+          if (!opened) {
+            transportSessions.delete(sessionId);
+            reject(new Error("Desktop E2E WebSocket failed to open."));
+            return;
+          }
+          emitDesktopEvent("local-daemon-transport-event", {
+            sessionId,
+            kind: "error",
+            error: "Desktop E2E WebSocket transport error.",
+          });
+        });
+      });
+    }
+
+    function buildDaemonStatus() {
+      return {
+        serverId: cfg.serverId,
+        status: daemonRunning ? "running" : "stopped",
+        listen: cfg.daemonListen ?? "127.0.0.1:6767",
+        hostname: null,
+        pid: currentPid,
+        home: "",
+        version: cfg.daemonVersion ?? null,
+        desktopManaged: manageDaemon,
+        error: null,
+      };
+    }
+
+    function startDesktopDaemon() {
+      window.__desktopDaemonStartRequested = true;
+      if (cfg.hangDaemonStart) {
+        return new Promise(() => undefined);
+      }
+      startCount += 1;
+      daemonRunning = true;
+      // First start (bootstrap) returns the configured PID; subsequent starts
+      // (after a stop) get a fresh PID so tests can observe the change.
+      currentPid = (cfg.daemonPid ?? 10000) + (startCount - 1) * 1000;
+      return buildDaemonStatus();
+    }
+
+    async function waitForDesktopSettingsResponse() {
+      const delayMs = cfg.desktopSettingsDelayMs ?? 0;
+      if (delayMs > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+
+    function patchDesktopSettings(args?: Record<string, unknown>) {
+      const daemon = args?.daemon;
+      if (
+        daemon !== null &&
+        typeof daemon === "object" &&
+        "manageBuiltInDaemon" in daemon &&
+        typeof daemon.manageBuiltInDaemon === "boolean"
+      ) {
+        manageDaemon = daemon.manageBuiltInDaemon;
+      }
+      return {
+        releaseChannel: "stable",
+        daemon: { manageBuiltInDaemon: manageDaemon, keepRunningAfterQuit: true },
+      };
+    }
+
+    function sendWebSocketTransportMessage(args?: Record<string, unknown>): null {
+      const sessionId = typeof args?.sessionId === "string" ? args.sessionId : "";
+      const socket = transportSessions.get(sessionId);
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        throw new Error(`Desktop E2E WebSocket session is not open: ${sessionId}`);
+      }
+      if (typeof args?.text === "string") {
+        socket.send(args.text);
+        return null;
+      }
+      if (typeof args?.binaryBase64 === "string") {
+        socket.send(base64ToBytes(args.binaryBase64));
+        return null;
+      }
+      throw new Error("Desktop E2E WebSocket send requires a payload.");
+    }
+
+    function closeWebSocketTransport(args?: Record<string, unknown>): null {
+      const sessionId = typeof args?.sessionId === "string" ? args.sessionId : "";
+      transportSessions.get(sessionId)?.close();
+      transportSessions.delete(sessionId);
+      return null;
+    }
+
+    const webSocketTransportCommandHandlers: Record<
+      string,
+      (args?: Record<string, unknown>) => unknown
+    > = {
+      open_websocket_daemon_transport: openWebSocketTransport,
+      send_local_daemon_transport_message: sendWebSocketTransportMessage,
+      close_local_daemon_transport: closeWebSocketTransport,
+    };
+
+    const desktopBridge: {
+      platform: string;
+      invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+      dialog: {
+        ask: (message: string, options?: Record<string, unknown>) => Promise<boolean>;
+        open: (options?: Record<string, unknown>) => Promise<string | string[] | null>;
+      };
+      getPendingOpenProject: () => Promise<string | null>;
+      opener: { openUrl: (url: string) => Promise<void> };
+      events: {
+        on: (event: string, handler: (payload: unknown) => void) => Promise<() => void>;
+      };
+      editor?: {
+        listTargets: () => Promise<DesktopEditorTargetConfig[]>;
+        openTarget: (input: DesktopEditorOpenRecord) => Promise<void>;
+      };
+    } = {
+      platform: "darwin",
+      invoke: async (command: string, args?: Record<string, unknown>) => {
+        if (command === "check_app_update") {
+          return cfg.updateAvailable
+            ? {
+                hasUpdate: true,
+                readyToInstall: cfg.updateReadyToInstall ?? true,
+                currentVersion: "1.0.0",
+                latestVersion: cfg.latestVersion ?? "1.2.3",
+                body: null,
+                date: null,
+              }
+            : {
+                hasUpdate: false,
+                readyToInstall: false,
+                currentVersion: "1.0.0",
+                latestVersion: null,
+                body: null,
+                date: null,
+              };
+        }
+
+        if (command === "install_app_update") {
+          if (cfg.slowInstall) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 3000));
+          }
+          return {
+            installed: true,
+            version: cfg.latestVersion ?? "1.2.3",
+            message: "App update installed. Restart required.",
+          };
+        }
+
+        if (command === "desktop_daemon_status") {
+          return buildDaemonStatus();
+        }
+
+        if (command === "desktop_daemon_logs") {
+          return { logPath: cfg.daemonLogPath ?? "", contents: "" };
+        }
+
+        if (command === "get_desktop_settings") {
+          await waitForDesktopSettingsResponse();
+          return {
+            releaseChannel: "stable",
+            daemon: { manageBuiltInDaemon: manageDaemon, keepRunningAfterQuit: true },
+          };
+        }
+
+        if (command === "patch_desktop_settings") {
+          return patchDesktopSettings(args);
+        }
+
+        if (command === "stop_desktop_daemon") {
+          daemonRunning = false;
+          currentPid = null;
+          return buildDaemonStatus();
+        }
+
+        if (command === "start_desktop_daemon") {
+          return startDesktopDaemon();
+        }
+
+        const transportCommandHandler = webSocketTransportCommandHandlers[command];
+        if (transportCommandHandler) {
+          return await transportCommandHandler(args);
+        }
+
+        return null;
+      },
+      dialog: {
+        ask: async (message: string, options?: Record<string, unknown>) => {
+          window.__capturedDialogCall = {
+            message,
+            title: typeof options?.title === "string" ? options.title : undefined,
+          };
+          return cfg.confirmShouldAccept ?? false;
+        },
+        open: async (options?: Record<string, unknown>) => {
+          window.__capturedDialogOpenCalls.push(options);
+          return cfg.dialogOpenResult ?? null;
+        },
+      },
+      getPendingOpenProject: async () => null,
+      opener: {
+        openUrl: async (url) => {
+          localStorage.setItem("@paseo:e2e-opened-url", url);
+        },
+      },
+      events: {
+        on: async (event, handler) => {
+          const handlers = desktopEventHandlers.get(event) ?? new Set();
+          handlers.add(handler);
+          desktopEventHandlers.set(event, handlers);
+          return () => {
+            handlers.delete(handler);
+            if (handlers.size === 0) {
+              desktopEventHandlers.delete(event);
+            }
+          };
+        },
+      },
+    };
+
+    if (cfg.editorTargets) {
+      desktopBridge.editor = {
+        listTargets: async () => cfg.editorTargets ?? [],
+        openTarget: async (input: DesktopEditorOpenRecord) => {
+          await window.__recordDesktopEditorOpen?.(input);
+        },
+      };
+    }
+
+    window.__capturedDialogOpenCalls = [];
+    (window as unknown as { paseoDesktop: unknown }).paseoDesktop = desktopBridge;
+  }, config);
+}
+
+export async function waitForDesktopDaemonStartRequest(page: Page): Promise<void> {
+  await page.waitForFunction(() => window.__desktopDaemonStartRequested === true);
+  // Give the startup state two paints to expose any app → splash regression.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+}
+
+export async function waitForDirectoryDialog(
+  page: Page,
+): Promise<Record<string, unknown> | undefined> {
+  await expect.poll(() => page.evaluate(() => window.__capturedDialogOpenCalls.length)).toBe(1);
+  return page.evaluate(() => window.__capturedDialogOpenCalls[0]);
+}
+
+export async function openDesktopSettings(page: Page, serverId: string): Promise<void> {
+  await openSettings(page);
+  await openSettingsHost(page, serverId);
+  // The daemon-lifecycle card moved to the Host section in the flat-settings
+  // layout; navigate there before asserting it.
+  await openSettingsHostSection(page, serverId, "host");
+  await expect(page.getByTestId("host-page-daemon-lifecycle-card")).toBeVisible({
+    timeout: 15_000,
+  });
+}
+
+export async function openDesktopAboutSettings(page: Page): Promise<void> {
+  await openSettings(page);
+  await openSettingsSection(page, "about");
+  await expect(page.getByText("App updates", { exact: true })).toBeVisible();
+}
+
+export async function expectUpdateBanner(page: Page, version: string): Promise<void> {
+  const callout = page.getByTestId("update-callout");
+  await expect(callout).toBeVisible({ timeout: 15_000 });
+  await expect(callout).toContainText(`v${version.replace(/^v/i, "")}`);
+}
+
+export async function clickCheckForUpdates(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Check" }).click();
+}
+
+export async function expectPendingUpdateCheckResult(page: Page, version: string): Promise<void> {
+  const normalizedVersion = `v${version.replace(/^v/i, "")}`;
+  await expect(
+    page.getByText(
+      new RegExp(`Update found: ${escapeRegex(normalizedVersion)}\\. Downloading\\.\\.\\.`),
+    ),
+  ).toBeVisible();
+  await expect(page.getByText(`Ready to install: ${normalizedVersion}`)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Update" })).toBeDisabled();
+}
+
+export async function clickInstallUpdate(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Install & restart" }).click();
+}
+
+export async function expectInstallInProgress(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Installing..." })).toBeVisible();
+}
+
+/**
+ * Clicks the daemon management switch and waits for dialog.ask to fire in the
+ * mock, then returns the captured call args (message + title). The mock auto-
+ * dismisses via confirmShouldAccept=false so callers can assert copy without
+ * worrying about state changes.
+ */
+export async function interceptDaemonManagementConfirmDialog(
+  page: Page,
+): Promise<ConfirmDialogCall> {
+  await page.getByRole("switch", { name: "Manage built-in daemon" }).click();
+  await page.waitForFunction(() => !!window.__capturedDialogCall, { timeout: 5_000 });
+  return page.evaluate(() => window.__capturedDialogCall!);
+}
+
+export async function toggleDaemonManagement(
+  page: Page,
+  _action: "enable" | "disable",
+): Promise<void> {
+  await page.getByRole("switch", { name: "Manage built-in daemon" }).click();
+}
+
+export function expectDaemonManagementConfirmDialog(args: ConfirmDialogCall): void {
+  expect(args.title).toBe("Pause built-in daemon");
+  expect(args.message).toContain("stop the built-in daemon immediately");
+}
+
+export async function expectDaemonManagementEnabled(page: Page): Promise<void> {
+  await expect(page.getByRole("switch", { name: "Manage built-in daemon" })).toBeChecked();
+}
+
+export async function expectDaemonManagementDisabled(page: Page): Promise<void> {
+  await expect(page.getByRole("switch", { name: "Manage built-in daemon" })).not.toBeChecked();
+}
+
+/**
+ * Asserts the daemon status card shows the given PID. Pass null to assert
+ * the cleared state (shown as "PID —" when the daemon is stopped).
+ */
+export async function expectDaemonStatusPid(page: Page, pid: number | null): Promise<void> {
+  const expected = pid !== null ? `PID ${pid}` : "PID —";
+  await expect(
+    page.getByTestId("host-page-daemon-lifecycle-card").getByText(expected),
+  ).toBeVisible();
+}
+
+export async function expectDaemonStatusLogPath(page: Page, logPath: string): Promise<void> {
+  await expect(
+    page.getByTestId("host-page-daemon-lifecycle-card").getByText(logPath),
+  ).toBeVisible();
+}
+
+/**
+ * Asserts the host page identity badge shows the given version string.
+ * The badge is populated from the live WebSocket session's serverInfo.version.
+ */
+export async function expectDaemonStatusVersion(page: Page, version: string): Promise<void> {
+  await expect(
+    page.getByTestId("host-page-identity").getByText(version, { exact: false }),
+  ).toBeVisible({ timeout: 15_000 });
+}

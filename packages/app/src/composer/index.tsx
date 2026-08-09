@@ -1,3 +1,4 @@
+import type { ComposerInputMode } from "@/composer/input-mode";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
@@ -66,10 +67,10 @@ import {
   sendQueuedComposerMessageNow,
   toggleGithubAttachmentFromPicker,
   uploadFileAttachments,
-  type AgentStreamWriter,
   type QueueWriter,
   type QueuedComposerMessage,
 } from "@/composer/actions";
+import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { useVoiceOptional } from "@/contexts/voice-context";
 import { useToast } from "@/contexts/toast-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -85,6 +86,7 @@ import {
 import {
   deleteAttachments,
   persistAttachmentFromBlob,
+  persistAttachmentFromDataUrl,
   persistAttachmentFromFileUri,
 } from "@/attachments/service";
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
@@ -176,7 +178,18 @@ function resolveCompactLayout(override: boolean | undefined, formFactor: boolean
   return override ?? formFactor;
 }
 
-function resolveMessagePlaceholder(isDesktopWebBreakpoint: boolean, t: TFunction): string {
+function resolveMessagePlaceholder(
+  inputMode: ComposerInputMode,
+  isDesktopWebBreakpoint: boolean,
+  t: TFunction,
+  override: string | undefined,
+): string {
+  if (override !== undefined) {
+    return override;
+  }
+  if (inputMode === "terminal") {
+    return t("composer.placeholders.terminal");
+  }
   return isDesktopWebBreakpoint
     ? t("composer.placeholders.desktop")
     : t("composer.placeholders.mobile");
@@ -905,6 +918,18 @@ interface ComposerProps {
   externalKeyboardShift?: boolean;
   /** Optional panel/container layout breakpoint. Defaults to the screen breakpoint. */
   isCompactLayout?: boolean;
+  /**
+   * What this composer is for. Terminal drops the chat-agent affordances and
+   * uses the terminal font; see `@/composer/input-mode`. Callers set the mode
+   * and nothing else — never branch on it at the call site.
+   */
+  inputMode?: ComposerInputMode;
+  /** Renders `value` as static text on the same surface, for content there is nothing to type into. */
+  readOnly?: boolean;
+  /** Replaces the submit icon with this label, still inside the composer's own toolbar row. */
+  submitLabel?: string;
+  /** Overrides the mode's default placeholder, for text only the caller can build. */
+  placeholder?: string;
 }
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
@@ -1113,6 +1138,10 @@ export function Composer({
   inputWrapperStyle,
   externalKeyboardShift,
   isCompactLayout: isCompactLayoutOverride,
+  inputMode = "chat",
+  readOnly: _readOnly = false,
+  submitLabel: _submitLabel,
+  placeholder,
 }: ComposerProps) {
   const { t } = useTranslation();
   const buttonIconSize = resolveComposerButtonIconSize();
@@ -1141,14 +1170,12 @@ export function Composer({
   const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
 
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
-  const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
-  const setAgentStreamHead = useSessionStore((state) => state.setAgentStreamHead);
 
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
   const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isCompactFormFactor);
   const isDesktopLayout = resolveIsDesktopWebBreakpoint(isCompactLayout);
-  const messagePlaceholder = resolveMessagePlaceholder(isDesktopLayout, t);
+  const messagePlaceholder = resolveMessagePlaceholder(inputMode, isDesktopLayout, t, placeholder);
   const userInput = value;
   const setUserInput = onChangeText;
   const workspaceAttachments = useWorkspaceAttachmentsForScopes(attachmentScopeKeys);
@@ -1366,12 +1393,6 @@ export function Composer({
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      const stream: AgentStreamWriter = {
-        getTail: (id) => useSessionStore.getState().sessions[serverId]?.agentStreamTail?.get(id),
-        getHead: (id) => useSessionStore.getState().sessions[serverId]?.agentStreamHead?.get(id),
-        setHead: (updater) => setAgentStreamHead(serverId, updater),
-        setTail: (updater) => setAgentStreamTail(serverId, updater),
-      };
       await dispatchComposerAgentMessage({
         client,
         agentId: targetAgentId,
@@ -1381,20 +1402,12 @@ export function Composer({
           supportsForgeAttachments: supportsForgeSearch,
         }),
         encodeImages,
-        stream,
+        submission: createMessageSubmissionWriter(serverId),
         steer: options?.steer,
       });
       onAttentionPromptSend?.();
     };
-  }, [
-    client,
-    onAttentionPromptSend,
-    serverId,
-    setAgentStreamTail,
-    setAgentStreamHead,
-    supportsForgeSearch,
-    t,
-  ]);
+  }, [client, onAttentionPromptSend, serverId, supportsForgeSearch, t]);
 
   useEffect(() => {
     onSubmitMessageRef.current = onSubmitMessage;
@@ -1536,6 +1549,8 @@ export function Composer({
       persister: {
         persistFromBlob: ({ blob, mimeType, fileName }) =>
           persistAttachmentFromBlob({ blob, mimeType, fileName }),
+        persistFromDataUrl: ({ dataUrl, mimeType, fileName }) =>
+          persistAttachmentFromDataUrl({ dataUrl, mimeType, fileName }),
         persistFromFileUri: ({ uri, mimeType, fileName }) =>
           persistAttachmentFromFileUri({ uri, mimeType, fileName }),
       },
@@ -1654,23 +1669,23 @@ export function Composer({
     if (interactionLocked) {
       return;
     }
-    const didCancel = cancelComposerAgent({
+    const cancelPromise = cancelComposerAgent({
       client,
       agentId: agentIdRef.current,
       isAgentRunning,
       isCancellingAgent,
       isConnected,
-      onCancelFailed: (error) => {
-        setIsCancellingAgent(false);
-        const message = resolveErrorMessage(error);
-        if (message && message.trim().length > 0) {
-          toastErrorRef.current(message);
-        }
-      },
     });
-    if (!didCancel) return;
+    if (!cancelPromise) return;
     setIsCancellingAgent(true);
     messageInputRef.current?.focus();
+    void cancelPromise.catch((error) => {
+      setIsCancellingAgent(false);
+      const message = resolveErrorMessage(error);
+      if (message && message.trim().length > 0) {
+        toastErrorRef.current(message);
+      }
+    });
   }, [client, interactionLocked, isAgentRunning, isCancellingAgent, isConnected]);
 
   const focusMessageInputForKeyboardAction = useCallback(() => {

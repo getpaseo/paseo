@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  applyDictationTranscript,
   computeCanStartDictation,
   resolveComposerSurfacePresentation,
   runAlternateSendAction,
@@ -160,6 +161,29 @@ describe("dictation keyboard behavior", () => {
     keyboard.pressDictationShortcut();
 
     expect(keyboard.actions).toEqual(["start", "start"]);
+  });
+});
+
+describe("dictation transcript behavior", () => {
+  it("publishes an auto-sent transcript to the composer before submitting it", () => {
+    const actions: string[] = [];
+
+    applyDictationTranscript("spoken prompt", {
+      value: "typed context",
+      defaultSendBehavior: "interrupt",
+      isAgentRunning: false,
+      onQueue: undefined,
+      onChangeText: (text) => actions.push(`change:${text}`),
+      onSubmit: (payload) => actions.push(`submit:${payload.text}`),
+      attachments: [],
+      cwd: "/repo",
+      autoSend: true,
+    });
+
+    expect(actions).toEqual([
+      "change:typed context spoken prompt",
+      "submit:typed context spoken prompt",
+    ]);
   });
 });
 

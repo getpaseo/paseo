@@ -20,6 +20,7 @@ import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
+import type { TurnPresentation } from "@/timeline/turn-liveness";
 
 const EMPTY_PERMISSIONS = new Map<string, PendingPermission>();
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
@@ -45,10 +46,14 @@ function useProviderSubagentDescriptor(
     (state) => state.sessions[context.serverId]?.agents.get(target.parentAgentId)?.provider,
   );
   const provider = descriptor?.provider ?? parentProvider ?? "agent";
-  const label = descriptor?.title?.trim() || descriptor?.description?.trim() || "Subagent";
+  // The task names the tab; the subagent type is supporting detail beside the provider.
+  const subagentType = descriptor?.title?.trim();
+  const label = descriptor?.description?.trim() || subagentType || "Subagent";
+  const providerLabel = `${formatProviderLabel(provider)} subagent`;
   return {
     label,
-    subtitle: `${formatProviderLabel(provider)} subagent`,
+    subtitle:
+      subagentType && subagentType !== label ? `${subagentType} · ${providerLabel}` : providerLabel,
     tooltip: label,
     titleState: descriptor ? "ready" : "loading",
     icon: getProviderIcon(provider),
@@ -104,10 +109,12 @@ function ProviderSubagentPanel() {
       .catch(() => undefined);
   }, [client, serverId, supported, target.parentAgentId, target.subagentId]);
 
-  const loadOlder = useCallback(() => {
-    if (!client || !supported || isLoadingOlder || !timeline?.hasOlder || !timeline.epoch) return;
+  const loadOlder = useCallback((): boolean => {
+    if (!client || !supported || isLoadingOlder || !timeline?.hasOlder || !timeline.epoch) {
+      return false;
+    }
     const firstSeq = timeline.rows.size ? Math.min(...timeline.rows.keys()) : null;
-    if (firstSeq === null) return;
+    if (firstSeq === null) return false;
     setIsLoadingOlder(true);
     void client
       .fetchProviderSubagentTimeline(target.parentAgentId, target.subagentId, {
@@ -121,6 +128,7 @@ function ProviderSubagentPanel() {
       })
       .catch(() => undefined)
       .finally(() => setIsLoadingOlder(false));
+    return true;
   }, [
     client,
     isLoadingOlder,
@@ -133,6 +141,7 @@ function ProviderSubagentPanel() {
   const firstTimelineSeq = timeline?.rows.size ? Math.min(...timeline.rows.keys()) : null;
   const progressKey =
     timeline?.epoch && firstTimelineSeq !== null ? `${timeline.epoch}:${firstTimelineSeq}` : null;
+  const subtitle = descriptor?.subtitle?.trim();
 
   const streamContext = useMemo<AgentScreenAgent>(
     () => ({
@@ -155,6 +164,15 @@ function ProviderSubagentPanel() {
     }),
     [isLoadingOlder, loadOlder, progressKey, timeline?.hasOlder],
   );
+  const turnPresentation = useMemo<TurnPresentation>(
+    () => ({
+      isActive: descriptor?.status === "running",
+      isCancelling: false,
+      startedAt: null,
+      turnId: null,
+    }),
+    [descriptor?.status],
+  );
 
   if (serverInfo && !supported) {
     return (
@@ -166,12 +184,24 @@ function ProviderSubagentPanel() {
 
   return (
     <View style={styles.container} testID="provider-subagent-panel">
+      {subtitle ? (
+        <View style={styles.subtitleHeader}>
+          <Text
+            style={styles.subtitleText}
+            numberOfLines={1}
+            testID="provider-subagent-pane-subtitle"
+          >
+            {subtitle}
+          </Text>
+        </View>
+      ) : null}
       <AgentStreamView
         agentId={streamId}
         serverId={serverId}
         context={streamContext}
         streamItems={timeline?.tail ?? EMPTY_STREAM_ITEMS}
         streamHead={timeline?.head ?? EMPTY_STREAM_ITEMS}
+        turnPresentation={turnPresentation}
         pendingPermissions={EMPTY_PERMISSIONS}
         isAuthoritativeHistoryReady
         onOpenWorkspaceFile={openFileInWorkspace}
@@ -183,7 +213,17 @@ function ProviderSubagentPanel() {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: { flex: 1 },
+  container: { flex: 1, minHeight: 0 },
+  subtitleHeader: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.border,
+  },
+  subtitleText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
   unsupported: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   unsupportedText: { color: theme.colors.foregroundMuted, textAlign: "center" },
 }));

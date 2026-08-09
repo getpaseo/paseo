@@ -115,6 +115,46 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.attentionSoundPreset).toBe("bell");
   });
 
+  it("enables the chat outline by default", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.chatOutlineEnabled).toBe(true);
+  });
+
+  it("loads a disabled chat outline preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ chatOutlineEnabled: false }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.chatOutlineEnabled).toBe(false);
+  });
+
+  it("uses the native terminal renderer by default", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.useLegacyTerminalRenderer).toBe(false);
+  });
+
+  it("loads the per-device legacy terminal renderer preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ useLegacyTerminalRenderer: true }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.useLegacyTerminalRenderer).toBe(true);
+  });
+
   it("loads configured terminal scrollback lines from app settings", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
@@ -394,6 +434,29 @@ describe("appearance settings", () => {
     });
 
     expect((await loadAppSettingsFromStorage(deps)).toolCallDetailLevel).toBe("overview");
+  });
+
+  it("migrates a switched-off checks row item to the hidden checks display", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sidebarRowItems: { checks: false } }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).sidebarChecksDisplay).toBe("none");
+  });
+
+  it("lets a stored checks display win over the row item it replaced", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          sidebarChecksDisplay: "icon",
+          sidebarRowItems: { checks: false },
+        }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).sidebarChecksDisplay).toBe("icon");
   });
 
   it("clamps the UI font size into range and rejects non-numeric values", async () => {

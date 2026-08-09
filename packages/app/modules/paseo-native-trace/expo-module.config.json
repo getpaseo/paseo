@@ -1,0 +1,6 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "modules": ["sh.paseo.trace.PaseoNativeTraceModule"]
+  }
+}

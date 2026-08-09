@@ -12,6 +12,15 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 // drift apart.
 export const TREE_INDENT_PER_LEVEL = 16;
 export const WORKSPACE_FILE_ROW_VERTICAL_PADDING = SPACING[1.5];
+export const WORKSPACE_TREE_ICON_SIZE = 16;
+export const WORKSPACE_TREE_LOADING_ICON_SIZE = 14;
+export const WORKSPACE_TREE_ICON_LABEL_GAP = SPACING[2];
+/**
+ * Trailing glyph rail shared with the explorer X and Changes options chevron.
+ * The extra 2px is optical: text ink ends inside its layout box, while the
+ * header icons' strokes extend to theirs.
+ */
+export const WORKSPACE_FILE_ROW_TRAILING_PADDING = SPACING[4] + 2;
 
 /** Left padding for a tree row at `depth`. Shared by folder rows and file headers
  * in the Changes tree so their indentation can't drift apart. */
@@ -19,7 +28,9 @@ export function treeRowPaddingLeft(depth: number): number {
   return SPACING[3] + depth * TREE_INDENT_PER_LEVEL;
 }
 
-const foregroundMutedIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const foregroundExtraMutedIconColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundExtraMuted,
+});
 
 const ThemedChevronRight = withUnistyles(ChevronRight);
 
@@ -52,8 +63,17 @@ export function TreeIndentGuides({ depth }: { depth: number }) {
 /** Rotating disclosure chevron for a directory row (points right; rotates down when expanded). */
 export function TreeChevron({ expanded }: { expanded: boolean }) {
   return (
-    <View style={expanded ? [styles.chevron, styles.chevronExpanded] : styles.chevron}>
-      <ThemedChevronRight size={16} uniProps={foregroundMutedIconColorMapping} />
+    <View
+      style={
+        expanded
+          ? [styles.chevron, styles.chevronExpanded]
+          : [styles.chevron, styles.chevronCollapsed]
+      }
+    >
+      <ThemedChevronRight
+        size={WORKSPACE_TREE_ICON_SIZE}
+        uniProps={foregroundExtraMutedIconColorMapping}
+      />
     </View>
   );
 }
@@ -67,13 +87,19 @@ const styles = StyleSheet.create((theme: Theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   chevron: {
-    width: 16,
-    height: 16,
+    width: WORKSPACE_TREE_ICON_SIZE,
+    height: WORKSPACE_TREE_ICON_SIZE,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   },
+  // Lucide leaves space around the chevron path. Align its painted right edge inside the fixed
+  // slot; the rotated glyph is wider, so it needs half the optical offset.
+  chevronCollapsed: {
+    left: 4,
+  },
   chevronExpanded: {
+    left: 2,
     transform: [{ rotate: "90deg" }],
   },
 }));

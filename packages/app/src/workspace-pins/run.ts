@@ -1,3 +1,4 @@
+import { resolveTerminalProfileLaunch } from "@getpaseo/protocol/terminal-profiles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import type { TerminalProfileInput } from "@/screens/workspace/terminals/use-workspace-terminals";
 import type { PinnedTabTarget } from "@/workspace-pins/target";
@@ -35,9 +36,7 @@ export function runPinnedTabTarget(
   if (!profile) {
     return;
   }
-  handlers.createTerminalWithProfile({
-    name: profile.name,
-    command: profile.command,
-    args: profile.args,
-  });
+  // Nothing to type from a pin, so the prompt is empty and any sentinel arg
+  // drops out.
+  handlers.createTerminalWithProfile(resolveTerminalProfileLaunch(profile, ""));
 }

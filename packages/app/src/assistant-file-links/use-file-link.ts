@@ -245,10 +245,10 @@ function canResolveAssistantFileLinkToFile(
 }
 
 function useStableSource(source: AssistantFileLinkSource): AssistantFileLinkSource {
-  const { href, text, markup, sourceInfo, sourceType } = source;
+  const { href, text, title, markup, sourceInfo, sourceType } = source;
   return useMemo(
-    () => ({ href, text, markup, sourceInfo, sourceType }),
-    [href, text, markup, sourceInfo, sourceType],
+    () => ({ href, text, title, markup, sourceInfo, sourceType }),
+    [href, text, title, markup, sourceInfo, sourceType],
   );
 }
 

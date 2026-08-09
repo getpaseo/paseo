@@ -17,7 +17,7 @@ export interface DaemonRuntimeConfig {
   worktreesRoot?: string;
   appBaseUrl?: string;
   desktopManaged?: boolean;
-  relay: {
+  getRelayConfig(): {
     enabled: boolean;
     endpoint: string;
     publicEndpoint: string;
@@ -169,7 +169,7 @@ export class DaemonSession {
           nodePath: process.execPath,
           startedAt: pidInfo?.startedAt ?? null,
           listen: this.daemonRuntimeConfig?.listen ?? null,
-          relay: this.daemonRuntimeConfig?.relay ?? null,
+          relay: this.daemonRuntimeConfig?.getRelayConfig() ?? null,
           providers,
         },
       });
@@ -196,10 +196,10 @@ export class DaemonSession {
     msg: Extract<SessionInboundMessage, { type: "daemon.get_pairing_offer.request" }>,
   ): Promise<void> {
     try {
-      const relay = this.daemonRuntimeConfig?.relay;
+      const relay = this.daemonRuntimeConfig?.getRelayConfig();
       const pairing = await generateLocalPairingOffer({
         paseoHome: this.paseoHome,
-        relayEnabled: relay?.enabled ?? true,
+        relayEnabled: relay?.enabled ?? false,
         relayEndpoint: relay?.endpoint,
         relayPublicEndpoint: relay?.publicEndpoint,
         relayUseTls: relay?.useTls,

@@ -96,10 +96,10 @@ export function buildMasterBacklogProjectTargets(input: {
         continue;
       }
       targets.push({
-        optionId: buildMasterBacklogProjectOptionId(host.serverId, project.projectKey),
+        optionId: buildMasterBacklogProjectOptionId(host.serverId, project.viewKey),
         serverId: host.serverId,
         serverName: host.serverName,
-        projectId: project.projectKey,
+        projectId: project.viewKey,
         projectName: project.projectName,
         repoRoot,
       });
@@ -122,7 +122,7 @@ export function annotateMasterBacklogTasks(input: {
 
   for (const project of input.projects) {
     for (const host of project.hosts) {
-      metadataByProject.set(projectMetadataKey(host.serverId, project.projectKey), {
+      metadataByProject.set(projectMetadataKey(host.serverId, project.viewKey), {
         projectName: project.projectName,
         repoRoot: host.repoRoot.trim() || null,
       });

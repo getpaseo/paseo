@@ -1,3 +1,4 @@
+import { resolveTurnPresentation, TURN_LIVENESS_IDLE } from "@/timeline/turn-liveness";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -257,6 +258,7 @@ function buildDraftAgentSnapshot(input: {
     persistence: null,
     runtimeInfo: { provider, sessionId: null, model, modeId },
     title: "Agent",
+    activeTurn: null,
     cwd: workspaceDirectory,
     model,
     features: composerState.agentControls.features,
@@ -480,7 +482,8 @@ export function WorkspaceDraftAgentTab({
   const {
     formErrorMessage,
     isSubmitting,
-    optimisticStreamItems,
+    submittedStreamItems,
+    pendingMessageSubmissions,
     draftAgent,
     handleCreateFromInput,
     continueCreateFromAttempt,
@@ -547,6 +550,10 @@ export function WorkspaceDraftAgentTab({
     enabled: isPaneFocused && !isSubmitting,
     actions: draftModelActions,
   });
+  const turnPresentation = useMemo(
+    () => resolveTurnPresentation(TURN_LIVENESS_IDLE, pendingMessageSubmissions.length > 0),
+    [pendingMessageSubmissions],
+  );
 
   const isReadyForPendingAutoSubmit = Boolean(
     pendingAutoSubmit &&
@@ -647,7 +654,9 @@ export function WorkspaceDraftAgentTab({
               agentId={tabId}
               serverId={serverId}
               context={draftAgent}
-              streamItems={optimisticStreamItems}
+              streamItems={submittedStreamItems}
+              pendingMessageSubmissions={pendingMessageSubmissions}
+              turnPresentation={turnPresentation}
               pendingPermissions={EMPTY_PENDING_PERMISSIONS}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />

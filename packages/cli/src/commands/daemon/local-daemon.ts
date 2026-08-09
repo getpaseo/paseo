@@ -128,6 +128,9 @@ function envWithHome(home?: string): NodeJS.ProcessEnv {
 
 function buildRunnerArgs(options: DaemonStartOptions): string[] {
   const args: string[] = [];
+  if (options.relay === true) {
+    args.push("--relay");
+  }
   if (options.relay === false) {
     args.push("--no-relay");
   }

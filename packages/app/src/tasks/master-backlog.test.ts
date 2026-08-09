@@ -15,7 +15,7 @@ describe("master backlog helpers", () => {
     const targets = buildMasterBacklogProjectTargets({
       projects: [
         projectSummary({
-          projectKey: "project-a",
+          viewKey: "project-a",
           projectName: "Project A",
           hosts: [
             { serverId: "host-a", serverName: "Alpha", isOnline: true, repoRoot: "/repo/a" },
@@ -47,7 +47,7 @@ describe("master backlog helpers", () => {
     const annotated = annotateMasterBacklogTasks({
       projects: [
         projectSummary({
-          projectKey: "project-a",
+          viewKey: "project-a",
           projectName: "Project A",
           hosts: [{ serverId: "host-a", serverName: "Alpha", isOnline: true, repoRoot: "/repo/a" }],
         }),
@@ -165,7 +165,7 @@ describe("master backlog helpers", () => {
 });
 
 function projectSummary(input: {
-  projectKey: string;
+  viewKey: string;
   projectName: string;
   hosts: Array<{
     serverId: string;
@@ -175,12 +175,12 @@ function projectSummary(input: {
   }>;
 }): ProjectSummary {
   return {
-    projectKey: input.projectKey,
+    viewKey: input.viewKey,
     projectName: input.projectName,
     projectCustomName: null,
     hosts: input.hosts.map((host) => ({
       ...host,
-      projectId: input.projectKey,
+      projectId: input.viewKey,
       projectName: input.projectName,
       projectCustomName: null,
       workspaceCount: 1,

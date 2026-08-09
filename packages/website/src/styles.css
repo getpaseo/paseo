@@ -307,9 +307,11 @@
 
 .docs-prose h2 {
   color: var(--color-foreground);
-  font-size: 1.25rem;
+  font-size: 1.375rem;
   line-height: 1.4;
   font-weight: 500;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--color-border);
   margin-top: 2rem;
   margin-bottom: 1rem;
 }

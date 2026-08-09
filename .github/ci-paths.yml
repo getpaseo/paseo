@@ -1,0 +1,71 @@
+# Pull-request checks are routed by the behavior they prove. Package consumers
+# do not inherit their dependencies' test suites; main and manual runs execute
+# every contract regardless of these paths.
+routing:
+  - ".github/ci-paths.yml"
+
+workspace:
+  - ".mise.toml"
+  - ".tool-versions"
+  - "package.json"
+  - "package-lock.json"
+  - "patches/**"
+  - "scripts/**"
+  - "tsconfig.json"
+  - "tsconfig.base.json"
+  - "vitest.config.ts"
+
+ci:
+  - ".github/actions/**"
+  - ".github/workflows/ci.yml"
+
+format:
+  - ".agents/**/*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}"
+  - ".github/**/*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}"
+  - "**/*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}"
+  - "packages/expo-two-way-audio/**"
+
+quality:
+  - "**/*.{cjs,js,json,jsx,mjs,ts,tsx}"
+  - "packages/expo-two-way-audio/**"
+
+hub:
+  - "packages/cli/src/commands/hub/**"
+  - "packages/server/src/server/hub/**"
+
+server:
+  - "packages/server/**"
+  - "packages/app/e2e/support/fixtures/recording.*"
+
+desktop:
+  - "packages/desktop/**"
+  - "packages/app/src/desktop/**"
+  - "packages/server/src/server/browser-tools/**"
+  - "packages/app/e2e/support/**"
+  - "packages/app/*config.{cjs,js,ts}"
+  - "packages/app/package.json"
+
+app:
+  - "packages/app/**"
+  - "packages/expo-two-way-audio/**"
+
+sdk:
+  - "packages/client/**"
+  - "packages/highlight/**"
+  - "packages/protocol/**"
+
+browser:
+  - "packages/app/src/!(desktop)/**"
+  - "packages/app/e2e/browser/**"
+  - "packages/app/e2e/support/**"
+  - "packages/app/assets/**"
+  - "packages/app/public/**"
+  - "packages/app/index.ts"
+  - "packages/app/*config.{cjs,js,ts}"
+  - "packages/app/package.json"
+
+relay:
+  - "packages/relay/**"
+
+cli:
+  - "packages/cli/**"

@@ -7,7 +7,8 @@
 <p align="center">
   <a href="README.md">English</a> ·
   <a href="README.zh-CN.md">简体中文</a> ·
-  <a href="README.ja.md">日本語</a>
+  <a href="README.ja.md">日本語</a> ·
+  <a href="README.ko.md">한국어</a>
 </p>
 
 <p align="center">
@@ -64,7 +65,7 @@ You need at least one agent CLI installed and configured with your credentials:
 
 Download it from [paseo.sh/download](https://paseo.sh/download) or the [GitHub releases page](https://github.com/getpaseo/paseo/releases). Open the app and the daemon starts automatically. Nothing else to install.
 
-To connect from your phone, open **Settings → your host → Connections → Pair a device**.
+To connect from your phone, open **Settings → your host → Pair Device**.
 
 ### CLI / headless
 
@@ -75,11 +76,12 @@ npm install -g @getpaseo/cli
 paseo
 ```
 
-This shows a QR code in the terminal. Connect from any client. This path is useful for servers and remote machines.
+Paseo starts locally, then asks whether to enable the end-to-end encrypted relay for device pairing. If you decline, connect directly over TCP, Tailscale, or another VPN. This path is useful for servers and remote machines.
 
 For full setup and configuration, see:
 
 - [Docs](https://paseo.sh/docs)
+- [Connectivity guide](https://paseo.sh/docs/connectivity)
 - [Configuration reference](https://paseo.sh/docs/configuration)
 
 ### Docker

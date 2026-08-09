@@ -62,6 +62,16 @@ export const en = {
       home: "Home",
       modelGroupLabel: "Model",
       modelSearchKeywords: "switch model change model set model select model",
+      thinkingGroupLabel: "Thinking",
+      thinkingSearchKeywords: "reasoning effort thinking think",
+      modeGroupLabel: "Mode",
+      modeSearchKeywords: "access permission approval mode",
+      planModeGroupLabel: "Plan mode",
+      planModeSearchKeywords: "plan planning plan mode",
+      fastModeGroupLabel: "Fast",
+      fastModeSearchKeywords: "fast speed low latency",
+      settingOn: "On",
+      settingOff: "Off",
     },
   },
   composer: {
@@ -69,9 +79,11 @@ export const en = {
       desktop: "Message the agent, tag @files, or use /commands and /skills",
       mobile: "Message, @files, /commands",
       fallback: "Message...",
+      terminal: "Prompt",
     },
     input: {
       accessibilityLabel: "Message agent...",
+      terminalAccessibilityLabel: "Terminal prompt",
       focusHint: "{{shortcut}} to focus",
       addAttachment: "Add attachment",
       interruptAgent: "Interrupt agent",
@@ -102,6 +114,7 @@ export const en = {
     },
     attachments: {
       addImage: "Add image",
+      pasteImage: "Paste image",
       addFile: "Upload file",
       addIssueOrPr: "Add issue or PR",
       addIssueOrPr_mr: "Add issue or MR",
@@ -129,6 +142,8 @@ export const en = {
       initialPromptRequired: "Initial prompt is required",
       alreadyLoading: "Already loading",
       uploadFailed: "Failed to upload file",
+      noClipboardImage: "No image in clipboard",
+      pasteImageFailed: "Failed to paste image",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
@@ -179,6 +194,7 @@ export const en = {
   agentStream: {
     empty: "Start chatting with this agent...",
     scrollToBottom: "Scroll to bottom",
+    historyLoadFailed: "Couldn't load agent history",
     search: {
       label: "Find in chat",
       placeholder: "Search conversation",
@@ -207,7 +223,7 @@ export const en = {
     states: {
       notFound: "Agent not found",
       failedToLoad: "Failed to load agent",
-      reconnecting: "Reconnecting...",
+      reconnecting: "Reconnecting",
       timelineSyncFailed: "Couldn't refresh agent history. Retrying…",
       archivingTitle: "Archiving agent...",
       archivingSubtitle: "Please wait while we archive this agent.",
@@ -232,8 +248,13 @@ export const en = {
   sessions: {
     title: "History",
     empty: "No sessions yet",
+    noMatches: "No sessions match",
+    tooManyMatches: "Too many matches — narrow your search",
+    hostLoadFailed: "{{host}}: Could not load history",
+    searchPlaceholder: "Search history",
     actions: {
       loadMore: "Load more",
+      clearSearch: "Clear search",
     },
   },
   agentList: {
@@ -269,7 +290,7 @@ export const en = {
       copyCode: "Copy code",
       copyTurn: "Copy turn",
       copyMessage: "Copy message",
-      forkMenu: "Fork chat",
+      forkMenu: "Fork chat from here",
       forkInNewTab: "Fork in a new tab",
       forkNativelyInNewTab: "Fork natively in a new tab (experimental)",
       forkInNewWorkspace: "Fork in a new workspace",
@@ -388,7 +409,7 @@ export const en = {
       openFile: "Open file",
       copyPath: "Copy path",
       download: "Download",
-      addToChat: "Add to chat…",
+      addToChat: "Add to chat",
       moreActions: "More actions",
     },
     fileExplorer: {
@@ -491,6 +512,7 @@ export const en = {
     },
     terminal: {
       hostDisconnected: "Host is not connected",
+      updateHost: "Update the host to use the native terminal renderer.",
       unableToSubscribe: "Unable to subscribe to terminal",
     },
     tabs: {
@@ -862,6 +884,14 @@ export const en = {
           viewPullRequest: "View",
           openOn: "Open on {{brand}}",
         },
+        checksSummary: {
+          passedLabel: "passed",
+          failedLabel: "failed",
+          runningLabel: "running",
+          passedAccessible: "Checks passed",
+          failedAccessible: "Checks failed",
+          runningAccessible: "Checks running",
+        },
         sections: {
           checks: "Checks",
           pipeline: "Pipeline",
@@ -909,6 +939,38 @@ export const en = {
     },
   },
   sidebar: {
+    display: {
+      trigger: "Display preferences",
+      heading: "Display",
+      grouping: {
+        label: "Grouping",
+        project: "Project",
+        status: "Status",
+      },
+      titleSource: {
+        label: "Title",
+        title: "Title",
+        branch: "Branch name",
+      },
+      show: {
+        label: "Show",
+        host: "Host",
+        changeRequest: "Pull request",
+        checks: "Checks",
+        services: "Services",
+        diff: "Diff stats",
+        timestamp: "Last activity",
+      },
+      checks: {
+        iconAndText: "Icon and text",
+        icon: "Icon only",
+        none: "Hidden",
+      },
+      hostFilter: {
+        label: "Host",
+        all: "All hosts",
+      },
+    },
     pinned: {
       title: "Pinned",
     },
@@ -934,7 +996,7 @@ export const en = {
       discord: "Discord",
       github: "Create GitHub issue",
       whatsNew: "What's new",
-      version: "Paseo {{version}}",
+      appName: "Paseo",
     },
     sections: {
       sessions: "History",
@@ -979,7 +1041,8 @@ export const en = {
     },
     workspace: {
       status: {
-        scriptsAvailable: "Scripts available",
+        serviceRunning: "Service {{name}} running",
+        serviceUnhealthy: "Service {{name}} unhealthy",
         creating: "Creating...",
       },
       actions: {
@@ -1041,14 +1104,29 @@ export const en = {
       composerStateRequired: "Composer state is required",
       selectModel: "Select a model",
     },
+    tooltips: {
+      project: "Choose the project",
+      host: "Choose the host",
+      isolation: "Choose the isolation level",
+      startingRef: "Choose where to start from",
+      launch: "Choose what to launch",
+    },
     refPicker: {
       startingRef: "Starting ref",
-      chooseStart: "Choose where to start from",
       intoBase: "into {{baseRef}}",
       searching: "Searching...",
       noMatchingRefs: "No matching refs.",
       searchPlaceholder: "Search branches and PRs",
       title: "Start from",
+    },
+    launch: {
+      title: "What to launch",
+      chat: "Chat",
+      terminal: "Terminal",
+      manageProfiles: "Manage profiles",
+      submit: "Launch",
+      promptPlaceholder: "Prompt {{name}}",
+      commandPlaceholder: "Run a command, or leave empty for a blank terminal",
     },
   },
   desktop: {
@@ -1205,6 +1283,7 @@ export const en = {
         installFailed: "Unable to install orchestration skills.",
         updateFailed: "Unable to update orchestration skills.",
         uninstallFailed: "Unable to uninstall orchestration skills.",
+        saveSelectionFailed: "Unable to save the orchestration skills selection.",
       },
     },
   },
@@ -1394,6 +1473,19 @@ export const en = {
         show: "Show advanced",
         hide: "Hide advanced",
       },
+      headers: {
+        title: "Custom headers",
+        add: "Add header",
+        name: "Name",
+        value: "Value",
+        remove: "Remove header",
+        errors: {
+          missingName: "Enter a name for each header",
+          invalidName: "{{name}} is not a valid header name",
+          invalidValue: "{{name}} contains an invalid line break",
+          duplicateName: "{{name}} is entered more than once",
+        },
+      },
       passwordVisibility: {
         show: "Show password",
         hide: "Hide password",
@@ -1457,9 +1549,21 @@ export const en = {
       loadingOffer: "Loading pairing offer...",
       failedToLoadOffer: "Failed to load pairing offer.",
       relayDisabled: "Relay is not enabled. Enable relay to pair a device.",
+      enableTitle: "Enable relay?",
+      enableDescription:
+        "Relay lets this device connect from anywhere. Pairing traffic is end-to-end encrypted.",
+      relayDocs: "How relay works",
+      relayDocsAccessibility: "Read how Paseo relay works",
+      enableRelay: "Enable relay",
+      enablingRelay: "Enabling...",
+      notNow: "Not now",
+      directConnectionHint:
+        "Without relay, connect directly over TCP, Tailscale, or another VPN. No QR code is created.",
+      updateRequired: "Update the host to enable relay from Paseo Desktop.",
       unavailable: "Pairing offer unavailable.",
       hint: "Scan this QR code with Paseo on your phone, or copy the link below.",
       qrUnavailable: "QR code unavailable.",
+      qrAccessibility: "Pairing QR code",
       retry: "Retry",
       copy: "Copy",
       copied: "Copied",
@@ -1604,7 +1708,9 @@ export const en = {
         cursor: "Line {{line}}, column {{column}}",
         preview: "Preview",
         source: "Source",
-        unavailableTitle: "File unavailable on disk",
+        deletedTitle: "File deleted on disk",
+        checkFailedTitle: "Couldn't check file on disk",
+        preservedDescription: "The open copy is preserved.",
         conflictDescription: "The local buffer was preserved. Choose which version to keep.",
         overwrite: "Overwrite",
         reload: "Reload",
@@ -1721,6 +1827,7 @@ export const en = {
       vimHint: "Applies to source files on web and desktop.",
     },
     hostSections: {
+      projects: "Projects",
       connections: "Connections",
       agents: "Agents",
       workspaces: "Workspaces",
@@ -1795,6 +1902,7 @@ export const en = {
           es: "Spanish",
           fr: "French",
           ja: "Japanese",
+          ko: "Korean",
           ptBR: "Brazilian Portuguese",
           ru: "Russian",
           zhCN: "Simplified Chinese",
@@ -1803,6 +1911,11 @@ export const en = {
     },
     diagnostics: {
       title: "Diagnostics",
+      legacyTerminalRenderer: {
+        label: "Use legacy terminal renderer",
+        description: "Use the previous WebView terminal after reopening a terminal",
+        accessibilityLabel: "Use legacy terminal renderer",
+      },
       testAudio: "Test audio",
       playTest: "Play test",
       playing: "Playing...",
@@ -1868,6 +1981,10 @@ export const en = {
       },
       detailLevel: {
         title: "Detail level",
+      },
+      chatOutline: {
+        title: "Chat outline",
+        description: "Show an outline for jumping between prompts",
       },
       fonts: {
         title: "Fonts",
@@ -1980,6 +2097,15 @@ export const en = {
         uninstallTitle: "Uninstall Paseo skills?",
         uninstallMessage:
           "Removes all Paseo orchestration skills from ~/.agents, ~/.claude, ~/.codex.",
+        choose: "Choose skills",
+        chooseAll: "All skills",
+        chooseAllHint: "Keep every bundled skill installed, including ones added later.",
+        chooseList: "Bundled skills",
+        chooseEmpty: "This build bundles no skills.",
+        removeTitle: "Remove deselected skills?",
+        removeMessage:
+          "{{skills}} will be deleted from ~/.agents, ~/.claude, and ~/.codex. Anything you added inside those skill folders is deleted too.",
+        saveFailed: "Could not save your skill selection.",
       },
       actions: {
         install: "Install",
@@ -1987,7 +2113,10 @@ export const en = {
         installed: "Installed",
         update: "Update",
         working: "Working...",
+        remove: "Remove",
         uninstall: "Uninstall",
+        save: "Save",
+        saving: "Saving...",
       },
       operations: {
         add: "Add skill",
@@ -2096,6 +2225,41 @@ export const en = {
       },
     },
     host: {
+      appearance: {
+        title: "Appearance",
+        name: {
+          label: "Name",
+        },
+        color: {
+          label: "Color",
+          accessibilityLabel: "Color, {{value}}",
+          options: {
+            none: "Default",
+            violet: "Violet",
+            sky: "Sky",
+            emerald: "Emerald",
+            orange: "Orange",
+            pink: "Pink",
+            indigo: "Indigo",
+            teal: "Teal",
+            red: "Red",
+            amber: "Amber",
+            blue: "Blue",
+          },
+        },
+        badge: {
+          label: "Sidebar badge",
+          accessibilityLabel: "Sidebar badge, {{value}}",
+          options: {
+            name: "Name",
+            icon: "Icon only",
+            hidden: "Hidden",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "Host not found",
       badges: {
         relay: "Relay",
@@ -2334,24 +2498,23 @@ export const en = {
       },
     },
     project: {
-      noEditableTarget: "We don't have an editable copy of this project on any connected host.",
+      noEditableTarget: "This project isn't editable on this host.",
       backToProjects: "Back to projects",
-      switchHost: "Switch host",
-      rename: {
-        renamedToast: "Project renamed",
-        errorFallback: "Couldn't rename project",
-        renameLabel: "Rename project",
-        resetLabel: "Reset project name to default",
-        projectNameLabel: "Project name",
-        saveLabel: "Save project name",
-        cancelLabel: "Cancel renaming",
-        reset: "Reset",
+      edit: {
+        title: "Edit project",
+        name: "Name",
+        nameLabel: "Project name",
+        icon: "Icon",
+        chooseImage: "Choose image",
+        useAutomatic: "Use automatic",
+        imageUrl: "Image or website URL",
+        save: "Save changes",
+        savedToast: "Project updated",
       },
       readFailures: {
         invalidTitle: "paseo.json couldn't be parsed",
         invalidDescription: "Fix the file on disk, then reload.",
         missingTitle: "This host doesn't have this project",
-        missingWithHosts: "Switch to another host above, or reload.",
         missingSingleHost: "The selected host has no record of this project.",
         transportTitle: "Couldn't load paseo.json",
         transportFallback: "The host didn't respond.",

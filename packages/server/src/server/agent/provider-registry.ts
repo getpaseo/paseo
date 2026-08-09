@@ -294,6 +294,17 @@ function mapModel(
   return mapped;
 }
 
+function resolveConfiguredModels(
+  provider: AgentProvider,
+  client: AgentClient,
+  models: ProviderProfileModel[],
+): AgentModelDefinition[] {
+  return models.map((model) => {
+    const mapped = mapModel(provider, model);
+    return client.resolveConfiguredModel?.(mapped) ?? mapped;
+  });
+}
+
 function mergeModels(
   provider: AgentProvider,
   profileModels: ProviderProfileModel[],
@@ -316,7 +327,7 @@ function mergeModels(
 function mergeModelAdditions(
   provider: AgentProvider,
   baseModels: AgentModelDefinition[],
-  modelAdditions: ProviderProfileModel[],
+  modelAdditions: Array<ProviderProfileModel | AgentModelDefinition>,
 ): AgentModelDefinition[] {
   if (modelAdditions.length === 0) {
     return baseModels;
@@ -335,9 +346,13 @@ function mergeModelAdditions(
       continue;
     }
 
+    const existingModel = mergedModels[existingIndex];
+    const explicitlyEnablesCompatibilityModel =
+      existingModel?.isSelectable === false && additionalModel.isSelectable === undefined;
     mergedModels[existingIndex] = {
-      ...mergedModels[existingIndex],
+      ...existingModel,
       ...additionalModel,
+      ...(explicitlyEnablesCompatibilityModel ? { isSelectable: true } : {}),
     };
   }
 
@@ -452,6 +467,7 @@ function wrapClientProvider(
           })
       : undefined,
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
+    resolveConfiguredModel: inner.resolveConfiguredModel?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
     listFeatures: listFeatures
       ? async (config) => await listFeatures({ ...config, provider: inner.provider })
@@ -498,10 +514,15 @@ function createRegistryEntry(
   resolved: ResolvedProvider,
 ): ProviderDefinition {
   const modelClient = resolved.createBaseClient(logger);
-  const hasReplacementModels =
-    resolved.profileModels.length > 0 && !resolved.profileModelsAreAdditive;
+  const profileModels = resolveConfiguredModels(provider, modelClient, resolved.profileModels);
+  const additionalModels = resolveConfiguredModels(
+    provider,
+    modelClient,
+    resolved.additionalModels,
+  );
+  const hasReplacementModels = profileModels.length > 0 && !resolved.profileModelsAreAdditive;
   const replacementModels = hasReplacementModels
-    ? resolved.profileModels.map((model) => mapModel(provider, model))
+    ? profileModels.map((model) => mapModel(provider, model))
     : [];
 
   const decorateModes = (modes: AgentMode[]): AgentMode[] =>
@@ -532,7 +553,7 @@ function createRegistryEntry(
         // Replacement models skip runtime model discovery, but additionalModels
         // must still be merged on top. If modes are dynamic, probe for modes via
         // the single catalog API; otherwise use static/empty modes with no runtime.
-        const models = mergeModelAdditions(provider, replacementModels, resolved.additionalModels);
+        const models = mergeModelAdditions(provider, replacementModels, additionalModels);
         if (hasStaticModes) {
           const defaultModeId = await catalogClient.resolveDefaultModeId?.({
             config: {
@@ -553,15 +574,9 @@ function createRegistryEntry(
       const catalog = await catalogClient.fetchCatalog(options);
       return {
         ...catalog,
-        models: mergeModels(
-          provider,
-          resolved.profileModels,
-          resolved.additionalModels,
-          catalog.models,
-          {
-            profileModelsAreAdditive: resolved.profileModelsAreAdditive,
-          },
-        ),
+        models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
+          profileModelsAreAdditive: resolved.profileModelsAreAdditive,
+        }),
         modes: decorateModes(catalog.modes),
       };
     },
@@ -574,16 +589,17 @@ function createResolvedProviderClient(
   resolved: ResolvedProvider,
 ): AgentClient {
   const inner = resolved.createBaseClient(logger);
-  const hasModelOverrides =
-    resolved.profileModels.length > 0 || resolved.additionalModels.length > 0;
+  const profileModels = resolveConfiguredModels(provider, inner, resolved.profileModels);
+  const additionalModels = resolveConfiguredModels(provider, inner, resolved.additionalModels);
+  const hasModelOverrides = profileModels.length > 0 || additionalModels.length > 0;
   if (inner.provider === provider && !hasModelOverrides) {
     return inner;
   }
   return wrapClientProvider(
     provider,
     inner,
-    resolved.profileModels,
-    resolved.additionalModels,
+    profileModels,
+    additionalModels,
     resolved.profileModelsAreAdditive,
   );
 }

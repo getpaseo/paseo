@@ -8,12 +8,13 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { DiffStat } from "@/components/diff-stat";
-import { FILE_ACTIONS_MENU_WIDTH } from "@/components/file-actions-menu";
 import {
   TreeChevron,
   TreeIndentGuides,
   treeRowPaddingLeft,
+  WORKSPACE_FILE_ROW_TRAILING_PADDING,
   WORKSPACE_FILE_ROW_VERTICAL_PADDING,
+  WORKSPACE_TREE_ICON_LABEL_GAP,
 } from "@/components/tree-primitives";
 import { type Theme } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
@@ -80,7 +81,9 @@ export function DiffFolderRow({
         testID={testID ? `${testID}-toggle` : undefined}
       >
         <View style={leftStyle}>
-          <TreeChevron expanded={!collapsed} />
+          <View style={styles.chevronOpticalOffset}>
+            <TreeChevron expanded={!collapsed} />
+          </View>
           <Text style={styles.folderName} numberOfLines={1}>
             {displayName}
           </Text>
@@ -91,7 +94,6 @@ export function DiffFolderRow({
             deletions={deletions}
             testID={testID ? `${testID}-stat` : undefined}
           />
-          <View style={styles.actionSlot} />
         </View>
       </Pressable>
     </View>
@@ -105,7 +107,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   folderRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingRight: theme.spacing[3],
+    paddingRight: WORKSPACE_FILE_ROW_TRAILING_PADDING,
     paddingVertical: WORKSPACE_FILE_ROW_VERTICAL_PADDING,
     gap: theme.spacing[1],
     minWidth: 0,
@@ -116,18 +118,19 @@ const styles = StyleSheet.create((theme: Theme) => ({
   left: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
+    gap: WORKSPACE_TREE_ICON_LABEL_GAP,
     flex: 1,
     minWidth: 0,
+  },
+  chevronOpticalOffset: {
+    // The Changes directory chevron reads high beside the folder label.
+    transform: [{ translateY: 2 }],
   },
   right: {
     flexDirection: "row",
     alignItems: "center",
     flexShrink: 0,
     gap: theme.spacing[1],
-  },
-  actionSlot: {
-    width: FILE_ACTIONS_MENU_WIDTH,
   },
   folderName: {
     fontSize: theme.fontSize.sm,

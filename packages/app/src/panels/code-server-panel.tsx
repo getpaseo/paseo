@@ -1,7 +1,7 @@
 import { Code2 } from "lucide-react-native";
 import { Text, View } from "react-native";
 import invariant from "tiny-invariant";
-import { BrowserPane } from "@/components/browser-pane";
+import { BrowserPane } from "@/desktop/browser/pane";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { useCodeServerStore } from "@/stores/code-server-store";

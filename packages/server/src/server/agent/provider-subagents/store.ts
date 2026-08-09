@@ -21,6 +21,7 @@ export interface ProviderSubagentDescriptor {
   updatedAt: string;
   toolCallId: string | null;
   cwd: string | null;
+  subtitle: string | null;
 }
 
 export type ProviderSubagentInputEvent =
@@ -29,9 +30,14 @@ export type ProviderSubagentInputEvent =
       id: string;
       title?: string | null;
       description?: string | null;
-      status: ProviderSubagentStatus;
+      /**
+       * Omit to keep the stored status. A presentation-only upsert says nothing about whether the
+       * child is still running, and must not revert a finished one.
+       */
+      status?: ProviderSubagentStatus;
       toolCallId?: string | null;
       cwd?: string | null;
+      subtitle?: string | null;
       timestamp?: string;
     }
   | {
@@ -56,6 +62,15 @@ export type ProviderSubagentStoreEvent =
 
 function storeKey(parentAgentId: string, subagentId: string): string {
   return `${parentAgentId}\0${subagentId}`;
+}
+
+/**
+ * Sticky upsert semantics for a descriptor field: an omitted value preserves what is stored, an
+ * explicit `null` clears it. Providers observe these fields incrementally, so a partial upsert
+ * must never blank fields it says nothing about.
+ */
+function stickyField<T>(next: T | undefined, previous: T | null | undefined): T | null {
+  return next === undefined ? (previous ?? null) : next;
 }
 
 export class ProviderSubagentStore {
@@ -100,15 +115,14 @@ export class ProviderSubagentStore {
       id: event.id,
       parentAgentId,
       provider,
-      title: event.title === undefined ? (previous?.title ?? null) : event.title,
-      description:
-        event.description === undefined ? (previous?.description ?? null) : event.description,
-      status: event.status,
+      title: stickyField(event.title, previous?.title),
+      description: stickyField(event.description, previous?.description),
+      status: event.status ?? previous?.status ?? "running",
       createdAt: previous?.createdAt ?? timestamp,
       updatedAt: timestamp,
-      toolCallId:
-        event.toolCallId === undefined ? (previous?.toolCallId ?? null) : event.toolCallId,
-      cwd: event.cwd === undefined ? (previous?.cwd ?? null) : event.cwd,
+      toolCallId: stickyField(event.toolCallId, previous?.toolCallId),
+      cwd: stickyField(event.cwd, previous?.cwd),
+      subtitle: stickyField(event.subtitle, previous?.subtitle),
     };
     this.descriptors.set(key, subagent);
     return { type: "upsert", subagent };
@@ -118,6 +132,10 @@ export class ProviderSubagentStore {
     return [...this.descriptors.values()]
       .filter((subagent) => subagent.parentAgentId === parentAgentId)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  }
+
+  listAll(): ProviderSubagentDescriptor[] {
+    return [...this.descriptors.values()];
   }
 
   get(parentAgentId: string, subagentId: string): ProviderSubagentDescriptor | null {

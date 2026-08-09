@@ -193,6 +193,25 @@ paseo daemon stop              # Stop the daemon
 
 Use `PASEO_HOME` to run multiple isolated daemon instances.
 
+## Hub
+
+```bash
+paseo hub connect <url>        # Enroll this daemon with a Paseo Hub
+paseo hub status               # Show the current Hub relationship
+paseo hub disconnect           # End it
+paseo hub deploy [file]        # Install and activate a Hub configuration
+```
+
+`file` defaults exactly to `.paseo/hub.yml` relative to the current directory. Pass a file to use another path. The CLI does not search parent directories or alternate filenames.
+
+Pass `-p, --project <slug>` to select the project, or add optional top-level `project` metadata to the YAML. The flag wins when both are present. Project is deployment metadata, not workflow configuration, and the YAML is sent unchanged.
+
+Prompt `include` blocks are read from `.paseo/partials/` under the current directory, even when you pass an explicit configuration file. The CLI sends only the files referenced by the main YAML. Nested include-looking text inside a partial is content and is not resolved recursively. Inline-only configurations omit the partial bundle.
+
+Deployment requires an explicit Hub origin and organization API key. `--hub <origin>` overrides `PASEO_HUB_URL`; `--api-key <secret>` overrides `PASEO_HUB_API_KEY`. The key's organization supplies organization scope. Durable Hub login and credential persistence are not implemented.
+
+See [Daemons in Hub](/docs/hub/daemons), [Hub configuration](/docs/hub/configuration), and the [Hub public API](/docs/hub/api).
+
 ## Connecting to a remote daemon
 
 `--host` accepts either a local target (`host:port`, a unix socket, or a Windows pipe) or a pairing offer URL, the same `https://app.paseo.sh/#offer=...` link the mobile app uses for QR pairing. With an offer URL the CLI connects through the Paseo relay with end-to-end encryption, so you can drive a daemon on another machine without exposing it to the network.
@@ -200,8 +219,12 @@ Use `PASEO_HOME` to run multiple isolated daemon instances.
 Get an offer URL from the daemon you want to control:
 
 ```bash
-paseo daemon pair --json   # prints { url, qr, ... }
+paseo daemon pair          # asks before enabling relay, then prints the QR and link
+paseo daemon pair --relay  # enables relay without prompting
+paseo daemon pair --json   # structured output; never prompts
 ```
+
+Relay is off for new installations. In non-interactive or JSON mode, a disabled relay returns a `RELAY_DISABLED` error; pass `--relay` to provide explicit consent. Relay pairing is end-to-end encrypted. See [Security](/docs/security).
 
 Use it from anywhere:
 

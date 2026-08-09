@@ -10,7 +10,7 @@ import {
   renameCodeServerInIndex,
   trimNonEmpty,
 } from "./state";
-import { createWorkspaceBrowser } from "@/stores/browser-store";
+import { createWorkspaceBrowser } from "@/desktop/browser/store";
 
 export type { CodeServerRecord } from "./state";
 
