@@ -118,9 +118,15 @@ export async function resolveKimiCatalogModels({
     } catch (error) {
       logger.warn(
         { modelId: model.id, error: toDiagnosticErrorMessage(error) },
-        `${provider} catalog probe could not resolve thinking options for model "${model.id}"; keeping its default options`,
+        `${provider} catalog probe could not resolve thinking options for model "${model.id}"; omitting inherited options`,
       );
-      resolved.push(withNormalizedKimiThinkingOptions(model));
+      // Pre-probe models share the session-default model's thinking options. Keeping those on
+      // failure can leave K3 with another model's legacy "on" toggle as a fake default.
+      resolved.push({
+        ...model,
+        thinkingOptions: undefined,
+        defaultThinkingOptionId: undefined,
+      });
     }
   }
   return resolved;

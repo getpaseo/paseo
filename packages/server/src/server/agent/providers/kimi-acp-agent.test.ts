@@ -240,7 +240,7 @@ describe("KimiACPAgentClient per-model thinking options", () => {
     expect(setSessionConfigOption).not.toHaveBeenCalled();
   });
 
-  test("keeps a model's default thinking options when its probe fails", async () => {
+  test("omits thinking options when a model's probe fails", async () => {
     const setSessionConfigOption = vi.fn(async ({ value }: { value: string }) => {
       if (value === "kimi-k3") {
         throw new Error("probe rejected model switch");
@@ -269,9 +269,13 @@ describe("KimiACPAgentClient per-model thinking options", () => {
       force: false,
     });
 
+    const kimiForCoding = catalog.models.find((model) => model.id === "kimi-for-coding");
     const kimiK3 = catalog.models.find((model) => model.id === "kimi-k3");
-    expect(kimiK3?.thinkingOptions).toEqual([
+    // Successful probe still gets its own options; failed K3 must not inherit K2.7's "on".
+    expect(kimiForCoding?.thinkingOptions).toEqual([
       expect.objectContaining({ id: "on", isDefault: true }),
     ]);
+    expect(kimiK3?.thinkingOptions).toBeUndefined();
+    expect(kimiK3?.defaultThinkingOptionId).toBeUndefined();
   });
 });
