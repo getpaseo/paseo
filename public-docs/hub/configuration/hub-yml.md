@@ -106,7 +106,7 @@ The grammar supports paths, JSON literals, parentheses, `!`, `==`, `!=`, `&&`, `
 | `agent`         | yes      | `provider`, optional `model`, `mode`, `thinkingOptionId`, and provider-native `options`.                          |
 | `prompt`        | yes      | Non-empty list of `text` and GitHub-only `include` blocks.                                                        |
 | `if`            | no       | Expression deciding whether this ordered step runs.                                                               |
-| `output`        | no       | `{ schema: <JSON Schema> }` for structured `finish_execution`.                                                    |
+| `output`        | no       | `{ schema: <JSON Schema> }` for the structured result the agent passes to `hub.finish_execution`.                 |
 | `allow_outputs` | no       | Registered output capabilities such as `slack.reply` or `discord.reply`, each with optional `max` and `required`. |
 | `auto_archive`  | no       | Archives the step's agent when it ends.                                                                           |
 
@@ -114,7 +114,7 @@ Prompt blocks are objects, not a scalar prompt:
 
 ```yaml
 prompt:
-  - text: Request: ${{ paseo.prompt }}
+  - text: "Request: ${{ paseo.prompt }}"
   - include: developer.md
 ```
 
@@ -133,7 +133,9 @@ allow_outputs:
     required: true
 ```
 
-Hub counts an actual capability emission; ordinary assistant text does not satisfy a required output. A required declaration must resolve to a registered, available Hub capability for that execution context, or dispatch rejects the step with an actionable configuration error. If delivery fails, the attempt is retryable; if the agent tries to finish first, Hub keeps the execution recoverable and names the concrete output tool before retrying `finish_execution`. A required output must have an effective `max` of at least `1`, or activation rejects the configuration. Omitting `required` preserves optional-output behavior and does not change the agent's permission mode. GitHub-triggered agents reply with their scoped `GH_TOKEN` (for example, through `gh issue comment`) rather than a Hub `github.reply` tool.
+Hub counts an actual capability emission; ordinary assistant text does not satisfy a required output. A required declaration must resolve to a registered, available Hub capability for that execution context, or dispatch rejects the step with an actionable configuration error. If delivery fails, the attempt is retryable; if the agent tries to finish first, Hub keeps the execution recoverable and names the concrete output tool before retrying `hub.finish_execution`. A required output must have an effective `max` of at least `1`, or activation rejects the configuration. Omitting `required` preserves optional-output behavior and does not change the agent's permission mode. GitHub-triggered agents reply with their scoped `GH_TOKEN` (for example, through `gh issue comment`) rather than a Hub `github.reply` tool.
+
+A declaration grants the tool. The step's prompt still has to tell the agent to call `hub.reply`, and to call `hub.finish_execution` when it is done. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).
 
 ## Prompt partials
 

@@ -42,12 +42,11 @@ Hub consumes only declared consecutive headers and passes `investigate the faile
 
 ## Credentials and replies
 
-GitHub-triggered steps receive a scoped `GH_TOKEN` for the triggering repository. The agent can use `gh` to comment, push, and open a pull request. A step may also declare:
+GitHub-triggered steps receive a scoped `GH_TOKEN` for the triggering repository. The agent can use `gh` to comment, push, and open a pull request. Say so in the prompt, and name the Hub tool that completes the step:
 
-```yaml
-allow_outputs:
-  - type: github.reply
-    max: 5
+```text
+Post the answer as an issue comment with `gh`.
+Call hub.finish_execution when the step is complete.
 ```
 
-See the [workflow examples](/docs/hub/configuration/examples) for review and PR workflows.
+Hub's `hub.reply` tool covers Slack and Discord, not GitHub. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call) and the [workflow examples](/docs/hub/configuration/examples) for review and PR workflows.

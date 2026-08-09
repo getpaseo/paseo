@@ -49,6 +49,9 @@ triggers:
           - text: |
               Help with this request:
               ${{ paseo.prompt }}
+
+              Call hub.reply to send your response to the originating conversation.
+              Call hub.finish_execution when the step is complete.
         allow_outputs:
           - type: slack.reply
 ```
@@ -59,17 +62,33 @@ Mention the bot in the configured channel:
 @Paseo how do I run the project locally?
 ```
 
-Hub removes the mention and gives the agent `how do I run the project locally?` as `${{ paseo.prompt }}`. The agent can use the configured `slack.reply` capability to answer in the thread.
+Hub removes the mention and gives the agent `how do I run the project locally?` as `${{ paseo.prompt }}`. The prompt tells it to call `hub.reply`, which posts in the thread through the step's `slack.reply` capability.
 
 What happens next:
 
 - Slack delivers the mention to Hub.
 - Hub checks the trigger event and filters, including the user allowlist.
 - Hub creates a workflow run and starts the `answer` step on the matching daemon.
-- The agent works with the prompt and finishes through Hub.
+- The agent works with the prompt, replies, and finishes through Hub.
 - Project → Activity records the event, step, outcome, and any reply.
 
 For GitHub, Discord, and manual runs, only the trigger and invocation change. The workflow steps work the same way. See [Triggers](/docs/hub/triggers) for provider matching.
+
+## Tell the agent which tool to call
+
+Hub attaches its own tools to every step, and the prompt has to name the one you want. An agent that is not told can end its turn with the answer only in its own transcript: nothing delivered, no output recorded, and the step left to its `idle_timeout`.
+
+- `hub.reply` sends a user-facing response to the conversation that triggered the workflow. It exists only when the step's `allow_outputs` grants a matching capability.
+- `hub.finish_execution` marks the step complete and records the structured result when the step declares an `output` schema.
+
+A step that answers a person names both, as the first workflow does:
+
+```text
+Call hub.reply to send your response to the originating conversation.
+Call hub.finish_execution when the step is complete.
+```
+
+A step that only feeds a later step names `hub.finish_execution` alone; most classifiers never reply. [Structured outputs](#structured-outputs) has that version.
 
 ## Deterministic inputs
 
@@ -143,6 +162,7 @@ steps:
     prompt:
       - text: Classify the request as answer or implementation.
       - text: ${{ paseo.prompt }}
+      - text: Call hub.finish_execution with the classification as the structured result.
     output:
       schema:
         type: object
@@ -163,6 +183,7 @@ steps:
     prompt:
       - text: Answer the request without changing files.
       - text: ${{ paseo.prompt }}
+      - text: Call hub.finish_execution when the step is complete.
 
   - id: implementation
     if: ${{ steps.classify.outputs.kind == 'implementation' }}
@@ -175,15 +196,16 @@ steps:
     prompt:
       - text: Implement the request and verify the result.
       - text: ${{ paseo.prompt }}
+      - text: Call hub.finish_execution when the step is complete.
 ```
 
-The classifier calls the `finish_execution` capability with:
+The classifier calls `hub.finish_execution` with:
 
 ```text
-finish_execution({ output: { kind: "implementation" } })
+hub.finish_execution({ output: { kind: "implementation" } })
 ```
 
-Hub validates that object against the schema. If it is invalid, the capability returns an MCP error and the same agent can correct and call it again. A valid output completes the step and makes it available as `${{ steps.classify.outputs.kind }}` to later steps.
+Hub validates that object against the schema. If it is invalid, the tool returns an MCP error and the same agent can correct and call it again. A valid output completes the step and makes it available as `${{ steps.classify.outputs.kind }}` to later steps.
 
 Use classification as defense in depth, then give reply or implementation authority only to the downstream step that needs it. [Hub security](/docs/hub/security) covers the trust boundary and provider-native controls.
 

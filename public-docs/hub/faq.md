@@ -48,7 +48,7 @@ No. The stored CLI login is a human organization credential; the enrolled daemon
 
 ## Can an agent reply back to Slack or Discord?
 
-Yes, with `allow_outputs`. See the [`hub.yml` output capability reference](/docs/hub/configuration/hub-yml#output-capabilities) for reply limits and required outputs. On GitHub, agents reply through the scoped `GH_TOKEN` they already have, so `gh issue comment` works.
+Yes, with `allow_outputs` on the step and a prompt that tells the agent to call `hub.reply`. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call) and the [`hub.yml` output capability reference](/docs/hub/configuration/hub-yml#output-capabilities) for reply limits and required outputs. On GitHub, agents reply through the scoped `GH_TOKEN` they already have, so `gh issue comment` works.
 
 ## Can I use it without GitHub?
 

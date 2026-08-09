@@ -10,6 +10,8 @@ category: Hub
 
 These examples use the durable step syntax. Replace the daemon, paths, provider identifiers, and provider filters with resources in your organization. The shared workflow page explains the contract behind each pattern.
 
+Each prompt names the Hub tool its step should call. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).
+
 ## Model and provider selection
 
 Use finite choices when caller input selects an agent provider or model.
@@ -46,7 +48,10 @@ triggers:
           model: ${{ paseo.inputs.model }}
           mode: full-access
         prompt:
-          - text: ${{ paseo.prompt }}
+          - text: |
+              ${{ paseo.prompt }}
+
+              Call hub.finish_execution when the step is complete.
 ```
 
 Invoke it with `provider=claude model=fast investigate the sync`. An undeclared leading key stops header parsing and becomes prompt text.
@@ -87,7 +92,11 @@ triggers:
           provider: codex
           mode: full-access
         prompt:
-          - text: ${{ paseo.prompt }}
+          - text: |
+              ${{ paseo.prompt }}
+
+              Call hub.reply to send your response to the originating conversation.
+              Call hub.finish_execution when the step is complete.
         allow_outputs:
           - type: slack.reply
             max: 5
@@ -112,7 +121,11 @@ triggers:
           provider: codex
           mode: full-access
         prompt:
-          - text: ${{ paseo.prompt }}
+          - text: |
+              ${{ paseo.prompt }}
+
+              Call hub.reply to send your response to the originating conversation.
+              Call hub.finish_execution when the step is complete.
         allow_outputs:
           - type: slack.reply
             max: 5
@@ -155,6 +168,7 @@ triggers:
         prompt:
           - text: Classify this request as answer or implementation.
           - text: ${{ paseo.prompt }}
+          - text: Call hub.finish_execution with the classification as the structured result.
         output:
           schema:
             type: object
@@ -175,6 +189,7 @@ triggers:
         prompt:
           - text: Answer the request. Do not change files.
           - text: ${{ paseo.prompt }}
+          - text: Call hub.finish_execution when the step is complete.
 
       - id: implementation
         if: ${{ paseo.inputs.kind == 'implementation' || steps.classify.outputs.kind == 'implementation' }}
@@ -187,16 +202,17 @@ triggers:
         prompt:
           - text: Implement the request, verify it, and report the result.
           - text: ${{ paseo.prompt }}
-        allow_outputs:
-          - type: github.reply
-            max: 5
+          - text: Post the result as an issue comment with `gh`.
+          - text: Call hub.finish_execution when the step is complete.
 ```
 
 The answer and implementation conditions cannot both be true for one classification. The workflow ends after the answer step because there is no later matching step.
 
+The implementation branch comments through the scoped GitHub credential the trigger provides; the read-only answer branch has no write or network authority to do that. On Slack and Discord, grant `slack.reply` or `discord.reply` on the branch that answers and tell the agent to call `hub.reply`.
+
 ## PR progress and final updates
 
-Keep progress and final updates on the implementation step. The step can use up to five replies while it works, then finish normally.
+Keep progress and final updates on the implementation step. The step comments while it works, then finishes.
 
 ```yaml
 environments:
@@ -226,11 +242,11 @@ triggers:
           - text: |
               Address the review request.
               Request: ${{ paseo.prompt }}
-        allow_outputs:
-          - type: github.reply
-            max: 5
+
+              Post progress and the final result as pull request comments with `gh`.
+              Call hub.finish_execution when the step is complete.
 ```
 
-For Slack and Discord, use `slack.reply` or `discord.reply` instead. GitHub-triggered agents also receive the scoped GitHub credential for the triggering repository, so the agent can use `gh` for repository updates.
+GitHub-triggered agents receive the scoped GitHub credential for the triggering repository, so they comment, push, and open pull requests with `gh`. For Slack and Discord, grant `slack.reply` or `discord.reply` on the step with the `max` it needs, and tell the agent to call `hub.reply` for each update.
 
 See [Hub workflows](/docs/hub/workflows) for partials, deadlines, structured output retry, and provider invocation details.

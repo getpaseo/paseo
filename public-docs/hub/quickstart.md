@@ -68,9 +68,13 @@ triggers:
           - text: |
               Someone asked for help.
               ${{ paseo.prompt }}
+
+              Call hub.finish_execution when the step is complete.
 ```
 
 `project` is the project slug from step 4. The deploy CLI reads it as deployment metadata; it does not affect workflow behavior. `daemon` is the normalized slug from step 3. `cwd` is a directory on that machine.
+
+The prompt names the Hub tool the agent should call. This step grants no reply capability, so it only finishes. [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call) covers replying to a person.
 
 If a prompt uses an `include` block, store the file below `.paseo/partials/`. The deploy CLI bundles only the files referenced by `.paseo/hub.yml`; nested include-looking text inside a partial is not resolved.
 

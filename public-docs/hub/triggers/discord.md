@@ -47,6 +47,8 @@ allow_outputs:
     max: 5
 ```
 
-The reply is posted in the triggering thread or channel. A Discord trigger has no implicit GitHub credential. If a step needs another connection, configure that connection through the supported step environment for your deployment; Hub does not guess between GitHub installations.
+The reply is posted in the triggering thread or channel. The declaration grants the `hub.reply` tool; the prompt has to tell the agent to call it. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).
+
+A Discord trigger has no implicit GitHub credential. If a step needs another connection, configure that connection through the supported step environment for your deployment; Hub does not guess between GitHub installations.
 
 See the [workflow examples](/docs/hub/configuration/examples) for complete step configurations.
