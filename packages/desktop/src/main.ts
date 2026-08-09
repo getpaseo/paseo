@@ -463,6 +463,18 @@ ipcMain.handle("paseo:browser:set-workspace-active-browser", (event, rawInput: u
   }
 });
 
+ipcMain.handle("paseo:browser:focus", (event, browserId: unknown): boolean => {
+  if (typeof browserId !== "string" || browserId.trim().length === 0) {
+    return false;
+  }
+  const contents = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
+  if (!contents) {
+    return false;
+  }
+  contents.focus();
+  return true;
+});
+
 ipcMain.handle("paseo:browser:open-devtools", (event, browserId: unknown) => {
   if (typeof browserId !== "string" || browserId.trim().length === 0) {
     const result = {

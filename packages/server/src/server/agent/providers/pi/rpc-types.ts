@@ -160,7 +160,9 @@ export type PiAgentSessionEvent =
   | { type: "message_end"; message: PiAgentMessage }
   | {
       type: "message_update";
-      message: PiAgentMessage;
+      // COMPAT(piCumulativeMessageUpdate): added in v0.3.0, remove after 2027-02-07 once the pi
+      // floor is >=0.84. pi <=0.83 repeats the cumulative assistant message on every update.
+      message?: PiAgentMessage;
       assistantMessageEvent: PiAssistantMessageEvent;
     }
   | {

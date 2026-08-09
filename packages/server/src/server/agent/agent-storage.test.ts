@@ -38,7 +38,9 @@ function buildManagedAgentConfig(
     title: configOverrides.title,
     modeId: configOverrides.modeId ?? "plan",
     model: configOverrides.model ?? "gpt-5.1",
-    extra: configOverrides.extra ?? { claude: { maxThinkingTokens: 1024 } },
+    thinkingOptionId: configOverrides.thinkingOptionId,
+    providerOptions: configOverrides.providerOptions,
+    toolPolicy: configOverrides.toolPolicy,
     systemPrompt: configOverrides.systemPrompt,
     mcpServers: configOverrides.mcpServers,
   };
@@ -157,7 +159,7 @@ describe("AgentStorage", () => {
           modeId: "coding",
           model: "gpt-5.1",
           systemPrompt: "Be terse and explicit.",
-          extra: { claude: { maxThinkingTokens: 1024 } },
+          providerOptions: { allowedTools: ["Read"] },
           mcpServers: {
             paseo: {
               type: "stdio",
@@ -189,7 +191,7 @@ describe("AgentStorage", () => {
     const reloaded = new AgentStorage(storagePath, logger);
     const [persisted] = await reloaded.list();
     expect(persisted.cwd).toBe("/tmp/project");
-    expect(persisted.config?.extra?.claude).toMatchObject({ maxThinkingTokens: 1024 });
+    expect(persisted.config?.providerOptions).toEqual({ allowedTools: ["Read"] });
   });
 
   test("applySnapshot stores and reloads featureValues when present", async () => {
@@ -354,7 +356,7 @@ describe("AgentStorage", () => {
     expect(record?.lastStatus).toBe("running");
   });
 
-  test("applySnapshot waits for in-flight writes before reading existing title", async () => {
+  test("applySnapshot projects metadata after in-flight archival writes", async () => {
     const agentId = "agent-pending-write";
     await storage.applySnapshot(createManagedAgent({ id: agentId }));
     const initialRecord = await storage.get(agentId);
@@ -382,12 +384,14 @@ describe("AgentStorage", () => {
     storageInternals.cache.set(agentId, {
       ...initialRecord!,
       title: "Generated title",
+      archivedAt: "2025-01-03T00:00:00.000Z",
     });
     releasePendingWrite?.();
 
     await applySnapshotPromise;
     const record = await storage.get(agentId);
     expect(record?.title).toBe("Generated title");
+    expect(record?.archivedAt).toBe("2025-01-03T00:00:00.000Z");
   });
 
   test("list returns all agents including internal ones", async () => {

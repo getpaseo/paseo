@@ -26,6 +26,7 @@ import { CommandCenterRootActions } from "@/command-center/root-registration";
 import { CommandCenterProvider } from "@/command-center/provider";
 import { CommandCenterWorkspaceActions } from "@/command-center/workspace-registration";
 import { AddProjectFlowHost } from "@/components/add-project-flow-host";
+import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { WorktreeSetupCalloutSource } from "@/components/worktree-setup-callout-source";
 import { DownloadToast } from "@/components/download-toast";
 import { QuittingOverlay } from "@/components/quitting-overlay";
@@ -643,7 +644,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
 
   // Apply font / size / syntax appearance settings on mount and when they change.
   // Sibling to the theme effect above; order is irrelevant because both patch all
-  // six registered theme keys, so the active key is always current.
+  // registered theme keys, so the active key is always current.
   useEffect(() => {
     if (settingsLoading) return;
     applyAppearance({
@@ -668,7 +669,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
       <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
       <HostSessionManager />
       <FaviconStatusSync />
-      {children}
+      <AppearanceStyleBoundary>{children}</AppearanceStyleBoundary>
     </VoiceProvider>
   );
 }
@@ -954,19 +955,17 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
 // context and need one shared provider for sibling sheets to stack.
 function RootProviders({ children }: { children: ReactNode }) {
   return (
-    <SafeAreaProvider>
-      <WindowChromeProvider>
-        <KeyboardProvider>
-          <KeyboardShiftProvider>
-            <ToastProvider>
-              <PortalProvider>
-                <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
-              </PortalProvider>
-            </ToastProvider>
-          </KeyboardShiftProvider>
-        </KeyboardProvider>
-      </WindowChromeProvider>
-    </SafeAreaProvider>
+    <WindowChromeProvider>
+      <KeyboardProvider>
+        <KeyboardShiftProvider>
+          <ToastProvider>
+            <PortalProvider>
+              <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
+            </PortalProvider>
+          </ToastProvider>
+        </KeyboardShiftProvider>
+      </KeyboardProvider>
+    </WindowChromeProvider>
   );
 }
 
@@ -998,9 +997,11 @@ export default function RootLayout() {
   return (
     <QueryProvider>
       <I18nProvider>
-        <RootErrorBoundary>
-          <RootAppTree />
-        </RootErrorBoundary>
+        <SafeAreaProvider>
+          <RootErrorBoundary>
+            <RootAppTree />
+          </RootErrorBoundary>
+        </SafeAreaProvider>
       </I18nProvider>
     </QueryProvider>
   );

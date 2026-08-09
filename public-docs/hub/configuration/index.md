@@ -33,8 +33,8 @@ project: my-project
 Then deploy:
 
 ```sh
-PASEO_HUB_URL=https://hub.example.com \
-PASEO_HUB_API_KEY=paseo_pk_... \
+paseo hub login https://hub.example.com
+paseo hub deploy --dry-run
 paseo hub deploy
 ```
 
@@ -42,9 +42,9 @@ The default path is exactly `.paseo/hub.yml` relative to the current directory. 
 
 For each prompt `include`, the CLI sends one `{ path, content }` entry whose path is relative to `.paseo/partials/`. It sends only files referenced by the main YAML; nested include-looking text inside a partial is not scanned. Missing, unsafe, duplicate, unreadable, non-file, or oversized inputs fail locally before the Hub request. A configuration with only inline prompt blocks sends no `partials` field.
 
-Use `--hub <origin>` or `PASEO_HUB_URL` for the Hub origin, and `--api-key <secret>` or `PASEO_HUB_API_KEY` for the organization API key. A flag takes precedence over its environment variable. The key supplies organization scope and needs `configuration:install`. `project` only selects the deployment target; workflows cannot reference it.
+`--dry-run` sends the identical resolved YAML, project slug, and prompt-partial bundle to `POST /api/v1/configurations/validate`. Hub performs the same compilation and resource resolution as installation but records and activates nothing.
 
-Durable Hub login and credential persistence are not implemented. Supply the origin and API key for each deployment through flags or the current process environment.
+Origin precedence is `--hub`, `PASEO_HUB_URL`, the active stored login, then `https://hub.paseo.sh`. Credential precedence is `--api-key`, `PASEO_HUB_API_KEY`, then an exact-origin stored login. API keys passed by flag or environment are not stored. A stored credential is organization-scoped and is never reused for a different Hub origin. Deploy and dry-run report the normalized destination before sending anything and include it in structured results.
 
 ## Sync
 
@@ -80,5 +80,7 @@ While a project uses a GitHub source, the dashboard editor is read-only. The rep
 ## The configuration repository does not have to be the repository you watch
 
 `filters.repo` can name any repository the organization has a connection for. Keeping `hub.yml` in a private repository while triggers watch several public ones is a common setup, because push access to the configuration repository grants access to the organization's connections.
+
+Treat the configuration repository as part of the security boundary. [Hub security](/docs/hub/security) covers what a changed configuration can authorize and how to limit the resulting agent process.
 
 Next: [Hub workflows](/docs/hub/workflows), then the [`hub.yml` reference](/docs/hub/configuration/hub-yml).

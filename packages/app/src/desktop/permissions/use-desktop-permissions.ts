@@ -14,12 +14,17 @@ export interface UseDesktopPermissionsReturn {
   snapshot: DesktopPermissionSnapshot | null;
   isRefreshing: boolean;
   requestingPermission: DesktopPermissionKind | null;
-  isSendingTestNotification: boolean;
-  testNotificationError: string | null;
+  testNotificationState: TestNotificationState;
   refreshPermissions: () => Promise<void>;
   requestPermission: (kind: DesktopPermissionKind) => Promise<void>;
   sendTestNotification: () => Promise<void>;
 }
+
+export type TestNotificationState =
+  | { status: "idle" }
+  | { status: "sending" }
+  | { status: "success" }
+  | { status: "error"; message: string };
 
 export function useDesktopPermissions(): UseDesktopPermissionsReturn {
   const { t } = useTranslation();
@@ -30,7 +35,9 @@ export function useDesktopPermissions(): UseDesktopPermissionsReturn {
   const [requestingPermission, setRequestingPermission] = useState<DesktopPermissionKind | null>(
     null,
   );
-  const [isSendingTestNotification, setIsSendingTestNotification] = useState(false);
+  const [testNotificationState, setTestNotificationState] = useState<TestNotificationState>({
+    status: "idle",
+  });
 
   useEffect(() => {
     return () => {
@@ -111,28 +118,34 @@ export function useDesktopPermissions(): UseDesktopPermissionsReturn {
     [isDesktopApp, refreshPermissions, t],
   );
 
-  const [testNotificationError, setTestNotificationError] = useState<string | null>(null);
-
   const sendTestNotification = useCallback(async () => {
     if (!isDesktopApp) {
       return;
     }
 
-    setIsSendingTestNotification(true);
-    setTestNotificationError(null);
+    setTestNotificationState({ status: "sending" });
     try {
       const sent = await sendOsNotification({
         title: t("desktop.permissions.testNotification.title"),
         body: t("desktop.permissions.testNotification.body"),
       });
-      if (!sent) {
-        setTestNotificationError(t("desktop.permissions.testNotification.notDelivered"));
+      if (!isMountedRef.current) {
+        return;
       }
+      setTestNotificationState(
+        sent
+          ? { status: "success" }
+          : {
+              status: "error",
+              message: t("desktop.permissions.testNotification.notDelivered"),
+            },
+      );
     } catch {
-      setTestNotificationError(t("desktop.permissions.testNotification.failed"));
-    } finally {
       if (isMountedRef.current) {
-        setIsSendingTestNotification(false);
+        setTestNotificationState({
+          status: "error",
+          message: t("desktop.permissions.testNotification.failed"),
+        });
       }
     }
   }, [isDesktopApp, t]);
@@ -150,8 +163,7 @@ export function useDesktopPermissions(): UseDesktopPermissionsReturn {
     snapshot,
     isRefreshing,
     requestingPermission,
-    isSendingTestNotification,
-    testNotificationError,
+    testNotificationState,
     refreshPermissions,
     requestPermission,
     sendTestNotification,

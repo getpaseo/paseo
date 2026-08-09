@@ -118,6 +118,53 @@ async function selectAssistantText(page: Page, text: string): Promise<void> {
   await selectAssistantTextRange(page, text, text);
 }
 
+async function selectAssistantListItemFromMarker(
+  page: Page,
+  listTag: "ol" | "ul",
+  itemText: string,
+  endText: string,
+): Promise<void> {
+  const assistantMessage = page.getByTestId("assistant-message").filter({
+    hasText: "Direct matches:",
+  });
+  const item = assistantMessage
+    .locator(`[data-paseo-markdown-tag="${listTag}"]`)
+    .filter({ hasText: itemText })
+    .locator(':scope > [data-paseo-markdown-tag="li"]')
+    .filter({ hasText: itemText });
+
+  await item.evaluate((element, selectedEndText) => {
+    const marker = element.querySelector(':scope > [data-paseo-markdown-list-marker="true"]');
+    const markerText = marker?.firstChild;
+    if (!(markerText instanceof Text)) {
+      throw new Error("Expected rendered list marker text");
+    }
+
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let endNode: Text | null = null;
+    let endOffset = -1;
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const offset = node.textContent?.indexOf(selectedEndText) ?? -1;
+      if (node instanceof Text && offset >= 0) {
+        endNode = node;
+        endOffset = offset + selectedEndText.length;
+        break;
+      }
+    }
+    if (!endNode) {
+      throw new Error(`Could not find list item selection end: ${selectedEndText}`);
+    }
+
+    const range = document.createRange();
+    range.setStart(markerText, 0);
+    range.setEnd(endNode, endOffset);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, endText);
+}
+
 async function doubleClickAssistantMarkdownText(
   page: Page,
   tag: "code" | "strong",
@@ -404,6 +451,24 @@ test("copying an assistant selection preserves Markdown structure and links", as
     expect(paragraphAndListClipboard.html).toContain(
       '<div>- <strong><a href="https://example.com/issues/1">First issue</a></strong>',
     );
+
+    await selectAssistantListItemFromMarker(page, "ul", "First issue", "failure.");
+    await copySelection(page);
+
+    const draggedBulletClipboard = await readRichClipboard(page);
+    expect(draggedBulletClipboard.plainText).toBe(
+      "- **[First issue](https://example.com/issues/1)**: exact `apply_patch` failure.",
+    );
+    expect(draggedBulletClipboard.html).toContain(
+      '<div>- <strong><a href="https://example.com/issues/1">First issue</a></strong>',
+    );
+
+    await selectAssistantListItemFromMarker(page, "ol", "Sixth item", "Sixth item");
+    await copySelection(page);
+
+    const draggedNumberClipboard = await readRichClipboard(page);
+    expect(draggedNumberClipboard.plainText).toBe("6. Sixth item");
+    expect(draggedNumberClipboard.html).toContain("<div>6. Sixth item</div>");
 
     await selectAssistantText(page, "docs");
     await copySelection(page);

@@ -665,7 +665,7 @@ describe("Hub relationship", () => {
     expect(relationship.relationshipFile()?.relationship.daemonId).toBe(daemonId);
     expect(first).toMatchObject({ payload: { success: true, executionId: "first-execution" } });
     expect(second).toMatchObject({ payload: { success: true, executionId: "second-execution" } });
-    expect(relationship.providerCreations()).toBe(2);
+    expect(await relationship.durableOwnedAgentIds()).toHaveLength(2);
   });
 
   test("daemon shutdown fences a pending create before closing owned agents", async () => {

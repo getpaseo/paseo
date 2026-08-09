@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { chromium } from "playwright";
+import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(scriptDir, "..");
@@ -199,6 +200,8 @@ async function startTargetPage() {
         <head><title>Desktop browser target</title></head>
         <body>
           <button id="bridge-target" onclick="this.textContent = 'Clicked'">Bridge target</button>
+          <label for="typing-target">Typing target</label>
+          <input id="typing-target" />
         </body>
       </html>`);
   });
@@ -323,6 +326,55 @@ async function readViewport(client, browserId) {
   return JSON.parse(evaluated.resultJson);
 }
 
+async function clickGuestElement(page, client, browserId, selector) {
+  const evaluated = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: `() => {
+      const element = document.querySelector(${JSON.stringify(selector)});
+      if (!(element instanceof HTMLElement)) return null;
+      const rect = element.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    }`,
+  });
+  const elementRect = JSON.parse(evaluated.resultJson);
+  assert(elementRect, `Guest element ${selector} was unavailable`);
+  const webviewRect = await page.evaluate((id) => {
+    const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
+    if (!(webview instanceof HTMLElement)) return null;
+    const rect = webview.getBoundingClientRect();
+    return { x: rect.x, y: rect.y };
+  }, browserId);
+  assert(webviewRect, `Browser webview ${browserId} was unavailable`);
+  await page.mouse.click(
+    webviewRect.x + elementRect.x + elementRect.width / 2,
+    webviewRect.y + elementRect.y + elementRect.height / 2,
+  );
+}
+
+async function selectDeviceSize(page, label) {
+  await page.locator('[aria-label="Device size"]').click();
+  const item = page.getByText(label, { exact: true });
+  await item.waitFor({ state: "visible", timeout: timeoutMs });
+  const rect = await item.boundingBox();
+  assert(rect, `Device size menu item ${label} had no bounds`);
+  const clip = {
+    x: Math.max(0, rect.x),
+    y: Math.max(0, rect.y),
+    width: rect.width,
+    height: rect.height,
+  };
+  const openPixels = await page.screenshot({ clip });
+  await page.keyboard.press("Escape");
+  await item.waitFor({ state: "hidden", timeout: timeoutMs });
+  const closedPixels = await page.screenshot({ clip });
+
+  await page.locator('[aria-label="Device size"]').click();
+  await item.waitFor({ state: "visible", timeout: timeoutMs });
+  await page.mouse.click(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  await page.keyboard.press("Escape");
+  return !openPixels.equals(closedPixels);
+}
+
 function recordViewportMismatch(failures, label, actual, expected) {
   if (actual.width === expected.width && actual.height === expected.height) {
     return;
@@ -340,6 +392,16 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId 
   );
   await originalWorkspaceRow.waitFor({ state: "visible", timeout: timeoutMs });
   await originalWorkspaceRow.click();
+
+  await page.evaluate(() => {
+    if (document.getElementById("overlay-root")) return;
+    const overlayRoot = document.createElement("div");
+    overlayRoot.id = "overlay-root";
+    overlayRoot.style.position = "fixed";
+    overlayRoot.style.inset = "0";
+    overlayRoot.style.pointerEvents = "none";
+    document.body.appendChild(overlayRoot);
+  });
 
   const created = await callBrowserTool(client, "browser_new_tab", { url: targetUrl });
   const browserId = created.browserId;
@@ -362,6 +424,30 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId 
     "Responsive viewport follows the visible browser pane",
     await readViewport(client, browserId),
     { width: firstGuest.width, height: firstGuest.height },
+  );
+
+  await clickGuestElement(page, client, browserId, "#typing-target");
+  const activeGuestElement = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: "() => document.activeElement?.id ?? null",
+  });
+  assert(
+    JSON.parse(activeGuestElement.resultJson) === "typing-target",
+    "Physical browser click did not focus the guest input",
+  );
+  const focusedGuest = await page.evaluate(
+    (id) => window.paseoDesktop?.browser?.focus?.(id),
+    browserId,
+  );
+  assert(focusedGuest === true, "Electron did not focus the registered browser guest");
+
+  const deviceSizeMenuPainted = await selectDeviceSize(page, "iPhone SE · 375×667");
+  assert(deviceSizeMenuPainted, "Device size menu did not paint above the browser surface");
+  recordViewportMismatch(
+    failures,
+    "device size menu paints and receives input above the browser surface",
+    await readViewport(client, browserId),
+    { width: 375, height: 667 },
   );
 
   await callBrowserTool(client, "browser_wait", {
@@ -426,6 +512,9 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId 
   }
   await callBrowserTool(client, "browser_resize", { browserId, ...requestedViewport });
 
+  await selectDeviceSize(page, "Responsive");
+  const responsiveViewport = await readViewport(client, browserId);
+
   await originalDeck.getByTestId(`workspace-tab-agent_${callerAgentId}`).click();
   await page.waitForTimeout(500);
   try {
@@ -437,13 +526,40 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId 
     failures,
     "inactive browser preserves the shared viewport",
     await readViewport(client, browserId),
-    requestedViewport,
+    responsiveViewport,
   );
   const focusContinuitySentinel = "preserve-browser-document-across-focus";
   await callBrowserTool(client, "browser_evaluate", {
     browserId,
-    function: `() => { globalThis.__paseoFocusContinuity = ${JSON.stringify(focusContinuitySentinel)}; return globalThis.__paseoFocusContinuity; }`,
+    function: `() => {
+      globalThis.__paseoFocusContinuity = ${JSON.stringify(focusContinuitySentinel)};
+      globalThis.__paseoViewportTransitions = [{ width: innerWidth, height: innerHeight }];
+      addEventListener('resize', () => {
+        globalThis.__paseoViewportTransitions.push({ width: innerWidth, height: innerHeight });
+      });
+      return globalThis.__paseoFocusContinuity;
+    }`,
   });
+  await page.evaluate((id) => {
+    const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
+    if (!webview) throw new Error(`Browser webview ${id} was unavailable`);
+    const events = [];
+    globalThis.__paseoBrowserReactivationEvents = events;
+    for (const name of [
+      "did-start-loading",
+      "did-navigate-in-page",
+      "load-commit",
+      "did-stop-loading",
+    ]) {
+      webview.addEventListener(name, (event) => {
+        events.push({
+          name,
+          url: event.url ?? null,
+          isMainFrame: event.isMainFrame ?? null,
+        });
+      });
+    }
+  }, browserId);
 
   await originalDeck.getByTestId(`workspace-tab-browser_${browserId}`).click();
   await page.waitForFunction(
@@ -457,6 +573,29 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId 
     },
     { id: browserId, webContentsId: firstGuest.webContentsId },
     { timeout: timeoutMs },
+  );
+  await page.waitForTimeout(1_500);
+  const reactivationEvents = await page.evaluate(
+    () => globalThis.__paseoBrowserReactivationEvents ?? [],
+  );
+  const unexpectedReactivationCommits = reactivationEvents.filter(
+    (event) => event.name === "did-navigate-in-page" || event.name === "load-commit",
+  );
+  assert(
+    unexpectedReactivationCommits.length === 0,
+    `responsive browser reactivation committed the current document: ${JSON.stringify(unexpectedReactivationCommits)}`,
+  );
+  const viewportTransitionsResult = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: "() => globalThis.__paseoViewportTransitions ?? []",
+  });
+  const viewportTransitions = JSON.parse(viewportTransitionsResult.resultJson);
+  const collapsedViewport = viewportTransitions.find(
+    (viewport) => viewport.width <= 1 || viewport.height <= 1,
+  );
+  assert(
+    collapsedViewport === undefined,
+    `responsive browser reactivation collapsed the guest viewport: ${JSON.stringify(viewportTransitions)}`,
   );
   const continuityResult = await callBrowserTool(client, "browser_evaluate", {
     browserId,
@@ -531,7 +670,7 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId 
     failures,
     "browser viewport survives workspace eviction and reattachment",
     await readViewport(client, browserId),
-    requestedViewport,
+    responsiveViewport,
   );
 
   await originalDeck.getByRole("button", { name: "Annotate element" }).click();
@@ -553,6 +692,8 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId 
     originalWebContentsId: firstGuest.webContentsId,
     finalWebContentsId: parkedGuest.webContentsId,
     viewport: "passed",
+    guestFocus: "passed",
+    overlayPlane: "passed",
     inactiveCapture: "passed",
     list: "passed",
     snapshot: "passed",
@@ -639,6 +780,8 @@ async function main() {
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
     const page = await waitForAppPage(browser, expoPort);
     const status = await waitForDesktopStatus(page);
+
+    await runAppearanceFontSizeRegression(page);
 
     const callerAgentId = await createCallerAgent(daemonPort);
     const transport = new StreamableHTTPClientTransport(

@@ -234,8 +234,13 @@ export const ptBR: TranslationResources = {
   sessions: {
     title: "Histórico de agentes",
     empty: "Nenhuma sessão ainda",
+    noMatches: "Nenhuma sessão corresponde",
+    tooManyMatches: "Muitos resultados — refine a busca",
+    hostLoadFailed: "{{host}}: Não foi possível carregar o histórico",
+    searchPlaceholder: "Buscar no histórico",
     actions: {
       loadMore: "Carregar mais",
+      clearSearch: "Limpar busca",
     },
   },
   agentList: {
@@ -971,7 +976,7 @@ export const ptBR: TranslationResources = {
       discord: "Discord",
       github: "Criar issue no GitHub",
       whatsNew: "Novidades",
-      version: "Paseo {{version}}",
+      appName: "Paseo",
     },
     sections: {
       sessions: "Histórico",
@@ -1264,7 +1269,6 @@ export const ptBR: TranslationResources = {
     },
   },
   rootError: {
-    kicker: "Algo deu errado",
     title: "O Paseo encontrou um problema.",
     body: "Tente novamente para recarregar o app. Se isso continuar acontecendo, inclua os detalhes abaixo ao relatar o problema.",
     details: "Detalhes",
@@ -1728,6 +1732,7 @@ export const ptBR: TranslationResources = {
       editor: "Editor",
       shortcuts: "Atalhos",
       integrations: "Integrações",
+      notifications: "Notificações",
       permissions: "Permissões",
       diagnostics: "Diagnósticos",
       about: "Sobre",
@@ -1736,6 +1741,21 @@ export const ptBR: TranslationResources = {
       title: "Editor",
       vimKeybindings: "Atalhos do Vim",
       vimHint: "Aplica-se a arquivos-fonte na web e no desktop.",
+    },
+    notifications: {
+      title: "Notificações",
+      permission: "Permissão de notificações",
+      refreshAccessibility: "Atualizar permissão de notificações",
+      playSound: "Reproduzir som",
+      playSoundHint: "Reproduz um som quando chega uma notificação da área de trabalho",
+      test: "Testar notificação",
+      testHint: "Envia uma notificação usando estas configurações",
+      permissionRequired: "Permita o acesso às notificações antes de testar",
+      send: "Enviar",
+      sending: "Enviando...",
+      sentTitle: "Notificação de teste enviada",
+      sentDescription: "O Paseo entregou a notificação ao sistema operacional.",
+      sendFailedTitle: "Não foi possível enviar a notificação de teste",
     },
     hostSections: {
       projects: "Projetos",
@@ -1885,6 +1905,7 @@ export const ptBR: TranslationResources = {
           midnight: "Midnight",
           claude: "Claude",
           ghostty: "Ghostty",
+          pureBlack: "Preto puro",
           auto: "Sistema",
         },
       },
@@ -1923,11 +1944,15 @@ export const ptBR: TranslationResources = {
       searchPlaceholder: "Pesquisar atalhos",
       unavailableOnMobile: "Atalhos de teclado estão disponíveis apenas no desktop",
       capturePrompt: "Pressione o atalho...",
+      unassigned: "Não definido",
       actions: {
+        menu: "Ações para {{name}}",
         done: "Concluído",
         cancel: "Cancelar",
+        bind: "Atribuir",
         rebind: "Reatribuir",
-        reset: "Redefinir",
+        clear: "Limpar",
+        reset: "Redefinir para o padrão",
         resetAll: "Redefinir tudo",
       },
       sections: {
@@ -2036,17 +2061,14 @@ export const ptBR: TranslationResources = {
     },
     permissions: {
       title: "Permissões",
-      notifications: "Notificações",
       microphone: "Microfone",
       refresh: "Atualizar",
       refreshing: "Atualizando...",
       refreshAccessibility: "Atualizar permissões do desktop",
-      test: "Testar",
       actions: {
         granted: "Concedida",
         request: "Solicitar",
         requesting: "Solicitando...",
-        busySuffix: "{{label}}...",
       },
     },
     host: {
