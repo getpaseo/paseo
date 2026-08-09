@@ -5,6 +5,7 @@ export const AgentOwnerSchema = z.discriminatedUnion("kind", [
     kind: z.literal("daemon"),
     daemonId: z.string(),
     executionId: z.string(),
+    createFingerprint: z.string().optional(),
   }),
 ]);
 

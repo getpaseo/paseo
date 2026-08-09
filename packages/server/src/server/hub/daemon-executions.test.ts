@@ -53,8 +53,13 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
   const response = await hub.ownedCreateResult("mcp-create");
 
   expect(response).toMatchObject({
-    type: "hub.execution.agent.create.response",
-    payload: { success: true, agent: { provider: "codex" }, error: null },
+    type: "hub.execution.agent.create.v2.response",
+    payload: {
+      success: true,
+      providerOptionsApplied: true,
+      agent: { provider: "codex" },
+      error: null,
+    },
   });
   expect(hub.latestProviderCreateConfig()?.mcpServers).toMatchObject({
     paseo: { type: "http" },
@@ -138,7 +143,7 @@ test("Hub returns path-specific structured provider option feedback", async () =
   const response = await hub.ownedCreateResult("invalid-options");
 
   expect(response).toMatchObject({
-    type: "hub.execution.agent.create.response",
+    type: "hub.execution.agent.create.v2.response",
     payload: {
       success: false,
       error: {
@@ -153,6 +158,113 @@ test("Hub returns path-specific structured provider option feedback", async () =
       },
     },
   });
+});
+
+test("rejects an in-flight v2 retry that changes a legacy create request", async () => {
+  const hub = await launchRelationship();
+  hub.holdAgentCreation();
+  hub.beginOwnedCreate("legacy-first", "immutable-inflight");
+  await hub.agentCreationAttempts(1);
+
+  hub.beginOwnedCreate("v2-mismatch", "immutable-inflight", {
+    providerOptions: { sandbox_mode: "workspace-write" },
+  });
+  const mismatch = await hub.ownedCreateResult("v2-mismatch");
+  expect(mismatch).toMatchObject({
+    type: "hub.execution.agent.create.v2.response",
+    payload: {
+      success: false,
+      error: {
+        code: "create_failed",
+        message: expect.stringContaining("already bound to a different create request"),
+      },
+    },
+  });
+
+  hub.finishAgentCreation();
+  await hub.ownedCreateResult("legacy-first");
+  expect(hub.providerCreations()).toBe(1);
+});
+
+test("binds persisted v2 executions to exact provider options", async () => {
+  const hub = await launchRelationship();
+  const originalOptions = {
+    sandbox_mode: "workspace-write",
+    sandbox_workspace_write: { network_access: false },
+  };
+  hub.beginOwnedCreate("v2-first", "immutable-v2", { providerOptions: originalOptions });
+  const first = await hub.ownedCreateResult("v2-first");
+  expect(first).toMatchObject({
+    type: "hub.execution.agent.create.v2.response",
+    payload: { success: true, providerOptionsApplied: true },
+  });
+
+  hub.beginOwnedCreate("v2-different", "immutable-v2", {
+    providerOptions: { sandbox_mode: "danger-full-access" },
+  });
+  const mismatch = await hub.ownedCreateResult("v2-different");
+  expect(mismatch).toMatchObject({
+    type: "hub.execution.agent.create.v2.response",
+    payload: {
+      success: false,
+      error: { message: expect.stringContaining("already bound to a different create request") },
+    },
+  });
+
+  hub.beginOwnedCreate("v2-exact-retry", "immutable-v2", {
+    providerOptions: originalOptions,
+  });
+  const retry = await hub.ownedCreateResult("v2-exact-retry");
+  expect(retry).toMatchObject({
+    type: "hub.execution.agent.create.v2.response",
+    payload: {
+      success: true,
+      providerOptionsApplied: true,
+      agentId: first.payload.agentId,
+    },
+  });
+  expect(hub.providerCreations()).toBe(1);
+
+  const reconstructed = await hub.reconstructAndReplay("immutable-v2", {
+    providerOptions: originalOptions,
+  });
+  expect(reconstructed.replay).toMatchObject({
+    providerOptionsApplied: true,
+    agent: { id: first.payload.agentId },
+  });
+});
+
+test("rejects a replay that changes Hub MCP or tool policy", async () => {
+  const hub = await HubRelationshipHarness.startWithAgentMcp();
+  await hub.beginConnect().result;
+  hub.connectLatestSocket();
+  relationship = hub;
+  const mcpServers = {
+    hub: { type: "http" as const, url: "https://hub.test/mcp/executions/immutable-policy" },
+  };
+  hub.beginOwnedCreate("policy-first", "immutable-policy", {
+    mcpServers,
+    toolPolicy: {
+      preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+    },
+  });
+  await hub.ownedCreateResult("policy-first");
+
+  hub.beginOwnedCreate("policy-mismatch", "immutable-policy", {
+    mcpServers,
+    toolPolicy: {
+      preapproved: [{ kind: "mcp", server: "hub", tool: "different_tool" }],
+    },
+  });
+  const mismatch = await hub.ownedCreateResult("policy-mismatch");
+  expect(mismatch).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: {
+      success: false,
+      error: { message: expect.stringContaining("already bound to a different create request") },
+    },
+  });
+  expect(hub.providerCreations()).toBe(1);
 });
 
 test("new Hub executions cannot override the daemon-owned Paseo MCP server", async () => {
@@ -179,7 +291,7 @@ test("new Hub executions cannot override the daemon-owned Paseo MCP server", asy
   expect(await hub.durableOwnedAgentIds()).toEqual([]);
 });
 
-test("reserved Paseo MCP input does not invalidate replay of an owned execution", async () => {
+test("changed reserved MCP input cannot reuse an owned execution", async () => {
   const hub = await launchRelationship();
   hub.beginOwnedCreate("original-create", "replayed-execution");
   const original = await hub.ownedCreateResult("original-create");
@@ -199,9 +311,10 @@ test("reserved Paseo MCP input does not invalidate replay of an owned execution"
   expect(replay).toMatchObject({
     type: "hub.execution.agent.create.response",
     payload: {
-      success: true,
+      success: false,
       executionId: "replayed-execution",
-      agentId: original.payload.agentId,
+      agentId: null,
+      error: { message: expect.stringContaining("already bound to a different create request") },
     },
   });
   expect(hub.providerCreations()).toBe(providerCreations);

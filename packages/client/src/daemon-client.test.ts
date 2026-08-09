@@ -836,6 +836,37 @@ test("sends new-agent run options when creating schedules", async () => {
   });
 });
 
+test("requires daemon capability before scheduling new-agent provider options", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "schedule_provider_options_legacy_daemon",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  await expect(
+    client.scheduleCreate({
+      prompt: "Run the task",
+      cadence: { type: "cron", expression: "* * * * *" },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "codex",
+          cwd: "/tmp/project",
+          providerOptions: { sandbox_mode: "workspace-write" },
+        },
+      },
+    }),
+  ).rejects.toThrow("Update the host to use provider-specific agent options.");
+  expect(mock.sent).toEqual([]);
+});
+
 test("sends new-agent run options when updating schedules", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -2158,6 +2189,155 @@ test("sends create_agent_request with workspace and caller identity", async () =
   );
 
   await expect(createPromise).rejects.toThrow("compat test sentinel");
+});
+
+test("requires daemon capability before sending create-agent provider options", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "provider_options_legacy_daemon",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  await expect(
+    client.createAgent({
+      provider: "codex",
+      cwd: "/tmp/project",
+      providerOptions: { sandbox_mode: "workspace-write" },
+    }),
+  ).rejects.toThrow("Update the host to use provider-specific agent options.");
+  expect(mock.sent).toEqual([]);
+});
+
+test("sends create-agent provider options when the daemon advertises support", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "provider_options_supported_daemon",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { agentProviderOptions: true } });
+  await connectPromise;
+
+  const createPromise = client.createAgent({
+    provider: "codex",
+    cwd: "/tmp/project",
+    providerOptions: { sandbox_mode: "workspace-write" },
+  });
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual(
+    expect.objectContaining({
+      type: "create_agent_request",
+      config: expect.objectContaining({
+        providerOptions: { sandbox_mode: "workspace-write" },
+      }),
+    }),
+  );
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: request.requestId,
+        error: "test complete",
+      },
+    }),
+  );
+  await expect(createPromise).rejects.toThrow("test complete");
+});
+
+test("requires daemon capability before resuming with provider options", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "resume_provider_options_legacy_daemon",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  await expect(
+    client.resumeAgent(
+      { provider: "codex", sessionId: "session-1" },
+      { providerOptions: { sandbox_mode: "workspace-write" } },
+    ),
+  ).rejects.toThrow("Update the host to use provider-specific agent options.");
+  expect(mock.sent).toEqual([]);
+});
+
+test("sends resume provider options when the daemon advertises support", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "resume_provider_options_supported_daemon",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { agentProviderOptions: true } });
+  await connectPromise;
+
+  const resumePromise = client.resumeAgent(
+    { provider: "codex", sessionId: "session-1" },
+    { providerOptions: { sandbox_mode: "workspace-write" } },
+  );
+  expect(parseSentFrame(mock.sent[0])).toEqual(
+    expect.objectContaining({
+      type: "resume_agent_request",
+      overrides: expect.objectContaining({
+        providerOptions: { sandbox_mode: "workspace-write" },
+      }),
+    }),
+  );
+
+  await client.close();
+  await expect(resumePromise).rejects.toThrow();
+});
+
+test("allows resume without provider options on older daemons", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "resume_without_provider_options_legacy_daemon",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const resumePromise = client.resumeAgent(
+    { provider: "codex", sessionId: "session-1" },
+    { modeId: "default" },
+  );
+  expect(parseSentFrame(mock.sent[0])).toEqual(
+    expect.objectContaining({
+      type: "resume_agent_request",
+      overrides: expect.objectContaining({ modeId: "default" }),
+    }),
+  );
+
+  await client.close();
+  await expect(resumePromise).rejects.toThrow();
 });
 
 test("sends worktree target and autoArchive in create_agent_request", async () => {

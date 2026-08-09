@@ -23,6 +23,9 @@ const mocks = vi.hoisted(() => {
       final: agent,
       lastMessage: '{"summary":"ok"}',
     })),
+    getLastServerInfoMessage: vi.fn(() => ({
+      features: { agentProviderOptions: true },
+    })),
     close: vi.fn(async () => undefined),
   };
 });
@@ -89,5 +92,26 @@ describe("run provider option propagation", () => {
 
     expect(mocks.createAgent).toHaveBeenCalledOnce();
     expect(mocks.createAgent).toHaveBeenCalledWith(expect.objectContaining({ providerOptions }));
+  });
+
+  it("fails before workspace or agent creation when the daemon lacks the capability", async () => {
+    mocks.getLastServerInfoMessage.mockReturnValueOnce({ features: {} });
+
+    await expect(
+      runRunCommand(
+        "bounded task",
+        {
+          provider: "codex",
+          model: "gpt-5.4",
+          providerOptions: JSON.stringify(providerOptions),
+        },
+        {} as never,
+      ),
+    ).rejects.toMatchObject({
+      code: "DAEMON_UPDATE_REQUIRED",
+    });
+
+    expect(mocks.createWorkspace).not.toHaveBeenCalled();
+    expect(mocks.createAgent).not.toHaveBeenCalled();
   });
 });

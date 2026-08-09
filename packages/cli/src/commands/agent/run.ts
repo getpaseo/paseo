@@ -265,6 +265,10 @@ export function loadProviderOptions(value: string): ProviderOptions {
   return parsed as ProviderOptions;
 }
 
+function loadOptionalProviderOptions(value: string | undefined): ProviderOptions | undefined {
+  return value === undefined ? undefined : loadProviderOptions(value);
+}
+
 class StructuredRunStatusError extends Error {
   readonly kind: "timeout" | "permission" | "error" | "empty";
 
@@ -310,6 +314,24 @@ async function fetchStructuredOutput(
 }
 
 type ConnectedDaemonClient = Awaited<ReturnType<typeof connectToDaemon>>;
+
+function requireProviderOptionsCapability(
+  client: Pick<ConnectedDaemonClient, "getLastServerInfoMessage">,
+  providerOptions: ProviderOptions | undefined,
+): void {
+  // COMPAT(agentProviderOptions): added in v0.3.1, remove gate after 2027-08-09.
+  // Old daemons accept the additive wire field but discard it, which would
+  // silently launch with a different execution policy.
+  if (
+    providerOptions !== undefined &&
+    client.getLastServerInfoMessage()?.features?.agentProviderOptions !== true
+  ) {
+    throw {
+      code: "DAEMON_UPDATE_REQUIRED",
+      message: "Update the host to use provider-specific run options.",
+    } satisfies CommandError;
+  }
+}
 
 export interface StructuredResponseTimelineClient {
   fetchAgentTimeline: ConnectedDaemonClient["fetchAgentTimeline"];
@@ -638,10 +660,7 @@ export async function runRunCommand(
 ): Promise<SingleResult<AgentRunResult>> {
   const host = getDaemonHost({ host: options.host });
   const outputSchema = options.outputSchema ? loadOutputSchema(options.outputSchema) : undefined;
-  const providerOptions =
-    options.providerOptions !== undefined
-      ? loadProviderOptions(options.providerOptions)
-      : undefined;
+  const providerOptions = loadOptionalProviderOptions(options.providerOptions);
 
   validateRunOptions(prompt, options, outputSchema);
   const waitTimeoutMs = parseWaitTimeoutOption(options.waitTimeout);
@@ -670,6 +689,8 @@ export async function runRunCommand(
     const labels = parseRunLabels(options.label);
     const env = parseRunEnv(options.env);
     const requestEnv = Object.keys(env).length > 0 ? env : undefined;
+
+    requireProviderOptionsCapability(client, providerOptions);
 
     const workspace = await resolveRunWorkspace(client, options, cwd);
     const workspaceId = workspace.id;

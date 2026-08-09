@@ -91,6 +91,7 @@ export class HubExecutionController {
   }
 
   private async createAgentWithResponse(message: HubExecutionAgentCreateRequest): Promise<void> {
+    const providerOptionsV2 = message.type === "hub.execution.agent.create.v2.request";
     try {
       requireNonBlankHubAgentField("executionId", message.executionId);
       requireNonBlankHubAgentField("prompt", message.prompt);
@@ -112,31 +113,67 @@ export class HubExecutionController {
         worktree: message.worktree,
       });
       if (this.closed) return;
-      this.send({
-        type: "hub.execution.agent.create.response",
-        payload: {
-          requestId: message.requestId,
-          executionId: message.executionId,
-          agentId: result.agent.id,
-          agent: result.agent,
-          success: true,
-          ...(message.toolPolicy ? { toolPolicyApplied: true as const } : {}),
-          error: null,
-        },
-      });
+      if (providerOptionsV2 && !result.providerOptionsApplied) {
+        throw new Error("Hub provider options were not applied to the resolved execution");
+      }
+      if (message.toolPolicy && !result.toolPolicyApplied) {
+        throw new Error("Hub tool policy was not applied to the resolved execution");
+      }
+      this.send(
+        providerOptionsV2
+          ? {
+              type: "hub.execution.agent.create.v2.response",
+              payload: {
+                requestId: message.requestId,
+                executionId: message.executionId,
+                agentId: result.agent.id,
+                agent: result.agent,
+                success: true,
+                providerOptionsApplied: true,
+                ...(result.toolPolicyApplied ? { toolPolicyApplied: true as const } : {}),
+                error: null,
+              },
+            }
+          : {
+              type: "hub.execution.agent.create.response",
+              payload: {
+                requestId: message.requestId,
+                executionId: message.executionId,
+                agentId: result.agent.id,
+                agent: result.agent,
+                success: true,
+                ...(result.toolPolicyApplied ? { toolPolicyApplied: true as const } : {}),
+                error: null,
+              },
+            },
+      );
     } catch (error) {
       if (this.closed) return;
-      this.send({
-        type: "hub.execution.agent.create.response",
-        payload: {
-          requestId: message.requestId,
-          executionId: message.executionId,
-          agentId: null,
-          agent: null,
-          success: false,
-          error: toHubCreateError(error),
-        },
-      });
+      this.send(
+        providerOptionsV2
+          ? {
+              type: "hub.execution.agent.create.v2.response",
+              payload: {
+                requestId: message.requestId,
+                executionId: message.executionId,
+                agentId: null,
+                agent: null,
+                success: false,
+                error: toHubCreateError(error),
+              },
+            }
+          : {
+              type: "hub.execution.agent.create.response",
+              payload: {
+                requestId: message.requestId,
+                executionId: message.executionId,
+                agentId: null,
+                agent: null,
+                success: false,
+                error: toHubCreateError(error),
+              },
+            },
+      );
     }
   }
 

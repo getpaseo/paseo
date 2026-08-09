@@ -673,7 +673,10 @@ export class HubRelationshipHarness {
   ): void {
     const { prompt = "Create through the Hub", provider = "codex", ...requestOptions } = options;
     this.latestSocket().socket.receive({
-      type: "hub.execution.agent.create.request",
+      type:
+        requestOptions.providerOptions === undefined
+          ? "hub.execution.agent.create.request"
+          : "hub.execution.agent.create.v2.request",
       requestId,
       executionId,
       provider,
@@ -1145,7 +1148,10 @@ export class HubRelationshipHarness {
     return this.acceptedCreate("reconnect-retry");
   }
 
-  async reconstructAndReplay(executionId = "execution-1") {
+  async reconstructAndReplay(
+    executionId = "execution-1",
+    options: { providerOptions?: AgentSessionConfig["providerOptions"] } = {},
+  ) {
     const storage = new AgentStorage(
       path.join(this.paseoHome, "agents"),
       pino({ level: "silent" }),
@@ -1156,7 +1162,7 @@ export class HubRelationshipHarness {
       logger: pino({ level: "silent" }),
     });
     const executions = this.executionsForReconstruction(manager, storage);
-    const replay = await executions.create(this.ownedCreateInput(executionId));
+    const replay = await executions.create({ ...this.ownedCreateInput(executionId), ...options });
     const durableAgentCount = (await storage.list()).filter(
       (record) => record.owner?.kind === "daemon",
     ).length;

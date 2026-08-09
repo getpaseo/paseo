@@ -6,6 +6,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 
 import type {
+  HubExecutionAgentCreateInput,
   HubExecutionAgents,
   OwnedAgentEvent,
   OwnedAgentSnapshot,
@@ -35,8 +36,17 @@ function deferred<T>(): Deferred<T> {
 class ControlledHubExecutionAgents implements HubExecutionAgents {
   private readonly createObserved = deferred<void>();
   private readonly createGate = deferred<OwnedAgentSnapshot>();
+  lastCreateInput: HubExecutionAgentCreateInput | null = null;
 
-  create(): Promise<OwnedAgentSnapshot> {
+  constructor(
+    private readonly appliedOverride?: {
+      providerOptionsApplied?: boolean;
+      toolPolicyApplied?: boolean;
+    },
+  ) {}
+
+  create(input: HubExecutionAgentCreateInput): Promise<OwnedAgentSnapshot> {
+    this.lastCreateInput = input;
     this.createObserved.resolve();
     return this.createGate.promise;
   }
@@ -60,6 +70,11 @@ class ControlledHubExecutionAgents implements HubExecutionAgents {
         id: "agent-shutdown",
         status: "running",
       } as AgentSnapshotPayload,
+      providerOptionsApplied:
+        this.appliedOverride?.providerOptionsApplied ??
+        this.lastCreateInput?.providerOptions !== undefined,
+      toolPolicyApplied:
+        this.appliedOverride?.toolPolicyApplied ?? this.lastCreateInput?.toolPolicy !== undefined,
     });
   }
 }
@@ -136,6 +151,77 @@ describe("HubExecutionController", () => {
         payload: expect.objectContaining({
           success: true,
           toolPolicyApplied: true,
+        }),
+      }),
+    ]);
+  });
+
+  test("forwards exact v2 provider options and acknowledges their application", async () => {
+    const agents = new ControlledHubExecutionAgents();
+    const messages: SessionOutboundMessage[] = [];
+    const controller = new HubExecutionController({
+      agents,
+      send: (message) => messages.push(message),
+    });
+    const providerOptions = {
+      sandbox_mode: "workspace-write",
+      sandbox_workspace_write: { network_access: false, writable_roots: [] },
+    };
+
+    const create = controller.createAgent({
+      type: "hub.execution.agent.create.v2.request",
+      requestId: "provider-options-create",
+      executionId: "execution-shutdown",
+      provider: "codex",
+      cwd: "/tmp/paseo",
+      prompt: "finish",
+      providerOptions,
+    });
+    await agents.creationStarted();
+    expect(agents.lastCreateInput?.providerOptions).toEqual(providerOptions);
+    agents.finishCreate();
+    await create;
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        type: "hub.execution.agent.create.v2.response",
+        payload: expect.objectContaining({
+          success: true,
+          providerOptionsApplied: true,
+        }),
+      }),
+    ]);
+  });
+
+  test("does not acknowledge a v2 create when applied state is unverified", async () => {
+    const agents = new ControlledHubExecutionAgents({ providerOptionsApplied: false });
+    const messages: SessionOutboundMessage[] = [];
+    const controller = new HubExecutionController({
+      agents,
+      send: (message) => messages.push(message),
+    });
+
+    const create = controller.createAgent({
+      type: "hub.execution.agent.create.v2.request",
+      requestId: "unverified-provider-options",
+      executionId: "execution-shutdown",
+      provider: "codex",
+      cwd: "/tmp/paseo",
+      prompt: "finish",
+      providerOptions: { sandbox_mode: "workspace-write" },
+    });
+    await agents.creationStarted();
+    agents.finishCreate();
+    await create;
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        type: "hub.execution.agent.create.v2.response",
+        payload: expect.objectContaining({
+          success: false,
+          error: expect.objectContaining({
+            message: expect.stringContaining("were not applied"),
+          }),
         }),
       }),
     ]);

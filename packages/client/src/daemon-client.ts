@@ -2444,6 +2444,7 @@ export class DaemonClient {
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
     const requestId = this.createRequestId(options.requestId);
     const config = resolveAgentConfig(options);
+    this.requireAgentProviderOptionsCapability(config.providerOptions);
 
     const message = SessionInboundMessageSchema.parse({
       type: "create_agent_request",
@@ -2709,6 +2710,7 @@ export class DaemonClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
   ): Promise<AgentSnapshotPayload> {
+    this.requireAgentProviderOptionsCapability(overrides?.providerOptions);
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "resume_agent_request",
@@ -5156,6 +5158,9 @@ export class DaemonClient {
   }
 
   async scheduleCreate(options: CreateScheduleOptions): Promise<ScheduleCreatePayload> {
+    if (options.target.type === "new-agent") {
+      this.requireAgentProviderOptionsCapability(options.target.config.providerOptions);
+    }
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
       message: {
@@ -5375,6 +5380,18 @@ export class DaemonClient {
 
   getLastServerInfoMessage(): ServerInfoStatusPayload | null {
     return this.lastServerInfoMessage;
+  }
+
+  private requireAgentProviderOptionsCapability(
+    providerOptions: AgentSessionConfig["providerOptions"],
+  ): void {
+    // COMPAT(agentProviderOptions): added in v0.3.1, remove gate after 2027-08-09.
+    if (
+      providerOptions !== undefined &&
+      this.lastServerInfoMessage?.features?.agentProviderOptions !== true
+    ) {
+      throw new Error("Update the host to use provider-specific agent options.");
+    }
   }
 
   private requireHubRelationshipSupport(): void {

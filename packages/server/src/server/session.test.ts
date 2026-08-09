@@ -451,7 +451,9 @@ describe("session authorization scopes", () => {
   test.each([
     ["*", "ping"],
     ["hub.execution.*", "hub.execution.agent.create.request"],
+    ["hub.execution.*", "hub.execution.agent.create.v2.request"],
     ["hub.execution.agent.create.request", "hub.execution.agent.create.request"],
+    ["hub.execution.agent.create.v2.request", "hub.execution.agent.create.v2.request"],
   ])("scope %s authorizes %s", (scope, requestType) => {
     expect(isSessionRpcAllowed([scope], requestType)).toBe(true);
   });
