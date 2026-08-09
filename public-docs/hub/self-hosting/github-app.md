@@ -2,7 +2,7 @@
 title: GitHub for Hub
 description: Create the GitHub App your Hub uses, install it, and connect it to an organization.
 nav: GitHub App
-order: 74
+order: 75
 category: Hub
 ---
 

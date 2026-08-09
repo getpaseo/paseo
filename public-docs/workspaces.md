@@ -50,7 +50,7 @@ You can create a workspace in the app or from the CLI:
 
 ```bash
 paseo workspace create --isolation local --path ~/dev/my-app --title main
-paseo workspace create --isolation worktree --path ~/dev/my-app --base main
+paseo workspace create --isolation worktree --path ~/dev/my-app --base origin/main
 ```
 
 You can also create a workspace without starting an agent right away. The workspace is still there with its working directory ready; you can open terminals, run services, or browse files, then start an agent later.

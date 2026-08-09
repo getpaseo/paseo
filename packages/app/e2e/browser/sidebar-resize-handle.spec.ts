@@ -8,7 +8,6 @@ async function expectBorderHighlight(page: Page, testID: string) {
   await expect(page.getByTestId(`${testID}-highlight`)).toHaveCount(0);
 
   await handle.hover();
-  await expect(page.getByTestId(`${testID}-highlight`)).toHaveCount(0);
 
   const highlight = page.getByTestId(`${testID}-highlight`);
   await expect(highlight).toBeVisible();

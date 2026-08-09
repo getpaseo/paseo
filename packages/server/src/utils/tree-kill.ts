@@ -110,6 +110,10 @@ function signalTreeOrChild(
   });
 }
 
+export function signalProcessTree(child: TreeKillTarget, signal: NodeJS.Signals): Promise<void> {
+  return signalTreeOrChild(child, signal, false, true);
+}
+
 function signalDirectChild(child: TreeKillTarget, signal: NodeJS.Signals): void {
   try {
     child.kill(signal);

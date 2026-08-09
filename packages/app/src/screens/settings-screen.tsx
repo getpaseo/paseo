@@ -28,6 +28,7 @@ import {
   Keyboard,
   Stethoscope,
   Info,
+  Bell,
   Shield,
   Puzzle,
   Plus,
@@ -78,6 +79,7 @@ import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
+import { DesktopNotificationsSection } from "@/desktop/components/desktop-notifications-section";
 import { BrowserDataSection } from "@/desktop/browser/settings/browser-data-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { isElectronRuntime } from "@/desktop/host";
@@ -152,6 +154,12 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     id: "integrations",
     labelKey: "settings.sections.integrations",
     icon: Puzzle,
+    desktopOnly: true,
+  },
+  {
+    id: "notifications",
+    labelKey: "settings.sections.notifications",
+    icon: Bell,
     desktopOnly: true,
   },
   {
@@ -1427,6 +1435,8 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
           return isDesktopApp ? <KeyboardShortcutsSection /> : null;
         case "integrations":
           return isDesktopApp ? <IntegrationsSection /> : null;
+        case "notifications":
+          return isDesktopApp ? <DesktopNotificationsSection /> : null;
         case "permissions":
           return isDesktopApp ? <DesktopPermissionsSection /> : null;
         case "diagnostics":

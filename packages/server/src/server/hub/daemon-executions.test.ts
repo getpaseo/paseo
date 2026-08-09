@@ -34,6 +34,10 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
   relationship = hub;
   const bearer = "hub-execution-bearer";
   hub.beginOwnedCreate("mcp-create", "mcp-execution", {
+    providerOptions: {
+      sandbox_mode: "workspace-write",
+      sandbox_workspace_write: { writable_roots: ["/var/cache/private-build"] },
+    },
     mcpServers: {
       hub: {
         type: "http",
@@ -41,10 +45,17 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
         headers: { Authorization: `Bearer ${bearer}` },
       },
     },
+    toolPolicy: {
+      preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+    },
   });
 
   const response = await hub.ownedCreateResult("mcp-create");
 
+  expect(response).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, agent: { provider: "codex" }, error: null },
+  });
   expect(hub.latestProviderCreateConfig()?.mcpServers).toMatchObject({
     paseo: { type: "http" },
     hub: {
@@ -53,9 +64,12 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
       headers: { Authorization: `Bearer ${bearer}` },
     },
   });
-  expect(response).toMatchObject({
-    type: "hub.execution.agent.create.response",
-    payload: { success: true, agent: { provider: "codex" } },
+  expect(hub.latestProviderCreateConfig()?.providerOptions).toEqual({
+    sandbox_mode: "workspace-write",
+    sandbox_workspace_write: { writable_roots: ["/var/cache/private-build"] },
+  });
+  expect(hub.latestProviderCreateConfig()?.toolPolicy).toEqual({
+    preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
   });
   expect(response.payload.agent).not.toHaveProperty("config");
   expect(response.payload.agent).not.toHaveProperty("mcpServers");
@@ -64,6 +78,8 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
     cwd: response.payload.agent.cwd,
   });
   expect(JSON.stringify(response.payload.agent)).not.toContain(bearer);
+  expect(JSON.stringify(response.payload.agent)).not.toContain("private-build");
+  expect(JSON.stringify(response.payload.agent)).not.toContain("finish_execution");
 
   const update = hub.hubMessages().find((message) => message.type === "hub.execution.agent.update");
   expect(update).toMatchObject({
@@ -80,6 +96,63 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
     cwd: update.payload.agent.cwd,
   });
   expect(JSON.stringify(update.payload.agent)).not.toContain(bearer);
+  expect(JSON.stringify(update.payload.agent)).not.toContain("private-build");
+  expect(JSON.stringify(update.payload.agent)).not.toContain("finish_execution");
+});
+
+test("Hub can preapprove only tools on MCP servers injected in the same request", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("foreign-grant", "foreign-grant-execution", {
+    mcpServers: {
+      hub: { type: "http", url: "https://hub.test/mcp/executions/foreign-grant" },
+    },
+    toolPolicy: {
+      preapproved: [{ kind: "mcp", server: "unrelated", tool: "dangerous_tool" }],
+    },
+  });
+
+  const response = await hub.ownedCreateResult("foreign-grant");
+
+  expect(response).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: {
+      success: false,
+      agentId: null,
+      error: {
+        code: "create_failed",
+        message: expect.stringContaining("requires MCP server 'unrelated'"),
+      },
+    },
+  });
+  expect(hub.providerCreations()).toBe(0);
+});
+
+test("Hub returns path-specific structured provider option feedback", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("invalid-options", "invalid-options-execution", {
+    providerOptions: {
+      sandbox_workspace_write: { writable_roots: ["/tmp", 42] },
+    },
+  });
+
+  const response = await hub.ownedCreateResult("invalid-options");
+
+  expect(response).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: {
+      success: false,
+      error: {
+        code: "provider_options_invalid",
+        provider: "codex",
+        issues: [
+          {
+            path: ["sandbox_workspace_write", "writable_roots", 1],
+            message: expect.any(String),
+          },
+        ],
+      },
+    },
+  });
 });
 
 test("new Hub executions cannot override the daemon-owned Paseo MCP server", async () => {
@@ -181,9 +254,7 @@ test("failed Hub creates release their lifecycle subscriptions", async () => {
   expect(hub.agentSubscriptionCount()).toBe(subscriptionBaseline);
 
   hub.failProviderPromptStart();
-  hub.beginOwnedCreate("failed-prompt-create-2", "failed-prompt-execution-2", {
-    worktree: { mode: "branch-off", newBranch: "failed-prompt-2" },
-  });
+  hub.beginOwnedCreate("failed-prompt-create-2", "failed-prompt-execution-2");
   const second = await hub.ownedCreateResult("failed-prompt-create-2");
 
   expect(second).toMatchObject({

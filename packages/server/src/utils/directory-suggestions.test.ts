@@ -53,6 +53,7 @@ async function searchRelativeDirectoryEntries(options: {
   matchMode?: "fuzzy" | "suffix";
   maxDepth?: number;
   maxEntriesScanned?: number;
+  respectGitIgnore?: boolean;
 }) {
   return searchDirectoryEntries({
     root: options.cwd,
@@ -67,7 +68,13 @@ async function searchRelativeDirectoryEntries(options: {
     limit: options.limit,
     maxDepth: options.maxDepth,
     maxEntriesScanned: options.maxEntriesScanned,
+    respectGitIgnore: options.respectGitIgnore,
   });
+}
+
+function initGitRepo(directory: string, ignorePatterns: string): void {
+  execFileSync("git", ["init", "-q"], { cwd: directory });
+  writeFileSync(path.join(directory, ".gitignore"), ignorePatterns);
 }
 
 describe("searchDirectoryEntries", () => {
@@ -790,6 +797,68 @@ describe("relative typed-entry configuration", () => {
 
     expect(results).toEqual([{ path: ".dev/paseo-home/daemon.log", kind: "file" }]);
   });
+
+  it("resolves an exact gitignored path while keeping it out of discovery results", async () => {
+    initGitRepo(workspaceDir, "generated/\n");
+    mkdirSync(path.join(workspaceDir, "generated"), { recursive: true });
+    writeFileSync(path.join(workspaceDir, "generated", "notes.md"), "generated notes\n");
+
+    const exactResults = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "generated/notes.md",
+      limit: 1,
+      includeFiles: true,
+      includeDirectories: false,
+      matchMode: "suffix",
+      respectGitIgnore: true,
+    });
+    const fuzzyResults = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "notes",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: false,
+      respectGitIgnore: true,
+    });
+
+    expect({ exactResults, fuzzyResults }).toEqual({
+      exactResults: [{ path: "generated/notes.md", kind: "file" }],
+      fuzzyResults: [{ path: "docs/notes.md", kind: "file" }],
+    });
+  });
+
+  it.skipIf(isWindows)(
+    "refuses an exact path that escapes the root through a symlink",
+    async () => {
+      const outsideDir = path.join(tempRoot, "outside-workspace");
+      mkdirSync(outsideDir, { recursive: true });
+      writeFileSync(path.join(outsideDir, "secret.md"), "outside\n");
+      symlinkSync(outsideDir, path.join(workspaceDir, "escape-link"));
+      symlinkSync(path.join(workspaceDir, "docs"), path.join(workspaceDir, "inside-link"));
+
+      const escaping = await searchRelativeDirectoryEntries({
+        cwd: workspaceDir,
+        query: "escape-link/secret.md",
+        limit: 1,
+        includeFiles: true,
+        includeDirectories: false,
+        matchMode: "suffix",
+      });
+      const staysInside = await searchRelativeDirectoryEntries({
+        cwd: workspaceDir,
+        query: "inside-link/notes.md",
+        limit: 1,
+        includeFiles: true,
+        includeDirectories: false,
+        matchMode: "suffix",
+      });
+
+      expect({ escaping, staysInside }).toEqual({
+        escaping: [],
+        staysInside: [{ path: "inside-link/notes.md", kind: "file" }],
+      });
+    },
+  );
 
   it("traverses only allowlisted hidden directories without suggesting the directories", async () => {
     mkdirSync(path.join(workspaceDir, ".claude"), { recursive: true });

@@ -301,7 +301,6 @@ export interface DaemonClientConfig {
   runtimeGeneration?: number | null;
   password?: string;
   authHeader?: string;
-  headers?: Record<string, string>;
   suppressSendErrors?: boolean;
   transportFactory?: DaemonTransportFactory;
   webSocketFactory?: WebSocketFactory;
@@ -790,11 +789,7 @@ export interface CreateScheduleOptions {
           archiveOnFinish?: boolean;
           isolation?: "local" | "worktree";
           title?: string | null;
-          approvalPolicy?: string;
-          sandboxMode?: string;
-          networkAccess?: boolean;
-          webSearch?: boolean;
-          extra?: AgentSessionConfig["extra"];
+          providerOptions?: AgentSessionConfig["providerOptions"];
           systemPrompt?: string;
           mcpServers?: AgentSessionConfig["mcpServers"];
         };
@@ -1250,7 +1245,7 @@ export class DaemonClient {
       return;
     }
 
-    const headers: Record<string, string> = { ...this.config.headers };
+    const headers: Record<string, string> = {};
     const password = normalizePassword(this.config.password);
     if (password) {
       headers.Authorization = `Bearer ${password}`;

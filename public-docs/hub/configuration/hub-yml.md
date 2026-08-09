@@ -2,7 +2,7 @@
 title: hub.yml reference
 description: The authored Hub configuration: environments, triggers, typed inputs, workflow steps, routing, and prompt partials.
 nav: hub.yml reference
-order: 69
+order: 71
 category: Hub
 ---
 
@@ -34,7 +34,11 @@ triggers:
           provider: codex
           mode: full-access
         prompt:
-          - text: ${{ paseo.prompt }}
+          - text: Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
 ```
 
 `project` is an optional bare project slug. The deploy CLI uses it to choose the target project when `-p, --project` is absent. The flag takes precedence over this metadata without rewriting the YAML. `project` is not available to triggers, expressions, or agents.
@@ -50,7 +54,7 @@ triggers:
 | `image`    | fly/docker  | Image name.                                                                                               |
 | `worktree` | no          | `branch-off`, `checkout-branch`, or `checkout-pr` target.                                                 |
 
-The `worktree` object is part of the environment. Its fields are exact authored names: `newBranch` and optional `base` for `branch-off`, `branch` for `checkout-branch`, and positive integer `prNumber` for `checkout-pr`.
+The `worktree` object is part of the environment. Its fields are exact authored names: `newBranch` and optional `base` for `branch-off`, `branch` for `checkout-branch`, and positive integer `prNumber` for `checkout-pr`. Give `base` a remote-tracking ref such as `origin/main`; see [Git worktrees](/docs/worktrees#create-a-worktree-backed-workspace).
 
 ## Triggers
 
@@ -103,22 +107,33 @@ The grammar supports paths, JSON literals, parentheses, `!`, `==`, `!=`, `&&`, `
 | `environment`   | yes      | Environment name or a finite input expression resolving to one.                                                   |
 | `max_runtime`   | yes      | Positive step hard limit, up to 24h.                                                                              |
 | `idle_timeout`  | yes      | Positive idle limit, no longer than the step hard limit.                                                          |
-| `agent`         | yes      | `provider`, optional `model`, `mode`, and `thinkingOptionId`.                                                     |
+| `agent`         | yes      | `provider`, optional `model`, `mode`, `thinkingOptionId`, and provider-native `options`.                          |
 | `prompt`        | yes      | Non-empty list of `text` and GitHub-only `include` blocks.                                                        |
 | `if`            | no       | Expression deciding whether this ordered step runs.                                                               |
-| `output`        | no       | `{ schema: <JSON Schema> }` for structured `finish_execution`.                                                    |
+| `env`           | no       | Environment variables populated from connection values. See [GitHub access](/docs/hub/github#other-integrations). |
+| `output`        | no       | `{ schema: <JSON Schema> }` for the structured result the agent passes to `hub.finish_execution`.                 |
 | `allow_outputs` | no       | Registered output capabilities such as `slack.reply` or `discord.reply`, each with optional `max` and `required`. |
 | `auto_archive`  | no       | Archives the step's agent when it ends.                                                                           |
+| `github`        | no       | Scoped GitHub token and git setup for this step. See [GitHub access](/docs/hub/github).                           |
 
 Prompt blocks are objects, not a scalar prompt:
 
 ```yaml
 prompt:
-  - text: Request: ${{ paseo.prompt }}
   - include: developer.md
+  - text: |
+      <user-prompt>
+      ${{ paseo.prompt }}
+      </user-prompt>
 ```
 
+Keep the triggering message in its own final block, wrapped in `<user-prompt>` tags, as [the first workflow](/docs/hub/workflows#your-first-workflow) does.
+
 Use `${{ paseo.prompt }}`, `${{ paseo.inputs.* }}`, `${{ steps.*.outputs.* }}`, and `${{ values.* }}` in prompts, conditions, and agent selection fields. Provider event payloads are not part of this workflow expression namespace; provider adapters put the normalized request into the prompt and preserve the raw event as evidence.
+
+`agent.options` carries JSON-safe options using the selected provider's native names and nesting. Paseo validates them with that provider's strict schema before starting the session. See [Hub security](/docs/hub/security) for the trust boundary and copyable provider examples.
+
+`mode` names a Paseo agent mode ID, which is a separate surface from these options. Some modes keep the provider's interactive approval flow, and that stalls an unattended step, so set the provider's own approval and sandbox settings in `options` instead.
 
 #### Output capabilities
 
@@ -131,11 +146,24 @@ allow_outputs:
     required: true
 ```
 
-Hub counts an actual capability emission; ordinary assistant text does not satisfy a required output. A required declaration must resolve to a registered, available Hub capability for that execution context, or dispatch rejects the step with an actionable configuration error. If delivery fails, the attempt is retryable; if the agent tries to finish first, Hub keeps the execution recoverable and names the concrete output tool before retrying `finish_execution`. A required output must have an effective `max` of at least `1`, or activation rejects the configuration. Omitting `required` preserves optional-output behavior and does not change the agent's permission mode. GitHub-triggered agents reply with their scoped `GH_TOKEN` (for example, through `gh issue comment`) rather than a Hub `github.reply` tool.
+`required: true` means the step must actually emit the capability. Assistant text does not count.
+
+- A required output must resolve to a registered, available capability for the execution, or dispatch rejects the step.
+- A required output needs an effective `max` of at least `1`, or activation rejects the configuration.
+- Failed delivery is retryable. An agent that tries to finish first is told the concrete output tool to call, then `hub.finish_execution` is retried.
+
+Omitting `required` keeps the output optional. GitHub has no reply capability; a step acts through the `gh` CLI with the token its [`github` block](/docs/hub/github) grants.
+
+A declaration grants the tool. The step's prompt still has to tell the agent to call `hub.reply`, and to call `hub.finish_execution` when it is done. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).
 
 ## Prompt partials
 
-`include` paths are relative to `.paseo/partials/`. For GitHub configuration, Hub reads them at the exact configuration commit and stores the resolved content and SHA-256 hash in the immutable revision. For `paseo hub deploy`, the CLI reads the referenced files from the local project root and sends them in the optional `partials` bundle; the bundle path omits the `.paseo/partials/` prefix. Missing files, unsafe paths, symlinks, submodules, directories, duplicate or unexpected bundle entries, and nested includes are rejected. Manual configurations cannot use repository partials.
+`include` paths are relative to `.paseo/partials/`.
+
+- GitHub configuration: Hub reads each file at the exact configuration commit and stores the resolved content and SHA-256 hash in the immutable revision.
+- `paseo hub deploy`: the CLI reads the referenced files from the local project root and sends them in the optional `partials` bundle. The bundle path omits the `.paseo/partials/` prefix.
+- Missing files, unsafe paths, symlinks, submodules, directories, duplicate or unexpected bundle entries, and nested includes are rejected.
+- Manual configurations cannot use repository partials.
 
 ## Deadlines
 
@@ -147,6 +175,7 @@ steps:
   - id: classify
     max_runtime: 2m
     idle_timeout: 30s
+
   - id: implement
     max_runtime: 90m
     idle_timeout: 10m

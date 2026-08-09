@@ -107,7 +107,7 @@ export const baseColors = {
   },
 } as const;
 
-export type ThemeName = "light" | "dark" | "zinc" | "midnight" | "claude" | "ghostty";
+export type ThemeName = "light" | "dark" | "zinc" | "midnight" | "claude" | "ghostty" | "pureBlack";
 
 // Diff colors — the +/- inside a diff view, where the color *is* the signal and has to
 // survive being scanned line by line, so it stays saturated. Light uses muted tones, dark
@@ -165,11 +165,18 @@ const darkStatusColors = {
 // for them. Same four hues and the same generation rule as the status colors above, but its
 // own band, because a dot is doing a different job than a check icon or a host badge.
 //
-// A dot is 6-8pt of solid color with no shape to read and no label attached. At the status
+// A dot is 6pt of solid color with no shape to read and no label attached. At the status
 // band's lightness the dots read dimmer than the static text and icons beside them on the same
-// row, which is backwards — the dot is the row's state. So the band is pushed away from the
-// surface rather than toward it (darker in light, lighter in dark) and carries more chroma:
-// 90% of gamut max against the status family's 55-60%.
+// row, which is backwards — the dot is the row's state. The loudness comes from chroma: 90% of
+// gamut max against the status family's 55-60%.
+//
+// Lightness is set by hue separation, not by distance from the surface. A dark dot on a light
+// surface has plenty of contrast but the four hues collapse into each other at 6pt — dark green,
+// dark red, dark amber and dark blue all read as "dark blob", and the point of the dot is telling
+// them apart at a glance. So the light band runs as bright as the contrast floor allows: L=0.62
+// is the last step where all four clear 3:1 against the sidebar's surface2 (success is the
+// binding one at 3.10, and drops under 3 by L=0.64), which is WCAG's non-text minimum for a
+// control that carries state.
 //
 // All four move together. A dot matching its siblings in lightness and chroma says only which
 // state the row is in; one that does not says "this row matters more", which is a claim the
@@ -178,14 +185,16 @@ const darkStatusColors = {
 // 90% and not 100%: at the gamut edge the lopsidedness is worst — green reaches C=0.215 while
 // blue manages 0.116 — so the set stops reading as one family and green wins. Red running out
 // of chroma as lightness climbs is what caps the dark band at L=0.72; higher turns the failed
-// dot pink. Running is blue at hue 250, clear of identity-colors' blue at 256.6 so a blue host
-// badge and a working dot on the same row do not read as related.
+// dot pink, and the light band pastels out the same way just above its own cap. Running is blue
+// at hue 250, clear of
+// identity-colors' blue at 256.6 so a blue host badge and a working dot on the same row do not
+// read as related.
 const lightStatusDotColors = {
-  // L=0.46, chroma 90% of gamut max
-  statusDotSuccess: "#186933",
-  statusDotDanger: "#a11c1c",
-  statusDotWarning: "#774e14",
-  statusDotRunning: "#165a96",
+  // L=0.62, chroma 90% of gamut max
+  statusDotSuccess: "#299f51",
+  statusDotDanger: "#f12e2f",
+  statusDotWarning: "#b37824",
+  statusDotRunning: "#268ae0",
 };
 
 const darkStatusDotColors = {
@@ -300,6 +309,8 @@ interface DarkThemeConfig {
   accentBright: string;
   accentForeground?: string;
   destructive: string;
+  terminalBlack: string;
+  terminalBrightBlack: string;
 }
 
 const darkTerminalAnsi = {
@@ -374,9 +385,9 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
       cursorAccent: tint.surface0,
       selectionBackground: "rgba(255, 255, 255, 0.2)",
       selectionForeground: "#fafafa",
-      black: tint.surfaceSidebar,
+      black: tint.terminalBlack,
       ...darkTerminalAnsi,
-      brightBlack: tint.surface3,
+      brightBlack: tint.terminalBrightBlack,
     },
   };
 }
@@ -403,6 +414,8 @@ const paseoDarkColors = buildDarkSemanticColors({
   accent: "#20744A",
   accentBright: "#7ccba0",
   destructive: "#c64f43", // warm red, hue ~7 — reads as red (not pink) against the green tint
+  terminalBlack: "#141716",
+  terminalBrightBlack: "#434645",
 });
 
 // Zinc — neutral gray, no tint
@@ -424,6 +437,8 @@ const zincDarkColors = buildDarkSemanticColors({
   accentBright: "#fafafa",
   accentForeground: "#18181b", // monochrome zinc accent is near-white — needs dark text
   destructive: "#c44a4a", // neutral red, hue 0 — clearly red without screaming
+  terminalBlack: "#131316",
+  terminalBrightBlack: "#3f3f46",
 });
 
 // Midnight — subtle blue tint
@@ -444,6 +459,8 @@ const midnightDarkColors = buildDarkSemanticColors({
   accent: "#3b6fcf",
   accentBright: "#7eaaeb",
   destructive: "#c44a52", // red with a hint of cool lean against the blue tint
+  terminalBlack: "#121420",
+  terminalBrightBlack: "#3c3e4c",
 });
 
 // Claude — warm neutral with subtle orange undertone
@@ -464,6 +481,8 @@ const claudeDarkColors = buildDarkSemanticColors({
   accent: "#d97757",
   accentBright: "#e89a7f",
   destructive: "#cf513e", // warm orange-red, hue ~10 — sits with the Claude orange accent
+  terminalBlack: "#1a1918",
+  terminalBrightBlack: "#4a4745",
 });
 
 // Ghostty — blue-tinted dark based on Ghostty default background
@@ -484,6 +503,8 @@ const ghosttyDarkColors = buildDarkSemanticColors({
   accent: "#89b4fa",
   accentBright: "#b4d0fc",
   destructive: "#c44a55", // red with slight cool lean against the slate-blue surfaces
+  terminalBlack: "#21252d",
+  terminalBrightBlack: "#4a4f5e",
 });
 
 export const SPACING = {
@@ -639,6 +660,30 @@ export const darkMidnightTheme = buildDarkTheme(midnightDarkColors);
 export const darkClaudeTheme = buildDarkTheme(claudeDarkColors);
 export const darkGhosttyTheme = buildDarkTheme(ghosttyDarkColors);
 
+// Pure black — zero-luminance background with high-contrast surfaces.
+const pureBlackDarkColors = buildDarkSemanticColors({
+  surface0: "#000000",
+  surface1: "#0a0a0a",
+  surface2: "#111111",
+  surface3: "#202020",
+  surface4: "#2d2d2d",
+  surfaceDiffEmpty: "#0c0c0c",
+  surfaceSidebar: "#000000",
+  surfaceSidebarHover: "#0d0d0d",
+  foregroundMuted: "#a1a1aa",
+  foregroundExtraMuted: "#71717a",
+  scrollbarHandle: "#71717a",
+  border: "#1c1c1c",
+  borderAccent: "#242424",
+  accent: "#20744A",
+  accentBright: "#7ccba0",
+  destructive: "#c44a4a",
+  terminalBlack: "#595959",
+  terminalBrightBlack: "#8a8a8a",
+});
+
+export const darkPureBlackTheme = buildDarkTheme(pureBlackDarkColors);
+
 export const lightTheme = {
   colorScheme: "light" as const,
   colors: {
@@ -672,8 +717,14 @@ export const lightTheme = {
 // Keep compatibility with existing code
 export const theme = darkTheme;
 
-// Export a union type that works for both themes
-export type Theme = typeof darkTheme | typeof lightTheme;
+export type Theme =
+  | typeof darkTheme
+  | typeof darkZincTheme
+  | typeof darkMidnightTheme
+  | typeof darkClaudeTheme
+  | typeof darkGhosttyTheme
+  | typeof darkPureBlackTheme
+  | typeof lightTheme;
 
 type UnistylesThemeKey =
   | "light"
@@ -681,7 +732,8 @@ type UnistylesThemeKey =
   | "darkZinc"
   | "darkMidnight"
   | "darkClaude"
-  | "darkGhostty";
+  | "darkGhostty"
+  | "darkPureBlack";
 
 export const THEME_TO_UNISTYLES: Record<ThemeName, UnistylesThemeKey> = {
   light: "light",
@@ -690,6 +742,7 @@ export const THEME_TO_UNISTYLES: Record<ThemeName, UnistylesThemeKey> = {
   midnight: "darkMidnight",
   claude: "darkClaude",
   ghostty: "darkGhostty",
+  pureBlack: "darkPureBlack",
 };
 
 export const THEME_SWATCHES: Record<ThemeName, string> = {
@@ -699,4 +752,5 @@ export const THEME_SWATCHES: Record<ThemeName, string> = {
   midnight: "#4A6BA8",
   claude: "#D97757",
   ghostty: "#8caaee",
+  pureBlack: "#000000",
 };

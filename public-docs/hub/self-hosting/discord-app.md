@@ -2,7 +2,7 @@
 title: Discord for Hub
 description: Create the Discord application your Hub uses, connect a guild, and write Discord triggers.
 nav: Discord app
-order: 76
+order: 77
 category: Hub
 ---
 
