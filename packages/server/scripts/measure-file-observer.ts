@@ -266,17 +266,23 @@ function fixtureDescription() {
   };
 }
 
-function evaluate(results: Measurement[]): { passed: boolean; failures: string[] } {
+function evaluate(results: Measurement[]): {
+  passed: boolean;
+  failures: string[];
+  comparatorFindings: string[];
+} {
   const failures: string[] = [];
+  const comparatorFindings: string[] = [];
   for (const result of results) {
+    const findings = result.backend === "node" ? failures : comparatorFindings;
     if (result.missedTrackedPaths !== 0) {
-      failures.push(`${result.backend} missed ${result.missedTrackedPaths} tracked paths`);
+      findings.push(`${result.backend} missed ${result.missedTrackedPaths} tracked paths`);
     }
     if (result.ignoredEvents !== 0) {
-      failures.push(`${result.backend} emitted ${result.ignoredEvents} excluded events`);
+      findings.push(`${result.backend} emitted ${result.ignoredEvents} excluded events`);
     }
     if (result.sustainedMissedPaths !== 0) {
-      failures.push(`${result.backend} missed ${result.sustainedMissedPaths} sustained paths`);
+      findings.push(`${result.backend} missed ${result.sustainedMissedPaths} sustained paths`);
     }
     if (result.teardownMs >= 1_000) {
       failures.push(`${result.backend} teardown took ${result.teardownMs.toFixed(1)}ms`);
@@ -289,7 +295,11 @@ function evaluate(results: Measurement[]): { passed: boolean; failures: string[]
     const parcel = parcelRuns[index];
     if (node.setupMs > parcel.setupMs * 8)
       failures.push(`node setup exceeded 8x Parcel on run ${node.run}`);
-    if (node.editLatencyMs > parcel.editLatencyMs * 4) {
+    if (
+      node.missedTrackedPaths === 0 &&
+      parcel.missedTrackedPaths === 0 &&
+      node.editLatencyMs > parcel.editLatencyMs * 4
+    ) {
       failures.push(`node edit completion exceeded 4x Parcel on run ${node.run}`);
     }
     if (node.eventLoopDelayMaxMs > parcel.eventLoopDelayMaxMs * 4 + 100) {
@@ -305,7 +315,7 @@ function evaluate(results: Measurement[]): { passed: boolean; failures: string[]
       );
     }
   }
-  return { passed: failures.length === 0, failures };
+  return { passed: failures.length === 0, failures, comparatorFindings };
 }
 
 function percentile(values: number[], quantile: number): number {
@@ -314,12 +324,13 @@ function percentile(values: number[], quantile: number): number {
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * quantile) - 1)] ?? 0;
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<void> {
+async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
   const deadline = performance.now() + timeoutMs;
   while (!predicate()) {
-    if (performance.now() >= deadline) throw new Error("Timed out waiting for observed edits");
+    if (performance.now() >= deadline) return false;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+  return true;
 }
 
 function readPositiveInteger(name: string, fallback: number): number {

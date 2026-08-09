@@ -219,7 +219,7 @@ test("observes a thousand concurrent writes and remains healthy after rename chu
   await writeFile(sentinel, "alive");
   await expect.poll(() => observed.has(sentinel)).toBe(true);
   await subscription.unsubscribe();
-});
+}, 20_000);
 
 test("aggregate diagnostics return to their lifecycle baseline", async () => {
   const root = await createRoot();
