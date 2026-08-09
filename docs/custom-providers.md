@@ -437,7 +437,7 @@ The [Agent Client Protocol (ACP)](https://agentclientprotocol.com) is an open st
 
 ACP agents communicate over JSON-RPC 2.0 on stdio. Paseo spawns the agent process and talks to it through stdin/stdout.
 
-Paseo also ships an in-app ACP provider catalog for common agents, including CodeWhale, Cursor, DeepAgents, DimCode, Gemini CLI, Hermes, Qwen Code, and Kimi Code. Catalog entries create the same `extends: "acp"` provider config shown below.
+Paseo also ships an in-app ACP provider catalog for common agents, including CodeWhale, Cursor, DeepAgents, DimCode, Gemini CLI, Hermes, Jcode, Qwen Code, and Kimi Code. Catalog entries create the same `extends: "acp"` provider config shown below.
 
 ### Adding a generic ACP provider
 
@@ -573,6 +573,29 @@ Ref: [Gemini CLI ACP mode docs](https://github.com/google-gemini/gemini-cli/blob
 ```
 
 Ref: [Hermes ACP docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp)
+
+### Example: Jcode
+
+[Jcode](https://jcode.sh) is an open-source, RAM-efficient coding agent harness with native memory, swarm collaboration, and browser automation. It supports ACP via the `acp` subcommand, backed by the Jcode daemon.
+
+1. Install: `curl -fsSL https://jcode.sh/install | bash` (or `brew install jcode` on macOS)
+2. Authenticate any provider: `jcode login --provider claude` (or `openai`, `gemini`, `copilot`, an OpenAI-compatible endpoint, and more)
+3. Add to config.json:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "jcode": {
+        "extends": "acp",
+        "label": "Jcode",
+        "description": "The most RAM efficient coding agent harness",
+        "command": ["jcode", "acp"]
+      }
+    }
+  }
+}
+```
 
 ### How ACP providers work in Paseo
 

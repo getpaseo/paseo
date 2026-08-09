@@ -45,6 +45,7 @@ Pick any of these from the in-app provider catalog. Each entry is a one-click in
 - [goose](https://block.github.io/goose/), Block's local open-source AI agent.
 - [Grok](https://docs.x.ai/build/overview), xAI's Grok Build agentic coding CLI.
 - [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp), Nous Research's self-improving agent.
+- [Jcode](https://jcode.sh), the most RAM efficient coding agent harness with native memory, swarm collaboration, and browser automation.
 - [Junie](https://junie.jetbrains.com/docs/junie-cli-acp.html), JetBrains' coding agent.
 - [Kilo Code](https://kilo.ai/docs/code-with-ai/platforms/cli), open-source coding agent.
 - [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code), Moonshot AI's coding assistant.

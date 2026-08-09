@@ -235,6 +235,16 @@ const CATALOG_DATA = [
     command: ["junie", "--acp", "true"],
   },
   {
+    id: "jcode",
+    title: "Jcode",
+    description:
+      "The most RAM efficient coding agent harness, with native memory, swarm collaboration, and browser automation",
+    version: "manual",
+    iconId: "jcode",
+    installLink: "https://jcode.sh",
+    command: ["jcode", "acp"],
+  },
+  {
     id: "kilo",
     title: "Kilo",
     description: "The open source coding agent",

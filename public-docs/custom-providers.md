@@ -13,7 +13,7 @@ Everything beyond the [supported providers](/docs/supported-providers) lives und
 - **Extend** a first-class provider to point at a different API (Z.AI, Alibaba/Qwen, a proxy, a self-hosted endpoint).
 - **Add profiles**, multiple entries against the same underlying provider with different credentials or curated model lists.
 - **Override the binary**, run a nightly build, a wrapper script, or a Docker image instead of the installed CLI.
-- **Add ACP agents**, Gemini CLI, Hermes, or any agent speaking the Agent Client Protocol over stdio.
+- **Add ACP agents**, Gemini CLI, Hermes, Jcode, or any agent speaking the Agent Client Protocol over stdio.
 - **Disable** a provider you don't use.
 
 Provider IDs must be lowercase alphanumeric with hyphens (`/^[a-z][a-z0-9-]*$/`). Every custom entry needs `extends` (a first-class provider ID or `"acp"`) and a `label`.
@@ -148,6 +148,11 @@ Any agent that speaks [ACP](https://agentclientprotocol.com) over stdio can be a
         "extends": "acp",
         "label": "Hermes",
         "command": ["hermes", "acp"]
+      },
+      "jcode": {
+        "extends": "acp",
+        "label": "Jcode",
+        "command": ["jcode", "acp"]
       }
     }
   }
