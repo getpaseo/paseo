@@ -23,13 +23,21 @@ interface WorkspaceFileSearchState {
   requestKey: string | null;
   entries: readonly WorkspaceFileSearchEntry[];
   loading: boolean;
+  error: string | null;
 }
 
 const EMPTY_STATE: WorkspaceFileSearchState = {
   requestKey: null,
   entries: [],
   loading: false,
+  error: null,
 };
+
+function errorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  if (error.name !== "DaemonRpcError") return error.message;
+  return error.message.replace(/ requestType=\S+(?: code=\S+)?$/, "");
+}
 
 function describeFileEntries(
   entries: readonly DirectorySuggestionEntry[],
@@ -40,6 +48,7 @@ function describeFileEntries(
 export function useWorkspaceFileSearch(input: { enabled: boolean; query: string }): {
   entries: readonly WorkspaceFileSearchEntry[];
   loading: boolean;
+  error: string | null;
   openFile(path: string): void;
 } {
   const selection = useActiveWorkspaceSelection();
@@ -67,7 +76,7 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
     const activeCwd = cwd;
 
     let cancelled = false;
-    setState({ requestKey, entries: [], loading: true });
+    setState({ requestKey, entries: [], loading: true, error: null });
     async function search(): Promise<void> {
       try {
         const payload = await activeClient.getDirectorySuggestions({
@@ -82,9 +91,12 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
           requestKey,
           entries: payload.error ? [] : describeFileEntries(payload.entries),
           loading: false,
+          error: payload.error ?? null,
         });
-      } catch {
-        if (!cancelled) setState({ requestKey, entries: [], loading: false });
+      } catch (error) {
+        if (!cancelled) {
+          setState({ requestKey, entries: [], loading: false, error: errorMessage(error) });
+        }
       }
     }
 
@@ -114,6 +126,7 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
   return {
     entries: state.requestKey === requestKey ? state.entries : [],
     loading: Boolean(requestKey) && (state.requestKey !== requestKey || state.loading),
+    error: state.requestKey === requestKey ? state.error : null,
     openFile,
   };
 }

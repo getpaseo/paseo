@@ -209,6 +209,7 @@ interface CommandCenterState {
   offsets: readonly number[];
   inputRef: React.RefObject<TextInput | null>;
   fileSearchLoading: boolean;
+  fileSearchError: string | null;
   close(): void;
   select(result: CommandCenterResult): void;
   key(key: string): boolean;
@@ -229,6 +230,7 @@ function useCommandCenterState(): CommandCenterState {
   const {
     entries: fileSearchEntries,
     loading: fileSearchLoading,
+    error: fileSearchError,
     openFile,
   } = useWorkspaceFileSearch({
     enabled: open && (scope === "files" || Boolean(query.trim())),
@@ -244,7 +246,7 @@ function useCommandCenterState(): CommandCenterState {
       searchText: entry.path.toLowerCase(),
       run: () => openFile(entry.path),
     }));
-    return [{ id: "files", rank: 1, title: t("shell.commandCenter.files"), results }];
+    return [{ id: "files", rank: 4, title: t("shell.commandCenter.files"), results }];
   }, [fileSearchEntries, openFile, t]);
   const contributionSections = useMemo(
     () => buildContributionSections(snapshot.contributions, query),
@@ -277,7 +279,7 @@ function useCommandCenterState(): CommandCenterState {
         close();
         return true;
       }
-      if (pressed === "Backspace" && !query && scope) {
+      if (pressed === "Backspace" && !query.trim() && scope) {
         setScope(null);
         return true;
       }
@@ -330,6 +332,7 @@ function useCommandCenterState(): CommandCenterState {
     offsets: projection.offsets,
     inputRef,
     fileSearchLoading,
+    fileSearchError,
     close,
     select,
     key,
@@ -348,7 +351,10 @@ const ResultRow = memo(function ResultRow({ result, active, onSelect }: ResultRo
     result.kind === "contribution" && result.contribution.presentation.kind === "choice"
       ? result.contribution.presentation
       : null;
-  const accessibilityLabel = choice?.path.join(" › ");
+  const accessibilityLabel =
+    result.kind === "file"
+      ? [result.title, result.subtitle].filter(Boolean).join(" ")
+      : choice?.path.join(" › ");
   const accessibilityState = useMemo(
     () => (isNative && choice ? { selected: choice.selected } : undefined),
     [choice],
@@ -374,7 +380,9 @@ const ResultRow = memo(function ResultRow({ result, active, onSelect }: ResultRo
       accessibilityLabel={accessibilityLabel}
       accessibilityState={accessibilityState}
       aria-pressed={isWeb ? choice?.selected : undefined}
-      testID={choice?.testId}
+      testID={
+        result.kind === "file" ? `command-center-file-row-${result.filePath}` : choice?.testId
+      }
     >
       <ResultContent result={result} />
     </Pressable>
@@ -384,21 +392,22 @@ const ResultRow = memo(function ResultRow({ result, active, onSelect }: ResultRo
 function ResultContent({ result }: { result: CommandCenterResult }) {
   if (result.kind === "file") {
     return (
-      <View style={styles.rowContent} testID={`command-center-file-${result.filePath}`}>
+      <View style={styles.rowContent}>
         <View style={styles.rowMain}>
-          <View style={styles.iconSlot}>
+          <View style={styles.iconSlot} testID="command-center-file-icon">
             <MaterialFileIcon fileName={result.title} size={16} />
           </View>
-          <View style={styles.textContent}>
-            <Text style={styles.title} numberOfLines={1}>
+          <Text style={styles.fileLine} numberOfLines={1} testID="command-center-file-line">
+            <Text style={styles.fileName} testID="command-center-file-name">
               {result.title}
             </Text>
             {result.subtitle ? (
-              <Text style={styles.subtitle} numberOfLines={1}>
+              <Text style={styles.filePath} testID="command-center-file-path">
+                {" "}
                 {result.subtitle}
               </Text>
             ) : null}
-          </View>
+          </Text>
         </View>
       </View>
     );
@@ -611,14 +620,28 @@ export function CommandCenter() {
   );
   const keyExtractor = useCallback((row: CommandCenterListRow) => row.key, []);
   const empty = useMemo(
-    () => (
-      <Text style={styles.emptyText}>
-        {state.fileSearchLoading
-          ? t("shell.commandCenter.searchingFiles")
-          : t("shell.commandCenter.noMatches")}
-      </Text>
-    ),
-    [state.fileSearchLoading, t],
+    () =>
+      state.fileSearchError ? null : (
+        <Text style={styles.emptyText}>
+          {state.fileSearchLoading
+            ? t("shell.commandCenter.searchingFiles")
+            : t("shell.commandCenter.noMatches")}
+        </Text>
+      ),
+    [state.fileSearchError, state.fileSearchLoading, t],
+  );
+  const fileSearchError = useMemo(
+    () =>
+      state.fileSearchError ? (
+        <Text
+          accessibilityLiveRegion="polite"
+          style={styles.errorText}
+          testID="command-center-file-search-error"
+        >
+          {t("common.errors.error")}: {state.fileSearchError}
+        </Text>
+      ) : null,
+    [state.fileSearchError, t],
   );
   const commonListProps = {
     data: state.rows,
@@ -626,6 +649,9 @@ export function CommandCenter() {
     keyExtractor,
     getItemLayout,
     ListEmptyComponent: empty,
+    ListFooterComponent: fileSearchError,
+    style: styles.results,
+    testID: "command-center-results",
     keyboardShouldPersistTaps: KEYBOARD_SHOULD_PERSIST_TAPS,
     showsVerticalScrollIndicator: false,
     initialNumToRender: 12,
@@ -678,7 +704,7 @@ export function CommandCenter() {
         keyboardBlurBehavior="restore"
         accessible={false}
       >
-        <View style={[styles.bottomSheetHeader, styles.searchRow]}>
+        <View style={[styles.bottomSheetHeader, styles.searchRow]} testID="command-center-header">
           {state.scope === "files" ? (
             <ScopePill label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
           ) : null}
@@ -711,7 +737,7 @@ export function CommandCenter() {
         <View style={styles.overlay}>
           <Pressable style={styles.backdrop} onPress={state.close} />
           <View ref={setWebOverlayScope} testID="command-center-panel" style={styles.panel}>
-            <View style={[styles.header, styles.searchRow]}>
+            <View style={[styles.header, styles.searchRow]} testID="command-center-header">
               {state.scope === "files" ? (
                 <ScopePill label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
               ) : null}
@@ -731,7 +757,7 @@ export function CommandCenter() {
                 autoFocus
               />
             </View>
-            <FlatList ref={listRef} style={styles.results} {...commonListProps} />
+            <FlatList ref={listRef} {...commonListProps} />
           </View>
         </View>
       </Modal>
@@ -764,6 +790,7 @@ const styles = StyleSheet.create((theme) => ({
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0, 0, 0, 0.5)" },
   panel: {
     width: 640,
+    height: 560,
     maxWidth: "92%",
     maxHeight: "80%",
     borderWidth: 1,
@@ -803,7 +830,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   scopePillText: { color: theme.colors.foreground, fontSize: theme.fontSize.xs },
-  results: { flexGrow: 0 },
+  results: { flex: 1 },
   sectionLabel: {
     paddingHorizontal: theme.spacing[4],
     paddingBottom: theme.spacing[2],
@@ -839,6 +866,9 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 18,
     flexShrink: 1,
   },
+  fileLine: { flex: 1, minWidth: 0, fontSize: theme.fontSize.sm, lineHeight: 20 },
+  fileName: { color: theme.colors.foreground },
+  filePath: { color: theme.colors.foregroundMuted },
   subtitle: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.xs, lineHeight: 16 },
   iconSlot: { width: 16, height: 20, alignItems: "center", justifyContent: "center" },
   rowShortcut: { flexShrink: 0 },
@@ -866,6 +896,12 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[6],
     textAlign: "center",
     color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  errorText: {
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    color: theme.colors.statusDanger,
     fontSize: theme.fontSize.sm,
   },
   sheetBackground: { backgroundColor: theme.colors.surface0 },

@@ -88,7 +88,8 @@ function contributionSearchText(contribution: CommandCenterContribution): string
 }
 
 function resultHeight(result: CommandCenterResult): number {
-  if (result.kind === "workspace" || result.kind === "agent" || result.kind === "file") return 56;
+  if (result.kind === "workspace" || result.kind === "agent") return 56;
+  if (result.kind === "file") return 36;
   if (result.contribution.presentation.kind === "action") {
     return result.contribution.presentation.subtitle ? 56 : 36;
   }
