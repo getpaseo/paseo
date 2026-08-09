@@ -14,8 +14,6 @@ A workflow is the work Hub performs after a trigger matches an event. You descri
 Slack mention → Hub trigger → workflow step → Paseo daemon → agent
 ```
 
-One step is a complete workflow. The scenarios further down add a second step, typed inputs, and agent-chosen routing, one at a time.
-
 ## Your first workflow
 
 One Slack trigger and one agent that answers in the thread:
@@ -91,8 +89,6 @@ Call hub.finish_execution when the step is complete.
 A step that only feeds a later step names `hub.finish_execution` alone. Most classifiers never reply.
 
 ## Scenarios
-
-Each scenario below is a complete configuration, and each one adds a single idea to the one before it. Open the one that matches what you are trying to do.
 
 :::example[Make a change instead of answering]
 `mode: full-access` lets the agent edit files and run commands. The environment gets a worktree, so the work happens on its own branch instead of your checkout.
@@ -190,8 +186,8 @@ triggers:
 Set `required: true` when a step must send at least one reply before it can finish successfully. See [output capabilities](/docs/hub/configuration/hub-yml#output-capabilities).
 :::
 
-:::example[Answer a pull request review comment]
-Hub mints a GitHub token for each execution of a GitHub-triggered step, scoped to the installation and the triggering repository, and puts it in the agent's environment as `GH_TOKEN`. That authenticates the `gh` CLI, so the agent delivers through `gh` rather than a Hub reply tool.
+:::example[Turn an issue into a pull request]
+A `github` block on the step grants the authority: a token scoped to the listed repositories and permissions, plus a git setup that commits and pushes with it. See [GitHub access](/docs/hub/github).
 
 ```yaml
 environments:
@@ -199,29 +195,39 @@ environments:
     kind: daemon
     daemon: my-macbook
     cwd: /Users/you/code/project
+    worktree:
+      mode: branch-off
+      newBranch: hub/work
+      base: origin/main
 
 triggers:
-  - name: pr-work
-    on: github.pull_request_review_comment
+  - name: issue-to-pr
+    on: github.issues
     max_runtime: 2h
     filters:
       repo: example/project
-      contains: "@paseo"
       from_users: [maintainer]
     steps:
-      - id: implement-review
+      - id: implement
         environment: development
         max_runtime: 90m
         idle_timeout: 10m
         auto_archive: true
+        github:
+          connection: example-github
+          repositories:
+            - example/project
+          permissions:
+            contents: write
+            pull_requests: write
         agent:
           provider: codex
           mode: full-access
         prompt:
           - text: |
-              Address the review request.
+              Implement what the issue asks for, verify it, commit, push the
+              branch, and open a pull request with `gh pr create`.
 
-              Post progress and the final result as pull request comments with `gh`.
               Call hub.finish_execution when the step is complete.
           - text: |
               <user-prompt>
@@ -229,9 +235,9 @@ triggers:
               </user-prompt>
 ```
 
-`hub.reply` covers Slack and Discord. It is not available on a GitHub trigger, so the prompt names `gh` for delivery and `hub.finish_execution` for completion. `auto_archive` archives the agent when the step ends.
+GitHub sends an `issues` event for every issue action, so opening, editing, or closing an issue as a listed user each starts a run. `${{ paseo.prompt }}` carries the issue title and body.
 
-`GH_TOKEN` authenticates API calls such as `gh pr comment`. It does not configure git. Committing needs a `user.name` and `user.email`, and pushing over HTTPS needs a credential helper, and Paseo sets neither. Configure them on the daemon host, or run `gh auth setup-git` there, before asking a step to push a branch or open a pull request.
+The trigger and the block are independent. The trigger only starts the run; without the block the agent has no token, GitHub-triggered or not. `hub.reply` covers Slack and Discord, so here the deliverable is the pull request and `hub.finish_execution` completes the step. `auto_archive` archives the agent when the step ends.
 :::
 
 :::example[Plan first, then implement]
@@ -369,7 +375,11 @@ triggers:
           - type: slack.reply
 ```
 
-Invoke it with `@Paseo model=gpt-5.4-mini how do I run the project locally?`. Hub stores `gpt-5.4-mini` as `${{ paseo.inputs.model }}` and passes the rest as the prompt. The first token that is not a declared input begins the prompt, so ordinary text stays ordinary text.
+```text
+@Paseo model=gpt-5.4-mini how do I run the project locally?
+```
+
+Hub reads leading `key=value` tokens that match declared inputs. `gpt-5.4-mini` becomes `${{ paseo.inputs.model }}`, and the rest is the prompt. The first token that is not a declared input starts the prompt, so ordinary text is never consumed.
 
 An input that selects a provider, model, or mode needs `choices`. A prompt cannot supply authority. Types, defaults, and rejected values are in the [`hub.yml` reference](/docs/hub/configuration/hub-yml#inputs).
 :::
@@ -457,7 +467,12 @@ triggers:
             max: 5
 ```
 
-One event can match several triggers and all of them run, so the input filters are what keep these two routes exclusive. Invoke with `@Paseo repo=paseo investigate the failed sync`.
+One event can match several triggers and all of them run; the input filters are what keep these two routes exclusive.
+
+```text
+@Paseo repo=paseo investigate the failed sync
+```
+
 :::
 
 :::example[Let the agent choose the model]
@@ -652,7 +667,7 @@ triggers:
 
 Steps run in order, and Hub skips a step whose `if` is false. The two conditions here cannot both be true, so the configuration lists a step per repository while a run only ever executes one of them.
 
-The classifier runs in `triage`, which has no worktree, because a read-only classification does not need a branch.
+The classifier runs in `triage`, which has no worktree, because a read-only classification does not need a branch. The same shape scopes credentials: a `github` block on each worker grants authority for its own repository, and the classifier holds none. See [GitHub access](/docs/hub/github#only-the-step-that-needs-it).
 :::
 
 :::example[Accept a caller override with a classifier fallback]

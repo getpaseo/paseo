@@ -2,7 +2,7 @@
 title: Hub triggers
 description: How Hub matches an inbound event to a trigger: events, filters, and the allowlist that gates every execution.
 nav: Triggers
-order: 65
+order: 66
 category: Hub
 ---
 
@@ -33,7 +33,7 @@ triggers:
               </user-prompt>
 ```
 
-Field-by-field detail is in the [`hub.yml` reference](/docs/hub/configuration/hub-yml). This page covers matching.
+Field-by-field detail is in the [`hub.yml` reference](/docs/hub/configuration/hub-yml).
 
 ## Events
 

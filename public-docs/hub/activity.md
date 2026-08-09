@@ -2,7 +2,7 @@
 title: Hub activity
 description: Read what Hub did with an event, tell a filtered event from an unrouted one, and debug a trigger that did nothing.
 nav: Activity
-order: 71
+order: 72
 category: Hub
 ---
 

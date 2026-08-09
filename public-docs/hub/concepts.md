@@ -31,7 +31,7 @@ GitHub / Slack / Discord / manual request
 - An **environment** names where a workflow step runs: a daemon, its working directory, and an optional worktree.
 - A **trigger** says which provider event can start a workflow and which events are allowed through.
 - A **workflow** is the ordered set of steps that runs after a trigger matches.
-- A **step** starts one agent execution, with its own prompt, agent selection, reply capabilities, and limits.
+- A **step** starts one agent execution, with its own prompt, agent selection, credentials, reply capabilities, and limits.
 
 The configuration lives in `.paseo/hub.yml` when the project uses a GitHub source. A project has one active configuration revision at a time.
 
@@ -45,7 +45,7 @@ The configuration lives in `.paseo/hub.yml` when the project uses a GitHub sourc
 6. The daemon starts the agent and Hub records its replies, structured output, status, and completion.
 7. The next step sees the completed step's output. When no steps remain, the workflow run is complete.
 
-The [Workflows guide](/docs/hub/workflows) starts with a one-step Slack example and adds inputs, structured outputs, and routing one concept at a time.
+Complete configurations are in [Workflows](/docs/hub/workflows).
 
 ## Activation
 
@@ -63,4 +63,4 @@ Triggers require a non-empty `from_users` allowlist for externally sourced event
 
 These controls do not sandbox the agent or make input safe. See [Hub security](/docs/hub/security) for the host boundary, provider-native policy, and defense-in-depth guidance.
 
-GitHub-triggered steps receive a scoped GitHub credential for the triggering repository. Slack and Discord do not implicitly choose a GitHub connection.
+GitHub credentials are never implied by the trigger. A step holds GitHub authority only when it declares a [`github` block](/docs/hub/github), whatever started the run.

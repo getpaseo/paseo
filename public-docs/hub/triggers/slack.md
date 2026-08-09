@@ -2,7 +2,7 @@
 title: Slack triggers
 description: Configure Slack mentions as Hub triggers and route them into durable workflows.
 nav: Slack
-order: 66
+order: 68
 category: Hub
 ---
 

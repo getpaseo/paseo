@@ -8,7 +8,7 @@ category: Hub
 
 # Hub quickstart
 
-From an empty Hub to an agent that starts when someone mentions it. Each step links to the page that covers it properly.
+From an empty Hub to an agent that starts when someone mentions it.
 
 ## 1. Sign in
 
@@ -95,14 +95,18 @@ paseo hub deploy --dry-run
 paseo hub deploy
 ```
 
-The commands use the active stored login. Origin precedence is explicit command origin or `--hub`, `PASEO_HUB_URL`, active login, then `https://hub.paseo.sh`. `--dry-run` sends the same YAML, project, and partial bundle to Hub's authoritative validator without recording or activating a revision. The command reads exactly `.paseo/hub.yml` from the current directory. Use `paseo hub deploy path/to/config.yml` for another file, or `-p, --project <slug>` to override the file's project metadata. An explicit `--api-key` or `PASEO_HUB_API_KEY` overrides the stored credential without persisting the key.
+`--dry-run` sends the same YAML, project, and partial bundle to Hub's validator without recording or activating a revision. Deploy reads `.paseo/hub.yml` in the current directory; pass a path for another file, or `-p, --project <slug>` to override the file's project metadata. Origin and credential precedence are in [Configuration](/docs/hub/configuration).
 
 ## 7. Trigger it
 
-Comment `@paseo have a look at this` on an issue in that repository, from the account you listed in `from_users`.
+Comment on an issue in that repository, from the account you listed in `from_users`:
+
+```text
+@paseo have a look at this
+```
 
 Open the project's **Activity** tab. You should see the event received and routed, and an execution in **Executions**. The agent itself appears in the Paseo app on that machine.
 
-Nothing happened? [Activity](/docs/hub/activity) has the checklist.
+If nothing happened, [Activity](/docs/hub/activity) has the checklist.
 
 Before enabling the example for broader use, read [Hub security](/docs/hub/security) for trigger allowlists, host boundaries, provider-native controls, and output authority.

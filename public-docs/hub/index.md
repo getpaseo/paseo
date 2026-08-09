@@ -75,8 +75,9 @@ Push it, mention the bot, and an agent starts on your machine. [Workflows](/docs
 2. [Daemons](/docs/hub/daemons)
 3. [Triggers](/docs/hub/triggers)
 4. [Workflows](/docs/hub/workflows)
-5. [Configuration](/docs/hub/configuration)
-6. [Security](/docs/hub/security)
+5. [GitHub access](/docs/hub/github)
+6. [Configuration](/docs/hub/configuration)
+7. [Security](/docs/hub/security)
 
 [Quickstart](/docs/hub/quickstart) goes end to end if you would rather start by doing.
 

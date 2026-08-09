@@ -2,7 +2,7 @@
 title: GitHub triggers
 description: Configure GitHub events as Hub triggers and route them into durable workflows.
 nav: GitHub
-order: 65
+order: 67
 category: Hub
 ---
 
@@ -10,12 +10,14 @@ category: Hub
 
 ## Events
 
-| `on`                                 | Fires when                                        |
-| ------------------------------------ | ------------------------------------------------- |
-| `github.issue_comment`               | A comment on an issue or pull request is created. |
-| `github.issues`                      | An issue is opened or edited.                     |
-| `github.pull_request_review`         | A review is submitted.                            |
-| `github.pull_request_review_comment` | A comment is added to a diff.                     |
+| `on`                                 | Event                                  |
+| ------------------------------------ | -------------------------------------- |
+| `github.issue_comment`               | A comment on an issue or pull request. |
+| `github.issues`                      | An issue.                              |
+| `github.pull_request_review`         | A pull request review.                 |
+| `github.pull_request_review_comment` | A comment on a diff.                   |
+
+Hub does not filter by webhook action. GitHub delivers a subscribed event for every action — created, edited, closed, deleted — and each delivery that passes the trigger's filters starts a run.
 
 Which repositories produce events is set on the GitHub App installation. `filters.repo` narrows a trigger to one `owner/name` repository.
 
@@ -42,13 +44,10 @@ Hub consumes only declared consecutive headers and passes `investigate the faile
 
 ## Credentials and replies
 
-Hub mints a GitHub token for each execution, scoped to the installation and the triggering repository, and puts it in the agent's environment as `GH_TOKEN`. That authenticates the `gh` CLI. Say what to do with it in the prompt, and name the Hub tool that completes the step:
+A GitHub trigger grants nothing by itself. A step that should comment, push, or open a pull request declares a [`github` block](/docs/hub/github); without one the agent has no token and no git configuration.
 
-```text
-Post the answer as an issue comment with `gh`.
-Call hub.finish_execution when the step is complete.
-```
+The event's identifiers are not part of the prompt. `${{ paseo.prompt }}` carries the comment body for comment events and the title plus body for issues, so give the agent work it can complete from that text alone — opening a pull request, for example — rather than replying to a thread it has no way to locate.
 
-The token authenticates API calls. It does not configure git, and Paseo does not set a commit identity or a credential helper, so configure those on the daemon host before a step commits or pushes.
+On comment events, Hub reacts on the triggering comment: 👀 when it accepts the event, 🚀 when the agent starts, 👍 when the step completes, and 👎 when it fails. Plain issue events get no reaction; watch those runs in Project → Activity.
 
-Hub's `hub.reply` tool covers Slack and Discord, not GitHub. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call) and the [workflow scenarios](/docs/hub/workflows#scenarios) for review and PR workflows.
+`hub.reply` covers Slack and Discord, not GitHub. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).

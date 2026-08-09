@@ -2,7 +2,7 @@
 title: Hub security
 description: Security boundaries, untrusted input, and provider-native controls for Hub workflows.
 nav: Security
-order: 79
+order: 80
 category: Hub
 ---
 
@@ -18,7 +18,7 @@ external event → Hub → your daemon → provider process → cwd, filesystem,
 
 The code, provider credentials, agent process, filesystem and network access, and resulting actions remain on or under the hosts and provider configuration you control. Hub records and coordinates the workflow; it does not take ownership of those resources.
 
-For the daemon's network, pairing, relay, and authentication model, see [Paseo security](/docs/security). This page covers the additional controls for agents started by Hub.
+For the daemon's network, pairing, relay, and authentication model, see [Paseo security](/docs/security).
 
 ## Treat external input as untrusted
 
@@ -312,6 +312,7 @@ Before enabling an externally triggered worker, verify:
 - The host, container, VM, and network policy match the intended boundary.
 - The provider-native permission or sandbox mode is explicit and uses the provider's current documentation.
 - Hub outputs are minimal; `allow_outputs` is present only on the step that needs it, with an appropriate `max` or `required` value.
+- [`github` blocks](/docs/hub/github) appear only on the steps that need them, with the narrowest repositories and permissions.
 - A narrow read-only classifier is used as defense in depth where it reduces exposure.
 - Configuration changes, executions, replies, and failures are reviewed in Activity and the relevant host logs.
 - The exact provider version, daemon host, credentials, filesystem, and network combination has been tested.

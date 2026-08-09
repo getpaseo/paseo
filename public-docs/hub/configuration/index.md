@@ -2,7 +2,7 @@
 title: Hub configuration
 description: Where a project's configuration comes from, how GitHub sync works, and how revisions activate and roll back.
 nav: Configuration
-order: 68
+order: 70
 category: Hub
 ---
 
