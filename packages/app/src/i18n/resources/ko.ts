@@ -1976,7 +1976,14 @@ export const ko: TranslationResources = {
           claude: "Claude",
           ghostty: "Ghostty",
           pureBlack: "순수 검정",
+          custom: "사용자 지정",
           auto: "시스템",
+        },
+        custom: {
+          title: "사용자 지정 테마",
+          none: "Paseo 테마 JSON 파일 가져오기",
+          import: "가져오기",
+          importing: "가져오는 중...",
         },
       },
       detailLevel: {
