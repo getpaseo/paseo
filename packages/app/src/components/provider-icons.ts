@@ -1,4 +1,4 @@
-import { Bot, PackagePlus } from "lucide-react-native";
+import { Bot, PackagePlus, Sparkles } from "lucide-react-native";
 import { createElement, type ComponentType } from "react";
 import { SvgXml } from "react-native-svg";
 import { ClaudeIcon } from "@/components/icons/claude-icon";
@@ -27,6 +27,7 @@ const BUILTIN_PROVIDER_ICONS: Record<string, ProviderIconComponent> = {
   omp: OmpIcon as unknown as ProviderIconComponent,
   opencode: OpenCodeIcon as unknown as ProviderIconComponent,
   pi: PiIcon as unknown as ProviderIconComponent,
+  senpi: Sparkles,
 };
 
 const CATALOG_ICON_SVGS = new Map(

@@ -7,6 +7,7 @@ export const BUILTIN_PROVIDER_ICON_NAMES = [
   "omp",
   "opencode",
   "pi",
+  "senpi",
 ];
 
 export const ACP_PROVIDER_ICON_NAMES = [

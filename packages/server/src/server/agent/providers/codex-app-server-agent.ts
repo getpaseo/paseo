@@ -247,6 +247,8 @@ interface CodexAppServerClientLike {
 
 interface CodexAppServerAgentDeps {
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  goalsEnabled?: boolean;
+  autoReviewEnabled?: boolean;
   customProvider?: {
     id: string;
     label: string;
@@ -6470,6 +6472,9 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   private resolveGoalsEnabled(): Promise<boolean> {
+    if (this.deps.goalsEnabled !== undefined) {
+      return Promise.resolve(this.deps.goalsEnabled);
+    }
     if (!this.goalsEnabledPromise) {
       this.goalsEnabledPromise = (async () => {
         try {
@@ -6495,6 +6500,9 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   private resolveAutoReviewEnabled(): Promise<boolean> {
+    if (this.deps.autoReviewEnabled !== undefined) {
+      return Promise.resolve(this.deps.autoReviewEnabled);
+    }
     if (!this.autoReviewEnabledPromise) {
       this.autoReviewEnabledPromise = (async () => {
         try {

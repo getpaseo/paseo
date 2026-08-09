@@ -29,7 +29,7 @@
   </a>
 </p>
 
-<p align="center">One interface for Claude Code, Codex, Copilot, OpenCode, and Pi agents.</p>
+<p align="center">One interface for Claude Code, Codex, Copilot, OpenCode, Pi, and Senpi agents.</p>
 
 <p align="center">
   <img src="https://paseo.sh/hero-mockup.png" alt="Paseo app screenshot" width="100%">
@@ -42,7 +42,7 @@
 Run agents in parallel on your own machines. Ship from your phone or your desk.
 
 - **Self-hosted:** Agents run on your machine with your full dev environment. Use your tools, your configs, and your skills.
-- **Multi-provider:** Claude Code, Codex, Copilot, OpenCode, and Pi through the same interface. Pick the right model for each job.
+- **Multi-provider:** Claude Code, Codex, Copilot, OpenCode, Pi, and Senpi through the same interface. Pick the right model for each job.
 - **Voice control:** Dictate tasks or talk through problems in voice mode. Hands-free when you need it.
 - **Cross-device:** iOS, Android, desktop, web, and CLI. Start work at your desk, check in from your phone, script it from the terminal.
 - **Privacy-first:** Paseo doesn't have any telemetry, tracking, or forced log-ins.
@@ -60,6 +60,7 @@ You need at least one agent CLI installed and configured with your credentials:
 - [GitHub Copilot](https://github.com/features/copilot/cli/)
 - [OpenCode](https://github.com/anomalyco/opencode)
 - [Pi](https://pi.dev)
+- [Senpi](https://github.com/code-yeongyu/senpi) (`senpi`)
 
 ### Desktop app (recommended)
 

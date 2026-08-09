@@ -26,6 +26,7 @@ const mockState = vi.hoisted(() => {
     runtimeSettings?: unknown;
     providerParams?: unknown;
     commandsRpcType?: unknown;
+    deps?: unknown;
   }
 
   return {
@@ -150,10 +151,12 @@ vi.mock("./providers/codex-app-server-agent.js", () => ({
     };
     readonly provider = "codex";
     readonly runtimeSettings?: unknown;
+    readonly deps?: unknown;
 
-    constructor(_logger: unknown, runtimeSettings?: unknown) {
+    constructor(_logger: unknown, runtimeSettings?: unknown, deps?: unknown) {
       this.runtimeSettings = runtimeSettings;
-      mockState.constructorArgs.codex.push({ runtimeSettings });
+      this.deps = deps;
+      mockState.constructorArgs.codex.push({ runtimeSettings, deps });
     }
 
     async createSession(): Promise<never> {
@@ -597,6 +600,31 @@ test("built-in override applies env", () => {
       env: {
         CLAUDE_CONFIG_DIR: "/tmp/claude",
       },
+    },
+  });
+});
+
+test("Senpi is a built-in app-server provider", () => {
+  const registry = buildProviderRegistry(logger);
+
+  expect(registry.senpi).toMatchObject({
+    id: "senpi",
+    label: "Senpi",
+    enabled: true,
+    derivedFromProviderId: null,
+  });
+  expect(registry.senpi.createClient(logger).provider).toBe("senpi");
+  expect(mockState.constructorArgs.codex).toContainEqual({
+    runtimeSettings: {
+      command: {
+        mode: "replace",
+        argv: ["senpi"],
+      },
+    },
+    deps: {
+      workspaceGitService: undefined,
+      goalsEnabled: false,
+      autoReviewEnabled: false,
     },
   });
 });

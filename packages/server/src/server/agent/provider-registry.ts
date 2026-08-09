@@ -213,6 +213,12 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       runtimeSettings,
       providerParams: options?.providerParams,
     }),
+  senpi: (logger, runtimeSettings, options) =>
+    new CodexAppServerAgentClient(logger, getSenpiAppServerRuntimeSettings(runtimeSettings), {
+      workspaceGitService: options?.workspaceGitService,
+      goalsEnabled: false,
+      autoReviewEnabled: false,
+    }),
   omp: (logger, runtimeSettings, options) =>
     new OmpAgentClient({
       logger,
@@ -235,6 +241,27 @@ function getCursorACPCommand(
   }
 
   return ["cursor-agent", "acp"];
+}
+
+function getSenpiAppServerRuntimeSettings(
+  runtimeSettings: ProviderRuntimeSettings | undefined,
+): ProviderRuntimeSettings {
+  if (runtimeSettings?.command?.mode === "replace") {
+    return runtimeSettings;
+  }
+
+  return {
+    ...runtimeSettings,
+    command: {
+      mode: "replace",
+      argv: [
+        "senpi",
+        ...(runtimeSettings?.command?.mode === "append"
+          ? (runtimeSettings.command.args ?? [])
+          : []),
+      ],
+    },
+  };
 }
 
 function getProviderClientFactory(provider: string): ProviderClientFactory {

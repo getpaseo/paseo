@@ -248,6 +248,14 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     modes: [],
   },
   {
+    id: "senpi",
+    label: "Senpi",
+    description:
+      "Senpi via the Codex app-server protocol with session persistence and tool streaming",
+    defaultModeId: null,
+    modes: [],
+  },
+  {
     id: "omp",
     label: "Oh My Pi",
     description: "Multi-provider coding agent with native approvals, host tools, and subagents",
