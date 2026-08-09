@@ -166,6 +166,19 @@ export async function expectWorkspaceAbsentFromSidebar(
   ).toHaveCount(0, { timeout: 30_000 });
 }
 
+// The display-preferences menu is one row per decision, and the options sit a page below that
+// row. Every caller has to walk the same path, so it lives here: when the menu's shape moves
+// again, this is the only place that has to follow.
+export async function openSidebarDisplayPage(page: Page, branchTestID: string): Promise<void> {
+  await page.getByTestId("sidebar-display-preferences-menu").click();
+  await page.getByTestId(branchTestID).click();
+}
+
+export async function selectSidebarStatusGrouping(page: Page): Promise<void> {
+  await openSidebarDisplayPage(page, "sidebar-display-grouping");
+  await page.getByTestId("sidebar-grouping-status").click();
+}
+
 export async function openMobileAgentSidebar(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open menu" }).click();
 }

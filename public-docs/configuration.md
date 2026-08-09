@@ -189,7 +189,7 @@ In the mobile app, enter the password in the direct connection setup screen.
 
 ## Relay
 
-New homes write `daemon.relay.enabled: false`. Paseo asks before enabling relay when you pair a device; existing homes keep their saved value. See [Security](/docs/security) for relay encryption and direct connection alternatives.
+New homes write `daemon.relay.enabled: false`. Paseo asks before enabling relay when you pair a device; existing homes keep their saved value. See [Connectivity](/docs/connectivity) to choose and configure a connection method, and [Security](/docs/security) for the relay encryption model.
 
 Set the persisted value in `config.json`:
 

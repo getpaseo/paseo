@@ -20,22 +20,15 @@ import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
 import { DiffStat } from "@/components/diff-stat";
 import {
-  CopyX,
-  ArrowLeftToLine,
-  ArrowRightToLine,
   ChevronDown,
   Copy,
   Ellipsis,
-  EllipsisVertical,
   Globe,
   Import as ImportIcon,
   PanelRight,
-  Pencil,
-  RotateCw,
   Settings,
   SquarePen,
   SquareTerminal,
-  X,
 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -45,6 +38,8 @@ import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { ScreenHeader } from "@/components/headers/screen-header";
 import { ScreenTitle } from "@/components/headers/screen-title";
+import { HostBadge } from "@/hosts/host-badge";
+import { useHostBadges } from "@/hosts/use-host-badges";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -73,6 +68,7 @@ import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useToast } from "@/contexts/toast-context";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
+import { traceInstant } from "@/performance/native-trace";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import {
   collectAllTabs,
@@ -126,13 +122,13 @@ import {
   useWorkspaceTabRename,
   WorkspaceTabRenameModal,
 } from "@/screens/workspace/use-workspace-tab-rename";
+import { MobileTabTrailingAccessory } from "@/screens/workspace/workspace-tab-trailing-accessory";
 import {
   WorkspaceDesktopTabsRow,
   type WorkspaceDesktopTabRowItem,
 } from "@/screens/workspace/workspace-desktop-tabs-row";
 import {
   buildWorkspaceTabMenuEntries,
-  type WorkspaceTabMenuEntry,
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
 import { useDesktopBrowserNewTabRequests } from "@/desktop/browser/new-tab-requests";
@@ -179,6 +175,7 @@ import {
 import { findAdjacentPane } from "@/utils/split-navigation";
 import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
 import { getIsElectron, isNative, isWeb } from "@/constants/platform";
+import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import {
   buildHostRootRoute,
@@ -191,6 +188,7 @@ import {
 } from "@/screens/workspace/terminals/use-workspace-terminals";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import {
+  resolveTerminalProfileLaunch,
   getTerminalProfileIcon,
   resolveTerminalProfiles,
 } from "@getpaseo/protocol/terminal-profiles";
@@ -244,15 +242,8 @@ function buildWorkspaceFileLocation(
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedEllipsis = withUnistyles(Ellipsis);
-const ThemedEllipsisVertical = withUnistyles(EllipsisVertical);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedCopy = withUnistyles(Copy);
-const ThemedRotateCw = withUnistyles(RotateCw);
-const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
-const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
-const ThemedCopyX = withUnistyles(CopyX);
-const ThemedPencil = withUnistyles(Pencil);
-const ThemedX = withUnistyles(X);
 const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedGlobe = withUnistyles(Globe);
@@ -439,10 +430,12 @@ function MobileActiveTabTrigger({
   activeTab,
   normalizedServerId,
   normalizedWorkspaceId,
+  backdrop,
 }: {
   activeTab: WorkspaceTabDescriptor | null;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
+  backdrop: SurfaceBackdrop;
 }) {
   if (!activeTab) {
     return null;
@@ -453,6 +446,7 @@ function MobileActiveTabTrigger({
       activeTab={activeTab}
       normalizedServerId={normalizedServerId}
       normalizedWorkspaceId={normalizedWorkspaceId}
+      backdrop={backdrop}
     />
   );
 }
@@ -461,10 +455,12 @@ function ResolvedMobileActiveTabTrigger({
   activeTab,
   normalizedServerId,
   normalizedWorkspaceId,
+  backdrop,
 }: {
   activeTab: WorkspaceTabDescriptor;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
+  backdrop: SurfaceBackdrop;
 }) {
   const { t } = useTranslation();
   return (
@@ -476,7 +472,7 @@ function ResolvedMobileActiveTabTrigger({
       {(presentation) => (
         <>
           <View style={styles.switcherTriggerIcon} testID="workspace-active-tab-icon">
-            <WorkspaceTabIcon presentation={presentation} active />
+            <WorkspaceTabIcon presentation={presentation} active backdrop={backdrop} />
           </View>
 
           <Text style={styles.switcherTriggerText} numberOfLines={1}>
@@ -514,93 +510,8 @@ function WorkspaceDocumentTitleEffect({
 
 function noop() {}
 
-function mobileTabMenuTriggerStyle({ open, pressed }: { open?: boolean; pressed?: boolean }) {
-  return [
-    styles.mobileTabMenuTrigger,
-    (Boolean(open) || Boolean(pressed)) && styles.mobileTabMenuTriggerActive,
-  ];
-}
-
 function switcherTriggerStyle({ pressed }: { pressed?: boolean }) {
   return [styles.switcherTrigger, Boolean(pressed) && styles.switcherTriggerPressed];
-}
-
-function MobileTabTrailingAccessory({
-  menuTestIDBase,
-  presentationLabel,
-  menuEntries,
-}: {
-  menuTestIDBase: string;
-  presentationLabel: string;
-  menuEntries: WorkspaceTabMenuEntry[];
-}) {
-  const { t } = useTranslation();
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        testID={`${menuTestIDBase}-trigger`}
-        accessibilityRole="button"
-        accessibilityLabel={t("workspace.tabs.menu.openFor", { label: presentationLabel })}
-        hitSlop={8}
-        style={mobileTabMenuTriggerStyle}
-      >
-        <ThemedEllipsis size={14} uniProps={mutedColorMapping} />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent side="bottom" align="end" width={220} testID={menuTestIDBase}>
-        {menuEntries.map((entry) =>
-          entry.kind === "separator" ? (
-            <DropdownMenuSeparator key={entry.key} />
-          ) : (
-            <MobileTabDropdownMenuItem key={entry.key} entry={entry} />
-          ),
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function MobileTabDropdownMenuItem({
-  entry,
-}: {
-  entry: Extract<WorkspaceTabMenuEntry, { kind: "item" }>;
-}) {
-  const leading = useMemo(() => {
-    switch (entry.icon) {
-      case "copy":
-        return <ThemedCopy size={16} uniProps={mutedColorMapping} />;
-      case "rotate-cw":
-        return <ThemedRotateCw size={16} uniProps={mutedColorMapping} />;
-      case "arrow-left-to-line":
-        return <ThemedArrowLeftToLine size={16} uniProps={mutedColorMapping} />;
-      case "arrow-right-to-line":
-        return <ThemedArrowRightToLine size={16} uniProps={mutedColorMapping} />;
-      case "copy-x":
-        return <ThemedCopyX size={16} uniProps={mutedColorMapping} />;
-      case "pencil":
-        return <ThemedPencil size={16} uniProps={mutedColorMapping} />;
-      case "x":
-        return <ThemedX size={16} uniProps={mutedColorMapping} />;
-      default:
-        return undefined;
-    }
-  }, [entry.icon]);
-  const trailing = useMemo(
-    () => (entry.hint ? <Text style={styles.menuItemHint}>{entry.hint}</Text> : undefined),
-    [entry.hint],
-  );
-  return (
-    <DropdownMenuItem
-      testID={entry.testID}
-      disabled={entry.disabled}
-      destructive={entry.destructive}
-      onSelect={entry.onSelect}
-      tooltip={entry.tooltip}
-      leading={leading}
-      trailing={trailing}
-    >
-      {entry.label}
-    </DropdownMenuItem>
-  );
 }
 
 function MobileWorkspaceTabOption({
@@ -836,14 +747,19 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
         style={switcherTriggerStyle}
         onPress={handleOpenSwitcher}
       >
-        <View style={styles.switcherTriggerLeft}>
-          <MobileActiveTabTrigger
-            activeTab={activeTab}
-            normalizedServerId={normalizedServerId}
-            normalizedWorkspaceId={normalizedWorkspaceId}
-          />
-        </View>
-        <ThemedChevronDown size={14} uniProps={mutedColorMapping} />
+        {({ pressed }) => (
+          <>
+            <View style={styles.switcherTriggerLeft}>
+              <MobileActiveTabTrigger
+                activeTab={activeTab}
+                normalizedServerId={normalizedServerId}
+                normalizedWorkspaceId={normalizedWorkspaceId}
+                backdrop={pressed ? "surface1" : "surface0"}
+              />
+            </View>
+            <ThemedChevronDown size={14} uniProps={mutedColorMapping} />
+          </>
+        )}
       </Pressable>
 
       <Combobox
@@ -938,6 +854,12 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
   recoveryAgentId,
 }: WorkspaceScreenProps) {
   const navigationFocused = useIsFocused();
+  useEffect(() => {
+    traceInstant("paseo.workspace.mount", { serverId, workspaceId });
+    return () => {
+      traceInstant("paseo.workspace.unmount", { serverId, workspaceId });
+    };
+  }, [serverId, workspaceId]);
   return (
     <WorkspaceScreenContent
       serverId={serverId}
@@ -1012,11 +934,7 @@ function HeaderMenuProfileItem({
   onCreateTerminalWithProfile,
 }: HeaderMenuProfileItemProps) {
   const handleSelect = useCallback(() => {
-    onCreateTerminalWithProfile({
-      name: profile.name,
-      command: profile.command,
-      args: profile.args,
-    });
+    onCreateTerminalWithProfile(resolveTerminalProfileLaunch(profile, ""));
   }, [onCreateTerminalWithProfile, profile]);
 
   const icon = getTerminalProfileIcon(profile);
@@ -1043,18 +961,16 @@ function HeaderMenuProfileItem({
   );
 }
 
-function WorkspaceHeaderMenuTriggerIcon({
-  hovered,
-  open,
-  isMobile,
-}: {
-  hovered: boolean;
-  open: boolean;
-  isMobile: boolean;
-}) {
-  const Icon = isMobile ? ThemedEllipsisVertical : ThemedEllipsis;
+/**
+ * The compact header buttons draw at 32pt, under the 44pt touch minimum, and sit flush against
+ * each other — so the slop can only grow vertically. Widening it would put two buttons' slop over
+ * the same pixels, which is a worse miss than a small target.
+ */
+const COMPACT_HEADER_BUTTON_HIT_SLOP = { top: 8, bottom: 8 } as const;
+
+function WorkspaceHeaderMenuTriggerIcon({ hovered, open }: { hovered: boolean; open: boolean }) {
   const colorMapping = hovered || open ? foregroundColorMapping : mutedColorMapping;
-  return <Icon size={16} uniProps={colorMapping} />;
+  return <ThemedEllipsis size={16} uniProps={colorMapping} />;
 }
 
 function WorkspaceHeaderMenu({
@@ -1095,22 +1011,28 @@ function WorkspaceHeaderMenu({
 
   const renderTriggerIcon = useCallback(
     ({ hovered, open }: { hovered: boolean; open: boolean }) => (
-      <WorkspaceHeaderMenuTriggerIcon hovered={hovered} open={open} isMobile={isMobile} />
+      <WorkspaceHeaderMenuTriggerIcon hovered={hovered} open={open} />
     ),
-    [isMobile],
+    [],
   );
 
   return (
-    <DropdownMenu>
+    <DropdownMenu compactMode="sheet">
       <DropdownMenuTrigger
         testID="workspace-header-menu-trigger"
         style={isMobile ? styles.compactHeaderActionButton : styles.headerActionButton}
+        hitSlop={isMobile ? COMPACT_HEADER_BUTTON_HIT_SLOP : undefined}
         accessibilityRole="button"
         accessibilityLabel={t("workspace.header.actions.workspaceActions")}
       >
         {renderTriggerIcon}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" width={220} testID="workspace-header-menu">
+      <DropdownMenuContent
+        align="start"
+        width={220}
+        testID="workspace-header-menu"
+        sheetTitle={t("workspace.header.actions.workspaceActions")}
+      >
         <DropdownMenuItem
           testID="workspace-header-new-agent"
           leading={menuNewAgentIcon}
@@ -1194,11 +1116,52 @@ function WorkspaceHeaderMenu({
   );
 }
 
+/**
+ * Which project the workspace belongs to, and which machine it runs on.
+ *
+ * Compact gets both, on their own line under the workspace name: this header is the only thing on
+ * screen that says where the workspace lives, because the sidebar that normally carries the host
+ * badge is closed. It still follows the host's own badge setting, so a purely local setup stays
+ * quiet. A project name that only repeats the workspace name is dropped on wide, where the two sit
+ * side by side, and kept on compact, where the line exists for the host anyway.
+ */
+function WorkspaceHeaderProjectRow({
+  subtitle,
+  isSubtitleDistinct,
+  serverId,
+}: {
+  subtitle: string;
+  isSubtitleDistinct: boolean;
+  serverId: string;
+}) {
+  const isCompact = useIsCompactFormFactor();
+  const hostBadge = useHostBadges({ enabled: isCompact }).get(serverId) ?? null;
+  const showProject = isSubtitleDistinct || isCompact;
+  if (!showProject && !hostBadge) {
+    return null;
+  }
+  return (
+    <View style={styles.headerProjectRow}>
+      {showProject ? (
+        <Text
+          testID="workspace-header-subtitle"
+          style={styles.headerProjectTitle}
+          numberOfLines={1}
+        >
+          {subtitle}
+        </Text>
+      ) : null}
+      {showProject && hostBadge ? <Text style={styles.headerProjectSeparator}>·</Text> : null}
+      {hostBadge ? <HostBadge badge={hostBadge} /> : null}
+    </View>
+  );
+}
+
 interface WorkspaceHeaderTitleBarProps {
   isLoading: boolean;
   title: string;
   subtitle: string;
-  showSubtitle: boolean;
+  isSubtitleDistinct: boolean;
   currentBranchName: string | null;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
@@ -1233,7 +1196,7 @@ function WorkspaceHeaderTitleBar({
   isLoading,
   title,
   subtitle,
-  showSubtitle,
+  isSubtitleDistinct,
   currentBranchName,
   normalizedServerId,
   normalizedWorkspaceId,
@@ -1271,16 +1234,14 @@ function WorkspaceHeaderTitleBar({
         </View>
       ) : (
         <View style={styles.headerTitleTextGroup}>
-          <ScreenTitle testID="workspace-header-title">{title}</ScreenTitle>
-          {showSubtitle ? (
-            <Text
-              testID="workspace-header-subtitle"
-              style={styles.headerProjectTitle}
-              numberOfLines={1}
-            >
-              {subtitle}
-            </Text>
-          ) : null}
+          <ScreenTitle testID="workspace-header-title" style={styles.headerTitle}>
+            {title}
+          </ScreenTitle>
+          <WorkspaceHeaderProjectRow
+            subtitle={subtitle}
+            isSubtitleDistinct={isSubtitleDistinct}
+            serverId={normalizedServerId}
+          />
         </View>
       )}
       <View style={styles.compactHeaderMenuCluster}>
@@ -1410,7 +1371,7 @@ interface WorkspaceHeaderFields {
   isWorkspaceHeaderLoading: boolean;
   workspaceHeaderTitle: string;
   workspaceHeaderSubtitle: string;
-  shouldShowWorkspaceHeaderSubtitle: boolean;
+  isWorkspaceHeaderSubtitleDistinct: boolean;
   isGitCheckout: boolean;
   currentBranchName: string | null;
 }
@@ -1445,7 +1406,7 @@ function deriveWorkspaceHeaderFields(input: {
       isWorkspaceHeaderLoading: true,
       workspaceHeaderTitle: "",
       workspaceHeaderSubtitle: "",
-      shouldShowWorkspaceHeaderSubtitle: false,
+      isWorkspaceHeaderSubtitleDistinct: false,
       isGitCheckout: false,
       currentBranchName: null,
     };
@@ -1454,7 +1415,7 @@ function deriveWorkspaceHeaderFields(input: {
     isWorkspaceHeaderLoading: false,
     workspaceHeaderTitle: renderState.title,
     workspaceHeaderSubtitle: renderState.subtitle,
-    shouldShowWorkspaceHeaderSubtitle: renderState.shouldShowSubtitle,
+    isWorkspaceHeaderSubtitleDistinct: renderState.isSubtitleDistinct,
     isGitCheckout: renderState.isGitCheckout,
     currentBranchName: renderState.currentBranchName,
   };
@@ -1929,7 +1890,7 @@ function WorkspaceScreenContent({
     isWorkspaceHeaderLoading,
     workspaceHeaderTitle,
     workspaceHeaderSubtitle,
-    shouldShowWorkspaceHeaderSubtitle,
+    isWorkspaceHeaderSubtitleDistinct,
     isGitCheckout,
     currentBranchName,
   } = deriveWorkspaceHeaderFields({
@@ -3760,7 +3721,7 @@ function WorkspaceScreenContent({
                 isLoading={isWorkspaceHeaderLoading}
                 title={workspaceHeaderTitle}
                 subtitle={workspaceHeaderSubtitle}
-                showSubtitle={shouldShowWorkspaceHeaderSubtitle}
+                isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}
                 currentBranchName={currentBranchName}
                 normalizedServerId={normalizedServerId}
                 normalizedWorkspaceId={normalizedWorkspaceId}
@@ -3925,14 +3886,14 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
   },
+  // Compact steps the whole header down one rung of the scale. The title and the project line
+  // stack there, so at the shared size they read as two headings rather than a subject and its
+  // caption, and they cost two full lines of a header that has none to spare.
   headerTitle: {
-    fontSize: theme.fontSize.base,
-    fontWeight: {
-      xs: "400",
-      md: "300",
+    fontSize: {
+      xs: theme.fontSize.sm,
+      md: theme.fontSize.base,
     },
-    color: theme.colors.foreground,
-    flexShrink: 1,
   },
   headerTitleContainer: {
     flex: 1,
@@ -3968,15 +3929,29 @@ const styles = StyleSheet.create((theme) => ({
       md: theme.spacing[2],
     },
   },
+  // No width cap. A percentage cap resolves against the title group, whose own width comes from
+  // this row's content, so it clips the project name while there is still room beside it.
+  // `flexShrink` on both this row and the title already gives up space only when there is none.
+  headerProjectRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+    minWidth: 0,
+    flexShrink: 1,
+  },
   headerProjectTitle: {
     color: theme.colors.foregroundMuted,
     fontSize: {
-      xs: theme.fontSize.sm,
+      xs: theme.fontSize.xs,
       md: theme.fontSize.base,
     },
     flexShrink: 1,
     minWidth: 0,
-    maxWidth: "60%",
+  },
+  headerProjectSeparator: {
+    color: theme.colors.foregroundExtraMuted,
+    fontSize: theme.fontSize.xs,
+    flexShrink: 0,
   },
   headerTitleSkeleton: {
     width: 220,
@@ -4108,20 +4083,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-  },
-  mobileTabMenuTrigger: {
-    width: 28,
-    height: 28,
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  mobileTabMenuTriggerActive: {
-    backgroundColor: theme.colors.surface2,
-  },
-  menuItemHint: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
   },
   headerMenuProfileIconWrapper: {
     width: 16,

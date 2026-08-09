@@ -19,6 +19,8 @@ Both concepts use the same cron engine, but their product surfaces stay separate
 
 Cron is the canonical cadence. The CLI accepts simple presets such as `5m` or `1h`, but compiles them to cron rather than storing a separate interval type.
 
+Both run on a cadence you set. To start an agent from an external event instead — a comment, a mention — see [Hub](/docs/hub).
+
 ## What it's for
 
 - **Fresh recurring jobs:** start a clean agent for daily triage, reports, or maintenance.

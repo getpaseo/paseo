@@ -14,6 +14,7 @@ export interface MockAgentWorkspace {
 export interface MockAgentOptions {
   repoPrefix: string;
   title: string;
+  port?: number;
   initialPrompt?: string;
   model?: string;
   modeId?: string;
@@ -28,7 +29,7 @@ export interface MockAgentOptions {
 export async function seedMockAgentWorkspace(
   options: MockAgentOptions,
 ): Promise<MockAgentWorkspace> {
-  const workspace = await seedWorkspace({ repoPrefix: options.repoPrefix });
+  const workspace = await seedWorkspace({ repoPrefix: options.repoPrefix, port: options.port });
   try {
     const agent = await workspace.client.createAgent({
       provider: "mock",

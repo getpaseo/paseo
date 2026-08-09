@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-manager.js";
 import {
+  buildStoredAgentPayload,
   toAgentPayload,
   toRecentProviderSessionDescriptorPayload,
   toStoredAgentRecord,
@@ -28,9 +29,7 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     cwd: "/tmp/project",
     modeId: "plan",
     model: "claude-3.5-sonnet",
-    extra: {
-      claude: { tone: "friendly" },
-    },
+    providerOptions: { allowedTools: ["Read"] },
   };
 
   const basePersistence: AgentPersistenceHandle = {
@@ -181,11 +180,11 @@ describe("toStoredAgentRecord", () => {
     expect(record.config).toEqual({
       modeId: agent.config.modeId,
       model: agent.config.model,
-      extra: { claude: { tone: "friendly" } },
+      providerOptions: { allowedTools: ["Read"] },
     });
 
-    record.config!.extra!.claude!.tone = "serious";
-    expect(agent.config.extra!.claude!.tone).toBe("friendly");
+    record.config!.providerOptions!.allowedTools = ["Bash"];
+    expect(agent.config.providerOptions!.allowedTools).toEqual(["Read"]);
     record.persistence!.sessionId = "mutated";
     expect(agent.persistence!.sessionId).toBe("persist-2");
   });
@@ -208,7 +207,8 @@ describe("toStoredAgentRecord", () => {
       config: {
         modeId: undefined,
         model: undefined,
-        extra: undefined,
+        providerOptions: undefined,
+        toolPolicy: undefined,
       },
     });
 
@@ -328,7 +328,16 @@ describe("toAgentPayload", () => {
         provider: "codex",
         sessionId: "persist-99",
         nativeHandle: { id: "native" } as unknown,
-        metadata: { restored: new Date("2025-03-01T00:00:00.000Z"), empty: {} },
+        metadata: {
+          restored: new Date("2025-03-01T00:00:00.000Z"),
+          empty: {},
+          mcpServers: {
+            hub: {
+              type: "http",
+              headers: { Authorization: "Bearer projection-secret" },
+            },
+          },
+        },
       },
     });
     const payload = toAgentPayload(agent);
@@ -340,6 +349,62 @@ describe("toAgentPayload", () => {
     });
     (payload.persistence as AgentPersistenceHandle).sessionId = "mutated";
     expect(agent.persistence!.sessionId).toBe("persist-99");
+  });
+
+  it("removes empty persistence metadata after projecting MCP configuration", () => {
+    const payload = toAgentPayload(
+      createManagedAgent({
+        provider: "codex",
+        config: { provider: "codex" },
+        persistence: {
+          provider: "codex",
+          sessionId: "persist-mcp-only",
+          metadata: { mcpServers: { hub: { type: "http", url: "https://hub.test/mcp" } } },
+        },
+      }),
+    );
+
+    expect(payload.persistence).toEqual({
+      provider: "codex",
+      sessionId: "persist-mcp-only",
+    });
+  });
+
+  it("strips MCP metadata from stored wire payloads while preserving private persistence", () => {
+    const record = toStoredAgentRecord(
+      createManagedAgent({
+        provider: "codex",
+        config: { provider: "codex" },
+        persistence: {
+          provider: "codex",
+          sessionId: "persist-stored",
+          metadata: {
+            conversationId: "conversation-stored",
+            mcpServers: {
+              hub: {
+                type: "http",
+                headers: { Authorization: "Bearer stored-projection-secret" },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const payload = buildStoredAgentPayload(record, ["codex"]);
+
+    expect(record.persistence?.metadata).toEqual({
+      conversationId: "conversation-stored",
+      mcpServers: {
+        hub: {
+          type: "http",
+          headers: { Authorization: "Bearer stored-projection-secret" },
+        },
+      },
+    });
+    expect(payload.persistence?.metadata).toEqual({
+      conversationId: "conversation-stored",
+    });
   });
 
   it("omits lastUsage when not available", () => {

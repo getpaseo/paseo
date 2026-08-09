@@ -125,6 +125,10 @@ function csiWithModifier(finalByte: string, input: TerminalKeyInput): string {
   return mod === 1 ? `\x1b[${finalByte}` : `\x1b[1;${mod}${finalByte}`;
 }
 
+function ss3WithModifier(finalByte: string, input: TerminalKeyInput): string {
+  return modifierParam(input) === 1 ? `\x1bO${finalByte}` : csiWithModifier(finalByte, input);
+}
+
 function csiTilde(base: number, input: TerminalKeyInput): string {
   const mod = modifierParam(input);
   return mod === 1 ? `\x1b[${base}~` : `\x1b[${base};${mod}~`;
@@ -161,16 +165,31 @@ function encodeFunctionKey(key: string, input: TerminalKeyInput): string | null 
   }
 }
 
-function encodeNavigationKey(key: string, input: TerminalKeyInput): string | null {
+function encodeArrowKey(
+  finalByte: string,
+  input: TerminalKeyInput,
+  options: TerminalKeyInputEncodingOptions,
+): string {
+  if (options.inputMode?.applicationCursorKeys) {
+    return ss3WithModifier(finalByte, input);
+  }
+  return csiWithModifier(finalByte, input);
+}
+
+function encodeNavigationKey(
+  key: string,
+  input: TerminalKeyInput,
+  options: TerminalKeyInputEncodingOptions,
+): string | null {
   switch (key) {
     case "ArrowUp":
-      return csiWithModifier("A", input);
+      return encodeArrowKey("A", input, options);
     case "ArrowDown":
-      return csiWithModifier("B", input);
+      return encodeArrowKey("B", input, options);
     case "ArrowRight":
-      return csiWithModifier("C", input);
+      return encodeArrowKey("C", input, options);
     case "ArrowLeft":
-      return csiWithModifier("D", input);
+      return encodeArrowKey("D", input, options);
     case "Home":
       return csiWithModifier("H", input);
     case "End":
@@ -225,7 +244,7 @@ export function encodeTerminalKeyInput(
       break;
   }
 
-  const nav = encodeNavigationKey(key, input);
+  const nav = encodeNavigationKey(key, input, options);
   if (nav !== null) return nav;
   const fn = encodeFunctionKey(key, input);
   if (fn !== null) return fn;

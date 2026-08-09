@@ -138,6 +138,42 @@ const SourceSchema = z.object({
     );
   });
 
+  it("accepts a compact provider snapshot envelope", () => {
+    const envelope = {
+      type: "session",
+      message: {
+        type: "get_providers_snapshot_response",
+        payload: {
+          entries: [],
+          compactSnapshot: {
+            entries: [
+              {
+                provider: "pi",
+                status: "ready",
+                enabled: true,
+                models: [{ id: "model-a", label: "Model A", thinkingSet: 0 }],
+              },
+            ],
+            thinkingSets: [
+              {
+                options: [{ id: "high", label: "High", isDefault: true }],
+                defaultOptionId: "high",
+              },
+            ],
+          },
+          snapshotHash: "snapshot-hash",
+          generatedAt: "2026-08-04T00:00:00.000Z",
+          requestId: "provider-snapshot",
+        },
+      },
+    };
+
+    expect(GeneratedWSOutboundMessageSchema.safeParse(envelope)).toEqual({
+      success: true,
+      data: envelope,
+    });
+  });
+
   it.each([
     {
       name: "dedicated attention message",

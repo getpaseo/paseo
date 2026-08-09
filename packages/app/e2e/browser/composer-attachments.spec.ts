@@ -4,6 +4,7 @@ import { expectComposerVisible } from "../support/helpers/composer";
 import { expectAgentIdle } from "../support/helpers/agent-stream";
 import {
   openAttachmentMenu,
+  expectAttachmentSheetRowsOnTitleRail,
   openGithubPickerFromMenu,
   attachImageFromMenu,
   expectAttachmentPill,
@@ -61,6 +62,22 @@ test.describe("Composer attachments", () => {
 
     await expect(page.getByTestId("message-input-attachment-menu-item-image")).toBeVisible();
     await expect(page.getByTestId("message-input-attachment-menu-item-github")).toBeVisible();
+  });
+
+  test("compact Plus menu aligns attachment rows with its sheet title", async ({
+    page,
+    withWorkspace,
+  }) => {
+    test.setTimeout(60_000);
+    const workspace = await withWorkspace({ prefix: "attach-sheet-rails-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    await openAttachmentMenu(page);
+
+    await expectAttachmentSheetRowsOnTitleRail(page);
   });
 
   test("GitHub combobox does not render until the picker is opened", async ({

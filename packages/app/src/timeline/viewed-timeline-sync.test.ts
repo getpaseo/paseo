@@ -1,9 +1,6 @@
 import { expect, test, vi } from "vitest";
 import type { ProjectedTimelineForwardFetchPlan } from "./timeline-sync-plan";
-import {
-  createViewedTimelineSync,
-  VIEWED_TIMELINE_UNSUBSCRIBE_GRACE_MS,
-} from "./viewed-timeline-sync";
+import { createViewedTimelineSync } from "./viewed-timeline-sync";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -129,18 +126,14 @@ class TimelineWorld {
     return new Promise((resolve) => this.retryWaiters.push(resolve));
   }
 
-  runUnsubscribeGrace(): void {
-    const index = this.scheduled.findIndex(
-      (entry) => entry.delayMs === VIEWED_TIMELINE_UNSUBSCRIBE_GRACE_MS,
+  elapse(elapsedMs: number): void {
+    const due = this.scheduled.filter((entry) => entry.delayMs <= elapsedMs);
+    this.scheduled.splice(
+      0,
+      this.scheduled.length,
+      ...this.scheduled.filter((entry) => entry.delayMs > elapsedMs),
     );
-    expect(index).toBeGreaterThanOrEqual(0);
-    this.scheduled.splice(index, 1)[0].task();
-  }
-
-  expectNoPendingUnsubscribe(): void {
-    expect(
-      this.scheduled.filter((entry) => entry.delayMs === VIEWED_TIMELINE_UNSUBSCRIBE_GRACE_MS),
-    ).toEqual([]);
+    for (const entry of due) entry.task();
   }
 
   private releaseMembershipWaiter(): void {
@@ -160,10 +153,6 @@ class TimelineWorld {
     }
   }
 }
-
-test("keeps hidden agents subscribed for thirty seconds", () => {
-  expect(VIEWED_TIMELINE_UNSUBSCRIBE_GRACE_MS).toBe(30_000);
-});
 
 test("uses a tail fetch when an agent becomes visible", async () => {
   const world = new TimelineWorld();
@@ -199,39 +188,6 @@ test("a gap absorbed by a running tail is recovered after the tail completes", a
   });
   recovery.respond({ hasNewer: false });
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
-});
-
-test("an idle reconciliation waits for an in-flight tail and fetches a fresh snapshot", async () => {
-  const world = new TimelineWorld();
-  world.sync.setConnected(true);
-  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
-  const membership = await world.nextMembership();
-  membership.succeed();
-  const initialTail = await world.nextFetch("agent-a");
-
-  world.sync.reconcileAgent("agent-a");
-
-  world.expectNoPendingFetch();
-  initialTail.respond({ hasNewer: false });
-
-  const reconciliation = await world.nextFetch("agent-a");
-  expect(reconciliation.request).toEqual({
-    direction: "tail",
-    limit: 40,
-    projection: "projected",
-  });
-  reconciliation.respond({ hasNewer: false });
-  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
-});
-
-test("does not reconcile an agent outside the viewed membership", () => {
-  const world = new TimelineWorld();
-  world.sync.setConnected(true);
-
-  world.sync.reconcileAgent("agent-a");
-
-  world.expectNoPendingFetch();
-  world.expectNoPendingMembership();
 });
 
 test("unchanged visible-set publication does not cancel paged catch-up", async () => {
@@ -279,48 +235,32 @@ test("all acknowledged agents begin catch-up independently", async () => {
   expect(membership.agentIds).toEqual(["agent-a", "agent-b"]);
 });
 
-test("membership changes during acknowledgement never catch up the stale set", async () => {
+test("an eviction during acknowledgement never catches up the stale hot set", async () => {
   const world = new TimelineWorld();
   world.sync.setConnected(true);
-  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  world.sync.replaceVisibleAgentIds("workspace", [
+    "agent-a",
+    "agent-b",
+    "agent-c",
+    "agent-d",
+    "agent-e",
+  ]);
   const staleMembership = await world.nextMembership();
-
-  world.sync.replaceVisibleAgentIds("workspace", ["agent-b"]);
-  world.runUnsubscribeGrace();
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-f"]);
   staleMembership.succeed();
   const currentMembership = await world.nextMembership();
   currentMembership.succeed();
-  const agentB = await world.nextFetch("agent-b");
-  agentB.respond({ hasNewer: false });
+  const currentCatchUps = await Promise.all(
+    ["agent-a", "agent-b", "agent-c", "agent-d", "agent-f"].map((agentId) =>
+      world.nextFetch(agentId),
+    ),
+  );
+  for (const catchUp of currentCatchUps) catchUp.respond({ hasNewer: false });
 
   expect({ stale: staleMembership.agentIds, current: currentMembership.agentIds }).toEqual({
-    stale: ["agent-a"],
-    current: ["agent-b"],
+    stale: ["agent-a", "agent-b", "agent-c", "agent-d", "agent-e"],
+    current: ["agent-a", "agent-b", "agent-c", "agent-d", "agent-f"],
   });
-  world.expectNoPendingFetch();
-});
-
-test("removing one agent during paging cancels only that agent", async () => {
-  const world = new TimelineWorld();
-  world.sync.setConnected(true);
-  world.sync.replaceVisibleAgentIds("workspace", ["agent-a", "agent-b"]);
-  const initialMembership = await world.nextMembership();
-  initialMembership.succeed();
-  const [agentA, agentB] = await Promise.all([
-    world.nextFetch("agent-a"),
-    world.nextFetch("agent-b"),
-  ]);
-
-  world.sync.replaceVisibleAgentIds("workspace", ["agent-b"]);
-  world.runUnsubscribeGrace();
-  const replacement = await world.nextMembership();
-  agentA.respond({ hasNewer: true, seq: 4 });
-  agentB.respond({ hasNewer: true, seq: 7 });
-  const agentBNext = await world.nextFetch("agent-b");
-  replacement.succeed();
-  agentBNext.respond({ hasNewer: false });
-
-  expect(replacement.agentIds).toEqual(["agent-b"]);
   world.expectNoPendingFetch();
 });
 
@@ -347,7 +287,22 @@ test("disconnect cancels paging and reconnect restores membership before fresh c
   world.expectNoPendingFetch();
 });
 
-test("overlapping sources deduplicate membership and source removal preserves remaining views", async () => {
+test("navigation while disconnected reconnects only the currently visible agent", async () => {
+  const world = new TimelineWorld();
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-b"]);
+
+  world.sync.setConnected(true);
+  const membership = await world.nextMembership();
+  membership.succeed();
+  const catchUp = await world.nextFetch("agent-b");
+  catchUp.respond({ hasNewer: false });
+
+  expect(membership.agentIds).toEqual(["agent-b"]);
+  world.expectNoPendingFetch();
+});
+
+test("overlapping sources deduplicate membership and retain hidden hot agents", async () => {
   const world = new TimelineWorld();
   world.sync.replaceVisibleAgentIds("left-route", ["agent-a"]);
   world.sync.replaceVisibleAgentIds("right-route", ["agent-a", "agent-b"]);
@@ -363,16 +318,11 @@ test("overlapping sources deduplicate membership and source removal preserves re
 
   world.sync.replaceVisibleAgentIds("left-route", []);
   world.expectNoPendingMembership();
-  world.expectNoPendingUnsubscribe();
   world.sync.replaceVisibleAgentIds("right-route", ["agent-b"]);
-  world.runUnsubscribeGrace();
-  const remaining = await world.nextMembership();
-  remaining.succeed();
 
-  expect({ combined: combined.agentIds, remaining: remaining.agentIds }).toEqual({
-    combined: ["agent-a", "agent-b"],
-    remaining: ["agent-b"],
-  });
+  expect(combined.agentIds).toEqual(["agent-a", "agent-b"]);
+  world.expectNoPendingMembership();
+  world.expectNoPendingFetch();
 });
 
 test("a failed catch-up reports once and retries through the explicit retry policy", async () => {
@@ -474,46 +424,27 @@ test("membership failure autonomously retries without another visibility declara
   });
 });
 
-test("background waits for grace before unsubscribing and catches up on return", async () => {
+test("backgrounding preserves the hot membership without catch-up on return", async () => {
   const world = new TimelineWorld();
   world.sync.setConnected(true);
   world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
-  const initial = await world.nextMembership();
-  initial.succeed();
-  const initialCatchUp = await world.nextFetch("agent-a");
-  initialCatchUp.respond({ hasNewer: false });
+  const agentAMembership = await world.nextMembership();
+  agentAMembership.succeed();
+  const agentACatchUp = await world.nextFetch("agent-a");
+  agentACatchUp.respond({ hasNewer: false });
+
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-b"]);
+  const agentBMembership = await world.nextMembership();
+  agentBMembership.succeed();
+  const agentBCatchUp = await world.nextFetch("agent-b");
+  agentBCatchUp.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-b")).toBe("ready"));
 
   world.sync.setActive(false);
   world.expectNoPendingMembership();
-  world.runUnsubscribeGrace();
-  const background = await world.nextMembership();
-  background.succeed();
-  world.sync.setActive(true);
-  const foreground = await world.nextMembership();
-  foreground.succeed();
-  const resumedCatchUp = await world.nextFetch("agent-a");
-  resumedCatchUp.respond({ hasNewer: false });
-
-  expect({ background: background.agentIds, foreground: foreground.agentIds }).toEqual({
-    background: [],
-    foreground: ["agent-a"],
-  });
-});
-
-test("foregrounding within grace preserves the live membership", async () => {
-  const world = new TimelineWorld();
-  world.sync.setConnected(true);
-  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
-  const membership = await world.nextMembership();
-  membership.succeed();
-  const catchUp = await world.nextFetch("agent-a");
-  catchUp.respond({ hasNewer: false });
-
-  world.sync.setActive(false);
-  world.expectNoPendingMembership();
+  world.elapse(60_000);
   world.sync.setActive(true);
 
-  world.expectNoPendingUnsubscribe();
   world.expectNoPendingMembership();
   world.expectNoPendingFetch();
 });
@@ -527,14 +458,17 @@ test("stale membership retry cannot overwrite a newer effective set", async () =
   const staleRetry = await world.nextRetry();
 
   world.sync.replaceVisibleAgentIds("workspace", ["agent-b"]);
-  world.runUnsubscribeGrace();
   const current = await world.nextMembership();
   staleRetry();
   current.succeed();
-  const catchUp = await world.nextFetch("agent-b");
-  catchUp.respond({ hasNewer: false });
+  const [agentA, agentB] = await Promise.all([
+    world.nextFetch("agent-a"),
+    world.nextFetch("agent-b"),
+  ]);
+  agentA.respond({ hasNewer: false });
+  agentB.respond({ hasNewer: false });
 
-  expect(current.agentIds).toEqual(["agent-b"]);
+  expect(current.agentIds).toEqual(["agent-a", "agent-b"]);
   world.expectNoPendingMembership();
 });
 
@@ -558,138 +492,114 @@ test("membership retry cannot run while disconnected", async () => {
   expect(restored.agentIds).toEqual(["agent-a"]);
 });
 
-test("quickly returning to an agent cancels its pending unsubscribe without another catch-up", async () => {
-  const world = new TimelineWorld();
-  world.sync.setConnected(true);
-  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
-  const membership = await world.nextMembership();
-  membership.succeed();
-  const initialCatchUp = await world.nextFetch("agent-a");
-  initialCatchUp.respond({ hasNewer: false });
-
-  await vi.waitFor(() => {
-    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready");
-  });
-
-  world.sync.replaceVisibleAgentIds("workspace", []);
-  world.expectNoPendingMembership();
-  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
-
-  expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready");
-
-  world.expectNoPendingUnsubscribe();
-  world.expectNoPendingMembership();
-  world.expectNoPendingFetch();
-});
-
-test("unsubscribe grace expiry removes the agent exactly once", async () => {
-  const world = new TimelineWorld();
-  world.sync.setConnected(true);
-  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
-  const membership = await world.nextMembership();
-  membership.succeed();
-  const catchUp = await world.nextFetch("agent-a");
-  catchUp.respond({ hasNewer: false });
-  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
-
-  const readinessChanges: string[] = [];
-  world.sync.subscribe(() => {
-    readinessChanges.push(world.sync.getAgentTimelineStatus("agent-a"));
-  });
-
-  world.sync.replaceVisibleAgentIds("workspace", []);
-  world.runUnsubscribeGrace();
-  const unsubscribe = await world.nextMembership();
-  unsubscribe.succeed();
-
-  expect(unsubscribe.agentIds).toEqual([]);
-  expect(readinessChanges.at(-1)).toBe("pending");
-  world.expectNoPendingUnsubscribe();
-  world.expectNoPendingMembership();
-});
-
-test("a new visible agent subscribes immediately while the previous agent lingers", async () => {
+test("returning to a hot hidden agent stays live after inactivity", async () => {
   const world = new TimelineWorld();
   world.sync.setConnected(true);
   world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
   const initialMembership = await world.nextMembership();
   initialMembership.succeed();
-  const initialCatchUp = await world.nextFetch("agent-a");
-  initialCatchUp.respond({ hasNewer: false });
+  const agentACatchUp = await world.nextFetch("agent-a");
+  agentACatchUp.respond({ hasNewer: false });
 
   world.sync.replaceVisibleAgentIds("workspace", ["agent-b"]);
   const expandedMembership = await world.nextMembership();
   expandedMembership.succeed();
   const agentBCatchUp = await world.nextFetch("agent-b");
   agentBCatchUp.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-b")).toBe("ready"));
 
-  expect(expandedMembership.agentIds).toEqual(["agent-a", "agent-b"]);
-  world.runUnsubscribeGrace();
-  const settledMembership = await world.nextMembership();
-  settledMembership.succeed();
-  expect(settledMembership.agentIds).toEqual(["agent-b"]);
+  world.elapse(60_000);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+
+  world.expectNoPendingMembership();
+  world.expectNoPendingFetch();
 });
 
-test("backgrounding preserves an existing unsubscribe grace period", async () => {
+test("the hot set evicts the least-recent hidden agent and promotes revisited agents", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  for (const agentId of ["agent-a", "agent-b", "agent-c", "agent-d", "agent-e"]) {
+    world.sync.replaceVisibleAgentIds("workspace", [agentId]);
+    const membership = await world.nextMembership();
+    membership.succeed();
+    const catchUp = await world.nextFetch(agentId);
+    catchUp.respond({ hasNewer: false });
+    await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus(agentId)).toBe("ready"));
+  }
+
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-b"]);
+  world.expectNoPendingMembership();
+  world.expectNoPendingFetch();
+
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-f"]);
+  const eviction = await world.nextMembership();
+  eviction.succeed();
+  const agentFCatchUp = await world.nextFetch("agent-f");
+  agentFCatchUp.respond({ hasNewer: false });
+  expect(eviction.agentIds).toEqual(["agent-b", "agent-c", "agent-d", "agent-e", "agent-f"]);
+
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-b"]);
+  world.expectNoPendingMembership();
+  world.expectNoPendingFetch();
+
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const restoreEvicted = await world.nextMembership();
+  restoreEvicted.succeed();
+  const agentACatchUp = await world.nextFetch("agent-a");
+  agentACatchUp.respond({ hasNewer: false });
+  expect(restoreEvicted.agentIds).toEqual(["agent-a", "agent-b", "agent-d", "agent-e", "agent-f"]);
+});
+
+test("visible agents are never evicted when they exceed the hot-set limit", async () => {
+  const world = new TimelineWorld();
+  const visible = ["agent-a", "agent-b", "agent-c", "agent-d", "agent-e", "agent-f"];
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", visible);
+  const membership = await world.nextMembership();
+  membership.succeed();
+  const catchUps = await Promise.all(visible.map((agentId) => world.nextFetch(agentId)));
+  for (const catchUp of catchUps) catchUp.respond({ hasNewer: false });
+
+  expect(membership.agentIds).toEqual(visible);
+
+  world.sync.replaceVisibleAgentIds("workspace", visible.slice(0, 5));
+  const hiddenEviction = await world.nextMembership();
+  hiddenEviction.succeed();
+  expect(hiddenEviction.agentIds).toEqual(visible.slice(0, 5));
+});
+
+test("disconnect clears hidden hot agents before reconnecting the visible set", async () => {
   const world = new TimelineWorld();
   world.sync.setConnected(true);
   world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
-  const membership = await world.nextMembership();
-  membership.succeed();
-  const catchUp = await world.nextFetch("agent-a");
-  catchUp.respond({ hasNewer: false });
+  const agentAMembership = await world.nextMembership();
+  agentAMembership.succeed();
+  const agentACatchUp = await world.nextFetch("agent-a");
+  agentACatchUp.respond({ hasNewer: false });
 
-  world.sync.replaceVisibleAgentIds("workspace", []);
-  world.sync.setActive(false);
-  world.expectNoPendingMembership();
-  world.runUnsubscribeGrace();
-  const unsubscribe = await world.nextMembership();
-  unsubscribe.succeed();
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-b"]);
+  const agentBMembership = await world.nextMembership();
+  agentBMembership.succeed();
+  const agentBCatchUp = await world.nextFetch("agent-b");
+  agentBCatchUp.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-b")).toBe("ready"));
 
-  expect(unsubscribe.agentIds).toEqual([]);
-  world.expectNoPendingMembership();
-});
-
-test("disconnecting cancels pending unsubscribe grace without publishing on the closed socket", async () => {
-  const world = new TimelineWorld();
-  world.sync.setConnected(true);
-  world.sync.replaceVisibleAgentIds("workspace", ["agent-a", "agent-b"]);
-  const membership = await world.nextMembership();
-  membership.succeed();
-  const [agentA, agentB] = await Promise.all([
-    world.nextFetch("agent-a"),
-    world.nextFetch("agent-b"),
-  ]);
-  agentA.respond({ hasNewer: false });
-  agentB.respond({ hasNewer: false });
-  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
-
-  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
-  const agentAStatuses: string[] = [];
-  world.sync.subscribe(() => {
-    agentAStatuses.push(world.sync.getAgentTimelineStatus("agent-a"));
-  });
   world.sync.setConnected(false);
-
-  expect(agentAStatuses).toEqual(["pending"]);
-  world.expectNoPendingUnsubscribe();
   world.expectNoPendingMembership();
-});
-
-test("disposing cancels pending unsubscribe grace", async () => {
-  const world = new TimelineWorld();
   world.sync.setConnected(true);
+  const restored = await world.nextMembership();
+  restored.succeed();
+  const restoredCatchUp = await world.nextFetch("agent-b");
+  restoredCatchUp.respond({ hasNewer: false });
+
+  expect(restored.agentIds).toEqual(["agent-b"]);
+
   world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
-  const membership = await world.nextMembership();
-  membership.succeed();
-  const catchUp = await world.nextFetch("agent-a");
-  catchUp.respond({ hasNewer: false });
-
-  world.sync.replaceVisibleAgentIds("workspace", []);
-  world.sync.dispose();
-
-  world.expectNoPendingUnsubscribe();
-  world.expectNoPendingMembership();
+  const reopened = await world.nextMembership();
+  reopened.succeed();
+  const reopenedCatchUp = await world.nextFetch("agent-a");
+  reopenedCatchUp.respond({ hasNewer: false });
+  expect(reopened.agentIds).toEqual(["agent-a", "agent-b"]);
 });
 
 test("legacy delivery skips subscription RPCs while retaining visibility catch-up and gap recovery", async () => {
@@ -713,6 +623,33 @@ test("legacy delivery skips subscription RPCs while retaining visibility catch-u
     limit: 40,
     projection: "projected",
   });
+});
+
+test("legacy delivery catches up after returning to a view or foreground", async () => {
+  const world = new TimelineWorld();
+  world.sync.setDeliveryMode("legacy");
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const firstAgentA = await world.nextFetch("agent-a");
+  firstAgentA.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-b"]);
+  const agentB = await world.nextFetch("agent-b");
+  agentB.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-b")).toBe("ready"));
+
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const secondAgentA = await world.nextFetch("agent-a");
+  secondAgentA.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.setActive(false);
+  world.sync.setActive(true);
+  const foregroundAgentA = await world.nextFetch("agent-a");
+  foregroundAgentA.respond({ hasNewer: false });
+
+  world.expectNoPendingMembership();
 });
 
 test("switching from legacy to selective delivery publishes membership and catches up once", async () => {

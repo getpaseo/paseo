@@ -101,6 +101,29 @@ describe("test-daemon-connection connectToDaemon", () => {
     expect(probe.clientIdsRequested).toBe(2);
   });
 
+  it("keeps direct TCP probes on the renderer WebSocket", async () => {
+    const { connectToDaemon } = await import("./test-daemon-connection");
+    const deps = {
+      ...probe.deps,
+      createWebSocketTransportFactory: () => {
+        throw new Error("Direct TCP must not use the desktop WebSocket bridge");
+      },
+    };
+
+    const result = await connectToDaemon(
+      {
+        id: "direct:lan:6767",
+        type: "directTcp",
+        endpoint: "lan:6767",
+      },
+      undefined,
+      deps,
+    );
+    await result.client.close();
+
+    expect(probe.createdConfigs()[0]?.transportFactory).toBeUndefined();
+  });
+
   it("encodes the local socket target into the client config", async () => {
     const { connectToDaemon } = await import("./test-daemon-connection");
     const result = await connectToDaemon(
@@ -132,6 +155,27 @@ describe("test-daemon-connection connectToDaemon", () => {
     await result.client.close();
 
     expect(probe.createdConfigs()[0]?.password).toBe("shared-secret");
+  });
+
+  it("passes performance tracing into the connected client", async () => {
+    const { connectToDaemon } = await import("./test-daemon-connection");
+    const trace = {
+      isEnabled: () => true,
+      beginSection: vi.fn(),
+      endSection: vi.fn(),
+    };
+    const result = await connectToDaemon(
+      {
+        id: "direct:lan:6767",
+        type: "directTcp",
+        endpoint: "lan:6767",
+      },
+      { trace },
+      probe.deps,
+    );
+    await result.client.close();
+
+    expect(probe.createdConfigs()[0]?.trace).toBe(trace);
   });
 
   it("uses relay TLS from the stored connection", async () => {

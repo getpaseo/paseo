@@ -21,6 +21,7 @@ import {
   selectNewWorkspaceProject,
   submitNewWorkspaceEmpty,
 } from "../support/helpers/new-workspace";
+import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { getVisibleWorkspaceAgentTabIds } from "../support/helpers/workspace-tabs";
 
@@ -397,8 +398,7 @@ async function expectWorkspaceRowInStatusBucket(
   page: Page,
   input: { serverId: string; workspaceId: string; bucket: string },
 ) {
-  await page.getByTestId("sidebar-display-preferences-menu").click();
-  await page.getByTestId("sidebar-grouping-status").click();
+  await selectSidebarStatusGrouping(page);
   await expect(
     page
       .getByTestId(`sidebar-status-group-rows-${input.bucket}`)
@@ -503,11 +503,15 @@ test.describe("Workspace model restart regressions", () => {
             createdWorkspaceId,
           ]),
         )
-        .toEqual({
-          [seeded.workspaceA]: "running",
+        .toMatchObject({
           [seeded.workspaceB]: "done",
           [createdWorkspaceId]: "done",
         });
+
+      // The restarted provider session may settle while the browser creates the sibling. Its
+      // initial running status is asserted above; this phase verifies that ownership never moves.
+      const workspaceStatuses = await fetchWorkspaceStatuses(client, [seeded.workspaceA]);
+      expect(["running", "done"]).toContain(workspaceStatuses[seeded.workspaceA]);
 
       await expectWorkspaceRowDoesNotShowIndicator(page, {
         serverId,
@@ -518,11 +522,6 @@ test.describe("Workspace model restart regressions", () => {
         serverId,
         workspaceId: createdWorkspaceId,
         indicator: "running",
-      });
-      await expectWorkspaceRowInStatusBucket(page, {
-        serverId,
-        workspaceId: seeded.workspaceA,
-        bucket: "running",
       });
       await expectWorkspaceRowInStatusBucket(page, {
         serverId,

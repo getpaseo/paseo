@@ -31,7 +31,7 @@ Use `paseo run` to start a new agent with a task:
 paseo run "implement user authentication"
 paseo run --provider codex "refactor the API layer"
 paseo run --background "run the focused test suite"
-paseo run --new-workspace worktree --worktree-mode branch-off --new-branch feature/x --base main "implement feature X"
+paseo run --new-workspace worktree --worktree-mode branch-off --new-branch feature/x --base origin/main "implement feature X"
 paseo run --workspace <workspace-id> "review the current diff"
 paseo run --output-schema schema.json "extract release notes"
 paseo run --output-schema '{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}' "summarize release notes"
@@ -60,7 +60,7 @@ paseo workspace create \
   --mode branch-off \
   --new-branch feature/auth \
   --worktree-slug feature-auth \
-  --base main
+  --base origin/main
 
 paseo workspace create \
   --isolation worktree \
@@ -192,6 +192,33 @@ paseo daemon stop              # Stop the daemon
 ```
 
 Use `PASEO_HOME` to run multiple isolated daemon instances.
+
+## Hub
+
+```bash
+paseo hub login [url]          # Approve and store organization-scoped CLI access
+paseo hub connect [url]        # Enroll this daemon using CLI access
+paseo hub projects             # List projects in the authenticated organization
+paseo hub status               # Show the current Hub relationship
+paseo hub disconnect           # End it
+paseo hub deploy [file]        # Install and activate a Hub configuration
+paseo hub deploy --dry-run     # Validate without installing or activating
+paseo hub logout               # Remove the active stored CLI login
+```
+
+`file` defaults exactly to `.paseo/hub.yml` relative to the current directory. Pass a file to use another path. The CLI does not search parent directories or alternate filenames.
+
+Pass `-p, --project <slug>` to select the project, or add optional top-level `project` metadata to the YAML. The flag wins when both are present. Project is deployment metadata, not workflow configuration, and the YAML is sent unchanged.
+
+Prompt `include` blocks are read from `.paseo/partials/` under the current directory, even when you pass an explicit configuration file. The CLI sends only the files referenced by the main YAML. Nested include-looking text inside a partial is content and is not resolved recursively. Inline-only configurations omit the partial bundle.
+
+`login` opens the Hub approval page and stores a durable organization-scoped CLI credential under `PASEO_HOME`. The stored login is separate from the daemon relationship created by `connect`. Interactive logout checks the same-origin daemon relationship and asks whether to disconnect before deleting the login. Declining removes only the login. JSON and noninteractive logout never prompt or disconnect implicitly; `--disconnect-daemon` is the explicit automation path, and `--force` applies to that daemon disconnection. If a requested disconnection fails, the login is preserved.
+
+Every command resolves and normalizes its destination before Hub or daemon work. Origin precedence is an explicit command origin or `--hub`, then `PASEO_HUB_URL`, then the active stored login origin, then the hosted default `https://hub.paseo.sh`. The hosted default never overrides an active login. Credential precedence is `--api-key <secret>`, then `PASEO_HUB_API_KEY`, then a stored login for the exact resolved origin. A stored credential is never sent to a different origin. API keys passed through flags or the environment are not stored.
+
+Human output reports the resolved destination before each action. JSON output keeps stdout machine-readable and includes the normalized Hub origin in command results where the destination would otherwise be lost.
+
+See [Daemons in Hub](/docs/hub/daemons), [Hub configuration](/docs/hub/configuration), and the [Hub public API](/docs/hub/api).
 
 ## Connecting to a remote daemon
 

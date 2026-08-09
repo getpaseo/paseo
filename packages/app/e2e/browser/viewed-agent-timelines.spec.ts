@@ -12,6 +12,7 @@ import {
   expectTurnCopyButton,
 } from "../support/helpers/agent-stream";
 import {
+  expectReconnectingToastDebounced,
   expectReconnectingToastGone,
   expectReconnectingToastVisible,
 } from "../support/helpers/workspace-ui";
@@ -97,7 +98,7 @@ async function expectAgentConsistentlyIdle(page: Page, title: string): Promise<v
 }
 
 test.describe("Viewed agent timelines", () => {
-  test("a turn that finishes while unsubscribed reopens with consistently idle chrome", async ({
+  test("a turn that finishes while hidden reopens with consistently idle chrome", async ({
     page,
   }) => {
     test.setTimeout(150_000);
@@ -105,9 +106,9 @@ test.describe("Viewed agent timelines", () => {
     const scenario = await seedViewedTimelineScenario({ firstAgentModel: "one-minute-stream" });
     try {
       await openAgent(page, scenario, scenario.firstAgentId);
-      await startVisibleTurn(page, scenario, "Finish after this chat becomes unsubscribed.");
+      await startVisibleTurn(page, scenario, "Finish after this chat becomes hidden.");
       await selectAgent(page, "Second viewed chat");
-      await subscriptions.waitForSubscribedAgents([scenario.secondAgentId], { timeout: 45_000 });
+      await subscriptions.waitForSubscribedAgents([scenario.firstAgentId, scenario.secondAgentId]);
       const finish = await scenario.client.waitForFinish(scenario.firstAgentId, 90_000);
       expect(finish.status).toBe("idle");
 
@@ -118,33 +119,7 @@ test.describe("Viewed agent timelines", () => {
     }
   });
 
-  test("an unsubscribed hidden chat catches up when shown", async ({ page }) => {
-    test.setTimeout(90_000);
-    const subscriptions = observeTimelineSubscriptions(page);
-    const scenario = await seedViewedTimelineScenario();
-    try {
-      await openAgent(page, scenario, scenario.firstAgentId);
-      await selectAgent(page, "Second viewed chat");
-      await subscriptions.waitForSubscribedAgents([scenario.secondAgentId], { timeout: 45_000 });
-      await commitMessage(
-        scenario,
-        scenario.firstAgentId,
-        "Committed after the first chat unsubscribed.",
-      );
-      await expect(
-        page.getByText("Committed after the first chat unsubscribed.", { exact: true }),
-      ).toHaveCount(0);
-      await selectAgent(page, "First viewed chat");
-      await expect(
-        page.getByText("Committed after the first chat unsubscribed.", { exact: true }),
-      ).toBeVisible();
-      await expect(page.getByText("(end of synthetic stream)", { exact: true })).toBeVisible();
-    } finally {
-      await scenario.cleanup();
-    }
-  });
-
-  test("a hidden retained chat stays current during unsubscribe grace", async ({ page }) => {
+  test("a hidden hot chat stays current", async ({ page }) => {
     test.setTimeout(60_000);
     const subscriptions = observeTimelineSubscriptions(page);
     const scenario = await seedViewedTimelineScenario();
@@ -205,6 +180,7 @@ test.describe("Viewed agent timelines", () => {
         "true",
       );
       await gate.drop();
+      await expectReconnectingToastDebounced(page);
       await expectReconnectingToastVisible(page);
       await commitMessage(scenario, scenario.firstAgentId, "Committed while the chat reconnects.");
       await expect(
@@ -217,6 +193,25 @@ test.describe("Viewed agent timelines", () => {
       });
       await expect(recoveredMessage).toHaveCount(1);
       await expect(recoveredMessage).toBeVisible();
+    } finally {
+      gate.restore();
+      await scenario.cleanup();
+    }
+  });
+
+  test("preserves reconnecting toast through retained tab switches", async ({ page }) => {
+    const gate = await installDaemonWebSocketGate(page);
+    const scenario = await seedViewedTimelineScenario();
+    try {
+      await openAgent(page, scenario, scenario.firstAgentId);
+      await selectAgent(page, "Second viewed chat");
+      await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeVisible();
+      await selectAgent(page, "First viewed chat");
+      await gate.drop();
+      await expectReconnectingToastVisible(page);
+
+      await selectAgent(page, "Second viewed chat");
+      await expectReconnectingToastVisible(page, { timeout: 500 });
     } finally {
       gate.restore();
       await scenario.cleanup();

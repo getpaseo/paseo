@@ -132,7 +132,7 @@ export function toAgentPayload(
     availableModes: cloneAvailableModes(agent.availableModes),
     features: normalizeFeatures(agent.features),
     pendingPermissions: sanitizePendingPermissions(agent.pendingPermissions),
-    persistence: sanitizePersistenceHandle(agent.persistence),
+    persistence: projectPersistenceHandleForWire(agent.persistence),
     title: options?.title ?? null,
     labels: agent.labels,
   };
@@ -213,7 +213,9 @@ export function buildStoredAgentPayload(
 
   const runtimeInfo = buildStoredRuntimeInfo(record);
   const providerAvailable = isStoredAgentProviderAvailable(record, validProviders);
-  const persistence = buildStoredPersistenceHandle(record, validProviders);
+  const persistence = projectPersistenceHandleForWire(
+    buildStoredPersistenceHandle(record, validProviders),
+  );
 
   return {
     id: record.id,
@@ -319,9 +321,16 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
       serializable.featureValues = featureValues;
     }
   }
-  const extra = sanitizeMetadata(config.extra);
-  if (extra !== undefined) {
-    serializable.extra = extra;
+  if (config.providerOptions !== undefined) {
+    const providerOptions = sanitizeOptionalJson(config.providerOptions);
+    if (providerOptions && isJsonObject(providerOptions)) {
+      serializable.providerOptions = providerOptions;
+    }
+  }
+  if (config.toolPolicy) {
+    serializable.toolPolicy = {
+      preapproved: config.toolPolicy.preapproved.map((grant) => ({ ...grant })),
+    };
   }
   if (config.systemPrompt) {
     serializable.systemPrompt = config.systemPrompt;
@@ -363,6 +372,20 @@ function sanitizePersistenceHandle(
     sanitized.metadata = metadata;
   }
   return sanitized;
+}
+
+function projectPersistenceHandleForWire(
+  handle: AgentPersistenceHandle | null,
+): AgentPersistenceHandle | null {
+  const projected = sanitizePersistenceHandle(handle);
+  if (!projected?.metadata) {
+    return projected;
+  }
+  delete projected.metadata.mcpServers;
+  if (Object.keys(projected.metadata).length === 0) {
+    delete projected.metadata;
+  }
+  return projected;
 }
 
 function cloneCapabilities(capabilities: AgentCapabilityFlags): AgentCapabilityFlags {

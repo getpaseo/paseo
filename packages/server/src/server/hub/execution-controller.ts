@@ -1,9 +1,14 @@
 import { isAbsolute } from "node:path";
 import type {
+  HubExecutionAgentCreateError,
   HubExecutionAgentCreateRequest,
   HubExecutionControlRequest,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
+import {
+  ProviderOptionsValidationError,
+  ToolPolicyUnsupportedError,
+} from "../agent/provider-options.js";
 
 import type { HubExecutionAgents, OwnedAgentEvent } from "./daemon-executions.js";
 
@@ -95,13 +100,15 @@ export class HubExecutionController {
         executionId: message.executionId,
         provider: message.provider,
         cwd: message.cwd,
-        workspaceId: message.workspaceId,
         prompt: message.prompt,
         model: message.model,
         modeId: message.modeId,
         thinkingOptionId: message.thinkingOptionId,
         featureValues: message.featureValues,
+        providerOptions: message.providerOptions,
+        toolPolicy: message.toolPolicy,
         env: message.env,
+        mcpServers: message.mcpServers,
         worktree: message.worktree,
       });
       if (this.closed) return;
@@ -113,6 +120,7 @@ export class HubExecutionController {
           agentId: result.agent.id,
           agent: result.agent,
           success: true,
+          ...(message.toolPolicy ? { toolPolicyApplied: true as const } : {}),
           error: null,
         },
       });
@@ -126,7 +134,7 @@ export class HubExecutionController {
           agentId: null,
           agent: null,
           success: false,
-          error: error instanceof Error ? error.message : String(error),
+          error: toHubCreateError(error),
         },
       });
     }
@@ -154,6 +162,28 @@ export class HubExecutionController {
       },
     });
   }
+}
+
+function toHubCreateError(error: unknown): HubExecutionAgentCreateError {
+  if (error instanceof ProviderOptionsValidationError) {
+    return {
+      code: error.code,
+      provider: error.provider,
+      issues: error.issues,
+      message: error.message,
+    };
+  }
+  if (error instanceof ToolPolicyUnsupportedError) {
+    return {
+      code: error.code,
+      provider: error.provider,
+      message: error.message,
+    };
+  }
+  return {
+    code: "create_failed",
+    message: error instanceof Error ? error.message : String(error),
+  };
 }
 
 function requireNonBlankHubAgentField(

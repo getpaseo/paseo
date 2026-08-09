@@ -67,6 +67,17 @@ npm run android:production     # Release build
 npm run android:clear          # Remove generated Android project
 ```
 
+For a production-ID release APK that local Android profiling tools can attach to:
+
+```bash
+PASEO_PROFILE_BUILD=1 npm run android:production
+```
+
+This keeps the `sh.paseo` package id, release Hermes bundle, and release optimizations. It adds
+`<profileable android:shell="true" />` and enables local Android trace markers for workspace mounts
+and daemon WebSocket traffic. The markers contain message types and sizes, never payload contents,
+and emit only while a system trace records the `sh.paseo` app (`perfetto -a sh.paseo ...`).
+
 Or from `packages/app`:
 
 ```bash

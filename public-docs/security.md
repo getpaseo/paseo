@@ -2,7 +2,7 @@
 title: Security
 description: "Security model for Paseo: architecture overview, connection methods, relay encryption, and best practices."
 nav: Security
-order: 4
+order: 5
 category: Getting started
 ---
 
@@ -58,20 +58,15 @@ If you believe a pairing offer has been compromised, restart the daemon to gener
 
 By default, the daemon listens on `127.0.0.1:6767` (localhost only). This is safe for local CLI usage but not reachable from your phone or other devices.
 
+For relay and Tailscale setup instructions, see [Connectivity](/docs/connectivity).
+
 ### Socket file (CLI only)
 
 For maximum isolation, you can configure the daemon to listen on a Unix socket file instead of a TCP port. This prevents any network access entirely, only processes on the same machine can connect. The CLI supports this mode, but the mobile app and web interface require a network connection.
 
 ### VPN access
 
-If you prefer direct connections over the relay, you can use a VPN like [Tailscale](https://tailscale.com). Tailscale creates a private network between your devices, so you can access your daemon without exposing it to the public internet.
-
-To set this up:
-
-1. Install Tailscale on your machine and phone and join them to the same [tailnet](https://tailscale.com/kb/1136/tailnet)
-2. Configure the daemon to listen on your Tailscale IP (e.g., `100.x.y.z:6767`)
-3. Add your Tailscale hostname to `hostnames` and `cors.allowedOrigins`
-4. Add the daemon as a direct connection in the Paseo app using the Tailscale address
+Use a VPN such as [Tailscale](https://tailscale.com) when you want a direct connection outside your local network. The VPN encrypts the traffic and keeps the daemon off the public internet. Bind the daemon to its VPN address, set a Paseo password, then add that address as a direct connection in the client.
 
 ### Binding to 0.0.0.0
 
@@ -138,6 +133,16 @@ Paseo wraps agent CLIs (Claude Code, Codex, OpenCode) but does not manage their 
 
 Paseo never stores or transmits provider API keys. Agents run in your user context with your existing credentials.
 
+## Hub identities and credentials
+
+Hub CLI login and daemon enrollment are separate identities. `paseo hub login [origin]` stores a durable organization-scoped human credential in a private file under `PASEO_HOME`, keyed by the normalized Hub origin. A stored credential is never sent to another origin. Protect `PASEO_HOME` as sensitive local state.
+
+Hub CLI credentials are bearer secrets. Remote Hub origins must use HTTPS; cleartext HTTP is accepted only for loopback development origins (`localhost`, `127.0.0.1`, and `[::1]`).
+
+`paseo hub connect [origin]` uses that credential, or an explicit API key, only to request a short-lived one-time enrollment token. The daemon exchanges the token and retains its own independently generated relationship credential. Logging out of the CLI does not silently remove daemon authority. Interactive logout completes any accepted same-origin daemon disconnection before deleting the login. In JSON and noninteractive use, `logout` never prompts or disconnects; pass `--disconnect-daemon` only when automation intends to remove both identities.
+
+`--api-key` and `PASEO_HUB_API_KEY` override stored login without being persisted. Prefer environment or secret-manager injection for automation, and avoid command-line flags when local process listings or shell history are visible to other users.
+
 ## Recommendations
 
 - **Use the relay** for mobile access, it's the simplest option and all traffic is end-to-end encrypted
@@ -146,3 +151,4 @@ Paseo never stores or transmits provider API keys. Agents run in your user conte
 - **Never bind to 0.0.0.0 without a password**, without one, any device on your network can connect
 - **Scope Docker mounts tightly**, agents can access mounted workspaces and provider credentials
 - **Keep your daemon updated**, security improvements are released regularly
+- **Protect the Hub configuration branch**, push access to `.paseo/hub.yml` controls what that project can reach, see [How Hub works](/docs/hub/concepts)

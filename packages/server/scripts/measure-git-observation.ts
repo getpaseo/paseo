@@ -17,6 +17,7 @@ import {
 } from "../src/utils/run-git-command.js";
 import { CheckoutDiffManager } from "../src/server/checkout-diff-manager.js";
 import {
+  subscribeToWorkspaceFileChanges,
   WorkspaceGitServiceImpl,
   type WorkspaceGitRuntimeSnapshot,
 } from "../src/server/workspace-git-service.js";
@@ -94,7 +95,7 @@ function createTrackedSubscriber(failWorktreeRoot: string | null) {
     if (failWorktreeRoot && path.resolve(args[0]) === failWorktreeRoot) {
       throw new Error("measurement watcher setup failure");
     }
-    const subscription = await parcelWatcher.subscribe(...args);
+    const subscription = await subscribeToWorkspaceFileChanges(...args);
     subscriptions.add(subscription);
     return {
       unsubscribe: async () => {

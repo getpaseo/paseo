@@ -77,6 +77,9 @@ export async function expectNoChatOutlinePreview(page: Page): Promise<void> {
 
 export async function expectNoChatOutlinePreviewWhileCrossingToSidebar(page: Page): Promise<void> {
   const railBox = await requireBoundingBox(chatOutlineRail(page));
+  const clockStart = Date.now();
+  await page.clock.install({ time: clockStart });
+  await page.clock.pauseAt(clockStart + 60_000);
   await page.mouse.move(railBox.x + railBox.width + 2, railBox.y + railBox.height / 2);
   await page.evaluate(() => {
     document.body.dataset.chatOutlinePreviewObserved = String(
@@ -91,19 +94,19 @@ export async function expectNoChatOutlinePreviewWhileCrossingToSidebar(page: Pag
     Object.assign(window, { __chatOutlinePreviewObserver: observer });
   });
 
-  for (let step = 0; step <= 10; step += 1) {
+  // Keep the transit slower than the activation delay at every point while making the whole
+  // crossing longer than it. Horizontal motion must keep postponing activation until leave
+  // cancels the final pending timer.
+  const transitSteps = 6;
+  for (let step = 0; step < transitSteps; step += 1) {
     await page.mouse.move(
-      railBox.x + railBox.width - 1 - (step * railBox.width) / 10,
+      railBox.x + railBox.width - 1 - (step * railBox.width) / transitSteps,
       railBox.y + railBox.height / 2,
     );
-    await page.evaluate(
-      () =>
-        new Promise<void>((resolve) => {
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-        }),
-    );
+    await page.clock.runFor(100);
   }
   await page.mouse.move(railBox.x - 2, railBox.y + railBox.height / 2);
+  await page.clock.runFor(200);
 
   const previewAppeared = await page.evaluate(() => {
     const observer = Reflect.get(window, "__chatOutlinePreviewObserver") as
@@ -123,26 +126,6 @@ export async function expectChatOutlinePromptToRemainBare(
   position: number,
 ): Promise<void> {
   await expect(chatOutlinePrompt(page, position)).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-}
-
-export async function expectChatOutlineAlignedWithActiveTabGlyph(page: Page): Promise<void> {
-  const outlinePill = chatOutlinePrompt(page, 1).locator("div").first();
-  const activeTabGlyph = page
-    .getByTestId("workspace-tabs-row")
-    .filter({ visible: true })
-    .locator('[role="button"][aria-selected="true"]')
-    .locator("svg")
-    .first();
-
-  await expect
-    .poll(async () => {
-      const [pillBox, glyphBox] = await Promise.all([
-        requireBoundingBox(outlinePill),
-        requireBoundingBox(activeTabGlyph),
-      ]);
-      return Math.abs(pillBox.x - glyphBox.x);
-    })
-    .toBeLessThanOrEqual(1);
 }
 
 /** Exactly one prompt is marked, without saying which — the reader always has a "you are here". */

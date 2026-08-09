@@ -38,13 +38,13 @@ export async function terminateWithTreeKill(
   }
 
   const exitPromise = waitForProcessExit(child);
-  await signalTreeOrChild(child, options.gracefulSignal ?? "SIGTERM");
+  await signalProcessTree(child, options.gracefulSignal ?? "SIGTERM");
   if (await waitForExitOrTimeout(exitPromise, options.gracefulTimeoutMs)) {
     return "terminated";
   }
 
   options.onForceSignal?.();
-  await signalTreeOrChild(child, options.forceSignal ?? "SIGKILL");
+  await signalProcessTree(child, options.forceSignal ?? "SIGKILL");
   if (options.forceTimeoutMs === undefined) {
     return "killed";
   }
@@ -53,7 +53,7 @@ export async function terminateWithTreeKill(
     : "kill-timeout";
 }
 
-function signalTreeOrChild(child: TreeKillTarget, signal: NodeJS.Signals): Promise<void> {
+export function signalProcessTree(child: TreeKillTarget, signal: NodeJS.Signals): Promise<void> {
   if (isProcessExited(child)) {
     return Promise.resolve();
   }

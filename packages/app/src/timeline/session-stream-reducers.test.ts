@@ -2715,6 +2715,49 @@ describe("processTimelineResponse", () => {
     expect(result.sideEffects).not.toContainEqual(expect.objectContaining({ type: "catch_up" }));
   });
 
+  it("keeps live assistant blocks ordered when merging a disjoint prompt-jump window", () => {
+    const live = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(
+          makeAssistantTimelineEvent("First paragraph.\n\nSecond", "assistant-1"),
+          80,
+        ),
+        makeStreamReducerEvent(makeAssistantTimelineEvent(" paragraph.", "assistant-1"), 81),
+        makeStreamReducerEvent(makeTimelineEvent("newest prompt", "user_message"), 82),
+      ],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+    });
+    expect(getAssistantTexts([...live.tail, ...live.head])).toEqual([
+      "First paragraph.",
+      "Second paragraph.",
+    ]);
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: live.tail,
+      currentHead: live.head,
+      currentCursor: live.cursor ?? undefined,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        mergeWindow: true,
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 40 },
+        hasOlder: false,
+        hasNewer: true,
+        entries: [makeTimelineEntry(1, "oldest prompt", "user_message")],
+      },
+    });
+
+    expect(getAssistantTexts([...result.tail, ...result.head])).toEqual([
+      "First paragraph.",
+      "Second paragraph.",
+    ]);
+  });
+
   it("fills the gap between a retained prompt window and the contiguous tail", () => {
     const currentTail: StreamItem[] = [
       {

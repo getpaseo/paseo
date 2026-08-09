@@ -60,7 +60,7 @@ ${agents}
 
 - [Changelog](${SITE_URL}/changelog): Release notes for the Paseo daemon, CLI, desktop, and mobile apps.
 - [Download](${SITE_URL}/download): Install Paseo on Mac, Windows, Linux, iOS, Android, or run the web app.
-- [Paseo Cloud](${SITE_URL}/cloud): Waitlist for the hosted multi-user version of Paseo.
+- [Paseo Hub](${SITE_URL}/hub): Optional service above your daemons that adds GitHub, Slack, and Discord triggers. Self-hosted, private beta.
 - [Blog](${SITE_URL}/blog): Updates and technical posts from the Paseo team.
 - [Privacy](${SITE_URL}/privacy): Privacy policy.
 - [GitHub](https://github.com/getpaseo/paseo): Source code, issues, and releases.

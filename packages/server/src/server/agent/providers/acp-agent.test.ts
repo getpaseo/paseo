@@ -1791,6 +1791,73 @@ describe("ACPAgentClient modelTransformer", () => {
   });
 });
 
+describe("ACPAgentClient catalog discovery without a model resolver", () => {
+  test("never switches models during catalog discovery even with multiple models and a thinking picker", async () => {
+    // The per-model probing that switches models lives on KimiACPAgentClient
+    // (see kimi-acp-agent.test.ts). The base client ships no catalog model resolver, so a
+    // slow or nonconforming ACP can't stall its catalog probe on extra setSessionConfigOption
+    // round trips.
+    const setSessionConfigOption = vi.fn();
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "session-1",
+              configOptions: [
+                {
+                  id: "model",
+                  name: "Model",
+                  category: "model",
+                  type: "select",
+                  currentValue: "model-a",
+                  options: [
+                    { value: "model-a", name: "Model A" },
+                    { value: "model-b", name: "Model B" },
+                  ],
+                },
+                {
+                  id: "thinking",
+                  name: "Thinking",
+                  category: "thought_level",
+                  type: "select",
+                  currentValue: "off",
+                  options: [
+                    { value: "off", name: "Off" },
+                    { value: "on", name: "On" },
+                  ],
+                },
+              ],
+            }),
+            setSessionConfigOption,
+          },
+          initialize: { agentCapabilities: {} },
+        } as unknown as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "acp",
+      logger: createTestLogger(),
+      defaultCommand: ["acp-agent"],
+      defaultModes: [],
+    });
+
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-generic-catalog",
+      force: false,
+    });
+
+    expect(setSessionConfigOption).not.toHaveBeenCalled();
+    expect(catalog.models.map((model) => model.id)).toEqual(["model-a", "model-b"]);
+  });
+});
+
 describe("ACPAgentClient config features", () => {
   test("enables Auto Accept for unattended ACP creation", () => {
     const client = new ACPAgentClient({

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyTerminalRendererReadyChange,
+  resolveTerminalStreamTarget,
   shouldReplayTerminalSnapshotForRenderer,
   shouldShowTerminalLoadingOverlay,
 } from "./terminal-renderer-readiness";
@@ -92,5 +93,43 @@ describe("terminal-renderer-readiness", () => {
         terminalStreamKey: "scope:terminal-2",
       }),
     ).toBe(false);
+  });
+
+  it("does not attach the stream before the matching renderer is ready", () => {
+    expect(
+      resolveTerminalStreamTarget({
+        terminalId: "terminal-1",
+        terminalStreamKey: "scope:terminal-1",
+        rendererReadyStreamKey: null,
+        isWorkspaceFocused: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("attaches the stream after the matching renderer is ready", () => {
+    expect(
+      resolveTerminalStreamTarget({
+        terminalId: "terminal-1",
+        terminalStreamKey: "scope:terminal-1",
+        rendererReadyStreamKey: "scope:terminal-1",
+        isWorkspaceFocused: true,
+      }),
+    ).toBe("terminal-1");
+  });
+
+  it("detaches and restores the same stream across renderer replacement", () => {
+    const targetForRenderer = (rendererReadyStreamKey: string | null) =>
+      resolveTerminalStreamTarget({
+        terminalId: "terminal-1",
+        terminalStreamKey: "scope:terminal-1",
+        rendererReadyStreamKey,
+        isWorkspaceFocused: true,
+      });
+
+    expect([
+      targetForRenderer("scope:terminal-1"),
+      targetForRenderer(null),
+      targetForRenderer("scope:terminal-1"),
+    ]).toEqual(["terminal-1", null, "terminal-1"]);
   });
 });

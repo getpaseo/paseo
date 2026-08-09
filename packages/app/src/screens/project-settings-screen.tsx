@@ -821,8 +821,7 @@ function ProjectTitleIcon({
       iconDataUri={iconDataUri}
       initial={initial}
       projectViewKey={projectViewKey}
-      imageStyle={styles.titleIcon}
-      fallbackStyle={styles.titleIconFallback}
+      size={28}
       textStyle={styles.titleIconFallbackText}
     />
   );
@@ -1104,18 +1103,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   editButton: {
     padding: theme.spacing[1],
-  },
-  titleIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: theme.borderRadius.md,
-  },
-  titleIconFallback: {
-    width: 28,
-    height: 28,
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
   },
   titleIconFallbackText: {
     fontSize: theme.fontSize.sm,
