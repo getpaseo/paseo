@@ -347,6 +347,8 @@ Override the command used to launch any provider with the `command` field. This 
 
 The `command` array completely replaces the default command for that provider. The binary must exist on the system — Paseo checks for its availability and will mark the provider as unavailable if not found.
 
+On Windows, an OpenCode command must point directly to `opencode.exe`. Paseo rejects shell scripts, command shells, and interpreter wrappers because helper cleanup requires the exact OpenCode process ID.
+
 ### OMP profiles and Pi-compatible forks
 
 OMP ships as a first-class built-in provider option. It is disabled by default; enable it with:
