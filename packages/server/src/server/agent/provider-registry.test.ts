@@ -948,6 +948,34 @@ test("kimi provider extending acp uses KimiACPAgentClient", () => {
   expect(mockState.constructorArgs.genericAcp).toEqual([]);
 });
 
+test("custom ACP profile opts into the Kimi adapter via params.acpVariant", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      "kimi-work": {
+        extends: "acp",
+        label: "Kimi (Work)",
+        command: ["kimi", "acp"],
+        params: { acpVariant: "kimi" },
+      },
+    },
+  });
+
+  expect(registry["kimi-work"].createClient(logger).provider).toBe("kimi-work");
+  expect(mockState.constructorArgs.kimi).toEqual([
+    {
+      command: ["kimi", "acp"],
+      env: undefined,
+      providerParams: { acpVariant: "kimi" },
+    },
+    {
+      command: ["kimi", "acp"],
+      env: undefined,
+      providerParams: { acpVariant: "kimi" },
+    },
+  ]);
+  expect(mockState.constructorArgs.genericAcp).toEqual([]);
+});
+
 test('extends: "acp" without command throws', () => {
   expect(() =>
     buildProviderRegistry(logger, {

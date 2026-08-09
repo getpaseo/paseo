@@ -724,6 +724,23 @@ function buildResolvedBuiltinProviders(
   return resolvedProviders;
 }
 
+const SPECIALIZED_ACP_VARIANTS = ["cursor", "kimi", "kiro", "traecli"] as const;
+
+const AcpVariantParamsSchema = z
+  .object({
+    acpVariant: z.enum(SPECIALIZED_ACP_VARIANTS).optional(),
+  })
+  .passthrough();
+
+// A specialized ACP adapter (Kimi's per-model thinking probe, Cursor's fast mode, TRAE, Kiro) is
+// otherwise selected by the exact provider id. Custom profiles get their own id, so a renamed
+// profile such as "kimi-work" would silently fall back to the generic adapter. `params.acpVariant`
+// lets a profile opt back into the built-in adapter it derives from.
+function resolveAcpVariant(providerId: string, params: unknown): string {
+  const parsed = AcpVariantParamsSchema.safeParse(params ?? {});
+  return parsed.success && parsed.data.acpVariant ? parsed.data.acpVariant : providerId;
+}
+
 function addDerivedProviders(
   resolvedProviders: Map<string, ResolvedProvider>,
   providerOverrides: Record<string, ProviderOverride>,
@@ -773,16 +790,17 @@ function addDerivedProviders(
             label: override.label ?? providerId,
             providerParams: override.params,
           };
-          if (providerId === "cursor") {
+          const acpVariant = resolveAcpVariant(providerId, override.params);
+          if (acpVariant === "cursor") {
             return new CursorACPAgentClient(acpOptions);
           }
-          if (providerId === "kimi") {
+          if (acpVariant === "kimi") {
             return new KimiACPAgentClient(acpOptions);
           }
-          if (providerId === "kiro") {
+          if (acpVariant === "kiro") {
             return new KiroACPAgentClient(acpOptions);
           }
-          if (providerId === "traecli") {
+          if (acpVariant === "traecli") {
             return new TraeACPAgentClient(acpOptions);
           }
           return new GenericACPAgentClient(acpOptions);
