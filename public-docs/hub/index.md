@@ -26,20 +26,48 @@ What that gives you today:
 
 Your daemons keep running agents where they always did. Hub decides when to ask them to.
 
-## How it fits together
+## What you write
 
-An organization holds your connections to GitHub, Slack, and Discord, and your registered daemons. Projects sit inside it, and each project has its own configuration.
+A file in your repository at `.paseo/hub.yml` says which events start an agent, and where it runs. This one answers a Slack mention in the thread it came from:
 
-```text
-organization
-├── connections
-├── daemons
-└── projects
+```yaml
+environments:
+  - name: development
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/project
+
+triggers:
+  - name: slack-help
+    on: slack.mention
+    max_runtime: 2h
+    filters:
+      workspace: T01234567
+      channels: [C01234567]
+      from_users: [U01234567]
+    steps:
+      - id: answer
+        environment: development
+        max_runtime: 30m
+        idle_timeout: 5m
+        agent:
+          provider: codex
+          mode: full-access
+        prompt:
+          - text: |
+              Help with this request.
+
+              Call hub.reply to send your response to the originating conversation.
+              Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+        allow_outputs:
+          - type: slack.reply
 ```
 
-A project is one set of environments and triggers. Split your work into projects the way you already split it in your head: one per product, per team, or per repository. Connections and daemons are shared across all of them, so a new project does not mean connecting GitHub again.
-
-[How Hub works](/docs/hub/concepts) covers this properly.
+Push it, mention the bot, and an agent starts on your machine. [Workflows](/docs/hub/workflows) builds from here through progress updates, typed inputs, and agents that choose their own model or repository.
 
 ## Reading order
 
@@ -47,22 +75,14 @@ A project is one set of environments and triggers. Split your work into projects
 2. [Daemons](/docs/hub/daemons)
 3. [Triggers](/docs/hub/triggers)
 4. [Workflows](/docs/hub/workflows)
-5. [Configuration](/docs/hub/configuration)
-6. [Security](/docs/hub/security)
+5. [GitHub access](/docs/hub/github)
+6. [Configuration](/docs/hub/configuration)
+7. [Security](/docs/hub/security)
 
 [Quickstart](/docs/hub/quickstart) goes end to end if you would rather start by doing.
 
 If a workflow accepts requests from GitHub, Slack, Discord, or the API, read [Hub security](/docs/hub/security) before giving an agent access to a working directory or output capability.
 
-## Running it
+## Where it runs
 
-Two ways: [hosted](/docs/hub/hosted) or [self-hosted](/docs/hub/self-hosting). Everything above is the same either way.
-
-Once Hub is running, approve durable CLI access and inspect the organization:
-
-```sh
-paseo hub login https://hub.example.com
-paseo hub projects
-```
-
-The login is scoped to that exact Hub origin. Use it to connect a daemon or deploy configuration without copying an API key into each command.
+Everything on this page and the pages it links to works the same way on [hosted Hub](/docs/hub/hosted) and on a Hub you run yourself under [self-hosting](/docs/hub/self-hosting).
