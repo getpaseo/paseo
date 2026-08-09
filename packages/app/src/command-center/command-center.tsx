@@ -706,7 +706,7 @@ export function CommandCenter() {
       >
         <View style={[styles.bottomSheetHeader, styles.searchRow]} testID="command-center-header">
           {state.scope === "files" ? (
-            <ScopePill label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
+            <ScopeSegment label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
           ) : null}
           <ThemedBottomSheetTextInput
             testID="command-center-input"
@@ -743,7 +743,7 @@ export function CommandCenter() {
           <View ref={setWebOverlayScope} testID="command-center-panel" style={styles.panel}>
             <View style={[styles.header, styles.searchRow]} testID="command-center-header">
               {state.scope === "files" ? (
-                <ScopePill label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
+                <ScopeSegment label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
               ) : null}
               <ThemedTextInput
                 testID="command-center-input"
@@ -789,16 +789,20 @@ function FileSearchLoadingIndicator({ loading, label }: { loading: boolean; labe
   );
 }
 
-function ScopePill({ label, onRemove }: { label: string; onRemove(): void }) {
+// The segment is a leading cell of the search row, not a badge floating inside it. It stretches to
+// the row's cross size and bleeds through the header padding with negative margins, so its height is
+// driven entirely by the input and toggling the scope can never resize the header.
+function ScopeSegment({ label, onRemove }: { label: string; onRemove(): void }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onRemove}
-      style={styles.scopePill}
+      style={styles.scopeSegment}
       testID="command-center-files-scope"
     >
-      <Text style={styles.scopePillText}>{label}</Text>
+      <ThemedFolder size={14} strokeWidth={2.2} />
+      <Text style={styles.scopeSegmentLabel}>{label}</Text>
       <ThemedX size={12} strokeWidth={2.2} />
     </Pressable>
   );
@@ -845,16 +849,24 @@ const styles = StyleSheet.create((theme) => ({
   growingInput: { flex: 1, minWidth: 0 },
   searchRow: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
   fileSearchStatus: { width: 14, height: 14, alignItems: "center", justifyContent: "center" },
-  scopePill: {
-    height: 24,
+  scopeSegment: {
+    alignSelf: "stretch",
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.full,
+    gap: theme.spacing[1.5],
+    marginVertical: -theme.spacing[3],
+    marginLeft: -theme.spacing[4],
+    paddingLeft: theme.spacing[4],
+    paddingRight: theme.spacing[2],
     backgroundColor: theme.colors.surface2,
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.border,
   },
-  scopePillText: { color: theme.colors.foreground, fontSize: theme.fontSize.xs },
+  scopeSegmentLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "500",
+  },
   results: { flex: 1 },
   sectionLabel: {
     paddingHorizontal: theme.spacing[4],
