@@ -511,11 +511,10 @@ describe("WorkspaceGitServiceImpl", () => {
   });
 
   test("bounds refresh generations and re-enqueues hot workspace successors fairly", async () => {
-    const hotCwds = Array.from(
-      { length: WORKSPACE_GIT_REFRESH_CONCURRENCY },
-      (_, index) => `/tmp/hot-repo-${index}`,
+    const hotCwds = Array.from({ length: WORKSPACE_GIT_REFRESH_CONCURRENCY }, (_, index) =>
+      path.resolve(`/tmp/hot-repo-${index}`),
     );
-    const fifthCwd = "/tmp/fifth-repo";
+    const fifthCwd = path.resolve("/tmp/fifth-repo");
     const firstReadGates = new Map(
       [...hotCwds, fifthCwd].map((cwd) => [cwd, createDeferred<CheckoutStatusGit>()]),
     );
@@ -620,7 +619,7 @@ describe("WorkspaceGitServiceImpl", () => {
   test("watcher subscription deadlines release observation admission slots", async () => {
     const cwds = Array.from(
       { length: WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY + 2 },
-      (_, index) => `/tmp/deadline-repo-${index}`,
+      (_, index) => path.resolve(`/tmp/deadline-repo-${index}`),
     );
     const stalledSubscriptions = Array.from(
       { length: WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY },
@@ -661,9 +660,8 @@ describe("WorkspaceGitServiceImpl", () => {
   });
 
   test("dispose settles queued refresh and observation work and cleans late watchers", async () => {
-    const cwds = Array.from(
-      { length: WORKSPACE_GIT_REFRESH_CONCURRENCY + 1 },
-      (_, index) => `/tmp/dispose-repo-${index}`,
+    const cwds = Array.from({ length: WORKSPACE_GIT_REFRESH_CONCURRENCY + 1 }, (_, index) =>
+      path.resolve(`/tmp/dispose-repo-${index}`),
     );
     const refreshGates = new Map(cwds.map((cwd) => [cwd, createDeferred<CheckoutStatusGit>()]));
     const getCheckoutStatus = vi.fn((cwd: string) => {
