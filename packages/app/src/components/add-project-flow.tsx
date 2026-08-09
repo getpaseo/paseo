@@ -69,7 +69,7 @@ import {
 import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { getIsElectronRuntime } from "@/constants/layout";
-import { isWeb } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 import { pickDirectory } from "@/desktop/pick-directory";
 import { useFetchQuery } from "@/data/query";
 import { getOpenProjectFailureReason, registerProjectDescriptor } from "@/hooks/open-project";
@@ -389,7 +389,6 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   }, [query]);
 
   useEffect(() => {
-    if (page.kind === "method") return;
     const timer = setTimeout(() => inputRef.current?.focus(), 0);
     return () => clearTimeout(timer);
   }, [page.kind]);
@@ -856,7 +855,25 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
                 ) : null}
               </View>
             </View>
-            {page.kind === "method" ? null : (
+            {page.kind === "method" && isNative ? (
+              // Native hardware-keyboard events need a focused responder even without a visible field.
+              <TextInput
+                key={page.kind}
+                ref={inputRef}
+                onKeyPress={handleNativeKeyPress}
+                onSubmitEditing={submitActive}
+                showSoftInputOnFocus={false}
+                caretHidden
+                contextMenuHidden
+                accessible={false}
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                pointerEvents="none"
+                style={styles.keyboardCapture}
+                testID="add-project-flow-keyboard-capture"
+              />
+            ) : null}
+            {page.kind !== "method" ? (
               <ThemedTextInput
                 key={page.kind}
                 ref={inputRef}
@@ -872,7 +889,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
                 returnKeyType="go"
                 testID="add-project-flow-input"
               />
-            )}
+            ) : null}
           </View>
           <ScrollView
             style={styles.results}
@@ -1007,6 +1024,12 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[1],
     outlineStyle: "none",
   } as object,
+  keyboardCapture: {
+    position: "absolute",
+    width: 1,
+    height: 1,
+    opacity: 0,
+  },
   results: { flexGrow: 0, flexShrink: 1, minHeight: 0 },
   resultsContent: { paddingVertical: theme.spacing[2] },
   row: {

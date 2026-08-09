@@ -73,6 +73,7 @@ test.describe("Add Project command-center flow", () => {
 
     await expect(addProjectFlowMethod(page, "directory-search")).toBeVisible();
     await expect(addProjectFlowInput(page)).toHaveCount(0);
+    await expect(addProjectFlow(page).getByRole("textbox")).toHaveCount(0);
     await expect(page.getByTestId("add-project-flow-page-host")).toHaveCount(0);
   });
 
