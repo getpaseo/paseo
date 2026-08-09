@@ -54,7 +54,7 @@ triggers:
 | `image`    | fly/docker  | Image name.                                                                                               |
 | `worktree` | no          | `branch-off`, `checkout-branch`, or `checkout-pr` target.                                                 |
 
-The `worktree` object is part of the environment. Its fields are exact authored names: `newBranch` and optional `base` for `branch-off`, `branch` for `checkout-branch`, and positive integer `prNumber` for `checkout-pr`.
+The `worktree` object is part of the environment. Its fields are exact authored names: `newBranch` and optional `base` for `branch-off`, `branch` for `checkout-branch`, and positive integer `prNumber` for `checkout-pr`. Give `base` a remote-tracking ref such as `origin/main`; see [Git worktrees](/docs/worktrees#create-a-worktree-backed-workspace).
 
 ## Triggers
 

@@ -222,6 +222,8 @@ triggers:
 
 The answer and implementation conditions cannot both be true for one classification. The workflow ends after the answer step because there is no later matching step.
 
+The classifier passes its result under `output`, and Hub validates it against the step's schema. [Structured outputs](/docs/hub/workflows#structured-outputs) shows the exact call and what an invalid one does.
+
 The implementation branch comments through the scoped GitHub credential the trigger provides; the read-only answer branch has no write or network authority to do that. On Slack and Discord, grant `slack.reply` or `discord.reply` on the branch that answers and tell the agent to call `hub.reply`.
 
 ## PR progress and final updates
