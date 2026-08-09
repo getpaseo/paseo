@@ -44,7 +44,10 @@ triggers:
         idle_timeout: 5m
         agent:
           provider: codex
-          mode: read-only
+          options:
+            approval_policy: never
+            sandbox_mode: read-only
+            web_search: disabled
         prompt:
           - text: |
               Help with this request.
@@ -58,6 +61,8 @@ triggers:
         allow_outputs:
           - type: slack.reply
 ```
+
+`agent.options` passes Codex's own settings through unchanged: no approval prompts, a read-only sandbox, no web search. Nobody is watching an unattended step, so one that stops to ask an approval question goes nowhere. [Provider-native controls](/docs/hub/security#provider-native-controls) has the equivalent block for each provider.
 
 Mention the bot in the configured channel:
 
@@ -163,7 +168,10 @@ steps:
     idle_timeout: 30s
     agent:
       provider: codex
-      mode: read-only
+      options:
+        approval_policy: never
+        sandbox_mode: read-only
+        web_search: disabled
     prompt:
       - text: Classify the request as answer or implementation.
       - text: Call hub.finish_execution with the classification as the structured result.
@@ -187,7 +195,10 @@ steps:
     idle_timeout: 2m
     agent:
       provider: codex
-      mode: read-only
+      options:
+        approval_policy: never
+        sandbox_mode: read-only
+        web_search: disabled
     prompt:
       - text: Answer the request without changing files.
       - text: Call hub.finish_execution when the step is complete.

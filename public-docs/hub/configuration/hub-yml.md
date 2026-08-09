@@ -131,6 +131,8 @@ Use `${{ paseo.prompt }}`, `${{ paseo.inputs.* }}`, `${{ steps.*.outputs.* }}`, 
 
 `agent.options` carries JSON-safe options using the selected provider's native names and nesting. Paseo validates them with that provider's strict schema before starting the session. See [Hub security](/docs/hub/security) for the trust boundary and copyable provider examples.
 
+`mode` names a Paseo agent mode ID, which is a separate surface from these options. Some modes keep the provider's interactive approval flow, and that stalls an unattended step, so set the provider's own approval and sandbox settings in `options` instead.
+
 #### Output capabilities
 
 `allow_outputs` separates permission from obligation. `max` limits how many times a capability may be emitted and defaults to `1`. Set `required: true` when the step must emit that capability at least once before it can finish successfully:

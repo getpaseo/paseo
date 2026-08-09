@@ -169,7 +169,10 @@ triggers:
         idle_timeout: 30s
         agent:
           provider: codex
-          mode: read-only
+          options:
+            approval_policy: never
+            sandbox_mode: read-only
+            web_search: disabled
         prompt:
           - text: Classify this request as answer or implementation.
           - text: Call hub.finish_execution with the classification as the structured result.
@@ -193,7 +196,10 @@ triggers:
         idle_timeout: 2m
         agent:
           provider: codex
-          mode: read-only
+          options:
+            approval_policy: never
+            sandbox_mode: read-only
+            web_search: disabled
         prompt:
           - text: Answer the request. Do not change files.
           - text: Call hub.finish_execution when the step is complete.
