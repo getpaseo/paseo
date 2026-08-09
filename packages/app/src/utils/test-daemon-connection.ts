@@ -13,6 +13,7 @@ import {
   createDesktopLocalDaemonTransportFactory,
   createDesktopWebSocketTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
+import { shouldRouteDirectTcpThroughHeaderBridge } from "@/runtime/direct-transport";
 
 export interface DaemonProbeClient {
   readonly lastError: string | null;
@@ -48,14 +49,20 @@ function resolveDirectTcpTransportFactory(
   connection: Extract<HostConnection, { type: "directTcp" }>,
   deps: Pick<DaemonConnectionDependencies<DaemonProbeClient>, "createWebSocketTransportFactory">,
 ): DaemonClientConfig["transportFactory"] {
-  // Only route through the main-process bridge when custom headers are set;
-  // headerless direct connections must stay on the renderer WebSocket so LAN
-  // targets aren't blocked by the macOS Local Network privacy gate. See
-  // host-runtime.ts createClient for the matching runtime decision.
-  if (!connection.headers || Object.keys(connection.headers).length === 0) {
+  // Mirror host-runtime.ts createClient: only header-bearing direct
+  // connections use the main-process bridge. Headerless ones return undefined
+  // so the client falls back to the renderer WebSocket. See
+  // shouldRouteDirectTcpThroughHeaderBridge for why.
+  const factory = deps.createWebSocketTransportFactory?.() ?? undefined;
+  if (
+    !shouldRouteDirectTcpThroughHeaderBridge({
+      headers: connection.headers,
+      hasWebSocketTransportFactory: factory !== undefined,
+    })
+  ) {
     return undefined;
   }
-  return deps.createWebSocketTransportFactory?.() ?? undefined;
+  return factory;
 }
 
 function normalizeNonEmptyString(value: unknown): string | null {

@@ -59,6 +59,7 @@ import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/direc
 import { ReplicaCache } from "@/runtime/replica-cache";
 import { nativePerformanceTrace } from "@/performance/native-trace";
 import { createAppWebSocketFactory } from "./websocket-factory";
+import { shouldRouteDirectTcpThroughHeaderBridge } from "./direct-transport";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
 export type HostRegistryStatus = "loading" | "ready";
@@ -503,16 +504,16 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         });
       }
       if (connection.type === "directTcp") {
-        // The main-process Node `ws` bridge is only needed to send custom
-        // request headers, which the renderer browser WebSocket can't set. On
-        // macOS the main process lacks the Local Network privacy grant, so
-        // routing headerless LAN connections through it fails with
-        // EHOSTUNREACH. Keep headerless direct connections on the renderer
-        // WebSocket and only use the bridge when headers are configured.
+        // See shouldRouteDirectTcpThroughHeaderBridge: headerless direct
+        // connections stay on the renderer WebSocket (works on macOS LAN,
+        // paseo://app origin is allowlisted); header-bearing ones use the
+        // main-process bridge so the custom headers can be sent.
         const useHeaderBridge =
-          webSocketTransportFactory &&
-          connection.headers &&
-          Object.keys(connection.headers).length > 0;
+          webSocketTransportFactory !== null &&
+          shouldRouteDirectTcpThroughHeaderBridge({
+            headers: connection.headers,
+            hasWebSocketTransportFactory: true,
+          });
         const directWebSocketConfig = useHeaderBridge
           ? { transportFactory: webSocketTransportFactory }
           : { webSocketFactory: createAppWebSocketFactory() };
