@@ -7,8 +7,8 @@ const DEFAULT_MAX_TRACKED_NATIVE_FILES = 250_000;
 const EVENT_BATCH_DELAY_MS = 10;
 const RECONCILIATION_DELAY_MS = 50;
 const NATIVE_AUDIT_QUIET_MS = 250;
-const NATIVE_AUDIT_MAX_DIRTY_MS = 2_000;
-const NATIVE_AUDIT_MIN_INTERVAL_MS = 2_000;
+const NATIVE_AUDIT_MAX_DIRTY_MS = 6_000;
+const NATIVE_AUDIT_MIN_INTERVAL_MS = 6_000;
 
 const activeObservers = new Set<RecursiveFileObserver>();
 let reconciliationCount = 0;

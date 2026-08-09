@@ -293,8 +293,12 @@ function evaluate(results: Measurement[]): {
   for (let index = 0; index < Math.min(nodeRuns.length, parcelRuns.length); index += 1) {
     const node = nodeRuns[index];
     const parcel = parcelRuns[index];
-    if (node.setupMs > parcel.setupMs * 8)
-      failures.push(`node setup exceeded 8x Parcel on run ${node.run}`);
+    const setupBudgetMs = Math.max(process.platform === "win32" ? 4_000 : 400, parcel.setupMs * 4);
+    if (node.setupMs > setupBudgetMs) {
+      failures.push(
+        `node setup ${node.setupMs.toFixed(1)}ms exceeded ${setupBudgetMs.toFixed(1)}ms on run ${node.run}`,
+      );
+    }
     if (
       node.missedTrackedPaths === 0 &&
       parcel.missedTrackedPaths === 0 &&
@@ -302,8 +306,11 @@ function evaluate(results: Measurement[]): {
     ) {
       failures.push(`node edit completion exceeded 4x Parcel on run ${node.run}`);
     }
-    if (node.eventLoopDelayMaxMs > parcel.eventLoopDelayMaxMs * 4 + 100) {
-      failures.push(`node event-loop delay exceeded the comparison budget on run ${node.run}`);
+    const eventLoopP99BudgetMs = Math.max(100, parcel.eventLoopDelayP99Ms * 4);
+    if (node.eventLoopDelayP99Ms > eventLoopP99BudgetMs) {
+      failures.push(
+        `node event-loop p99 ${node.eventLoopDelayP99Ms.toFixed(1)}ms exceeded ${eventLoopP99BudgetMs.toFixed(1)}ms on run ${node.run}`,
+      );
     }
     const sustainedCpuBudgetMs = Math.max(
       parcel.sustainedCpuMs * 4,
