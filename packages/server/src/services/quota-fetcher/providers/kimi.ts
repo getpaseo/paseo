@@ -238,6 +238,30 @@ function kimiUsageWindowsFromPayload(
   return windows;
 }
 
+// Soft-parse only: a weird `user` shape must not fail window parsing. Label is the title-cased
+// membership enum (LEVEL_BASIC → "Basic"), not a marketing plan name.
+function planLabelFromUsagePayload(payload: unknown): string | null {
+  const parsed = z
+    .object({
+      user: z
+        .object({
+          membership: z.object({ level: ApiOptionalStringSchema }).passthrough().nullish(),
+        })
+        .passthrough()
+        .nullish(),
+    })
+    .passthrough()
+    .safeParse(payload);
+  const level = parsed.success ? parsed.data.user?.membership?.level?.trim() : null;
+  if (!level) return null;
+  const words = level
+    .replace(/^LEVEL_/i, "")
+    .split(/[_\s]+/)
+    .filter((word) => word.length > 0);
+  if (words.length === 0) return null;
+  return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(" ");
+}
+
 const KimiAuthSchema = z
   .object({
     access_token: z.string().nullish(),
@@ -302,13 +326,14 @@ export class KimiQuotaProvider implements ProviderUsageFetcher {
       return unavailableUsage(this);
     }
 
-    const windows = kimiUsageWindowsFromPayload(await res.json(), this.logger);
+    const payload = await res.json();
+    const windows = kimiUsageWindowsFromPayload(payload, this.logger);
 
     return {
       providerId: this.providerId,
       displayName: this.displayName,
       status: "available",
-      planLabel: null,
+      planLabel: planLabelFromUsagePayload(payload),
       windows,
       balances: [],
       details: [],

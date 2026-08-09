@@ -1842,6 +1842,45 @@ describe("KimiQuotaProvider usage windows", () => {
     ]);
   });
 
+  it("surfaces a title-cased membership level as the plan label", async () => {
+    process.env["KIMI_TOKEN"] = "kimi_test_token";
+    const fetchApi = vi.fn(async () =>
+      jsonResponse({
+        usage: { limit: "100", remaining: "74", resetTime: "2026-02-11T17:32:50Z" },
+        user: { membership: { level: "LEVEL_BASIC" } },
+      }),
+    );
+    const provider = new KimiQuotaProvider({ logger: createLogger(), fetch: fetchApi });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.planLabel).toBe("Basic");
+  });
+
+  it("keeps usage windows when membership is malformed or missing", async () => {
+    process.env["KIMI_TOKEN"] = "kimi_test_token";
+    const fetchApi = vi.fn(async () =>
+      jsonResponse({
+        usage: { limit: "100", remaining: "74", resetTime: "2026-02-11T17:32:50Z" },
+        user: { membership: "LEVEL_BASIC" },
+      }),
+    );
+    const provider = new KimiQuotaProvider({ logger: createLogger(), fetch: fetchApi });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.status).toBe("available");
+    expect(usage.planLabel).toBeNull();
+    expect(usage.windows).toEqual([
+      expect.objectContaining({
+        id: "coding_usage",
+        label: "Weekly limit",
+        usedPct: 26,
+        remainingPct: 74,
+      }),
+    ]);
+  });
+
   it("keeps window ids unique when Kimi returns duplicate limit descriptors", async () => {
     process.env["KIMI_TOKEN"] = "kimi_test_token";
     const duplicate = {
