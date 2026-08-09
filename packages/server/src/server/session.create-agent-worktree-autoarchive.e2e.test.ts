@@ -143,12 +143,12 @@ test("create_agent_request creates a worktree and auto-archives both after the f
 
   expect(created.cwd).not.toBe(repoDir);
   const listedWithWorktree = await ctx.client.getPaseoWorktreeList({ cwd: repoDir });
-  expect(listedWithWorktree.worktrees).toEqual([
-    expect.objectContaining({
-      worktreePath: created.cwd,
-      branchName: "agent-lifecycle-dispatch-test",
-    }),
-  ]);
+  expect(listedWithWorktree.worktrees).toHaveLength(1);
+  const listedWorktree = listedWithWorktree.worktrees[0];
+  expect(listedWorktree?.branchName).toBe("agent-lifecycle-dispatch-test");
+  expect(createRealpathAwarePathMatcher(created.cwd)(listedWorktree?.worktreePath ?? "")).toBe(
+    true,
+  );
 
   await ctx.client.waitForFinish(created.id, 10000);
 
