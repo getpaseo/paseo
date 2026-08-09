@@ -194,13 +194,13 @@ describe("projects settings routes", () => {
     expect(buildSettingsAddHostRoute("retry 1")).toBe("/settings/general?addHost=retry%201");
   });
 
-  it("buildProjectsSettingsRoute returns /settings/projects", () => {
-    expect(buildProjectsSettingsRoute()).toBe("/settings/projects");
+  it("buildProjectsSettingsRoute scopes the list to a host", () => {
+    expect(buildProjectsSettingsRoute("host a")).toBe("/settings/hosts/host%20a/projects");
   });
 
   it("buildProjectSettingsRoute addresses a host-local project id", () => {
     expect(buildProjectSettingsRoute("host a", "project/1")).toBe(
-      "/settings/projects/host%20a/project%2F1",
+      "/settings/hosts/host%20a/projects/project%2F1",
     );
   });
 
@@ -265,8 +265,10 @@ describe("global routes", () => {
 describe("host settings section slugs", () => {
   it("keeps current host settings sections", () => {
     expect(normalizeHostSectionSlug("connections")).toBe("connections");
+    expect(normalizeHostSectionSlug("pair-device")).toBe("pair-device");
     expect(normalizeHostSectionSlug("agents")).toBe("agents");
     expect(normalizeHostSectionSlug("workspaces")).toBe("workspaces");
+    expect(normalizeHostSectionSlug("projects")).toBe("projects");
     expect(normalizeHostSectionSlug("providers")).toBe("providers");
     expect(normalizeHostSectionSlug("usage")).toBe("usage");
     expect(normalizeHostSectionSlug("host")).toBe("host");

@@ -28,8 +28,8 @@ import {
   cloneElement,
 } from "react";
 import type { ComponentType, ReactNode } from "react";
-import { MarkdownIt, type ASTNode, type RenderRules } from "react-native-markdown-display";
-import { useQuery } from "@tanstack/react-query";
+import type MarkdownIt from "markdown-it";
+import { type ASTNode, type RenderRules } from "react-native-markdown-display";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
   Circle,
@@ -48,7 +48,7 @@ import {
   FileSymlink,
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { Theme } from "@/styles/theme";
+import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import Animated, {
   Easing,
@@ -72,22 +72,11 @@ import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
-import {
-  getAssistantImageLoadStateFromMetadata,
-  getAssistantImageMetadata,
-  setAssistantImageMetadata,
-  type AssistantImageLoadState,
-} from "@/utils/assistant-image-metadata";
 import { setAssistantMarkdownBlockHeight } from "@/utils/assistant-message-height-estimate";
-import { resolveAssistantImageSource } from "@/utils/assistant-image-source";
-import {
-  createPreviewAttachmentId,
-  getFileNameFromPath,
-  parseImageDataUrl,
-} from "@/attachments/utils";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { PlanCard } from "./plan-card";
 import { useToolCallSheet } from "./tool-call-sheet";
@@ -102,8 +91,7 @@ import {
   useAssistantLinkPress,
 } from "@/assistant-file-links";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
-import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
-import { persistAttachmentFromBytes, persistAttachmentFromDataUrl } from "@/attachments/service";
+import { useAssistantImage } from "@/assistant-image/use-assistant-image";
 import {
   AttachmentFrame,
   AttachmentLabel,
@@ -117,6 +105,12 @@ import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import {
+  markdownCopyDataSet,
+  markdownCopyOrderedListDataSet,
+  markdownCopyTableCellDataSet,
+  type MarkdownCopyInlineTag,
+} from "@/assistant-selection-copy/markup";
 export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
 
@@ -132,6 +126,7 @@ interface UserMessageProps {
   client?: DaemonClient | null;
   isFirstInGroup?: boolean;
   isLastInGroup?: boolean;
+  isPending?: boolean;
   disableOuterSpacing?: boolean;
 }
 
@@ -381,6 +376,7 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     alignSelf: "flex-end",
     flexDirection: "row",
     alignItems: "center",
+    height: 24,
     gap: theme.spacing[2],
     marginTop: theme.spacing[2],
   },
@@ -425,6 +421,7 @@ export const UserMessage = memo(function UserMessage({
   client,
   isFirstInGroup = true,
   isLastInGroup = true,
+  isPending = false,
   disableOuterSpacing,
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
@@ -436,7 +433,7 @@ export const UserMessage = memo(function UserMessage({
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
   const hasAttachments = attachments.length > 0;
-  const showTrailingRow = hasText && (isCompact || isNative || isHovered);
+  const showTrailingRow = !isPending && hasText && (isCompact || isNative || isHovered);
   const formattedTimestamp = useMemo(
     () => formatMessageTimestamp(new Date(timestamp)),
     [timestamp],
@@ -489,7 +486,7 @@ export const UserMessage = memo(function UserMessage({
   );
 
   return (
-    <View style={containerStyle} testID="user-message">
+    <View style={containerStyle} testID="user-message" aria-busy={isPending}>
       <View
         style={userMessageStylesheet.content}
         onPointerEnter={handlePointerEnter}
@@ -529,9 +526,15 @@ export const UserMessage = memo(function UserMessage({
           {hasText ? <MarkdownRenderer text={message} enableHtmlish={false} /> : null}
         </View>
         {hasText ? (
-          <View style={trailingRowStyle} pointerEvents={showTrailingRow ? "auto" : "none"}>
-            <Text style={userMessageStylesheet.timestampText}>{formattedTimestamp}</Text>
-            {capabilities ? (
+          <View
+            style={trailingRowStyle}
+            pointerEvents={showTrailingRow ? "auto" : "none"}
+            testID="user-message-trailing-row"
+          >
+            <Text style={userMessageStylesheet.timestampText} testID="user-message-timestamp">
+              {formattedTimestamp}
+            </Text>
+            {capabilities && messageId ? (
               <RewindMenu
                 capabilities={capabilities}
                 isPending={rewindMutation.isPending}
@@ -725,6 +728,7 @@ export const LiveElapsed = memo(function LiveElapsed({
 });
 
 interface AssistantMessageProps {
+  occurrenceKey: string;
   message: string;
   timestamp: number;
   workspaceRoot?: string;
@@ -753,10 +757,20 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   imageSurface: {
     width: "100%",
     overflow: "hidden",
+    position: "relative",
   },
   image: {
     width: "100%",
     height: "100%",
+  },
+  imageLoadingOverlay: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: "center",
+    justifyContent: "center",
   },
   imageState: {
     alignItems: "center",
@@ -774,125 +788,9 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
 
 const ASSISTANT_IMAGE_MIN_HEIGHT = 160;
 
-const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedImage({
-  uri,
-  alt,
-  containerStyle,
-  source,
-  workspaceRoot,
-  serverId,
-}: {
-  uri: string;
-  alt?: string;
-  containerStyle?: StyleProp<ViewStyle>;
-  source: string;
-  workspaceRoot?: string;
-  serverId?: string;
-}) {
-  const cachedMetadata = useMemo(
-    () => getAssistantImageMetadata({ source, workspaceRoot, serverId }),
-    [serverId, source, workspaceRoot],
-  );
-  const [loadState, setLoadState] = useState<AssistantImageLoadState>(() =>
-    getAssistantImageLoadStateFromMetadata(cachedMetadata),
-  );
-
-  useEffect(() => {
-    if (cachedMetadata) {
-      setLoadState(getAssistantImageLoadStateFromMetadata(cachedMetadata));
-      return () => {};
-    }
-
-    setLoadState({ status: "loading" });
-    let cancelled = false;
-
-    Image.getSize(
-      uri,
-      (width, height) => {
-        if (cancelled) {
-          return;
-        }
-        if (width > 0 && height > 0) {
-          const metadata = setAssistantImageMetadata(
-            { source, workspaceRoot, serverId },
-            { width, height },
-          );
-          setLoadState({
-            status: "ready",
-            aspectRatio: metadata?.aspectRatio ?? width / height,
-          });
-        }
-      },
-      () => {
-        if (cancelled) {
-          return;
-        }
-        setLoadState({ status: "error" });
-      },
-    );
-
-    return () => {
-      cancelled = true;
-    };
-  }, [cachedMetadata, serverId, source, uri, workspaceRoot]);
-
-  const handleImageError = useCallback(() => {
-    setLoadState({ status: "error" });
-  }, []);
-  const { t } = useTranslation();
-  const surfaceStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [
-      assistantMessageStylesheet.imageSurface,
-      loadState.status === "ready"
-        ? { aspectRatio: loadState.aspectRatio }
-        : { height: ASSISTANT_IMAGE_MIN_HEIGHT },
-    ],
-    [loadState],
-  );
-  const frameStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [assistantMessageStylesheet.imageFrame, containerStyle],
-    [containerStyle],
-  );
-  const stateSurfaceStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [surfaceStyle, assistantMessageStylesheet.imageState],
-    [surfaceStyle],
-  );
-  const imageSource = useMemo(() => ({ uri }), [uri]);
-
-  if (loadState.status !== "ready") {
-    return (
-      <View style={frameStyle}>
-        <View style={stateSurfaceStyle}>
-          {loadState.status === "loading" ? (
-            <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
-          ) : null}
-          {loadState.status === "error" ? (
-            <Text style={assistantMessageStylesheet.imageErrorText}>
-              {t("message.attachments.imageUnavailable")}
-            </Text>
-          ) : null}
-        </View>
-      </View>
-    );
-  }
-
-  return (
-    <View style={frameStyle}>
-      <View style={surfaceStyle}>
-        <Image
-          source={imageSource}
-          style={assistantMessageStylesheet.image}
-          resizeMode="contain"
-          accessibilityLabel={alt}
-          onError={handleImageError}
-        />
-      </View>
-    </View>
-  );
-});
-
 function AssistantMarkdownImage({
   source,
+  occurrenceKey,
   alt,
   hasLeadingContent,
   client,
@@ -900,18 +798,13 @@ function AssistantMarkdownImage({
   serverId,
 }: {
   source: string;
+  occurrenceKey: string;
   alt?: string;
   hasLeadingContent: boolean;
   client?: DaemonClient | null;
   workspaceRoot?: string;
   serverId?: string;
 }) {
-  const { t } = useTranslation();
-  const resolution = useMemo(
-    () => resolveAssistantImageSource({ source, workspaceRoot }),
-    [source, workspaceRoot],
-  );
-  const dataImage = useMemo(() => parseImageDataUrl(source), [source]);
   const containerStyle = useMemo<StyleProp<ViewStyle>>(
     () => ({
       marginTop: hasLeadingContent ? 16 : 0,
@@ -919,64 +812,31 @@ function AssistantMarkdownImage({
     }),
     [hasLeadingContent],
   );
-
-  const query = useQuery({
-    queryKey: [
-      "assistantMarkdownImage",
-      serverId ?? "unknown-server",
-      resolution?.kind === "file_rpc" ? resolution.cwd : null,
-      resolution?.kind === "file_rpc" ? resolution.path : null,
-    ],
-    enabled: Boolean(client && resolution?.kind === "file_rpc"),
-    staleTime: 30_000,
-    queryFn: async () => {
-      if (!client || !resolution || resolution.kind !== "file_rpc") {
-        return null;
-      }
-
-      const file = await client.readFile(resolution.cwd, resolution.path);
-      if (file.kind !== "image") {
-        throw new Error(t("message.attachments.imagePreviewUnavailable"));
-      }
-
-      return await persistAttachmentFromBytes({
-        id: createPreviewAttachmentId({
-          mimeType: file.mime,
-          path: file.path || resolution.path,
-          size: file.size,
-          modifiedAt: file.modifiedAt,
-          contentLength: file.bytes.byteLength,
-        }),
-        bytes: file.bytes,
-        mimeType: file.mime,
-        fileName: getFileNameFromPath(file.path || resolution.path),
-      });
-    },
+  const image = useAssistantImage({
+    source,
+    occurrenceKey,
+    client,
+    workspaceRoot,
+    serverId,
   });
-  const dataImageQuery = useQuery({
-    queryKey: ["assistantMarkdownDataImage", dataImage?.cacheKey ?? null],
-    enabled: dataImage !== null,
-    staleTime: 30_000,
-    queryFn: async () => {
-      if (!dataImage) {
-        return null;
-      }
-
-      return await persistAttachmentFromDataUrl({
-        id: createPreviewAttachmentId({
-          mimeType: dataImage.mimeType,
-          contentLength: dataImage.base64.length,
-        }),
-        dataUrl: source,
-        mimeType: dataImage.mimeType,
-      });
-    },
-  });
-
-  const fileAssetUri = useAttachmentPreviewUrl(query.data);
-  const dataImageAssetUri = useAttachmentPreviewUrl(dataImageQuery.data);
-  const directUri = resolution?.kind === "direct" && !dataImage ? resolution.uri : null;
-  const resolvedUri = directUri ?? dataImageAssetUri ?? fileAssetUri ?? null;
+  const binding = image.status === "failed" ? null : image.binding;
+  const aspectRatio = image.status === "failed" ? null : image.aspectRatio;
+  const imageUri = binding?.uri ?? "";
+  const imageSource = useMemo(() => ({ uri: imageUri }), [imageUri]);
+  const frameStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [assistantMessageStylesheet.imageFrame, containerStyle],
+    [containerStyle],
+  );
+  const imageSizeStyle = useMemo<ViewStyle>(() => {
+    if (aspectRatio) {
+      return { aspectRatio };
+    }
+    return { height: ASSISTANT_IMAGE_MIN_HEIGHT };
+  }, [aspectRatio]);
+  const surfaceStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [assistantMessageStylesheet.imageSurface, imageSizeStyle],
+    [imageSizeStyle],
+  );
 
   const stateFrameStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
@@ -988,20 +848,15 @@ function AssistantMarkdownImage({
     [containerStyle],
   );
 
-  if (resolvedUri) {
+  if (image.status === "failed") {
     return (
-      <AssistantMarkdownResolvedImage
-        uri={resolvedUri}
-        alt={alt}
-        containerStyle={containerStyle}
-        source={source}
-        workspaceRoot={workspaceRoot}
-        serverId={serverId}
-      />
+      <View style={stateFrameStyle}>
+        <Text style={assistantMessageStylesheet.imageErrorText}>{image.message}</Text>
+      </View>
     );
   }
 
-  if (query.isLoading || dataImageQuery.isLoading) {
+  if (!binding) {
     return (
       <View style={stateFrameStyle}>
         <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
@@ -1009,33 +864,28 @@ function AssistantMarkdownImage({
     );
   }
 
-  const errorText = resolveAssistantImageErrorText(
-    query.error,
-    dataImageQuery.error,
-    t("message.attachments.imagePreviewLoadFailed"),
-  );
-
   return (
-    <View style={stateFrameStyle}>
-      <Text style={assistantMessageStylesheet.imageErrorText}>{errorText}</Text>
+    <View style={frameStyle}>
+      <View style={surfaceStyle} accessibilityRole="image" accessibilityLabel={alt}>
+        <Image
+          ref={binding.onRef}
+          source={imageSource}
+          style={assistantMessageStylesheet.image}
+          resizeMode="contain"
+          onLoad={binding.onLoad}
+          onError={binding.onError}
+        />
+        {image.status === "loading" ? (
+          <View pointerEvents="none" style={assistantMessageStylesheet.imageLoadingOverlay}>
+            <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
 
-function resolveAssistantImageErrorText(
-  fileError: unknown,
-  dataError: unknown,
-  fallbackText: string,
-): string {
-  if (fileError instanceof Error) return fileError.message;
-  if (dataError instanceof Error) return dataError.message;
-  return fallbackText;
-}
-
-function getInlineCodeAutoLinkUrl(
-  markdownParser: ReturnType<typeof MarkdownIt>,
-  content: string,
-): string | null {
+function getInlineCodeAutoLinkUrl(markdownParser: MarkdownIt, content: string): string | null {
   const trimmed = content.trim();
   if (!trimmed) {
     return null;
@@ -1080,6 +930,7 @@ function getMarkdownLinkSource(node: AssistantMarkdownAstNode): AssistantFileLin
   return {
     href: typeof node.attributes?.href === "string" ? node.attributes.href : "",
     text: getMarkdownNodeText(node),
+    title: typeof node.attributes?.title === "string" ? node.attributes.title : undefined,
     markup: node.markup,
     sourceInfo: node.sourceInfo,
     sourceType: node.sourceType === "inline-code" ? "inline-code" : undefined,
@@ -1187,9 +1038,9 @@ export const TurnCopyButton = memo(function TurnCopyButton({
           ? turnCopyButtonStylesheet.iconHoveredColor.color
           : turnCopyButtonStylesheet.iconColor.color;
         return copied ? (
-          <Check size={16} color={iconColor} />
+          <Check size={ICON_SIZE.sm} color={iconColor} />
         ) : (
-          <Copy size={16} color={iconColor} />
+          <Copy size={ICON_SIZE.sm} color={iconColor} />
         );
       }}
     </Pressable>
@@ -1516,6 +1367,7 @@ interface MarkdownInheritedTextProps {
   textStyle: TextStyle;
   style?: StyleProp<TextStyle>;
   monoSurface?: boolean;
+  copyTag?: MarkdownCopyInlineTag;
   children: ReactNode;
 }
 
@@ -1524,6 +1376,7 @@ function MarkdownInheritedText({
   textStyle,
   style: overrideStyle,
   monoSurface,
+  copyTag,
   children,
 }: MarkdownInheritedTextProps) {
   const style = useMemo(
@@ -1539,6 +1392,7 @@ function MarkdownInheritedText({
   return (
     <MarkdownTextSpan
       monoSurface={monoSurface}
+      copyTag={copyTag}
       style={style}
       onPress={linkPress?.onPress}
       accessibilityRole={linkPress?.accessibilityRole}
@@ -1562,16 +1416,31 @@ function MarkdownListItemContent({ contentStyle, children }: MarkdownListItemCon
 
 interface MarkdownListViewProps {
   baseStyle: ViewStyle;
+  copyTag: "ol" | "ul";
+  orderedStart?: unknown;
   spacing: { marginTop: number; marginBottom: number };
   children: ReactNode;
 }
 
-function MarkdownListView({ baseStyle, spacing, children }: MarkdownListViewProps) {
+function MarkdownListView({
+  baseStyle,
+  copyTag,
+  orderedStart,
+  spacing,
+  children,
+}: MarkdownListViewProps) {
   const style = useMemo(() => [baseStyle, spacing], [baseStyle, spacing]);
-  return <View style={style}>{children}</View>;
+  const copyDataSet =
+    copyTag === "ol" ? markdownCopyOrderedListDataSet(orderedStart) : markdownCopyDataSet.ul;
+  return (
+    <View style={style} dataSet={copyDataSet}>
+      {children}
+    </View>
+  );
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
+  occurrenceKey,
   message,
   timestamp: _timestamp,
   workspaceRoot,
@@ -1580,18 +1449,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   spacing = "default",
   onOpenLocalhostUrl,
 }: AssistantMessageProps) {
-  const markdownParser = useMemo(() => {
-    const parser = MarkdownIt({ typographer: true, linkify: true });
-    const defaultValidateLink = parser.validateLink.bind(parser);
-    parser.validateLink = (url: string) => {
-      if (url.trim().toLowerCase().startsWith("file://")) {
-        return true;
-      }
-
-      return defaultValidateLink(url);
-    };
-    return parser;
-  }, []);
+  const markdownParser = useMemo(createAssistantMarkdownParser, []);
 
   const fileLinkActions = useAssistantFileLinkActions();
   const handleMarkdownLinkPress = useStableEvent((url: string) => {
@@ -1606,6 +1464,103 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   const markdownRules = useMemo<RenderRules>(() => {
     return {
+      heading1: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
+        <View key={node.key} style={styles._VIEW_SAFE_heading1} dataSet={markdownCopyDataSet.h1}>
+          {children}
+        </View>
+      ),
+      heading2: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
+        <View key={node.key} style={styles._VIEW_SAFE_heading2} dataSet={markdownCopyDataSet.h2}>
+          {children}
+        </View>
+      ),
+      heading3: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
+        <View key={node.key} style={styles._VIEW_SAFE_heading3} dataSet={markdownCopyDataSet.h3}>
+          {children}
+        </View>
+      ),
+      heading4: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
+        <View key={node.key} style={styles._VIEW_SAFE_heading4} dataSet={markdownCopyDataSet.h4}>
+          {children}
+        </View>
+      ),
+      heading5: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
+        <View key={node.key} style={styles._VIEW_SAFE_heading5} dataSet={markdownCopyDataSet.h5}>
+          {children}
+        </View>
+      ),
+      heading6: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
+        <View key={node.key} style={styles._VIEW_SAFE_heading6} dataSet={markdownCopyDataSet.h6}>
+          {children}
+        </View>
+      ),
+      blockquote: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
+        <View
+          key={node.key}
+          style={styles._VIEW_SAFE_blockquote}
+          dataSet={markdownCopyDataSet.blockquote}
+        >
+          {children}
+        </View>
+      ),
+      hr: (node: ASTNode, _children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
+        <View key={node.key} style={styles._VIEW_SAFE_hr} dataSet={markdownCopyDataSet.hr} />
+      ),
+      table: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
+        <View key={node.key} style={styles._VIEW_SAFE_table} dataSet={markdownCopyDataSet.table}>
+          {children}
+        </View>
+      ),
+      thead: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
+        <View key={node.key} style={styles._VIEW_SAFE_thead} dataSet={markdownCopyDataSet.thead}>
+          {children}
+        </View>
+      ),
+      tbody: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
+        <View key={node.key} style={styles._VIEW_SAFE_tbody} dataSet={markdownCopyDataSet.tbody}>
+          {children}
+        </View>
+      ),
+      tr: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
+        <View key={node.key} style={styles._VIEW_SAFE_tr} dataSet={markdownCopyDataSet.tr}>
+          {children}
+        </View>
+      ),
       text: (
         node: ASTNode,
         _children: ReactNode[],
@@ -1652,6 +1607,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       ) => (
         <MarkdownInheritedText
           key={node.key}
+          copyTag="strong"
           inheritedStyles={inheritedStyles}
           textStyle={styles.strong}
         >
@@ -1667,6 +1623,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       ) => (
         <MarkdownInheritedText
           key={node.key}
+          copyTag="em"
           inheritedStyles={inheritedStyles}
           textStyle={styles.em}
         >
@@ -1682,6 +1639,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       ) => (
         <MarkdownInheritedText
           key={node.key}
+          copyTag="s"
           inheritedStyles={inheritedStyles}
           textStyle={styles.s}
         >
@@ -1702,7 +1660,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         _parent: ASTNode[],
         styles: MarkdownStyles,
       ) => (
-        <MarkdownTextSpan key={node.key} style={styles.hardbreak}>
+        <MarkdownTextSpan key={node.key} style={styles.hardbreak} copyTag="br">
           {"\n"}
         </MarkdownTextSpan>
       ),
@@ -1797,6 +1755,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         return (
           <MarkdownInheritedText
             key={node.key}
+            copyTag="code"
             inheritedStyles={inheritedStyles}
             textStyle={styles.code_inline}
             monoSurface
@@ -1814,6 +1773,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         <MarkdownListView
           key={node.key}
           baseStyle={styles.bullet_list}
+          copyTag="ul"
           spacing={getMarkdownListSpacing(node, parent)}
         >
           {children}
@@ -1828,6 +1788,8 @@ export const AssistantMessage = memo(function AssistantMessage({
         <MarkdownListView
           key={node.key}
           baseStyle={styles.ordered_list}
+          copyTag="ol"
+          orderedStart={node.attributes?.start}
           spacing={getMarkdownListSpacing(node, parent)}
         >
           {children}
@@ -1844,8 +1806,10 @@ export const AssistantMessage = memo(function AssistantMessage({
         const contentStyle = isOrdered ? styles.ordered_list_content : styles.bullet_list_content;
 
         return (
-          <View key={node.key} style={styles.list_item}>
-            <Text style={iconStyle}>{marker}</Text>
+          <View key={node.key} style={styles.list_item} dataSet={markdownCopyDataSet.li}>
+            <Text style={iconStyle} dataSet={markdownCopyDataSet.ignore}>
+              {marker}
+            </Text>
             <MarkdownListItemContent contentStyle={contentStyle}>
               {children}
             </MarkdownListItemContent>
@@ -1854,12 +1818,22 @@ export const AssistantMessage = memo(function AssistantMessage({
       },
       th: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
         <MarkdownTableCellText key={node.key}>
-          <View style={styles._VIEW_SAFE_th}>{children}</View>
+          <View
+            style={styles._VIEW_SAFE_th}
+            dataSet={markdownCopyTableCellDataSet("th", node.attributes?.style)}
+          >
+            {children}
+          </View>
         </MarkdownTableCellText>
       ),
       td: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
         <MarkdownTableCellText key={node.key}>
-          <View style={styles._VIEW_SAFE_td}>{children}</View>
+          <View
+            style={styles._VIEW_SAFE_td}
+            dataSet={markdownCopyTableCellDataSet("td", node.attributes?.style)}
+          >
+            {children}
+          </View>
         </MarkdownTableCellText>
       ),
       paragraph: (
@@ -1910,6 +1884,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           <AssistantMarkdownImage
             key={node.key}
             source={String(node.attributes?.src ?? "")}
+            occurrenceKey={`${occurrenceKey}:${node.key}`}
             alt={typeof node.attributes?.alt === "string" ? node.attributes.alt : undefined}
             hasLeadingContent={hasLeadingContent}
             client={client}
@@ -1919,7 +1894,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         );
       },
     };
-  }, [client, fileLinkActions, markdownParser, serverId, workspaceRoot]);
+  }, [client, fileLinkActions, markdownParser, occurrenceKey, serverId, workspaceRoot]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
   const keyedBlocks = useMemo(

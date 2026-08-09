@@ -4,10 +4,23 @@ import {
   resolveDesktopAppChromeLayout,
   resolveDesktopAppContentMinimum,
   resolveDesktopExplorerWidth,
+  resolveDesktopSidebarVisibility,
   resolveDesktopSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
 
 describe("desktop sidebar layout", () => {
+  it("keeps a retained sidebar hidden while app chrome is suppressed", () => {
+    expect(
+      resolveDesktopSidebarVisibility({
+        chromeEnabled: false,
+        isCompactLayout: false,
+        isMounted: true,
+        isOpen: true,
+        canShare: true,
+      }),
+    ).toBe(false);
+  });
+
   it("keeps the sidebar toggle window-owned beside left window controls", () => {
     expect(
       resolveDesktopAppChromeLayout({

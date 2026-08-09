@@ -2,9 +2,14 @@ import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 interface FakeSpawnBehavior {
+  closeDelayMs?: number;
   delayMs?: number;
   emitError?: Error;
+  exitDelayMs?: number;
   exitCode?: number | null;
+  killCloseDelayMs?: number;
+  killExitDelayMs?: number;
+  spawnError?: Error;
   stderrData?: Buffer | string;
   stdoutData?: Buffer | string;
 }
@@ -43,10 +48,11 @@ class FakeChildProcess extends EventEmitter {
   public readonly stdout = new EventEmitter();
   public killed = false;
   public killSignals: NodeJS.Signals[] = [];
+  public closed = false;
+  public exited = false;
 
   private readonly behavior: FakeSpawnBehavior;
   private readonly timers: NodeJS.Timeout[] = [];
-  private closed = false;
 
   public constructor(behavior: FakeSpawnBehavior) {
     super();
@@ -69,17 +75,31 @@ class FakeChildProcess extends EventEmitter {
     this.killed = true;
     this.killSignals.push(signal);
     this.clearTimers();
+    const exitDelayMs = this.behavior.killExitDelayMs ?? 0;
     this.schedule(() => {
-      this.finishClose({
+      this.finishExit({
         exitCode: null,
         signal,
       });
-    }, 0);
+    }, exitDelayMs);
+    this.schedule(
+      () => {
+        this.finishClose({
+          exitCode: null,
+          signal,
+        });
+      },
+      Math.max(exitDelayMs, this.behavior.killCloseDelayMs ?? exitDelayMs),
+    );
     return true;
   }
 
   public dispose(): void {
     this.clearTimers();
+    if (!this.exited) {
+      fakeSpawnController.activeCount -= 1;
+      this.exited = true;
+    }
     this.closed = true;
   }
 
@@ -108,12 +128,22 @@ class FakeChildProcess extends EventEmitter {
       return;
     }
 
+    const exitDelayMs = this.behavior.exitDelayMs ?? this.behavior.delayMs ?? 0;
     this.schedule(() => {
-      this.finishClose({
+      this.finishExit({
         exitCode: this.behavior.exitCode ?? 0,
         signal: null,
       });
-    }, this.behavior.delayMs ?? 0);
+    }, exitDelayMs);
+    this.schedule(
+      () => {
+        this.finishClose({
+          exitCode: this.behavior.exitCode ?? 0,
+          signal: null,
+        });
+      },
+      Math.max(exitDelayMs, this.behavior.closeDelayMs ?? this.behavior.delayMs ?? exitDelayMs),
+    );
   }
 
   private finishClose({
@@ -125,19 +155,32 @@ class FakeChildProcess extends EventEmitter {
   }): void {
     if (this.closed) return;
 
+    this.finishExit({ exitCode, signal });
     this.closed = true;
     this.clearTimers();
-    fakeSpawnController.activeCount -= 1;
     this.emit("close", exitCode, signal);
+  }
+
+  private finishExit({
+    exitCode,
+    signal,
+  }: {
+    exitCode: number | null;
+    signal: NodeJS.Signals | null;
+  }): void {
+    if (this.exited) return;
+
+    this.exited = true;
+    fakeSpawnController.activeCount -= 1;
+    this.emit("exit", exitCode, signal);
   }
 
   private finishError(error: Error): void {
     if (this.closed) return;
 
-    this.closed = true;
     this.clearTimers();
-    fakeSpawnController.activeCount -= 1;
     this.emit("error", error);
+    this.finishClose({ exitCode: null, signal: null });
   }
 
   private schedule(callback: () => void, delayMs: number): void {
@@ -160,6 +203,9 @@ vi.mock("node:child_process", async () => {
     ...actual,
     spawn: vi.fn(() => {
       const behavior = fakeSpawnController.queue.shift() ?? {};
+      if (behavior.spawnError) {
+        throw behavior.spawnError;
+      }
       const child = new FakeChildProcess(behavior);
       fakeSpawnController.processes.push(child);
       return child as unknown as ReturnType<typeof actual.spawn>;
@@ -230,6 +276,139 @@ describe("runGitCommand", () => {
     });
   });
 
+  it("holds the limiter slot until a timed out process exits without waiting for close", async () => {
+    const { runGitCommand } = await loadRunGitCommand(1);
+
+    enqueueSpawnBehaviors(
+      { delayMs: 5_000, killExitDelayMs: 100, killCloseDelayMs: 500 },
+      { delayMs: 0, stdoutData: "next" },
+    );
+
+    const timedOut = runGitCommand(["status"], {
+      cwd: process.cwd(),
+      timeout: 20,
+    }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    const next = runGitCommand(["rev-parse", "--show-toplevel"], {
+      cwd: process.cwd(),
+    });
+
+    await vi.waitFor(() => {
+      expect(fakeSpawnController.processes[0]?.killed).toBe(true);
+    });
+    expect(fakeSpawnController.processes).toHaveLength(1);
+    expect(fakeSpawnController.activeCount).toBe(1);
+
+    await expect(timedOut).resolves.toEqual(
+      expect.objectContaining({
+        message: "Git command timed out after 20ms: git status",
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(fakeSpawnController.processes).toHaveLength(2);
+    });
+    expect(fakeSpawnController.processes[0]?.exited).toBe(true);
+    expect(fakeSpawnController.processes[0]?.closed).toBe(false);
+    await expect(next).resolves.toMatchObject({
+      exitCode: 0,
+      stdout: "next",
+    });
+    expect(fakeSpawnController.peakActiveCount).toBe(1);
+  });
+
+  it("finishes process metrics at exit without waiting for close", async () => {
+    const { runGitCommand, startGitCommandMetrics, stopGitCommandMetrics } =
+      await loadRunGitCommand(1);
+
+    enqueueSpawnBehaviors(
+      { exitDelayMs: 0, closeDelayMs: 500 },
+      { delayMs: 0, stdoutData: "next" },
+    );
+    startGitCommandMetrics();
+
+    void runGitCommand(["status"], { cwd: process.cwd() });
+    await expect(
+      runGitCommand(["rev-parse", "--show-toplevel"], { cwd: process.cwd() }),
+    ).resolves.toMatchObject({ stdout: "next" });
+
+    expect(fakeSpawnController.processes[0]?.exited).toBe(true);
+    expect(fakeSpawnController.processes[0]?.closed).toBe(false);
+    expect(stopGitCommandMetrics()).toMatchObject({
+      total: 2,
+      failed: 0,
+      maxConcurrent: 1,
+    });
+  });
+
+  it("records submitted Git commands before they start and refuses an incomplete measurement", async () => {
+    const {
+      getGitCommandMetrics,
+      runGitCommand,
+      startGitCommandMetrics,
+      stopGitCommandMetrics,
+      waitForGitCommandMetricsIdle,
+    } = await loadRunGitCommand(1);
+
+    enqueueSpawnBehaviors({ delayMs: 100 }, { delayMs: 0 });
+    startGitCommandMetrics();
+
+    const first = runGitCommand(["status", "--short"], { cwd: process.cwd() });
+    const second = runGitCommand(["rev-parse", "--show-toplevel"], { cwd: process.cwd() });
+
+    await vi.waitFor(() => {
+      expect(fakeSpawnController.processes).toHaveLength(1);
+    });
+    expect(getGitCommandMetrics()).toMatchObject({
+      submitted: 2,
+      started: 1,
+      completed: 0,
+      active: 1,
+      pending: 1,
+      submissions: [
+        { args: ["status", "--short"], cwd: process.cwd() },
+        { args: ["rev-parse", "--show-toplevel"], cwd: process.cwd() },
+      ],
+    });
+    expect(() => stopGitCommandMetrics()).toThrow(
+      "Cannot stop Git command metrics while 2 submitted commands are unfinished",
+    );
+
+    await Promise.all([first, second]);
+    await waitForGitCommandMetricsIdle({ quietMs: 0, timeoutMs: 1_000 });
+    expect(stopGitCommandMetrics()).toMatchObject({
+      submitted: 2,
+      started: 2,
+      completed: 2,
+      active: 0,
+      pending: 0,
+      total: 2,
+    });
+  });
+
+  it("carries high-priority admission across an async user operation", async () => {
+    const { runGitCommand, runWithGitCommandPriority } = await loadRunGitCommand(1);
+    enqueueSpawnBehaviors(
+      { delayMs: 100, stdoutData: "active" },
+      { stdoutData: "high" },
+      { stdoutData: "normal" },
+    );
+
+    const active = runGitCommand(["status"], { cwd: process.cwd() });
+    await vi.waitFor(() => expect(fakeSpawnController.processes).toHaveLength(1));
+    const normal = runGitCommand(["rev-parse", "normal"], { cwd: process.cwd() });
+    const high = runWithGitCommandPriority("high", () =>
+      runGitCommand(["rev-parse", "high"], { cwd: process.cwd() }),
+    );
+
+    await expect(Promise.all([active, high, normal])).resolves.toEqual([
+      expect.objectContaining({ stdout: "active" }),
+      expect.objectContaining({ stdout: "high" }),
+      expect.objectContaining({ stdout: "normal" }),
+    ]);
+  });
+
   it("resolves truncated stdout, caps output, and kills the child process", async () => {
     const { runGitCommand } = await loadRunGitCommand(1);
 
@@ -274,6 +453,21 @@ describe("runGitCommand", () => {
       truncated: false,
     });
   });
+
+  it("releases the limiter after a synchronous spawn failure", async () => {
+    const { runGitCommand } = await loadRunGitCommand(1);
+
+    enqueueSpawnBehaviors(
+      { spawnError: new Error("spawn threw") },
+      { delayMs: 0, stdoutData: "ok" },
+    );
+
+    await expect(runGitCommand(["status"], { cwd: process.cwd() })).rejects.toThrow("spawn threw");
+    await expect(runGitCommand(["status"], { cwd: process.cwd() })).resolves.toMatchObject({
+      exitCode: 0,
+      stdout: "ok",
+    });
+  }, 1_000);
 
   it("traces git command spawn and close metadata when a logger is provided", async () => {
     const { runGitCommand } = await loadRunGitCommand(1);

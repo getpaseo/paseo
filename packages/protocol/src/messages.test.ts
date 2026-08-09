@@ -40,6 +40,19 @@ function fetchWorkspacesResponse(workspace: Record<string, unknown>) {
   };
 }
 
+describe("project icon message security", () => {
+  test("rejects URL sources at the daemon boundary", () => {
+    const parsed = SessionInboundMessageSchema.safeParse({
+      type: "project.icon.set.request",
+      projectId: "project-1",
+      source: { type: "url", url: "http://127.0.0.1/private" },
+      requestId: "request-1",
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+});
+
 describe("workspace descriptor message compatibility", () => {
   test("old-shaped fetch_workspaces_response without project still parses", () => {
     const parsed = SessionOutboundMessageSchema.parse(

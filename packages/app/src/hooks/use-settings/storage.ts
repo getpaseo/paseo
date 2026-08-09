@@ -2,6 +2,17 @@ import { isSyntaxThemeId, type SyntaxThemeId } from "@getpaseo/highlight";
 import type { QueryClient } from "@tanstack/react-query";
 import type { DesktopSettings } from "@/desktop/settings/desktop-settings";
 import { parseAppLanguage, type AppLanguage } from "@/i18n/locales";
+import {
+  DEFAULT_SIDEBAR_CHECKS_DISPLAY,
+  parseSidebarChecksDisplay,
+  type SidebarChecksDisplay,
+} from "@/components/sidebar/display-preferences/checks-display";
+import {
+  DEFAULT_SIDEBAR_ROW_ITEMS,
+  isChecksHiddenByLegacyRowItem,
+  parseSidebarRowItems,
+  type SidebarRowItems,
+} from "@/components/sidebar/display-preferences/row-items";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 
 export const APP_SETTINGS_KEY = "@paseo:app-settings";
@@ -12,7 +23,10 @@ export type SendBehavior = "interrupt" | "queue" | "steer";
 export type ReleaseChannel = "stable" | "beta";
 export type ServiceUrlBehavior = "ask" | "in-app" | "external";
 export type WorkspaceTitleSource = "title" | "branch";
+/** What a sidebar workspace row shows in the space to the right of its title. */
+export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
 export type ToolCallDetailLevel = "overview" | "detailed";
+
 /** Curated attention chimes for agent/terminal interrupts. Default soft. */
 export type AttentionSoundPreset =
   | "soft"
@@ -43,6 +57,11 @@ export const ATTENTION_SOUND_PRESETS: readonly AttentionSoundPreset[] = [
 const VALID_THEMES = new Set<string>([...Object.keys(THEME_TO_UNISTYLES), "auto"]);
 const VALID_SERVICE_URL_BEHAVIORS = new Set<ServiceUrlBehavior>(["ask", "in-app", "external"]);
 const VALID_WORKSPACE_TITLE_SOURCES = new Set<WorkspaceTitleSource>(["title", "branch"]);
+const VALID_SIDEBAR_WORKSPACE_TRAILINGS = new Set<SidebarWorkspaceTrailing>([
+  "diff",
+  "timestamp",
+  "none",
+]);
 const VALID_TOOL_CALL_DETAIL_LEVELS = new Set<ToolCallDetailLevel>(["overview", "detailed"]);
 const VALID_ATTENTION_SOUND_PRESETS = new Set<AttentionSoundPreset>(ATTENTION_SOUND_PRESETS);
 export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
@@ -62,14 +81,19 @@ export interface AppSettings {
   sendBehavior: SendBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
   terminalScrollbackLines: number;
+  useLegacyTerminalRenderer: boolean;
   uiFontFamily: string; // "" = platform default UI stack
   monoFontFamily: string; // "" = platform default mono stack
   uiFontSize: number; // clamped px, default 16
   codeFontSize: number; // clamped px, default 12
   syntaxTheme: SyntaxThemeId; // default "one"
   workspaceTitleSource: WorkspaceTitleSource;
+  sidebarWorkspaceTrailing: SidebarWorkspaceTrailing;
+  sidebarRowItems: SidebarRowItems;
+  sidebarChecksDisplay: SidebarChecksDisplay;
   autoExpandReasoning: boolean;
   toolCallDetailLevel: ToolCallDetailLevel;
+  chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
   /** When true, unfocused attention focuses Paseo and opens the target. Default off. */
   attentionIntrusiveMode: boolean;
@@ -86,8 +110,13 @@ export interface Settings extends AppSettings {
   releaseChannel: ReleaseChannel;
 }
 
-type StoredAppSettings = Partial<Omit<AppSettings, "attentionSoundPreset">> & {
+/**
+ * `sidebarRowItems` is widened back to `unknown` because it is still read for a value the
+ * current shape no longer has — see `isChecksHiddenByLegacyRowItem`.
+ */
+type StoredAppSettings = Partial<Omit<AppSettings, "sidebarRowItems" | "attentionSoundPreset">> & {
   compactToolCalls?: unknown;
+  sidebarRowItems?: unknown;
   /** May include legacy "classic" before the 10-sound expansion. */
   attentionSoundPreset?: string;
 };
@@ -98,14 +127,19 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   sendBehavior: "interrupt",
   serviceUrlBehavior: "ask",
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
+  useLegacyTerminalRenderer: false,
   uiFontFamily: "",
   monoFontFamily: "",
   uiFontSize: DEFAULT_UI_FONT_SIZE,
   codeFontSize: DEFAULT_CODE_FONT_SIZE,
   syntaxTheme: "one",
   workspaceTitleSource: "title",
+  sidebarWorkspaceTrailing: "diff",
+  sidebarRowItems: DEFAULT_SIDEBAR_ROW_ITEMS,
+  sidebarChecksDisplay: DEFAULT_SIDEBAR_CHECKS_DISPLAY,
   autoExpandReasoning: false,
   toolCallDetailLevel: "detailed",
+  chatOutlineEnabled: true,
   vimKeybindings: false,
   attentionIntrusiveMode: false,
   attentionOsBubbleEnabled: true,
@@ -231,31 +265,101 @@ function parseToolCallDetailLevel(stored: StoredAppSettings): ToolCallDetailLeve
   return null;
 }
 
-function parseSendBehavior(value: unknown): SendBehavior | null {
-  if (value === "interrupt" || value === "queue" || value === "steer") {
-    return value;
+function parseStoredSidebarChecksDisplay(stored: StoredAppSettings): SidebarChecksDisplay | null {
+  const display = parseSidebarChecksDisplay(stored.sidebarChecksDisplay);
+  if (display !== null) {
+    return display;
   }
-  return null;
+  // COMPAT(sidebarRowItemsChecks): migrated in v0.3.0, remove after 2027-08-05.
+  return isChecksHiddenByLegacyRowItem(stored.sidebarRowItems) ? "none" : null;
 }
 
-function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
+function pickBooleanAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
+  const result: Partial<AppSettings> = {};
+  if (typeof stored.useLegacyTerminalRenderer === "boolean") {
+    result.useLegacyTerminalRenderer = stored.useLegacyTerminalRenderer;
+  }
+  if (typeof stored.vimKeybindings === "boolean") {
+    result.vimKeybindings = stored.vimKeybindings;
+  }
+  if (typeof stored.chatOutlineEnabled === "boolean") {
+    result.chatOutlineEnabled = stored.chatOutlineEnabled;
+  }
+  if (typeof stored.attentionIntrusiveMode === "boolean") {
+    result.attentionIntrusiveMode = stored.attentionIntrusiveMode;
+  }
+  if (typeof stored.attentionOsBubbleEnabled === "boolean") {
+    result.attentionOsBubbleEnabled = stored.attentionOsBubbleEnabled;
+  }
+  if (typeof stored.attentionSoundEnabled === "boolean") {
+    result.attentionSoundEnabled = stored.attentionSoundEnabled;
+  }
+  return result;
+}
+
+/**
+ * The settings whose stored value only has to be a member of a fixed set. Grouped like the
+ * boolean settings are: the numeric and font settings need real parsing and clamping, these
+ * need a membership check and nothing else.
+ */
+function pickEnumAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
   if (typeof stored.theme === "string" && VALID_THEMES.has(stored.theme)) {
     result.theme = stored.theme;
   }
-  const language = parseAppLanguage(stored.language);
-  if (language !== null) {
-    result.language = language;
-  }
-  const sendBehavior = parseSendBehavior(stored.sendBehavior);
-  if (sendBehavior !== null) {
-    result.sendBehavior = sendBehavior;
+  if (
+    stored.sendBehavior === "interrupt" ||
+    stored.sendBehavior === "queue" ||
+    stored.sendBehavior === "steer"
+  ) {
+    result.sendBehavior = stored.sendBehavior;
   }
   if (
     typeof stored.serviceUrlBehavior === "string" &&
     VALID_SERVICE_URL_BEHAVIORS.has(stored.serviceUrlBehavior)
   ) {
     result.serviceUrlBehavior = stored.serviceUrlBehavior;
+  }
+  if (typeof stored.syntaxTheme === "string" && isSyntaxThemeId(stored.syntaxTheme)) {
+    result.syntaxTheme = stored.syntaxTheme;
+  }
+  if (
+    typeof stored.workspaceTitleSource === "string" &&
+    VALID_WORKSPACE_TITLE_SOURCES.has(stored.workspaceTitleSource)
+  ) {
+    result.workspaceTitleSource = stored.workspaceTitleSource;
+  }
+  if (
+    typeof stored.sidebarWorkspaceTrailing === "string" &&
+    VALID_SIDEBAR_WORKSPACE_TRAILINGS.has(stored.sidebarWorkspaceTrailing)
+  ) {
+    result.sidebarWorkspaceTrailing = stored.sidebarWorkspaceTrailing;
+  }
+  if (typeof stored.attentionSoundPreset === "string") {
+    // COMPAT(attentionSoundClassic): "classic" renamed to "bell" when the preset set expanded.
+    const rawPreset = stored.attentionSoundPreset;
+    if (rawPreset === "classic") {
+      result.attentionSoundPreset = "bell";
+    } else if (VALID_ATTENTION_SOUND_PRESETS.has(rawPreset as AttentionSoundPreset)) {
+      result.attentionSoundPreset = rawPreset as AttentionSoundPreset;
+    }
+  }
+  return result;
+}
+
+function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
+  const result: Partial<AppSettings> = {};
+  Object.assign(result, pickEnumAppSettings(stored));
+  if (stored.sidebarRowItems !== undefined) {
+    result.sidebarRowItems = parseSidebarRowItems(stored.sidebarRowItems);
+  }
+  const sidebarChecksDisplay = parseStoredSidebarChecksDisplay(stored);
+  if (sidebarChecksDisplay !== null) {
+    result.sidebarChecksDisplay = sidebarChecksDisplay;
+  }
+  const language = parseAppLanguage(stored.language);
+  if (language !== null) {
+    result.language = language;
   }
   const terminalScrollbackLines = parseTerminalScrollbackLines(stored.terminalScrollbackLines);
   if (terminalScrollbackLines !== null) {
@@ -283,48 +387,13 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   if (codeFontSize !== null) {
     result.codeFontSize = codeFontSize;
   }
-  if (typeof stored.syntaxTheme === "string" && isSyntaxThemeId(stored.syntaxTheme)) {
-    result.syntaxTheme = stored.syntaxTheme;
-  }
-  if (typeof stored.vimKeybindings === "boolean") {
-    result.vimKeybindings = stored.vimKeybindings;
-  }
-  if (
-    typeof stored.workspaceTitleSource === "string" &&
-    VALID_WORKSPACE_TITLE_SOURCES.has(stored.workspaceTitleSource)
-  ) {
-    result.workspaceTitleSource = stored.workspaceTitleSource;
-  }
+  Object.assign(result, pickBooleanAppSettings(stored));
   if (typeof stored.autoExpandReasoning === "boolean") {
     result.autoExpandReasoning = stored.autoExpandReasoning;
   }
   const toolCallDetailLevel = parseToolCallDetailLevel(stored);
   if (toolCallDetailLevel !== null) {
     result.toolCallDetailLevel = toolCallDetailLevel;
-  }
-  Object.assign(result, pickAttentionAppSettings(stored));
-  return result;
-}
-
-function pickAttentionAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
-  const result: Partial<AppSettings> = {};
-  if (typeof stored.attentionIntrusiveMode === "boolean") {
-    result.attentionIntrusiveMode = stored.attentionIntrusiveMode;
-  }
-  if (typeof stored.attentionOsBubbleEnabled === "boolean") {
-    result.attentionOsBubbleEnabled = stored.attentionOsBubbleEnabled;
-  }
-  if (typeof stored.attentionSoundEnabled === "boolean") {
-    result.attentionSoundEnabled = stored.attentionSoundEnabled;
-  }
-  if (typeof stored.attentionSoundPreset === "string") {
-    // COMPAT(attentionSoundClassic): "classic" renamed to "bell" when the preset set expanded.
-    const rawPreset = stored.attentionSoundPreset;
-    if (rawPreset === "classic") {
-      result.attentionSoundPreset = "bell";
-    } else if (VALID_ATTENTION_SOUND_PRESETS.has(rawPreset as AttentionSoundPreset)) {
-      result.attentionSoundPreset = rawPreset as AttentionSoundPreset;
-    }
   }
   return result;
 }

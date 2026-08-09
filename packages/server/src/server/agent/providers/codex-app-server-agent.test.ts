@@ -1330,7 +1330,13 @@ describe("Codex app-server provider", () => {
       async () => appServer.child,
     );
 
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
     await session.startTurn("remember this", { clientMessageId: "client-message" });
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "thread-1",
+      turn: { id: "turn-1" },
+    });
     const userMessage = waitForNextTimelineItem(session, "user_message");
     emitCodexUserMessage(appServer, { id: "codex-message", text: "remember this" });
 
@@ -1341,6 +1347,7 @@ describe("Codex app-server provider", () => {
         clientMessageId: "client-message",
       },
     });
+    expect(events.slice(0, 2).map((event) => event.type)).toEqual(["turn_started", "timeline"]);
     appServer.completeTurn();
     await session.close();
   });
@@ -2938,8 +2945,14 @@ describe("Codex app-server provider", () => {
     }
   });
 
-  test("rejects an interrupt until Codex identifies the accepted turn", async () => {
-    const appServer = createFakeCodexAppServer();
+  test("waits for Codex to identify an accepted turn before interrupting it", async () => {
+    const interruptedTurns: unknown[] = [];
+    const appServer = createFakeCodexAppServer({
+      "turn/interrupt": async (params) => {
+        interruptedTurns.push(params);
+        return {};
+      },
+    });
     const session = new CodexAppServerAgentSession(
       createConfig({ cwd: "/workspace/project" }),
       null,
@@ -2951,13 +2964,45 @@ describe("Codex app-server provider", () => {
       const resultPromise = session.run("Start working.");
       await appServer.waitForTurnStart();
 
-      await expect(session.interrupt()).rejects.toThrow(
-        "Cannot interrupt Codex before turn/started identifies the active turn",
-      );
-
+      const interruptPromise = session.interrupt();
       appServer.startsTurn({ threadId: "thread-1", turnId: "turn-identified-late" });
+      await interruptPromise;
+
+      expect(interruptedTurns).toEqual([{ threadId: "thread-1", turnId: "turn-identified-late" }]);
       appServer.completeTurn();
       await resultPromise;
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("does not interrupt after the accepted turn terminates before identification", async () => {
+    const interruptedTurns: unknown[] = [];
+    const appServer = createFakeCodexAppServer({
+      "turn/interrupt": async (params) => {
+        interruptedTurns.push(params);
+        return {};
+      },
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Finish before identification.");
+      await appServer.waitForTurnStart();
+      const interruptPromise = session.interrupt();
+      appServer.completeTurn();
+
+      await expect(interruptPromise).rejects.toThrow(
+        "Cannot interrupt Codex before turn/started identifies the active turn",
+      );
+      await resultPromise;
+      expect(interruptedTurns).toEqual([]);
       appServer.assertNoErrors();
     } finally {
       await session.close();

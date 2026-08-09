@@ -83,6 +83,12 @@ import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 import { revertOpenCodeConversationAndFiles } from "./opencode/rewind.js";
+import {
+  claimOpenCodeSubagentFallbackTitle,
+  foldOpenCodeSubagentPresentation,
+  type OpenCodeSubagentPresentationFacts,
+  type OpenCodeSubagentPresentationState,
+} from "./opencode/subagent-presentation.js";
 import type { ManagedProcessRegistry } from "../../managed-processes/managed-processes.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
@@ -312,6 +318,7 @@ const OpencodeToolStateSchema = z
     input: z.unknown().optional(),
     output: z.unknown().optional(),
     error: z.unknown().optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
@@ -332,6 +339,7 @@ const OpencodeToolPartWithCallIdSchema = OpencodeToolPartBaseSchema.extend({
   input: part.state?.input,
   output: part.state?.output,
   error: part.state?.error,
+  metadata: part.state?.metadata,
 }));
 
 const OpencodeToolPartWithIdSchema = OpencodeToolPartBaseSchema.extend({
@@ -344,6 +352,7 @@ const OpencodeToolPartWithIdSchema = OpencodeToolPartBaseSchema.extend({
   input: part.state?.input,
   output: part.state?.output,
   error: part.state?.error,
+  metadata: part.state?.metadata,
 }));
 
 const OpencodeToolPartWithoutIdSchema = OpencodeToolPartBaseSchema.extend({
@@ -356,6 +365,7 @@ const OpencodeToolPartWithoutIdSchema = OpencodeToolPartBaseSchema.extend({
   input: part.state?.input,
   output: part.state?.output,
   error: part.state?.error,
+  metadata: part.state?.metadata,
 }));
 
 const OpencodeToolPartSchema = z.union([
@@ -371,6 +381,7 @@ const OpencodeToolPartTimelineEnvelopeSchema = OpencodeToolPartSchema.transform(
   input: part.input,
   output: part.output,
   error: part.error,
+  metadata: part.metadata,
 }));
 
 const OpencodeToolPartToTimelineItemSchema = OpencodeToolPartTimelineEnvelopeSchema.transform(
@@ -382,6 +393,7 @@ const OpencodeToolPartToTimelineItemSchema = OpencodeToolPartTimelineEnvelopeSch
       input: part.input,
       output: part.output,
       error: part.error,
+      metadata: part.metadata,
     }),
 );
 
@@ -1724,6 +1736,7 @@ export interface OpenCodeEventTranslationState {
   subAgentsByCallId?: Map<string, OpenCodeSubAgentActivityState>;
   subAgentCallIdByChildSessionId?: Map<string, string>;
   knownChildSessionIds?: Set<string>;
+  subagentPresentationByChildId?: Map<string, OpenCodeSubagentPresentationState>;
   modelContextWindowsByModelKey?: ReadonlyMap<string, number>;
   onAssistantModelContextWindowResolved?: (contextWindowMaxTokens: number) => void;
 }
@@ -1761,6 +1774,8 @@ interface OpenCodeChildSessionInfo {
   title?: string;
   directory?: string;
   revert?: OpenCodePersistedSession["revert"];
+  agent?: string;
+  model?: { id: string; variant?: string };
 }
 
 interface OpenCodeSubAgentActivityState {
@@ -2102,6 +2117,62 @@ function getOpenCodeKnownChildSessionIds(state: OpenCodeEventTranslationState): 
   return state.knownChildSessionIds;
 }
 
+function getOpenCodeSubagentPresentationState(
+  childSessionId: string,
+  state: OpenCodeEventTranslationState,
+): OpenCodeSubagentPresentationState {
+  state.subagentPresentationByChildId ??= new Map();
+  const existing = state.subagentPresentationByChildId.get(childSessionId);
+  if (existing) {
+    return existing;
+  }
+  const created: OpenCodeSubagentPresentationState = { facts: {} };
+  state.subagentPresentationByChildId.set(childSessionId, created);
+  return created;
+}
+
+function sumOpenCodeAssistantMessageTokens(
+  tokens: OpenCodeAssistantMessage["tokens"] | undefined,
+): number {
+  if (!tokens) {
+    return 0;
+  }
+  return (
+    (readPositiveFiniteNumber(tokens.input) ?? 0) +
+    (readPositiveFiniteNumber(tokens.output) ?? 0) +
+    (readPositiveFiniteNumber(tokens.reasoning) ?? 0) +
+    (readPositiveFiniteNumber(tokens.cache?.read) ?? 0) +
+    (readPositiveFiniteNumber(tokens.cache?.write) ?? 0)
+  );
+}
+
+/** Presentation facts observable on a child assistant message. Token sums only count once the
+ * message completes, so partial frames don't publish a shrinking total. */
+function readOpenCodeAssistantPresentationFacts(
+  info: OpenCodeAssistantMessage,
+): OpenCodeSubagentPresentationFacts | null {
+  const facts: OpenCodeSubagentPresentationFacts = {};
+  const agentName = readNonEmptyString(info.agent);
+  if (agentName) {
+    facts.agentName = agentName;
+  }
+  const modelId = readNonEmptyString(info.modelID);
+  if (modelId) {
+    facts.modelId = modelId;
+  }
+  const variant = readNonEmptyString(info.variant);
+  if (variant) {
+    facts.variant = variant;
+  }
+  if (info.time?.completed !== undefined) {
+    const totalTokens = sumOpenCodeAssistantMessageTokens(info.tokens);
+    if (totalTokens > 0) {
+      facts.totalTokens = totalTokens;
+    }
+  }
+  return Object.keys(facts).length > 0 ? facts : null;
+}
+
 function isOpenCodeSessionTrackedByParent(
   sessionId: string,
   state: OpenCodeEventTranslationState,
@@ -2127,20 +2198,34 @@ function appendOpenCodeChildSessionDetected(
   }
 
   const knownChildSessionIds = getOpenCodeKnownChildSessionIds(state);
+  // Known limitation: detection runs once per child, so a session record that gains `agent`
+  // only in a later session.updated is not refreshed here. Assistant-frame facts recover the
+  // descriptor title and subtitle via appendChildAssistantPresentationUpsert.
   if (knownChildSessionIds.has(child.id)) {
     return false;
   }
 
   knownChildSessionIds.add(child.id);
+  const presentation = getOpenCodeSubagentPresentationState(child.id, state);
+  const subtitle = foldOpenCodeSubagentPresentation(presentation, {
+    ...(child.agent ? { agentName: child.agent } : {}),
+    ...(child.model?.id ? { modelId: child.model.id } : {}),
+    ...(child.model?.variant ? { variant: child.model.variant } : {}),
+  });
+  const title = claimOpenCodeSubagentFallbackTitle(presentation, child.agent);
+  // The row label contract: `description` carries the task (session title fallback), `title`
+  // carries the subagent type. Neither gets a placeholder — absent facts render as nothing.
   events.push({
     type: "provider_subagent",
     provider: "opencode",
     event: {
       type: "upsert",
       id: child.id,
-      title: child.title ?? "OpenCode subagent",
+      ...(title ? { title } : {}),
+      ...(child.title && !presentation.descriptionFromLink ? { description: child.title } : {}),
       status,
       ...(child.directory ? { cwd: child.directory } : {}),
+      ...(subtitle ? { subtitle } : {}),
     },
   });
   return true;
@@ -2169,10 +2254,59 @@ function linkOpenCodeSubAgentChildSession(
   activity: OpenCodeSubAgentActivityState,
   childSessionId: string,
   state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
 ): void {
   activity.childSessionId = childSessionId;
   const maps = getOpenCodeSubAgentMaps(state);
   maps.callIdByChildSessionId.set(childSessionId, activity.toolCall.callId);
+  appendOpenCodeSubAgentLinkPresentation(activity, childSessionId, state, events);
+}
+
+/**
+ * When a child session ties to a parent `task` tool call, publish the task's identity onto the
+ * descriptor: `description` (task input), `title` (subagent type), `toolCallId`. Presentation
+ * only — no `status`, so it can never revert a finished child.
+ */
+function appendOpenCodeSubAgentLinkPresentation(
+  activity: OpenCodeSubAgentActivityState,
+  childSessionId: string,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  const detail = activity.toolCall.detail;
+  if (detail.type !== "sub_agent") {
+    return;
+  }
+  const presentation = getOpenCodeSubagentPresentationState(childSessionId, state);
+  if (presentation.linkedToolCallId === activity.toolCall.callId) {
+    return;
+  }
+  presentation.linkedToolCallId = activity.toolCall.callId;
+  const subAgentType = readNonEmptyString(detail.subAgentType);
+  const description = readNonEmptyString(detail.description);
+  if (subAgentType) {
+    presentation.titleFromLink = true;
+    presentation.titleEmitted = true;
+  }
+  if (description) {
+    presentation.descriptionFromLink = true;
+  }
+  const subtitle = foldOpenCodeSubagentPresentation(
+    presentation,
+    subAgentType ? { agentName: subAgentType } : {},
+  );
+  events.push({
+    type: "provider_subagent",
+    provider: "opencode",
+    event: {
+      type: "upsert",
+      id: childSessionId,
+      toolCallId: activity.toolCall.callId,
+      ...(subAgentType ? { title: subAgentType } : {}),
+      ...(description ? { description } : {}),
+      ...(subtitle ? { subtitle } : {}),
+    },
+  });
 }
 
 function buildOpenCodeSubAgentTimelineItem(
@@ -2195,13 +2329,14 @@ function buildOpenCodeSubAgentTimelineItem(
 function registerOpenCodeSubAgentToolCall(
   item: ToolCallTimelineItem,
   state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
 ): ToolCallTimelineItem {
   if (item.detail.type !== "sub_agent") {
     return item;
   }
   const activity = getOpenCodeSubAgentState(item.callId, state, item);
   if (item.detail.childSessionId) {
-    linkOpenCodeSubAgentChildSession(activity, item.detail.childSessionId, state);
+    linkOpenCodeSubAgentChildSession(activity, item.detail.childSessionId, state, events);
   }
   return buildOpenCodeSubAgentTimelineItem(activity);
 }
@@ -2224,7 +2359,7 @@ function appendOpenCodeToolCallTimelineItem(
   state: OpenCodeEventTranslationState,
   events: AgentStreamEvent[],
 ): void {
-  const timelineItem = registerOpenCodeSubAgentToolCall(item, state);
+  const timelineItem = registerOpenCodeSubAgentToolCall(item, state, events);
   events.push({
     type: "timeline",
     provider: "opencode",
@@ -2241,7 +2376,7 @@ function appendOpenCodeSubAgentChildSessionLinked(
   if (!activity) {
     return;
   }
-  linkOpenCodeSubAgentChildSession(activity, childSessionId, state);
+  linkOpenCodeSubAgentChildSession(activity, childSessionId, state, events);
   events.push({
     type: "timeline",
     provider: "opencode",
@@ -2271,20 +2406,14 @@ function appendOpenCodeSessionCreatedOrUpdated(
 
   const parentSessionId = readNonEmptyString(info?.parentID) ?? readNonEmptyString(info?.parentId);
   if (parentSessionId) {
-    appendOpenCodeChildSessionDetected(
-      {
-        id: event.properties.info.id,
-        parentSessionId,
-        ...(readNonEmptyString(info?.title)
-          ? { title: readNonEmptyString(info?.title) ?? undefined }
-          : {}),
-        ...(readNonEmptyString(info?.directory)
-          ? { directory: readNonEmptyString(info?.directory) ?? undefined }
-          : {}),
-      },
-      state,
-      events,
-    );
+    const child = readOpenCodeChildSessionInfo({
+      ...info,
+      id: event.properties.info.id,
+      parentID: parentSessionId,
+    });
+    if (child) {
+      appendOpenCodeChildSessionDetected(child, state, events);
+    }
   }
   if (parentSessionId === state.sessionId) {
     appendOpenCodeSubAgentChildSessionLinked(event.properties.info.id, state, events);
@@ -2302,6 +2431,7 @@ function appendOpenCodeSessionDeleted(
   }
   state.knownChildSessionIds?.delete(sessionId);
   state.subAgentCallIdByChildSessionId?.delete(sessionId);
+  state.subagentPresentationByChildId?.delete(sessionId);
   events.push({
     type: "provider_subagent",
     provider: "opencode",
@@ -2760,7 +2890,25 @@ function createDeferred<T>(): Deferred<T> {
 type OpenCodeTurnState =
   | { status: "idle" }
   | { status: "running"; turnId: string }
-  | { status: "stopping"; idle: Deferred<void> };
+  | { status: "stopping"; stop: OpenCodeStop };
+
+type OpenCodeRunnerStatus = "idle" | "busy" | "retry";
+
+/**
+ * One in-flight stop of the OpenCode session runner.
+ *
+ * A stop tracks the run it is stopping: the terminal that run still owes, and
+ * the cancellation the caller is still owed. The aborts it issues are tracked by
+ * the session instead, because OpenCode's abort is session-scoped rather than
+ * turn-scoped and can outlive the stop that issued it. The runner is reusable
+ * only once both the terminal and every issued abort have settled.
+ */
+interface OpenCodeStop {
+  /** Foreground turn still owed a cancellation acknowledgement; cleared once emitted. */
+  pendingCancellationTurnId: string | null;
+  /** Resolves when the canceled run publishes its authoritative terminal. */
+  readonly terminal: Deferred<void>;
+}
 
 function unwrapOpenCodeGlobalEvent(event: unknown): OpenCodeEvent | null {
   const record = readOpenCodeRecord(event);
@@ -2797,15 +2945,28 @@ function getOpenCodeEventSessionId(event: OpenCodeEvent): string | null {
   );
 }
 
-function isOpenCodeTerminalEvent(event: OpenCodeEvent, sessionId: string): boolean {
-  if (event.type === "session.idle" || event.type === "session.error") {
-    return event.properties.sessionID === sessionId;
+function getOpenCodeRunnerStatusFromEvent(
+  event: OpenCodeEvent,
+  sessionId: string,
+): OpenCodeRunnerStatus | null {
+  if (getOpenCodeEventSessionId(event) !== sessionId) {
+    return null;
   }
-  return (
-    event.type === "session.status" &&
-    event.properties.sessionID === sessionId &&
-    event.properties.status.type === "idle"
-  );
+  if (event.type === "session.status") {
+    return event.properties.status.type;
+  }
+  if (event.type === "session.idle" || event.type === "session.error") {
+    return "idle";
+  }
+  return null;
+}
+
+function isOpenCodeRunnerActive(status: OpenCodeRunnerStatus): boolean {
+  return status === "busy" || status === "retry";
+}
+
+function isOpenCodeTerminalEvent(event: OpenCodeEvent, sessionId: string): boolean {
+  return getOpenCodeRunnerStatusFromEvent(event, sessionId) === "idle";
 }
 
 function isOpenCodeProviderInternalEvent(event: AgentStreamEvent): boolean {
@@ -2826,12 +2987,29 @@ function readOpenCodeChildSessionInfo(value: unknown): OpenCodeChildSessionInfo 
   const title = readNonEmptyString(record.title);
   const directory = readNonEmptyString(record.directory);
   const revert = readOpenCodeRecord(record.revert) as OpenCodePersistedSession["revert"] | null;
+  const agent = readNonEmptyString(record.agent);
+  const model = readOpenCodeChildSessionModel(record.model);
   return {
     id,
     parentSessionId,
     ...(title ? { title } : {}),
     ...(directory ? { directory } : {}),
     ...(revert ? { revert } : {}),
+    ...(agent ? { agent } : {}),
+    ...(model ? { model } : {}),
+  };
+}
+
+function readOpenCodeChildSessionModel(value: unknown): OpenCodeChildSessionInfo["model"] | null {
+  const record = readOpenCodeRecord(value);
+  const id = readNonEmptyString(record?.id);
+  if (!record || !id) {
+    return null;
+  }
+  const variant = readNonEmptyString(record.variant);
+  return {
+    id,
+    ...(variant ? { variant } : {}),
   };
 }
 
@@ -2913,10 +3091,22 @@ class OpenCodeAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
   private turnState: OpenCodeTurnState = { status: "idle" };
+  /**
+   * Settlement of every session-scoped abort issued so far. It outlives the stop
+   * that issued it because a request still in flight can cancel a replacement
+   * run, and a rejection means we never proved the runner stopped.
+   */
+  private abortSettlement: Promise<void> = Promise.resolve();
+  private externalStatusReconciliationStarted = false;
+  private runnerStatusRevision = 0;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private subAgentsByCallId = new Map<string, OpenCodeSubAgentActivityState>();
   private subAgentCallIdByChildSessionId = new Map<string, string>();
   private knownChildSessionIds = new Set<string>();
+  private readonly subagentPresentationByChildId = new Map<
+    string,
+    OpenCodeSubagentPresentationState
+  >();
   private readonly childTranslationStates = new Map<string, OpenCodeEventTranslationState>();
   private readonly childSessionCwds = new Map<string, string>();
   private readonly pendingPermissionDirectories = new Map<string, string>();
@@ -3009,22 +3199,31 @@ class OpenCodeAgentSession implements AgentSession {
   async interrupt(): Promise<void> {
     const turnId = this.activeForegroundTurnId;
     this.abortController?.abort();
-    if (turnId) {
-      this.beginStoppingTurn(turnId);
-    }
+    const abort = this.issueStop(turnId);
     // COMPAT(opencodeSlowAbort): OpenCode 1.14.42+ blocks session.abort until
     // the running tool actually stops, which can be tens of seconds for
     // long-running tools. Cap the wait so the user-visible cancel lands
     // quickly while still giving OpenCode a chance to confirm the abort
     // cleanly. Drop the timeout once upstream returns abort acknowledgement
     // before tool teardown.
-    const abortPromise = this.abortSession(turnId, "interrupt");
-    await withTimeout(abortPromise, 2_000, "OpenCode session.abort").catch((error) => {
-      this.logger.warn(
-        { err: error, sessionId: this.sessionId, turnId },
-        "OpenCode session.abort exceeded the cancel cap; proceeding with local cancel",
-      );
-    });
+    const settledAbort = abort.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    // Only the cap is tolerated. A settled failure means the runner may still be
+    // going, and the caller must hear about it.
+    const abortFailure = await withTimeout(settledAbort, 2_000, "OpenCode session.abort").catch(
+      (error) => {
+        this.logger.warn(
+          { err: error, sessionId: this.sessionId, turnId },
+          "OpenCode session.abort did not settle within the cancel cap",
+        );
+        return undefined;
+      },
+    );
+    if (abortFailure !== undefined) {
+      throw abortFailure;
+    }
   }
 
   async revertBoth(input: { messageId: string }): Promise<void> {
@@ -3042,71 +3241,116 @@ class OpenCodeAgentSession implements AgentSession {
         sessionID: this.sessionId,
         directory: this.config.cwd,
       })
-      .then(() => undefined)
+      .then((response) => {
+        if (response.error) {
+          throw new Error(toDiagnosticErrorMessage(response.error));
+        }
+        return undefined;
+      })
       .catch((error) => {
         this.logger.warn(
           { err: error, sessionId: this.sessionId, turnId, reason },
           "OpenCode session.abort rejected",
         );
+        throw error;
       });
+  }
+
+  /**
+   * Gate every runner-affecting operation on the previous stop. OpenCode runs one
+   * runner per session and aborts it session-wide, so a replacement may start
+   * only once the canceled run published its terminal and our own abort settled.
+   * A failed abort never proved the runner stopped, so it fails closed until the
+   * next Stop issues a fresh one.
+   */
+  private async awaitRunnerQuiescence(): Promise<void> {
+    const providerIdle = this.waitUntilProviderIdle();
+    // A failed abort is decisive on its own, so let it reject this wait without
+    // leaving the still-running observation unhandled.
+    void providerIdle.catch(() => undefined);
+    let observed = this.abortSettlement;
+    await Promise.all([observed, providerIdle]);
+    // Stop can issue a further abort while we waited, and the settlement is
+    // replaced rather than mutated, so drain until what we observed is current.
+    while (this.abortSettlement !== observed) {
+      observed = this.abortSettlement;
+      await observed;
+    }
   }
 
   private async waitUntilProviderIdle(): Promise<void> {
     if (this.turnState.status !== "stopping") {
       return;
     }
-
-    const stopping = this.turnState;
-    // OpenCode creates prompts before joining its single session runner. Sending
-    // while that runner is stopping can strand the new prompt behind the old
-    // run, so only provider-confirmed idle makes the session reusable.
     await withTimeout(
-      this.observeProviderStopBoundary(stopping),
+      this.observeProviderStopBoundary(this.turnState.stop),
       OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
       "OpenCode previous turn to stop",
     );
   }
 
-  private async observeProviderStopBoundary(
-    stopping: Extract<OpenCodeTurnState, { status: "stopping" }>,
-  ): Promise<void> {
-    while (this.turnState === stopping) {
-      void this.abortSession(null, "turn_start_boundary");
+  private async observeProviderStopBoundary(stop: OpenCodeStop): Promise<void> {
+    while (this.isStopping(stop)) {
       const eventStreamTask = this.eventStreamTask;
       const boundary = await (eventStreamTask
         ? Promise.race([
-            stopping.idle.promise.then(() => "idle" as const),
+            stop.terminal.promise.then(() => "terminal" as const),
             eventStreamTask.then(
               () => "stream_ended" as const,
               () => "stream_ended" as const,
             ),
           ])
         : Promise.resolve("stream_ended" as const));
-      if (boundary === "idle") {
+      if (boundary === "terminal") {
         return;
       }
-
-      await this.ensureEventStreamReady();
-      const response = await this.client.session.status({ directory: this.config.cwd });
-      if (response.error) {
-        throw new Error(
-          `Failed to confirm OpenCode session status: ${toDiagnosticErrorMessage(response.error)}`,
-        );
-      }
-      const statuses = readOpenCodeRecord(response.data);
-      if (!statuses) {
-        throw new Error("OpenCode returned an invalid session status response");
-      }
-      const status = readOpenCodeRecord(statuses[this.sessionId]);
-      const statusType = readNonEmptyString(status?.type);
-      if (!status || statusType === "idle") {
-        this.finishStoppingTurn();
-        return;
-      }
-      if (statusType !== "busy" && statusType !== "retry") {
-        throw new Error(`OpenCode returned an unknown session status '${statusType ?? "missing"}'`);
-      }
+      await this.reconcileStopWithProviderStatus(stop);
     }
+  }
+
+  /**
+   * The event stream dropped mid-stop, so the canceled run's terminal may have
+   * gone with it. `session.status` is the provider's authority on whether the
+   * runner is still going, and an idle answer ends the stop through the same
+   * transition an SSE terminal takes. A failed probe is not evidence either way,
+   * so the stop keeps waiting on the replacement stream instead of rejecting a
+   * caller that a later terminal would have released.
+   */
+  private async reconcileStopWithProviderStatus(stop: OpenCodeStop): Promise<void> {
+    await this.ensureEventStreamReady();
+    try {
+      if ((await this.readProviderRunnerStatus()) === "idle") {
+        this.finishStoppingTurn(stop);
+      }
+    } catch (error) {
+      this.logger.warn(
+        { err: error, sessionId: this.sessionId, turnId: stop.pendingCancellationTurnId },
+        "Failed to reconcile the OpenCode stop with provider session status",
+      );
+    }
+  }
+
+  private async readProviderRunnerStatus(): Promise<OpenCodeRunnerStatus> {
+    const response = await this.client.session.status({ directory: this.config.cwd });
+    if (response.error) {
+      throw new Error(
+        `Failed to confirm OpenCode session status: ${toDiagnosticErrorMessage(response.error)}`,
+      );
+    }
+    const statuses = readOpenCodeRecord(response.data);
+    if (!statuses) {
+      throw new Error("OpenCode returned an invalid session status response");
+    }
+    const status = readOpenCodeRecord(statuses[this.sessionId]);
+    // OpenCode drops idle sessions from the status map entirely.
+    if (!status) {
+      return "idle";
+    }
+    const statusType = readNonEmptyString(status.type);
+    if (statusType !== "idle" && statusType !== "busy" && statusType !== "retry") {
+      throw new Error(`OpenCode returned an unknown session status '${statusType ?? "missing"}'`);
+    }
+    return statusType;
   }
 
   async startTurn(
@@ -3116,7 +3360,7 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.turnState.status === "running") {
       throw new Error("A foreground turn is already active");
     }
-    await this.waitUntilProviderIdle();
+    await this.awaitRunnerQuiescence();
     if (this.turnState.status !== "idle") {
       throw new Error("OpenCode is still stopping the previous turn");
     }
@@ -3315,10 +3559,38 @@ class OpenCodeAgentSession implements AgentSession {
   }
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
+    this.startExternalStatusReconciliation();
     this.startChildSessionHydration();
     return () => {
       this.subscribers.delete(callback);
     };
+  }
+
+  private startExternalStatusReconciliation(): void {
+    if (!this.externallyDriven || this.externalStatusReconciliationStarted || this.closed) {
+      return;
+    }
+    this.externalStatusReconciliationStarted = true;
+    void this.reconcileExternalRunnerStatus().catch((error) => {
+      this.logger.warn(
+        { err: error, sessionId: this.sessionId },
+        "Failed to reconcile externally driven OpenCode session status",
+      );
+    });
+  }
+
+  private async reconcileExternalRunnerStatus(): Promise<void> {
+    await this.ensureEventStreamReady();
+    const observedRevision = this.runnerStatusRevision;
+    const runnerStatus = await this.readProviderRunnerStatus();
+    if (
+      this.runnerStatusRevision !== observedRevision ||
+      this.turnState.status !== "idle" ||
+      !isOpenCodeRunnerActive(runnerStatus)
+    ) {
+      return;
+    }
+    this.startAutonomousTurn();
   }
 
   private startChildSessionHydration(): void {
@@ -3423,6 +3695,50 @@ class OpenCodeAgentSession implements AgentSession {
         translationState.hydratedPartFingerprints?.set(part.id, JSON.stringify(part));
       }
     }
+    this.emitHydratedChildPresentation(child, messages);
+  }
+
+  /**
+   * After replaying a historical child, derive presentation facts from the last assistant
+   * message (the session record's agent/model were already folded at detection) and publish
+   * any missing title plus the updated subtitle once. Presentation-only: no `status`.
+   */
+  private emitHydratedChildPresentation(
+    child: OpenCodeChildSessionInfo,
+    messages: ReadonlyArray<OpenCodeSessionMessage>,
+  ): void {
+    const lastAssistant = messages.findLast(
+      (message): message is OpenCodeSessionMessage & { info: OpenCodeAssistantMessage } =>
+        message.info.role === "assistant",
+    );
+    if (!lastAssistant) {
+      return;
+    }
+    const facts = readOpenCodeAssistantPresentationFacts(lastAssistant.info);
+    if (!facts) {
+      return;
+    }
+    const presentation = getOpenCodeSubagentPresentationState(
+      child.id,
+      this.getChildTranslationState(child.id),
+    );
+    const subtitle = foldOpenCodeSubagentPresentation(presentation, facts);
+    const title = claimOpenCodeSubagentFallbackTitle(presentation, facts.agentName);
+    if (!subtitle && !title) {
+      return;
+    }
+    const event: AgentStreamEvent = {
+      type: "provider_subagent",
+      provider: "opencode",
+      event: {
+        type: "upsert",
+        id: child.id,
+        ...(title ? { title } : {}),
+        ...(subtitle ? { subtitle } : {}),
+      },
+    };
+    this.recordProviderInternalEvent(event);
+    this.notifySubscribers(event, null);
   }
 
   private recordProviderInternalEvent(event: AgentStreamEvent): void {
@@ -3441,6 +3757,7 @@ class OpenCodeAgentSession implements AgentSession {
       unregisterOpenCodeChildSessionServerUrl(event.event.id);
       this.childTranslationStates.delete(event.event.id);
       this.childSessionCwds.delete(event.event.id);
+      this.subagentPresentationByChildId.delete(event.event.id);
     }
   }
 
@@ -3451,6 +3768,9 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private ensureEventStreamReady(): Promise<void> {
+    if (this.closed) {
+      return Promise.reject(new Error("OpenCode session is closed"));
+    }
     if (this.eventStreamReady) {
       return this.eventStreamReady.promise;
     }
@@ -3576,18 +3896,8 @@ class OpenCodeAgentSession implements AgentSession {
     if (!event) {
       return;
     }
-    if (
-      this.turnState.status === "stopping" &&
-      getOpenCodeEventSessionId(event) === this.sessionId
-    ) {
-      if (isOpenCodeTerminalEvent(event, this.sessionId)) {
-        this.finishStoppingTurn();
-      }
-      this.traceOpenCode("provider.opencode.event.skip", {
-        n: eventCount,
-        reason: "turn_stopping",
-        type: event.type,
-      });
+    this.observeRunnerStatusEvent(event);
+    if (this.discardEventWhileStopping(event, eventCount)) {
       return;
     }
     const translated = await this.translateEvent(event);
@@ -3599,7 +3909,7 @@ class OpenCodeAgentSession implements AgentSession {
         foregroundEvents.push(translatedEvent);
       }
     }
-    if (!turnId && this.shouldStartAutonomousTurn(event, foregroundEvents)) {
+    if (!turnId && this.shouldStartAutonomousTurn(event)) {
       turnId = this.startAutonomousTurn();
     }
     if (!turnId) {
@@ -3640,6 +3950,27 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
+  private discardEventWhileStopping(event: OpenCodeEvent, eventCount: number): boolean {
+    if (
+      this.turnState.status !== "stopping" ||
+      getOpenCodeEventSessionId(event) !== this.sessionId
+    ) {
+      return false;
+    }
+    // Residue of the canceled run must not surface as a new turn. Its terminal
+    // is the authoritative end of the stop, so anything OpenCode publishes
+    // afterwards belongs to a new run by construction and takes the live path.
+    if (isOpenCodeTerminalEvent(event, this.sessionId)) {
+      this.finishStoppingTurn(this.turnState.stop);
+    }
+    this.traceOpenCode("provider.opencode.event.skip", {
+      n: eventCount,
+      reason: "turn_stopping",
+      type: event.type,
+    });
+    return true;
+  }
+
   private emitBackgroundPermissionRequests(events: readonly AgentStreamEvent[]): void {
     for (const event of events) {
       if (event.type === "permission_requested") {
@@ -3648,37 +3979,20 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
-  private shouldStartAutonomousTurn(
-    event: OpenCodeEvent,
-    foregroundEvents: readonly AgentStreamEvent[],
-  ): boolean {
+  private observeRunnerStatusEvent(event: OpenCodeEvent): void {
+    if (getOpenCodeRunnerStatusFromEvent(event, this.sessionId) !== null) {
+      this.runnerStatusRevision += 1;
+    }
+  }
+
+  private shouldStartAutonomousTurn(event: OpenCodeEvent): boolean {
     if (this.turnState.status !== "idle") {
       return false;
     }
-    if (getOpenCodeEventSessionId(event) !== this.sessionId) {
-      return false;
-    }
-    // OpenCode publishes the persisted user message before it marks the runner
-    // busy. That message is the earliest unambiguous boundary for a plugin-
-    // initiated parent turn; session metadata and assistant echoes are not.
-    if (event.type === "message.updated" && event.properties.info.role === "user") {
-      if (this.emittedUserMessageIds.has(event.properties.info.id)) {
-        return false;
-      }
-      return true;
-    }
-    if (!this.externallyDriven) {
-      return false;
-    }
-    if (
-      foregroundEvents.some(
-        (foregroundEvent) =>
-          foregroundEvent.type !== "thread_started" && !toTerminalTurnEvent(foregroundEvent),
-      )
-    ) {
-      return true;
-    }
-    return event.type === "session.status" && event.properties.status.type === "busy";
+    // Message records are mutable and can be patched after the runner stops.
+    // Only OpenCode's execution status is authoritative for autonomous activity.
+    const runnerStatus = getOpenCodeRunnerStatusFromEvent(event, this.sessionId);
+    return runnerStatus !== null && isOpenCodeRunnerActive(runnerStatus);
   }
 
   private startAutonomousTurn(): string {
@@ -3720,29 +4034,96 @@ class OpenCodeAgentSession implements AgentSession {
     this.notifySubscribers(event, turnId);
   }
 
-  private beginStoppingTurn(turnId: string): void {
-    if (this.turnState.status !== "running" || this.turnState.turnId !== turnId) {
-      return;
+  private isStopping(stop: OpenCodeStop): boolean {
+    return this.turnState.status === "stopping" && this.turnState.stop === stop;
+  }
+
+  /** Stops the session runner and returns the abort this Stop issued. */
+  private issueStop(turnId: string | null): Promise<void> {
+    if (this.turnState.status === "stopping") {
+      // Stop pressed again during a stop retries that same stop. There is one
+      // runner per session, so a second boundary would race the first — and
+      // after a failed abort, a fresh one is both the only proof that can still
+      // acknowledge the canceled turn and the only way out of fail-closed.
+      return this.issueOwnedAbort(this.turnState.stop);
     }
-    this.synthesizeInterruptedToolCalls(turnId);
+    const stop: OpenCodeStop = {
+      pendingCancellationTurnId: turnId,
+      terminal: createDeferred<void>(),
+    };
+    const abort = this.issueOwnedAbort(stop);
+    if (turnId) {
+      this.synthesizeInterruptedToolCalls(turnId);
+      // An idle session has no run to observe, so only abort settlement gates
+      // reuse there. A running one also owes the canceled run's terminal.
+      this.turnState = { status: "stopping", stop };
+    }
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
     this.abortController = null;
-    this.turnState = { status: "stopping", idle: createDeferred<void>() };
+    return abort;
+  }
+
+  /** Issues one more session-scoped abort for this stop and returns it. */
+  private issueOwnedAbort(stop: OpenCodeStop): Promise<void> {
+    const abort = this.runOwnedAbort(stop.pendingCancellationTurnId);
+    // Abort is session-scoped, so its settlement is too: an older request lands
+    // on the runner whenever the server gets to it, however many stops have come
+    // and gone since. Only the newest abort may hold the gate closed, since
+    // recovering from a failed one is what pressing Stop again is for.
+    const stillInFlight = this.abortSettlement.catch(() => undefined);
+    this.abortSettlement = Promise.all([stillInFlight, abort]).then(() => undefined);
+    void this.abortSettlement.catch(() => undefined);
+    // Cancellation is acknowledged as soon as an owned abort succeeds, or when
+    // the provider publishes the canceled run's terminal.
+    void abort.then(
+      () => this.acknowledgeCancellation(stop),
+      () => undefined,
+    );
+    return abort;
+  }
+
+  private acknowledgeCancellation(stop: OpenCodeStop): void {
+    const turnId = stop.pendingCancellationTurnId;
+    if (!turnId) {
+      return;
+    }
+    stop.pendingCancellationTurnId = null;
     this.notifySubscribers(
       { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
       turnId,
     );
   }
 
-  private finishStoppingTurn(): void {
-    if (this.turnState.status !== "stopping") {
+  /**
+   * Issues the session-scoped abort for one stop, retrying it once. The stop owns
+   * every abort it needs: a detached retry would outlive its own boundary and
+   * cancel whichever run happened to be current when it landed.
+   */
+  private runOwnedAbort(turnId: string | null): Promise<void> {
+    // The turn hop also converts a synchronous SDK throw into a rejection.
+    return Promise.resolve()
+      .then(() => this.abortSession(turnId, "interrupt"))
+      .catch((error) => {
+        if (this.closed) {
+          throw error;
+        }
+        return this.abortSession(turnId, "stop_retry");
+      });
+  }
+
+  private finishStoppingTurn(stop: OpenCodeStop): void {
+    if (!this.isStopping(stop)) {
       return;
     }
-    const stopping = this.turnState;
+    // Acknowledge before leaving the stopping state so a successor run adopted
+    // from the very next event cannot start ahead of the cancellation.
+    this.acknowledgeCancellation(stop);
     resetOpenCodeTurnTrackingState(this.createTranslationState());
+    const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
+    this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
     this.turnState = { status: "idle" };
-    stopping.idle.resolve();
+    stop.terminal.resolve();
   }
 
   private trackToolCall(item: ToolCallTimelineItem): void {
@@ -3991,9 +4372,6 @@ class OpenCodeAgentSession implements AgentSession {
         logger: this.logger,
       });
       await this.deleteProviderSessionIfEphemeral();
-      if (this.turnState.status === "stopping") {
-        this.turnState.idle.resolve();
-      }
       this.turnState = { status: "idle" };
     } finally {
       await this.releaseServer?.();
@@ -4153,6 +4531,7 @@ class OpenCodeAgentSession implements AgentSession {
       subAgentsByCallId: this.subAgentsByCallId,
       subAgentCallIdByChildSessionId: this.subAgentCallIdByChildSessionId,
       knownChildSessionIds: this.knownChildSessionIds,
+      subagentPresentationByChildId: this.subagentPresentationByChildId,
       modelContextWindowsByModelKey: this.modelContextWindowsByModelKey,
       onAssistantModelContextWindowResolved: (contextWindowMaxTokens) => {
         this.accumulatedUsage.contextWindowMaxTokens = contextWindowMaxTokens;
@@ -4185,6 +4564,7 @@ class OpenCodeAgentSession implements AgentSession {
       subAgentsByCallId: new Map(),
       subAgentCallIdByChildSessionId: new Map(),
       knownChildSessionIds: new Set(),
+      subagentPresentationByChildId: this.subagentPresentationByChildId,
       modelContextWindowsByModelKey: this.modelContextWindowsByModelKey,
     };
     this.childTranslationStates.set(sessionId, state);
@@ -4219,6 +4599,7 @@ class OpenCodeAgentSession implements AgentSession {
     if (event.type === "session.status" && event.properties.status.type === "busy") {
       markRunning();
     }
+    this.appendChildAssistantPresentationUpsert(sessionId, event, events);
     for (const childEvent of translated) {
       if (childEvent.type === "timeline") {
         markRunning();
@@ -4260,6 +4641,48 @@ class OpenCodeAgentSession implements AgentSession {
       }
     }
     return events;
+  }
+
+  /**
+   * Fold presentation facts (agent, model, variant, completed-message tokens) off a child
+   * assistant `message.updated` frame and emit the missing title and/or changed subtitle.
+   * Never carries `status`: a presentation upsert must not revert a finished child.
+   */
+  private appendChildAssistantPresentationUpsert(
+    sessionId: string,
+    event: OpenCodeEvent,
+    events: AgentStreamEvent[],
+  ): void {
+    if (event.type !== "message.updated") {
+      return;
+    }
+    const info = event.properties.info;
+    if (info.sessionID !== sessionId || info.role !== "assistant") {
+      return;
+    }
+    const facts = readOpenCodeAssistantPresentationFacts(info);
+    if (!facts) {
+      return;
+    }
+    const presentation = getOpenCodeSubagentPresentationState(
+      sessionId,
+      this.getChildTranslationState(sessionId),
+    );
+    const subtitle = foldOpenCodeSubagentPresentation(presentation, facts);
+    const title = claimOpenCodeSubagentFallbackTitle(presentation, facts.agentName);
+    if (!subtitle && !title) {
+      return;
+    }
+    events.push({
+      type: "provider_subagent",
+      provider: "opencode",
+      event: {
+        type: "upsert",
+        id: sessionId,
+        ...(title ? { title } : {}),
+        ...(subtitle ? { subtitle } : {}),
+      },
+    });
   }
 
   private async translateEvent(event: OpenCodeEvent): Promise<AgentStreamEvent[]> {

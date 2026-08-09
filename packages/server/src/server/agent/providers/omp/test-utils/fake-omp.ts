@@ -112,6 +112,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly hostToolUpdates: OmpRpcHostToolUpdate[] = [];
   getStateRequestCount = 0;
   abortRequested = false;
+  abortError: Error | null = null;
   readonly canceledExtensionUiRequests: string[] = [];
   readonly extensionUiResponses: Array<{
     id: string;
@@ -238,6 +239,9 @@ export class FakeOmpSession implements OmpRuntimeSession {
   }
 
   async abort(): Promise<void> {
+    if (this.abortError) {
+      throw this.abortError;
+    }
     this.abortRequested = true;
   }
 

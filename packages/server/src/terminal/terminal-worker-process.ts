@@ -130,21 +130,27 @@ function watchTerminal(session: TerminalSession): void {
   });
   outputCoalescerByTerminalId.set(session.id, outputCoalescer);
 
-  const unsubscribeMessage = session.subscribe((message) => {
-    if (message.type === "output") {
-      pendingOutputRevision = message.revision;
-      outputCoalescer.handle(message.data);
-      return;
-    }
-    // Non-output messages (snapshot/snapshotReady/titleChange) must not jump
-    // ahead of buffered output: flush the coalescer first, then forward.
-    outputCoalescer.flush();
-    sendToParent({
-      type: "terminalMessage",
-      terminalId: session.id,
-      message,
-    });
-  });
+  const unsubscribeMessage = session.subscribe(
+    (message) => {
+      if (message.type === "output") {
+        pendingOutputRevision = message.revision;
+        outputCoalescer.handle(message.data);
+        return;
+      }
+      // Non-output messages (snapshot/snapshotReady/titleChange) must not jump
+      // ahead of buffered output: flush the coalescer first, then forward.
+      outputCoalescer.flush();
+      sendToParent({
+        type: "terminalMessage",
+        terminalId: session.id,
+        message,
+      });
+    },
+    // Creation already sends an authoritative state in terminalCreated. A second
+    // asynchronous state snapshot can arrive after the create response and
+    // overwrite a resize issued immediately by the caller.
+    { initialSnapshot: "ready" },
+  );
   const unsubscribeExit = session.onExit((info) => {
     outputCoalescer.flush();
     clearTerminalSubscriptions(session.id);

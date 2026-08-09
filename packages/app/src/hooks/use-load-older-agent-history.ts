@@ -144,9 +144,9 @@ export function useLoadOlderAgentHistory({
     [agentId, serverId, setOlderFetchInFlight],
   );
 
-  const loadOlder = useCallback(() => {
+  const loadOlder = useCallback(async (): Promise<boolean> => {
     const session = useSessionStore.getState().sessions[serverId];
-    void loadOlderAgentHistory(agentId, {
+    const result = await loadOlderAgentHistory(agentId, {
       client: session?.client
         ? {
             fetchAgentTimeline: (timelineAgentId, request) =>
@@ -160,6 +160,9 @@ export function useLoadOlderAgentHistory({
       toast,
       failedMessage: t("loadOlderHistory.failed"),
     });
+    // Strategy callers treat a true return as "a load was started/finished";
+    // false means there is nothing left (or no client/cursor) to fetch.
+    return result === "loaded" || result === "failed";
   }, [agentId, serverId, setInFlight, toast, t]);
 
   const loadAllOlder = useCallback(

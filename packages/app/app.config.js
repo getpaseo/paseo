@@ -1,9 +1,11 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const pkg = require("./package.json");
+const withAndroidProfileable = require("./plugins/with-android-profileable");
 const withFdroidAutolinking = require("./plugins/with-fdroid-autolinking");
 const appVariant = process.env.APP_VARIANT ?? "production";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
+const isProfileBuild = process.env.PASEO_PROFILE_BUILD === "1";
 const forkIdSuffix = process.env.PASEO_FORK_ID_SUFFIX?.trim();
 const explicitAndroidPackageId = process.env.PASEO_ANDROID_PACKAGE_ID?.trim();
 const explicitAndroidAppName = process.env.PASEO_ANDROID_APP_NAME?.trim();
@@ -238,6 +240,7 @@ export default {
       searchPaths: ["../../node_modules", "./node_modules"],
     },
     plugins: [
+      ...(isProfileBuild ? [withAndroidProfileable] : []),
       "expo-router",
       "expo-local-authentication",
       "@config-plugins/react-native-pdf",
@@ -282,6 +285,7 @@ export default {
       autolinkingModuleResolution: true,
     },
     extra: {
+      profileBuild: isProfileBuild,
       fdroidBuild: isFdroidBuild,
       router: {},
       ...(expoProjectId ? { eas: { projectId: expoProjectId } } : {}),

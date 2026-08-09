@@ -3,6 +3,7 @@ import type {
   WorkspaceStructureHostPlacement,
   WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
+import { createProjectViewKey } from "@/projects/workspace-structure";
 
 export type HostProjectListItem = WorkspaceStructureProject;
 
@@ -31,16 +32,17 @@ export function hostProjectFromRoute(route: HostProjectRouteContext): HostProjec
     return null;
   }
   return {
-    projectKey: projectId,
+    viewKey: createProjectViewKey({ kind: "placement", serverId: route.serverId, projectId }),
+    projectKey: null,
     projectName: trimOptional(route.displayName) || projectId,
-    projectKind: "git",
+    projectKind: "unknown",
     iconWorkingDir,
     hosts: [
       {
         serverId: route.serverId,
         projectId,
         iconWorkingDir,
-        canCreateWorktree: true,
+        worktreeSupport: "unknown",
       },
     ],
     workspaceKeys: [],
@@ -64,7 +66,12 @@ export function hostProjectFromWorkspace(input: {
   }
   const canCreate = canCreateWorktreeForProjectKind(input.workspace.projectKind);
   return {
-    projectKey: projectId,
+    viewKey: createProjectViewKey({
+      kind: "placement",
+      serverId: input.serverId,
+      projectId,
+    }),
+    projectKey: null,
     projectName: input.workspace.projectDisplayName || projectId,
     projectKind: input.workspace.projectKind,
     iconWorkingDir,
@@ -73,7 +80,8 @@ export function hostProjectFromWorkspace(input: {
         serverId: input.serverId,
         projectId: input.workspace.projectId,
         iconWorkingDir,
-        canCreateWorktree: canCreate,
+        worktreeSupport: canCreate ? "supported" : "unsupported",
+        customIconRevision: input.workspace.projectCustomIconRevision,
       },
     ],
     workspaceKeys: [`${input.serverId}:${input.workspace.id}`],
@@ -81,7 +89,7 @@ export function hostProjectFromWorkspace(input: {
 }
 
 function projectCanCreateWorktree(project: HostProjectListItem): boolean {
-  return project.hosts.some((h) => h.canCreateWorktree);
+  return project.hosts.some((host) => host.worktreeSupport !== "unsupported");
 }
 
 function getHostProjectPlacement(
@@ -92,6 +100,13 @@ function getHostProjectPlacement(
     if (host.serverId === serverId) return host;
   }
   return null;
+}
+
+export function getWorktreeSupportForHostProject(input: {
+  project: HostProjectListItem;
+  serverId: string;
+}): WorkspaceStructureHostPlacement["worktreeSupport"] {
+  return getHostProjectPlacement(input.project, input.serverId)?.worktreeSupport ?? "unknown";
 }
 
 export function getHostProjectSourceDirectory(
@@ -114,7 +129,7 @@ export function canCreateWorkspaceForHostProject(input: {
   if (!host) {
     return false;
   }
-  return input.allowAllProjects || host.canCreateWorktree;
+  return input.allowAllProjects || host.worktreeSupport !== "unsupported";
 }
 
 export function filterWorkspaceProjectsForHost(input: {
@@ -131,6 +146,67 @@ export function filterWorkspaceProjectsForHost(input: {
   );
 }
 
+function compareHostProjectsForServer(
+  left: HostProjectListItem,
+  right: HostProjectListItem,
+  serverId: string,
+): number {
+  return (
+    left.projectName.localeCompare(right.projectName, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    }) ||
+    (getHostProjectId(left, serverId) ?? "").localeCompare(
+      getHostProjectId(right, serverId) ?? "",
+    ) ||
+    left.viewKey.localeCompare(right.viewKey)
+  );
+}
+
+export function resolveExactHostProjectCandidate(input: {
+  candidate: HostProjectListItem;
+  projects: readonly HostProjectListItem[];
+  serverId: string;
+}): HostProjectListItem | null {
+  const candidatePlacement = getHostProjectId(input.candidate, input.serverId);
+  if (candidatePlacement) {
+    const exactPlacement = input.projects.find(
+      (project) => getHostProjectId(project, input.serverId) === candidatePlacement,
+    );
+    if (exactPlacement) return exactPlacement;
+  }
+
+  const exactView = input.projects.find((project) => project.viewKey === input.candidate.viewKey);
+  if (input.candidate.projectKey !== null && exactView?.projectKey === input.candidate.projectKey) {
+    return exactView;
+  }
+
+  return null;
+}
+
+export function resolveEquivalentHostProjectCandidate(input: {
+  candidate: HostProjectListItem;
+  projects: readonly HostProjectListItem[];
+  serverId: string;
+}): HostProjectListItem | null {
+  if (input.candidate.projectKey === null) return null;
+  const equivalents = input.projects.filter(
+    (project) => project.projectKey === input.candidate.projectKey,
+  );
+  if (equivalents.length === 0) return null;
+  return equivalents.toSorted((left, right) =>
+    compareHostProjectsForServer(left, right, input.serverId),
+  )[0]!;
+}
+
+export function resolveHostProjectCandidate(input: {
+  candidate: HostProjectListItem;
+  projects: readonly HostProjectListItem[];
+  serverId: string;
+}): HostProjectListItem | null {
+  return resolveExactHostProjectCandidate(input) ?? resolveEquivalentHostProjectCandidate(input);
+}
+
 export function resolveInitialWorkspaceProject(input: {
   routeProject: HostProjectListItem | null;
   lastActiveProject: HostProjectListItem | null;
@@ -143,20 +219,12 @@ export function resolveInitialWorkspaceProject(input: {
     if (!candidate) {
       continue;
     }
-    const candidatePlacement = candidate.hosts.find(
-      (host) => host.serverId === input.serverId && host.projectId,
-    );
     const hydratedProject =
-      (candidatePlacement
-        ? input.projects.find((project) =>
-            project.hosts.some(
-              (host) =>
-                host.serverId === input.serverId && host.projectId === candidatePlacement.projectId,
-            ),
-          )
-        : undefined) ??
-      input.projects.find((project) => project.projectKey === candidate.projectKey) ??
-      candidate;
+      resolveHostProjectCandidate({
+        candidate,
+        projects: input.projects,
+        serverId: input.serverId,
+      }) ?? candidate;
     if (
       canCreateWorkspaceForHostProject({
         project: hydratedProject,
@@ -186,19 +254,19 @@ export function resolveInitialWorktreeProject(input: {
 }
 
 export function resolveSelectedHostProject(input: {
-  selectedProjectKey: string | null;
+  selectedViewKey: string | null;
   projects: readonly HostProjectListItem[];
   routeProject: HostProjectListItem | null;
   lastActiveProject: HostProjectListItem | null;
 }): HostProjectListItem | null {
-  const selectedProjectKey = input.selectedProjectKey?.trim() ?? "";
-  if (!selectedProjectKey) {
+  const selectedViewKey = input.selectedViewKey?.trim() ?? "";
+  if (!selectedViewKey) {
     return null;
   }
 
   return (
-    input.projects.find((project) => project.projectKey === selectedProjectKey) ??
-    (input.routeProject?.projectKey === selectedProjectKey ? input.routeProject : null) ??
-    (input.lastActiveProject?.projectKey === selectedProjectKey ? input.lastActiveProject : null)
+    input.projects.find((project) => project.viewKey === selectedViewKey) ??
+    (input.routeProject?.viewKey === selectedViewKey ? input.routeProject : null) ??
+    (input.lastActiveProject?.viewKey === selectedViewKey ? input.lastActiveProject : null)
   );
 }

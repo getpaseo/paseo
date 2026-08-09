@@ -1,5 +1,5 @@
 import { agentPanelRegistration } from "@/panels/agent-panel";
-import { browserPanelRegistration } from "@/panels/browser-panel";
+import { browserPanelRegistration } from "@/desktop/browser/panel";
 import { codeServerPanelRegistration } from "@/panels/code-server-panel";
 import { commitDiffPanelRegistration, workingDiffPanelRegistration } from "@/panels/diff-panel";
 import { draftPanelRegistration } from "@/panels/draft-panel";

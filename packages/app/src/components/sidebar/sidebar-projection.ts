@@ -25,7 +25,7 @@ export function buildSidebarProjection(input: {
   projects: SidebarProjectEntry[];
   pinnedKeys: PinnedSidebarKeys;
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
-  projectNamesByKey: Map<string, string>;
+  projectNamesByViewKey: Map<string, string>;
   groupMode: SidebarGroupMode;
   pinnedCollapsed: boolean;
   collapsedProjectKeys: ReadonlySet<string>;
@@ -42,7 +42,7 @@ export function buildSidebarProjection(input: {
           Array.from(input.workspaceEntriesByKey.values()).filter(
             (workspace) => !pinnedWorkspaceKeys.has(workspace.workspaceKey),
           ),
-          input.projectNamesByKey,
+          input.projectNamesByViewKey,
         )
       : [];
 
@@ -61,7 +61,7 @@ export function buildSidebarProjection(input: {
     sections.push(
       ...pinnedGroups.unpinnedProjects.map((project) => ({
         workspaces: project.workspaces,
-        collapsed: input.collapsedProjectKeys.has(project.projectKey),
+        collapsed: input.collapsedProjectKeys.has(project.viewKey),
       })),
     );
   }

@@ -630,6 +630,7 @@ describe("WorkspaceReconciliationService", () => {
       createdAt: timestamp,
       updatedAt: expect.any(String),
       archivedAt: expect.any(String),
+      autoArchivedChangeRequestUrl: null,
     });
     expect(projects.get("p1")).toEqual(project);
   });

@@ -69,24 +69,33 @@ export function MobilePanelOverlay({
   }
 
   return (
-    <View style={overlayStyle} pointerEvents={overlayPointerEvents}>
-      <Pressable
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        onPress={showMobileAgent}
-        pointerEvents={isOpen ? "auto" : "none"}
-        style={StyleSheet.absoluteFillObject}
-        testID={`${panel}-backdrop`}
+    <GestureDetector gesture={closeGesture} touchAction="pan-y">
+      {/* Fabric needs an always-mounted native host to attach the close handler while the
+          retained panel content is hidden. nativeID keeps that host registered. */}
+      <View
+        collapsable={false}
+        nativeID={`${panel}-gesture-host`}
+        pointerEvents={overlayPointerEvents}
+        style={styles.overlay}
       >
-        <Animated.View pointerEvents="none" style={backdropStyle} />
-      </Pressable>
+        <View style={overlayStyle} pointerEvents={overlayPointerEvents}>
+          <Pressable
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            onPress={showMobileAgent}
+            pointerEvents={isOpen ? "auto" : "none"}
+            style={StyleSheet.absoluteFillObject}
+            testID={`${panel}-backdrop`}
+          >
+            <Animated.View pointerEvents="none" style={backdropStyle} />
+          </Pressable>
 
-      <GestureDetector gesture={closeGesture} touchAction="pan-y">
-        <Animated.View pointerEvents={isOpen ? "auto" : "none"} style={combinedPanelStyle}>
-          <WindowChromeRootRegion corners="both">{children}</WindowChromeRootRegion>
-        </Animated.View>
-      </GestureDetector>
-    </View>
+          <Animated.View pointerEvents={isOpen ? "auto" : "none"} style={combinedPanelStyle}>
+            <WindowChromeRootRegion corners="both">{children}</WindowChromeRootRegion>
+          </Animated.View>
+        </View>
+      </View>
+    </GestureDetector>
   );
 }
 

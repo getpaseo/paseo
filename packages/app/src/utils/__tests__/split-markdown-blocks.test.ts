@@ -67,6 +67,14 @@ describe("splitMarkdownBlocks", () => {
     ]);
   });
 
+  it("keeps a loose nested list in its outer list block", () => {
+    expect(
+      splitMarkdownBlocks(
+        "Before\n\n3. Outer three\n\n   7. Inner seven\n   8. Inner eight\n\nAfter",
+      ),
+    ).toEqual(["Before", "3. Outer three\n\n   7. Inner seven\n   8. Inner eight", "After"]);
+  });
+
   it("treats triple newlines as a split point and filters empty blocks", () => {
     expect(splitMarkdownBlocks("First paragraph\n\n\nSecond paragraph")).toEqual([
       "First paragraph",

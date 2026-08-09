@@ -82,6 +82,34 @@ describe("Hub session protocol", () => {
     expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
   });
 
+  test("accepts an optional MCP server configuration on Hub creates", () => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-mcp",
+      executionId: "execution-mcp",
+      provider: "codex",
+      cwd: "/workspace",
+      prompt: "Implement the requested change",
+      mcpServers: {
+        hub: {
+          type: "http",
+          url: "https://hub.example/mcp/executions/execution-mcp",
+          headers: { Authorization: "Bearer hub-execution-bearer" },
+        },
+      },
+    };
+
+    expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
+    expect(PreviousHubAgentCreateRequestSchema.parse(message)).toEqual({
+      type: "hub.execution.agent.create.request",
+      requestId: "request-mcp",
+      executionId: "execution-mcp",
+      provider: "codex",
+      cwd: "/workspace",
+      prompt: "Implement the requested change",
+    });
+  });
+
   test.each([
     undefined,
     { mode: "branch-off", newBranch: "hub-work", base: "main" },

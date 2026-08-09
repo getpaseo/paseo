@@ -18,6 +18,12 @@ export interface ReleaseInfo {
   windowsArm64Asset: string | null;
 }
 
+export interface ReleaseChannels {
+  stable: ReleaseInfo;
+  /** The newest prerelease, or null when stable has caught up with it. */
+  beta: ReleaseInfo | null;
+}
+
 const LINUX_APPIMAGE_ASSET_PATTERN =
   /^Paseo-(?:\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)-)?x86_64\.AppImage$/;
 
@@ -28,7 +34,7 @@ const REQUIRED_ASSET_PATTERNS = [
 ];
 
 const GITHUB_RELEASES_URL = "https://api.github.com/repos/getpaseo/paseo/releases?per_page=10";
-const RELEASE_CACHE_KEY = "github-release:v1";
+const RELEASE_CACHE_KEY = "github-release:v2";
 const ANDROID_RELEASE_CACHE_KEY = "github-android-release:v1";
 
 function hasRequiredAssets(release: GitHubRelease): boolean {
@@ -77,23 +83,58 @@ async function fetchGitHubReleases(): Promise<GitHubRelease[]> {
   return (await response.json()) as GitHubRelease[];
 }
 
-async function fetchLatestReadyRelease(): Promise<ReleaseInfo> {
-  const releases = await fetchGitHubReleases();
-  const ready = releases.find(
-    (release) => !release.prerelease && !release.draft && hasRequiredAssets(release),
-  );
-  if (!ready) throw new Error("no ready GitHub release found");
+function toReleaseInfo(release: GitHubRelease): ReleaseInfo | null {
+  if (release.draft || !hasRequiredAssets(release)) return null;
 
-  const windowsAssets = pickWindowsAssets(ready.assets);
-  const linuxAppImageAsset = pickLinuxAppImageAsset(ready.assets);
-  if (!linuxAppImageAsset) throw new Error("ready release missing Linux AppImage asset");
+  const linuxAppImageAsset = pickLinuxAppImageAsset(release.assets);
+  if (!linuxAppImageAsset) return null;
 
+  const windowsAssets = pickWindowsAssets(release.assets);
   return {
-    version: versionFromTag(ready.tag_name),
+    version: versionFromTag(release.tag_name),
     linuxAppImageAsset,
     windowsX64Asset: windowsAssets.x64,
     windowsArm64Asset: windowsAssets.arm64,
   };
+}
+
+function coreVersion(version: string): number[] {
+  return version.split("-")[0].split(".").map(Number);
+}
+
+/**
+ * A beta is only worth offering while its core version is ahead of stable.
+ * Promotion ships the same core as a stable release, which retires the beta
+ * channel until the next beta line opens.
+ */
+function leadsStable(betaVersion: string, stableVersion: string): boolean {
+  const beta = coreVersion(betaVersion);
+  const stable = coreVersion(stableVersion);
+  for (let index = 0; index < Math.max(beta.length, stable.length); index++) {
+    const betaPart = beta[index] ?? 0;
+    const stablePart = stable[index] ?? 0;
+    if (betaPart !== stablePart) return betaPart > stablePart;
+  }
+  return false;
+}
+
+export function selectReleaseChannels(releases: GitHubRelease[]): ReleaseChannels {
+  const stable = releases
+    .filter((release) => !release.prerelease)
+    .map(toReleaseInfo)
+    .find((release) => release !== null);
+  if (!stable) throw new Error("no ready GitHub release found");
+
+  const beta = releases
+    .filter((release) => release.prerelease)
+    .map(toReleaseInfo)
+    .find((release) => release !== null);
+
+  return { stable, beta: beta && leadsStable(beta.version, stable.version) ? beta : null };
+}
+
+async function fetchReleaseChannels(): Promise<ReleaseChannels> {
+  return selectReleaseChannels(await fetchGitHubReleases());
 }
 
 export function getLatestAndroidVersionFromReleases(releases: GitHubRelease[]): string {
@@ -141,12 +182,18 @@ function isReleaseInfo(value: unknown): value is ReleaseInfo {
   );
 }
 
-export async function getLatestReleaseInfo(context: WebsiteCacheContext): Promise<ReleaseInfo> {
+function isReleaseChannels(value: unknown): value is ReleaseChannels {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return isReleaseInfo(record.stable) && (record.beta === null || isReleaseInfo(record.beta));
+}
+
+export async function getReleaseChannels(context: WebsiteCacheContext): Promise<ReleaseChannels> {
   return getBlockingColdCache({
     context,
     key: RELEASE_CACHE_KEY,
-    isValue: isReleaseInfo,
-    fetchFresh: fetchLatestReadyRelease,
+    isValue: isReleaseChannels,
+    fetchFresh: fetchReleaseChannels,
   });
 }
 

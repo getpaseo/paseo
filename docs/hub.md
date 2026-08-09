@@ -45,8 +45,11 @@ replays the original prompt. A duplicate create returns the existing agent witho
 turn.
 
 Hub creates use the same agent creation path as trusted clients. They may select any existing
-worktree target shape. Execution completion policy remains outside the daemon: a completed agent
-turn does not imply that the Hub execution is terminal.
+worktree target shape and carry optional MCP server configuration for the agent session. The daemon
+keeps that configuration in its private agent record so provider sessions can recover after a
+restart; neither ordinary client snapshots and updates nor Hub projections expose session
+configuration. Execution completion policy remains outside the daemon: a completed agent turn does
+not imply that the Hub execution is terminal.
 
 The Hub ends an execution by sending `hub.execution.control.request` with the durable execution ID
 and either `interrupt` or `archive`. The daemon resolves the agent from the authenticated daemon
