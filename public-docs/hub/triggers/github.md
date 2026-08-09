@@ -42,11 +42,13 @@ Hub consumes only declared consecutive headers and passes `investigate the faile
 
 ## Credentials and replies
 
-GitHub-triggered steps receive a scoped `GH_TOKEN` for the triggering repository. The agent can use `gh` to comment, push, and open a pull request. Say so in the prompt, and name the Hub tool that completes the step:
+Hub mints a GitHub token for each execution, scoped to the installation and the triggering repository, and puts it in the agent's environment as `GH_TOKEN`. That authenticates the `gh` CLI. Say what to do with it in the prompt, and name the Hub tool that completes the step:
 
 ```text
 Post the answer as an issue comment with `gh`.
 Call hub.finish_execution when the step is complete.
 ```
 
-Hub's `hub.reply` tool covers Slack and Discord, not GitHub. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call) and the [workflow examples](/docs/hub/configuration/examples) for review and PR workflows.
+The token authenticates API calls. It does not configure git, and Paseo does not set a commit identity or a credential helper, so configure those on the daemon host before a step commits or pushes.
+
+Hub's `hub.reply` tool covers Slack and Discord, not GitHub. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call) and the [workflow scenarios](/docs/hub/workflows#scenarios) for review and PR workflows.

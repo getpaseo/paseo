@@ -52,4 +52,4 @@ allow_outputs:
 
 The reply is posted in the triggering thread. A root message gets a new thread; a threaded message stays in that thread.
 
-The declaration grants the `hub.reply` tool; the prompt has to tell the agent to call it. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call), and the shared [workflow examples](/docs/hub/configuration/examples) for complete configurations.
+The declaration grants the `hub.reply` tool; the prompt has to tell the agent to call it. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call), and the shared [workflow scenarios](/docs/hub/workflows#scenarios) for complete configurations.

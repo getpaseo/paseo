@@ -12,7 +12,7 @@ From an empty Hub to an agent that starts when someone mentions it. Each step li
 
 ## 1. Sign in
 
-Open your Hub and sign in with the owner account created during deployment. Replace its temporary password when prompted. Your connections, daemons, and projects all live inside its organization.
+Open your Hub and sign in. Your connections, daemons, and projects all live inside one organization. [Hosted](/docs/hub/hosted) and [self-hosting](/docs/hub/self-hosting) cover how you get that first account.
 
 ## 2. Connect GitHub
 

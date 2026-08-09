@@ -1,6 +1,6 @@
 ---
 title: How Hub works
-description: How a provider event reaches a workflow and a Paseo daemon, for hosted and self-hosted Hub.
+description: How a provider event reaches a workflow and a Paseo daemon.
 nav: How it works
 order: 62
 category: Hub
@@ -8,7 +8,7 @@ category: Hub
 
 # How Hub works
 
-Hub connects the places where requests arrive to the machines where your agents run. The same flow applies to hosted and self-hosted Hub.
+Hub connects the places where requests arrive to the machines where your agents run.
 
 ```text
 GitHub / Slack / Discord / manual request

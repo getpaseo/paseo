@@ -51,4 +51,4 @@ The reply is posted in the triggering thread or channel. The declaration grants 
 
 A Discord trigger has no implicit GitHub credential. If a step needs another connection, configure that connection through the supported step environment for your deployment; Hub does not guess between GitHub installations.
 
-See the [workflow examples](/docs/hub/configuration/examples) for complete step configurations.
+See the [workflow scenarios](/docs/hub/workflows#scenarios) for complete step configurations.

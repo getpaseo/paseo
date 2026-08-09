@@ -1,11 +1,13 @@
 import rehypeAutolinkHeadings from "rehype-autolink-headings";
 import rehypeSlug from "rehype-slug";
+import remarkDirective from "remark-directive";
 import remarkGfm from "remark-gfm";
 import { createHighlighterCore, type HighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import type { PluggableList } from "unified";
+import { remarkDocsExample } from "./docs-example-directive.js";
 
-export const docsRemarkPlugins: PluggableList = [remarkGfm];
+export const docsRemarkPlugins: PluggableList = [remarkGfm, remarkDirective, remarkDocsExample];
 
 let docsHighlighter: Promise<HighlighterCore> | undefined;
 

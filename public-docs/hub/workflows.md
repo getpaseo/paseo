@@ -1,6 +1,6 @@
 ---
 title: Hub workflows
-description: Learn how Hub turns a provider event into one or more ordered agent steps.
+description: Learn how Hub turns a provider event into one or more ordered agent steps, from a single reply to classifier-driven routing.
 nav: Workflows
 order: 64
 category: Hub
@@ -10,17 +10,15 @@ category: Hub
 
 A workflow is the work Hub performs after a trigger matches an event. You describe it in `.paseo/hub.yml`, next to the environments where your agents run.
 
-The basic shape is small:
-
 ```text
 Slack mention → Hub trigger → workflow step → Paseo daemon → agent
 ```
 
-You can stop there with one step. Add deterministic inputs when the person invoking the workflow should choose a route. Add structured outputs when an agent should make a decision for a later step.
+One step is a complete workflow. The scenarios further down add a second step, typed inputs, and agent-chosen routing, one at a time.
 
 ## Your first workflow
 
-Start with one Slack trigger and one agent step:
+One Slack trigger and one agent that answers in the thread:
 
 ```yaml
 environments:
@@ -62,27 +60,19 @@ triggers:
           - type: slack.reply
 ```
 
-`agent.options` passes Codex's own settings through unchanged: no approval prompts, a read-only sandbox, no web search. Nobody is watching an unattended step, so one that stops to ask an approval question goes nowhere. [Provider-native controls](/docs/hub/security#provider-native-controls) has the equivalent block for each provider.
-
 Mention the bot in the configured channel:
 
 ```text
 @Paseo how do I run the project locally?
 ```
 
-Hub removes the mention and gives the agent `how do I run the project locally?` as `${{ paseo.prompt }}`. The prompt tells it to call `hub.reply`, which posts in the thread through the step's `slack.reply` capability.
+Hub removes the mention and gives the agent `how do I run the project locally?` as `${{ paseo.prompt }}`. The agent answers through `hub.reply`, which posts in the thread, and Project → Activity records the event, the step, the outcome, and the reply.
 
-The last block wraps the triggering message in `<user-prompt>` tags and keeps it as its own prompt item, so the agent can tell the request apart from your instructions. Tags are a formatting convention; [Hub security](/docs/hub/security) covers the allowlists, provider policy, and output authority that decide what an agent may do with the request.
+`agent.options` passes Codex's own settings through unchanged: no approval prompts, a read-only sandbox, no web search. Nobody is watching an unattended step, so one that stops to ask an approval question goes nowhere. [Provider-native controls](/docs/hub/security#provider-native-controls) has the equivalent block for each provider.
 
-What happens next:
+The last prompt block wraps the triggering message in `<user-prompt>` tags and keeps it as its own prompt item, so the agent can tell the request apart from your instructions. Tags are a formatting convention; [Hub security](/docs/hub/security) covers the allowlists, provider policy, and output authority that decide what an agent may do with the request.
 
-- Slack delivers the mention to Hub.
-- Hub checks the trigger event and filters, including the user allowlist.
-- Hub creates a workflow run and starts the `answer` step on the matching daemon.
-- The agent works with the prompt, replies, and finishes through Hub.
-- Project → Activity records the event, step, outcome, and any reply.
-
-For GitHub, Discord, and manual runs, only the trigger and invocation change. The workflow steps work the same way. See [Triggers](/docs/hub/triggers) for provider matching.
+For GitHub, Discord, and manual runs, only the trigger and invocation change. The steps work the same way. See [Triggers](/docs/hub/triggers) for provider matching.
 
 ## Tell the agent which tool to call
 
@@ -98,187 +88,624 @@ Call hub.reply to send your response to the originating conversation.
 Call hub.finish_execution when the step is complete.
 ```
 
-A step that only feeds a later step names `hub.finish_execution` alone; most classifiers never reply. [Structured outputs](#structured-outputs) has that version.
+A step that only feeds a later step names `hub.finish_execution` alone. Most classifiers never reply.
 
-## Deterministic inputs
+## Scenarios
 
-A deterministic input is a typed value supplied by the person or system that invokes the workflow. Hub validates it before starting an agent. Use one when the caller should make an explicit choice, such as selecting a repository or agent.
+Each scenario below is a complete configuration, and each one adds a single idea to the one before it. Open the one that matches what you are trying to do.
 
-Declare the input on the trigger:
-
-```yaml
-inputs:
-  repo:
-    type: string
-    choices: [project, paseo]
-  agent:
-    type: string
-    default: codex
-    choices: [codex, claude]
-```
-
-The caller puts declared inputs at the start of the message:
-
-```text
-@Paseo repo=project agent=claude investigate the failed sync
-```
-
-Hub stores these values under `paseo.inputs` and passes the remaining text as the prompt:
-
-```text
-paseo.inputs.repo  = "project"
-paseo.inputs.agent = "claude"
-paseo.prompt       = "investigate the failed sync"
-```
-
-Inputs can be `string`, `number`, or `boolean`. Add `required`, `default`, or `choices` when needed. A value that does not match its type or choices, a missing required value, or a duplicate input creates a rejected Activity record and starts no agent.
-
-The first word that is not a declared input starts the prompt. This lets ordinary text remain ordinary text:
-
-```text
-@Paseo repo=project status=blocked explain the failure
-```
-
-If `status` is not declared, the prompt is `status=blocked explain the failure`. It is not treated as workflow input.
-
-### Deterministic routing
-
-Use `filters.inputs` when different triggers should own different choices:
+:::example[Make a change instead of answering]
+`mode: full-access` lets the agent edit files and run commands. The environment gets a worktree, so the work happens on its own branch instead of your checkout.
 
 ```yaml
-filters:
-  from_users: [U01234567]
-  inputs:
-    repo: project
+environments:
+  - name: development
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/project
+    worktree:
+      mode: branch-off
+      newBranch: hub/work
+      base: origin/main
+
+triggers:
+  - name: slack-work
+    on: slack.mention
+    max_runtime: 2h
+    filters:
+      workspace: T01234567
+      channels: [C01234567]
+      from_users: [U01234567]
+    steps:
+      - id: work
+        environment: development
+        max_runtime: 90m
+        idle_timeout: 10m
+        agent:
+          provider: codex
+          mode: full-access
+        prompt:
+          - text: |
+              Make the change, verify it, and report what you did.
+
+              Call hub.reply to send your response to the originating conversation.
+              Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+        allow_outputs:
+          - type: slack.reply
 ```
 
-Create a second trigger with `repo: paseo` and the same input declaration. The two routes are exclusive for a supplied `repo` value. See [Repository routing](/docs/hub/configuration/examples#repository-routing) for a complete configuration.
+Base the worktree on `origin/main` rather than `main`. [Git worktrees](/docs/worktrees#create-a-worktree-backed-workspace) explains why, along with setup hooks and scripts.
+:::
 
-## Structured outputs
-
-A structured output is a JSON value an agent returns when it finishes a step. Declare its JSON Schema when a later step needs to use the decision.
-
-This example asks one agent whether the request needs an answer or implementation, then runs only the matching step:
+:::example[Report progress while working]
+`max` is how many times a step may use a capability, and it defaults to `1`. Raise it and tell the agent to send updates as it goes.
 
 ```yaml
-steps:
-  - id: classify
-    environment: development
-    max_runtime: 2m
-    idle_timeout: 30s
-    agent:
-      provider: codex
-      options:
-        approval_policy: never
-        sandbox_mode: read-only
-        web_search: disabled
-    prompt:
-      - text: Classify the request as answer or implementation.
-      - text: Call hub.finish_execution with the classification as the structured result.
-      - text: |
-          <user-prompt>
-          ${{ paseo.prompt }}
-          </user-prompt>
-    output:
-      schema:
-        type: object
-        additionalProperties: false
-        required: [kind]
-        properties:
-          kind:
-            enum: [answer, implementation]
+environments:
+  - name: development
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/project
+    worktree:
+      mode: branch-off
+      newBranch: hub/work
+      base: origin/main
 
-  - id: answer
-    if: ${{ steps.classify.outputs.kind == 'answer' }}
-    environment: development
-    max_runtime: 10m
-    idle_timeout: 2m
-    agent:
-      provider: codex
-      options:
-        approval_policy: never
-        sandbox_mode: read-only
-        web_search: disabled
-    prompt:
-      - text: Answer the request without changing files.
-      - text: Call hub.finish_execution when the step is complete.
-      - text: |
-          <user-prompt>
-          ${{ paseo.prompt }}
-          </user-prompt>
+triggers:
+  - name: slack-work
+    on: slack.mention
+    max_runtime: 2h
+    filters:
+      workspace: T01234567
+      channels: [C01234567]
+      from_users: [U01234567]
+    steps:
+      - id: work
+        environment: development
+        max_runtime: 90m
+        idle_timeout: 10m
+        agent:
+          provider: codex
+          mode: full-access
+        prompt:
+          - text: |
+              Make the change, verify it, and report what you did.
 
-  - id: implementation
-    if: ${{ steps.classify.outputs.kind == 'implementation' }}
-    environment: development
-    max_runtime: 90m
-    idle_timeout: 10m
-    agent:
-      provider: codex
-      mode: full-access
-    prompt:
-      - text: Implement the request and verify the result.
-      - text: Call hub.finish_execution when the step is complete.
-      - text: |
-          <user-prompt>
-          ${{ paseo.prompt }}
-          </user-prompt>
+              Call hub.reply when you start, when something surprising happens,
+              and when you finish.
+              Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+        allow_outputs:
+          - type: slack.reply
+            max: 5
 ```
 
-The classifier calls `hub.finish_execution` with:
+Set `required: true` when a step must send at least one reply before it can finish successfully. See [output capabilities](/docs/hub/configuration/hub-yml#output-capabilities).
+:::
+
+:::example[Answer a pull request review comment]
+Hub mints a GitHub token for each execution of a GitHub-triggered step, scoped to the installation and the triggering repository, and puts it in the agent's environment as `GH_TOKEN`. That authenticates the `gh` CLI, so the agent delivers through `gh` rather than a Hub reply tool.
+
+```yaml
+environments:
+  - name: development
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/project
+
+triggers:
+  - name: pr-work
+    on: github.pull_request_review_comment
+    max_runtime: 2h
+    filters:
+      repo: example/project
+      contains: "@paseo"
+      from_users: [maintainer]
+    steps:
+      - id: implement-review
+        environment: development
+        max_runtime: 90m
+        idle_timeout: 10m
+        auto_archive: true
+        agent:
+          provider: codex
+          mode: full-access
+        prompt:
+          - text: |
+              Address the review request.
+
+              Post progress and the final result as pull request comments with `gh`.
+              Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+```
+
+`hub.reply` covers Slack and Discord. It is not available on a GitHub trigger, so the prompt names `gh` for delivery and `hub.finish_execution` for completion. `auto_archive` archives the agent when the step ends.
+
+`GH_TOKEN` authenticates API calls such as `gh pr comment`. It does not configure git. Committing needs a `user.name` and `user.email`, and pushing over HTTPS needs a credential helper, and Paseo sets neither. Configure them on the daemon host, or run `gh auth setup-git` there, before asking a step to push a branch or open a pull request.
+:::
+
+:::example[Plan first, then implement]
+Steps run in order, and each one gets its own agent, limits, and authority. Here a read-only step posts a plan and a full-access step carries it out.
+
+```yaml
+environments:
+  - name: triage
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/project
+
+  - name: development
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/project
+    worktree:
+      mode: branch-off
+      newBranch: hub/work
+      base: origin/main
+
+triggers:
+  - name: slack-work
+    on: slack.mention
+    max_runtime: 3h
+    filters:
+      workspace: T01234567
+      channels: [C01234567]
+      from_users: [U01234567]
+    steps:
+      - id: plan
+        environment: triage
+        max_runtime: 10m
+        idle_timeout: 2m
+        agent:
+          provider: codex
+          options:
+            approval_policy: never
+            sandbox_mode: read-only
+            web_search: disabled
+        prompt:
+          - text: |
+              Read the code and write the approach you would take. Change nothing.
+
+              Call hub.finish_execution with the approach as the structured result.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+        output:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [plan]
+            properties:
+              plan:
+                type: string
+
+      - id: implement
+        environment: development
+        max_runtime: 90m
+        idle_timeout: 10m
+        agent:
+          provider: codex
+          mode: full-access
+        prompt:
+          - text: |
+              Carry out this approach, verify it, and report the result.
+
+              ${{ steps.plan.outputs.plan }}
+
+              Call hub.reply to send your response to the originating conversation.
+              Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+        allow_outputs:
+          - type: slack.reply
+```
+
+Each step is a separate agent execution with its own prompt, and nothing carries over on its own. The second agent never sees the first agent's transcript. The only thing that crosses is what the first step declared under `output` and the second step interpolated, which is why the plan is a schema field here rather than a sentence in a reply.
+
+Environments do not carry over either. A worktree environment creates a worktree for each execution that uses it, so two steps sharing one worktree environment get two branches rather than one shared working directory. The planning step runs in `triage`, which has no worktree, because it only reads.
+
+An output that a prompt interpolates does not need finite choices. That requirement applies to `agent.provider`, `agent.model`, `agent.mode`, and `environment`, which is covered further down.
+:::
+
+:::example[Let the caller choose]
+A declared input is a typed value the caller supplies as a leading `key=value` token. Hub validates it before any agent starts.
+
+```yaml
+environments:
+  - name: development
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/project
+
+triggers:
+  - name: slack-help
+    on: slack.mention
+    max_runtime: 2h
+    filters:
+      workspace: T01234567
+      channels: [C01234567]
+      from_users: [U01234567]
+    inputs:
+      model:
+        type: string
+        default: gpt-5.5
+        choices: [gpt-5.5, gpt-5.4-mini]
+    steps:
+      - id: answer
+        environment: development
+        max_runtime: 30m
+        idle_timeout: 5m
+        agent:
+          provider: codex
+          model: ${{ paseo.inputs.model }}
+          options:
+            approval_policy: never
+            sandbox_mode: read-only
+            web_search: disabled
+        prompt:
+          - text: |
+              Help with this request.
+
+              Call hub.reply to send your response to the originating conversation.
+              Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+        allow_outputs:
+          - type: slack.reply
+```
+
+Invoke it with `@Paseo model=gpt-5.4-mini how do I run the project locally?`. Hub stores `gpt-5.4-mini` as `${{ paseo.inputs.model }}` and passes the rest as the prompt. The first token that is not a declared input begins the prompt, so ordinary text stays ordinary text.
+
+An input that selects a provider, model, or mode needs `choices`. A prompt cannot supply authority. Types, defaults, and rejected values are in the [`hub.yml` reference](/docs/hub/configuration/hub-yml#inputs).
+:::
+
+:::example[Send two repositories to two triggers]
+When two routes should stay separate, give each its own trigger and match on the supplied input with `filters.inputs`.
+
+```yaml
+environments:
+  - name: project
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/project
+
+  - name: paseo
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/paseo
+
+triggers:
+  - name: project-request
+    on: slack.mention
+    max_runtime: 2h
+    filters:
+      workspace: T01234567
+      from_users: [U01234567]
+      inputs: { repo: project }
+    inputs:
+      repo:
+        type: string
+        choices: [project, paseo]
+    steps:
+      - id: project-work
+        environment: project
+        max_runtime: 90m
+        idle_timeout: 10m
+        agent:
+          provider: codex
+          mode: full-access
+        prompt:
+          - text: |
+              Do the work in this repository.
+
+              Call hub.reply to send your response to the originating conversation.
+              Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+        allow_outputs:
+          - type: slack.reply
+            max: 5
+
+  - name: paseo-request
+    on: slack.mention
+    max_runtime: 2h
+    filters:
+      workspace: T01234567
+      from_users: [U01234567]
+      inputs: { repo: paseo }
+    inputs:
+      repo:
+        type: string
+        choices: [project, paseo]
+    steps:
+      - id: paseo-work
+        environment: paseo
+        max_runtime: 90m
+        idle_timeout: 10m
+        agent:
+          provider: codex
+          mode: full-access
+        prompt:
+          - text: |
+              Do the work in this repository.
+
+              Call hub.reply to send your response to the originating conversation.
+              Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+        allow_outputs:
+          - type: slack.reply
+            max: 5
+```
+
+One event can match several triggers and all of them run, so the input filters are what keep these two routes exclusive. Invoke with `@Paseo repo=paseo investigate the failed sync`.
+:::
+
+:::example[Let the agent choose the model]
+A structured output is a JSON value an agent returns when it finishes. Declare its schema with an `enum`, and a later step can read the decision.
+
+```yaml
+environments:
+  - name: development
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/project
+
+triggers:
+  - name: slack-help
+    on: slack.mention
+    max_runtime: 2h
+    filters:
+      workspace: T01234567
+      channels: [C01234567]
+      from_users: [U01234567]
+    steps:
+      - id: classify
+        environment: development
+        max_runtime: 2m
+        idle_timeout: 30s
+        agent:
+          provider: codex
+          options:
+            approval_policy: never
+            sandbox_mode: read-only
+            web_search: disabled
+        prompt:
+          - text: |
+              Pick gpt-5.4-mini for a small question and gpt-5.5 for real work.
+
+              Call hub.finish_execution with the choice as the structured result.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+        output:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [model]
+            properties:
+              model:
+                enum: [gpt-5.5, gpt-5.4-mini]
+
+      - id: answer
+        environment: development
+        max_runtime: 30m
+        idle_timeout: 5m
+        agent:
+          provider: codex
+          model: ${{ steps.classify.outputs.model }}
+          mode: full-access
+        prompt:
+          - text: |
+              Handle this request.
+
+              Call hub.reply to send your response to the originating conversation.
+              Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+        allow_outputs:
+          - type: slack.reply
+```
+
+The classifier calls the tool with its result under `output`:
 
 ```text
-hub.finish_execution({ output: { kind: "implementation" } })
+hub.finish_execution({ output: { model: "gpt-5.4-mini" } })
 ```
 
-Hub validates that object against the schema. If it is invalid, the tool returns an MCP error and the same agent can correct and call it again. A valid output completes the step and makes it available as `${{ steps.classify.outputs.kind }}` to later steps.
+Hub validates that object against the schema. An invalid one returns an MCP error and the same agent can correct it and call again. A valid one completes the step and makes the value available as `${{ steps.classify.outputs.model }}`.
 
-Use classification as defense in depth, then give reply or implementation authority only to the downstream step that needs it. [Hub security](/docs/hub/security) covers the trust boundary and provider-native controls.
+The `enum` is what allows an agent-produced value to select a model at all. An output that selects a provider, model, or mode has to prove its choices are finite, through an `enum` or a `const`.
+:::
 
-Steps run in order. When a step's `if` condition is false, Hub skips it and evaluates the next step. In this example, only one downstream condition can be true. If the answer step runs, the workflow ends without starting the implementation step.
+:::example[Let the agent choose the repository]
+A model is a value, so it goes straight into `agent.model`. A repository is a configured environment with its own `cwd`, and `environment` takes a literal name or `${{ paseo.inputs.<name> }}` and nothing else. Give each repository its own environment and its own conditional step.
 
-## Deterministic input or classifier?
+```yaml
+environments:
+  - name: triage
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/project
 
-Choose based on where the decision comes from:
+  - name: project
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/project
+    worktree:
+      mode: branch-off
+      newBranch: hub/work
+      base: origin/main
 
-| Use                 | When                                                                                  | Example                                                                     |
-| ------------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Deterministic input | The caller knows the answer and should control the route.                             | `repo=project` selects the project environment.                             |
-| Classifier output   | The route depends on the request and the caller should not have to label it.          | A read-only agent decides whether a request is an answer or implementation. |
-| Both                | Give experienced callers an explicit override and use classification as the fallback. | Supplied `repo` skips classification; absent `repo` runs it.                |
+  - name: paseo
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/paseo
+    worktree:
+      mode: branch-off
+      newBranch: hub/work
+      base: origin/main
 
-An agent-produced value cannot grant arbitrary authority. If an output selects a provider, model, or mode, the configuration must prove the possible choices are finite: `choices` on the input, `enum` or `const` in the output schema.
+triggers:
+  - name: slack-work
+    on: slack.mention
+    max_runtime: 3h
+    filters:
+      workspace: T01234567
+      channels: [C01234567]
+      from_users: [U01234567]
+    steps:
+      - id: classify
+        environment: triage
+        max_runtime: 2m
+        idle_timeout: 30s
+        agent:
+          provider: codex
+          options:
+            approval_policy: never
+            sandbox_mode: read-only
+            web_search: disabled
+        prompt:
+          - text: |
+              Decide which repository this request belongs to.
 
-An environment is stricter. `environment` takes a literal environment name or `${{ paseo.inputs.<name> }}`, and nothing else, so no output and no composed value can name one. Give each destination its own environment and its own conditional step instead.
+              Call hub.finish_execution with the choice as the structured result.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+        output:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [repo]
+            properties:
+              repo:
+                enum: [project, paseo]
 
-The namespaces stay separate:
+      - id: project-work
+        if: ${{ steps.classify.outputs.repo == 'project' }}
+        environment: project
+        max_runtime: 90m
+        idle_timeout: 10m
+        agent:
+          provider: codex
+          mode: full-access
+        prompt:
+          - text: |
+              Do the work in this repository.
 
-- `${{ paseo.inputs.repo }}` — deterministic caller evidence.
-- `${{ steps.classify.outputs.repo }}` — structured agent evidence.
-- `${{ values.selected_repo }}` — a composed value.
+              Call hub.reply to send your response to the originating conversation.
+              Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+        allow_outputs:
+          - type: slack.reply
+            max: 5
 
-Compose an override and fallback with `??`:
+      - id: paseo-work
+        if: ${{ steps.classify.outputs.repo == 'paseo' }}
+        environment: paseo
+        max_runtime: 90m
+        idle_timeout: 10m
+        agent:
+          provider: codex
+          mode: full-access
+        prompt:
+          - text: |
+              Do the work in this repository.
+
+              Call hub.reply to send your response to the originating conversation.
+              Call hub.finish_execution when the step is complete.
+          - text: |
+              <user-prompt>
+              ${{ paseo.prompt }}
+              </user-prompt>
+        allow_outputs:
+          - type: slack.reply
+            max: 5
+```
+
+Steps run in order, and Hub skips a step whose `if` is false. The two conditions here cannot both be true, so the configuration lists a step per repository while a run only ever executes one of them.
+
+The classifier runs in `triage`, which has no worktree, because a read-only classification does not need a branch.
+:::
+
+:::example[Accept a caller override with a classifier fallback]
+`values` binds an expression under its own name, and `??` takes the first side that is present. A caller who already knows the answer supplies it, and the classifier covers everyone else.
 
 ```yaml
 values:
   selected_repo: ${{ paseo.inputs.repo ?? steps.classify.outputs.repo }}
 ```
 
-A supplied `repo` wins and the classifier's answer is ignored. Add `if: ${{ paseo.inputs.repo == null }}` to the classifier to skip the run entirely when the caller already decided. [Let the classifier pick the repository and the model](/docs/hub/configuration/examples#let-the-classifier-pick-the-repository-and-the-model) is the worked configuration.
+Declare `repo` as an input with `choices`, keep the classifier's `enum` output, and give the classifier a condition so it only runs when it is needed:
 
-## Common patterns
+```yaml
+inputs:
+  repo:
+    type: string
+    choices: [project, paseo]
 
-Once the basic workflow makes sense, use these complete examples:
+steps:
+  - id: classify
+    if: ${{ paseo.inputs.repo == null }}
+    # unchanged from the scenario above
 
-- [Classifier-chosen repository and model](/docs/hub/configuration/examples#let-the-classifier-pick-the-repository-and-the-model)
-- [Repository and project routing](/docs/hub/configuration/examples#repository-routing)
-- [Safety gate and direct answer](/docs/hub/configuration/examples#safety-gate-and-direct-answer)
-- [PR progress and final updates](/docs/hub/configuration/examples#pr-progress-and-final-updates)
-- [Prompt partials](/docs/hub/configuration/hub-yml#prompt-partials)
-- [Deadlines](/docs/hub/configuration/hub-yml#deadlines)
-- [Provider invocation](/docs/hub/configuration/hub-yml#provider-invocation)
+  - id: project-work
+    if: ${{ values.selected_repo == 'project' }}
+    # unchanged from the scenario above
+
+  - id: paseo-work
+    if: ${{ values.selected_repo == 'paseo' }}
+    # unchanged from the scenario above
+```
+
+Both sides of a `??` used for authority have to be finite on their own: `choices` on the input, an `enum` in the output schema. A composed value can select a provider, model, or mode. It cannot select an environment, which is why the branches above still test `values.selected_repo` rather than feeding it to `environment`.
+
+The namespaces stay separate:
+
+- `${{ paseo.inputs.repo }}` — deterministic caller evidence.
+- `${{ steps.classify.outputs.repo }}` — structured agent evidence.
+- `${{ values.selected_repo }}` — a composed value.
+  :::
+
+## Choosing between a caller input and a classifier
+
+| Use                 | When                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------- |
+| Deterministic input | The caller knows the answer and should control the route.                             |
+| Classifier output   | The route depends on the request and the caller should not have to label it.          |
+| Both                | Give experienced callers an explicit override and use classification as the fallback. |
+
+A read-only classifier is also a way to keep authority away from the step that reads untrusted text. It reduces exposure without being a boundary. [Hub security](/docs/hub/security) covers the trust boundary, provider-native controls, and what to check before pointing a workflow at a public repository.
 
 ## Next
 
-The [`hub.yml` reference](/docs/hub/configuration/hub-yml) covers every field, expression, prompt partial, reply capability, and deadline. It also documents activation errors and the exact limits for each field.
+The [`hub.yml` reference](/docs/hub/configuration/hub-yml) covers every field, expression, and limit, including [prompt partials](/docs/hub/configuration/hub-yml#prompt-partials) for text shared between steps, [deadlines](/docs/hub/configuration/hub-yml#deadlines), and [provider invocation](/docs/hub/configuration/hub-yml#provider-invocation).
 
 Then return to [Configuration](/docs/hub/configuration) to connect the file to a project, or [Activity](/docs/hub/activity) to inspect a run.
