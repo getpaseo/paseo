@@ -253,6 +253,18 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
       fetchInFlightCount: 0,
       snapshotUpdatedListenerCount: 0,
       watcherErrorCallbackCount: 0,
+      fileObserver: {
+        activeObservationCount: 0,
+        nativeHandleCount: 0,
+        pendingEventCount: 0,
+        reconciliationInFlightCount: 0,
+        reconciliationCount: 0,
+        reconciliationFailureCount: 0,
+        observerFailureCount: 0,
+        directoryLimitFailureCount: 0,
+        lastReconciliationDurationMs: 0,
+        maxReconciliationDurationMs: 0,
+      },
     }),
     dispose: () => {},
   };

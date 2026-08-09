@@ -1,0 +1,113 @@
+name: File observer stress
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/file-observer.yml"
+      - "packages/server/package.json"
+      - "packages/server/scripts/measure-file-observer.ts"
+      - "packages/server/scripts/reproduce-file-observer-teardown.ts"
+      - "packages/server/scripts/reproduce-parcel-archive-race.ts"
+      - "packages/server/scripts/support/parcel-file-observer.ts"
+      - "packages/server/src/server/file-observer/**"
+      - "packages/server/src/server/workspace-git-service*"
+      - "packages/server/src/server/session.create-agent-worktree-autoarchive.e2e.test.ts"
+  workflow_dispatch:
+    inputs:
+      directories:
+        description: Watched directories per root in the comparison fixture
+        default: "490"
+        type: string
+      roots:
+        description: Concurrent worktree-shaped roots
+        default: "10"
+        type: string
+      ignored_files:
+        description: Writes inside an excluded subtree
+        default: "10000"
+        type: string
+      preexisting_files:
+        description: Pre-existing files per watched root
+        default: "1000"
+        type: string
+      edits:
+        description: Tracked edit burst size
+        default: "1000"
+        type: string
+      repetitions:
+        description: Isolated comparison runs per backend
+        default: "5"
+        type: string
+      teardown_iterations:
+        description: Archive-style teardown iterations
+        default: "1000"
+        type: string
+
+jobs:
+  stress:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      PASEO_WATCH_BENCH_DIRS: ${{ inputs.directories || '490' }}
+      PASEO_WATCH_BENCH_ROOTS: ${{ inputs.roots || '10' }}
+      PASEO_WATCH_BENCH_IGNORED_FILES: ${{ inputs.ignored_files || '10000' }}
+      PASEO_WATCH_BENCH_PREEXISTING_FILES: ${{ inputs.preexisting_files || '1000' }}
+      PASEO_WATCH_BENCH_EDITS: ${{ inputs.edits || '1000' }}
+      PASEO_WATCH_BENCH_REPETITIONS: ${{ inputs.repetitions || '5' }}
+      PASEO_WATCH_REPRO_ITERATIONS: ${{ inputs.teardown_iterations || '1000' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: node scripts/npm-retry.mjs ci
+
+      - name: Build server dependencies
+        run: npm run build:server-deps
+
+      - name: Run real-filesystem observer contract
+        run: npx vitest run packages/server/src/server/file-observer/index.test.ts packages/server/src/server/workspace-git-service.observation.integration.test.ts --bail=1
+
+      - name: Run isolated daemon auto-archive lifecycle
+        run: npx vitest run packages/server/src/server/session.create-agent-worktree-autoarchive.e2e.test.ts --bail=1 -t "creates a worktree and auto-archives both"
+
+      - name: Compare production observer with Parcel
+        shell: bash
+        run: |
+          mkdir -p file-observer-artifacts
+          set -o pipefail
+          npm run measure:file-observer --workspace=@getpaseo/server | tee file-observer-artifacts/comparison.json.log
+
+      - name: Stress archive teardown under an external watchdog
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run repro:file-observer-teardown --workspace=@getpaseo/server -- --backend=node | tee file-observer-artifacts/teardown-soak.json.log
+
+      - name: Reproduce the Parcel teardown wedge and verify the production observer
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          PASEO_WATCH_RACE_RUNS: "5"
+          PASEO_WATCH_RACE_ITERATIONS: "10"
+          PASEO_WATCH_RACE_PRODUCTION_TIMEOUT_MS: "30000"
+          PASEO_WATCH_RACE_TIMEOUT_MS: "10000"
+        run: |
+          set -o pipefail
+          npm run repro:file-observer-archive-race --workspace=@getpaseo/server | tee file-observer-artifacts/archive-race.json.log
+
+      - name: Upload file observer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: file-observer-${{ runner.os }}
+          path: file-observer-artifacts

@@ -1,0 +1,19 @@
+# File observation
+
+Use `packages/server/src/server/file-observer` for recursive filesystem observation. Keep platform watchers, directory discovery, exclusion reconciliation, event batching, failure cleanup, and teardown inside that module. A consumer supplies a root and excluded subtrees; it must not branch on the platform or manage child watchers.
+
+Do not replace the Linux implementation with `fs.watch({ recursive: true })`. Node 22 implements Linux recursion in JavaScript by walking the tree and watching every file and directory. Paseo's directory-only Linux watcher already exhausted resources before ignored-tree pruning and a watcher cap were added in [#794](https://github.com/getpaseo/paseo/pull/794).
+
+Closing an observation must remain safe after its root is renamed or removed. Workspace archive removes owned worktrees while releasing observation references, so teardown cannot assume the watched path still exists.
+
+`unsubscribe()` is an awaited barrier. Once it resolves, no scan, reconciliation, queued event, native handle, or callback may remain. `updateIgnore()` is the equivalent barrier for excluded paths: events queued below a newly excluded root cannot be delivered after it resolves. Treat path disappearance while scanning, attaching, or receiving a watcher error as rename/archive churn. Surface permission and resource errors so WorkspaceGit can enter bounded polling.
+
+Linux topology repair is trailing-debounced and scoped to the renamed path. A file rename needs one classification stat; a new or moved directory scans only its subtree. Full-tree scans are reserved for startup and ignore-set replacement. The initial Linux scan conservatively emits existing files discovered before their directory watcher was installed; WorkspaceGit batches these into one refresh. Benchmark this startup cost with pre-populated trees.
+
+Read aggregate health with `getFileObserverDiagnostics()`. Runtime metrics include active observations, native handles, pending events, reconciliation activity and latency, and failure counts. Do not add path lists, watcher handles, or platform-specific controls to this interface.
+
+Git owns Git-ignore evaluation. The observer accepts absolute excluded roots and applies updates without replacing the observation or exposing its watcher topology. This keeps tracked files inside otherwise ignored directories observable and keeps Git policy out of the filesystem module.
+
+Parcel remains a benchmark control in `packages/server/scripts/support/parcel-file-observer.ts`; production code must not import it. Run the isolated comparison with `npm run measure:file-observer --workspace=@getpaseo/server`. Run the 1,000-cycle production teardown soak with `npm run repro:file-observer-teardown --workspace=@getpaseo/server -- --backend=node`. On Linux, `npm run repro:file-observer-archive-race --workspace=@getpaseo/server` reproduces the Parcel signal-interruption wedge under a child-process watchdog and requires five clean production-observer runs.
+
+The `File observer stress` workflow is the dogfood gate and runs on matching pull requests or by manual dispatch. It runs real-filesystem contracts, an isolated daemon auto-archive lifecycle, the Parcel comparison, sustained-create CPU measurement, and the teardown soak on Linux, macOS, and Windows; Linux also runs the deterministic wedge comparison. Start dogfood only after all three jobs pass and their evidence artifacts show zero missed or excluded events, observer handles returning to baseline, bounded teardown, bounded sustained CPU, and no callback after close.

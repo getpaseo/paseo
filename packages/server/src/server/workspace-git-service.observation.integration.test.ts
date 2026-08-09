@@ -1,15 +1,13 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import parcelWatcher from "@parcel/watcher";
 import type pino from "pino";
 import { afterEach, expect, test, vi } from "vitest";
 import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
-import {
-  subscribeToWorkspaceFileChanges,
-  WorkspaceGitServiceImpl,
-} from "./workspace-git-service.js";
+import { subscribeToFileChanges } from "./file-observer/index.js";
+import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
+import type { FileChange, SubscribeToFileChanges } from "./file-observer/index.js";
 
 function createLogger(): pino.Logger {
   const logger = {
@@ -64,7 +62,7 @@ afterEach(async () => {
   }
 });
 
-test("native recursive observation updates tracked state and prunes ignored storms", async () => {
+test("recursive observation updates tracked state and prunes ignored storms", async () => {
   const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-git-observation-")));
   const repoDir = path.join(tempDir, "repo");
   const trackedPath = path.join(repoDir, "src", "tracked.txt");
@@ -80,13 +78,13 @@ test("native recursive observation updates tracked state and prunes ignored stor
 
   let activeWatcherCount = 0;
   let watcherStartCount = 0;
-  let onWorkingTreeWatcherStopped: (() => void) | null = null;
+  let onWorkingTreeIgnoreUpdated: (() => void) | null = null;
   const deliveredEvents: Array<{
     directory: string;
-    events: parcelWatcher.Event[];
+    events: FileChange[];
   }> = [];
-  const subscribe: typeof parcelWatcher.subscribe = async (directory, callback, options) => {
-    const subscription = await subscribeToWorkspaceFileChanges(
+  const subscribe: SubscribeToFileChanges = async (directory, callback, options) => {
+    const subscription = await subscribeToFileChanges(
       directory,
       (error, events) => {
         deliveredEvents.push({ directory, events });
@@ -97,14 +95,17 @@ test("native recursive observation updates tracked state and prunes ignored stor
     activeWatcherCount += 1;
     watcherStartCount += 1;
     return {
+      updateIgnore: async (paths) => {
+        await subscription.updateIgnore(paths);
+        if (directory === repoDir) {
+          const onUpdated = onWorkingTreeIgnoreUpdated;
+          onWorkingTreeIgnoreUpdated = null;
+          onUpdated?.();
+        }
+      },
       unsubscribe: async () => {
         await subscription.unsubscribe();
         activeWatcherCount -= 1;
-        if (directory === repoDir) {
-          const onStopped = onWorkingTreeWatcherStopped;
-          onWorkingTreeWatcherStopped = null;
-          onStopped?.();
-        }
       },
     };
   };
@@ -294,16 +295,16 @@ test("native recursive observation updates tracked state and prunes ignored stor
   buildIgnored = false;
   observedPath = newlyTrackedPath;
   observedRelativePath = "build/tracked.txt";
-  let editedDuringWatcherHandoff = false;
-  onWorkingTreeWatcherStopped = () => {
-    editedDuringWatcherHandoff = true;
+  let editedDuringIgnoreUpdate = false;
+  onWorkingTreeIgnoreUpdated = () => {
+    editedDuringIgnoreUpdate = true;
     writeFileSync(newlyTrackedPath, "first\nsecond\n");
   };
   writeFileSync(path.join(repoDir, ".git", "index"), "force-added\n");
   await vi.waitFor(
     () => {
-      expect(editedDuringWatcherHandoff).toBe(true);
-      expect(watcherStartCount).toBe(3);
+      expect(editedDuringIgnoreUpdate).toBe(true);
+      expect(watcherStartCount).toBe(2);
       expect(activeWatcherCount).toBe(2);
       expect(summaryListener).toHaveBeenLastCalledWith(
         expect.objectContaining({

@@ -3,7 +3,6 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import parcelWatcher from "@parcel/watcher";
 import type pino from "pino";
 import {
   getCheckoutDiff,
@@ -16,11 +15,15 @@ import {
   type GitCommandMetricsSnapshot,
 } from "../src/utils/run-git-command.js";
 import { CheckoutDiffManager } from "../src/server/checkout-diff-manager.js";
+import { subscribeToFileChanges } from "../src/server/file-observer/index.js";
 import {
-  subscribeToWorkspaceFileChanges,
   WorkspaceGitServiceImpl,
   type WorkspaceGitRuntimeSnapshot,
 } from "../src/server/workspace-git-service.js";
+import type {
+  FileObserverSubscription,
+  SubscribeToFileChanges,
+} from "../src/server/file-observer/index.js";
 
 interface ProducerCounts {
   structural: number;
@@ -90,14 +93,15 @@ function snapshotCounts(counts: ProducerCounts): ProducerCounts {
 }
 
 function createTrackedSubscriber(failWorktreeRoot: string | null) {
-  const subscriptions = new Set<parcelWatcher.AsyncSubscription>();
-  const subscribe = async (...args: Parameters<typeof parcelWatcher.subscribe>) => {
+  const subscriptions = new Set<FileObserverSubscription>();
+  const subscribe: SubscribeToFileChanges = async (...args) => {
     if (failWorktreeRoot && path.resolve(args[0]) === failWorktreeRoot) {
       throw new Error("measurement watcher setup failure");
     }
-    const subscription = await subscribeToWorkspaceFileChanges(...args);
+    const subscription = await subscribeToFileChanges(...args);
     subscriptions.add(subscription);
     return {
+      updateIgnore: (paths) => subscription.updateIgnore(paths),
       unsubscribe: async () => {
         await subscription.unsubscribe();
         subscriptions.delete(subscription);
@@ -175,7 +179,7 @@ async function measurePhase(input: {
 
 async function closeMeasuredService(input: {
   service: WorkspaceGitServiceImpl;
-  subscriptions: Set<parcelWatcher.AsyncSubscription>;
+  subscriptions: Set<FileObserverSubscription>;
 }): Promise<void> {
   input.service.dispose();
   await waitFor(() => input.subscriptions.size === 0, "watchers to close");
