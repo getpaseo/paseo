@@ -104,6 +104,7 @@ See [docs/development.md](docs/development.md) for full setup, build sync requir
 
 ## Critical rules
 
+- **Fork releases are PR → merge → tag on `main`.** Never push a `v*` release tag from an unmerged feature branch. Open a PR, merge it, then tag the merge commit on `main` (or dispatch the fork release workflows with `checkout_ref=main`). See [docs/fork-release.md](docs/fork-release.md).
 - **NEVER restart the main Paseo daemon on port 6767 without permission** — it manages all running agents. If you're an agent, restarting it kills your own process.
 - **NEVER assume a timeout means the service needs restarting** — timeouts can be transient.
 - **NEVER add auth checks to tests** — agent providers handle their own auth.
