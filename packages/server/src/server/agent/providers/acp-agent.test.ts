@@ -13,11 +13,14 @@ import {
   RequestPermissionRequest,
   SessionConfigOption,
   SessionUpdate,
+  ToolCall,
 } from "@agentclientprotocol/sdk";
 
 import {
   ACPAgentClient,
   ACPAgentSession,
+  type ACPExtensionSubagentParser,
+  type ACPExtensionTurnSignalParser,
   type SpawnedACPProcess,
   type SessionStateResponse,
   buildACPClientCapabilities,
@@ -29,6 +32,8 @@ import {
   resolveACPModelSelection,
   summarizeACPRequestError,
 } from "./acp-agent.js";
+import type { ProviderSubagentInputEvent } from "../provider-subagents/store.js";
+
 import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
 import {
   COPILOT_AGENT_FEATURE_OPTION,
@@ -45,6 +50,7 @@ import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import type { AgentTimelineItem } from "../agent-sdk-types.js";
 import type { AgentCapabilityFlags, AgentPersistenceHandle } from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
@@ -86,9 +92,16 @@ describe("buildACPClientCapabilities", () => {
 
 interface ACPSessionInternals {
   sessionId: string | null;
-  connection: { prompt: (...args: unknown[]) => Promise<PromptResponse> };
+  connection: {
+    prompt: (...args: unknown[]) => Promise<PromptResponse>;
+    cancel?: (params: { sessionId: string }) => Promise<unknown>;
+  };
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
+  replayingHistory: boolean;
+  historyPending: boolean;
+  persistedHistory: AgentTimelineItem[];
+  handleChildExit(code: number | null, signal: NodeJS.Signals | null, diagnostic?: string): void;
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
   acpMcpServers(): unknown[];
 }
@@ -232,6 +245,60 @@ function createKiroSession(
       extensionCommandsParser: parseKiroExtensionCommands,
       waitForInitialCommands: options.waitForInitialCommands ?? false,
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
+    },
+  );
+}
+
+function createSessionWithSubagentParser(
+  subagentUpdateParser: ACPExtensionSubagentParser,
+  logger: ReturnType<typeof createTestLogger> = createTestLogger(),
+): ACPAgentSession {
+  return new ACPAgentSession(
+    {
+      provider: "acp",
+      cwd: "/tmp/paseo-acp-test",
+    },
+    {
+      provider: "acp",
+      logger,
+      defaultCommand: ["gjc", "acp"],
+      defaultModes: [],
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      subagentUpdateParser,
+    },
+  );
+}
+
+function createSessionWithTurnSignalParser(
+  turnSignalParser: ACPExtensionTurnSignalParser,
+  logger: ReturnType<typeof createTestLogger> = createTestLogger(),
+): ACPAgentSession {
+  return new ACPAgentSession(
+    {
+      provider: "acp",
+      cwd: "/tmp/paseo-acp-test",
+    },
+    {
+      provider: "acp",
+      logger,
+      defaultCommand: ["gjc", "acp"],
+      defaultModes: [],
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      turnSignalParser,
     },
   );
 }
@@ -2548,6 +2615,812 @@ describe("ACPAgentSession", () => {
     });
 
     expect(await listCommandsPromise).toEqual([]);
+  });
+
+  test("maps a vendor extension notification into provider-subagent events via subagentUpdateParser", async () => {
+    const parser: ACPExtensionSubagentParser = (method, params) => {
+      if (method !== "_gjc/sdk/subagent/update") return null;
+      const events = params.subagents;
+      return Array.isArray(events) ? (events as ProviderSubagentInputEvent[]) : null;
+    };
+    const session = createSessionWithSubagentParser(parser);
+    const received: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => received.push(event));
+
+    await session.extNotification("_gjc/sdk/subagent/update", {
+      sessionId: "session-1",
+      subagents: [
+        {
+          type: "upsert",
+          id: "subagent-1",
+          title: "Audit the repo",
+          status: "running",
+          toolCallId: "call-1",
+        },
+        {
+          type: "timeline",
+          id: "subagent-1",
+          item: { type: "assistant_message", text: "Started", messageId: "m1" },
+        },
+      ],
+    });
+
+    expect(received.filter((event) => event.type === "provider_subagent")).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "acp",
+        event: {
+          type: "upsert",
+          id: "subagent-1",
+          title: "Audit the repo",
+          status: "running",
+          toolCallId: "call-1",
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "acp",
+        event: {
+          type: "timeline",
+          id: "subagent-1",
+          item: { type: "assistant_message", text: "Started", messageId: "m1" },
+        },
+      },
+    ]);
+  });
+
+  test("ignores extension notifications a subagentUpdateParser does not handle", async () => {
+    const parser: ACPExtensionSubagentParser = () => null;
+    const session = createSessionWithSubagentParser(parser);
+    const received: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => received.push(event));
+
+    await session.extNotification("_gjc/sdk/subagent/update", {
+      sessionId: "session-1",
+      subagents: [],
+    });
+
+    expect(received.filter((event) => event.type === "provider_subagent")).toEqual([]);
+  });
+
+  test("ignores provider-subagent events when the parser returns an empty batch", async () => {
+    const parser: ACPExtensionSubagentParser = () => [];
+    const session = createSessionWithSubagentParser(parser);
+    const received: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => received.push(event));
+
+    await session.extNotification("_gjc/sdk/subagent/update", { sessionId: "session-1" });
+
+    expect(received.filter((event) => event.type === "provider_subagent")).toEqual([]);
+  });
+
+  test("ignores provider-subagent events addressed to a different session", async () => {
+    const parser: ACPExtensionSubagentParser = () => [
+      { type: "upsert", id: "subagent-1", status: "running" },
+    ];
+    const session = createSessionWithSubagentParser(parser);
+    const received: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => received.push(event));
+
+    await session.extNotification("_gjc/sdk/subagent/update", {
+      sessionId: "other-session",
+    });
+
+    expect(received.filter((event) => event.type === "provider_subagent")).toEqual([]);
+  });
+
+  test("flushes provider-subagent events buffered during resume replay to the first subscriber", async () => {
+    const parser: ACPExtensionSubagentParser = () => [
+      { type: "upsert", id: "subagent-1", status: "running" },
+      { type: "remove", id: "subagent-2" },
+    ];
+    const session = createSessionWithSubagentParser(parser);
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.replayingHistory = true;
+
+    // While `session/load` is still running the manager is not subscribed, so
+    // the events are buffered instead of pushed to an empty subscriber set.
+    await session.extNotification("_gjc/sdk/subagent/update", { sessionId: "session-1" });
+    const received: AgentStreamEvent[] = [];
+    session.subscribe((event) => received.push(event));
+
+    // The manager subscribes after registerSession(); the buffered events
+    // flush to it, so a reload that never hydrates still sees the snapshot.
+    expect(received.filter((event) => event.type === "provider_subagent")).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "acp",
+        event: { type: "upsert", id: "subagent-1", status: "running" },
+      },
+      { type: "provider_subagent", provider: "acp", event: { type: "remove", id: "subagent-2" } },
+    ]);
+    // The buffer was drained by the subscribe flush; a later streamHistory
+    // hydration finds nothing to re-apply.
+    expect(internals.historyPending).toBe(false);
+    const hydrated: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      hydrated.push(event);
+    }
+    expect(hydrated).toEqual([]);
+  });
+
+  test("delivers provider-subagent events buffered in the subscribe window on subscribe", async () => {
+    // Simulates the window after session/load resolves (replayingHistory
+    // already reset) but before AgentManager.registerSession() reaches
+    // subscribeToSession(): no subscribers exist, so the events must be
+    // buffered instead of pushed to an empty set.
+    const parser: ACPExtensionSubagentParser = () => [
+      { type: "upsert", id: "subagent-1", status: "running" },
+    ];
+    const session = createSessionWithSubagentParser(parser);
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.replayingHistory = false;
+    internals.historyPending = false;
+
+    await session.extNotification("_gjc/sdk/subagent/update", { sessionId: "session-1" });
+    // historyPending is forced so the event stays deliverable through either
+    // the subscribe flush or history hydration.
+    expect(internals.historyPending).toBe(true);
+
+    const received: AgentStreamEvent[] = [];
+    session.subscribe((event) => received.push(event));
+    expect(received.filter((event) => event.type === "provider_subagent")).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "acp",
+        event: { type: "upsert", id: "subagent-1", status: "running" },
+      },
+    ]);
+  });
+
+  test("keeps timeline replay pending after flushing buffered subagents on subscribe", async () => {
+    // session/load can buffer ordinary timeline history AND a subagent
+    // snapshot together; flushing the subagent events on subscribe must not
+    // strand the timeline replay, or a forced Refresh that already deleted the
+    // durable timeline would render the conversation empty.
+    const parser: ACPExtensionSubagentParser = () => [
+      { type: "upsert", id: "subagent-1", status: "running" },
+    ];
+    const session = createSessionWithSubagentParser(parser);
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.replayingHistory = true;
+    internals.persistedHistory = [{ type: "user_message", text: "hi", messageId: "m1" }];
+    internals.historyPending = true;
+
+    await session.extNotification("_gjc/sdk/subagent/update", { sessionId: "session-1" });
+    const received: AgentStreamEvent[] = [];
+    session.subscribe((event) => received.push(event));
+
+    // The subagent snapshot flushes to the subscriber...
+    expect(received.filter((event) => event.type === "provider_subagent")).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "acp",
+        event: { type: "upsert", id: "subagent-1", status: "running" },
+      },
+    ]);
+    // ...while the timeline replay stays pending for history hydration.
+    expect(internals.historyPending).toBe(true);
+    const hydrated: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      hydrated.push(event);
+    }
+    expect(hydrated).toEqual([
+      {
+        type: "timeline",
+        provider: "acp",
+        item: { type: "user_message", text: "hi", messageId: "m1" },
+      },
+    ]);
+  });
+
+  test("streamHistory drains provider-subagent events when consumed before subscribe", async () => {
+    // Hydration-before-subscribe ordering safety net: whoever consumes the
+    // buffer first (streamHistory or the subscribe flush) drains it, so the
+    // events are delivered exactly once.
+    const parser: ACPExtensionSubagentParser = () => [
+      { type: "upsert", id: "subagent-1", status: "running" },
+    ];
+    const session = createSessionWithSubagentParser(parser);
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.replayingHistory = true;
+
+    await session.extNotification("_gjc/sdk/subagent/update", { sessionId: "session-1" });
+    internals.historyPending = true;
+    const hydrated: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      hydrated.push(event);
+    }
+    expect(hydrated).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "acp",
+        event: { type: "upsert", id: "subagent-1", status: "running" },
+      },
+    ]);
+
+    // The buffer was drained by streamHistory, so the subscribe flush is a
+    // no-op and nothing is delivered twice.
+    const received: AgentStreamEvent[] = [];
+    session.subscribe((event) => received.push(event));
+    expect(received.filter((event) => event.type === "provider_subagent")).toEqual([]);
+  });
+
+  test("starts an autonomous turn from an explicit start signal", async () => {
+    const parser: ACPExtensionTurnSignalParser = () => ({ type: "start" });
+    const session = createSessionWithTurnSignalParser(parser);
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+
+    const started = events.find((event) => event.type === "turn_started");
+    expect(started).toMatchObject({ type: "turn_started", provider: "acp" });
+    expect(typeof (started as { turnId?: unknown }).turnId).toBe("string");
+
+    // Timeline events emitted while the autonomous turn is active are tagged
+    // with its turn id so the manager attributes them to the autonomous run.
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "m1",
+        content: { type: "text", text: "hi" },
+      } as SessionUpdate,
+    });
+    const timeline = events.find((event) => event.type === "timeline");
+    expect((timeline as { turnId?: string }).turnId).toBe((started as { turnId: string }).turnId);
+  });
+
+  test("ignores a start signal while a foreground turn is active", async () => {
+    const parser: ACPExtensionTurnSignalParser = () => ({ type: "start" });
+    const session = createSessionWithTurnSignalParser(parser);
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).activeForegroundTurnId = "foreground-1";
+    session.subscribe((event) => events.push(event));
+
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+
+    expect(events.filter((event) => event.type === "turn_started")).toEqual([]);
+  });
+
+  test("ignores end and fail signals without an active autonomous turn", async () => {
+    const parser: ACPExtensionTurnSignalParser = (method) =>
+      method.endsWith("/fail") ? { type: "fail", error: "boom" } : { type: "end" };
+    const session = createSessionWithTurnSignalParser(parser);
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    await session.extNotification("_gjc/sdk/turn/end", { sessionId: "session-1" });
+    await session.extNotification("_gjc/sdk/turn/fail", { sessionId: "session-1" });
+
+    expect(
+      events.filter((event) => event.type === "turn_completed" || event.type === "turn_failed"),
+    ).toEqual([]);
+  });
+
+  test("completes and fails an autonomous turn on end and fail signals", async () => {
+    const parser: ACPExtensionTurnSignalParser = (method) => {
+      if (method.endsWith("/fail")) {
+        return { type: "fail", error: "boom" };
+      }
+      if (method.endsWith("/end")) {
+        return { type: "end" };
+      }
+      return { type: "start" };
+    };
+    const session = createSessionWithTurnSignalParser(parser);
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+    const started = events.find((event) => event.type === "turn_started") as {
+      turnId: string;
+    };
+    await session.extNotification("_gjc/sdk/turn/end", { sessionId: "session-1" });
+    const completed = events.find((event) => event.type === "turn_completed");
+    expect(completed).toMatchObject({
+      type: "turn_completed",
+      provider: "acp",
+      turnId: started.turnId,
+    });
+
+    // A second start after completion opens a fresh turn.
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+    const second = events.filter((event) => event.type === "turn_started");
+    expect(second).toHaveLength(2);
+    expect((second[1] as { turnId: string }).turnId).not.toBe(started.turnId);
+
+    await session.extNotification("_gjc/sdk/turn/fail", { sessionId: "session-1" });
+    const failed = events.find((event) => event.type === "turn_failed");
+    expect(failed).toMatchObject({
+      type: "turn_failed",
+      provider: "acp",
+      error: "boom",
+    });
+  });
+
+  test("terminalizes running tool calls when an autonomous turn fails", async () => {
+    const parser: ACPExtensionTurnSignalParser = (method) =>
+      method.endsWith("/fail") ? { type: "fail", error: "boom" } : { type: "start" };
+    const session = createSessionWithTurnSignalParser(parser);
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+    const started = events.find((event) => event.type === "turn_started") as {
+      turnId: string;
+    };
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-1",
+        name: "bash",
+        status: "running",
+      } as unknown as ToolCall,
+    });
+
+    await session.extNotification("_gjc/sdk/turn/fail", {
+      sessionId: "session-1",
+      error: "boom",
+    });
+
+    // Exactly one canceled row, tagged with the failed turn id.
+    const canceledTools = events.filter(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.status === "canceled",
+    );
+    expect(canceledTools).toHaveLength(1);
+    expect((canceledTools[0] as { turnId?: string }).turnId).toBe(started.turnId);
+  });
+
+  test("terminalizes running tool calls when an autonomous turn completes", async () => {
+    const parser: ACPExtensionTurnSignalParser = (method) =>
+      method.endsWith("/end") ? { type: "end" } : { type: "start" };
+    const session = createSessionWithTurnSignalParser(parser);
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+    const started = events.find((event) => event.type === "turn_started") as {
+      turnId: string;
+    };
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-1",
+        name: "bash",
+        status: "running",
+      } as unknown as ToolCall,
+    });
+
+    await session.extNotification("_gjc/sdk/turn/end", { sessionId: "session-1" });
+
+    // Exactly one canceled row, tagged with the completed turn id, so the UI
+    // does not keep showing an indefinitely running tool after the turn closes.
+    const canceledTools = events.filter(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.status === "canceled",
+    );
+    expect(canceledTools).toHaveLength(1);
+    expect((canceledTools[0] as { turnId?: string }).turnId).toBe(started.turnId);
+  });
+
+  test("completes a pending autonomous turn before a foreground prompt", async () => {
+    const parser: ACPExtensionTurnSignalParser = () => ({ type: "start" });
+    const session = createSessionWithTurnSignalParser(parser);
+    const prompt = vi.fn().mockResolvedValue({ stopReason: "end_turn" });
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    session.subscribe((event) => events.push(event));
+
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+    const started = events.find((event) => event.type === "turn_started") as {
+      turnId: string;
+    };
+
+    await session.startTurn("hello");
+
+    const order = events.filter(
+      (event) => event.type === "turn_started" || event.type === "turn_completed",
+    );
+    const completedIndex = order.findIndex(
+      (event) =>
+        event.type === "turn_completed" && (event as { turnId?: string }).turnId === started.turnId,
+    );
+    const foregroundStartIndex = order.findIndex(
+      (event) =>
+        event.type === "turn_started" && (event as { turnId?: string }).turnId !== started.turnId,
+    );
+    expect(completedIndex).toBeGreaterThan(-1);
+    expect(foregroundStartIndex).toBeGreaterThan(completedIndex);
+  });
+
+  test("replays turn lifecycle events buffered during the initialization window on subscribe", async () => {
+    const parser: ACPExtensionTurnSignalParser = () => ({ type: "start" });
+    const session = createSessionWithTurnSignalParser(parser);
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+
+    // No subscribers yet (session/new, session/load, or the registerSession
+    // window): the start signal must be buffered, not pushed to an empty set.
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+    const received: AgentStreamEvent[] = [];
+    session.subscribe((event) => received.push(event));
+
+    const started = received.find((event) => event.type === "turn_started");
+    expect(started).toMatchObject({ type: "turn_started", provider: "acp" });
+    expect(typeof (started as { turnId?: unknown }).turnId).toBe("string");
+  });
+
+  test("replays a buffered start followed by an end in order", async () => {
+    const parser: ACPExtensionTurnSignalParser = (method) =>
+      method.endsWith("/end") ? { type: "end" } : { type: "start" };
+    const session = createSessionWithTurnSignalParser(parser);
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+    await session.extNotification("_gjc/sdk/turn/end", { sessionId: "session-1" });
+    const received: AgentStreamEvent[] = [];
+    session.subscribe((event) => received.push(event));
+
+    const turns = received.filter(
+      (event) => event.type === "turn_started" || event.type === "turn_completed",
+    );
+    expect(turns).toHaveLength(2);
+    expect(turns[0]).toMatchObject({ type: "turn_started" });
+    expect(turns[1]).toMatchObject({
+      type: "turn_completed",
+      turnId: (turns[0] as { turnId: string }).turnId,
+    });
+  });
+
+  test("buffers autonomous output emitted before the manager subscribes", async () => {
+    const parser: ACPExtensionTurnSignalParser = () => ({ type: "start" });
+    const session = createSessionWithTurnSignalParser(parser);
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+
+    // A turn start followed by ordinary session/update output, all before the
+    // manager subscribes: the timeline event must not be lost.
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "m1",
+        content: { type: "text", text: "hi" },
+      } as SessionUpdate,
+    });
+
+    const received: AgentStreamEvent[] = [];
+    session.subscribe((event) => received.push(event));
+
+    const started = received.find((event) => event.type === "turn_started") as {
+      turnId: string;
+    };
+    expect(started).toBeDefined();
+    const timeline = received.find((event) => event.type === "timeline");
+    expect(timeline).toMatchObject({ type: "timeline", turnId: started.turnId });
+    expect(received.indexOf(started)).toBeLessThan(received.indexOf(timeline as AgentStreamEvent));
+  });
+
+  test("finalizes buffered content at autonomous turn boundaries", async () => {
+    const parser: ACPExtensionTurnSignalParser = (method) =>
+      method.endsWith("/end") ? { type: "end" } : { type: "start" };
+    const session = createSessionWithTurnSignalParser(parser);
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    // Turn 1: start, ID-less assistant chunk, trailing user chunk, end.
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "one" },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "internal" },
+      } as SessionUpdate,
+    });
+    await session.extNotification("_gjc/sdk/turn/end", { sessionId: "session-1" });
+
+    // The trailing user chunk was flushed at the turn boundary, before the
+    // terminal, tagged with the closed turn id.
+    const userEvents = events.filter(
+      (event) => event.type === "timeline" && event.item.type === "user_message",
+    );
+    const completed = events.find((event) => event.type === "turn_completed") as {
+      turnId: string;
+    };
+    expect(userEvents).toHaveLength(1);
+    expect((userEvents[0] as { turnId?: string }).turnId).toBe(completed.turnId);
+    expect(events.indexOf(userEvents[0] as AgentStreamEvent)).toBeLessThan(
+      events.indexOf(completed),
+    );
+
+    // Turn 2: an ID-less assistant chunk must get a fresh synthetic message id
+    // instead of reusing turn 1's, which would merge the two turns in the
+    // timeline projection.
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "two" },
+      } as SessionUpdate,
+    });
+    const assistantIds = events
+      .filter((event) => event.type === "timeline" && event.item.type === "assistant_message")
+      .map((event) => (event.item as { messageId?: string }).messageId);
+    expect(assistantIds).toHaveLength(2);
+    expect(assistantIds[0]).not.toBe(assistantIds[1]);
+  });
+
+  test("cancels running tool calls when an autonomous turn is interrupted", async () => {
+    const parser: ACPExtensionTurnSignalParser = () => ({ type: "start" });
+    const session = createSessionWithTurnSignalParser(parser);
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { cancel };
+    session.subscribe((event) => events.push(event));
+
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-1",
+        name: "bash",
+        status: "running",
+      } as unknown as ToolCall,
+    });
+
+    await session.interrupt();
+
+    // The running tool row is synthesized as canceled and tagged with the
+    // closing autonomous turn id instead of staying running forever.
+    const canceledTool = events.find(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.status === "canceled",
+    );
+    expect(canceledTool).toBeDefined();
+    const started = events.find((event) => event.type === "turn_started") as {
+      turnId: string;
+    };
+    expect((canceledTool as { turnId?: string }).turnId).toBe(started.turnId);
+  });
+
+  test("settles an active autonomous turn when the ACP process exits", async () => {
+    const parser: ACPExtensionTurnSignalParser = () => ({ type: "start" });
+    const session = createSessionWithTurnSignalParser(parser);
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+    const started = events.find((event) => event.type === "turn_started") as {
+      turnId: string;
+    };
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-1",
+        name: "bash",
+        status: "running",
+      } as unknown as ToolCall,
+    });
+
+    // The child exit handler routes here; without the autonomous branch the
+    // manager would stay stuck in the running state, and without tool cleanup
+    // the timeline would retain the running tool row forever.
+    asInternals<ACPSessionInternals>(session).handleChildExit(1, null, "boom");
+
+    const failed = events.find((event) => event.type === "turn_failed");
+    expect(failed).toMatchObject({
+      type: "turn_failed",
+      provider: "acp",
+      error: "ACP agent exited unexpectedly (1)",
+      diagnostic: "boom",
+      turnId: started.turnId,
+    });
+    const canceledTools = events.filter(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.status === "canceled",
+    );
+    // Exactly one canceled row: handleChildExit synthesizes once and
+    // failAutonomousTurn must not emit a duplicate for the same tool call.
+    expect(canceledTools).toHaveLength(1);
+    expect((canceledTools[0] as { turnId?: string }).turnId).toBe(started.turnId);
+  });
+
+  test("terminalizes running provider subagents when the ACP process exits", async () => {
+    const parser: ACPExtensionSubagentParser = () => [
+      { type: "upsert", id: "sub-1", status: "running" },
+    ];
+    const session = createSessionWithSubagentParser(parser);
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    await session.extNotification("_gjc/sdk/subagent/update", { sessionId: "session-1" });
+    const running = events.find(
+      (event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "upsert" &&
+        event.event.status === "running",
+    );
+    expect(running).toBeDefined();
+
+    // The parent process is dead; the still-running subagent must be
+    // terminalized instead of staying displayed as running indefinitely.
+    asInternals<ACPSessionInternals>(session).handleChildExit(1, null);
+
+    const canceled = events.filter(
+      (event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "upsert" &&
+        event.event.status === "canceled",
+    );
+    expect(canceled).toHaveLength(1);
+    expect(canceled[0]).toMatchObject({
+      provider: "acp",
+      event: { type: "upsert", id: "sub-1", status: "canceled" },
+    });
+  });
+
+  test("terminalizes a default-running provider subagent on process exit", async () => {
+    // An upsert without status defaults to "running" in the store; the exit
+    // path must terminalize it too, not just explicitly-running updates.
+    const parser: ACPExtensionSubagentParser = () => [{ type: "upsert", id: "sub-1" }];
+    const session = createSessionWithSubagentParser(parser);
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    await session.extNotification("_gjc/sdk/subagent/update", { sessionId: "session-1" });
+    asInternals<ACPSessionInternals>(session).handleChildExit(1, null);
+
+    const canceled = events.filter(
+      (event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "upsert" &&
+        event.event.status === "canceled",
+    );
+    expect(canceled).toHaveLength(1);
+    expect(canceled[0]).toMatchObject({
+      provider: "acp",
+      event: { type: "upsert", id: "sub-1", status: "canceled" },
+    });
+  });
+
+  test("stops buffering after the initial manager subscription", async () => {
+    const session = createSession();
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+
+    // The manager's first subscription; initialization is over.
+    const first: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => first.push(event));
+    unsubscribe();
+
+    // An out-of-turn timeline event between sequential run() turns (zero
+    // subscribers, but not initialization) must not be buffered for the next
+    // run to drain into its own result.
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "m1",
+        content: { type: "text", text: "stale" },
+      } as SessionUpdate,
+    });
+
+    // A later subscription must not receive the stale event.
+    const second: AgentStreamEvent[] = [];
+    session.subscribe((event) => second.push(event));
+    expect(second.filter((event) => event.type === "timeline")).toEqual([]);
+  });
+
+  test("terminalizes running tool calls when an autonomous turn fails", async () => {
+    const parser: ACPExtensionTurnSignalParser = () => ({ type: "start" });
+    const session = createSessionWithTurnSignalParser(parser);
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { cancel };
+    session.subscribe((event) => events.push(event));
+
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+    const started = events.find((event) => event.type === "turn_started") as {
+      turnId: string;
+    };
+
+    await session.interrupt();
+
+    expect(cancel).toHaveBeenCalledWith({ sessionId: "session-1" });
+    const canceled = events.find((event) => event.type === "turn_canceled");
+    expect(canceled).toMatchObject({
+      type: "turn_canceled",
+      provider: "acp",
+      turnId: started.turnId,
+    });
+  });
+
+  test("keeps the autonomous turn active when the ACP cancel fails", async () => {
+    const parser: ACPExtensionTurnSignalParser = () => ({ type: "start" });
+    const session = createSessionWithTurnSignalParser(parser);
+    const cancel = vi.fn().mockRejectedValue(new Error("cancel refused"));
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { cancel };
+    session.subscribe((event) => events.push(event));
+
+    await session.extNotification("_gjc/sdk/turn/start", { sessionId: "session-1" });
+    const started = events.find((event) => event.type === "turn_started") as {
+      turnId: string;
+    };
+
+    await expect(session.interrupt()).rejects.toThrow("cancel refused");
+
+    // No terminal was emitted: the manager observes the failed interrupt as a
+    // refusal instead of a false settlement.
+    expect(
+      events.filter((event) => event.type === "turn_canceled" || event.type === "turn_completed"),
+    ).toEqual([]);
+
+    // autonomousTurnId is still set, so provider output keeps its turn tag.
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "m2",
+        content: { type: "text", text: "still running" },
+      } as SessionUpdate,
+    });
+    const timeline = events.find((event) => event.type === "timeline");
+    expect((timeline as { turnId?: string }).turnId).toBe(started.turnId);
+  });
+
+  test("ignores interrupt without an active foreground or autonomous turn", async () => {
+    const session = createSessionWithTurnSignalParser(() => ({ type: "start" }));
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { cancel };
+
+    await session.interrupt();
+
+    expect(cancel).not.toHaveBeenCalled();
   });
 
   test("emits assistant and reasoning chunks as deltas while user chunks stay accumulated", async () => {

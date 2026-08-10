@@ -96,6 +96,10 @@ import {
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
+import type {
+  ProviderSubagentInputEvent,
+  ProviderSubagentStatus,
+} from "../provider-subagents/store.js";
 import {
   isDefaultAgentCreateConfigUnattended,
   resolveDefaultAgentCreateConfig,
@@ -376,6 +380,41 @@ export type ACPExtensionCommandsParser = (
 ) => AgentSlashCommand[] | null;
 
 /**
+ * Lets a provider that publishes subagent/background-task state through a
+ * vendor-specific ACP extension notification translate that payload into Paseo
+ * provider-subagent store events, without the generic ACP session/client
+ * carrying any vendor knowledge. Return the parsed events (possibly empty) for
+ * a notification this provider owns, or null to ignore notifications it does
+ * not handle.
+ */
+export type ACPExtensionSubagentParser = (
+  method: string,
+  params: Record<string, unknown>,
+) => ProviderSubagentInputEvent[] | null;
+
+/**
+ * An explicitly declared turn lifecycle signal from an ACP agent. Unlike
+ * implicit spontaneous session updates, only these signals may open or close a
+ * non-foreground (autonomous) turn: the earlier implicit approach (#2058, later
+ * reverted by #2148) could complete an active foreground run while its prompt
+ * was still streaming, because it minted turns for any out-of-prompt update.
+ */
+export type ACPTurnSignal = { type: "start" } | { type: "end" } | { type: "fail"; error: string };
+
+/**
+ * Lets a provider that runs its own background work declare turn lifecycle
+ * boundaries through a vendor-specific ACP extension notification. The generic
+ * ACP session translates a returned signal into `turn_started` /
+ * `turn_completed` / `turn_failed` events that the manager treats as an
+ * autonomous run, without the shared layer carrying any vendor knowledge.
+ * Return null to ignore notifications the provider does not handle.
+ */
+export type ACPExtensionTurnSignalParser = (
+  method: string,
+  params: Record<string, unknown>,
+) => ACPTurnSignal | null;
+
+/**
  * Context handed to an {@link ACPCatalogModelResolver} during `fetchCatalog`. It exposes
  * the already-derived models plus the live probe session so a resolver can refine them
  * (e.g. switch through each model to read back per-model options) without re-implementing
@@ -428,6 +467,8 @@ interface ACPAgentClientOptions {
   ) => Promise<void>;
   capabilities?: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  subagentUpdateParser?: ACPExtensionSubagentParser;
+  turnSignalParser?: ACPExtensionTurnSignalParser;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -458,6 +499,8 @@ interface ACPAgentSessionOptions {
   ) => Promise<void>;
   capabilities: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  subagentUpdateParser?: ACPExtensionSubagentParser;
+  turnSignalParser?: ACPExtensionTurnSignalParser;
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
@@ -818,6 +861,8 @@ export class ACPAgentClient implements AgentClient {
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly subagentUpdateParser?: ACPExtensionSubagentParser;
+  private readonly turnSignalParser?: ACPExtensionTurnSignalParser;
   protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
@@ -846,6 +891,8 @@ export class ACPAgentClient implements AgentClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.subagentUpdateParser = options.subagentUpdateParser;
+    this.turnSignalParser = options.turnSignalParser;
   }
 
   async createSession(
@@ -878,6 +925,8 @@ export class ACPAgentClient implements AgentClient {
         extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+        subagentUpdateParser: this.subagentUpdateParser,
+        turnSignalParser: this.turnSignalParser,
       },
     );
     await session.initializeNewSession();
@@ -927,6 +976,8 @@ export class ACPAgentClient implements AgentClient {
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       extensionCommandsParser: this.extensionCommandsParser,
+      subagentUpdateParser: this.subagentUpdateParser,
+      turnSignalParser: this.turnSignalParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
     });
@@ -1410,8 +1461,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private pendingUserMessage: PendingUserMessage | null = null;
   private submittedUserMessageTurnId: string | null = null;
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
+  private readonly synthesizedCanceledToolCallIds = new Set<string>();
   private readonly terminalEntries = new Map<string, TerminalEntry>();
   private readonly persistedHistory: AgentTimelineItem[] = [];
+  private readonly persistedProviderSubagentEvents: ProviderSubagentInputEvent[] = [];
+  private readonly pendingEvents: AgentStreamEvent[] = [];
+  private hasSubscribed = false;
+  /**
+   * Effective provider-subagent statuses mirroring ProviderSubagentStore's
+   * default/sticky semantics, so the process-exit path knows which forwarded
+   * subagents are still running.
+   */
+  private readonly providerSubagentStatuses = new Map<string, ProviderSubagentStatus>();
   private readonly initialHandle?: AgentPersistenceHandle;
 
   private readonly config: AgentSessionConfig;
@@ -1433,6 +1494,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly subagentUpdateParser?: ACPExtensionSubagentParser;
+  private readonly turnSignalParser?: ACPExtensionTurnSignalParser;
+  private autonomousTurnId: string | null = null;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
@@ -1473,6 +1537,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.subagentUpdateParser = options.subagentUpdateParser;
+    this.turnSignalParser = options.turnSignalParser;
   }
 
   get id(): string | null {
@@ -1534,7 +1600,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         );
         this.deliverTranslatedEvents(this.flushPendingUserMessage());
         this.replayingHistory = false;
-        this.historyPending = this.persistedHistory.length > 0;
+        this.historyPending =
+          this.persistedHistory.length > 0 || this.persistedProviderSubagentEvents.length > 0;
         this.applySessionState(response);
       } else if (sessionCapabilities?.resume) {
         const response = await this.runACPRequest(() =>
@@ -1597,6 +1664,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.activeForegroundTurnId) {
       throw new Error("A foreground turn is already active");
     }
+    // A foreground prompt owns the session, so close any open autonomous turn
+    // before starting it; otherwise its dangling run would keep the manager
+    // busy and the next turn terminal could misattribute the close.
+    this.completeAutonomousTurn();
 
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     const turnId = randomUUID();
@@ -1635,6 +1706,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
+    this.hasSubscribed = true;
     if (this.sessionId) {
       callback({
         type: "thread_started",
@@ -1642,20 +1714,56 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         sessionId: this.sessionId,
       });
     }
+    // Flush provider-subagent events buffered during the initialization window
+    // (before the manager subscribed). A history-preserving reload keeps
+    // `historyPrimed` true and never consumes streamHistory(), so without this
+    // flush the buffered snapshot would be lost and the reloaded session would
+    // show the previous run's terminalized rows. Either this or a streamHistory
+    // hydration drains the buffer first; whichever runs first wins.
+    if (this.persistedProviderSubagentEvents.length > 0) {
+      const subagentEvents = this.persistedProviderSubagentEvents.splice(0);
+      // Recompute instead of clearing: session/load may have buffered ordinary
+      // timeline history alongside the subagent snapshot, and that replay must
+      // stay pending for the manager's history hydration. Clearing the flag
+      // unconditionally strands persistedHistory and, after a forced Refresh
+      // that already deleted the durable timeline, leaves the conversation
+      // empty.
+      this.historyPending = this.persistedHistory.length > 0;
+      for (const event of subagentEvents) {
+        this.pushEvent({ type: "provider_subagent", provider: this.provider, event });
+      }
+    }
+    // Replay events buffered during the initialization window (turn lifecycle,
+    // timeline, tool activity) in arrival order so the manager actually sees
+    // the autonomous run the provider declared and its initial output.
+    if (this.pendingEvents.length > 0) {
+      const pendingEvents = this.pendingEvents.splice(0);
+      for (const event of pendingEvents) {
+        this.pushEvent(event);
+      }
+    }
     return () => {
       this.subscribers.delete(callback);
     };
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    if (!this.historyPending || this.persistedHistory.length === 0) {
+    if (
+      !this.historyPending ||
+      (this.persistedHistory.length === 0 && this.persistedProviderSubagentEvents.length === 0)
+    ) {
       return;
     }
     const history = [...this.persistedHistory];
     this.persistedHistory.length = 0;
+    const subagentEvents = [...this.persistedProviderSubagentEvents];
+    this.persistedProviderSubagentEvents.length = 0;
     this.historyPending = false;
     for (const item of history) {
       yield { type: "timeline", provider: this.provider, item };
+    }
+    for (const event of subagentEvents) {
+      yield { type: "provider_subagent", provider: this.provider, event };
     }
   }
 
@@ -2155,8 +2263,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.pendingPermissions.clear();
 
-    if (this.activeForegroundTurnId) {
-      await this.connection.cancel({ sessionId: this.sessionId });
+    if (this.activeForegroundTurnId || this.autonomousTurnId) {
+      if (this.autonomousTurnId) {
+        // Cancel the provider first and only close the local turn once the
+        // cancel is acknowledged: emitting `turn_canceled` before a failed or
+        // timed-out round-trip would settle the manager's autonomous run as
+        // success while the provider keeps running, and clearing
+        // autonomousTurnId would untag its later output. On failure the await
+        // throws, interrupt() propagates, and the manager reports the refusal
+        // while the turn stays active.
+        await this.connection.cancel({ sessionId: this.sessionId });
+        this.cancelAutonomousTurn();
+      } else {
+        await this.connection.cancel({ sessionId: this.sessionId });
+      }
     }
   }
 
@@ -2316,6 +2436,202 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         sessionId: typeof params.sessionId === "string" ? params.sessionId : undefined,
       });
     }
+
+    const sessionId = typeof params.sessionId === "string" ? params.sessionId : undefined;
+    const matchesSession =
+      sessionId === undefined || this.sessionId === null || sessionId === this.sessionId;
+
+    const parsedSubagentEvents = this.subagentUpdateParser?.(method, params);
+    if (parsedSubagentEvents && parsedSubagentEvents.length > 0 && matchesSession) {
+      this.applySubagentUpdates(parsedSubagentEvents);
+    }
+
+    const turnSignal = this.turnSignalParser?.(method, params);
+    if (turnSignal && matchesSession) {
+      this.applyTurnSignal(turnSignal);
+    }
+  }
+
+  /**
+   * Routes provider-subagent events either to subscribers or, while the
+   * manager has not subscribed yet (replay/initialization window, including
+   * `unstable_resumeSession()` providers), to the history buffer that the
+   * manager's hydration consumes after subscribing.
+   */
+  private applySubagentUpdates(parsedSubagentEvents: ProviderSubagentInputEvent[]): void {
+    this.trackProviderSubagentStatuses(parsedSubagentEvents);
+    if (this.replayingHistory || (!this.hasSubscribed && this.subscribers.size === 0)) {
+      this.persistedProviderSubagentEvents.push(...parsedSubagentEvents);
+      // The resume branch does not set historyPending on its own, so a buffer
+      // filled outside the replay path must force it to keep streamHistory()
+      // deliverable.
+      this.historyPending = true;
+    } else {
+      for (const event of parsedSubagentEvents) {
+        this.pushEvent({ type: "provider_subagent", provider: this.provider, event });
+      }
+    }
+  }
+
+  /**
+   * Mirrors ProviderSubagentStore.apply()'s status semantics: an omitted status
+   * on a new descriptor defaults to "running", and an omitted status on an
+   * existing one is sticky. The process-exit path uses this to terminalize
+   * still-running provider subagents (the manager's
+   * cancelRunningProviderSubagents only runs on reload/close).
+   */
+  private trackProviderSubagentStatuses(events: ProviderSubagentInputEvent[]): void {
+    for (const event of events) {
+      if (event.type === "upsert") {
+        const nextStatus = event.status ?? this.providerSubagentStatuses.get(event.id) ?? "running";
+        this.providerSubagentStatuses.set(event.id, nextStatus);
+      } else if (event.type === "remove") {
+        this.providerSubagentStatuses.delete(event.id);
+      }
+    }
+  }
+
+  /**
+   * Emits a canceled upsert for every still-running provider subagent, matching
+   * the status AgentManager.cancelRunningProviderSubagents uses on reload/close.
+   * applySubagentUpdates also updates the status map (canceled replaces running).
+   */
+  private terminalizeRunningProviderSubagents(): void {
+    const runningIds = [...this.providerSubagentStatuses.entries()]
+      .filter(([, status]) => status === "running")
+      .map(([id]) => id);
+    if (runningIds.length === 0) {
+      return;
+    }
+    const events: ProviderSubagentInputEvent[] = runningIds.map((id) => ({
+      type: "upsert",
+      id,
+      status: "canceled",
+    }));
+    this.applySubagentUpdates(events);
+  }
+
+  /**
+   * Applies an explicitly declared turn lifecycle signal. Only these signals
+   * may open or close a non-foreground turn; implicit spontaneous session
+   * updates must never mint one (see the ACPTurnSignal doc comment).
+   */
+  private applyTurnSignal(signal: ACPTurnSignal): void {
+    if (signal.type === "start") {
+      this.startAutonomousTurn();
+    } else if (signal.type === "end") {
+      this.completeAutonomousTurn();
+    } else {
+      this.failAutonomousTurn(signal.error);
+    }
+  }
+
+  /**
+   * Settles whichever turn is active when the ACP process dies: a foreground
+   * turn through finishTurn() and an autonomous turn through
+   * failAutonomousTurn(). Without the autonomous branch the manager would stay
+   * stuck in the running state, with Stop unable to recover because the cancel
+   * would be sent over the already-dead connection.
+   */
+  private handleChildExit(
+    code: number | null,
+    signal: NodeJS.Signals | null,
+    diagnostic?: string,
+  ): void {
+    const error = `ACP agent exited unexpectedly (${code ?? "null"}${signal ? `, ${signal}` : ""})`;
+    // Terminalize running provider subagents (the parent process is dead, so
+    // the manager's reload/close-only cancellation never runs and the store
+    // would keep them displayed as running indefinitely), then synthesize
+    // terminal tool rows before failing either active turn.
+    this.terminalizeRunningProviderSubagents();
+    this.synthesizeCanceledToolCalls();
+    if (this.activeForegroundTurnId) {
+      this.finishTurn({
+        type: "turn_failed",
+        provider: this.provider,
+        error,
+        ...(diagnostic ? { diagnostic } : {}),
+        turnId: this.activeForegroundTurnId,
+      });
+    }
+    if (this.autonomousTurnId) {
+      this.failAutonomousTurn(error, diagnostic);
+    }
+  }
+
+  /**
+   * Opens a non-foreground turn so the manager tracks it as an autonomous run
+   * (running status, activeTurn, stoppable from Paseo). A foreground turn owns
+   * the session, so a start signal while one is streaming is ignored — the
+   * failure mode that forced the #2058 autonomous-turn revert.
+   */
+  private startAutonomousTurn(): void {
+    if (this.activeForegroundTurnId || this.autonomousTurnId) {
+      return;
+    }
+    const turnId = randomUUID();
+    this.autonomousTurnId = turnId;
+    this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+  }
+
+  private completeAutonomousTurn(): void {
+    if (!this.autonomousTurnId) {
+      return;
+    }
+    const turnId = this.autonomousTurnId;
+    // Finalize buffered content exactly like finishTurn(): flush a trailing
+    // pending user chunk while the turn id is still active so it stays tagged,
+    // and reset the synthetic assistant message id so the next autonomous
+    // turn's ID-less response cannot merge into this one in the timeline
+    // projection.
+    this.deliverTranslatedEvents(this.flushPendingUserMessage());
+    // Terminalize outstanding running tools before closing the turn, same as
+    // the fail/cancel/exit paths; the idempotent synthesis prevents duplicates.
+    this.synthesizeCanceledToolCalls();
+    this.autonomousTurnId = null;
+    this.fallbackAssistantMessageId = null;
+    this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+  }
+
+  private failAutonomousTurn(error: string, diagnostic?: string): void {
+    if (!this.autonomousTurnId) {
+      return;
+    }
+    const turnId = this.autonomousTurnId;
+    this.deliverTranslatedEvents(this.flushPendingUserMessage());
+    // Terminalize running tools while the turn id is still set so the cleanup
+    // rows retain the failed turn's id (same as cancelAutonomousTurn).
+    this.synthesizeCanceledToolCalls();
+    this.autonomousTurnId = null;
+    this.fallbackAssistantMessageId = null;
+    this.pushEvent({
+      type: "turn_failed",
+      provider: this.provider,
+      error,
+      ...(diagnostic ? { diagnostic } : {}),
+      turnId,
+    });
+  }
+
+  private cancelAutonomousTurn(): void {
+    if (!this.autonomousTurnId) {
+      return;
+    }
+    const turnId = this.autonomousTurnId;
+    this.deliverTranslatedEvents(this.flushPendingUserMessage());
+    // Synthesize canceled rows for running tool calls, like the foreground
+    // cancellation path, so the timeline does not show a tool running forever
+    // after Stop. Must run while autonomousTurnId is still set so the rows are
+    // tagged with the closing turn.
+    this.synthesizeCanceledToolCalls();
+    this.autonomousTurnId = null;
+    this.fallbackAssistantMessageId = null;
+    this.pushEvent({
+      type: "turn_canceled",
+      provider: this.provider,
+      reason: "Interrupted",
+      turnId,
+    });
   }
 
   // Cache an asynchronously-delivered slash-command batch and unblock any
@@ -2480,16 +2796,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       if (this.closed) {
         return;
       }
-      if (this.activeForegroundTurnId) {
-        this.synthesizeCanceledToolCalls();
-        this.finishTurn({
-          type: "turn_failed",
-          provider: this.provider,
-          error: `ACP agent exited unexpectedly (${code ?? "null"}${signal ? `, ${signal}` : ""})`,
-          diagnostic: stderrChunks.join("").trim() || undefined,
-          turnId: this.activeForegroundTurnId,
-        });
-      }
+      this.handleChildExit(code, signal, stderrChunks.join("").trim() || undefined);
     });
 
     const stream = createLoggedNdJsonStream(
@@ -2733,6 +3040,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.toolSnapshotTransformer) {
       snapshot = this.toolSnapshotTransformer(snapshot);
     }
+    // A fresh update supersedes any earlier synthesized cancellation for this
+    // call, so a re-running tool can be canceled again on a later stop.
+    this.synthesizedCanceledToolCallIds.delete(toolCallId);
     this.toolCalls.set(toolCallId, snapshot);
     return [this.wrapTimeline(mapToolSnapshotToTimeline(snapshot, this.terminalEntries))];
   }
@@ -2858,7 +3168,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       type: "timeline",
       provider: this.provider,
       item,
-      turnId: this.activeForegroundTurnId ?? undefined,
+      turnId: this.activeForegroundTurnId ?? this.autonomousTurnId ?? undefined,
     };
   }
 
@@ -2873,6 +3183,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       },
       "provider.acp.event_emit",
     );
+    if (!this.hasSubscribed && this.subscribers.size === 0) {
+      // The manager only subscribes after registerSession() completes, so a
+      // live delivery during session/new, session/load, or the awaited
+      // registerSession window would be dropped. Buffer everything emitted in
+      // that initialization window — turn lifecycle, timeline output, tool
+      // activity — and replay it in order when the first subscriber attaches.
+      // After the initial subscription, zero-subscriber periods (e.g. between
+      // sequential run() turns) must NOT buffer: the next run would drain the
+      // stale events into its own result.
+      this.pendingEvents.push(event);
+      return;
+    }
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }
@@ -2941,17 +3263,25 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private synthesizeCanceledToolCalls(): void {
-    for (const snapshot of this.toolCalls.values()) {
-      const mapped = mapToolSnapshotToTimeline(snapshot, this.terminalEntries);
-      if (mapped.status === "running") {
-        this.pushEvent(
-          this.wrapTimeline({
-            ...mapped,
-            status: "canceled",
-            error: null,
-          }),
-        );
+    for (const [toolCallId, snapshot] of this.toolCalls) {
+      if (this.synthesizedCanceledToolCallIds.has(toolCallId)) {
+        continue;
       }
+      const mapped = mapToolSnapshotToTimeline(snapshot, this.terminalEntries);
+      if (mapped.status !== "running") {
+        continue;
+      }
+      this.pushEvent(
+        this.wrapTimeline({
+          ...mapped,
+          status: "canceled",
+          error: null,
+        }),
+      );
+      // Record the synthesis so a later call (e.g. handleChildExit followed by
+      // failAutonomousTurn on process exit) does not emit a duplicate canceled
+      // row for the same tool call.
+      this.synthesizedCanceledToolCallIds.add(toolCallId);
     }
   }
 

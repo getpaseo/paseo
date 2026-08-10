@@ -10,6 +10,8 @@ import {
   type ACPConfigFeatureOption,
   DEFAULT_ACP_CAPABILITIES,
   type ACPExtensionCommandsParser,
+  type ACPExtensionSubagentParser,
+  type ACPExtensionTurnSignalParser,
 } from "./acp-agent.js";
 import {
   buildBinaryDiagnosticRows,
@@ -50,6 +52,8 @@ interface GenericACPAgentClientOptions {
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  subagentUpdateParser?: ACPExtensionSubagentParser;
+  turnSignalParser?: ACPExtensionTurnSignalParser;
   catalogModelResolver?: ACPCatalogModelResolver;
 }
 
@@ -75,6 +79,8 @@ export class GenericACPAgentClient extends ACPAgentClient {
       clientCapabilityMeta: options.clientCapabilityMeta,
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
+      subagentUpdateParser: options.subagentUpdateParser,
+      turnSignalParser: options.turnSignalParser,
       catalogModelResolver: options.catalogModelResolver,
     });
 
