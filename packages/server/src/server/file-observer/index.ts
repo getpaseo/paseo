@@ -8,7 +8,8 @@ const EVENT_BATCH_DELAY_MS = 10;
 const RECONCILIATION_DELAY_MS = 50;
 const NATIVE_AUDIT_QUIET_MS = 500;
 const NATIVE_AUDIT_MAX_DIRTY_MS = 5_000;
-const NATIVE_CHANGE_SCOPE_FRESH_MS = 5_000;
+const NATIVE_OPTIONAL_AUDIT_QUIET_MS = 8_000;
+const NATIVE_OPTIONAL_AUDIT_MAX_DIRTY_MS = 8_000;
 const NATIVE_FULL_AUDIT_QUIET_MS = 30_000;
 const NATIVE_FULL_AUDIT_MIN_INTERVAL_MS = 30_000;
 const NATIVE_FULL_AUDIT_MAX_DIRTY_MS = 5 * 60_000;
@@ -161,7 +162,6 @@ class RecursiveFileObserver {
   private nativeFiles = new Set<string>();
   private nativeDirectories = new Set<string>();
   private nativeEntries = new Map<string, NativeDirectoryEntry>();
-  private readonly nativeDirectoryInventoryAt = new Map<string, number>();
   private nativeAuditTimer: NodeJS.Timeout | null = null;
   private nativeFullAuditTimer: NodeJS.Timeout | null = null;
   private readonly pendingNativeAuditScopes = new Set<string>();
@@ -307,7 +307,6 @@ class RecursiveFileObserver {
     this.nativeFiles.clear();
     this.nativeDirectories.clear();
     this.nativeEntries.clear();
-    this.nativeDirectoryInventoryAt.clear();
     activeObservers.delete(this);
   }
 
@@ -331,7 +330,7 @@ class RecursiveFileObserver {
       } else {
         nativeRenameEventCount += 1;
         this.classifyRenameEvent(path);
-        this.requestNativeAudit(scope);
+        this.requestNativeChangeAudit(scope);
       }
       if (this.nativeDirectories.has(path)) this.requestNativeAudit(path, false, true);
     });
@@ -512,7 +511,6 @@ class RecursiveFileObserver {
     this.nativeFiles = inventory.files;
     this.nativeDirectories = inventory.directories;
     this.nativeEntries = inventory.entries;
-    this.nativeDirectoryInventoryAt.clear();
   }
 
   private async reconcileNativeScopes(
@@ -538,13 +536,6 @@ class RecursiveFileObserver {
       ) {
         continue;
       }
-      const inventoriedAt = this.nativeDirectoryInventoryAt.get(directory);
-      if (
-        inventoriedAt !== undefined &&
-        performance.now() - inventoriedAt < NATIVE_CHANGE_SCOPE_FRESH_MS
-      ) {
-        continue;
-      }
       await this.reconcileNativeDirectory(directory, generation);
       if (!this.canCommitNativeAudit(generation)) return;
     }
@@ -565,8 +556,6 @@ class RecursiveFileObserver {
       this.removeNativeSubtree(directory, true);
       return;
     }
-    this.nativeDirectoryInventoryAt.set(directory, performance.now());
-
     const previous = this.nativeEntries.get(directory) ?? {
       directories: new Set<string>(),
       files: new Set<string>(),
@@ -668,9 +657,6 @@ class RecursiveFileObserver {
       if (!isPathInside(root, directory)) continue;
       this.nativeDirectories.delete(directory);
       this.nativeEntries.delete(directory);
-    }
-    for (const directory of this.nativeDirectoryInventoryAt.keys()) {
-      if (isPathInside(root, directory)) this.nativeDirectoryInventoryAt.delete(directory);
     }
     const parentEntry = this.nativeEntries.get(dirname(root));
     parentEntry?.directories.delete(root);
@@ -832,18 +818,14 @@ class RecursiveFileObserver {
     this.nativeAuditDirtySince ??= now;
     this.nativeAuditLastDirtyAt = now;
     if (this.nativeAuditQueued || this.nativeAuditRunning) return;
+    if (this.nativeAuditTimer) {
+      clearTimeout(this.nativeAuditTimer);
+      this.nativeAuditTimer = null;
+    }
     this.scheduleNativeAudit();
   }
 
   private requestNativeChangeAudit(scope: string): void {
-    const inventoriedAt = this.nativeDirectoryInventoryAt.get(scope);
-    if (
-      inventoriedAt !== undefined &&
-      performance.now() - inventoriedAt < NATIVE_CHANGE_SCOPE_FRESH_MS
-    ) {
-      this.requestNativeSafetyAudit();
-      return;
-    }
     if (this.closed || this.failed) return;
     this.pendingNativeChangeAuditScopes.add(scope);
     this.requestNativeSafetyAudit();
@@ -876,16 +858,35 @@ class RecursiveFileObserver {
       return;
     const now = performance.now();
     const dirtySince = this.nativeAuditDirtySince ?? now;
-    const quietDeadline = (this.nativeAuditLastDirtyAt ?? now) + NATIVE_AUDIT_QUIET_MS;
-    const starvationDeadline = dirtySince + NATIVE_AUDIT_MAX_DIRTY_MS;
+    const optionalOnly =
+      !this.nativeFullAuditRequested &&
+      this.pendingNativeAuditScopes.size === 0 &&
+      this.pendingNativeRecursiveAuditScopes.size === 0 &&
+      this.pendingNativeChangeAuditScopes.size > 0;
+    const quietMs = optionalOnly ? NATIVE_OPTIONAL_AUDIT_QUIET_MS : NATIVE_AUDIT_QUIET_MS;
+    const maxDirtyMs = optionalOnly
+      ? NATIVE_OPTIONAL_AUDIT_MAX_DIRTY_MS
+      : NATIVE_AUDIT_MAX_DIRTY_MS;
+    const quietDeadline = (this.nativeAuditLastDirtyAt ?? now) + quietMs;
+    const starvationDeadline = dirtySince + maxDirtyMs;
     const deadline = Math.min(quietDeadline, starvationDeadline);
     this.nativeAuditTimer = setTimeout(
       () => {
         this.nativeAuditTimer = null;
         const nextNow = performance.now();
-        const nextQuietDeadline = (this.nativeAuditLastDirtyAt ?? nextNow) + NATIVE_AUDIT_QUIET_MS;
-        const nextStarvationDeadline =
-          (this.nativeAuditDirtySince ?? nextNow) + NATIVE_AUDIT_MAX_DIRTY_MS;
+        const nextOptionalOnly =
+          !this.nativeFullAuditRequested &&
+          this.pendingNativeAuditScopes.size === 0 &&
+          this.pendingNativeRecursiveAuditScopes.size === 0 &&
+          this.pendingNativeChangeAuditScopes.size > 0;
+        const nextQuietMs = nextOptionalOnly
+          ? NATIVE_OPTIONAL_AUDIT_QUIET_MS
+          : NATIVE_AUDIT_QUIET_MS;
+        const nextMaxDirtyMs = nextOptionalOnly
+          ? NATIVE_OPTIONAL_AUDIT_MAX_DIRTY_MS
+          : NATIVE_AUDIT_MAX_DIRTY_MS;
+        const nextQuietDeadline = (this.nativeAuditLastDirtyAt ?? nextNow) + nextQuietMs;
+        const nextStarvationDeadline = (this.nativeAuditDirtySince ?? nextNow) + nextMaxDirtyMs;
         if (nextNow < Math.min(nextQuietDeadline, nextStarvationDeadline)) {
           this.scheduleNativeAudit();
           return;
@@ -964,7 +965,6 @@ class RecursiveFileObserver {
     this.pendingNativeAuditScopes.clear();
     this.pendingNativeChangeAuditScopes.clear();
     this.pendingNativeRecursiveAuditScopes.clear();
-    this.nativeDirectoryInventoryAt.clear();
     this.nativeFullAuditRequested = false;
     this.nativeSafetyAuditPending = false;
     this.nativeSafetyAuditDirtySince = null;

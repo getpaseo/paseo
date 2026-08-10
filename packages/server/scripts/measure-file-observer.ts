@@ -224,6 +224,17 @@ async function measure(
       () => sustainedPaths.every((path) => delivered.some((event) => event.path === path)),
       10_000,
     );
+    const sustainedSettled = await waitFor(() => {
+      const diagnostics = getFileObserverDiagnostics();
+      return (
+        diagnostics.pendingEventCount === 0 &&
+        diagnostics.pendingReconciliationWorkCount === 0 &&
+        diagnostics.reconciliationInFlightCount === 0
+      );
+    }, 30_000);
+    if (!sustainedSettled) {
+      throw new Error("Timed out waiting for sustained observer reconciliation to settle");
+    }
     const sustainedDurationMs = performance.now() - sustainedStarted;
     const sustainedCpu = process.cpuUsage(sustainedCpuBefore);
     const sustainedCpuMs = (sustainedCpu.user + sustainedCpu.system) / 1_000;
