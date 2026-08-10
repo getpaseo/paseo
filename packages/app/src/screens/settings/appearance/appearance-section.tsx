@@ -60,6 +60,7 @@ function getThemeLabel(t: TFunction, value: AppSettings["theme"]): string {
     midnight: "settings.appearance.theme.options.midnight",
     claude: "settings.appearance.theme.options.claude",
     ghostty: "settings.appearance.theme.options.ghostty",
+    pureBlack: "settings.appearance.theme.options.pureBlack",
     auto: "settings.appearance.theme.options.auto",
   };
   return t(labelKeys[value]);
@@ -71,6 +72,7 @@ const DARK_VARIANT_THEMES: readonly AppSettings["theme"][] = [
   "midnight",
   "claude",
   "ghostty",
+  "pureBlack",
 ];
 
 // Platform default stacks can be the bare native tokens ("normal"/"monospace");

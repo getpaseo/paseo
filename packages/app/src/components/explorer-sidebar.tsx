@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useAnimatedStyle, useSharedValue, runOnJS } from "react-native-reanimated";
+import { scheduleOnRN } from "react-native-worklets";
 import { Gesture } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { X } from "lucide-react-native";
@@ -37,6 +38,10 @@ import { RetainedPanelActivity } from "@/components/retained-panel";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { resolveDesktopExplorerWidth } from "@/components/desktop-sidebar-layout";
+import {
+  SIDEBAR_RESIZE_ACTIVATION_OFFSET,
+  SIDEBAR_RESIZE_FAIL_OFFSET,
+} from "@/components/sidebar-resize-handle-layout";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { resolveFocusedChatTarget } from "@/composer/focused-chat-target";
@@ -172,6 +177,9 @@ export function ExplorerSidebar({
   });
   const startWidthRef = useRef(visibleExplorerWidth);
   const resizeWidth = useSharedValue(visibleExplorerWidth);
+  const [resizePressed, setResizePressed] = useState(false);
+  const showResizeGrip = useCallback(() => setResizePressed(true), []);
+  const hideResizeGrip = useCallback(() => setResizePressed(false), []);
 
   useEffect(() => {
     resizeWidth.value = visibleExplorerWidth;
@@ -190,8 +198,15 @@ export function ExplorerSidebar({
       Gesture.Pan()
         .enabled(true)
         .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
-        .onStart(() => {
-          startWidthRef.current = visibleExplorerWidth;
+        .onBegin(() => {
+          scheduleOnRN(showResizeGrip);
+        })
+        // See the left sidebar's gesture: horizontal intent only, with the start
+        // width anchored to the activation translation so the threshold is free.
+        .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
+        .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
+        .onStart((event) => {
+          startWidthRef.current = visibleExplorerWidth + event.translationX;
           resizeWidth.value = visibleExplorerWidth;
         })
         .onUpdate((event) => {
@@ -203,8 +218,18 @@ export function ExplorerSidebar({
         })
         .onEnd(() => {
           runOnJS(setExplorerWidth)(resizeWidth.value);
+        })
+        .onFinalize(() => {
+          scheduleOnRN(hideResizeGrip);
         }),
-    [resizeWidth, setExplorerWidth, viewportWidth, visibleExplorerWidth],
+    [
+      hideResizeGrip,
+      resizeWidth,
+      setExplorerWidth,
+      showResizeGrip,
+      viewportWidth,
+      visibleExplorerWidth,
+    ],
   );
 
   const resizeAnimatedStyle = useAnimatedStyle(() => ({
@@ -225,6 +250,7 @@ export function ExplorerSidebar({
         <SidebarResizeHandle
           edge="left"
           gesture={resizeGesture}
+          pressed={resizePressed}
           testID="explorer-sidebar-resize-handle"
         />
 

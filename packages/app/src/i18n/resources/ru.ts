@@ -1307,7 +1307,6 @@ export const ru: TranslationResources = {
     },
   },
   rootError: {
-    kicker: "Что-то пошло не так",
     title: "В Paseo возникла проблема.",
     body: "Попробуйте снова перезагрузить приложение. Если это повторяется, приложите приведенные ниже подробности к отчету.",
     details: "Подробности",
@@ -1493,19 +1492,6 @@ export const ru: TranslationResources = {
         label: "Передовой",
         show: "Показать расширенные",
         hide: "Скрыть расширенные",
-      },
-      headers: {
-        title: "Пользовательские заголовки",
-        add: "Добавить заголовок",
-        name: "Имя",
-        value: "Значение",
-        remove: "Удалить заголовок",
-        errors: {
-          missingName: "Введите имя для каждого заголовка",
-          invalidName: "{{name}} — недопустимое имя заголовка",
-          invalidValue: "{{name}} содержит недопустимый перенос строки",
-          duplicateName: "{{name}} введён несколько раз",
-        },
       },
       passwordVisibility: {
         show: "Показать пароль",
@@ -1840,6 +1826,7 @@ export const ru: TranslationResources = {
       editor: "Редактор",
       shortcuts: "Ярлыки",
       integrations: "Интеграции",
+      notifications: "Уведомления",
       permissions: "Разрешения",
       diagnostics: "Диагностика",
       about: "О",
@@ -1848,6 +1835,21 @@ export const ru: TranslationResources = {
       title: "Редактор",
       vimKeybindings: "Клавиши Vim",
       vimHint: "Применяется к исходным файлам в веб- и настольной версии.",
+    },
+    notifications: {
+      title: "Уведомления",
+      permission: "Разрешение на уведомления",
+      refreshAccessibility: "Обновить разрешение на уведомления",
+      playSound: "Воспроизводить звук",
+      playSoundHint: "Воспроизводит звук при получении уведомления на компьютере",
+      test: "Проверить уведомление",
+      testHint: "Отправляет уведомление с текущими настройками",
+      permissionRequired: "Разрешите доступ к уведомлениям перед проверкой",
+      send: "Отправить",
+      sending: "Отправка...",
+      sentTitle: "Тестовое уведомление отправлено",
+      sentDescription: "Paseo передал уведомление операционной системе.",
+      sendFailedTitle: "Не удалось отправить тестовое уведомление",
     },
     hostSections: {
       projects: "Проекты",
@@ -2000,6 +2002,7 @@ export const ru: TranslationResources = {
           midnight: "Полночь",
           claude: "Клод",
           ghostty: "Призрачный",
+          pureBlack: "Чистый чёрный",
           auto: "Система",
         },
       },
@@ -2040,11 +2043,15 @@ export const ru: TranslationResources = {
       searchPlaceholder: "Поиск сочетаний клавиш",
       unavailableOnMobile: "Сочетания клавиш доступны только на рабочем столе.",
       capturePrompt: "Нажмите ярлык...",
+      unassigned: "Не задано",
       actions: {
+        menu: "Действия для {{name}}",
         done: "Сделанный",
         cancel: "Отмена",
+        bind: "Привязать",
         rebind: "Перепривязка",
-        reset: "Перезагрузить",
+        clear: "Очистить",
+        reset: "Сбросить к значению по умолчанию",
         resetAll: "Сбросить все",
       },
       sections: {
@@ -2151,12 +2158,10 @@ export const ru: TranslationResources = {
     },
     permissions: {
       title: "Разрешения",
-      notifications: "Уведомления",
       microphone: "Микрофон",
       refresh: "Обновить",
       refreshing: "Освежающий...",
       refreshAccessibility: "Обновить разрешения рабочего стола",
-      test: "Тест",
       attention: {
         title: "Attention",
         intrusive: {
@@ -2246,7 +2251,6 @@ export const ru: TranslationResources = {
         granted: "Предоставленный",
         request: "Запрос",
         requesting: "Запрос...",
-        busySuffix: "{{label}}...",
       },
     },
     host: {

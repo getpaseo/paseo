@@ -7,6 +7,7 @@ import {
 } from "@getpaseo/protocol/agent-lifecycle";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { getStatusDotColor } from "@/utils/status-dot-color";
+import { STATUS_INDICATOR_FILLED_DOT_SIZE } from "@/utils/status-indicator-geometry";
 
 export function AgentStatusDot({
   status,
@@ -56,8 +57,8 @@ function isAgentLifecycleStatus(value: string): value is AgentLifecycleStatus {
 
 const styles = StyleSheet.create((theme) => ({
   dot: {
-    width: 8,
-    height: 8,
+    width: STATUS_INDICATOR_FILLED_DOT_SIZE,
+    height: STATUS_INDICATOR_FILLED_DOT_SIZE,
     borderRadius: theme.borderRadius.full,
   },
 }));

@@ -33,18 +33,8 @@ export const ScheduleTargetSchema = z.discriminatedUnion("type", [
       archiveOnFinish: z.boolean().optional(),
       isolation: z.enum(["local", "worktree"]).optional(),
       title: z.string().trim().min(1).nullable().optional(),
-      approvalPolicy: z.string().trim().min(1).optional(),
-      sandboxMode: z.string().trim().min(1).optional(),
-      networkAccess: z.boolean().optional(),
-      webSearch: z.boolean().optional(),
+      providerOptions: z.record(z.string(), z.json()).optional(),
       featureValues: z.record(z.string(), z.unknown()).optional(),
-      extra: z
-        .object({
-          codex: z.record(z.string(), z.unknown()).optional(),
-          claude: z.record(z.string(), z.unknown()).optional(),
-        })
-        .partial()
-        .optional(),
       systemPrompt: z.string().optional(),
       mcpServers: z.record(z.string(), z.unknown()).optional(),
     }),

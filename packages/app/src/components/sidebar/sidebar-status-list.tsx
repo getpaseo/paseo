@@ -688,12 +688,15 @@ function StatusWorkspaceRowInner({
   inStatusGroup?: boolean;
 }) {
   const isTouchPlatform = platformIsNative;
+  const [isPressed, setIsPressed] = useState(false);
   const trailing = useSidebarWorkspaceTrailing();
 
   const isDesktop = !isTouchPlatform;
   const serviceSummary = isDesktop ? selectWorkspaceServiceSummary(workspace.scripts) : null;
 
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
+  const handlePressIn = useCallback(() => setIsPressed(true), []);
+  const handlePressOut = useCallback(() => setIsPressed(false), []);
 
   return (
     <SidebarWorkspaceRowFrame workspace={workspace}>
@@ -714,6 +717,7 @@ function StatusWorkspaceRowInner({
           showShortcut,
         });
         const workspaceRowStyle = getStatusWorkspaceRowStyle({
+          isPressed,
           selected,
           isHovered,
           inStatusGroup,
@@ -744,7 +748,9 @@ function StatusWorkspaceRowInner({
               accessibilityRole="button"
               accessibilityState={accessibilityState}
               style={workspaceRowStyle}
-              highlightStyle={styles.workspaceRowHovered}
+              highlightStyle={styles.workspaceRowPressed}
+              onPressIn={handlePressIn}
+              onPressOut={handlePressOut}
               onPress={onPress}
               testID={`sidebar-workspace-row-${workspace.workspaceKey}`}
             >
@@ -754,7 +760,7 @@ function StatusWorkspaceRowInner({
                 leadingProjectName={projectName}
                 leadingProjectIconDataUri={projectIconDataUri}
                 serviceSummary={serviceSummary}
-                backdrop={getSidebarRowBackdrop({ selected, isHovered })}
+                backdrop={getSidebarRowBackdrop({ isPressed, selected, isHovered })}
                 isHovered={isHovered}
                 isLoading={isArchiving}
                 shortcutNumber={shortcutNumber}
@@ -858,10 +864,12 @@ function StatusWorkspaceActionSlot({
 }
 
 function getStatusWorkspaceRowStyle({
+  isPressed,
   selected,
   isHovered,
   inStatusGroup,
 }: {
+  isPressed: boolean;
   selected: boolean;
   isHovered: boolean;
   inStatusGroup: boolean;
@@ -871,6 +879,7 @@ function getStatusWorkspaceRowStyle({
     inStatusGroup && sidebarWorkspaceRowStyles.rowIndented,
     selected && styles.sidebarRowSelected,
     isHovered && styles.workspaceRowHovered,
+    isPressed && styles.workspaceRowPressed,
   ];
 }
 
