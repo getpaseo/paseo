@@ -397,9 +397,32 @@ export const fr: TranslationResources = {
     fileActions: {
       openFile: "Ouvrir le fichier",
       copyPath: "Copier le chemin",
+      copyRelativePath: "Copier le chemin relatif",
+      revealIn: "Afficher dans {{target}}",
       download: "Télécharger",
       addToChat: "Ajouter au chat",
       moreActions: "Plus de propositions",
+      newFile: "Nouveau fichier",
+      newFolder: "Nouveau dossier",
+      collapseFolder: "Replier le dossier",
+      rename: "Renommer",
+      duplicate: "Dupliquer",
+      revert: "Abandonner les modifications",
+      delete: "Supprimer",
+      confirmDelete: {
+        fileTitle: "Supprimer le fichier ?",
+        folderTitle: "Supprimer le dossier ?",
+        message: "« {{name}} » sera définitivement supprimé.",
+        confirm: "Supprimer",
+        cancel: "Annuler",
+      },
+      confirmRevert: {
+        title: "Abandonner les modifications ?",
+        message: "Les modifications de « {{name}} » seront définitivement abandonnées.",
+        confirm: "Abandonner",
+        cancel: "Annuler",
+        failed: "Échec de l'abandon des modifications",
+      },
     },
     fileExplorer: {
       sort: {
@@ -429,6 +452,15 @@ export const fr: TranslationResources = {
       },
       errors: {
         failedToListDirectory: "Échec de la liste du répertoire",
+        createFailed: "Échec de la création de l'entrée",
+        renameFailed: "Échec du renommage de l'entrée",
+        duplicateFailed: "Échec de la duplication de l'entrée",
+        revealFailed: "Échec de l'affichage de l'entrée",
+        deleteFailed: "Échec de la suppression de l'entrée",
+      },
+      draft: {
+        filePlaceholder: "Nom du fichier",
+        folderPlaceholder: "Nom du dossier",
       },
     },
     setup: {

@@ -397,9 +397,32 @@ export const es: TranslationResources = {
     fileActions: {
       openFile: "Abrir archivo",
       copyPath: "Copiar ruta",
+      copyRelativePath: "Copiar ruta relativa",
+      revealIn: "Mostrar en {{target}}",
       download: "Descargar",
       addToChat: "Añadir al chat",
       moreActions: "Más acciones",
+      newFile: "Nuevo archivo",
+      newFolder: "Nueva carpeta",
+      collapseFolder: "Contraer carpeta",
+      rename: "Renombrar",
+      duplicate: "Duplicar",
+      revert: "Descartar cambios",
+      delete: "Eliminar",
+      confirmDelete: {
+        fileTitle: "¿Eliminar archivo?",
+        folderTitle: "¿Eliminar carpeta?",
+        message: '"{{name}}" se eliminará permanentemente.',
+        confirm: "Eliminar",
+        cancel: "Cancelar",
+      },
+      confirmRevert: {
+        title: "¿Descartar cambios?",
+        message: 'Los cambios en "{{name}}" se descartarán permanentemente.',
+        confirm: "Descartar",
+        cancel: "Cancelar",
+        failed: "No se pudieron descartar los cambios",
+      },
     },
     fileExplorer: {
       sort: {
@@ -429,6 +452,15 @@ export const es: TranslationResources = {
       },
       errors: {
         failedToListDirectory: "No se pudo listar el directorio",
+        createFailed: "No se pudo crear la entrada",
+        renameFailed: "No se pudo renombrar la entrada",
+        duplicateFailed: "No se pudo duplicar la entrada",
+        revealFailed: "No se pudo mostrar la entrada",
+        deleteFailed: "No se pudo eliminar la entrada",
+      },
+      draft: {
+        filePlaceholder: "Nombre del archivo",
+        folderPlaceholder: "Nombre de la carpeta",
       },
     },
     setup: {

@@ -394,9 +394,32 @@ export const ko: TranslationResources = {
     fileActions: {
       openFile: "파일 열기",
       copyPath: "경로 복사",
+      copyRelativePath: "상대 경로 복사",
+      revealIn: "{{target}}에서 보기",
       download: "다운로드",
       addToChat: "채팅에 추가",
       moreActions: "추가 작업",
+      newFile: "새 파일",
+      newFolder: "새 폴더",
+      collapseFolder: "폴더 접기",
+      rename: "이름 바꾸기",
+      duplicate: "복제",
+      revert: "변경 사항 버리기",
+      delete: "삭제",
+      confirmDelete: {
+        fileTitle: "파일을 삭제할까요?",
+        folderTitle: "폴더를 삭제할까요?",
+        message: '"{{name}}"이(가) 영구적으로 삭제됩니다.',
+        confirm: "삭제",
+        cancel: "취소",
+      },
+      confirmRevert: {
+        title: "변경 사항을 버릴까요?",
+        message: '"{{name}}"의 변경 사항이 영구적으로 삭제됩니다.',
+        confirm: "버리기",
+        cancel: "취소",
+        failed: "변경 사항을 버리지 못했습니다",
+      },
     },
     fileExplorer: {
       sort: {
@@ -426,6 +449,15 @@ export const ko: TranslationResources = {
       },
       errors: {
         failedToListDirectory: "디렉터리 목록을 불러오지 못했습니다",
+        createFailed: "항목을 만들지 못했습니다",
+        renameFailed: "항목 이름을 바꾸지 못했습니다",
+        duplicateFailed: "항목을 복제하지 못했습니다",
+        revealFailed: "항목을 표시하지 못했습니다",
+        deleteFailed: "항목을 삭제하지 못했습니다",
+      },
+      draft: {
+        filePlaceholder: "파일 이름",
+        folderPlaceholder: "폴더 이름",
       },
     },
     setup: {

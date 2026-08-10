@@ -393,9 +393,32 @@ export const zhCN: TranslationResources = {
     fileActions: {
       openFile: "打开文件",
       copyPath: "复制路径",
+      copyRelativePath: "复制相对路径",
+      revealIn: "在 {{target}} 中显示",
       download: "下载",
       addToChat: "添加到聊天",
       moreActions: "更多操作",
+      newFile: "新建文件",
+      newFolder: "新建文件夹",
+      collapseFolder: "折叠文件夹",
+      rename: "重命名",
+      duplicate: "复制",
+      revert: "放弃更改",
+      delete: "删除",
+      confirmDelete: {
+        fileTitle: "删除文件？",
+        folderTitle: "删除文件夹？",
+        message: "“{{name}}”将被永久删除。",
+        confirm: "删除",
+        cancel: "取消",
+      },
+      confirmRevert: {
+        title: "放弃更改？",
+        message: "对“{{name}}”的更改将被永久放弃。",
+        confirm: "放弃",
+        cancel: "取消",
+        failed: "放弃更改失败",
+      },
     },
     fileExplorer: {
       sort: {
@@ -425,6 +448,15 @@ export const zhCN: TranslationResources = {
       },
       errors: {
         failedToListDirectory: "列出目录失败",
+        createFailed: "创建条目失败",
+        renameFailed: "重命名条目失败",
+        duplicateFailed: "复制条目失败",
+        revealFailed: "显示条目失败",
+        deleteFailed: "删除条目失败",
+      },
+      draft: {
+        filePlaceholder: "文件名",
+        folderPlaceholder: "文件夹名称",
       },
     },
     setup: {

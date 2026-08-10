@@ -392,9 +392,32 @@ export const en = {
     fileActions: {
       openFile: "Open file",
       copyPath: "Copy path",
+      copyRelativePath: "Copy relative path",
+      revealIn: "Reveal in {{target}}",
       download: "Download",
       addToChat: "Add to chat",
       moreActions: "More actions",
+      newFile: "New file",
+      newFolder: "New folder",
+      collapseFolder: "Collapse folder",
+      rename: "Rename",
+      duplicate: "Duplicate",
+      revert: "Discard changes",
+      delete: "Delete",
+      confirmDelete: {
+        fileTitle: "Delete file?",
+        folderTitle: "Delete folder?",
+        message: '"{{name}}" will be permanently deleted.',
+        confirm: "Delete",
+        cancel: "Cancel",
+      },
+      confirmRevert: {
+        title: "Discard changes?",
+        message: 'Changes to "{{name}}" will be permanently discarded.',
+        confirm: "Discard",
+        cancel: "Cancel",
+        failed: "Failed to discard changes",
+      },
     },
     fileExplorer: {
       sort: {
@@ -424,6 +447,15 @@ export const en = {
       },
       errors: {
         failedToListDirectory: "Failed to list directory",
+        createFailed: "Failed to create entry",
+        renameFailed: "Failed to rename entry",
+        duplicateFailed: "Failed to duplicate entry",
+        revealFailed: "Failed to reveal entry",
+        deleteFailed: "Failed to delete entry",
+      },
+      draft: {
+        filePlaceholder: "File name",
+        folderPlaceholder: "Folder name",
       },
     },
     setup: {
