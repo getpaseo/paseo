@@ -1061,6 +1061,7 @@ export const ja: TranslationResources = {
         archiveWorkspace: "ワークスペースをアーカイブ",
         hideFromSidebar: "サイドバーから非表示",
         splitPane: "サイドパネルで開く",
+        mainCheckout: "Main checkout",
         archiving: "アーカイブ中...",
         hiding: "非表示にしています...",
       },

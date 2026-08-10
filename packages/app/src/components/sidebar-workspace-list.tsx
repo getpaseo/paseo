@@ -102,6 +102,8 @@ import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { collectAllPanes } from "@/stores/workspace-layout-actions";
 import { useSessionStore } from "@/stores/session-store";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
+import { SidebarBranchGroupRow } from "@/components/sidebar/sidebar-branch-group-row";
+import { buildSidebarBranchGroups, type SidebarBranchGroup } from "@/hooks/sidebar-branch-groups";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
@@ -1605,6 +1607,75 @@ function WorkspaceRow({
   );
 }
 
+function BranchGroupItem({
+  group,
+  collapsedBranchGroupKeys,
+  onToggleCollapsed,
+  visibleWorkspaces,
+  renderWorkspace,
+  handleWorkspaceDragEnd,
+  selectionKey,
+  useNestable,
+  parentGestureRef,
+  dragGestureHostPresented,
+  projectViewKey,
+}: {
+  group: SidebarBranchGroup;
+  collapsedBranchGroupKeys: ReadonlySet<string>;
+  onToggleCollapsed: (groupKey: string) => void;
+  visibleWorkspaces: readonly SidebarWorkspacePlacement[];
+  renderWorkspace: (info: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => ReactElement;
+  handleWorkspaceDragEnd: (workspaces: SidebarWorkspacePlacement[]) => void;
+  selectionKey: string;
+  useNestable: boolean;
+  parentGestureRef?: MutableRefObject<GestureType | undefined>;
+  dragGestureHostPresented?: boolean;
+  projectViewKey: string;
+}) {
+  const { t } = useTranslation();
+  const isGroupCollapsed = collapsedBranchGroupKeys.has(group.key);
+  const groupPlacements = useMemo(
+    () => visibleWorkspaces.filter((ws) => group.workspaceKeys.includes(ws.workspaceKey)),
+    [group.workspaceKeys, visibleWorkspaces],
+  );
+  const handleToggleCollapsed = useCallback(
+    () => onToggleCollapsed(group.key),
+    [group.key, onToggleCollapsed],
+  );
+  if (groupPlacements.length === 0) {
+    return null;
+  }
+  const label =
+    group.isParent || !group.branch ? t("sidebar.workspace.actions.mainCheckout") : group.branch;
+  return (
+    <View>
+      <SidebarBranchGroupRow
+        label={label}
+        isParent={group.isParent}
+        collapsed={isGroupCollapsed}
+        onToggleCollapsed={handleToggleCollapsed}
+        testID={`sidebar-branch-group-${group.key}`}
+      />
+      {!isGroupCollapsed ? (
+        <DraggableList
+          testID={`sidebar-workspace-list-${projectViewKey}-${group.key}`}
+          data={groupPlacements}
+          keyExtractor={workspaceKeyExtractor}
+          renderItem={renderWorkspace}
+          onDragEnd={handleWorkspaceDragEnd}
+          extraData={selectionKey}
+          scrollEnabled={false}
+          useDragHandle
+          nestable={useNestable}
+          simultaneousGestureRef={parentGestureRef}
+          gestureHostPresented={dragGestureHostPresented}
+          containerStyle={styles.workspaceListContainer}
+        />
+      ) : null}
+    </View>
+  );
+}
+
 function ProjectBlock({
   project,
   workspaceEntriesByKey,
@@ -1662,6 +1733,22 @@ function ProjectBlock({
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
   } = useLimitedSidebarGroup(project.workspaces);
+  const branchGroups = useMemo(
+    () => buildSidebarBranchGroups({ project, workspaceEntriesByKey }),
+    [project, workspaceEntriesByKey],
+  );
+  const collapsedBranchGroupKeys = useSidebarCollapsedSectionsStore(
+    (state) => state.collapsedBranchGroupKeys,
+  );
+  const toggleBranchGroupCollapsed = useSidebarCollapsedSectionsStore(
+    (state) => state.toggleBranchGroupCollapsed,
+  );
+  const toggleBranchGroupCollapsedByKey = useCallback(
+    (groupKey: string) => {
+      toggleBranchGroupCollapsed(groupKey);
+    },
+    [toggleBranchGroupCollapsed],
+  );
   const rowModel = useMemo(
     () =>
       buildSidebarProjectRowModel({
@@ -1817,20 +1904,39 @@ function ProjectBlock({
     if (project.workspaces.length > 0) {
       projectChildren = (
         <>
-          <DraggableList
-            testID={`sidebar-workspace-list-${project.viewKey}`}
-            data={visibleWorkspaces}
-            keyExtractor={workspaceKeyExtractor}
-            renderItem={renderWorkspace}
-            onDragEnd={handleWorkspaceDragEnd}
-            extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-            scrollEnabled={false}
-            useDragHandle
-            nestable={useNestable}
-            simultaneousGestureRef={parentGestureRef}
-            gestureHostPresented={dragGestureHostPresented}
-            containerStyle={styles.workspaceListContainer}
-          />
+          {branchGroups.length > 1 ? (
+            branchGroups.map((group) => (
+              <BranchGroupItem
+                key={group.key}
+                group={group}
+                collapsedBranchGroupKeys={collapsedBranchGroupKeys}
+                onToggleCollapsed={toggleBranchGroupCollapsedByKey}
+                visibleWorkspaces={visibleWorkspaces}
+                renderWorkspace={renderWorkspace}
+                handleWorkspaceDragEnd={handleWorkspaceDragEnd}
+                selectionKey={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+                useNestable={useNestable}
+                parentGestureRef={parentGestureRef}
+                dragGestureHostPresented={dragGestureHostPresented}
+                projectViewKey={project.viewKey}
+              />
+            ))
+          ) : (
+            <DraggableList
+              testID={`sidebar-workspace-list-${project.viewKey}`}
+              data={visibleWorkspaces}
+              keyExtractor={workspaceKeyExtractor}
+              renderItem={renderWorkspace}
+              onDragEnd={handleWorkspaceDragEnd}
+              extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+              scrollEnabled={false}
+              useDragHandle
+              nestable={useNestable}
+              simultaneousGestureRef={parentGestureRef}
+              gestureHostPresented={dragGestureHostPresented}
+              containerStyle={styles.workspaceListContainer}
+            />
+          )}
           {canToggleWorkspaces ? (
             <SidebarGroupToggleRow
               expanded={workspacesExpanded}

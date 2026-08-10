@@ -1080,6 +1080,7 @@ export const fr: TranslationResources = {
         archiveWorkspace: "Archiver l’espace de travail",
         hideFromSidebar: "Masquer de la barre latérale",
         splitPane: "Ouvrir dans un panneau latéral",
+        mainCheckout: "Main checkout",
         archiving: "Archivage...",
         hiding: "Dissimulation...",
       },

@@ -1072,6 +1072,7 @@ export const ru: TranslationResources = {
         archiveWorkspace: "Архивировать рабочее пространство",
         hideFromSidebar: "Скрыть с боковой панели",
         splitPane: "Открыть в боковой панели",
+        mainCheckout: "Main checkout",
         archiving: "Архивирование...",
         hiding: "Скрытие...",
       },
