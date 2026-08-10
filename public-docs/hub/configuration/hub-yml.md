@@ -64,6 +64,18 @@ The only top-level keys are `environments` and `agents`. A `triggers` key is rej
 
 For `worktree`, use `newBranch` and optional `base` with `branch-off`, `branch` with `checkout-branch`, or positive `prNumber` with `checkout-pr`.
 
+```yaml
+environments:
+  review:
+    kind: daemon
+    daemon: build-server
+    cwd: /workspace/project
+    worktree:
+      mode: branch-off
+      newBranch: paseo/review
+      base: origin/main
+```
+
 An environment is a complete named object. A step selects its name; objects are not inherited, merged, or partially overridden.
 
 ### Named agents
@@ -80,6 +92,8 @@ Each agent is one complete provider configuration:
 
 A named selection preserves the complete object, including structured options. Named agents have no parent, patch, or per-step override.
 
+Hub passes `model`, `mode`, `thinkingOptionId`, and `options` to the Paseo daemon without renaming or flattening provider fields. The selected daemon validates them against its current provider schema; Hub does not translate provider-native options.
+
 ## Workflow files
 
 `.paseo/workflows/review.yml`:
@@ -88,6 +102,8 @@ A named selection preserves the complete object, including structured options. N
 name: review
 on: manual.run
 max_runtime: 2h
+filters:
+  from_users: [automation]
 inputs:
   repo:
     type: string
@@ -103,15 +119,15 @@ steps:
       - text: ${{ paseo.prompt }}
 ```
 
-| Field         | Required           | Notes                                                     |
-| ------------- | ------------------ | --------------------------------------------------------- |
-| `name`        | yes                | Workflow name, unique across the bundle.                  |
-| `on`          | yes                | Provider event such as `manual.run` or `discord.mention`. |
-| `max_runtime` | yes                | Hard limit for the complete run, up to 24h.               |
-| `filters`     | provider-dependent | Provider resource and sender allowlists.                  |
-| `inputs`      | no                 | Typed invocation headers.                                 |
-| `values`      | no                 | Named expressions.                                        |
-| `steps`       | yes                | One or more ordered inline steps.                         |
+| Field         | Required | Notes                                                     |
+| ------------- | -------- | --------------------------------------------------------- |
+| `name`        | yes      | Workflow name, unique across the bundle.                  |
+| `on`          | yes      | Provider event such as `manual.run` or `discord.mention`. |
+| `max_runtime` | yes      | Hard limit for the complete run, up to 24h.               |
+| `filters`     | yes      | Provider resource filters and the sender allowlist.       |
+| `inputs`      | no       | Typed invocation headers.                                 |
+| `values`      | no       | Named expressions.                                        |
+| `steps`       | yes      | One or more ordered inline steps.                         |
 
 ### Inputs and values
 
@@ -176,7 +192,7 @@ prompt:
 
 Includes resolve relative to `.paseo/workflows/`, so shared partials use `partials/<name>.md`. Missing files, absolute or traversing paths, symlinks, content mismatches, and files outside the partial tree are rejected.
 
-### Output authority
+### Output capabilities
 
 Authority stays on the step that uses it:
 
@@ -188,6 +204,8 @@ allow_outputs:
 ```
 
 Slack workflows use `slack.reply`; Discord workflows use `discord.reply`. The declaration grants `hub.reply`, and the prompt must tell the agent to call it. GitHub has no reply output; use an explicit [`github` block](/docs/hub/github).
+
+Every step receives `hub.finish_execution`. The prompt must tell the agent when to call it; Hub does not append completion or reply instructions. If `output.schema` is present, `hub.finish_execution` requires an `output` value that matches the schema. If an `allow_outputs` entry is `required: true`, the agent must emit that output before finishing. `max` defaults to `1`.
 
 ## Migrating a monolithic file
 

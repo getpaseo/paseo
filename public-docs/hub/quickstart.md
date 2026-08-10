@@ -8,20 +8,21 @@ category: Hub
 
 # Hub quickstart
 
-## 1. Connect GitHub and a daemon
+## 1. Create a project
 
-Open **Connections** in Hub and connect the GitHub account or organization whose repositories you use. On the machine that will run agents:
+Open **Connections** in Hub and connect the GitHub account or organization whose repositories you use. Then open **Projects → New project** and create a project.
+
+## 2. Log in and connect a daemon
+
+On the machine that will run agents:
 
 ```sh
 paseo hub login https://your-hub.example.com
+paseo hub projects
 paseo hub connect
 ```
 
-Approve the browser login. See [Daemons](/docs/hub/daemons) for the separation between your CLI login and the daemon relationship.
-
-## 2. Create a project
-
-Open **Projects → New project**. In **Configuration**, choose the repository that will hold the configuration and select **Use for configuration**.
+Approve the browser login. `projects` shows the slug needed by `deploy`. See [Daemons](/docs/hub/daemons) for the separation between your CLI login and the daemon relationship.
 
 ## 3. Add the bundle
 
@@ -79,9 +80,7 @@ Workflow files are discovered as direct `.yml` children of `.paseo/workflows/`. 
 
 ## 4. Validate and deploy
 
-Push the files to the configuration repository's default branch. Hub fetches the complete bundle at that commit, validates it, and activates a revision. A failed sync leaves the previous revision active.
-
-You can validate or deploy the same local bundle from its project root:
+From the project root:
 
 ```sh
 paseo hub deploy -p your-project --dry-run
@@ -101,3 +100,15 @@ Comment from the account in `from_users`:
 Open the project's **Activity** tab to see routing and execution. If nothing runs, use the [Activity checklist](/docs/hub/activity).
 
 Before widening the allowlist or granting write authority, read [Hub security](/docs/hub/security).
+
+When you no longer need the local CLI login:
+
+```sh
+paseo hub logout
+```
+
+Logging out does not disconnect the daemon. When the daemon is connected to the same Hub as the active CLI login, use `paseo hub logout --disconnect-daemon` to remove both relationships.
+
+## Next
+
+[single-repo-team-bot](https://github.com/getpaseo/hub/tree/main/examples/single-repo-team-bot) is a complete bundle covering all three providers, with a classifier, a worker, and shared prompt partials.

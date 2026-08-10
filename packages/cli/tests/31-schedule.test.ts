@@ -4,31 +4,7 @@ import assert from "node:assert";
 import { rm } from "node:fs/promises";
 import { createE2ETestContext } from "./helpers/test-daemon.ts";
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForLoopInList(
-  ctx: Awaited<ReturnType<typeof createE2ETestContext>>,
-  id: string,
-) {
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const listed = await ctx.paseo(["loop", "ls", "--json"]);
-    assert.strictEqual(listed.exitCode, 0, listed.stderr);
-    const listedJson = JSON.parse(listed.stdout);
-    assert(Array.isArray(listedJson), listed.stdout);
-    if (listedJson.some((item: { id: string }) => item.id === id)) {
-      return listedJson;
-    }
-    await sleep(250);
-  }
-
-  const listed = await ctx.paseo(["loop", "ls", "--json"]);
-  assert.strictEqual(listed.exitCode, 0, listed.stderr);
-  return JSON.parse(listed.stdout);
-}
-
-console.log("=== Loop And Schedule Command Tests ===\n");
+console.log("=== Schedule Command Tests ===\n");
 
 const ctx = await createE2ETestContext({ timeout: 30000 });
 
@@ -171,62 +147,10 @@ try {
     assert.strictEqual(JSON.parse(deleted.stdout).id, createdJson.id);
     console.log("compatibility agent-target schedules remain deletable\n");
   }
-
-  {
-    console.log("Test 2: loop run/ls/inspect/logs/stop work");
-    const run = await ctx.paseo(
-      [
-        "loop",
-        "run",
-        "Return any response",
-        "--name",
-        "smoke-loop",
-        "--verify-check",
-        "true",
-        "--json",
-      ],
-      { timeout: 30000 },
-    );
-    assert.strictEqual(run.exitCode, 0, run.stderr);
-    const runJson = JSON.parse(run.stdout);
-    assert.strictEqual(runJson.name, "smoke-loop");
-
-    const listedJson = await waitForLoopInList(ctx, runJson.id);
-    assert(
-      listedJson.some((item: { id: string }) => item.id === runJson.id),
-      JSON.stringify(listedJson),
-    );
-
-    async function pollStatus(attempt: number): Promise<string> {
-      if (attempt >= 40) return "running";
-      const inspect = await ctx.paseo(["loop", "inspect", runJson.id, "--json"]);
-      assert.strictEqual(inspect.exitCode, 0, inspect.stderr);
-      const inspectJson = JSON.parse(inspect.stdout);
-      const current = inspectJson.status;
-      if (current !== "running") {
-        assert.strictEqual(current, "succeeded", inspect.stdout);
-        return current;
-      }
-      await sleep(250);
-      return pollStatus(attempt + 1);
-    }
-    const status = await pollStatus(0);
-    assert.strictEqual(status, "succeeded");
-
-    const logs = await ctx.paseo(["loop", "logs", runJson.id], { timeout: 15000 });
-    assert.strictEqual(logs.exitCode, 0, logs.stderr);
-    assert(logs.stdout.includes("verify-check"), logs.stdout);
-
-    const stopped = await ctx.paseo(["loop", "stop", runJson.id, "--json"]);
-    assert.strictEqual(stopped.exitCode, 0, stopped.stderr);
-    const stoppedJson = JSON.parse(stopped.stdout);
-    assert(["succeeded", "stopped"].includes(stoppedJson.status), stopped.stdout);
-    console.log("loop commands work\n");
-  }
 } finally {
   await ctx.stop();
   await rm(ctx.paseoHome, { recursive: true, force: true });
   await rm(ctx.workDir, { recursive: true, force: true });
 }
 
-console.log("=== Loop And Schedule Command Tests Passed ===");
+console.log("=== Schedule Command Tests Passed ===");

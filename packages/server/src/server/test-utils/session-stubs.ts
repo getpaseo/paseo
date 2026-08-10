@@ -42,27 +42,27 @@ export function asAgentManager(stub: {
 export function asAgentStorage(stub: {
   [K in keyof SessionOptions["agentStorage"]]?: unknown;
 }): SessionOptions["agentStorage"] {
-  return createStub<SessionOptions["agentStorage"]>(stub);
+  return createStub<SessionOptions["agentStorage"]>({
+    listByProviderSession: async () => [],
+    listByWorkspace: async () => [],
+    ...stub,
+  });
 }
 
 export function asDownloadTokenStore(): SessionOptions["downloadTokenStore"] {
   return createStub<SessionOptions["downloadTokenStore"]>({});
 }
 
-export function asPushTokenStore(): SessionOptions["pushTokenStore"] {
-  return createStub<SessionOptions["pushTokenStore"]>({});
-}
-
-export function asChatService(): SessionOptions["chatService"] {
-  return createStub<SessionOptions["chatService"]>({});
+export function asPushNotifications(
+  stub: {
+    [K in keyof SessionOptions["pushNotifications"]]?: unknown;
+  } = {},
+): SessionOptions["pushNotifications"] {
+  return createStub<SessionOptions["pushNotifications"]>(stub);
 }
 
 export function asScheduleService(): SessionOptions["scheduleService"] {
   return createStub<SessionOptions["scheduleService"]>({});
-}
-
-export function asLoopService(): SessionOptions["loopService"] {
-  return createStub<SessionOptions["loopService"]>({});
 }
 
 export function asCheckoutDiffManager(stub: {

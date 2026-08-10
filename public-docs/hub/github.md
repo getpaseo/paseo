@@ -46,18 +46,21 @@ The agent can use `git` and `gh` within the declared repositories and permission
 | `connection`   | Project GitHub connection slug.                                                                                                        |
 | `repositories` | Repositories the token can reach. On a GitHub-triggered run, this defaults to the triggering repository. Required for other providers. |
 | `permissions`  | Installation-token permissions such as `contents`, `pull_requests`, and `issues`. Defaults to `contents: read`.                        |
-| `duration`     | Token lifetime. Defaults to `1h`, GitHub's maximum.                                                                                    |
+| `duration`     | Positive token lifetime up to `1h`. Defaults to `1h`, GitHub's maximum.                                                                |
 
 Requested authority cannot exceed the GitHub App installation. Activation and dispatch fail clearly when the connection, repository, or permissions cannot be resolved.
 
 ## Agent environment
 
-Hub supplies `GH_TOKEN` and git configuration through environment variables:
+Hub supplies `GH_TOKEN` and process-scoped git configuration through environment variables:
 
-- Commits use the App bot identity.
-- `git@github.com` remotes are rewritten to HTTPS.
-- Global and system git configuration are ignored.
-- The daemon host's git credentials are not used or changed.
+- Commits use the App bot login as `user.name` and `<app-id>+<bot-login>@users.noreply.github.com` as `user.email`.
+- `git@github.com:` and `ssh://git@github.com/` remotes are rewritten to HTTPS.
+- `gh auth git-credential` handles GitHub credentials for the step.
+- User-global and system git configuration are ignored, and terminal credential prompts are disabled.
+- The daemon host's git identity and credentials are not read or changed.
+
+`GH_TOKEN` and Hub's git configuration variables are reserved when a step has a `github` block; workflow `env` cannot replace them.
 
 ## Keep authority on the worker
 

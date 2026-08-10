@@ -1,10 +1,25 @@
-import { appendFile, chmod, mkdtemp, rm, stat, truncate, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { runGitCommand } from "../../utils/run-git-command.js";
 import {
+  createExplorerEntry,
+  deleteExplorerEntry,
+  duplicateExplorerEntry,
   getExplorerFileVersion,
   readExplorerFile,
+  renameExplorerEntry,
   streamExplorerFile,
   writeExplorerFile,
 } from "./service.js";
@@ -369,6 +384,204 @@ describe("file explorer service", () => {
           relativePath: "~/some/file.txt",
         }),
       ).rejects.toThrow("Access outside of workspace is not allowed");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("creates files and directories, refusing duplicates and separator names", async () => {
+    const root = await createTempDir("paseo-entry-create-");
+    try {
+      const file = await createExplorerEntry({
+        root,
+        parentPath: ".",
+        name: "notes.txt",
+        kind: "file",
+      });
+      expect(file).toEqual({ status: "ok", path: "notes.txt" });
+      expect((await stat(path.join(root, "notes.txt"))).isFile()).toBe(true);
+
+      const dir = await createExplorerEntry({
+        root,
+        parentPath: ".",
+        name: "docs",
+        kind: "directory",
+      });
+      expect(dir).toEqual({ status: "ok", path: "docs" });
+      const nested = await createExplorerEntry({
+        root,
+        parentPath: "docs",
+        name: "guide.md",
+        kind: "file",
+      });
+      expect(nested).toEqual({ status: "ok", path: "docs/guide.md" });
+
+      const duplicate = await createExplorerEntry({
+        root,
+        parentPath: ".",
+        name: "notes.txt",
+        kind: "file",
+      });
+      expect(duplicate.status).toBe("error");
+
+      const traversal = await createExplorerEntry({
+        root,
+        parentPath: ".",
+        name: "../escape",
+        kind: "directory",
+      });
+      expect(traversal.status).toBe("error");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("duplicates files and folders with collision-free sibling names", async () => {
+    const root = await createTempDir("paseo-entry-duplicate-");
+    try {
+      await writeFile(path.join(root, "notes.txt"), "original", "utf8");
+      const firstFileCopy = await duplicateExplorerEntry({
+        root,
+        relativePath: "notes.txt",
+      });
+      expect(firstFileCopy).toEqual({ status: "ok", path: "notes copy.txt" });
+      expect(await readFile(path.join(root, "notes copy.txt"), "utf8")).toBe("original");
+
+      const secondFileCopy = await duplicateExplorerEntry({
+        root,
+        relativePath: "notes.txt",
+      });
+      expect(secondFileCopy).toEqual({ status: "ok", path: "notes copy 2.txt" });
+
+      await mkdir(path.join(root, "docs"));
+      await writeFile(path.join(root, "docs", "guide.md"), "guide", "utf8");
+      const folderCopy = await duplicateExplorerEntry({ root, relativePath: "docs" });
+      expect(folderCopy).toEqual({ status: "ok", path: "docs copy" });
+      expect(await readFile(path.join(root, "docs copy", "guide.md"), "utf8")).toBe("guide");
+
+      await expect(duplicateExplorerEntry({ root, relativePath: "." })).resolves.toMatchObject({
+        status: "error",
+      });
+      await expect(duplicateExplorerEntry({ root, relativePath: "missing.txt" })).resolves.toEqual({
+        status: "error",
+        error: "File or folder no longer exists",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("renames tracked entries with Git and untracked entries on the filesystem", async () => {
+    const root = await createTempDir("paseo-entry-rename-");
+    try {
+      await runGitCommand(["init"], { cwd: root });
+      await writeFile(path.join(root, "tracked.txt"), "tracked", "utf8");
+      await mkdir(path.join(root, "tracked-folder"));
+      await writeFile(path.join(root, "tracked-folder", "inside.txt"), "tracked", "utf8");
+      await runGitCommand(["add", "."], { cwd: root });
+      await runGitCommand(
+        ["-c", "user.name=Paseo Test", "-c", "user.email=test@paseo.local", "commit", "-m", "base"],
+        { cwd: root },
+      );
+
+      const tracked = await renameExplorerEntry({
+        root,
+        relativePath: "tracked.txt",
+        name: "renamed.txt",
+      });
+      expect(tracked).toEqual({ status: "ok", path: "renamed.txt" });
+      expect((await runGitCommand(["status", "--short"], { cwd: root })).stdout.trim()).toBe(
+        "R  tracked.txt -> renamed.txt",
+      );
+
+      const trackedFolder = await renameExplorerEntry({
+        root,
+        relativePath: "tracked-folder",
+        name: "renamed-folder",
+      });
+      expect(trackedFolder).toEqual({ status: "ok", path: "renamed-folder" });
+      const gitStatus = (await runGitCommand(["status", "--short"], { cwd: root })).stdout;
+      expect(gitStatus).toContain("tracked-folder/inside.txt -> renamed-folder/inside.txt");
+
+      await writeFile(path.join(root, "untracked.txt"), "untracked", "utf8");
+      const untracked = await renameExplorerEntry({
+        root,
+        relativePath: "untracked.txt",
+        name: "moved.txt",
+      });
+      expect(untracked).toEqual({ status: "ok", path: "moved.txt" });
+      expect((await stat(path.join(root, "moved.txt"))).isFile()).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("supports case-only renames for tracked and untracked files", async () => {
+    const root = await createTempDir("paseo-entry-case-rename-");
+    try {
+      await runGitCommand(["init"], { cwd: root });
+      await writeFile(path.join(root, "Tracked.txt"), "tracked", "utf8");
+      await writeFile(path.join(root, "Loose.txt"), "untracked", "utf8");
+      await runGitCommand(["add", "Tracked.txt"], { cwd: root });
+      await runGitCommand(
+        ["-c", "user.name=Paseo Test", "-c", "user.email=test@paseo.local", "commit", "-m", "base"],
+        { cwd: root },
+      );
+
+      await expect(
+        renameExplorerEntry({ root, relativePath: "Tracked.txt", name: "tracked.txt" }),
+      ).resolves.toEqual({ status: "ok", path: "tracked.txt" });
+      expect((await stat(path.join(root, "tracked.txt"))).isFile()).toBe(true);
+
+      await expect(
+        renameExplorerEntry({ root, relativePath: "Loose.txt", name: "loose.txt" }),
+      ).resolves.toEqual({ status: "ok", path: "loose.txt" });
+      expect((await stat(path.join(root, "loose.txt"))).isFile()).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses invalid renames, existing targets, and the workspace root", async () => {
+    const root = await createTempDir("paseo-entry-rename-errors-");
+    try {
+      await writeFile(path.join(root, "source.txt"), "source", "utf8");
+      await writeFile(path.join(root, "existing.txt"), "existing", "utf8");
+
+      await expect(
+        renameExplorerEntry({ root, relativePath: "source.txt", name: "existing.txt" }),
+      ).resolves.toEqual({ status: "error", error: '"existing.txt" already exists' });
+      await expect(
+        renameExplorerEntry({ root, relativePath: "source.txt", name: "../outside.txt" }),
+      ).resolves.toEqual({ status: "error", error: "Name cannot contain path separators" });
+      await expect(
+        renameExplorerEntry({ root, relativePath: ".", name: "renamed-root" }),
+      ).resolves.toEqual({ status: "error", error: "Cannot rename the workspace root" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("deletes files and directories but never the workspace root or outside paths", async () => {
+    const root = await createTempDir("paseo-entry-delete-");
+    try {
+      await writeFile(path.join(root, "doomed.txt"), "bye", "utf8");
+      const removedFile = await deleteExplorerEntry({ root, relativePath: "doomed.txt" });
+      expect(removedFile).toEqual({ status: "ok", path: "doomed.txt" });
+      await expect(stat(path.join(root, "doomed.txt"))).rejects.toThrow();
+
+      await createExplorerEntry({ root, parentPath: ".", name: "nested", kind: "directory" });
+      await writeFile(path.join(root, "nested", "inner.txt"), "hi", "utf8");
+      const removedDir = await deleteExplorerEntry({ root, relativePath: "nested" });
+      expect(removedDir).toEqual({ status: "ok", path: "nested" });
+      await expect(stat(path.join(root, "nested"))).rejects.toThrow();
+
+      const rootDelete = await deleteExplorerEntry({ root, relativePath: "." });
+      expect(rootDelete.status).toBe("error");
+
+      await expect(
+        deleteExplorerEntry({ root, relativePath: "../outside" }),
+      ).resolves.toMatchObject({ status: "error" });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

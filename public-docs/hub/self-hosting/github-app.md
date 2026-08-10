@@ -16,6 +16,8 @@ Go to **Settings → Developer settings → GitHub Apps → New GitHub App** on 
 
 Replace `hub.example.com` with your `PASEO_HUB_APP_URL`.
 
+The webhook URL must be reachable from GitHub. Keep GitHub's default SSL verification enabled; see [Provider URLs](/docs/hub/self-hosting#provider-urls).
+
 | Setting            | Value                                                      |
 | ------------------ | ---------------------------------------------------------- |
 | Homepage URL       | `https://hub.example.com`                                  |

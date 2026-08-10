@@ -61,6 +61,7 @@ test.each([408, 429])("transient enrollment status %s remains retryable", async 
       idempotencyKey: "ceremony-1",
       hubOrigin,
       token: "token",
+      hostname: "test-daemon.local",
       serverId: "server-1",
       daemonPublicKey: "public-key",
       credentialVerifier: "verifier",
@@ -74,7 +75,10 @@ test.each([408, 429])("transient enrollment status %s remains retryable", async 
 });
 
 test("enrollment rejects a transport URL that cannot open a WebSocket", async () => {
-  const hubOrigin = await startEnrollmentHub("ftp://hub.test/daemon");
+  let enrolledHostname: string | undefined;
+  const hubOrigin = await startEnrollmentHub("ftp://hub.test/daemon", (enrollment) => {
+    enrolledHostname = enrollment.hostname;
+  });
   const remote = new DirectHubRelationshipRemote();
 
   await expect(
@@ -83,12 +87,14 @@ test("enrollment rejects a transport URL that cannot open a WebSocket", async ()
       idempotencyKey: "ceremony-1",
       hubOrigin,
       token: "token",
+      hostname: "test-daemon.local",
       serverId: "server-1",
       daemonPublicKey: "public-key",
       credentialVerifier: "verifier",
       scopes: ["hub.execution.*"],
     }),
   ).rejects.toThrow("Hub WebSocket URL must use ws or wss");
+  expect(enrolledHostname).toBe("test-daemon.local");
 });
 
 test("enrollment rejects a WebSocket URL with a fragment", async () => {
@@ -101,6 +107,7 @@ test("enrollment rejects a WebSocket URL with a fragment", async () => {
       idempotencyKey: "ceremony-1",
       hubOrigin,
       token: "token",
+      hostname: "test-daemon.local",
       serverId: "server-1",
       daemonPublicKey: "public-key",
       credentialVerifier: "verifier",
@@ -119,6 +126,7 @@ test("enrollment rejects a WebSocket outside the enrolled Hub authority", async 
       idempotencyKey: "ceremony-1",
       hubOrigin,
       token: "token",
+      hostname: "test-daemon.local",
       serverId: "server-1",
       daemonPublicKey: "public-key",
       credentialVerifier: "verifier",
@@ -138,6 +146,7 @@ test.each(["enrollment", "revocation"])("%s HTTP calls are bounded", async (oper
           idempotencyKey: "ceremony-1",
           hubOrigin,
           token: "token",
+          hostname: "test-daemon.local",
           serverId: "server-1",
           daemonPublicKey: "public-key",
           credentialVerifier: "verifier",
@@ -290,11 +299,15 @@ async function startHubReturning(status: number): Promise<string> {
   return `http://127.0.0.1:${address.port}`;
 }
 
-async function startEnrollmentHub(webSocketUrl: string): Promise<string> {
+async function startEnrollmentHub(
+  webSocketUrl: string,
+  onEnrollment?: (enrollment: { daemonId: string; hostname: string }) => void,
+): Promise<string> {
   const server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
-    const enrollment = JSON.parse(body) as { daemonId: string };
+    const enrollment = JSON.parse(body) as { daemonId: string; hostname: string };
+    onEnrollment?.(enrollment);
     response.writeHead(200, { "content-type": "application/json" }).end(
       JSON.stringify({
         daemonId: enrollment.daemonId,
@@ -523,6 +536,7 @@ async function connectController(
   openPaseoHomes.push(paseoHome);
   const controller = new HubRelationshipController({
     paseoHome,
+    hostname: "test-daemon.local",
     serverId: "server-1",
     daemonPublicKey: "daemon-public-key",
     logger: pino({ level: "silent" }),
