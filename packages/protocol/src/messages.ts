@@ -160,6 +160,10 @@ export const MutableDaemonConfigSchema = z
     enableTerminalAgentHooks: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
+    // Which profile a plain new terminal opens. Empty means the system shell.
+    // Profiles are host state, so the daemon owns the choice and every client
+    // sees the same one.
+    defaultTerminalProfileId: z.string().default(""),
   })
   .passthrough();
 
@@ -177,6 +181,7 @@ export const MutableDaemonConfigPatchSchema = z
     enableTerminalAgentHooks: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
+    defaultTerminalProfileId: z.string().optional(),
   })
   .partial()
   .passthrough();
@@ -2400,6 +2405,7 @@ export const CreateTerminalRequestSchema = z.object({
   agentId: z.string().optional(),
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
+  shell: z.string().optional(),
   // Initial PTY size. Added in v0.1.107; the app no longer sends it (the estimate cache that fed
   // it was removed — the pane-focus resize claim sizes the PTY instead). Kept and honored
   // permanently: released v0.1.107 clients still send it, and programmatic callers may pass an
@@ -2410,6 +2416,13 @@ export const CreateTerminalRequestSchema = z.object({
       cols: z.number().int().positive(),
     })
     .optional(),
+  requestId: z.string(),
+});
+
+// Which shells exist is a property of the host, so the daemon answers rather than
+// each client probing its own machine.
+export const ListTerminalShellsRequestSchema = z.object({
+  type: z.literal("terminal.shells.list.request"),
   requestId: z.string(),
 });
 
@@ -2698,6 +2711,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   UnsubscribeTerminalsRequestSchema,
   CreateTerminalRequestSchema,
   RenameTerminalRequestSchema,
+  ListTerminalShellsRequestSchema,
   StartWorkspaceScriptRequestSchema,
   WorkspaceScriptListRequestSchema,
   WorkspaceScriptStartRequestSchema,
@@ -2987,6 +3001,11 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceScriptManagement: z.boolean().optional(),
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: z.boolean().optional(),
+        // COMPAT(defaultTerminalProfile): added in the first release after v0.3.0 (pin the
+        // real version on merge), remove gate after 2027-08-08.
+        // The daemon opens a chosen profile for a plain new terminal; the client hides
+        // the Host setting when the host cannot honor it.
+        defaultTerminalProfile: z.boolean().optional(),
       })
       .optional(),
   })
@@ -5249,6 +5268,21 @@ export const RenameTerminalResponseSchema = z.object({
   }),
 });
 
+export const ListTerminalShellsResponseSchema = z.object({
+  type: z.literal("terminal.shells.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    // Shells found installed on the host, in display order. The resolved path
+    // rides along so a profile made from one is self-describing and editable
+    // rather than an opaque preset id.
+    shells: z.array(z.object({ id: z.string(), path: z.string() })),
+    // What a terminal opens when no profile is marked default. The settings list
+    // shows it as a row so that choice is visible and reversible.
+    systemShellPath: z.string().default(""),
+    error: z.string().nullable(),
+  }),
+});
+
 export const SubscribeTerminalResponseSchema = z.object({
   type: z.literal("subscribe_terminal_response"),
   payload: z.union([
@@ -5553,6 +5587,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   TerminalsChangedSchema,
   CreateTerminalResponseSchema,
   RenameTerminalResponseSchema,
+  ListTerminalShellsResponseSchema,
   SubscribeTerminalResponseSchema,
   KillTerminalResponseSchema,
   CaptureTerminalResponseSchema,
@@ -5989,6 +6024,8 @@ export type CreateTerminalRequest = z.infer<typeof CreateTerminalRequestSchema>;
 export type CreateTerminalResponse = z.infer<typeof CreateTerminalResponseSchema>;
 export type RenameTerminalRequest = z.infer<typeof RenameTerminalRequestSchema>;
 export type RenameTerminalResponse = z.infer<typeof RenameTerminalResponseSchema>;
+export type ListTerminalShellsRequest = z.infer<typeof ListTerminalShellsRequestSchema>;
+export type ListTerminalShellsResponse = z.infer<typeof ListTerminalShellsResponseSchema>;
 export type StartWorkspaceScriptRequest = z.infer<typeof StartWorkspaceScriptRequestSchema>;
 export type StartWorkspaceScriptResponse = z.infer<
   typeof StartWorkspaceScriptResponseMessageSchema

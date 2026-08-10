@@ -38,25 +38,42 @@ export function measureElement(element: View): Promise<Rect> {
  * there is more room above. Both conditions matter: flipping into a side that is equally
  * cramped just moves the clipping, so a surface taller than the whole viewport stays put.
  *
- * Only the vertical placements flip. A left/right submenu that doesn't fit is handled by the
- * caller choosing its side up front, because flipping it mid-open would move the surface out
- * from under the pointer that is travelling toward it.
+ * Side placements flip on the same terms. A submenu opens to the right by default, which is
+ * fine until its parent is anchored near the right edge — then there is nowhere to put it and
+ * edge clamping drags it back over the row that opened it. Flipping to the left is the only
+ * placement that fits.
+ *
+ * The old rule was that only the caller may pick a side, because re-deciding mid-hover moves
+ * the surface out from under a pointer travelling toward it. That hazard is real and this does
+ * not fully remove it: `menu-overlay.tsx` recomputes whenever `onContentLayout` reports a new
+ * size, so a flyout whose content resizes while open can still flip under the cursor. What
+ * makes it safe in practice is that menu content is a fixed list measured once on open — if you
+ * add a flyout whose content grows after it opens, freeze the placement after the first
+ * measurement rather than relying on this.
  */
 function flipPlacement(input: {
   placement: Placement;
   triggerRect: Rect;
-  contentHeight: number;
+  contentSize: Size;
   displayArea: Rect;
 }): Placement {
-  const { placement, triggerRect, contentHeight, displayArea } = input;
+  const { placement, triggerRect, contentSize, displayArea } = input;
   const spaceTop = triggerRect.y - displayArea.y;
   const spaceBottom = displayArea.y + displayArea.height - (triggerRect.y + triggerRect.height);
+  const spaceLeft = triggerRect.x - displayArea.x;
+  const spaceRight = displayArea.x + displayArea.width - (triggerRect.x + triggerRect.width);
 
-  if (placement === "bottom" && spaceBottom < contentHeight && spaceTop > spaceBottom) {
+  if (placement === "bottom" && spaceBottom < contentSize.height && spaceTop > spaceBottom) {
     return "top";
   }
-  if (placement === "top" && spaceTop < contentHeight && spaceBottom > spaceTop) {
+  if (placement === "top" && spaceTop < contentSize.height && spaceBottom > spaceTop) {
     return "bottom";
+  }
+  if (placement === "right" && spaceRight < contentSize.width && spaceLeft > spaceRight) {
+    return "left";
+  }
+  if (placement === "left" && spaceLeft < contentSize.width && spaceRight > spaceLeft) {
+    return "right";
   }
   return placement;
 }
@@ -131,7 +148,7 @@ export function computePosition({
   const actualPlacement = flipPlacement({
     placement,
     triggerRect,
-    contentHeight: contentSize.height,
+    contentSize,
     displayArea,
   });
   const anchored = anchorToPlacement({

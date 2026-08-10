@@ -56,6 +56,14 @@ export {
 export { findExecutable } from "../executable-resolution/executable-resolution.js";
 export { execCommand, spawnProcess } from "../utils/spawn.js";
 
+// Terminal shell resolution shared with the desktop settings probe, so the
+// offered shells and the spawned shell always agree. Imported from
+// terminal-shell.js, not terminal.js, to keep node-pty out of this entry.
+export {
+  findTerminalShellBinary,
+  type TerminalShellLookupOptions,
+} from "../terminal/terminal-shell.js";
+
 // Provider manifest (source of truth for provider definitions)
 export {
   AGENT_PROVIDER_DEFINITIONS,

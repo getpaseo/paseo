@@ -9,6 +9,7 @@ import {
   CheckoutRenameBranchResponseSchema,
   parseServerInfoStatusPayload,
   RenameTerminalResponseSchema,
+  ListTerminalShellsResponseSchema,
   RestartRequestedStatusPayloadSchema,
   ShutdownRequestedStatusPayloadSchema,
   DaemonUpdateResponseSchema,
@@ -488,6 +489,7 @@ type AgentPermissionResolvedPayload = AgentPermissionResolvedMessage["payload"];
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 type CreateTerminalPayload = CreateTerminalResponse["payload"];
 export type RenameTerminalResult = z.infer<typeof RenameTerminalResponseSchema>["payload"];
+export type ListTerminalShellsResult = z.infer<typeof ListTerminalShellsResponseSchema>["payload"];
 type SubscribeTerminalPayload = SubscribeTerminalResponse["payload"];
 type CloseItemsPayload = CloseItemsResponse["payload"];
 type KillTerminalPayload = KillTerminalResponse["payload"];
@@ -4929,6 +4931,7 @@ export class DaemonClient {
       args?: string[];
       workspaceId?: string;
       size?: { rows: number; cols: number };
+      shell?: string;
     },
   ): Promise<CreateTerminalPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
@@ -4939,6 +4942,7 @@ export class DaemonClient {
       agentId: options?.agentId,
       command: options?.command,
       args: options?.args,
+      shell: options?.shell,
       ...(options?.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
       ...(options?.size !== undefined ? { size: options.size } : {}),
       requestId: resolvedRequestId,
@@ -4960,6 +4964,14 @@ export class DaemonClient {
         title: input.title,
       },
       responseType: "terminal.rename.response",
+    });
+  }
+
+  async listTerminalShells(requestId?: string): Promise<ListTerminalShellsResult> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "terminal.shells.list.request" },
+      responseType: "terminal.shells.list.response",
     });
   }
 

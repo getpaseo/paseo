@@ -17,6 +17,7 @@ function makeConfig(browserToolsEnabled = false): MutableDaemonConfig {
     autoArchiveAfterMerge: false,
     enableTerminalAgentHooks: false,
     appendSystemPrompt: "",
+    defaultTerminalProfileId: "",
   };
 }
 

@@ -2,15 +2,19 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
 import {
   buildTerminalEnvironment,
+  clearTerminalShellExecutableCache,
   createTerminal,
   ensureNodePtySpawnHelperExecutableForCurrentPlatform,
+  findTerminalShellBinary,
   resolveDefaultTerminalShell,
+  resolveTerminalShellExecutable,
   resolveTerminalSpawnCommand,
   humanizeProcessTitle,
   normalizeProcessTitle,
   resolveZshShellIntegrationDir,
   type TerminalSession,
 } from "./terminal.js";
+import { listAvailableTerminalShells } from "./terminal-shell.js";
 import {
   chmodSync,
   cpSync,
@@ -24,7 +28,7 @@ import {
 } from "node:fs";
 import { spawnSync } from "node:child_process";
 import * as pty from "node-pty";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
 import { stripVTControlCharacters } from "node:util";
@@ -240,6 +244,226 @@ describe("createTerminal", () => {
         env: { ComSpec: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" },
       }),
     ).toBe("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  });
+
+  it("uses $SHELL as the default on macOS and Linux, falling back to /bin/sh", () => {
+    for (const platform of ["darwin", "linux"] as const) {
+      expect(
+        resolveDefaultTerminalShell({ platform, env: { SHELL: "/opt/homebrew/bin/fish" } }),
+      ).toBe("/opt/homebrew/bin/fish");
+      // A login shell with no SHELL exported still has to land somewhere runnable.
+      expect(resolveDefaultTerminalShell({ platform, env: {} })).toBe("/bin/sh");
+    }
+  });
+
+  it("resolves preset and custom terminal shell executables dynamically via PATH", async () => {
+    const mockFinder = vi.fn(async (name: string) => {
+      if (name === "pwsh.exe")
+        return "C:\\Users\\user\\AppData\\Local\\Microsoft\\WinGet\\Links\\pwsh.exe";
+      if (name === "powershell.exe")
+        return "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+      if (name === "zsh") return "/opt/homebrew/bin/zsh";
+      if (name === "nu.exe") return "C:\\Program Files\\nu\\nu.exe";
+      if (name === "elvish") return "/usr/local/bin/elvish";
+      return null;
+    });
+
+    await expect(
+      resolveTerminalShellExecutable("default", {
+        platform: "win32",
+        env: {},
+        findOnPath: mockFinder,
+      }),
+    ).resolves.toBe("C:\\Windows\\System32\\cmd.exe");
+
+    await expect(
+      resolveTerminalShellExecutable("pwsh", { platform: "win32", findOnPath: mockFinder }),
+    ).resolves.toBe("C:\\Users\\user\\AppData\\Local\\Microsoft\\WinGet\\Links\\pwsh.exe");
+
+    await expect(
+      resolveTerminalShellExecutable("powershell", {
+        platform: "win32",
+        findOnPath: mockFinder,
+      }),
+    ).resolves.toBe("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+
+    await expect(
+      resolveTerminalShellExecutable("zsh", { platform: "darwin", findOnPath: mockFinder }),
+    ).resolves.toBe("/opt/homebrew/bin/zsh");
+
+    await expect(
+      resolveTerminalShellExecutable("nu", { platform: "win32", findOnPath: mockFinder }),
+    ).resolves.toBe("C:\\Program Files\\nu\\nu.exe");
+
+    await expect(
+      resolveTerminalShellExecutable("elvish", { platform: "linux", findOnPath: mockFinder }),
+    ).resolves.toBe("/usr/local/bin/elvish");
+
+    await expect(
+      resolveTerminalShellExecutable("C:\\Tools\\my-shell.exe", {
+        platform: "win32",
+        findOnPath: mockFinder,
+      }),
+    ).resolves.toBe("C:\\Tools\\my-shell.exe");
+  });
+
+  it("resolves real installed nu executable on current host", async () => {
+    const resolved = await resolveTerminalShellExecutable("nu");
+    expect(resolved.toLowerCase()).toContain("nu");
+  });
+
+  it("spawns real installed nu shell in createTerminal on current host", async () => {
+    const session = await createTerminal({
+      cwd: tmpdir(),
+      workspaceId: "ws-nu-test",
+      shell: "nu",
+    });
+    session.kill();
+    expect(session.id).toBeDefined();
+  });
+
+  // Git for Windows keeps its bash off PATH, and the `bash.exe` that IS on PATH
+  // is the WSL launcher. A single "bash" preset therefore always meant WSL. The
+  // contract is that the two ids resolve to different binaries.
+  it("keeps WSL and Git Bash distinct on Windows", async () => {
+    clearTerminalShellExecutableCache();
+    const finder = vi.fn(async (name: string) => {
+      if (name === "wsl.exe") return "C:\\Windows\\System32\\wsl.exe";
+      if (name === "bash.exe") return "C:\\Windows\\System32\\bash.exe";
+      // Git Bash is never found by name; only `git` is on PATH.
+      if (name === "git") return "C:\\Program Files\\Git\\cmd\\git.exe";
+      return null;
+    });
+
+    const wsl = await findTerminalShellBinary("wsl", { platform: "win32", findOnPath: finder });
+    const gitBash = await findTerminalShellBinary("git-bash", {
+      platform: "win32",
+      findOnPath: finder,
+    });
+
+    expect(wsl).toBe("C:\\Windows\\System32\\wsl.exe");
+    // Derived from the git install root, not from a PATH lookup of "bash".
+    expect(gitBash?.toLowerCase()).toContain("git");
+    expect(gitBash?.toLowerCase()).toContain("bash.exe");
+    expect(gitBash).not.toBe(wsl);
+    expect(gitBash?.toLowerCase()).not.toContain("system32");
+  });
+
+  it("reports a shell that is not installed as unavailable rather than guessing", async () => {
+    clearTerminalShellExecutableCache();
+    const finder = vi.fn(async () => null);
+    await expect(
+      findTerminalShellBinary("elvish", { platform: "win32", findOnPath: finder }),
+    ).resolves.toBeNull();
+    await expect(
+      findTerminalShellBinary("fish", { platform: "win32", findOnPath: finder }),
+    ).resolves.toBeNull();
+  });
+
+  // The list feeds profile creation, so it carries the resolved path and holds
+  // only shells that are actually installed — an id the caller would then have
+  // to interpret, or a placeholder entry, would produce an unspawnable profile.
+  it("lists installed shells with their resolved paths", async () => {
+    const installed: Record<string, string> = {
+      zsh: "/opt/homebrew/bin/zsh",
+      pwsh: "/usr/local/bin/pwsh",
+    };
+
+    await expect(
+      listAvailableTerminalShells({
+        platform: "darwin",
+        findOnPath: async (name) => installed[name] ?? null,
+      }),
+    ).resolves.toEqual([
+      { id: "zsh", path: "/opt/homebrew/bin/zsh" },
+      { id: "pwsh", path: "/usr/local/bin/pwsh" },
+    ]);
+  });
+
+  // Shell integration is keyed on the spawned binary's base name, and selecting a
+  // preset resolves it to an absolute PATH hit rather than passing `$SHELL`
+  // through. A resolution that changed the base name would silently drop OSC 633
+  // exit codes and OSC 2 tab titles for anyone who picks zsh explicitly.
+  it("keeps zsh shell integration when zsh is selected explicitly", async () => {
+    clearTerminalShellExecutableCache();
+    const resolved = await resolveTerminalShellExecutable("zsh", {
+      platform: "darwin",
+      findOnPath: async () => "/opt/homebrew/bin/zsh",
+    });
+
+    expect(basename(resolved)).toBe("zsh");
+    expect(
+      buildTerminalEnvironment({
+        shell: resolved,
+        env: {},
+        zshShellIntegrationDir: resolveZshShellIntegrationDir(),
+        paseoCliBinDir: null,
+        paseoHookCliPath: null,
+      }),
+    ).toHaveProperty("ZDOTDIR");
+  });
+
+  // A shell Paseo ships no integration for still spawns; it just does not get the
+  // zsh hooks. Asserted so the gate stays an opt-in rather than becoming a
+  // requirement that breaks the other presets.
+  it("spawns a non-zsh shell without shell-integration env", async () => {
+    clearTerminalShellExecutableCache();
+    const resolved = await resolveTerminalShellExecutable("nu", {
+      platform: "darwin",
+      findOnPath: async () => "/opt/homebrew/bin/nu",
+    });
+
+    expect(
+      buildTerminalEnvironment({
+        shell: resolved,
+        env: {},
+        zshShellIntegrationDir: resolveZshShellIntegrationDir(),
+        paseoCliBinDir: null,
+        paseoHookCliPath: null,
+      }),
+    ).not.toHaveProperty("ZDOTDIR");
+  });
+
+  // Git Bash is reachable even when `git` is absent from PATH (a Git for Windows
+  // install that only registered its GUI shims), so the standard install
+  // locations are checked as a fallback.
+  it.runIf(isPlatform("win32"))(
+    "finds Git Bash at its standard install location without git on PATH",
+    async () => {
+      clearTerminalShellExecutableCache();
+      const resolved = await findTerminalShellBinary("git-bash", {
+        platform: "win32",
+        findOnPath: async () => null,
+      });
+
+      if (resolved === null) {
+        // Git for Windows is not installed on this host; nothing to assert.
+        return;
+      }
+      expect(resolved.toLowerCase()).toContain("bash.exe");
+      expect(resolved.toLowerCase()).not.toContain("system32");
+    },
+  );
+
+  it("memoizes resolved shell paths in memory for fast subsequent terminal launches", async () => {
+    clearTerminalShellExecutableCache();
+    const finder = vi.fn(async () => "/usr/local/bin/fish");
+    await expect(
+      resolveTerminalShellExecutable("fish", { platform: "darwin", findOnPath: finder }),
+    ).resolves.toBe("/usr/local/bin/fish");
+    expect(finder).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back safely to default system shell if a requested shell is missing", async () => {
+    clearTerminalShellExecutableCache();
+    const finder = vi.fn(async () => null);
+    await expect(
+      resolveTerminalShellExecutable("pwsh", {
+        platform: "win32",
+        env: {},
+        findOnPath: finder,
+      }),
+    ).resolves.toBe("C:\\Windows\\System32\\cmd.exe");
   });
 
   it("passes profile commands through untouched on non-Windows", async () => {

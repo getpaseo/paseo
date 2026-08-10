@@ -43,6 +43,7 @@ const daemonConfig: MutableDaemonConfig = {
   autoArchiveAfterMerge: false,
   enableTerminalAgentHooks: false,
   appendSystemPrompt: "",
+  defaultTerminalProfileId: "",
 };
 
 function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}): {

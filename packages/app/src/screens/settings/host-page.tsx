@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Globe,
   Monitor,
+  MoreVertical,
   Pencil,
   Plus,
   RotateCw,
@@ -16,7 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
-import type { TerminalProfile } from "@getpaseo/protocol/messages";
+import type { MutableDaemonConfigPatch, TerminalProfile } from "@getpaseo/protocol/messages";
 import {
   getTerminalProfileIcon,
   DEFAULT_TERMINAL_PROFILES,
@@ -25,12 +26,23 @@ import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-moda
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { Alert as InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+  type MenuPageDefinition,
+} from "@/components/ui/dropdown-menu";
+import { Radio } from "@/components/ui/radio";
 import { Switch } from "@/components/ui/switch";
 import {
   ProfileDraft,
   TerminalProfileEditModal,
 } from "@/screens/settings/terminal-profile-edit-modal";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { getIsElectron } from "@/constants/platform";
+import { useFetchQuery } from "@/data/query";
 import {
   getDesktopDaemonStatus,
   restartDesktopDaemon,
@@ -52,6 +64,7 @@ import {
   useHostRuntimeSnapshot,
   useHosts,
 } from "@/runtime/host-runtime";
+import { useHostFeature } from "@/runtime/host-features";
 import { ProvidersSection } from "@/screens/settings/providers-section";
 import { ProviderUsageSettingsSection } from "@/provider-usage/settings-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
@@ -78,6 +91,7 @@ const ThemedProfilePencil = withUnistyles(Pencil);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedProfileSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedPlus = withUnistyles(Plus);
+const ThemedMoreVertical = withUnistyles(MoreVertical);
 
 interface DynamicProviderIconProps {
   iconKey: string;
@@ -100,6 +114,7 @@ const moveDownIcon = <ThemedArrowDown size={ICON_SIZE.sm} uniProps={mutedColorMa
 const editProfileIcon = <ThemedProfilePencil size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 const removeProfileIcon = <ThemedTrash2 size={ICON_SIZE.sm} uniProps={destructiveColorMapping} />;
 const addProfileIcon = <ThemedPlus size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
+const kebabIcon = <ThemedMoreVertical size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 
 function formatHostConnectionLabel(connection: HostConnection, t: TFunction): string {
   if (connection.type === "relay") {
@@ -1438,31 +1453,185 @@ function parseArgsString(raw: string): string[] | undefined {
 
 const EMPTY_PROFILE_DRAFT: ProfileDraft = { name: "", command: "", args: "" };
 
+// Human names for the shell ids `terminal.shells.list` reports. A detected shell
+// becomes a profile pre-filled with its resolved path, so this is the profile's
+// name rather than a picker label.
+const TERMINAL_SHELL_LABELS: Record<string, string> = {
+  pwsh: "PowerShell 7 (pwsh)",
+  powershell: "Windows PowerShell",
+  cmd: "Command Prompt (cmd.exe)",
+  wsl: "WSL (Linux)",
+  "git-bash": "Git Bash",
+  zsh: "Zsh",
+  bash: "Bash",
+  fish: "Fish",
+  nu: "Nushell (nu)",
+  elvish: "Elvish",
+};
+
+const DETECTED_SHELLS_PAGE_ID = "detected-shells";
+
+interface DetectedShell {
+  id: string;
+  path: string;
+}
+
+function DetectedShellMenuItem({
+  shell,
+  onSelect,
+}: {
+  shell: DetectedShell;
+  onSelect: (shell: DetectedShell) => void;
+}) {
+  const handleSelect = useCallback(() => onSelect(shell), [onSelect, shell]);
+  // No path here on purpose. A menu surface sizes to its content, so an absolute
+  // path as the description grew this flyout to ~580px — wide enough that on a
+  // narrow window neither side fits and flipping cannot help, leaving only edge
+  // clamping. The label is the decision; the path shows up in the row the moment
+  // the profile exists.
+  return (
+    <DropdownMenuItem onSelect={handleSelect} testID={`terminal-profiles-add-shell-${shell.id}`}>
+      {TERMINAL_SHELL_LABELS[shell.id] ?? shell.id}
+    </DropdownMenuItem>
+  );
+}
+
+/**
+ * Hover for a profile row.
+ *
+ * Tracked on the row's plain wrapper View, never on a Pressable: a Pressable
+ * carries its own hover state machine and the ones nested inside the row would
+ * fight it (docs/hover.md, failure mode 1). Nothing is revealed and no geometry
+ * moves — the radio slot is a fixed width whether it draws a dot or not — so the
+ * flicker loops that doc describes cannot start.
+ *
+ * These events do not fire on native, which is the intent: hover is a pointer
+ * affordance and every control here is visible without it.
+ */
+function useRowHover() {
+  const [isHovered, setIsHovered] = useState(false);
+  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+  return { isHovered, handlePointerEnter, handlePointerLeave };
+}
+
+/**
+ * The system shell as a first-class row.
+ *
+ * Without it the selection could only ever move between profiles, so once a
+ * profile was chosen there was no way back to the plain shell. Making it a row
+ * means exactly one row always carries the dot, and clearing is the same
+ * gesture as choosing.
+ */
+function SystemShellRow({
+  isDefault,
+  systemShellPath,
+  onSetDefault,
+}: {
+  isDefault: boolean;
+  systemShellPath: string;
+  onSetDefault: (id: string) => void;
+}) {
+  const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const handleSetDefault = useCallback(() => onSetDefault(""), [onSetDefault]);
+  const selectionState = useMemo(() => ({ selected: isDefault }), [isDefault]);
+  const { isHovered, handlePointerEnter, handlePointerLeave } = useRowHover();
+
+  return (
+    <View
+      style={[settingsStyles.row, terminalProfileStyles.row]}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
+      testID="terminal-profile-row-system-shell"
+    >
+      <Pressable
+        style={terminalProfileStyles.selectArea}
+        onPress={handleSetDefault}
+        accessibilityRole="radio"
+        accessibilityState={selectionState}
+        accessibilityLabel={t("settings.host.terminalProfiles.systemShell")}
+        testID="terminal-profile-select-system-shell"
+      >
+        <View style={terminalProfileStyles.iconWrapper}>
+          <ThemedProfileSquareTerminal size={ICON_SIZE.md} uniProps={mutedColorMapping} />
+        </View>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+            {t("settings.host.terminalProfiles.systemShell")}
+          </Text>
+          <Text style={settingsStyles.rowHint} numberOfLines={1}>
+            {systemShellPath || t("settings.host.terminalProfiles.systemShellUnknown")}
+          </Text>
+        </View>
+        <View
+          style={terminalProfileStyles.defaultSlot}
+          accessible={isDefault}
+          accessibilityLabel={
+            isDefault ? t("settings.host.terminalProfiles.defaultMarker") : undefined
+          }
+          testID={isDefault ? "terminal-profile-default-system-shell" : undefined}
+        >
+          <Radio
+            selected={isDefault}
+            preview={isHovered && !isDefault}
+            testID="terminal-profile-radio-system-shell"
+          />
+        </View>
+      </Pressable>
+      <View style={terminalProfileStyles.rowActions}>
+        {/* One spacer per action a profile row has and this row does not, so the
+            rail lands on the same rung. Compact collapses those four into one
+            kebab, so one spacer covers it. */}
+        {Array.from({ length: isCompact ? 1 : 4 }, (_unused, index) => (
+          <View key={index} style={terminalProfileStyles.rowActionSpacer} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
 interface TerminalProfileRowProps {
   profile: TerminalProfile;
   isFirst: boolean;
   isLast: boolean;
+  /**
+   * Whether to draw the separator above. Not the same as `isFirst`, which is
+   * list position and governs the move buttons: the system shell row can sit
+   * above the first profile, which then needs a border but still cannot move up.
+   */
+  showBorder: boolean;
+  /** The host honors a default profile. Without it the row shows no default affordance. */
+  canSetDefault: boolean;
+  isDefault: boolean;
   onEdit: (id: string) => void;
   onRemove: (id: string) => void;
   onMoveUp: (id: string) => void;
   onMoveDown: (id: string) => void;
+  onSetDefault: (id: string) => void;
 }
 
 function TerminalProfileRow({
   profile,
   isFirst,
   isLast,
+  showBorder,
+  canSetDefault,
+  isDefault,
   onEdit,
   onRemove,
   onMoveUp,
   onMoveDown,
+  onSetDefault,
 }: TerminalProfileRowProps) {
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
 
   const handleEdit = useCallback(() => onEdit(profile.id), [onEdit, profile.id]);
   const handleRemove = useCallback(() => onRemove(profile.id), [onRemove, profile.id]);
   const handleMoveUp = useCallback(() => onMoveUp(profile.id), [onMoveUp, profile.id]);
   const handleMoveDown = useCallback(() => onMoveDown(profile.id), [onMoveDown, profile.id]);
+  const handleSetDefault = useCallback(() => onSetDefault(profile.id), [onSetDefault, profile.id]);
 
   const commandText =
     profile.args && profile.args.length > 0
@@ -1470,68 +1639,148 @@ function TerminalProfileRow({
       : profile.command;
 
   const rowStyle = useMemo(
-    () => [settingsStyles.row, !isFirst && settingsStyles.rowBorder, terminalProfileStyles.row],
-    [isFirst],
+    () => [settingsStyles.row, showBorder && settingsStyles.rowBorder, terminalProfileStyles.row],
+    [showBorder],
   );
 
   const icon = getTerminalProfileIcon(profile);
+  const selectionState = useMemo(
+    () => (canSetDefault ? { selected: isDefault } : undefined),
+    [canSetDefault, isDefault],
+  );
+  const { isHovered, handlePointerEnter, handlePointerLeave } = useRowHover();
 
   return (
-    <View style={rowStyle} testID={`terminal-profile-row-${profile.id}`}>
-      <View style={terminalProfileStyles.iconWrapper}>
-        {icon ? (
-          <ThemedDynamicProviderIcon
-            iconKey={icon}
-            size={ICON_SIZE.md}
-            uniProps={mutedColorMapping}
-          />
-        ) : (
-          <ThemedProfileSquareTerminal size={ICON_SIZE.md} uniProps={mutedColorMapping} />
-        )}
-      </View>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
-          {profile.name}
-        </Text>
-        <Text style={settingsStyles.rowHint} numberOfLines={1}>
-          {commandText}
-        </Text>
-      </View>
+    <View
+      style={rowStyle}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
+      testID={`terminal-profile-row-${profile.id}`}
+    >
+      <Pressable
+        style={terminalProfileStyles.selectArea}
+        onPress={canSetDefault ? handleSetDefault : undefined}
+        disabled={!canSetDefault}
+        accessibilityRole={canSetDefault ? "radio" : undefined}
+        accessibilityState={selectionState}
+        accessibilityLabel={profile.name}
+        testID={`terminal-profile-select-${profile.id}`}
+      >
+        <View style={terminalProfileStyles.iconWrapper}>
+          {icon ? (
+            <ThemedDynamicProviderIcon
+              iconKey={icon}
+              size={ICON_SIZE.md}
+              uniProps={mutedColorMapping}
+            />
+          ) : (
+            <ThemedProfileSquareTerminal size={ICON_SIZE.md} uniProps={mutedColorMapping} />
+          )}
+        </View>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+            {profile.name}
+          </Text>
+          <Text style={settingsStyles.rowHint} numberOfLines={1}>
+            {commandText}
+          </Text>
+        </View>
+        {canSetDefault ? (
+          <View
+            style={terminalProfileStyles.defaultSlot}
+            accessible={isDefault}
+            accessibilityLabel={
+              isDefault ? t("settings.host.terminalProfiles.defaultMarker") : undefined
+            }
+            testID={isDefault ? `terminal-profile-default-${profile.id}` : undefined}
+          >
+            <Radio
+              selected={isDefault}
+              preview={isHovered && !isDefault}
+              testID={`terminal-profile-radio-${profile.id}`}
+            />
+          </View>
+        ) : null}
+      </Pressable>
       <View style={terminalProfileStyles.rowActions}>
-        <Button
-          variant="ghost"
-          size="sm"
-          leftIcon={moveUpIcon}
-          onPress={handleMoveUp}
-          disabled={isFirst}
-          accessibilityLabel={t("settings.host.terminalProfiles.moveUp")}
-          testID={`terminal-profile-move-up-${profile.id}`}
-        />
-        <Button
-          variant="ghost"
-          size="sm"
-          leftIcon={moveDownIcon}
-          onPress={handleMoveDown}
-          disabled={isLast}
-          accessibilityLabel={t("settings.host.terminalProfiles.moveDown")}
-          testID={`terminal-profile-move-down-${profile.id}`}
-        />
-        <Button
-          variant="ghost"
-          size="sm"
-          leftIcon={editProfileIcon}
-          onPress={handleEdit}
-          accessibilityLabel={t("settings.host.terminalProfiles.editProfile")}
-          testID={`terminal-profile-edit-${profile.id}`}
-        />
-        <Button
-          variant="ghost"
-          size="sm"
-          leftIcon={removeProfileIcon}
-          onPress={handleRemove}
-          accessibilityLabel={t("settings.host.terminalProfiles.remove")}
-          testID={`terminal-profile-remove-${profile.id}`}
-        />
+        {isCompact ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              accessibilityRole="button"
+              accessibilityLabel={t("settings.host.terminalProfiles.moreActions")}
+              style={terminalProfileStyles.kebabTrigger}
+              testID={`terminal-profile-kebab-${profile.id}`}
+            >
+              {kebabIcon}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" width={200}>
+              <DropdownMenuItem
+                onSelect={handleMoveUp}
+                disabled={isFirst}
+                testID={`terminal-profile-menu-move-up-${profile.id}`}
+              >
+                {t("settings.host.terminalProfiles.moveUp")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={handleMoveDown}
+                disabled={isLast}
+                testID={`terminal-profile-menu-move-down-${profile.id}`}
+              >
+                {t("settings.host.terminalProfiles.moveDown")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={handleEdit}
+                testID={`terminal-profile-menu-edit-${profile.id}`}
+              >
+                {t("settings.host.terminalProfiles.editProfile")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={handleRemove}
+                destructive
+                testID={`terminal-profile-menu-remove-${profile.id}`}
+              >
+                {t("settings.host.terminalProfiles.remove")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={moveUpIcon}
+              onPress={handleMoveUp}
+              disabled={isFirst}
+              accessibilityLabel={t("settings.host.terminalProfiles.moveUp")}
+              testID={`terminal-profile-move-up-${profile.id}`}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={moveDownIcon}
+              onPress={handleMoveDown}
+              disabled={isLast}
+              accessibilityLabel={t("settings.host.terminalProfiles.moveDown")}
+              testID={`terminal-profile-move-down-${profile.id}`}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={editProfileIcon}
+              onPress={handleEdit}
+              accessibilityLabel={t("settings.host.terminalProfiles.editProfile")}
+              testID={`terminal-profile-edit-${profile.id}`}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={removeProfileIcon}
+              onPress={handleRemove}
+              accessibilityLabel={t("settings.host.terminalProfiles.remove")}
+              testID={`terminal-profile-remove-${profile.id}`}
+            />
+          </>
+        )}
       </View>
     </View>
   );
@@ -1541,6 +1790,11 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
+  const client = useHostRuntimeClient(serverId);
+  // COMPAT(defaultTerminalProfile): hosts up to and including v0.3.0 always open the system
+  // shell and have no shell listing, so both are hidden rather than shown and
+  // silently ignored.
+  const canSetDefault = useHostFeature(serverId, "defaultTerminalProfile");
   const [editingProfile, setEditingProfile] = useState<{
     id: string;
     draft: ProfileDraft;
@@ -1554,6 +1808,29 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
     () => (config ? (config.terminalProfiles ?? DEFAULT_TERMINAL_PROFILES) : null),
     [config],
   );
+
+  const defaultProfileId = config?.defaultTerminalProfileId ?? "";
+
+  // A query rather than an effect: the runtime client is a fresh object after
+  // every reconnect, so an effect depending on it re-fires forever.
+  const shellsQuery = useFetchQuery({
+    queryKey: ["terminal-shells", serverId],
+    queryFn: async () => {
+      if (!client) return { shells: [] as DetectedShell[], systemShellPath: "" };
+      const payload = await client.listTerminalShells();
+      // The daemon reports a failed probe in the payload rather than rejecting.
+      // Swallowing it renders as "no shells installed", which is a different and
+      // wrong answer.
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      return { shells: payload.shells, systemShellPath: payload.systemShellPath };
+    },
+    enabled: Boolean(client) && isConnected && canSetDefault,
+    dataShape: "value",
+    retry: false,
+    staleTimeMs: 60_000,
+  });
 
   const saveProfiles = useCallback(
     async (next: TerminalProfile[]) => {
@@ -1634,8 +1911,16 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
         destructive: true,
       }).then(async (confirmed) => {
         if (!confirmed || !profiles) return;
+        // Dropping the default clears the pointer in the same write, so the host
+        // is never left aiming at a profile that no longer exists.
+        const patch: MutableDaemonConfigPatch = {
+          terminalProfiles: profiles.filter((p) => p.id !== id),
+        };
+        if (defaultProfileId === id) {
+          patch.defaultTerminalProfileId = "";
+        }
         try {
-          await saveProfiles(profiles.filter((p) => p.id !== id));
+          await patchConfig(patch);
         } catch (error) {
           Alert.alert(
             t("common.errors.unableToSave"),
@@ -1645,7 +1930,7 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
         return;
       });
     },
-    [profiles, saveProfiles, t],
+    [defaultProfileId, patchConfig, profiles, t],
   );
 
   const handleMoveUp = useCallback(
@@ -1688,18 +1973,98 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
     [profiles, saveProfiles, t],
   );
 
-  const addButton = useMemo(
+  const handleSetDefault = useCallback(
+    async (id: string) => {
+      try {
+        await patchConfig({ defaultTerminalProfileId: id });
+      } catch (error) {
+        Alert.alert(
+          t("common.errors.unableToSave"),
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    },
+    [patchConfig, t],
+  );
+
+  const handleAddShell = useCallback(
+    async (shell: DetectedShell) => {
+      const current = profiles ? [...profiles] : [];
+      const next: TerminalProfile[] = [
+        ...current,
+        {
+          id: generateProfileId(),
+          name: TERMINAL_SHELL_LABELS[shell.id] ?? shell.id,
+          command: shell.path,
+          args: [],
+        },
+      ];
+      try {
+        await saveProfiles(next);
+      } catch (error) {
+        Alert.alert(
+          t("common.errors.unableToSave"),
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    },
+    [profiles, saveProfiles, t],
+  );
+
+  const systemShellPath = shellsQuery.data?.systemShellPath ?? "";
+
+  // A shell already standing behind a profile is not worth offering twice.
+  const offeredShells = useMemo(() => {
+    const commands = new Set(profiles?.map((profile) => profile.command));
+    return (shellsQuery.data?.shells ?? []).filter((shell) => !commands.has(shell.path));
+  }, [profiles, shellsQuery.data]);
+
+  const shellPages = useMemo<MenuPageDefinition[]>(() => {
+    if (offeredShells.length === 0) return [];
+    return [
+      {
+        id: DETECTED_SHELLS_PAGE_ID,
+        title: t("settings.host.terminalProfiles.detectedShells"),
+        content: offeredShells.map((shell) => (
+          <DetectedShellMenuItem key={shell.id} shell={shell} onSelect={handleAddShell} />
+        )),
+      },
+    ];
+  }, [handleAddShell, offeredShells, t]);
+
+  const addMenu = useMemo(
     () => (
-      <Button
-        variant="ghost"
-        size="sm"
-        leftIcon={addProfileIcon}
-        onPress={handleAddOpen}
-        disabled={!isConnected || !profiles}
-        testID="terminal-profiles-add-button"
-      />
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          accessibilityRole="button"
+          accessibilityLabel={t("settings.host.terminalProfiles.addProfileTitle")}
+          disabled={!profiles}
+          style={terminalProfileStyles.addTrigger}
+          testID="terminal-profiles-add-button"
+        >
+          {addProfileIcon}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          minWidth={220}
+          pages={shellPages}
+          sheetTitle={t("settings.host.terminalProfiles.addProfileTitle")}
+        >
+          <DropdownMenuItem onSelect={handleAddOpen} testID="terminal-profiles-add-profile">
+            {t("settings.host.terminalProfiles.addProfile")}
+          </DropdownMenuItem>
+          {shellPages.length > 0 ? (
+            <DropdownMenuSubTrigger
+              id={DETECTED_SHELLS_PAGE_ID}
+              testID="terminal-profiles-detected-shells"
+            >
+              {t("settings.host.terminalProfiles.detectedShells")}
+            </DropdownMenuSubTrigger>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
     ),
-    [handleAddOpen, isConnected, profiles],
+    [handleAddOpen, profiles, shellPages, t],
   );
 
   if (!isConnected) {
@@ -1718,10 +2083,17 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
     <>
       <SettingsSection
         title={t("settings.host.terminalProfiles.sectionTitle")}
-        trailing={addButton}
+        trailing={addMenu}
         testID="terminal-profiles-section"
       >
         <View style={settingsStyles.card} testID="terminal-profiles-card">
+          {canSetDefault ? (
+            <SystemShellRow
+              isDefault={defaultProfileId === ""}
+              systemShellPath={systemShellPath}
+              onSetDefault={handleSetDefault}
+            />
+          ) : null}
           {profiles && profiles.length > 0 ? (
             profiles.map((profile, index) => (
               <TerminalProfileRow
@@ -1729,10 +2101,14 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
                 profile={profile}
                 isFirst={index === 0}
                 isLast={index === profiles.length - 1}
+                showBorder={index > 0 || canSetDefault}
+                canSetDefault={canSetDefault}
+                isDefault={profile.id === defaultProfileId}
                 onEdit={handleEditOpen}
                 onRemove={handleRemove}
                 onMoveUp={handleMoveUp}
                 onMoveDown={handleMoveDown}
+                onSetDefault={handleSetDefault}
               />
             ))
           ) : (
@@ -1743,6 +2119,11 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
             </View>
           )}
         </View>
+        {canSetDefault ? (
+          <Text style={terminalProfileStyles.cardHint}>
+            {t("settings.host.terminalProfiles.defaultHint")}
+          </Text>
+        ) : null}
       </SettingsSection>
 
       <TerminalProfileEditModal
@@ -1794,10 +2175,51 @@ const terminalProfileStyles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  // A fixed slot so the action rail sits on the same rung whether or not this is
+  // the selected row. Sized to the radio, which draws its ring either way, so
+  // nothing moves under the cursor (docs/hover.md, failure mode 2).
+  defaultSlot: {
+    width: 18,
+    alignItems: "center",
+  },
   rowActions: {
     flexDirection: "row",
     alignItems: "center",
     gap: 0,
+  },
+  // The system shell row carries only "set as default", so the four actions it
+  // does not have are held open. Same reason as defaultSlot above: the rail has
+  // to land on one rung for every row in the card.
+  //
+  // Width of an icon-only ghost sm Button: the icon, its horizontal padding, and
+  // the 1px transparent border every Button carries (see button.tsx base style).
+  // Measured at 40px; a spacer 2px short walked the rail 8px off the rung.
+  rowActionSpacer: {
+    width: theme.iconSize.sm + theme.spacing[3] * 2 + 2,
+  },
+  // The row body is the control: pressing it chooses what a new terminal opens.
+  // The action rail stays outside it so a nested Pressable never has to fight
+  // the outer one for the press (docs/hover.md).
+  selectArea: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    minWidth: 0,
+  },
+  addTrigger: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
+  },
+  // Matches the footprint of the ghost sm Buttons it replaces on compact, so the
+  // rail keeps its rung whichever branch renders.
+  kebabTrigger: {
+    width: theme.iconSize.sm + theme.spacing[3] * 2 + 2,
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "stretch",
   },
   emptyCard: {
     padding: theme.spacing[4],
@@ -1807,6 +2229,11 @@ const terminalProfileStyles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     textAlign: "center",
+  },
+  cardHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    marginLeft: theme.spacing[1],
   },
 }));
 

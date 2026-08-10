@@ -115,4 +115,4 @@ concurrently `
     --names "metro,electron" `
     --prefix-colors "magenta,cyan" `
     "cd `"$AppDir`" && cross-env PASEO_WEB_PLATFORM=electron npx expo start --port $($env:EXPO_PORT)" `
-    "npx wait-on tcp:$($env:EXPO_PORT) && npx electron `"$DesktopDir`""
+    "npx wait-on tcp:127.0.0.1:$($env:EXPO_PORT) && npx electron `"$DesktopDir`""

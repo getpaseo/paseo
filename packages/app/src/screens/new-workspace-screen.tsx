@@ -2118,7 +2118,11 @@ export function NewWorkspaceScreen({
             input.workspaceDirectory,
             input.name,
             undefined,
-            { command: input.command, args: input.args, workspaceId: input.workspaceId },
+            {
+              command: input.command,
+              args: input.args,
+              workspaceId: input.workspaceId,
+            },
           );
           if (!createdTerminal.terminal) {
             throw new Error(createdTerminal.error ?? t("newWorkspace.errors.createWorktreeFailed"));

@@ -696,6 +696,7 @@ test("config actions delegate to existing daemon config RPCs", async () => {
       autoArchiveAfterMerge: false,
       enableTerminalAgentHooks: false,
       appendSystemPrompt: "",
+      defaultTerminalProfileId: "",
     },
   });
 
@@ -751,6 +752,7 @@ test("config actions delegate to existing daemon config RPCs", async () => {
       autoArchiveAfterMerge: false,
       enableTerminalAgentHooks: false,
       appendSystemPrompt: "",
+      defaultTerminalProfileId: "",
     },
   });
 

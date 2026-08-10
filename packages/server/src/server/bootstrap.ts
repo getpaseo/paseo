@@ -164,6 +164,9 @@ import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createConfiguredTerminalManager } from "../terminal/terminal-manager-factory.js";
 import { applyTerminalAgentHookSetting } from "../terminal/agent-hooks/terminal-agent-hook-setting.js";
+import { executableExists } from "../executable-resolution/executable-resolution.js";
+import { findTerminalShellBinary } from "../terminal/terminal-shell.js";
+import { resolveTerminalProfiles } from "@getpaseo/protocol/terminal-profiles";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { createRelayRuntime, type RelayRuntime } from "./relay-runtime.js";
 import type { PushNotificationSender } from "./push/notifications.js";
@@ -399,6 +402,7 @@ export interface PaseoDaemonConfig {
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
+  defaultTerminalProfileId?: string;
   staticDir: string;
   mcpDebug: boolean;
   isDev?: boolean;
@@ -507,7 +511,66 @@ function resolveExpressTrustProxySetting(config: PaseoDaemonConfig): true | stri
   return config.trustedProxies ?? ["loopback"];
 }
 
-function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDaemonConfig {
+// COMPAT(terminalShell): the per-host terminal shell setting never shipped and
+// is replaced by a terminal profile marked default. Remove after 2026-11-07.
+const MIGRATED_SHELL_PROFILE_NAMES: Record<string, string> = {
+  pwsh: "PowerShell 7",
+  powershell: "Windows PowerShell",
+  cmd: "Command Prompt",
+  wsl: "WSL",
+  "git-bash": "Git Bash",
+  zsh: "Zsh",
+  bash: "Bash",
+  fish: "Fish",
+  nu: "Nushell",
+  elvish: "Elvish",
+};
+
+// Reads the persisted file rather than PaseoDaemonConfig because the shell
+// fields are deliberately gone from the daemon's config shape — on disk is the
+// only place they still exist. A shell that no longer resolves migrates to
+// nothing: a default profile that cannot spawn is worse than no default.
+async function migrateTerminalShellSetting(paseoHome: string): Promise<TerminalProfile | null> {
+  const daemon = loadPersistedConfig(paseoHome).daemon;
+  if (!daemon || daemon.defaultTerminalProfileId !== undefined) {
+    return null;
+  }
+
+  const shell = daemon.terminalShell?.trim();
+  if (!shell || shell === "default") {
+    return null;
+  }
+
+  // Both branches have to clear the same bar. `findTerminalShellBinary` already
+  // confirms a preset resolves to something on disk; a hand-typed custom path is
+  // the more likely one to be stale, so it gets the same check rather than being
+  // trusted verbatim.
+  let command: string | null;
+  if (shell === "custom") {
+    const configured = daemon.customTerminalShellPath?.trim();
+    command = configured ? executableExists(configured) : null;
+  } else {
+    command = await findTerminalShellBinary(shell);
+  }
+  if (!command) {
+    return null;
+  }
+
+  return {
+    id: `shell-${shell}`,
+    name: MIGRATED_SHELL_PROFILE_NAMES[shell] ?? path.basename(command),
+    command,
+  };
+}
+
+// The initial mutable config is assembled here rather than in loadConfig
+// because loadConfig is a synchronous read of disk state, while resolving a
+// shell preset to an absolute path is async. It is also the last point before
+// DaemonConfigStore takes ownership, so a migrated default lands in the same
+// object the config RPC serves and the store writes back on the next patch.
+export async function createInitialMutableDaemonConfig(
+  config: PaseoDaemonConfig,
+): Promise<MutableDaemonConfig> {
   const providers: MutableDaemonConfig["providers"] = Object.fromEntries(
     Object.entries(config.providerOverrides ?? {}).map(([providerId, override]) => {
       const providerConfig: MutableDaemonConfig["providers"][string] = {};
@@ -532,10 +595,22 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
     appendSystemPrompt: config.appendSystemPrompt ?? "",
+    defaultTerminalProfileId: config.defaultTerminalProfileId ?? "",
   };
 
   if (config.terminalProfiles !== undefined) {
     initialConfig.terminalProfiles = config.terminalProfiles;
+  }
+
+  const migratedShellProfile = await migrateTerminalShellSetting(config.paseoHome);
+  if (migratedShellProfile) {
+    // Written out in full: an explicit list replaces the implicit shipped one,
+    // so the profiles a user never edited have to be carried over by hand.
+    initialConfig.terminalProfiles = [
+      ...resolveTerminalProfiles(config.terminalProfiles),
+      migratedShellProfile,
+    ];
+    initialConfig.defaultTerminalProfileId = migratedShellProfile.id;
   }
 
   return initialConfig;
@@ -553,7 +628,7 @@ export async function createPaseoDaemon(
   const daemonVersion = config.daemonVersion ?? resolveDaemonVersion(import.meta.url);
   const daemonConfigStore = new DaemonConfigStore(
     config.paseoHome,
-    createInitialMutableDaemonConfig(config),
+    await createInitialMutableDaemonConfig(config),
     logger,
     { relayEnabledMutable: config.relayEnabledMutable ?? true },
   );

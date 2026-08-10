@@ -61,6 +61,48 @@ it("returns empty list for new cwd", async () => {
   expect(terminals).toHaveLength(0);
 });
 
+// The manager builds its `createTerminal` payload from an explicit allowlist, so
+// a new pass-through option is dropped silently unless a test asserts it.
+// `shell` shipped broken exactly that way: the request carried the resolved
+// binary, the manager never forwarded it, and every terminal fell back to the
+// default shell. An unspawnable path is the assertion: if `shell` is dropped the
+// default shell starts fine and this test fails.
+it("forwards a requested shell to the spawned terminal", async () => {
+  manager = createTerminalManager();
+  const cwd = realpathSync(tmpdir());
+  const missingShell = join(cwd, "paseo-nonexistent-shell-binary.exe");
+
+  await expect(
+    manager.createTerminal({ cwd, workspaceId: "ws-shell", shell: missingShell }),
+  ).rejects.toThrow();
+
+  expect(await manager.getTerminals(cwd)).toHaveLength(0);
+});
+
+// A profile launches its own binary as the PTY process, so the shell setting is
+// not consulted. Resolving it anyway cost a PATH lookup plus a `--version`
+// execution on every profile launch (~2s for cmd.exe, whose probe can only time
+// out) for a value that was then discarded. An unspawnable shell path proves it
+// is never touched: the profile still starts.
+it("ignores the shell setting when launching a profile command", async () => {
+  manager = createTerminalManager();
+  const cwd = realpathSync(tmpdir());
+  const missingShell = join(cwd, "paseo-nonexistent-shell-binary.exe");
+  const command = isPlatform("win32")
+    ? (process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe")
+    : "/bin/sh";
+
+  const created = await manager.createTerminal({
+    cwd,
+    workspaceId: "ws-profile-shell",
+    shell: missingShell,
+    command,
+  });
+
+  expect(created.id).toBeTruthy();
+  expect(await manager.getTerminals(cwd)).toHaveLength(1);
+});
+
 it("returns existing terminals on subsequent calls", async () => {
   manager = createTerminalManager();
   const cwd = realpathSync(tmpdir());

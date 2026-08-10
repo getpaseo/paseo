@@ -314,6 +314,74 @@ describe("terminal-session-controller legacy terminal creation", () => {
       expect.objectContaining({ cwd: "/work/repo", workspaceId: "ws-1", rows: 55, cols: 136 }),
     );
   });
+
+  // A plain terminal opens the host's default profile; a profile the client
+  // launched explicitly already carries its own command and must not be
+  // rewritten to the default.
+  test("applies the default profile to a plain terminal but not to an explicit command", async () => {
+    const outboundMessages: SessionOutboundMessage[] = [];
+    const createTerminal = vi.fn(
+      async (options: Parameters<TerminalManager["createTerminal"]>[0]) =>
+        listSession({
+          id: "term-1",
+          name: options.name ?? "Terminal 1",
+          cwd: options.cwd,
+          workspaceId: options.workspaceId,
+        }),
+    );
+    const terminalManager: TerminalManager = {
+      getTerminals: vi.fn(),
+      createTerminal,
+      registerCwdEnv: vi.fn(),
+      validateTerminalActivityToken: vi.fn(() => "unknown"),
+      getTerminal: vi.fn(),
+      getTerminalState: vi.fn(),
+      setTerminalTitle: vi.fn(),
+      setTerminalActivity: vi.fn(),
+      clearTerminalAttention: vi.fn(),
+      killTerminal: vi.fn(),
+      killTerminalAndWait: vi.fn(),
+      captureTerminal: vi.fn(),
+      listDirectories: vi.fn(() => []),
+      killAll: vi.fn(),
+      subscribeTerminalsChanged: vi.fn(() => vi.fn()),
+      subscribeTerminalActivity: vi.fn(() => vi.fn()),
+      subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
+    };
+    const controller = new TerminalSessionController({
+      terminalManager,
+      emit: (message) => outboundMessages.push(message),
+      emitBinary: vi.fn(),
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: isSameOrDescendantPath,
+      sessionLogger: createLogger(),
+      listTerminalWorkspaceRefs: async () => [],
+      getDefaultTerminalLaunch: () => ({ command: "/usr/bin/fish", args: ["--login"] }),
+    });
+
+    await controller.dispatch({
+      type: "create_terminal_request",
+      cwd: "/work/repo",
+      workspaceId: "ws-1",
+      requestId: "req-plain",
+    });
+    await controller.dispatch({
+      type: "create_terminal_request",
+      cwd: "/work/repo",
+      workspaceId: "ws-1",
+      command: "codex",
+      requestId: "req-profile",
+    });
+
+    expect(createTerminal).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ command: "/usr/bin/fish", args: ["--login"], shell: undefined }),
+    );
+    expect(createTerminal).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ command: "codex", args: undefined, shell: undefined }),
+    );
+  });
 });
 
 async function flushMicrotasks(): Promise<void> {

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { writePrivateFileAtomicSync } from "../server/private-files.js";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
+import { resolveTerminalShellExecutable } from "./terminal-shell.js";
 import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { TerminalActivityTracker } from "./activity/terminal-activity-tracker.js";
@@ -232,18 +233,15 @@ export function ensureNodePtySpawnHelperExecutableForCurrentPlatform(
   }
 }
 
-export function resolveDefaultTerminalShell(
-  options: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv } = {},
-): string {
-  const platform = options.platform ?? process.platform;
-  const env = options.env ?? process.env;
-
-  if (platform === "win32") {
-    return env.ComSpec || env.COMSPEC || "C:\\Windows\\System32\\cmd.exe";
-  }
-
-  return env.SHELL || "/bin/sh";
-}
+// Shell resolution lives in terminal-shell.ts so it can be imported without
+// pulling node-pty in. Re-exported here for existing importers.
+export {
+  clearTerminalShellExecutableCache,
+  findTerminalShellBinary,
+  resolveDefaultTerminalShell,
+  resolveTerminalShellExecutable,
+  type TerminalShellLookupOptions,
+} from "./terminal-shell.js";
 
 export interface ResolvedTerminalCommand {
   command: string;
@@ -896,7 +894,6 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     command,
     args = [],
   } = options;
-  const resolvedShell = shell ?? resolveDefaultTerminalShell();
 
   const id = options.id ?? randomUUID();
   const listeners = new Set<(msg: ServerMessage) => void>();
@@ -937,10 +934,12 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
 
   ensureNodePtySpawnHelperExecutableForCurrentPlatform();
 
-  // Create PTY
+  // A profile supplies its own binary, so shell *resolution* is skipped: there
+  // is no preset id to look up and no default to fall back to. Shell
+  // *environment* still applies below, keyed on whatever binary is spawned.
   const { command: spawnCommand, args: spawnArgs } = command
     ? await resolveTerminalSpawnCommand(command, args)
-    : { command: resolvedShell, args: [] as string[] };
+    : { command: await resolveTerminalShellExecutable(shell), args: [] as string[] };
   const ptyProcess = pty.spawn(spawnCommand, spawnArgs, {
     name: "xterm-256color",
     cols,
