@@ -2401,6 +2401,123 @@ describe("ACPAgentSession slash commands", () => {
       },
     ]);
   });
+
+  test("caches commands from available_commands_update that arrives before session/new returns", async () => {
+    const clientToAgent = new TransformStream();
+    const agentToClient = new TransformStream();
+
+    let session!: ACPAgentSession;
+
+    const client = new ClientSideConnection(
+      () => ({
+        async requestPermission() {
+          return { outcome: { outcome: "cancelled" } };
+        },
+        async sessionUpdate(params) {
+          await session.sessionUpdate(params);
+        },
+        async writeTextFile() {
+          return {};
+        },
+        async readTextFile() {
+          return { content: "" };
+        },
+        async createTerminal() {
+          return { terminalId: "" };
+        },
+        async killTerminal() {},
+      }),
+      ndJsonStream(clientToAgent.writable, agentToClient.readable),
+    );
+
+    let agentConnection!: AgentSideConnection;
+    const agent: Agent = {
+      async initialize() {
+        return {
+          protocolVersion: PROTOCOL_VERSION,
+          agentCapabilities: {},
+          authMethods: [],
+        };
+      },
+      async newSession() {
+        // Simulate Devin CLI, which fires available_commands_update before
+        // responding to the session/new request.
+        await agentConnection.sessionUpdate({
+          sessionId: "early-session",
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              {
+                name: "early-cmd",
+                description: "Arrived before session/new response",
+                input: { hint: "<arg>" },
+              },
+            ],
+          },
+        });
+        return { sessionId: "early-session" };
+      },
+      async authenticate() {},
+      async cancel() {},
+      async prompt() {
+        throw new Error("not implemented");
+      },
+    };
+    agentConnection = new AgentSideConnection(
+      () => agent,
+      ndJsonStream(agentToClient.writable, clientToAgent.readable),
+    );
+
+    class EarlyUpdateSession extends ACPAgentSession {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: {
+            kill: vi.fn(),
+            exitCode: 0,
+            signalCode: null,
+            once: vi.fn(),
+          } as unknown as ChildProcess,
+          connection: client,
+          initialize: { agentCapabilities: {} },
+        };
+      }
+    }
+
+    session = new EarlyUpdateSession(
+      {
+        provider: "devin",
+        cwd: "/tmp/paseo-acp-test",
+      },
+      {
+        provider: "devin",
+        logger: createTestLogger(),
+        defaultCommand: ["devin", "acp"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        waitForInitialCommands: true,
+        initialCommandsWaitTimeoutMs: 1500,
+      },
+    );
+
+    await session.initializeNewSession();
+    const commands = await session.listCommands();
+
+    expect(commands).toEqual([
+      {
+        name: "early-cmd",
+        description: "Arrived before session/new response",
+        argumentHint: "<arg>",
+        kind: "command",
+      },
+    ]);
+  });
 });
 
 describe("ACPAgentSession", () => {

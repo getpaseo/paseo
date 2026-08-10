@@ -2264,7 +2264,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       },
       "provider.acp.raw_event",
     );
-    if (params.sessionId !== this.sessionId) {
+    // ACP notifications are scoped to a single stdio connection, so any update
+    // that arrives before we know the session id, or with an empty/omitted
+    // session id (some ACP servers omit it for async session-level updates),
+    // is for this session. Otherwise require an exact match to avoid cross-talk.
+    if (this.sessionId !== null && params.sessionId !== "" && params.sessionId !== this.sessionId) {
       return;
     }
 
@@ -2666,7 +2670,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.cachedCommands = update.availableCommands.map((command) => ({
           name: command.name,
           description: command.description,
-          argumentHint: "",
+          argumentHint: command.input?.hint ?? "",
           kind: "command",
         }));
         this.settleCommandsReady();
