@@ -56,16 +56,20 @@ const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
  */
 export function WorkspaceMetaRow({
   hostBadge,
+  projectSubtitle = null,
   prHint,
   serviceSummary,
 }: {
   hostBadge: HostBadgeModel | null;
+  /** When set (status grouping + project subtitle pref), replaces host identity. */
+  projectSubtitle?: string | null;
   prHint: PrHint | null;
   serviceSummary: WorkspaceServiceSummary | null;
 }) {
   const { rowItems, checksDisplay } = useSidebarMetaPreferences();
   const items = selectMetaRowItems({
     hasHostBadge: hostBadge !== null,
+    projectSubtitle,
     prHint,
     serviceSummary,
     visible: rowItems,
@@ -77,7 +81,7 @@ export function WorkspaceMetaRow({
   return (
     <View style={styles.row}>
       {items.map((item, index) => (
-        <Fragment key={item.kind}>
+        <Fragment key={item.kind === "project" ? `project-${item.name}` : item.kind}>
           {index > 0 ? <Text style={styles.separator}>·</Text> : null}
           <MetaItemNode item={item} hostBadge={hostBadge} />
         </Fragment>
@@ -95,6 +99,13 @@ function MetaItemNode({
 }): ReactNode {
   if (item.kind === "host") {
     return hostBadge ? <HostBadge badge={hostBadge} /> : null;
+  }
+  if (item.kind === "project") {
+    return (
+      <Text style={styles.projectName} numberOfLines={1}>
+        {item.name}
+      </Text>
+    );
   }
   if (item.kind === "changeRequest") {
     return <PullRequestItem hint={item.hint} />;
@@ -275,6 +286,13 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     lineHeight: 16,
     flexShrink: 0,
+  },
+  projectName: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 16,
+    flexShrink: 1,
+    minWidth: 0,
   },
   // The one item that gives way when the line runs out of room — see `ServiceItem`.
   serviceItem: {

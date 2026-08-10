@@ -958,8 +958,14 @@ export const en = {
         changeRequest: "Pull request",
         checks: "Checks",
         services: "Services",
+        identityIcon: "Identity icon",
         diff: "Diff stats",
         timestamp: "Last activity",
+      },
+      statusSubtitle: {
+        label: "Under title (Status)",
+        host: "Host name",
+        project: "Project name",
       },
       checks: {
         iconAndText: "Icon and text",
@@ -1017,6 +1023,7 @@ export const en = {
         openNewWindowFailed: "Couldn't open a new window",
         openBacklog: "Open backlog",
         openBacklogFor: "Open backlog for {{projectName}}",
+        newBacklogItem: "New backlog item",
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
         remove: "Remove project",

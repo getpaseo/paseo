@@ -7,6 +7,7 @@ import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspac
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
 import type { HostBadgeModel } from "@/hosts/appearance";
+import { useAppSettings } from "@/hooks/use-settings";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
 import { StyleSheet } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
@@ -690,6 +691,10 @@ function StatusWorkspaceRowInner({
   const isTouchPlatform = platformIsNative;
   const [isPressed, setIsPressed] = useState(false);
   const trailing = useSidebarWorkspaceTrailing();
+  const {
+    settings: { sidebarStatusSubtitle },
+  } = useAppSettings();
+  const projectSubtitle = sidebarStatusSubtitle === "project" ? projectName : null;
 
   const isDesktop = !isTouchPlatform;
   const serviceSummary = isDesktop ? selectWorkspaceServiceSummary(workspace.scripts) : null;
@@ -757,6 +762,7 @@ function StatusWorkspaceRowInner({
               <SidebarWorkspaceRowContent
                 workspace={workspace}
                 hostBadge={hostBadge}
+                projectSubtitle={projectSubtitle}
                 leadingProjectName={projectName}
                 leadingProjectIconDataUri={projectIconDataUri}
                 serviceSummary={serviceSummary}

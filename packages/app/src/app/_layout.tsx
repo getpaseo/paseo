@@ -61,6 +61,7 @@ import { SessionProvider } from "@/contexts/session-context";
 import { SidebarCalloutProvider } from "@/contexts/sidebar-callout-context";
 import { ToastProvider } from "@/contexts/toast-context";
 import { AttentionBannerHost } from "@/components/attention-banner-host";
+import { CreateBacklogTaskHost } from "@/components/create-backlog-task-host";
 import { InteractionLockBanner } from "@/interaction-lock/banner";
 import { VoiceProvider } from "@/contexts/voice-context";
 import {
@@ -952,6 +953,7 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
         <ToastProvider>
           <ProvidersWrapper>{children}</ProvidersWrapper>
           <AttentionBannerHost />
+          <CreateBacklogTaskHost />
           <InteractionLockBanner />
         </ToastProvider>
       </SidebarCalloutProvider>

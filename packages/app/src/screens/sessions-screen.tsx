@@ -1,13 +1,14 @@
-import { useMemo, useState, useCallback, useEffect, type ReactElement } from "react";
-import { View, Text } from "react-native";
+import { useMemo, useState, useCallback, useEffect, useRef, type ReactElement } from "react";
+import { Pressable, View, Text, type PressableStateCallbackType } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ChevronLeft } from "lucide-react-native";
+import { ChevronDown, ChevronLeft, Folder } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { Button } from "@/components/ui/button";
+import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { AgentList } from "@/components/agent-list";
 import { SearchField } from "@/components/ui/search-field";
@@ -17,6 +18,12 @@ import { type AgentHistoryHostError, useAgentHistory } from "@/hooks/use-agent-h
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useHosts } from "@/runtime/host-runtime";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
+import {
+  buildSessionProjectFilterOptions,
+  filterAgentsByProject,
+  SESSIONS_ALL_PROJECTS_FILTER_ID,
+  type SessionProjectFilterOption,
+} from "@/utils/session-project-filter";
 
 /** Long enough that a typed word is one request, short enough to feel live. */
 const SEARCH_DEBOUNCE_MS = 200;
@@ -53,8 +60,10 @@ function resolveEmptyText(input: {
   t: TFunction;
   isSearching: boolean;
   isAllHosts: boolean;
+  isAllProjects: boolean;
 }): string {
   if (input.isSearching) return input.t("sessions.noMatches");
+  if (!input.isAllProjects) return "No sessions for this project";
   if (input.isAllHosts) return input.t("sessions.empty");
   return "No sessions for this host";
 }
@@ -69,6 +78,33 @@ export function SessionsScreen() {
   return <SessionsScreenContent />;
 }
 
+function useSessionsProjectFilter(historyAgents: ReturnType<typeof useAgentHistory>["agents"]) {
+  const [projectFilterId, setProjectFilterId] = useState(SESSIONS_ALL_PROJECTS_FILTER_ID);
+  const projectFilterOptions = useMemo(
+    () => buildSessionProjectFilterOptions(historyAgents),
+    [historyAgents],
+  );
+  const resolvedProjectFilterId = useMemo(() => {
+    if (projectFilterId === SESSIONS_ALL_PROJECTS_FILTER_ID) {
+      return SESSIONS_ALL_PROJECTS_FILTER_ID;
+    }
+    if (projectFilterOptions.some((option) => option.id === projectFilterId)) {
+      return projectFilterId;
+    }
+    return SESSIONS_ALL_PROJECTS_FILTER_ID;
+  }, [projectFilterId, projectFilterOptions]);
+  const agents = useMemo(
+    () => filterAgentsByProject(historyAgents, resolvedProjectFilterId),
+    [historyAgents, resolvedProjectFilterId],
+  );
+  return {
+    agents,
+    projectFilterOptions,
+    resolvedProjectFilterId,
+    setProjectFilterId,
+  };
+}
+
 function SessionsScreenContent() {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -78,7 +114,7 @@ function SessionsScreenContent() {
   const search = useDebouncedValue(searchInput, SEARCH_DEBOUNCE_MS).trim();
   const historyServerId = selectedHost === ALL_HOSTS_OPTION_ID ? null : selectedHost;
   const {
-    agents,
+    agents: historyAgents,
     hasMore,
     isInitialLoad,
     isLoadingMore,
@@ -94,6 +130,8 @@ function SessionsScreenContent() {
     search,
   });
   const isSearching = isSearchSupported && search.length > 0;
+  const { agents, projectFilterOptions, resolvedProjectFilterId, setProjectFilterId } =
+    useSessionsProjectFilter(historyAgents);
 
   useEffect(() => {
     if (
@@ -116,9 +154,11 @@ function SessionsScreenContent() {
     t,
     isSearching,
     isAllHosts: selectedHost === ALL_HOSTS_OPTION_ID,
+    isAllProjects: resolvedProjectFilterId === SESSIONS_ALL_PROJECTS_FILTER_ID,
   });
   const showHostFilter = hosts.length > 1;
-  const showFilterRow = showHostFilter || isSearchSupported;
+  const showProjectFilter = projectFilterOptions.length > 0;
+  const showFilterRow = showHostFilter || showProjectFilter || isSearchSupported;
   const showLoadError = isError && agents.length === 0;
 
   const handleBack = useCallback(() => {
@@ -149,6 +189,55 @@ function SessionsScreenContent() {
     );
   }, [hasMore, isLoadingMore, isSearchTruncated, loadMore, t]);
 
+  const body = (() => {
+    if (isInitialLoad) {
+      return (
+        <View style={styles.loadingContainer}>
+          <LoadingSpinner size="large" color={theme.colors.foregroundMuted} />
+        </View>
+      );
+    }
+    if (showLoadError) {
+      return (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>Unable to load sessions</Text>
+          <Button variant="ghost" onPress={handleRefresh}>
+            Try again
+          </Button>
+        </View>
+      );
+    }
+    if (agents.length === 0) {
+      return (
+        <View style={styles.emptyContainer} testID="sessions-empty">
+          <Text style={styles.emptyText}>{emptyText}</Text>
+          {isSearching ? (
+            <Button variant="ghost" onPress={handleClearSearch}>
+              {t("sessions.actions.clearSearch")}
+            </Button>
+          ) : (
+            <Button variant="ghost" leftIcon={ChevronLeft} onPress={handleBack}>
+              Back
+            </Button>
+          )}
+        </View>
+      );
+    }
+    return (
+      <AgentList
+        agents={agents}
+        showCheckoutInfo={false}
+        isRefreshing={isManualRefresh}
+        onRefresh={handleRefresh}
+        listFooterComponent={listFooterComponent}
+        showAttentionIndicator={false}
+        showHostColumn
+        searchMatchesByAgentKey={isSearching ? searchMatchesByAgentKey : undefined}
+        flat={isSearching}
+      />
+    );
+  })();
+
   return (
     <View style={styles.container}>
       <MenuHeader title={t("sessions.title")} />
@@ -173,50 +262,92 @@ function SessionsScreenContent() {
               hostOptionTestID={sessionsHostOptionTestID}
             />
           ) : null}
+          {showProjectFilter ? (
+            <SessionsProjectFilter
+              options={projectFilterOptions}
+              value={resolvedProjectFilterId}
+              onSelect={setProjectFilterId}
+            />
+          ) : null}
         </View>
       ) : null}
       {hostErrors.length > 0 ? <SessionHostErrorsBanner errors={hostErrors} t={t} /> : null}
-      {isInitialLoad ? (
-        <View style={styles.loadingContainer}>
-          <LoadingSpinner size="large" color={theme.colors.foregroundMuted} />
-        </View>
-      ) : null}
-      {!isInitialLoad && showLoadError ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>Unable to load sessions</Text>
-          <Button variant="ghost" onPress={handleRefresh}>
-            Try again
-          </Button>
-        </View>
-      ) : null}
-      {!isInitialLoad && !showLoadError && agents.length === 0 ? (
-        <View style={styles.emptyContainer} testID="sessions-empty">
-          <Text style={styles.emptyText}>{emptyText}</Text>
-          {isSearching ? (
-            <Button variant="ghost" onPress={handleClearSearch}>
-              {t("sessions.actions.clearSearch")}
-            </Button>
-          ) : (
-            <Button variant="ghost" leftIcon={ChevronLeft} onPress={handleBack}>
-              Back
-            </Button>
-          )}
-        </View>
-      ) : null}
-      {!isInitialLoad && !showLoadError && agents.length > 0 ? (
-        <AgentList
-          agents={agents}
-          showCheckoutInfo={false}
-          isRefreshing={isManualRefresh}
-          onRefresh={handleRefresh}
-          listFooterComponent={listFooterComponent}
-          showAttentionIndicator={false}
-          showHostColumn
-          searchMatchesByAgentKey={isSearching ? searchMatchesByAgentKey : undefined}
-          flat={isSearching}
-        />
-      ) : null}
+      {body}
     </View>
+  );
+}
+
+function SessionsProjectFilter({
+  options,
+  value,
+  onSelect,
+}: {
+  options: readonly SessionProjectFilterOption[];
+  value: string;
+  onSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<View | null>(null);
+  const comboboxOptions = useMemo<ComboboxOption[]>(
+    () => [
+      { id: SESSIONS_ALL_PROJECTS_FILTER_ID, label: "All projects" },
+      ...options.map((option) => ({ id: option.id, label: option.label })),
+    ],
+    [options],
+  );
+  const selectedLabel =
+    value === SESSIONS_ALL_PROJECTS_FILTER_ID
+      ? "All projects"
+      : (options.find((option) => option.id === value)?.label ?? "All projects");
+  const triggerStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.projectFilterTrigger,
+      (Boolean(hovered) || pressed || open) && styles.projectFilterTriggerActive,
+    ],
+    [open],
+  );
+  const handlePress = useCallback(() => {
+    setOpen((current) => !current);
+  }, []);
+  const handleSelect = useCallback(
+    (id: string) => {
+      onSelect(id);
+      setOpen(false);
+    },
+    [onSelect],
+  );
+
+  return (
+    <>
+      <View ref={anchorRef} collapsable={false} style={styles.projectFilterWrap}>
+        <Pressable
+          onPress={handlePress}
+          style={triggerStyle}
+          accessibilityRole="button"
+          accessibilityLabel={`Filter by project: ${selectedLabel}`}
+          testID="sessions-project-filter-trigger"
+        >
+          <Folder size={14} color={styles.projectFilterIcon.color} />
+          <Text style={styles.projectFilterTriggerText} numberOfLines={1}>
+            {selectedLabel}
+          </Text>
+          <ChevronDown size={14} color={styles.projectFilterIcon.color} />
+        </Pressable>
+      </View>
+      <Combobox
+        options={comboboxOptions}
+        value={value}
+        onSelect={handleSelect}
+        searchable={options.length > 6}
+        searchPlaceholder="Search projects..."
+        emptyText="No projects found"
+        title="Filter by project"
+        open={open}
+        onOpenChange={setOpen}
+        anchorRef={anchorRef}
+        desktopPlacement="bottom-start"
+      />
+    </>
   );
 }
 
@@ -228,12 +359,41 @@ const styles = StyleSheet.create((theme) => ({
   filterContainer: {
     flexDirection: "row",
     alignItems: "center",
+    flexWrap: "wrap",
     gap: theme.spacing[2],
     paddingHorizontal: {
       xs: theme.spacing[3],
       md: theme.spacing[6],
     },
     paddingTop: theme.spacing[4],
+  },
+  projectFilterWrap: {
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  projectFilterTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface1,
+    maxWidth: 220,
+  },
+  projectFilterTriggerActive: {
+    backgroundColor: theme.colors.surface2,
+  },
+  projectFilterTriggerText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  projectFilterIcon: {
+    color: theme.colors.foregroundMuted,
   },
   emptyContainer: {
     flex: 1,

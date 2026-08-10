@@ -970,8 +970,14 @@ export const ru: TranslationResources = {
         changeRequest: "Pull request",
         checks: "Проверки",
         services: "Сервисы",
+        identityIcon: "Identity icon",
         diff: "Статистика изменений",
         timestamp: "Последняя активность",
+      },
+      statusSubtitle: {
+        label: "Under title (Status)",
+        host: "Host name",
+        project: "Project name",
       },
       checks: {
         iconAndText: "Значок и текст",
@@ -1029,6 +1035,7 @@ export const ru: TranslationResources = {
         openNewWindowFailed: "Couldn't open a new window",
         openBacklog: "Open backlog",
         openBacklogFor: "Open backlog for {{projectName}}",
+        newBacklogItem: "New backlog item",
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
         remove: "Удалить проект",

@@ -121,6 +121,7 @@ export function SidebarWorkspaceRowFrame({
 export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowContent({
   workspace,
   hostBadge,
+  projectSubtitle = null,
   leadingProjectName = null,
   leadingProjectIconDataUri = null,
   serviceSummary = null,
@@ -135,6 +136,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
 }: {
   workspace: SidebarWorkspaceEntry;
   hostBadge?: HostBadgeModel | null;
+  /** Status grouping: show project name under the title instead of host. */
+  projectSubtitle?: string | null;
   /** Hoisted rows use their project icon as the leading visual because no project row contains them. */
   leadingProjectName?: string | null;
   leadingProjectIconDataUri?: string | null;
@@ -193,6 +196,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
           </View>
           <WorkspaceMetaRow
             hostBadge={hostBadge ?? null}
+            projectSubtitle={projectSubtitle}
             prHint={workspace.prHint}
             serviceSummary={serviceSummary}
           />

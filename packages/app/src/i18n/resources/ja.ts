@@ -960,8 +960,14 @@ export const ja: TranslationResources = {
         changeRequest: "プルリクエスト",
         checks: "チェック",
         services: "サービス",
+        identityIcon: "Identity icon",
         diff: "差分統計",
         timestamp: "最終アクティビティ",
+      },
+      statusSubtitle: {
+        label: "Under title (Status)",
+        host: "Host name",
+        project: "Project name",
       },
       checks: {
         iconAndText: "アイコンとテキスト",
@@ -1019,6 +1025,7 @@ export const ja: TranslationResources = {
         openNewWindowFailed: "新しいウィンドウを開けませんでした",
         openBacklog: "Open backlog",
         openBacklogFor: "Open backlog for {{projectName}}",
+        newBacklogItem: "New backlog item",
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
         remove: "プロジェクトを削除",

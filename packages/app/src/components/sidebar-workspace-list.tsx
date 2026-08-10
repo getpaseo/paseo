@@ -49,6 +49,7 @@ import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
 import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
+import { useCreateBacklogTaskStore } from "@/stores/create-backlog-task-store";
 import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import {
   useSidebarWorkspacePinController,
@@ -152,6 +153,7 @@ import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { useHostBadges } from "@/hosts/use-host-badges";
+import { useAppSettings } from "@/hooks/use-settings";
 import { useSidebarRowItems } from "@/components/sidebar/display-preferences/model";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
@@ -477,14 +479,6 @@ function ProjectRowTrailingActions({
           testID={`sidebar-project-new-worktree-${projectViewKey}`}
         />
       ) : null}
-      {backlogTarget ? (
-        <ProjectBacklogButton
-          displayName={displayName}
-          onPress={onOpenBacklog}
-          visible={actionsVisible}
-          testID={`sidebar-project-backlog-${projectViewKey}`}
-        />
-      ) : null}
       {onRemoveProject ? (
         <View
           style={!actionsVisible && styles.projectKebabButtonHidden}
@@ -492,8 +486,11 @@ function ProjectRowTrailingActions({
         >
           <ProjectKebabMenu
             projectViewKey={projectViewKey}
+            displayName={displayName}
             settingsTarget={settingsTarget}
             projectPath={projectPath}
+            backlogTarget={backlogTarget}
+            onOpenBacklog={onOpenBacklog}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
           />
@@ -505,6 +502,8 @@ function ProjectRowTrailingActions({
 
 const trash2LeadingIcon = <ThemedTrash2 size={14} uniProps={foregroundMutedColorMapping} />;
 const settingsLeadingIcon = <ThemedSettings size={14} uniProps={foregroundMutedColorMapping} />;
+const listTodoLeadingIcon = <ThemedListTodo size={14} uniProps={foregroundMutedColorMapping} />;
+const plusLeadingIcon = <ThemedPlus size={14} uniProps={foregroundMutedColorMapping} />;
 const openInNewWindowLeadingIcon = (
   <ThemedExternalLink size={14} uniProps={foregroundMutedColorMapping} />
 );
@@ -520,14 +519,20 @@ function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
 
 function ProjectKebabMenu({
   projectViewKey,
+  displayName,
   settingsTarget,
   projectPath,
+  backlogTarget,
+  onOpenBacklog,
   onRemoveProject,
   removeProjectStatus,
 }: {
   projectViewKey: string;
+  displayName: string;
   settingsTarget: { serverId: string; projectId: string } | null;
   projectPath: string;
+  backlogTarget: ProjectBacklogTarget | null;
+  onOpenBacklog: () => void;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
@@ -547,8 +552,11 @@ function ProjectKebabMenu({
         <ProjectMenuItems
           surface="dropdown"
           projectViewKey={projectViewKey}
+          displayName={displayName}
           settingsTarget={settingsTarget}
           projectPath={projectPath}
+          backlogTarget={backlogTarget}
+          onOpenBacklog={onOpenBacklog}
           onRemoveProject={onRemoveProject}
           removeProjectStatus={removeProjectStatus}
         />
@@ -575,20 +583,27 @@ function ProjectMenuItem({
 function ProjectMenuItems({
   surface,
   projectViewKey,
+  displayName,
   settingsTarget,
   projectPath,
+  backlogTarget,
+  onOpenBacklog,
   onRemoveProject,
   removeProjectStatus,
 }: {
   surface: ProjectMenuSurface;
   projectViewKey: string;
+  displayName: string;
   settingsTarget: { serverId: string; projectId: string } | null;
   projectPath: string;
+  backlogTarget: ProjectBacklogTarget | null;
+  onOpenBacklog: () => void;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
   const { t } = useTranslation();
   const toast = useToast();
+  const openCreateBacklogTask = useCreateBacklogTaskStore((state) => state.openCreateBacklogTask);
   const handleOpenProjectSettings = useCallback(() => {
     if (!settingsTarget) return;
     router.navigate(buildProjectSettingsRoute(settingsTarget.serverId, settingsTarget.projectId));
@@ -604,9 +619,37 @@ function ProjectMenuItems({
         toast.error(t("sidebar.project.actions.openNewWindowFailed"));
       });
   }, [projectPath, t, toast]);
+  const handleCreateBacklogTask = useCallback(() => {
+    if (!backlogTarget) return;
+    openCreateBacklogTask({
+      preferredServerId: backlogTarget.serverId,
+      preferredProjectId: projectViewKey,
+      preferredProjectName: displayName,
+    });
+  }, [backlogTarget, displayName, openCreateBacklogTask, projectViewKey]);
 
   return (
     <>
+      {backlogTarget ? (
+        <>
+          <ProjectMenuItem
+            surface={surface}
+            testID={`sidebar-project-menu-open-backlog-${projectViewKey}`}
+            leading={listTodoLeadingIcon}
+            onSelect={onOpenBacklog}
+          >
+            {t("sidebar.project.actions.openBacklog")}
+          </ProjectMenuItem>
+          <ProjectMenuItem
+            surface={surface}
+            testID={`sidebar-project-menu-new-backlog-item-${projectViewKey}`}
+            leading={plusLeadingIcon}
+            onSelect={handleCreateBacklogTask}
+          >
+            {t("sidebar.project.actions.newBacklogItem")}
+          </ProjectMenuItem>
+        </>
+      ) : null}
       {settingsTarget ? (
         <ProjectMenuItem
           surface={surface}
@@ -811,66 +854,6 @@ function NewWorktreeButton({
               <Shortcut chord={newWorktreeKeys} style={styles.projectActionTooltipShortcut} />
             ) : null}
           </View>
-        </TooltipContent>
-      </Tooltip>
-    </View>
-  );
-}
-
-function ProjectBacklogButton({
-  displayName,
-  onPress,
-  visible,
-  testID,
-}: {
-  displayName: string;
-  onPress: () => void;
-  visible: boolean;
-  testID: string;
-}) {
-  const { t } = useTranslation();
-  const pressableStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.projectIconActionButton,
-      !visible && styles.projectIconActionButtonHidden,
-      (Boolean(hovered) || pressed) && styles.projectIconActionButtonHovered,
-    ],
-    [visible],
-  );
-
-  const handlePress = useCallback(
-    (event: GestureResponderEvent) => {
-      event.stopPropagation();
-      onPress();
-    },
-    [onPress],
-  );
-
-  return (
-    <View style={styles.projectTrailingControlSlot} pointerEvents={visible ? "auto" : "none"}>
-      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-        <TooltipTrigger asChild disabled={!visible}>
-          <Pressable
-            style={pressableStyle}
-            onPress={handlePress}
-            accessibilityRole={platformIsWeb ? undefined : "button"}
-            accessibilityLabel={t("sidebar.project.actions.openBacklogFor", {
-              projectName: displayName,
-            })}
-            testID={testID}
-          >
-            {({ hovered, pressed }) => (
-              <ThemedListTodo
-                size={15}
-                uniProps={hovered || pressed ? foregroundColorMapping : foregroundMutedColorMapping}
-              />
-            )}
-          </Pressable>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="center" offset={8}>
-          <Text style={styles.projectActionTooltipText}>
-            {t("sidebar.project.actions.openBacklog")}
-          </Text>
         </TooltipContent>
       </Tooltip>
     </View>
@@ -1149,8 +1132,11 @@ function ProjectHeaderRow({
         <ProjectMenuItems
           surface="context"
           projectViewKey={project.viewKey}
+          displayName={displayName}
           settingsTarget={settingsTarget}
           projectPath={projectPath}
+          backlogTarget={backlogTarget}
+          onOpenBacklog={handleOpenBacklog}
           onRemoveProject={onRemoveProject}
           removeProjectStatus={removeProjectStatus}
         />
@@ -2050,8 +2036,12 @@ export function SidebarWorkspaceList({
   // "off", `shouldShowSidebarHostLabels` is the automatic "there is only one host so it says
   // nothing", and each host's own `badgeDisplay` decides name vs icon vs hidden. Turning the
   // item off here removes the badge everywhere; leaving it on defers to the per-host setting.
+  const {
+    settings: { sidebarIdentityIcon },
+  } = useAppSettings();
   const hostBadgeByServerId = useHostBadges({
     enabled: rowItems.host && shouldShowSidebarHostLabels(projects),
+    showIcon: sidebarIdentityIcon,
   });
   const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const supportsMultiplicityByServerId = useHostFeatureMap(serverIds, "workspaceMultiplicity");

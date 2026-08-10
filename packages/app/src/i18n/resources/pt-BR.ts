@@ -970,8 +970,14 @@ export const ptBR: TranslationResources = {
         changeRequest: "Pull request",
         checks: "Verificações",
         services: "Serviços",
+        identityIcon: "Identity icon",
         diff: "Estatísticas de diff",
         timestamp: "Última atividade",
+      },
+      statusSubtitle: {
+        label: "Under title (Status)",
+        host: "Host name",
+        project: "Project name",
       },
       checks: {
         iconAndText: "Ícone e texto",
@@ -1029,6 +1035,7 @@ export const ptBR: TranslationResources = {
         openNewWindowFailed: "Não foi possível abrir uma nova janela",
         openBacklog: "Open backlog",
         openBacklogFor: "Open backlog for {{projectName}}",
+        newBacklogItem: "New backlog item",
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
         remove: "Remover projeto",

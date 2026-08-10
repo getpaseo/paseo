@@ -11,8 +11,10 @@ import { selectHostBadges, type HostBadgeModel } from "@/hosts/appearance";
  */
 export function useHostBadges({
   enabled,
+  showIcon = true,
 }: {
   enabled: boolean;
+  showIcon?: boolean;
 }): ReadonlyMap<string, HostBadgeModel> {
   const hosts = useHosts();
   const localServerId = useLocalDaemonServerId();
@@ -24,7 +26,8 @@ export function useHostBadges({
         localServerId,
         localHostResolutionPending: localDaemon.status !== "resolved",
         enabled,
+        showIcon,
       }),
-    [hosts, localDaemon.status, localServerId, enabled],
+    [hosts, localDaemon.status, localServerId, enabled, showIcon],
   );
 }

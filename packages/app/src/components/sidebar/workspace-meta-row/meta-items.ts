@@ -11,6 +11,7 @@ import type { WorkspaceServiceSummary } from "./service-summary";
  */
 export type MetaRowItem =
   | { kind: "host" }
+  | { kind: "project"; name: string }
   | { kind: "changeRequest"; hint: PrHint }
   | { kind: "checks"; summary: CheckSummary; label: boolean }
   | { kind: "services"; summary: WorkspaceServiceSummary };
@@ -24,18 +25,24 @@ export type MetaRowItem =
  *
  * The host is filtered upstream, where the badge map is built: a host that should show nothing
  * has no badge to hand down, so by the time a row sees one it is meant to be drawn.
+ *
+ * Status grouping can swap host identity for a plain project name via `projectSubtitle`.
  */
 export function selectMetaRowItems(input: {
   hasHostBadge: boolean;
+  projectSubtitle?: string | null;
   prHint: PrHint | null;
   serviceSummary: WorkspaceServiceSummary | null;
   visible: SidebarRowItems;
   checksDisplay: SidebarChecksDisplay;
 }): MetaRowItem[] {
-  const { hasHostBadge, prHint, serviceSummary, visible, checksDisplay } = input;
+  const { hasHostBadge, projectSubtitle, prHint, serviceSummary, visible, checksDisplay } = input;
   const items: MetaRowItem[] = [];
 
-  if (hasHostBadge) {
+  const trimmedProject = projectSubtitle?.trim() ?? "";
+  if (trimmedProject) {
+    items.push({ kind: "project", name: trimmedProject });
+  } else if (hasHostBadge) {
     items.push({ kind: "host" });
   }
   if (prHint && visible.changeRequest) {

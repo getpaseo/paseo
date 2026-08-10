@@ -41,13 +41,19 @@ const HOST_ICON_MAPPINGS: Record<HostColor, (theme: Theme) => { color: string }>
  * them — see `flexShrink` below.
  */
 export function HostBadge({ badge }: { badge: HostBadgeModel }) {
+  const showIcon = badge.showIcon !== false;
+  if (!showIcon && !badge.showLabel) {
+    return null;
+  }
   return (
     <View
       style={styles.badge}
       testID={`host-badge-${badge.serverId}`}
       accessibilityLabel={badge.label}
     >
-      <ThemedServer size={HOST_BADGE_ICON_SIZE} uniProps={HOST_ICON_MAPPINGS[badge.color]} />
+      {showIcon ? (
+        <ThemedServer size={HOST_BADGE_ICON_SIZE} uniProps={HOST_ICON_MAPPINGS[badge.color]} />
+      ) : null}
       {badge.showLabel ? (
         <Text style={[styles.label, labelColorStyle(badge.color)]} numberOfLines={1}>
           {badge.label}

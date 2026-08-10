@@ -955,8 +955,14 @@ export const ko: TranslationResources = {
         changeRequest: "풀 리퀘스트",
         checks: "검사",
         services: "서비스",
+        identityIcon: "Identity icon",
         diff: "Diff 통계",
         timestamp: "마지막 활동",
+      },
+      statusSubtitle: {
+        label: "Under title (Status)",
+        host: "Host name",
+        project: "Project name",
       },
       checks: {
         iconAndText: "아이콘 및 텍스트",
@@ -1018,6 +1024,7 @@ export const ko: TranslationResources = {
         removing: "제거하는 중...",
         openBacklog: "Open backlog",
         openBacklogFor: "Open backlog for {{projectName}}",
+        newBacklogItem: "New backlog item",
       },
       confirmations: {
         removeTitle: "프로젝트를 제거할까요?",

@@ -13,6 +13,11 @@ import {
   parseSidebarRowItems,
   type SidebarRowItems,
 } from "@/components/sidebar/display-preferences/row-items";
+import {
+  DEFAULT_SIDEBAR_STATUS_SUBTITLE,
+  parseSidebarStatusSubtitle,
+  type SidebarStatusSubtitle,
+} from "@/components/sidebar/display-preferences/workspace-subtitle";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 
 export const APP_SETTINGS_KEY = "@paseo:app-settings";
@@ -91,6 +96,13 @@ export interface AppSettings {
   sidebarWorkspaceTrailing: SidebarWorkspaceTrailing;
   sidebarRowItems: SidebarRowItems;
   sidebarChecksDisplay: SidebarChecksDisplay;
+  /**
+   * When group-by is Status, what identity text sits under the workspace title.
+   * Project grouping always uses host when host is enabled.
+   */
+  sidebarStatusSubtitle: SidebarStatusSubtitle;
+  /** Server glyph next to host identity under a workspace title. Default on. */
+  sidebarIdentityIcon: boolean;
   autoExpandReasoning: boolean;
   toolCallDetailLevel: ToolCallDetailLevel;
   chatOutlineEnabled: boolean;
@@ -137,6 +149,8 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   sidebarWorkspaceTrailing: "diff",
   sidebarRowItems: DEFAULT_SIDEBAR_ROW_ITEMS,
   sidebarChecksDisplay: DEFAULT_SIDEBAR_CHECKS_DISPLAY,
+  sidebarStatusSubtitle: DEFAULT_SIDEBAR_STATUS_SUBTITLE,
+  sidebarIdentityIcon: true,
   autoExpandReasoning: false,
   toolCallDetailLevel: "detailed",
   chatOutlineEnabled: true,
@@ -294,6 +308,9 @@ function pickBooleanAppSettings(stored: StoredAppSettings): Partial<AppSettings>
   if (typeof stored.attentionSoundEnabled === "boolean") {
     result.attentionSoundEnabled = stored.attentionSoundEnabled;
   }
+  if (typeof stored.sidebarIdentityIcon === "boolean") {
+    result.sidebarIdentityIcon = stored.sidebarIdentityIcon;
+  }
   return result;
 }
 
@@ -352,6 +369,9 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   Object.assign(result, pickEnumAppSettings(stored));
   if (stored.sidebarRowItems !== undefined) {
     result.sidebarRowItems = parseSidebarRowItems(stored.sidebarRowItems);
+  }
+  if (stored.sidebarStatusSubtitle !== undefined) {
+    result.sidebarStatusSubtitle = parseSidebarStatusSubtitle(stored.sidebarStatusSubtitle);
   }
   const sidebarChecksDisplay = parseStoredSidebarChecksDisplay(stored);
   if (sidebarChecksDisplay !== null) {

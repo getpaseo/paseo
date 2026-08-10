@@ -940,8 +940,14 @@ export const zhCN: TranslationResources = {
         changeRequest: "拉取请求",
         checks: "检查",
         services: "服务",
+        identityIcon: "Identity icon",
         diff: "差异统计",
         timestamp: "最近活动",
+      },
+      statusSubtitle: {
+        label: "Under title (Status)",
+        host: "Host name",
+        project: "Project name",
       },
       checks: {
         iconAndText: "图标和文字",
@@ -998,6 +1004,7 @@ export const zhCN: TranslationResources = {
         openNewWindowFailed: "无法打开新窗口",
         openBacklog: "Open backlog",
         openBacklogFor: "Open backlog for {{projectName}}",
+        newBacklogItem: "New backlog item",
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
         remove: "移除 project",

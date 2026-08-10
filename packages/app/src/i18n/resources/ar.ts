@@ -948,8 +948,14 @@ export const ar: TranslationResources = {
         changeRequest: "طلب السحب",
         checks: "الفحوصات",
         services: "الخدمات",
+        identityIcon: "Identity icon",
         diff: "إحصائيات الفروق",
         timestamp: "آخر نشاط",
+      },
+      statusSubtitle: {
+        label: "Under title (Status)",
+        host: "Host name",
+        project: "Project name",
       },
       checks: {
         iconAndText: "أيقونة ونص",
@@ -1007,6 +1013,7 @@ export const ar: TranslationResources = {
         openNewWindowFailed: "Couldn't open a new window",
         openBacklog: "Open backlog",
         openBacklogFor: "Open backlog for {{projectName}}",
+        newBacklogItem: "New backlog item",
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
         remove: "إزالة المشروع",

@@ -133,7 +133,7 @@ interface PendingPickedFile extends PickedFile {
   key: string;
 }
 
-interface CreateTaskInput {
+export interface CreateTaskInput {
   title: string;
   description: string;
   attachments: PickedFile[];
@@ -1596,10 +1596,11 @@ function getAttachmentIcon(mimeType: string) {
   return FileText;
 }
 
-function TaskFormSheet({
+export function TaskFormSheet({
   visible,
   projectName,
   projectTargets,
+  preferredTargetOptionId,
   task,
   onClose,
   onCreate,
@@ -1611,6 +1612,8 @@ function TaskFormSheet({
   visible: boolean;
   projectName?: string;
   projectTargets?: readonly MasterBacklogProjectTarget[];
+  /** When opening create from a project, pre-select that target. */
+  preferredTargetOptionId?: string;
   task?: TaskCard | null;
   onClose: () => void;
   onCreate?: (input: CreateTaskInput) => Promise<void>;
@@ -1655,10 +1658,15 @@ function TaskFormSheet({
     setTitle(task?.title ?? "");
     setDescription(task?.description ?? "");
     setAttachments([]);
-    setSelectedTargetOptionId(projectTargets?.[0]?.optionId ?? "");
+    const preferred =
+      preferredTargetOptionId &&
+      projectTargets?.some((target) => target.optionId === preferredTargetOptionId)
+        ? preferredTargetOptionId
+        : (projectTargets?.[0]?.optionId ?? "");
+    setSelectedTargetOptionId(preferred);
     setError(null);
     setResetKey((current) => current + 1);
-  }, [projectTargets, task?.description, task?.id, task?.title, visible]);
+  }, [preferredTargetOptionId, projectTargets, task?.description, task?.id, task?.title, visible]);
 
   useEffect(() => {
     if (!visible || isEdit || !projectTargets) {
@@ -1668,9 +1676,15 @@ function TaskFormSheet({
       if (current && projectTargets.some((target) => target.optionId === current)) {
         return current;
       }
+      if (
+        preferredTargetOptionId &&
+        projectTargets.some((target) => target.optionId === preferredTargetOptionId)
+      ) {
+        return preferredTargetOptionId;
+      }
       return projectTargets[0]?.optionId ?? "";
     });
-  }, [isEdit, projectTargets, visible]);
+  }, [isEdit, preferredTargetOptionId, projectTargets, visible]);
 
   const targetByOptionId = useMemo(
     () => new Map((projectTargets ?? []).map((target) => [target.optionId, target] as const)),

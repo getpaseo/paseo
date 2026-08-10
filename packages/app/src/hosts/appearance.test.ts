@@ -105,6 +105,7 @@ describe("selectHostBadges", () => {
       label: "Beta",
       color: "none",
       showLabel: true,
+      showIcon: true,
     });
   });
 
@@ -119,6 +120,7 @@ describe("selectHostBadges", () => {
       label: "Alpha",
       color: "teal",
       showLabel: false,
+      showIcon: true,
     });
   });
 
