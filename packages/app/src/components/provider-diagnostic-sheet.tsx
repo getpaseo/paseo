@@ -1,5 +1,20 @@
 import * as Clipboard from "expo-clipboard";
-import { AlertTriangle, Copy, FileText, Pencil, Plus, RotateCw, Trash2 } from "lucide-react-native";
+import {
+  AlertTriangle,
+  Brain,
+  ChevronDown,
+  Copy,
+  FileText,
+  Image as ImageIcon,
+  Mic,
+  Pencil,
+  Plus,
+  RotateCw,
+  Trash2,
+  Type,
+  Video,
+  Wrench,
+} from "lucide-react-native";
 import type { TFunction } from "i18next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -11,8 +26,21 @@ import {
   type SheetHeader,
 } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ScrollableCodeSurface, SurfaceCard } from "@/components/ui/scrollable-code-surface";
+import {
+  applyCandidateToFields,
+  buildSavedCustomModel,
+  candidateSourceId,
+  CUSTOM_MODEL_METADATA_SOURCE_ID,
+  describeCandidateOption,
+  formatTokenCount,
+  parsePositiveTokenInput,
+  resolveCustomModelFormFields,
+  resolveCustomModelLookup,
+  type ModelsDevCandidateLike,
+} from "@/components/provider-custom-model-form";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
@@ -73,17 +101,7 @@ function DiscoveredModelRow({ model }: { model: AgentModelDefinition }) {
 }
 
 function formatContextWindowTokens(tokens: number | undefined): string | null {
-  if (typeof tokens !== "number" || !Number.isFinite(tokens) || tokens <= 0) {
-    return null;
-  }
-  if (tokens % 1000 === 0) {
-    const thousands = tokens / 1000;
-    if (thousands % 1000 === 0) {
-      return `${thousands / 1000}M`;
-    }
-    return `${thousands}k`;
-  }
-  return String(tokens);
+  return formatTokenCount(tokens);
 }
 
 function CustomModelRow({
@@ -110,6 +128,10 @@ function CustomModelRow({
     [deleting],
   );
   const contextWindowLabel = formatContextWindowTokens(model.contextWindowMaxTokens);
+  const maxOutputLabel = formatContextWindowTokens(model.maxOutputTokens);
+  const limitsLabel = [contextWindowLabel, maxOutputLabel ? `out ${maxOutputLabel}` : null]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <View style={sheetStyles.modelRow}>
@@ -124,9 +146,9 @@ function CustomModelRow({
       >
         {model.id}
       </Text>
-      {contextWindowLabel ? (
+      {limitsLabel ? (
         <Text style={sheetStyles.descriptionInline} numberOfLines={1}>
-          {contextWindowLabel}
+          {limitsLabel}
         </Text>
       ) : null}
       <View style={sheetStyles.modelRowFiller} />
@@ -172,41 +194,7 @@ function SectionHeader({ title, count, hint }: { title: string; count?: number; 
 }
 
 function parseContextWindowInput(value: string): number | undefined | "invalid" {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  if (!/^\d+$/.test(trimmed)) {
-    return "invalid";
-  }
-  const parsed = Number(trimmed);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return "invalid";
-  }
-  return Math.trunc(parsed);
-}
-
-function resolveCustomModelFormFields(
-  mode:
-    | {
-        kind: "add";
-      }
-    | {
-        kind: "edit";
-        model: ProviderProfileModel;
-      },
-): { modelId: string; label: string; contextWindow: string } {
-  if (mode.kind !== "edit") {
-    return { modelId: "", label: "", contextWindow: "" };
-  }
-  return {
-    modelId: mode.model.id,
-    label: mode.model.label === mode.model.id ? "" : mode.model.label,
-    contextWindow:
-      typeof mode.model.contextWindowMaxTokens === "number"
-        ? String(mode.model.contextWindowMaxTokens)
-        : "",
-  };
+  return parsePositiveTokenInput(value);
 }
 
 function resolveCustomModelSaveLabel(
@@ -238,6 +226,139 @@ function buildCustomModelList(
 
 const ADD_CUSTOM_MODEL_MODE = { kind: "add" } as const;
 
+function modalityIcon(kind: string, color: string) {
+  const size = 14;
+  switch (kind) {
+    case "text":
+      return <Type size={size} color={color} />;
+    case "image":
+      return <ImageIcon size={size} color={color} />;
+    case "audio":
+      return <Mic size={size} color={color} />;
+    case "video":
+      return <Video size={size} color={color} />;
+    case "pdf":
+      return <FileText size={size} color={color} />;
+    default:
+      return <Type size={size} color={color} />;
+  }
+}
+
+function capabilityIcon(kind: string, color: string) {
+  if (kind === "tools") {
+    return <Wrench size={14} color={color} />;
+  }
+  if (kind === "reasoning" || kind === "interleaved") {
+    return <Brain size={14} color={color} />;
+  }
+  return <Type size={14} color={color} />;
+}
+
+function ModelMetadataSummary({ summary }: { summary: ModelsDevCandidateLike | null }) {
+  const { t } = useTranslation();
+  const { theme } = useUnistyles();
+  if (!summary) {
+    return null;
+  }
+  const contextLabel =
+    summary.contextWindowMaxTokens > 0
+      ? (formatTokenCount(summary.contextWindowMaxTokens) ?? String(summary.contextWindowMaxTokens))
+      : "—";
+  const maxOutputLabel =
+    typeof summary.maxOutputTokens === "number"
+      ? (formatTokenCount(summary.maxOutputTokens) ?? String(summary.maxOutputTokens))
+      : "—";
+  const inputs = summary.inputModalities ?? [];
+  const outputs = summary.outputModalities ?? [];
+  const capabilities = summary.capabilities ?? [];
+  if (
+    summary.contextWindowMaxTokens <= 0 &&
+    summary.maxOutputTokens === undefined &&
+    inputs.length === 0 &&
+    outputs.length === 0 &&
+    capabilities.length === 0
+  ) {
+    return null;
+  }
+
+  return (
+    <View style={sheetStyles.summaryCard} testID="custom-model-metadata-summary">
+      <View style={sheetStyles.summaryGrid}>
+        <View style={sheetStyles.summaryCell}>
+          <Text style={sheetStyles.summaryLabel}>
+            {t("settings.providers.models.contextWindow")}
+          </Text>
+          <Text style={sheetStyles.summaryValue}>{contextLabel}</Text>
+        </View>
+        <View style={sheetStyles.summaryCell}>
+          <Text style={sheetStyles.summaryLabel}>{t("settings.providers.models.maxOutput")}</Text>
+          <Text style={sheetStyles.summaryValue}>{maxOutputLabel}</Text>
+        </View>
+      </View>
+      {inputs.length > 0 ? (
+        <View style={sheetStyles.summaryRow}>
+          <Text style={sheetStyles.summaryLabel}>{t("settings.providers.models.inputTypes")}</Text>
+          <View style={sheetStyles.iconRow}>
+            {inputs.map((item) => (
+              <View key={`in-${item}`} style={sheetStyles.iconChip} accessibilityLabel={item}>
+                {modalityIcon(item, theme.colors.foregroundMuted)}
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+      {outputs.length > 0 ? (
+        <View style={sheetStyles.summaryRow}>
+          <Text style={sheetStyles.summaryLabel}>{t("settings.providers.models.outputTypes")}</Text>
+          <View style={sheetStyles.iconRow}>
+            {outputs.map((item) => (
+              <View key={`out-${item}`} style={sheetStyles.iconChip} accessibilityLabel={item}>
+                {modalityIcon(item, theme.colors.foregroundMuted)}
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+      {capabilities.length > 0 ? (
+        <View style={sheetStyles.summaryRow}>
+          <Text style={sheetStyles.summaryLabel}>
+            {t("settings.providers.models.capabilities")}
+          </Text>
+          <View style={sheetStyles.iconRow}>
+            {capabilities.map((item) => (
+              <View key={`cap-${item}`} style={sheetStyles.capabilityChip}>
+                {capabilityIcon(item, theme.colors.foregroundMuted)}
+                <Text style={sheetStyles.capabilityText}>{item}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function resolveSelectedCandidate(
+  sourceId: string,
+  candidates: ModelsDevCandidateLike[],
+  summary: ModelsDevCandidateLike | null,
+): ModelsDevCandidateLike | null {
+  if (sourceId === CUSTOM_MODEL_METADATA_SOURCE_ID) {
+    return null;
+  }
+  return candidates.find((entry) => candidateSourceId(entry) === sourceId) ?? summary;
+}
+
+function createEmptyAutofillSnapshot(): {
+  label: string;
+  contextWindow: string;
+  maxOutput: string;
+} {
+  return { label: "", contextWindow: "", maxOutput: "" };
+}
+
+// Form has progressive disclosure branches for lookup/source/manual values.
+// eslint-disable-next-line complexity -- multi-case custom model form UI
 function CustomModelFormSubSheet({
   provider,
   serverId,
@@ -260,12 +381,17 @@ function CustomModelFormSubSheet({
   const [modelId, setModelId] = useState("");
   const [label, setLabel] = useState("");
   const [contextWindow, setContextWindow] = useState("");
+  const [maxOutput, setMaxOutput] = useState("");
+  const [sourceId, setSourceId] = useState(CUSTOM_MODEL_METADATA_SOURCE_ID);
+  const [candidates, setCandidates] = useState<ModelsDevCandidateLike[]>([]);
+  const [summary, setSummary] = useState<ModelsDevCandidateLike | null>(null);
+  const [sourceOpen, setSourceOpen] = useState(false);
+  const sourceAnchorRef = useRef<View | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lookupHint, setLookupHint] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
-  const lastAutofilledContextRef = useRef<string | null>(null);
-  const lastAutofilledLabelRef = useRef<string | null>(null);
+  const lastAutofilledRef = useRef({ label: "", contextWindow: "", maxOutput: "" });
   const lookupRequestIdRef = useRef(0);
 
   const additionalModels = useMemo(
@@ -277,41 +403,89 @@ function CustomModelFormSubSheet({
   const trimmedId = modelId.trim();
   const trimmedLabel = label.trim();
   const parsedContext = parseContextWindowInput(contextWindow);
+  const parsedMaxOutput = parseContextWindowInput(maxOutput);
   const idConflict =
     trimmedId.length > 0 &&
     additionalModels.some((model) => model.id === trimmedId && model.id !== originalId);
-  const canSave = trimmedId.length > 0 && !idConflict && parsedContext !== "invalid" && !saving;
+  const canSave =
+    trimmedId.length > 0 &&
+    !idConflict &&
+    parsedContext !== "invalid" &&
+    parsedMaxOutput !== "invalid" &&
+    !saving;
   const saveLabel = resolveCustomModelSaveLabel(t, { isEdit, saving });
+
+  const sourceOptions = useMemo(() => {
+    const customOption = {
+      id: CUSTOM_MODEL_METADATA_SOURCE_ID,
+      label: t("settings.providers.models.metadataSourceCustom"),
+      description: t("settings.providers.models.metadataSourceCustomDescription"),
+    };
+    return [customOption, ...candidates.map(describeCandidateOption)];
+  }, [candidates, t]);
+
+  const selectedSourceOption = useMemo(
+    () => sourceOptions.find((option) => option.id === sourceId) ?? sourceOptions[0]!,
+    [sourceId, sourceOptions],
+  );
+
+  const showSourcePicker = candidates.length > 1;
 
   useEffect(() => {
     if (!visible) {
       setModelId("");
       setLabel("");
       setContextWindow("");
+      setMaxOutput("");
+      setSourceId(CUSTOM_MODEL_METADATA_SOURCE_ID);
+      setCandidates([]);
+      setSummary(null);
+      setSourceOpen(false);
       setError(null);
       setLookupHint(null);
       setLookingUp(false);
-      lastAutofilledContextRef.current = null;
-      lastAutofilledLabelRef.current = null;
+      lastAutofilledRef.current = createEmptyAutofillSnapshot();
       return;
     }
     const fields = resolveCustomModelFormFields(mode);
     setModelId(fields.modelId);
     setLabel(fields.label);
     setContextWindow(fields.contextWindow);
+    setMaxOutput(fields.maxOutput);
+    setSourceId(fields.sourceId);
+    setSummary(fields.summary);
+    setCandidates([]);
     setError(null);
     setLookupHint(null);
-    lastAutofilledContextRef.current = null;
-    lastAutofilledLabelRef.current = null;
+    lastAutofilledRef.current = createEmptyAutofillSnapshot();
   }, [mode, visible]);
+
+  const applyCandidate = useCallback(
+    (candidate: ModelsDevCandidateLike, options?: { forceSource?: boolean }) => {
+      const applied = applyCandidateToFields(
+        candidate,
+        {
+          label,
+          contextWindow,
+          maxOutput,
+        },
+        lastAutofilledRef.current,
+      );
+      setLabel(applied.next.label);
+      setContextWindow(applied.next.contextWindow);
+      setMaxOutput(applied.next.maxOutput);
+      lastAutofilledRef.current = applied.lastAutofilled;
+      setSummary(candidate);
+      if (options?.forceSource !== false) {
+        setSourceId(candidateSourceId(candidate));
+      }
+    },
+    [contextWindow, label, maxOutput],
+  );
 
   const runModelsDevLookup = useCallback(async () => {
     const query = modelId.trim();
     if (!query || !client) {
-      return;
-    }
-    const supportsLookup = client.getLastServerInfoMessage?.()?.features?.modelsDevLookup === true;
-    if (!supportsLookup || typeof client.lookupModelsDevModel !== "function") {
       return;
     }
 
@@ -319,41 +493,29 @@ function CustomModelFormSubSheet({
     setLookingUp(true);
     setLookupHint(t("settings.providers.models.lookingUpModel"));
     try {
-      const result = await client.lookupModelsDevModel(query);
+      const preferredProviderId = mode.kind === "edit" ? mode.model.modelsDevProviderId : undefined;
+      const lookup = await resolveCustomModelLookup({
+        client,
+        modelId: query,
+        preferredProviderId,
+      });
       if (requestId !== lookupRequestIdRef.current) {
         return;
       }
-      if (!result.found || typeof result.contextWindowMaxTokens !== "number") {
+      if (lookup.kind !== "found" || !lookup.preferred) {
+        setCandidates([]);
+        setSourceId(CUSTOM_MODEL_METADATA_SOURCE_ID);
         setLookupHint(t("settings.providers.models.modelsDevNotFound"));
         return;
       }
 
-      const nextContext = String(result.contextWindowMaxTokens);
-      setContextWindow((current) => {
-        const canFill =
-          current.trim().length === 0 || current.trim() === lastAutofilledContextRef.current;
-        if (!canFill) {
-          return current;
-        }
-        lastAutofilledContextRef.current = nextContext;
-        return nextContext;
-      });
-
-      if (result.name) {
-        const nextLabel = result.name;
-        setLabel((current) => {
-          const canFill =
-            current.trim().length === 0 ||
-            current.trim() === query ||
-            current.trim() === lastAutofilledLabelRef.current;
-          if (!canFill) {
-            return current;
-          }
-          lastAutofilledLabelRef.current = nextLabel;
-          return nextLabel;
-        });
-      }
-      setLookupHint(t("settings.providers.models.modelsDevAutofilled"));
+      setCandidates(lookup.candidates);
+      applyCandidate(lookup.preferred);
+      setLookupHint(
+        lookup.candidates.length > 1
+          ? t("settings.providers.models.modelsDevChooseSource")
+          : t("settings.providers.models.modelsDevAutofilled"),
+      );
     } catch {
       if (requestId === lookupRequestIdRef.current) {
         setLookupHint(t("settings.providers.models.modelsDevLookupFailed"));
@@ -363,15 +525,33 @@ function CustomModelFormSubSheet({
         setLookingUp(false);
       }
     }
-  }, [client, modelId, t]);
+  }, [applyCandidate, client, mode, modelId, t]);
 
   const handleModelIdLookup = useCallback(() => {
     void runModelsDevLookup();
   }, [runModelsDevLookup]);
 
+  const openSourcePicker = useCallback(() => {
+    setSourceOpen(true);
+  }, []);
+
+  const handleSourceSelect = useCallback(
+    (nextSourceId: string) => {
+      setSourceOpen(false);
+      const candidate = resolveSelectedCandidate(nextSourceId, candidates, null);
+      if (!candidate) {
+        setSourceId(CUSTOM_MODEL_METADATA_SOURCE_ID);
+        return;
+      }
+      applyCandidate(candidate);
+    },
+    [applyCandidate, candidates],
+  );
+
   const handleSave = useCallback(() => {
     const contextTokens = parseContextWindowInput(contextWindow);
-    if (!canSave || contextTokens === "invalid") {
+    const maxOutputTokens = parseContextWindowInput(maxOutput);
+    if (!canSave || contextTokens === "invalid" || maxOutputTokens === "invalid") {
       return;
     }
     if (idConflict) {
@@ -379,11 +559,14 @@ function CustomModelFormSubSheet({
       return;
     }
 
-    const nextModel: ProviderProfileModel = {
+    const nextModel = buildSavedCustomModel({
       id: trimmedId,
       label: trimmedLabel.length > 0 ? trimmedLabel : trimmedId,
-      ...(contextTokens !== undefined ? { contextWindowMaxTokens: contextTokens } : {}),
-    };
+      contextTokens: contextTokens === undefined ? undefined : contextTokens,
+      maxOutputTokens: maxOutputTokens === undefined ? undefined : maxOutputTokens,
+      sourceId,
+      selectedCandidate: resolveSelectedCandidate(sourceId, candidates, summary),
+    });
     const nextModels = buildCustomModelList(additionalModels, nextModel, originalId);
 
     setError(null);
@@ -404,13 +587,17 @@ function CustomModelFormSubSheet({
   }, [
     additionalModels,
     canSave,
+    candidates,
     contextWindow,
     idConflict,
+    maxOutput,
     onClose,
     originalId,
     patchConfig,
     provider,
     refresh,
+    sourceId,
+    summary,
     t,
     trimmedId,
     trimmedLabel,
@@ -430,7 +617,7 @@ function CustomModelFormSubSheet({
       header={header}
       visible={visible}
       onClose={onClose}
-      desktopMaxWidth={420}
+      desktopMaxWidth={480}
       snapPoints={ADD_SNAP_POINTS}
       testID={isEdit ? "edit-custom-model-sheet" : "add-custom-model-sheet"}
     >
@@ -466,14 +653,90 @@ function CustomModelFormSubSheet({
           style={[sheetStyles.formInput, isWeb && { outlineStyle: "none" }]}
         />
 
+        {lookingUp || lookupHint ? (
+          <Text style={sheetStyles.descriptionInline}>{lookupHint}</Text>
+        ) : null}
+
+        {showSourcePicker ? (
+          <>
+            <Text style={sheetStyles.formLabel}>
+              {t("settings.providers.models.metadataSource")}
+            </Text>
+            <Text style={sheetStyles.descriptionInline}>
+              {t("settings.providers.models.metadataSourceHint")}
+            </Text>
+            <View ref={sourceAnchorRef} collapsable={false}>
+              <Pressable
+                onPress={openSourcePicker}
+                style={sheetStyles.sourceTrigger}
+                testID="custom-model-metadata-source"
+              >
+                <View style={sheetStyles.sourceTriggerText}>
+                  <Text style={sheetStyles.sourceTriggerLabel} numberOfLines={1}>
+                    {selectedSourceOption.label}
+                  </Text>
+                  {selectedSourceOption.description ? (
+                    <Text style={sheetStyles.descriptionInline} numberOfLines={1}>
+                      {selectedSourceOption.description}
+                    </Text>
+                  ) : null}
+                </View>
+                <ChevronDown size={16} color={theme.colors.foregroundMuted} />
+              </Pressable>
+            </View>
+            <Combobox
+              options={sourceOptions}
+              value={sourceId}
+              onSelect={handleSourceSelect}
+              searchable
+              searchPlaceholder={t("settings.providers.models.metadataSourceSearch")}
+              emptyText={t("settings.providers.models.metadataSourceEmpty")}
+              title={t("settings.providers.models.metadataSource")}
+              open={sourceOpen}
+              onOpenChange={setSourceOpen}
+              anchorRef={sourceAnchorRef}
+              desktopPlacement="bottom-start"
+              desktopMinWidth={360}
+            />
+          </>
+        ) : null}
+
+        <ModelMetadataSummary summary={summary} />
+
         <Text style={sheetStyles.formLabel}>{t("settings.providers.models.contextWindow")}</Text>
+        <Text style={sheetStyles.descriptionInline}>
+          {t("settings.providers.models.contextWindowHint")}
+        </Text>
         <AdaptiveTextInput
           initialValue={contextWindow}
           resetKey={`custom-model-window-${visible}-${originalId ?? "add"}`}
           value={contextWindow}
           onChangeText={setContextWindow}
-          onSubmitEditing={handleSave}
           placeholder={t("settings.providers.models.contextWindowPlaceholder")}
+          placeholderTextColor={theme.colors.foregroundMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="number-pad"
+          // @ts-expect-error - outlineStyle is web-only
+          style={[sheetStyles.formInput, isWeb && { outlineStyle: "none" }]}
+        />
+        {parsedContext === "invalid" ? (
+          <Text style={sheetStyles.errorText}>
+            {t("settings.providers.models.contextWindowInvalid")}
+          </Text>
+        ) : null}
+
+        <Text style={sheetStyles.formLabel}>{t("settings.providers.models.maxOutput")}</Text>
+        <Text style={sheetStyles.descriptionInline}>
+          {t("settings.providers.models.maxOutputHint")}
+        </Text>
+        <AdaptiveTextInput
+          initialValue={maxOutput}
+          resetKey={`custom-model-max-output-${visible}-${originalId ?? "add"}`}
+          value={maxOutput}
+          onChangeText={setMaxOutput}
+          onSubmitEditing={handleSave}
+          placeholder={t("settings.providers.models.maxOutputPlaceholder")}
           placeholderTextColor={theme.colors.foregroundMuted}
           autoCapitalize="none"
           autoCorrect={false}
@@ -482,17 +745,12 @@ function CustomModelFormSubSheet({
           // @ts-expect-error - outlineStyle is web-only
           style={[sheetStyles.formInput, isWeb && { outlineStyle: "none" }]}
         />
-        <Text style={sheetStyles.descriptionInline}>
-          {t("settings.providers.models.contextWindowHint")}
-        </Text>
-        {lookingUp || lookupHint ? (
-          <Text style={sheetStyles.descriptionInline}>{lookupHint}</Text>
-        ) : null}
-        {parsedContext === "invalid" ? (
+        {parsedMaxOutput === "invalid" ? (
           <Text style={sheetStyles.errorText}>
-            {t("settings.providers.models.contextWindowInvalid")}
+            {t("settings.providers.models.maxOutputInvalid")}
           </Text>
         ) : null}
+
         {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
         <View style={sheetStyles.formActions}>
           <Button variant="secondary" size="sm" onPress={onClose} disabled={saving}>
@@ -1140,6 +1398,83 @@ const sheetStyles = StyleSheet.create((theme) => ({
     justifyContent: "flex-end",
     gap: theme.spacing[2],
   },
+  sourceTrigger: {
+    minHeight: 44,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+    backgroundColor: theme.colors.surface0,
+  },
+  sourceTriggerText: {
+    flex: 1,
+    gap: 2,
+  },
+  sourceTriggerLabel: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+  },
+  summaryCard: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing[3],
+    gap: theme.spacing[2],
+    backgroundColor: theme.colors.surface0,
+  },
+  summaryGrid: {
+    flexDirection: "row",
+    gap: theme.spacing[3],
+  },
+  summaryCell: {
+    flex: 1,
+    gap: 2,
+  },
+  summaryRow: {
+    gap: theme.spacing[1],
+  },
+  summaryLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    textTransform: "uppercase",
+  },
+  summaryValue: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    fontWeight: theme.fontWeight.medium,
+  },
+  iconRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing[1],
+    alignItems: "center",
+  },
+  iconChip: {
+    width: 24,
+    height: 24,
+    borderRadius: theme.borderRadius.sm,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.surface1,
+  },
+  capabilityChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderRadius: theme.borderRadius.sm,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 2,
+    backgroundColor: theme.colors.surface1,
+  },
+  capabilityText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+  },
   codeBlockLoading: {
     paddingVertical: theme.spacing[4],
     paddingHorizontal: theme.spacing[4],
@@ -1150,5 +1485,5 @@ const sheetStyles = StyleSheet.create((theme) => ({
 }));
 
 const MAIN_SNAP_POINTS = ["65%", "92%"];
-const ADD_SNAP_POINTS = ["40%"];
+const ADD_SNAP_POINTS = ["70%", "92%"];
 const DIAGNOSTIC_SNAP_POINTS = ["50%", "85%"];

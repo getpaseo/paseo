@@ -37,8 +37,10 @@ import {
 } from "./background-tasks.js";
 import { mapClaudeProviderHeartbeatToolEvent } from "./provider-heartbeats.js";
 import {
-  applyClaudeAutoCompactWindowEnv,
   applyClaudeCustomModelEnvPins,
+  applyClaudeMaxContextTokensEnv,
+  applyClaudeMaxOutputTokensEnv,
+  resolveClaudeMaxOutputTokens,
   resolveClaudeContextWindowMaxTokens,
   getClaudeModelsWithSettings,
   normalizeClaudeRuntimeModelId,
@@ -407,7 +409,7 @@ interface ClaudeAgentClientOptions {
   defaults?: { agents?: Record<string, AgentDefinition> };
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
-  profileModels?: Array<{ id: string; contextWindowMaxTokens?: number }>;
+  profileModels?: Array<{ id: string; contextWindowMaxTokens?: number; maxOutputTokens?: number }>;
   queryFactory?: ClaudeQueryFactory;
   resolveBinary?: () => Promise<string>;
   resolveVersion?: () => Promise<string>;
@@ -417,7 +419,7 @@ interface ClaudeAgentClientOptions {
 interface ClaudeAgentSessionOptions {
   defaults?: { agents?: Record<string, AgentDefinition> };
   runtimeSettings?: ProviderRuntimeSettings;
-  profileModels?: Array<{ id: string; contextWindowMaxTokens?: number }>;
+  profileModels?: Array<{ id: string; contextWindowMaxTokens?: number; maxOutputTokens?: number }>;
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
@@ -1493,7 +1495,11 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
-  private readonly profileModels?: Array<{ id: string; contextWindowMaxTokens?: number }>;
+  private readonly profileModels?: Array<{
+    id: string;
+    contextWindowMaxTokens?: number;
+    maxOutputTokens?: number;
+  }>;
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: () => Promise<string>;
@@ -2029,7 +2035,11 @@ class ClaudeAgentSession implements AgentSession {
   private readonly agentId?: string;
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly runtimeSettings?: ProviderRuntimeSettings;
-  private readonly profileModels?: Array<{ id: string; contextWindowMaxTokens?: number }>;
+  private readonly profileModels?: Array<{
+    id: string;
+    contextWindowMaxTokens?: number;
+    maxOutputTokens?: number;
+  }>;
   private readonly persistSession?: boolean;
   private readonly logger: Logger;
   private readonly queryFactory?: ClaudeQueryFactory;
@@ -3300,7 +3310,12 @@ class ClaudeAgentSession implements AgentSession {
       modelId: this.config.model,
       profileModels: this.profileModels,
     });
-    return applyClaudeAutoCompactWindowEnv(pinned, configuredWindow);
+    const configuredMaxOutput = resolveClaudeMaxOutputTokens({
+      modelId: this.config.model,
+      profileModels: this.profileModels,
+    });
+    const withContext = applyClaudeMaxContextTokensEnv(pinned, configuredWindow);
+    return applyClaudeMaxOutputTokensEnv(withContext, configuredMaxOutput);
   }
 
   private async buildOptions(): Promise<ClaudeOptions> {

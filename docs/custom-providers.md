@@ -675,16 +675,27 @@ Every entry under `agents.providers` accepts these fields:
 
 Each entry in the `models` / `additionalModels` array:
 
-| Field                    | Type               | Required | Description                                                              |
-| ------------------------ | ------------------ | -------- | ------------------------------------------------------------------------ |
-| `id`                     | `string`           | Yes      | Model identifier sent to the provider                                    |
-| `label`                  | `string`           | Yes      | Display name in the UI                                                   |
-| `description`            | `string`           | No       | Short description                                                        |
-| `isDefault`              | `boolean`          | No       | Mark as the default model selection                                      |
-| `contextWindowMaxTokens` | `number`           | No       | Context window size in tokens (used by usage meter + Claude compact env) |
-| `thinkingOptions`        | `ThinkingOption[]` | No       | Available thinking/reasoning levels                                      |
+| Field                    | Type               | Required | Description                                                                   |
+| ------------------------ | ------------------ | -------- | ----------------------------------------------------------------------------- |
+| `id`                     | `string`           | Yes      | Model identifier sent to the provider                                         |
+| `label`                  | `string`           | Yes      | Display name in the UI                                                        |
+| `description`            | `string`           | No       | Short description                                                             |
+| `isDefault`              | `boolean`          | No       | Mark as the default model selection                                           |
+| `contextWindowMaxTokens` | `number`           | No       | Context window size in tokens (usage meter + Claude capacity override)        |
+| `maxOutputTokens`        | `number`           | No       | Max single-response tokens (Claude `CLAUDE_CODE_MAX_OUTPUT_TOKENS` when set)  |
+| `modelsDevProviderId`    | `string`           | No       | models.dev provider id used for metadata, or `custom` for fully manual values |
+| `modelsDevMatchedId`     | `string`           | No       | Exact models.dev model id selected for metadata                               |
+| `inputModalities`        | `string[]`         | No       | Snapshot of accepted input types from models.dev                              |
+| `outputModalities`       | `string[]`         | No       | Snapshot of output types from models.dev                                      |
+| `capabilities`           | `string[]`         | No       | Snapshot of capability chips from models.dev                                  |
+| `thinkingOptions`        | `ThinkingOption[]` | No       | Available thinking/reasoning levels                                           |
 
-In Settings → Providers → a provider sheet, custom models can be **added and edited**. The form accepts Model ID, optional Label, and optional Context window. On Model ID blur, the daemon looks up [models.dev](https://models.dev) (`limit.context`) when `server_info.features.modelsDevLookup` is present and autofills the context window (and label when empty). Manual values always win over autofill.
+In Settings → Providers → a provider sheet, custom models can be **added and edited**. The form accepts Model ID, optional Label, Context Window, and Max Output. On Model ID blur, the daemon looks up [models.dev](https://models.dev) when `server_info.features.modelsDevLookup` is present and returns every matching host listing (`limit.context`, `limit.output`, modalities, capabilities).
+
+- One clear listing: autofill Context Window, Max Output, and label when empty.
+- Multiple listings: show a searchable **Metadata Source** dropdown (always includes **Custom**). Changing the source updates only fields still empty or previously autofilled.
+- Not found / lookup failed: save still works; leave fields blank or set them manually.
+- Manual values always win over autofill.
 
 ### Thinking option
 
@@ -719,14 +730,15 @@ Rules:
 - User-provided values win: if a pin key is already set in process env, `agents.providers.*.env`, or launch env, Paseo leaves it alone.
 - The main chat model is still enforced separately via the Claude Agent SDK `model` option.
 
-### Custom model context window + Claude auto-compact
+### Custom model context window + max output
 
-When a Claude model entry under `agents.providers.claude.models` / `additionalModels` sets `contextWindowMaxTokens` (for example `500000`), Paseo:
+When a Claude model entry under `agents.providers.claude.models` / `additionalModels` sets capacity fields, Paseo:
 
-1. Merges that value into the runtime model catalog and seeds the composer context-window meter max for sessions on that model.
-2. Fill-if-missing sets session env `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to the token count as a string (`"500000"`).
+1. Merges `contextWindowMaxTokens` into the runtime model catalog and seeds the composer context-window meter max for sessions on that model.
+2. Fill-if-missing sets session env `CLAUDE_CODE_MAX_CONTEXT_TOKENS` from `contextWindowMaxTokens` so Claude Code treats the custom model as that capacity and derives its own auto-compact threshold.
+3. Fill-if-missing sets session env `CLAUDE_CODE_MAX_OUTPUT_TOKENS` from `maxOutputTokens` when present. Leave it unset when unknown so Claude Code keeps its custom-model default (32k).
 
-User/provider process env still wins for `CLAUDE_CODE_AUTO_COMPACT_WINDOW`. Runtime Claude-reported windows may still update the meter max after usage events.
+User/provider process env still wins for both keys and can still set `CLAUDE_CODE_AUTO_COMPACT_WINDOW` explicitly when a custom compaction threshold is desired. Runtime Claude-reported windows may still update the meter max after usage events.
 
 ### Gotcha: `extends: "claude"` with third-party endpoints
 

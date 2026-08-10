@@ -224,7 +224,14 @@ export function applyClaudeCustomModelEnvPins(
   return changed ? next : env;
 }
 
-export const CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
+export const CLAUDE_MAX_CONTEXT_TOKENS_ENV_KEY = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
+export const CLAUDE_MAX_OUTPUT_TOKENS_ENV_KEY = "CLAUDE_CODE_MAX_OUTPUT_TOKENS";
+
+interface ClaudeProfileModelLimits {
+  id: string;
+  contextWindowMaxTokens?: number;
+  maxOutputTokens?: number;
+}
 
 /**
  * Resolve the preferred context-window max for a selected Claude model.
@@ -232,14 +239,9 @@ export const CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY = "CLAUDE_CODE_AUTO_COMPACT_WIND
  */
 export function resolveClaudeContextWindowMaxTokens(options: {
   modelId: string | null | undefined;
-  profileModels?: Array<{ id: string; contextWindowMaxTokens?: number }>;
+  profileModels?: ClaudeProfileModelLimits[];
 }): number | undefined {
-  const trimmed = typeof options.modelId === "string" ? options.modelId.trim() : "";
-  if (!trimmed) {
-    return undefined;
-  }
-
-  const profileMatch = options.profileModels?.find((model) => model.id === trimmed);
+  const profileMatch = findProfileModel(options.modelId, options.profileModels);
   if (
     typeof profileMatch?.contextWindowMaxTokens === "number" &&
     Number.isFinite(profileMatch.contextWindowMaxTokens) &&
@@ -248,29 +250,79 @@ export function resolveClaudeContextWindowMaxTokens(options: {
     return Math.trunc(profileMatch.contextWindowMaxTokens);
   }
 
+  const trimmed = typeof options.modelId === "string" ? options.modelId.trim() : "";
+  if (!trimmed) {
+    return undefined;
+  }
   return findClaudeModel(trimmed)?.contextWindowMaxTokens;
 }
 
 /**
- * Fill-if-missing CLAUDE_CODE_AUTO_COMPACT_WINDOW from a configured context window.
+ * Resolve the preferred max-output tokens for a selected Claude model.
+ * Only profile/additional model config is used; first-party models keep Claude Code defaults.
  */
-export function applyClaudeAutoCompactWindowEnv(
+export function resolveClaudeMaxOutputTokens(options: {
+  modelId: string | null | undefined;
+  profileModels?: ClaudeProfileModelLimits[];
+}): number | undefined {
+  const profileMatch = findProfileModel(options.modelId, options.profileModels);
+  if (
+    typeof profileMatch?.maxOutputTokens === "number" &&
+    Number.isFinite(profileMatch.maxOutputTokens) &&
+    profileMatch.maxOutputTokens > 0
+  ) {
+    return Math.trunc(profileMatch.maxOutputTokens);
+  }
+  return undefined;
+}
+
+/**
+ * Fill-if-missing CLAUDE_CODE_MAX_CONTEXT_TOKENS from a configured context window.
+ * Claude Code uses this value to calculate its own auto-compact threshold.
+ */
+export function applyClaudeMaxContextTokensEnv(
   env: NodeJS.ProcessEnv,
   contextWindowMaxTokens: number | undefined,
 ): NodeJS.ProcessEnv {
-  if (
-    typeof contextWindowMaxTokens !== "number" ||
-    !Number.isFinite(contextWindowMaxTokens) ||
-    contextWindowMaxTokens <= 0
-  ) {
+  return applyPositiveTokenEnv(env, CLAUDE_MAX_CONTEXT_TOKENS_ENV_KEY, contextWindowMaxTokens);
+}
+
+/**
+ * Fill-if-missing CLAUDE_CODE_MAX_OUTPUT_TOKENS from a configured max output.
+ * Leave unset when unknown so Claude Code keeps its custom-model default.
+ */
+export function applyClaudeMaxOutputTokensEnv(
+  env: NodeJS.ProcessEnv,
+  maxOutputTokens: number | undefined,
+): NodeJS.ProcessEnv {
+  return applyPositiveTokenEnv(env, CLAUDE_MAX_OUTPUT_TOKENS_ENV_KEY, maxOutputTokens);
+}
+
+function findProfileModel(
+  modelId: string | null | undefined,
+  profileModels: ClaudeProfileModelLimits[] | undefined,
+): ClaudeProfileModelLimits | undefined {
+  const trimmed = typeof modelId === "string" ? modelId.trim() : "";
+  if (!trimmed) {
+    return undefined;
+  }
+  return profileModels?.find((model) => model.id === trimmed);
+}
+
+function applyPositiveTokenEnv(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  value: number | undefined,
+): NodeJS.ProcessEnv {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return env;
   }
-  if (hasNonEmptyEnvValue(env[CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY])) {
+  if (hasNonEmptyEnvValue(env[key])) {
     return env;
   }
   return {
     ...env,
-    [CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY]: String(Math.trunc(contextWindowMaxTokens)),
+    [key]: String(Math.trunc(value)),
   };
 }
 
