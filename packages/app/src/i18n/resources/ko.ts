@@ -273,6 +273,14 @@ export const ko: TranslationResources = {
     },
   },
   message: {
+    mermaid: {
+      diagram: "Mermaid 다이어그램",
+      zoomIn: "확대",
+      zoomOut: "축소",
+      resetZoom: "보기 초기화",
+      viewSource: "소스 보기",
+      viewDiagram: "다이어그램 보기",
+    },
     actions: {
       copyCode: "코드 복사",
       copyTurn: "턴 복사",
