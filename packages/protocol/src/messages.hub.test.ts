@@ -124,7 +124,7 @@ describe("Hub session protocol", () => {
 
   test("round-trips native provider options and structured MCP preapproval", () => {
     const message = {
-      type: "hub.execution.agent.create.request",
+      type: "hub.execution.agent.create.v2.request",
       requestId: "request-policy",
       executionId: "execution-policy",
       provider: "codex",
@@ -143,6 +143,21 @@ describe("Hub session protocol", () => {
     };
 
     expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
+    expect(PreviousHubAgentCreateRequestSchema.safeParse(message).success).toBe(false);
+  });
+
+  test("rejects provider options on the legacy Hub create request", () => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-legacy-policy",
+      executionId: "execution-legacy-policy",
+      provider: "codex",
+      cwd: "/workspace",
+      prompt: "Do not silently downgrade",
+      providerOptions: { sandbox_mode: "workspace-write" },
+    };
+
+    expect(SessionInboundMessageSchema.safeParse(message).success).toBe(false);
   });
 
   test.each(["Bash", "Edit", "Write"])("cannot encode native %s tool preapproval", (tool) => {
@@ -229,6 +244,35 @@ describe("Hub session protocol", () => {
       expect(parseHubExecutionOutboundMessage(response)).toEqual(response);
     },
   );
+
+  test("requires an applied-options acknowledgment on successful v2 creates", () => {
+    const response = {
+      type: "hub.execution.agent.create.v2.response",
+      payload: {
+        requestId: "request-v2",
+        executionId: "execution-v2",
+        agentId: "agent-1",
+        agent,
+        success: true,
+        providerOptionsApplied: true,
+        error: null,
+      },
+    };
+
+    expect(parseHubExecutionOutboundMessage(response)).toEqual(response);
+    expect(
+      SessionOutboundMessageSchema.safeParse({
+        ...response,
+        payload: { ...response.payload, providerOptionsApplied: undefined },
+      }).success,
+    ).toBe(false);
+    expect(
+      SessionOutboundMessageSchema.safeParse({
+        ...response,
+        payload: { ...response.payload, providerOptionsApplied: false },
+      }).success,
+    ).toBe(false);
+  });
 
   test("the previous Hub create parser ignores additive worktree and auto-archive fields", () => {
     const newRequest = {

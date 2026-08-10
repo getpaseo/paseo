@@ -34,11 +34,14 @@ browser, binary, retained-session, or broadcast state. Its outbound execution ev
 agents owned by that daemon identity, so unrelated local agents remain outside the Hub surface.
 
 Each Hub create carries an execution ID. The daemon stores that ID with the agent's relationship
-owner before acknowledging creation. Duplicate or replayed creates for the same daemon and
-execution resolve to the same durable agent. After a lost response, reconnect, or daemon restart,
-the Hub retries `hub.execution.agent.create.request` with the same execution ID. The idempotent
-response returns the existing agent and its current state; there is no separate reconciliation RPC.
-Transient stream frames are not durably replayed.
+owner before acknowledging creation and binds it to a canonical fingerprint of the immutable create
+request. Duplicate or replayed creates for the same daemon and execution resolve to the same durable
+agent only when that fingerprint matches; changed provider, model, prompt, isolation target,
+provider options, MCP configuration, tool policy, or other create input is rejected. After a lost
+response, reconnect, or daemon restart, the Hub retries the same request version and exact payload
+with the same execution ID. It must never downgrade a v2 request to the legacy create type. The
+idempotent response returns the existing agent and its current state; there is no separate
+reconciliation RPC. Transient stream frames are not durably replayed.
 
 Daemon restart preserves the Hub relationship and owned execution identity, but interrupts any
 active turn. The daemon persists that agent as `closed`; an idempotent create retry returns the same
@@ -49,8 +52,11 @@ turn.
 Every Hub execution creates a fresh Paseo workspace. The workspace owns the execution's agents and
 terminals. Local checkout and worktree targets select only the workspace backing and isolation; the
 Hub cannot select or reuse an existing workspace. Hub creates use the same agent creation path as
-trusted clients. They may select any worktree target shape and carry optional MCP server configuration and provider-native
-`providerOptions` for the agent session. The daemon keeps that configuration in its private agent
+trusted clients. They may select any worktree target shape and carry optional MCP server
+configuration. Provider-native `providerOptions` require the strict
+`hub.execution.agent.create.v2.request`; a successful v2 response requires
+`providerOptionsApplied: true`. The legacy create request rejects provider options. The daemon keeps
+that configuration in its private agent
 record so provider sessions can recover after a restart; neither ordinary client snapshots and
 updates nor Hub projections expose session configuration. See [providers.md](providers.md) for the
 supported provider keys.

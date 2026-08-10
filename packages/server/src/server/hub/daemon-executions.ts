@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   AgentSnapshotPayload,
   AgentStreamEventPayload,
@@ -40,6 +41,8 @@ export interface HubExecutionControlInput {
 export interface OwnedAgentSnapshot {
   executionId: string;
   agent: AgentSnapshotPayload;
+  providerOptionsApplied: boolean;
+  toolPolicyApplied: boolean;
 }
 
 export type OwnedAgentEvent =
@@ -76,7 +79,10 @@ export class DaemonExecutions implements HubExecutionAgents {
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly createAgentCommand: BoundCreateAgentCommand;
-  private readonly pendingCreates = new Map<string, Promise<OwnedAgentSnapshot>>();
+  private readonly pendingCreates = new Map<
+    string,
+    { fingerprint: string; promise: Promise<OwnedAgentSnapshot> }
+  >();
   private readonly pendingControlActions = new Map<string, Promise<void>>();
   private readonly controlTails = new Map<string, Promise<void>>();
   private authorityGeneration = 0;
@@ -95,20 +101,24 @@ export class DaemonExecutions implements HubExecutionAgents {
     if (!this.authorityActive) {
       return Promise.reject(new Error("Hub relationship authority is no longer active"));
     }
-    const owner = this.owner(input.executionId);
+    const fingerprint = fingerprintHubExecutionCreate(input);
+    const owner = this.owner(input.executionId, fingerprint);
     const key = daemonExecutionKey(owner);
     const pending = this.pendingCreates.get(key);
     if (pending) {
-      return pending;
+      if (pending.fingerprint !== fingerprint) {
+        return Promise.reject(createInputMismatchError(input.executionId));
+      }
+      return pending.promise;
     }
 
     const authorityGeneration = this.authorityGeneration;
     const create = this.createOrResolve(owner, input, authorityGeneration).finally(() => {
-      if (this.pendingCreates.get(key) === create) {
+      if (this.pendingCreates.get(key)?.promise === create) {
         this.pendingCreates.delete(key);
       }
     });
-    this.pendingCreates.set(key, create);
+    this.pendingCreates.set(key, { fingerprint, promise: create });
     return create;
   }
 
@@ -124,7 +134,7 @@ export class DaemonExecutions implements HubExecutionAgents {
 
     const previous =
       this.controlTails.get(executionKey) ??
-      this.pendingCreates.get(executionKey)?.then(() => undefined) ??
+      this.pendingCreates.get(executionKey)?.promise.then(() => undefined) ??
       Promise.resolve();
     const authorityGeneration = this.authorityGeneration;
     const control = previous
@@ -148,7 +158,7 @@ export class DaemonExecutions implements HubExecutionAgents {
     this.authorityActive = false;
     this.authorityGeneration++;
     await Promise.allSettled([
-      ...this.pendingCreates.values(),
+      ...[...this.pendingCreates.values()].map((pending) => pending.promise),
       ...this.pendingControlActions.values(),
     ]);
   }
@@ -173,8 +183,9 @@ export class DaemonExecutions implements HubExecutionAgents {
     const existing = await this.agentStorage.findByDaemonExecution(owner);
     if (existing) {
       requireExecutionWorkspaceId(existing);
+      this.requireMatchingCreate(existing, input, owner.createFingerprint);
       this.requireAuthority(authorityGeneration);
-      return this.resolveRecord(existing);
+      return this.resolveRecord(existing, input);
     }
     this.requireAuthority(authorityGeneration);
     requireHubMcpNamespace(input.mcpServers);
@@ -244,6 +255,8 @@ export class DaemonExecutions implements HubExecutionAgents {
     return {
       executionId: owner.executionId,
       agent: serializeAgentSnapshot(result.liveSnapshot),
+      providerOptionsApplied: input.providerOptions !== undefined,
+      toolPolicyApplied: input.toolPolicy !== undefined,
     };
   }
 
@@ -272,9 +285,12 @@ export class DaemonExecutions implements HubExecutionAgents {
     await this.options.archiveWorkspace(workspaceId, input.requestId);
   }
 
-  private resolveRecord(record: StoredAgentRecord): OwnedAgentSnapshot {
+  private resolveRecord(
+    record: StoredAgentRecord,
+    input: HubExecutionAgentCreateInput,
+  ): OwnedAgentSnapshot {
     requireExecutionWorkspaceId(record);
-    return this.projectRecord(record);
+    return this.projectRecord(record, input);
   }
 
   private requireAuthority(authorityGeneration: number, operation = "agent creation"): void {
@@ -283,7 +299,10 @@ export class DaemonExecutions implements HubExecutionAgents {
     }
   }
 
-  private projectRecord(record: StoredAgentRecord): OwnedAgentSnapshot {
+  private projectRecord(
+    record: StoredAgentRecord,
+    input: HubExecutionAgentCreateInput,
+  ): OwnedAgentSnapshot {
     const owner = this.requireOwner(record);
     const live = this.agentManager.getAgent(record.id);
     return {
@@ -294,7 +313,30 @@ export class DaemonExecutions implements HubExecutionAgents {
             ...buildStoredAgentPayload(record, this.agentManager.getRegisteredProviderIds()),
             status: "closed",
           },
+      providerOptionsApplied: input.providerOptions !== undefined,
+      toolPolicyApplied: input.toolPolicy !== undefined,
     };
+  }
+
+  private requireMatchingCreate(
+    record: StoredAgentRecord,
+    input: HubExecutionAgentCreateInput,
+    requestedFingerprint: string | undefined,
+  ): void {
+    const owner = this.requireOwner(record);
+    if (owner.createFingerprint === undefined) {
+      if (
+        input.providerOptions !== undefined ||
+        input.toolPolicy !== undefined ||
+        input.mcpServers
+      ) {
+        throw createInputMismatchError(input.executionId);
+      }
+      return;
+    }
+    if (owner.createFingerprint !== requestedFingerprint) {
+      throw createInputMismatchError(input.executionId);
+    }
   }
 
   private projectEvent(event: AgentManagerEvent): OwnedAgentEvent | null {
@@ -335,8 +377,8 @@ export class DaemonExecutions implements HubExecutionAgents {
     return agent?.owner?.kind === "daemon" && agent.owner.daemonId === this.daemonId;
   }
 
-  private owner(executionId: string): DaemonAgentOwner {
-    return { kind: "daemon", daemonId: this.daemonId, executionId };
+  private owner(executionId: string, createFingerprint?: string): DaemonAgentOwner {
+    return { kind: "daemon", daemonId: this.daemonId, executionId, createFingerprint };
   }
 
   private requireOwner(record: StoredAgentRecord): DaemonAgentOwner {
@@ -346,6 +388,27 @@ export class DaemonExecutions implements HubExecutionAgents {
     }
     return owner;
   }
+}
+
+function fingerprintHubExecutionCreate(input: HubExecutionAgentCreateInput): string {
+  return createHash("sha256")
+    .update(JSON.stringify(sortJsonValue(input)))
+    .digest("hex");
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonValue);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, sortJsonValue(entry)]),
+  );
+}
+
+function createInputMismatchError(executionId: string): Error {
+  return new Error(`Hub execution ${executionId} is already bound to a different create request`);
 }
 
 function requireHubMcpNamespace(mcpServers: Record<string, McpServerConfig> | undefined): void {

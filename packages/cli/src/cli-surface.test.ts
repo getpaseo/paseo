@@ -29,6 +29,11 @@ describe("canonical CLI surface", () => {
     expect(help).toContain("--forge <forge>");
   });
 
+  it("offers provider-specific execution options on run", () => {
+    const run = createCli().commands.find((command) => command.name() === "run");
+    expect(run?.helpInformation()).toContain("--provider-options <json-or-path>");
+  });
+
   it("uses background for execution and reserves detach for ownership", () => {
     const run = createCli().commands.find((command) => command.name() === "run");
     expect(run?.helpInformation()).toContain("--background");

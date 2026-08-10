@@ -1,6 +1,7 @@
 import { Command, Option } from "commander";
 import { getStructuredAgentResponse, StructuredAgentResponseError } from "@getpaseo/server";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type {
   CommandOptions,
@@ -39,6 +40,10 @@ export function addRunOptions(cmd: Command): Command {
       )
       .option("--thinking <id>", "Thinking option ID to use for this run")
       .option("--mode <mode>", "Provider-specific mode (e.g., plan, default, bypass)")
+      .option(
+        "--provider-options <json-or-path>",
+        "Provider-specific JSON options, supplied inline or as a file path",
+      )
       .option("--new-workspace <local|worktree>", "Create a separate local or worktree workspace")
       .addOption(new Option("--worktree <name>", "Legacy workspace isolation alias").hideHelp())
       .option(
@@ -115,6 +120,7 @@ export interface AgentRunOptions extends CommandOptions {
   model?: string;
   thinking?: string;
   mode?: string;
+  providerOptions?: string;
   newWorkspace?: string;
   worktree?: string;
   worktreeMode?: string;
@@ -215,6 +221,54 @@ function loadOutputSchema(value: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+export function loadProviderOptions(value: string): ProviderOptions {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw {
+      code: "INVALID_PROVIDER_OPTIONS",
+      message: "--provider-options cannot be empty",
+      details: "Provide an inline JSON object or a path to a JSON file",
+    } satisfies CommandError;
+  }
+
+  let source = trimmed;
+  if (!trimmed.startsWith("{")) {
+    try {
+      source = readFileSync(resolve(trimmed), "utf8");
+    } catch (err) {
+      throw {
+        code: "INVALID_PROVIDER_OPTIONS",
+        message: `Failed to read provider options file: ${trimmed}`,
+        details: err instanceof Error ? err.message : String(err),
+      } satisfies CommandError;
+    }
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch (err) {
+    throw {
+      code: "INVALID_PROVIDER_OPTIONS",
+      message: "Failed to parse provider options JSON",
+      details: err instanceof Error ? err.message : String(err),
+    } satisfies CommandError;
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw {
+      code: "INVALID_PROVIDER_OPTIONS",
+      message: "Provider options must be a JSON object",
+    } satisfies CommandError;
+  }
+
+  return parsed as ProviderOptions;
+}
+
+function loadOptionalProviderOptions(value: string | undefined): ProviderOptions | undefined {
+  return value === undefined ? undefined : loadProviderOptions(value);
+}
+
 class StructuredRunStatusError extends Error {
   readonly kind: "timeout" | "permission" | "error" | "empty";
 
@@ -260,6 +314,24 @@ async function fetchStructuredOutput(
 }
 
 type ConnectedDaemonClient = Awaited<ReturnType<typeof connectToDaemon>>;
+
+function requireProviderOptionsCapability(
+  client: Pick<ConnectedDaemonClient, "getLastServerInfoMessage">,
+  providerOptions: ProviderOptions | undefined,
+): void {
+  // COMPAT(agentProviderOptions): added in v0.3.1, remove gate after 2027-08-09.
+  // Old daemons accept the additive wire field but discard it, which would
+  // silently launch with a different execution policy.
+  if (
+    providerOptions !== undefined &&
+    client.getLastServerInfoMessage()?.features?.agentProviderOptions !== true
+  ) {
+    throw {
+      code: "DAEMON_UPDATE_REQUIRED",
+      message: "Update the host to use provider-specific run options.",
+    } satisfies CommandError;
+  }
+}
 
 export interface StructuredResponseTimelineClient {
   fetchAgentTimeline: ConnectedDaemonClient["fetchAgentTimeline"];
@@ -588,6 +660,7 @@ export async function runRunCommand(
 ): Promise<SingleResult<AgentRunResult>> {
   const host = getDaemonHost({ host: options.host });
   const outputSchema = options.outputSchema ? loadOutputSchema(options.outputSchema) : undefined;
+  const providerOptions = loadOptionalProviderOptions(options.providerOptions);
 
   validateRunOptions(prompt, options, outputSchema);
   const waitTimeoutMs = parseWaitTimeoutOption(options.waitTimeout);
@@ -617,6 +690,8 @@ export async function runRunCommand(
     const env = parseRunEnv(options.env);
     const requestEnv = Object.keys(env).length > 0 ? env : undefined;
 
+    requireProviderOptionsCapability(client, providerOptions);
+
     const workspace = await resolveRunWorkspace(client, options, cwd);
     const workspaceId = workspace.id;
     const callerAgentId = resolveRunCallerAgentId();
@@ -636,6 +711,7 @@ export async function runRunCommand(
             modeId: options.mode,
             model: resolvedProviderModel.model,
             thinkingOptionId,
+            providerOptions,
             initialPrompt: structuredPrompt,
             outputSchema,
             images,
@@ -707,6 +783,7 @@ export async function runRunCommand(
       modeId: options.mode,
       model: resolvedProviderModel.model,
       thinkingOptionId,
+      providerOptions,
       initialPrompt: prompt,
       images,
       env: requestEnv,

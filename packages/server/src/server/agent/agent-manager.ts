@@ -4358,7 +4358,7 @@ export class AgentManager {
     config: AgentSessionConfig,
     options: NormalizeConfigOptions = {},
   ): Promise<AgentSessionConfig> {
-    const normalized: AgentSessionConfig = { ...config };
+    let normalized: AgentSessionConfig = { ...config };
 
     // Always resolve cwd to absolute path for consistent history file lookup
     if (normalized.cwd) {
@@ -4388,6 +4388,10 @@ export class AgentManager {
       normalized.model = trimmed.length > 0 && trimmed !== "default" ? trimmed : undefined;
     }
 
+    // Validate and normalize caller-supplied provider policy before catalog
+    // discovery, which can start a provider helper process.
+    normalized = this.applyProviderConfiguration(normalized);
+
     const shouldResolveDefaultModel = options.resolveDefaultModel ?? true;
     if (shouldResolveDefaultModel && !normalized.model) {
       const defaultModelId = await this.resolveDefaultModelId(normalized);
@@ -4396,7 +4400,7 @@ export class AgentManager {
       }
     }
 
-    return this.applyProviderConfiguration(normalized);
+    return normalized;
   }
 
   private applyProviderConfiguration(config: AgentSessionConfig): AgentSessionConfig {

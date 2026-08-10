@@ -2508,8 +2508,7 @@ export const CaptureTerminalRequestSchema = z.object({
   requestId: z.string(),
 });
 
-export const HubExecutionAgentCreateRequestSchema = z.object({
-  type: z.literal("hub.execution.agent.create.request"),
+const HubExecutionAgentCreateRequestFields = {
   requestId: z.string(),
   executionId: z.string(),
   provider: z.string(),
@@ -2521,14 +2520,30 @@ export const HubExecutionAgentCreateRequestSchema = z.object({
   modeId: z.string().optional(),
   thinkingOptionId: z.string().optional(),
   featureValues: z.record(z.string(), z.unknown()).optional(),
-  providerOptions: ProviderOptionsSchema.optional(),
   toolPolicy: ToolPolicySchema.optional(),
   env: z.record(z.string(), z.string()).optional(),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
   worktree: CreateAgentWorktreeTargetSchema.optional(),
+};
+
+export const HubExecutionAgentCreateRequestSchema = z.object({
+  type: z.literal("hub.execution.agent.create.request"),
+  ...HubExecutionAgentCreateRequestFields,
+  // Security-sensitive provider options require the versioned request below.
+  providerOptions: z.never().optional(),
 });
 
-export type HubExecutionAgentCreateRequest = z.infer<typeof HubExecutionAgentCreateRequestSchema>;
+export const HubExecutionAgentCreateV2RequestSchema = z
+  .object({
+    type: z.literal("hub.execution.agent.create.v2.request"),
+    ...HubExecutionAgentCreateRequestFields,
+    providerOptions: ProviderOptionsSchema,
+  })
+  .strict();
+
+export type HubExecutionAgentCreateRequest =
+  | z.infer<typeof HubExecutionAgentCreateRequestSchema>
+  | z.infer<typeof HubExecutionAgentCreateV2RequestSchema>;
 
 const HubExecutionAgentCreateErrorSchema = z.discriminatedUnion("code", [
   z.object({
@@ -2569,6 +2584,7 @@ export type HubExecutionControlRequest = z.infer<typeof HubExecutionControlReque
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateRequestSchema,
+  HubExecutionAgentCreateV2RequestSchema,
   HubExecutionControlRequestSchema,
   BrowserAutomationExecuteResponseSchema,
   VoiceAudioChunkMessageSchema,
@@ -2941,6 +2957,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentDetach: z.boolean().optional(),
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
         agentThinkingUpdate: z.boolean().optional(),
+        // COMPAT(agentProviderOptions): added in v0.3.1, remove gate after 2027-08-09.
+        agentProviderOptions: z.boolean().optional(),
         // COMPAT(daemonDiagnostics): added in v0.1.100, remove gate after 2026-12-25 once daemon floor >= v0.1.100.
         daemonDiagnostics: z.boolean().optional(),
         // COMPAT(daemonSelfUpdate): added in v0.1.93, remove gate after 2026-12-13.
@@ -5340,6 +5358,36 @@ export const HubExecutionAgentCreateResponseSchema = z.object({
   }),
 });
 
+export const HubExecutionAgentCreateV2ResponseSchema = z
+  .object({
+    type: z.literal("hub.execution.agent.create.v2.response"),
+    payload: z.discriminatedUnion("success", [
+      z
+        .object({
+          requestId: z.string(),
+          executionId: z.string(),
+          agentId: z.string(),
+          agent: AgentSnapshotPayloadSchema,
+          success: z.literal(true),
+          providerOptionsApplied: z.literal(true),
+          toolPolicyApplied: z.literal(true).optional(),
+          error: z.null(),
+        })
+        .strict(),
+      z
+        .object({
+          requestId: z.string(),
+          executionId: z.string(),
+          agentId: z.null(),
+          agent: z.null(),
+          success: z.literal(false),
+          error: HubExecutionAgentCreateErrorSchema,
+        })
+        .strict(),
+    ]),
+  })
+  .strict();
+
 export const HubExecutionControlResponseSchema = z.object({
   type: z.literal("hub.execution.control.response"),
   payload: z.object({
@@ -5370,12 +5418,16 @@ export const HubExecutionAgentStreamSchema = z.object({
 });
 
 export type HubExecutionAgentCreateResponse = z.infer<typeof HubExecutionAgentCreateResponseSchema>;
+export type HubExecutionAgentCreateV2Response = z.infer<
+  typeof HubExecutionAgentCreateV2ResponseSchema
+>;
 export type HubExecutionControlResponse = z.infer<typeof HubExecutionControlResponseSchema>;
 export type HubExecutionAgentUpdate = z.infer<typeof HubExecutionAgentUpdateSchema>;
 export type HubExecutionAgentStream = z.infer<typeof HubExecutionAgentStreamSchema>;
 
 export const HubExecutionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateResponseSchema,
+  HubExecutionAgentCreateV2ResponseSchema,
   HubExecutionControlResponseSchema,
   HubExecutionAgentUpdateSchema,
   HubExecutionAgentStreamSchema,
@@ -5409,6 +5461,7 @@ export type DaemonUpdateProgressMessage = z.infer<typeof DaemonUpdateProgressMes
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateResponseSchema,
+  HubExecutionAgentCreateV2ResponseSchema,
   HubExecutionControlResponseSchema,
   HubExecutionAgentUpdateSchema,
   HubExecutionAgentStreamSchema,

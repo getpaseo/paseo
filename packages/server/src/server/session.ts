@@ -1965,7 +1965,10 @@ export class Session {
   }
 
   private dispatchHubExecutionMessage(msg: SessionInboundMessage): Promise<void> | undefined {
-    if (msg.type === "hub.execution.agent.create.request") {
+    if (
+      msg.type === "hub.execution.agent.create.request" ||
+      msg.type === "hub.execution.agent.create.v2.request"
+    ) {
       return this.hubExecutionController?.createAgent(msg);
     }
     if (msg.type === "hub.execution.control.request") {

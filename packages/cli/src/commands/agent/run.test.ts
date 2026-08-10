@@ -1,10 +1,54 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  loadProviderOptions,
   resolveExistingRunWorkspace,
   resolveRunCallerAgentId,
   runRunCommand,
   type AgentRunOptions,
 } from "./run";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+describe("provider options loading", () => {
+  it("accepts an inline JSON object", () => {
+    expect(
+      loadProviderOptions(
+        '{"sandbox_mode":"workspace-write","sandbox_workspace_write":{"network_access":false}}',
+      ),
+    ).toEqual({
+      sandbox_mode: "workspace-write",
+      sandbox_workspace_write: { network_access: false },
+    });
+  });
+
+  it("accepts a JSON object from a file", () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-provider-options-"));
+    const path = join(directory, "options.json");
+    try {
+      writeFileSync(path, '{"sandbox_mode":"read-only"}', "utf8");
+      expect(loadProviderOptions(path)).toEqual({ sandbox_mode: "read-only" });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["[]", "null", '"workspace-write"'])("rejects non-object JSON: %s", (value) => {
+    expect(() => loadProviderOptions(value)).toThrow();
+  });
+
+  it("returns a stable CLI error for malformed JSON", () => {
+    expect(() => loadProviderOptions("{not-json}")).toThrow(
+      expect.objectContaining({ code: "INVALID_PROVIDER_OPTIONS" }),
+    );
+  });
+
+  it("rejects an empty value instead of silently omitting the policy", () => {
+    expect(() => loadProviderOptions("  ")).toThrow(
+      expect.objectContaining({ code: "INVALID_PROVIDER_OPTIONS" }),
+    );
+  });
+});
 
 describe("managed agent caller context", () => {
   it("propagates a trimmed PASEO_AGENT_ID", () => {
