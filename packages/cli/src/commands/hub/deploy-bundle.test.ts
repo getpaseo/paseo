@@ -172,7 +172,7 @@ const hubResource = [
   "        network_access: false",
   "  claude:",
   "    provider: claude",
-  "    mode: ultracode",
+  "    mode: bypassPermissions",
   "",
 ].join("\n");
 

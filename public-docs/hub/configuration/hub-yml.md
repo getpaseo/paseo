@@ -47,7 +47,7 @@ agents:
         network_access: false
   claude:
     provider: claude
-    mode: ultracode
+    mode: bypassPermissions
 ```
 
 The only top-level keys are `environments` and `agents`. A `triggers` key is rejected with a migration error.
