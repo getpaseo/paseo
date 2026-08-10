@@ -31,6 +31,9 @@ export function buildWorkspaceAgentActivityIndex(
     const status = deriveSidebarStateBucket({
       status: agent.status,
       pendingPermissionCount: agent.pendingPermissions.length,
+      pendingQuestionCount: agent.pendingPermissions.filter(
+        (permission) => permission.kind === "question",
+      ).length,
       requiresAttention: agent.requiresAttention,
       attentionReason: agent.attentionReason,
     });

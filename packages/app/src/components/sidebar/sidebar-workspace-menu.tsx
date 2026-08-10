@@ -2,7 +2,16 @@ import { useMemo, type ComponentProps, type PropsWithChildren, type ReactNode } 
 import { useTranslation } from "react-i18next";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Archive, CircleCheck, Copy, MoreVertical, Pencil, Pin, PinOff } from "lucide-react-native";
+import {
+  Archive,
+  CircleCheck,
+  Copy,
+  MoreVertical,
+  PanelRightOpen,
+  Pencil,
+  Pin,
+  PinOff,
+} from "lucide-react-native";
 import { isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
@@ -41,6 +50,7 @@ const ThemedPencil = withUnistyles(Pencil);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedPin = withUnistyles(Pin);
 const ThemedPinOff = withUnistyles(PinOff);
+const ThemedPanelRightOpen = withUnistyles(PanelRightOpen);
 
 const copyLeadingIcon = <ThemedCopy size={14} uniProps={foregroundMutedColorMapping} />;
 const renameLeadingIcon = <ThemedPencil size={14} uniProps={foregroundMutedColorMapping} />;
@@ -50,6 +60,9 @@ const markAsReadLeadingIcon = (
 const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />;
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
+const splitPaneLeadingIcon = (
+  <ThemedPanelRightOpen size={14} uniProps={foregroundMutedColorMapping} />
+);
 
 function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
   return (
@@ -75,6 +88,10 @@ export interface SidebarWorkspaceMenuProps {
   onTogglePin?: () => void;
   openInFileManagerPath?: string | null;
   /**
+   * Open this workspace's root agent in a side pane (split view). Only shown on web.
+   */
+  onSplitPane?: () => void;
+  /**
    * Lifted so the row that reveals the kebab can keep it mounted while its menu is up. See
    * `useOpenKebabMenuVisibility`.
    */
@@ -88,7 +105,6 @@ interface SidebarWorkspaceMenuItemsProps extends Omit<
 > {
   onArchive?: () => void;
 }
-
 type MenuSurface = "context" | "dropdown";
 
 function WorkspaceMenuItem({
@@ -119,6 +135,7 @@ function SidebarWorkspaceMenuItems({
   isPinned,
   onTogglePin,
   openInFileManagerPath,
+  onSplitPane,
 }: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
   const { t } = useTranslation();
   const archiveTrailing = useMemo(
@@ -183,6 +200,16 @@ function SidebarWorkspaceMenuItems({
         path={openInFileManagerPath}
         testID={`sidebar-workspace-menu-open-folder-${workspaceKey}`}
       />
+      {onSplitPane ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-split-pane-${workspaceKey}`}
+          leading={splitPaneLeadingIcon}
+          onSelect={onSplitPane}
+        >
+          {t("sidebar.workspace.actions.splitPane")}
+        </WorkspaceMenuItem>
+      ) : null}
       {onArchive ? (
         <WorkspaceMenuItem
           surface={surface}
@@ -214,6 +241,7 @@ export function SidebarWorkspaceMenu({
   isPinned,
   onTogglePin,
   openInFileManagerPath,
+  onSplitPane,
   open,
   onOpenChange,
 }: SidebarWorkspaceMenuProps) {
@@ -245,6 +273,7 @@ export function SidebarWorkspaceMenu({
           isPinned={isPinned}
           onTogglePin={onTogglePin}
           openInFileManagerPath={openInFileManagerPath}
+          onSplitPane={onSplitPane}
         />
       </DropdownMenuContent>
     </DropdownMenu>
@@ -277,6 +306,7 @@ export function SidebarWorkspaceContextMenu({
   isPinned,
   onTogglePin,
   openInFileManagerPath,
+  onSplitPane,
   accessibilityLabel,
   highlightStyle,
   ...triggerProps
@@ -343,6 +373,7 @@ export function SidebarWorkspaceContextMenu({
           isPinned={isPinned}
           onTogglePin={onTogglePin}
           openInFileManagerPath={openInFileManagerPath}
+          onSplitPane={onSplitPane}
         />
       </ContextMenuContent>
     </ContextMenu>

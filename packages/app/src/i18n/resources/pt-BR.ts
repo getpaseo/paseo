@@ -1071,6 +1071,7 @@ export const ptBR: TranslationResources = {
         archive: "Arquivar",
         archiveWorkspace: "Arquivar workspace",
         hideFromSidebar: "Ocultar da barra lateral",
+        splitPane: "Abrir no painel lateral",
         archiving: "Arquivando...",
         hiding: "Ocultando...",
       },

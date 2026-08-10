@@ -1049,6 +1049,7 @@ export const ar: TranslationResources = {
         archive: "أرشيف",
         archiveWorkspace: "أرشفة مساحة العمل",
         hideFromSidebar: "إخفاء من الشريط الجانبي",
+        splitPane: "فتح في اللوحة الجانبية",
         archiving: "أرشفة...",
         hiding: "إخفاء...",
       },

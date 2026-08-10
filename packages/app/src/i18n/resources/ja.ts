@@ -1060,6 +1060,7 @@ export const ja: TranslationResources = {
         archive: "アーカイブ",
         archiveWorkspace: "ワークスペースをアーカイブ",
         hideFromSidebar: "サイドバーから非表示",
+        splitPane: "サイドパネルで開く",
         archiving: "アーカイブ中...",
         hiding: "非表示にしています...",
       },

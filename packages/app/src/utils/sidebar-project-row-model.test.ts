@@ -24,6 +24,7 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     name: "paseo",
     title: null,
     currentBranch: null,
+    provider: null,
     statusBucket: "done",
     diffStat: null,
     prHint: null,

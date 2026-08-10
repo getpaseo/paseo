@@ -1059,6 +1059,7 @@ export const en = {
         archive: "Archive",
         archiveWorkspace: "Archive workspace",
         hideFromSidebar: "Hide from sidebar",
+        splitPane: "Open in side pane",
         archiving: "Archiving...",
         hiding: "Hiding...",
       },

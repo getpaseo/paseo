@@ -98,6 +98,9 @@ import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
 } from "@/components/sidebar/sidebar-workspace-menu";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { collectAllPanes } from "@/stores/workspace-layout-actions";
+import { useSessionStore } from "@/stores/session-store";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
@@ -302,6 +305,7 @@ interface WorkspaceRowInnerProps {
   archiveShortcutKeys?: ShortcutKey[][] | null;
   isPinned?: boolean;
   onTogglePin?: () => void;
+  onSplitPane?: () => void;
   reserveIdleStatusIndicatorSpace?: boolean;
 }
 
@@ -632,6 +636,7 @@ function WorkspaceRowRightGroup({
   onRename,
   isPinned,
   onTogglePin,
+  onSplitPane,
 }: {
   workspace: SidebarWorkspaceEntry;
   isHovered: boolean;
@@ -650,6 +655,7 @@ function WorkspaceRowRightGroup({
   onRename?: () => void;
   isPinned?: boolean;
   onTogglePin?: () => void;
+  onSplitPane?: () => void;
 }) {
   const workspacePath = workspace.workspaceDirectory ?? workspace.projectRootPath;
   const { t } = useTranslation();
@@ -697,6 +703,7 @@ function WorkspaceRowRightGroup({
                 archiveShortcutKeys={archiveShortcutKeys}
                 isPinned={isPinned}
                 onTogglePin={onTogglePin}
+                onSplitPane={onSplitPane}
                 openInFileManagerPath={workspacePath}
               />
             ) : null}
@@ -1076,6 +1083,7 @@ function WorkspaceRowInner({
   archiveShortcutKeys,
   isPinned,
   onTogglePin,
+  onSplitPane,
   reserveIdleStatusIndicatorSpace = true,
 }: WorkspaceRowInnerProps) {
   const _isCompact = useIsCompactFormFactor();
@@ -1149,6 +1157,7 @@ function WorkspaceRowInner({
               archiveShortcutKeys={archiveShortcutKeys}
               isPinned={isPinned}
               onTogglePin={onTogglePin}
+              onSplitPane={onSplitPane}
               openInFileManagerPath={workspace.workspaceDirectory}
               disabled={isArchiving}
               aria-selected={selected}
@@ -1193,6 +1202,7 @@ function WorkspaceRowInner({
                   onRename={onRename}
                   isPinned={isPinned}
                   onTogglePin={onTogglePin}
+                  onSplitPane={onSplitPane}
                 />
               </SidebarWorkspaceRowContent>
             </SidebarWorkspaceContextMenu>
@@ -1326,6 +1336,32 @@ function WorkspaceRowWithMenu({
   }, [onToggleWorkspacePin, workspace]);
   const onTogglePin = canPin ? handleTogglePin : undefined;
 
+  const handleSplitPane = useCallback(() => {
+    const layoutStore = useWorkspaceLayoutStore.getState();
+    const layout = layoutStore.layoutByWorkspace[workspace.workspaceKey];
+    if (!layout) {
+      return;
+    }
+    const targetPaneId = layout.focusedPaneId ?? collectAllPanes(layout.root)[0]?.id;
+    if (!targetPaneId) {
+      return;
+    }
+    const paneId = layoutStore.splitPaneEmpty(workspace.workspaceKey, {
+      targetPaneId,
+      position: "right",
+    });
+    if (!paneId) {
+      return;
+    }
+    const rootAgentId = useSessionStore
+      .getState()
+      .sessions[workspace.serverId]?.workspaceAgentActivity.get(workspace.workspaceId)?.agentId;
+    if (rootAgentId) {
+      layoutStore.openTabFocused(workspace.workspaceKey, { kind: "agent", agentId: rootAgentId });
+    }
+  }, [workspace.serverId, workspace.workspaceId, workspace.workspaceKey]);
+  const onSplitPane = platformIsWeb ? handleSplitPane : undefined;
+
   const archiveShortcutKeys = useShortcutKeys("archive-workspace");
   const { hasClearableAttention, clearAttention } = useClearWorkspaceAttention({
     serverId: workspace.serverId,
@@ -1376,6 +1412,7 @@ function WorkspaceRowWithMenu({
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
         isPinned={isPinned}
         onTogglePin={onTogglePin}
+        onSplitPane={onSplitPane}
         reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       />
       <AdaptiveRenameModal

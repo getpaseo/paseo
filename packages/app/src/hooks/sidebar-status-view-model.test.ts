@@ -24,6 +24,7 @@ function ws(
     name: input.name ?? "main",
     title: input.title ?? null,
     currentBranch: input.currentBranch ?? null,
+    provider: null,
     statusBucket: input.statusBucket ?? "done",
     statusEnteredAt: input.statusEnteredAt ?? null,
     archivingAt: null,
@@ -157,6 +158,11 @@ describe("buildStatusGroups", () => {
 
   it("uses hydrated workspace entries with real status, not structural placeholders", () => {
     const workspaces = [
+      ws({
+        workspaceKey: "srv:pq",
+        statusBucket: "pending_question",
+        statusEnteredAt: d("2026-01-01T00:00:00Z"),
+      }),
       ws({
         workspaceKey: "srv:ni",
         statusBucket: "needs_input",

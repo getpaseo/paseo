@@ -1039,6 +1039,7 @@ export const zhCN: TranslationResources = {
         archive: "归档",
         archiveWorkspace: "归档工作区",
         hideFromSidebar: "从侧边栏隐藏",
+        splitPane: "在侧栏中打开",
         archiving: "正在归档...",
         hiding: "正在隐藏...",
       },

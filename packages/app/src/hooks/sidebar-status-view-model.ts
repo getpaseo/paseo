@@ -3,6 +3,7 @@ import type { SidebarWorkspaceEntry } from "@/hooks/sidebar-workspaces-view-mode
 export type StatusBucket = SidebarWorkspaceEntry["statusBucket"];
 
 export const STATUS_BUCKET_ORDER: readonly StatusBucket[] = [
+  "pending_question",
   "needs_input",
   "failed",
   "attention",
@@ -11,6 +12,7 @@ export const STATUS_BUCKET_ORDER: readonly StatusBucket[] = [
 ] as const;
 
 export const STATUS_BUCKET_LABELS: Record<StatusBucket, string> = {
+  pending_question: "Question",
   needs_input: "Needs input",
   failed: "Failed",
   attention: "Ready to review",

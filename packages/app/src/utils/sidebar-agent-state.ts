@@ -4,7 +4,13 @@ import {
   type AgentStateBucketInput,
 } from "@getpaseo/protocol/agent-state-bucket";
 
-export type SidebarStateBucket = "needs_input" | "failed" | "running" | "attention" | "done";
+export type SidebarStateBucket =
+  | "needs_input"
+  | "pending_question"
+  | "failed"
+  | "running"
+  | "attention"
+  | "done";
 export type SidebarAttentionReason = AgentAttentionReason;
 
 export function deriveSidebarStateBucket(input: AgentStateBucketInput): SidebarStateBucket {
@@ -23,6 +29,7 @@ export function isSidebarActiveAgent(input: AgentStateBucketInput): boolean {
 // both; done stays last.
 const STATUS_BUCKET_PRIORITY: readonly SidebarStateBucket[] = [
   "needs_input",
+  "pending_question",
   "failed",
   "running",
   "attention",

@@ -1098,6 +1098,7 @@ export const FetchAgentsRequestMessageSchema = z.object({
 
 const WorkspaceStateBucketSchema = z.enum([
   "needs_input",
+  "pending_question",
   "failed",
   "running",
   "attention",

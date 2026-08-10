@@ -28,6 +28,7 @@ import {
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import { StatusRing } from "@/components/status-ring";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
+import { getProviderIcon } from "@/components/provider-icons";
 
 // The scrim spans more than the kebab so the fade starts left of the diff stat. Solid from
 // SCRIM_SOLID_OFFSET rightward, which keeps the kebab itself off the gradient entirely.
@@ -177,12 +178,15 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
           />
         ) : (
-          <WorkspaceStatusIndicator
-            bucket={workspace.statusBucket}
-            workspaceKind={workspace.workspaceKind}
-            loading={isLoading}
-            reserveIdleSpace={reserveIdleStatusIndicatorSpace}
-          />
+          <>
+            {workspace.provider ? <WorkspaceProviderLogo provider={workspace.provider} /> : null}
+            <WorkspaceStatusIndicator
+              bucket={workspace.statusBucket}
+              workspaceKind={workspace.workspaceKind}
+              loading={isLoading}
+              reserveIdleSpace={reserveIdleStatusIndicatorSpace}
+            />
+          </>
         )}
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
@@ -284,8 +288,19 @@ function StatusDotOverlay({ dotColorStyle }: { dotColorStyle: ViewStyle }) {
   return <View style={[styles.statusDotOverlay, dotColorStyle]} />;
 }
 
+function WorkspaceProviderLogo({ provider }: { provider: string }) {
+  const ProviderIcon = withUnistyles(getProviderIcon(provider));
+  return (
+    <View style={styles.workspaceProviderLogo}>
+      <ProviderIcon size={14} uniProps={foregroundMutedColorMapping} />
+    </View>
+  );
+}
+
 function getStatusDotColorStyle(bucket: SidebarStateBucket) {
   switch (bucket) {
+    case "pending_question":
+      return styles.statusDotNeedsInput;
     case "needs_input":
       return styles.statusDotNeedsInput;
     case "failed":
@@ -526,6 +541,13 @@ const styles = StyleSheet.create((theme) => ({
     width: theme.iconSize.md,
     height: 20,
     borderRadius: theme.borderRadius.full,
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  workspaceProviderLogo: {
+    width: theme.iconSize.md,
+    height: 20,
     flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
