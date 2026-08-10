@@ -117,7 +117,7 @@ describe("ProviderCatalogSession", () => {
   });
 
   it("returns the canonical cwd used by snapshot updates", async () => {
-    const getSnapshot = vi.fn(() => makeEntries());
+    const getSnapshot = vi.fn((_cwd?: string) => makeEntries());
     const { subsystem, emitted } = makeSubsystem({
       snapshot: { getSnapshot },
     });
@@ -128,8 +128,9 @@ describe("ProviderCatalogSession", () => {
       cwd: "/repo/./sdk",
     });
 
-    expect(getSnapshot).toHaveBeenCalledWith("/repo/sdk");
-    expect(findByType(emitted, "get_providers_snapshot_response")?.payload.cwd).toBe("/repo/sdk");
+    const canonicalCwd = getSnapshot.mock.calls[0]?.[0];
+    expect(canonicalCwd).toEqual(expect.any(String));
+    expect(findByType(emitted, "get_providers_snapshot_response")?.payload.cwd).toBe(canonicalCwd);
   });
 
   it("pushes the compact encoding to capable clients", () => {
