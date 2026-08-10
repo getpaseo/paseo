@@ -779,9 +779,10 @@ class RecursiveFileObserver {
   }
 
   private scheduleNativeFullAudit(): void {
-    if (this.closed || this.failed || !this.nativeSafetyAuditPending || this.nativeAuditRunning)
-      return;
+    if (this.closed || this.failed || !this.nativeSafetyAuditPending) return;
     if (this.nativeFullAuditTimer) clearTimeout(this.nativeFullAuditTimer);
+    this.nativeFullAuditTimer = null;
+    if (this.nativeAuditRunning) return;
     const now = performance.now();
     const dirtySince = this.nativeSafetyAuditDirtySince ?? now;
     const quietDeadline = now + NATIVE_FULL_AUDIT_QUIET_MS;
