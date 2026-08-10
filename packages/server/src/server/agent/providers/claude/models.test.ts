@@ -15,10 +15,13 @@ import {
   resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
 import {
-  applyClaudeAutoCompactWindowEnv,
   applyClaudeCustomModelEnvPins,
+  applyClaudeMaxContextTokensEnv,
+  applyClaudeMaxOutputTokensEnv,
   buildClaudeCustomModelEnvPins,
-  CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY,
+  CLAUDE_MAX_CONTEXT_TOKENS_ENV_KEY,
+  CLAUDE_MAX_OUTPUT_TOKENS_ENV_KEY,
+  resolveClaudeMaxOutputTokens,
   CLAUDE_CUSTOM_MODEL_PIN_ENV_KEYS,
   findClaudeModel,
   getClaudeModels,
@@ -591,7 +594,7 @@ describe("Claude custom model env pins", () => {
   });
 });
 
-describe("Claude auto compact window env", () => {
+describe("Claude max context tokens env", () => {
   it("resolveClaudeContextWindowMaxTokens prefers profile models over first-party", () => {
     expect(
       resolveClaudeContextWindowMaxTokens({
@@ -609,24 +612,54 @@ describe("Claude auto compact window env", () => {
     ).toBe(firstParty?.contextWindowMaxTokens);
   });
 
-  it("applyClaudeAutoCompactWindowEnv fills missing compact window", () => {
-    const applied = applyClaudeAutoCompactWindowEnv({ PATH: "/usr/bin" }, 500_000);
-    expect(applied[CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY]).toBe("500000");
+  it("applyClaudeMaxContextTokensEnv fills missing context window", () => {
+    const applied = applyClaudeMaxContextTokensEnv({ PATH: "/usr/bin" }, 500_000);
+    expect(applied[CLAUDE_MAX_CONTEXT_TOKENS_ENV_KEY]).toBe("500000");
     expect(applied.PATH).toBe("/usr/bin");
   });
 
-  it("applyClaudeAutoCompactWindowEnv preserves user env", () => {
-    const applied = applyClaudeAutoCompactWindowEnv(
-      { [CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY]: "200000" },
+  it("applyClaudeMaxContextTokensEnv preserves user env", () => {
+    const applied = applyClaudeMaxContextTokensEnv(
+      { [CLAUDE_MAX_CONTEXT_TOKENS_ENV_KEY]: "200000" },
       500_000,
     );
-    expect(applied[CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY]).toBe("200000");
+    expect(applied[CLAUDE_MAX_CONTEXT_TOKENS_ENV_KEY]).toBe("200000");
   });
 
-  it("applyClaudeAutoCompactWindowEnv is a no-op without a positive window", () => {
+  it("applyClaudeMaxContextTokensEnv is a no-op without a positive window", () => {
     const base = { PATH: "/usr/bin" };
-    expect(applyClaudeAutoCompactWindowEnv(base, undefined)).toEqual(base);
-    expect(applyClaudeAutoCompactWindowEnv(base, 0)).toEqual(base);
+    expect(applyClaudeMaxContextTokensEnv(base, undefined)).toEqual(base);
+    expect(applyClaudeMaxContextTokensEnv(base, 0)).toEqual(base);
+  });
+});
+
+describe("Claude max output tokens env", () => {
+  it("resolveClaudeMaxOutputTokens reads profile max output only", () => {
+    expect(
+      resolveClaudeMaxOutputTokens({
+        modelId: "glm-5.1",
+        profileModels: [{ id: "glm-5.1", maxOutputTokens: 500_000 }],
+      }),
+    ).toBe(500_000);
+    expect(
+      resolveClaudeMaxOutputTokens({
+        modelId: "glm-5.1",
+        profileModels: [{ id: "glm-5.1", contextWindowMaxTokens: 500_000 }],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("applyClaudeMaxOutputTokensEnv fills missing max output", () => {
+    const applied = applyClaudeMaxOutputTokensEnv({ PATH: "/usr/bin" }, 500_000);
+    expect(applied[CLAUDE_MAX_OUTPUT_TOKENS_ENV_KEY]).toBe("500000");
+  });
+
+  it("applyClaudeMaxOutputTokensEnv preserves user env", () => {
+    const applied = applyClaudeMaxOutputTokensEnv(
+      { [CLAUDE_MAX_OUTPUT_TOKENS_ENV_KEY]: "32000" },
+      500_000,
+    );
+    expect(applied[CLAUDE_MAX_OUTPUT_TOKENS_ENV_KEY]).toBe("32000");
   });
 });
 

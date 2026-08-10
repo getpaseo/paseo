@@ -4327,6 +4327,17 @@ export const MetadataCustomEndpointListModelsResponseSchema = z.object({
     .passthrough(),
 });
 
+const ModelsDevLookupCandidateSchema = z.object({
+  providerId: z.string(),
+  matchedId: z.string(),
+  name: z.string().optional(),
+  contextWindowMaxTokens: z.number().int().positive(),
+  maxOutputTokens: z.number().int().positive().optional(),
+  inputModalities: z.array(z.string()).optional(),
+  outputModalities: z.array(z.string()).optional(),
+  capabilities: z.array(z.string()).optional(),
+});
+
 export const ModelsDevLookupModelResponseSchema = z.object({
   type: z.literal("models.dev.lookup_model.response"),
   payload: z
@@ -4337,7 +4348,12 @@ export const ModelsDevLookupModelResponseSchema = z.object({
       matchedId: z.string().optional(),
       name: z.string().optional(),
       contextWindowMaxTokens: z.number().int().positive().optional(),
+      maxOutputTokens: z.number().int().positive().optional(),
       providerId: z.string().optional(),
+      inputModalities: z.array(z.string()).optional(),
+      outputModalities: z.array(z.string()).optional(),
+      capabilities: z.array(z.string()).optional(),
+      candidates: z.array(ModelsDevLookupCandidateSchema).optional(),
       error: z.string().nullable().optional(),
     })
     .passthrough(),

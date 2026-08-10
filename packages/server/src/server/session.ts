@@ -1417,7 +1417,14 @@ export class Session {
               matchedId: result.matchedId,
               ...(result.name ? { name: result.name } : {}),
               contextWindowMaxTokens: result.contextWindowMaxTokens,
+              ...(result.maxOutputTokens !== undefined
+                ? { maxOutputTokens: result.maxOutputTokens }
+                : {}),
               providerId: result.providerId,
+              ...(result.inputModalities ? { inputModalities: result.inputModalities } : {}),
+              ...(result.outputModalities ? { outputModalities: result.outputModalities } : {}),
+              ...(result.capabilities ? { capabilities: result.capabilities } : {}),
+              candidates: result.candidates,
               error: null,
             }
           : {

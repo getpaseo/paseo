@@ -14,6 +14,10 @@ const FIXTURE = {
         id: "claude-sonnet-4-6",
         name: "Claude Sonnet 4.6",
         limit: { context: 200_000, output: 64_000 },
+        modalities: { input: ["text", "image"], output: ["text"] },
+        tool_call: true,
+        reasoning: true,
+        structured_output: true,
       },
     },
   },
@@ -28,6 +32,32 @@ const FIXTURE = {
         id: "anthropic/claude-sonnet-4-6",
         name: "Claude Sonnet via aggregator",
         limit: { context: 1_000_000, output: 64_000 },
+        modalities: { input: ["text"], output: ["text"] },
+        tool_call: true,
+      },
+    },
+  },
+  openrouter: {
+    models: {
+      "x-ai/grok-4.5": {
+        id: "x-ai/grok-4.5",
+        name: "Grok 4.5",
+        limit: { context: 500_000, output: 32_768 },
+        modalities: { input: ["text", "image"], output: ["text"] },
+        tool_call: true,
+        reasoning: true,
+      },
+    },
+  },
+  xai: {
+    models: {
+      "grok-4.5": {
+        id: "grok-4.5",
+        name: "Grok 4.5",
+        limit: { context: 500_000, output: 500_000 },
+        modalities: { input: ["text", "image"], output: ["text"] },
+        tool_call: true,
+        reasoning: true,
       },
     },
   },
@@ -50,7 +80,7 @@ afterEach(() => {
 describe("buildModelsDevCatalogIndex / lookupModelsDevModelInCatalog", () => {
   const catalog = buildModelsDevCatalogIndex(FIXTURE);
 
-  test("exact id match", () => {
+  test("exact id match includes output limit and single candidate", () => {
     const result = lookupModelsDevModelInCatalog(catalog, "glm-5.1");
     expect(result).toEqual({
       found: true,
@@ -58,7 +88,17 @@ describe("buildModelsDevCatalogIndex / lookupModelsDevModelInCatalog", () => {
       matchedId: "glm-5.1",
       name: "GLM 5.1",
       contextWindowMaxTokens: 500_000,
+      maxOutputTokens: 64_000,
       providerId: "zhipuai",
+      candidates: [
+        {
+          providerId: "zhipuai",
+          matchedId: "glm-5.1",
+          name: "GLM 5.1",
+          contextWindowMaxTokens: 500_000,
+          maxOutputTokens: 64_000,
+        },
+      ],
     });
   });
 
@@ -68,6 +108,7 @@ describe("buildModelsDevCatalogIndex / lookupModelsDevModelInCatalog", () => {
     if (result.found) {
       expect(result.matchedId).toBe("glm-5.1");
       expect(result.contextWindowMaxTokens).toBe(500_000);
+      expect(result.maxOutputTokens).toBe(64_000);
     }
   });
 
@@ -77,8 +118,42 @@ describe("buildModelsDevCatalogIndex / lookupModelsDevModelInCatalog", () => {
       found: true,
       matchedId: "zai/glm-5.2",
       contextWindowMaxTokens: 1_000_000,
+      maxOutputTokens: 128_000,
       providerId: "impossibl",
     });
+  });
+
+  test("returns multiple candidates when the same model is hosted by different providers", () => {
+    const result = lookupModelsDevModelInCatalog(catalog, "grok-4.5");
+    expect(result.found).toBe(true);
+    if (!result.found) {
+      return;
+    }
+    expect(result.candidates).toHaveLength(2);
+    expect(result.candidates.map((candidate) => candidate.providerId).sort()).toEqual([
+      "openrouter",
+      "xai",
+    ]);
+    const xai = result.candidates.find((candidate) => candidate.providerId === "xai");
+    const openrouter = result.candidates.find((candidate) => candidate.providerId === "openrouter");
+    expect(xai?.maxOutputTokens).toBe(500_000);
+    expect(openrouter?.maxOutputTokens).toBe(32_768);
+    expect(xai?.capabilities).toEqual(expect.arrayContaining(["tools", "reasoning"]));
+    expect(xai?.inputModalities).toEqual(["text", "image"]);
+  });
+
+  test("parses modalities and capability flags", () => {
+    const result = lookupModelsDevModelInCatalog(catalog, "claude-sonnet-4-6");
+    expect(result.found).toBe(true);
+    if (!result.found) {
+      return;
+    }
+    expect(result.inputModalities).toEqual(["text", "image"]);
+    expect(result.outputModalities).toEqual(["text"]);
+    expect(result.capabilities).toEqual(
+      expect.arrayContaining(["tools", "reasoning", "structured"]),
+    );
+    expect(result.candidates.length).toBeGreaterThanOrEqual(1);
   });
 
   test("empty query is not found", () => {
@@ -109,6 +184,8 @@ describe("lookupModelsDevModel", () => {
     expect(first.found).toBe(true);
     if (first.found) {
       expect(first.contextWindowMaxTokens).toBe(500_000);
+      expect(first.maxOutputTokens).toBe(64_000);
+      expect(first.candidates).toHaveLength(1);
     }
     expect(second.found).toBe(true);
     expect(fetchImpl).toHaveBeenCalledTimes(1);

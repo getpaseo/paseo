@@ -2,13 +2,29 @@ const MODELS_DEV_API_URL = "https://models.dev/api.json";
 const DEFAULT_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_FETCH_TIMEOUT_MS = 8_000;
 
+export interface ModelsDevCandidate {
+  providerId: string;
+  matchedId: string;
+  name?: string;
+  contextWindowMaxTokens: number;
+  maxOutputTokens?: number;
+  inputModalities?: string[];
+  outputModalities?: string[];
+  capabilities?: string[];
+}
+
 export interface ModelsDevLookupHit {
   found: true;
   query: string;
   matchedId: string;
   name?: string;
   contextWindowMaxTokens: number;
+  maxOutputTokens?: number;
   providerId: string;
+  inputModalities?: string[];
+  outputModalities?: string[];
+  capabilities?: string[];
+  candidates: ModelsDevCandidate[];
 }
 
 export interface ModelsDevLookupMiss {
@@ -24,6 +40,10 @@ interface ModelsDevIndexEntry {
   matchedId: string;
   name?: string;
   contextWindowMaxTokens: number;
+  maxOutputTokens?: number;
+  inputModalities?: string[];
+  outputModalities?: string[];
+  capabilities?: string[];
 }
 
 interface ModelsDevCatalogCache {
@@ -59,23 +79,16 @@ export function lookupModelsDevModelInCatalog(
     return { found: false, query: "" };
   }
 
-  const exact = pickBestEntry(catalog.byExactId.get(trimmed));
-  if (exact) {
-    return toHit(trimmed, exact);
-  }
-
-  const caseInsensitive = pickBestEntry(catalog.byLowerId.get(trimmed.toLowerCase()));
-  if (caseInsensitive) {
-    return toHit(trimmed, caseInsensitive);
-  }
-
   const suffixKey = trimmed.includes("/") ? trimmed.slice(trimmed.lastIndexOf("/") + 1) : trimmed;
-  const suffixMatches = pickBestEntry(catalog.bySuffix.get(suffixKey.toLowerCase()));
-  if (suffixMatches) {
-    return toHit(trimmed, suffixMatches);
+  const matches = [
+    ...(catalog.byExactId.get(trimmed) ?? []),
+    ...(catalog.byLowerId.get(trimmed.toLowerCase()) ?? []),
+    ...(catalog.bySuffix.get(suffixKey.toLowerCase()) ?? []),
+  ];
+  if (matches.length === 0) {
+    return { found: false, query: trimmed };
   }
-
-  return { found: false, query: trimmed };
+  return toHit(trimmed, matches);
 }
 
 export async function lookupModelsDevModel(
@@ -114,32 +127,54 @@ export function buildModelsDevCatalogIndex(payload: unknown): ModelsDevCatalogCa
       continue;
     }
     for (const [modelKey, modelValue] of Object.entries(models)) {
-      if (!isRecord(modelValue)) {
-        continue;
+      const entry = parseModelsDevModelEntry(providerId, modelKey, modelValue);
+      if (entry) {
+        entries.push(entry);
       }
-      const limit = isRecord(modelValue.limit) ? modelValue.limit : null;
-      const context = limit?.context;
-      if (typeof context !== "number" || !Number.isFinite(context) || context <= 0) {
-        continue;
-      }
-      const matchedId =
-        typeof modelValue.id === "string" && modelValue.id.trim().length > 0
-          ? modelValue.id.trim()
-          : modelKey;
-      const name =
-        typeof modelValue.name === "string" && modelValue.name.trim().length > 0
-          ? modelValue.name.trim()
-          : undefined;
-      entries.push({
-        providerId,
-        matchedId,
-        ...(name ? { name } : {}),
-        contextWindowMaxTokens: Math.trunc(context),
-      });
     }
   }
 
   return indexEntries(entries, Date.now());
+}
+
+function parseModelsDevModelEntry(
+  providerId: string,
+  modelKey: string,
+  modelValue: unknown,
+): ModelsDevIndexEntry | null {
+  if (!isRecord(modelValue)) {
+    return null;
+  }
+  const limit = isRecord(modelValue.limit) ? modelValue.limit : null;
+  const context = limit?.context;
+  if (typeof context !== "number" || !Number.isFinite(context) || context <= 0) {
+    return null;
+  }
+
+  const matchedId =
+    typeof modelValue.id === "string" && modelValue.id.trim().length > 0
+      ? modelValue.id.trim()
+      : modelKey;
+  const name =
+    typeof modelValue.name === "string" && modelValue.name.trim().length > 0
+      ? modelValue.name.trim()
+      : undefined;
+  const maxOutput = readPositiveInt(limit?.output);
+  const modalities = isRecord(modelValue.modalities) ? modelValue.modalities : null;
+  const inputModalities = readStringList(modalities?.input);
+  const outputModalities = readStringList(modalities?.output);
+  const capabilities = deriveCapabilities(modelValue);
+
+  return {
+    providerId,
+    matchedId,
+    ...(name ? { name } : {}),
+    contextWindowMaxTokens: Math.trunc(context),
+    ...(maxOutput !== undefined ? { maxOutputTokens: maxOutput } : {}),
+    ...(inputModalities ? { inputModalities } : {}),
+    ...(outputModalities ? { outputModalities } : {}),
+    ...(capabilities ? { capabilities } : {}),
+  };
 }
 
 async function loadModelsDevCatalog(
@@ -228,31 +263,111 @@ function pushMap(
   map.set(key, [entry]);
 }
 
-function pickBestEntry(entries: ModelsDevIndexEntry[] | undefined): ModelsDevIndexEntry | null {
-  if (!entries || entries.length === 0) {
-    return null;
-  }
-  if (entries.length === 1) {
-    return entries[0] ?? null;
-  }
+function sortEntries(entries: ModelsDevIndexEntry[]): ModelsDevIndexEntry[] {
   return [...entries].sort((a, b) => {
     const providerCmp = a.providerId.localeCompare(b.providerId);
     if (providerCmp !== 0) {
       return providerCmp;
     }
     return a.matchedId.localeCompare(b.matchedId);
-  })[0]!;
+  });
 }
 
-function toHit(query: string, entry: ModelsDevIndexEntry): ModelsDevLookupHit {
+function dedupeEntries(entries: ModelsDevIndexEntry[]): ModelsDevIndexEntry[] {
+  const seen = new Set<string>();
+  const result: ModelsDevIndexEntry[] = [];
+  for (const entry of sortEntries(entries)) {
+    const key = `${entry.providerId}\0${entry.matchedId}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(entry);
+  }
+  return result;
+}
+
+function toCandidate(entry: ModelsDevIndexEntry): ModelsDevCandidate {
   return {
-    found: true,
-    query,
+    providerId: entry.providerId,
     matchedId: entry.matchedId,
     ...(entry.name ? { name: entry.name } : {}),
     contextWindowMaxTokens: entry.contextWindowMaxTokens,
-    providerId: entry.providerId,
+    ...(entry.maxOutputTokens !== undefined ? { maxOutputTokens: entry.maxOutputTokens } : {}),
+    ...(entry.inputModalities ? { inputModalities: entry.inputModalities } : {}),
+    ...(entry.outputModalities ? { outputModalities: entry.outputModalities } : {}),
+    ...(entry.capabilities ? { capabilities: entry.capabilities } : {}),
   };
+}
+
+function toHit(query: string, entries: ModelsDevIndexEntry[]): ModelsDevLookupHit {
+  const candidates = dedupeEntries(entries).map(toCandidate);
+  const best = candidates[0];
+  if (!best) {
+    return {
+      found: true,
+      query,
+      matchedId: query,
+      contextWindowMaxTokens: 1,
+      providerId: "unknown",
+      candidates: [],
+    };
+  }
+  return {
+    found: true,
+    query,
+    matchedId: best.matchedId,
+    ...(best.name ? { name: best.name } : {}),
+    contextWindowMaxTokens: best.contextWindowMaxTokens,
+    ...(best.maxOutputTokens !== undefined ? { maxOutputTokens: best.maxOutputTokens } : {}),
+    providerId: best.providerId,
+    ...(best.inputModalities ? { inputModalities: best.inputModalities } : {}),
+    ...(best.outputModalities ? { outputModalities: best.outputModalities } : {}),
+    ...(best.capabilities ? { capabilities: best.capabilities } : {}),
+    candidates,
+  };
+}
+
+function deriveCapabilities(modelValue: Record<string, unknown>): string[] | undefined {
+  const capabilities: string[] = [];
+  if (modelValue.tool_call === true) {
+    capabilities.push("tools");
+  }
+  if (modelValue.reasoning === true) {
+    capabilities.push("reasoning");
+  }
+  if (modelValue.structured_output === true) {
+    capabilities.push("structured");
+  }
+  if (modelValue.temperature === true) {
+    capabilities.push("temperature");
+  }
+  if (modelValue.attachment === true) {
+    capabilities.push("attachment");
+  }
+  if (modelValue.interleaved === true) {
+    capabilities.push("interleaved");
+  }
+  // Some providers nest open_weights/knowledge differently; ignore unknowns.
+  return capabilities.length > 0 ? capabilities : undefined;
+}
+
+function readPositiveInt(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return Math.trunc(value);
+}
+
+function readStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const items = value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  return items.length > 0 ? items : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

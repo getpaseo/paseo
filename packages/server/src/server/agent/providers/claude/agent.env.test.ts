@@ -5,8 +5,7 @@ import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { AgentLaunchContext } from "../../agent-sdk-types.js";
 import { ClaudeAgentClient } from "./agent.js";
 import type { ClaudeQueryInput } from "./query.js";
-import { CLAUDE_CUSTOM_MODEL_PIN_ENV_KEYS } from "./models.js";
-import { CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY } from "./models.js";
+import { CLAUDE_CUSTOM_MODEL_PIN_ENV_KEYS, CLAUDE_MAX_CONTEXT_TOKENS_ENV_KEY } from "./models.js";
 
 function createQueryMock(events: unknown[]): Query {
   let index = 0;
@@ -35,7 +34,7 @@ describe("Claude SDK env", () => {
     for (const key of CLAUDE_CUSTOM_MODEL_PIN_ENV_KEYS) {
       vi.stubEnv(key, "");
     }
-    vi.stubEnv(CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY, "");
+    vi.stubEnv(CLAUDE_MAX_CONTEXT_TOKENS_ENV_KEY, "");
   });
 
   afterEach(() => {
@@ -216,7 +215,7 @@ describe("Claude SDK env", () => {
     }
   });
 
-  test("sets CLAUDE_CODE_AUTO_COMPACT_WINDOW from profile model context window", async () => {
+  test("sets CLAUDE_CODE_MAX_CONTEXT_TOKENS from profile model context window", async () => {
     let capturedEnv: Record<string, string | undefined> | undefined;
     const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
       capturedEnv = options.env;
@@ -249,7 +248,7 @@ describe("Claude SDK env", () => {
       logger: createTestLogger(),
       queryFactory,
       resolveBinary: async () => "/test/claude/bin",
-      profileModels: [{ id: "glm-5.1", contextWindowMaxTokens: 500_000 }],
+      profileModels: [{ id: "glm-5.1", contextWindowMaxTokens: 500_000, maxOutputTokens: 500_000 }],
     });
     const session = await client.createSession({
       provider: "claude",
@@ -259,7 +258,9 @@ describe("Claude SDK env", () => {
 
     try {
       await session.run("compact window check");
-      expect(capturedEnv?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("500000");
+      expect(capturedEnv?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("500000");
+      expect(capturedEnv?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("500000");
+      expect(capturedEnv?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).not.toBe("500000");
     } finally {
       await session.close();
     }

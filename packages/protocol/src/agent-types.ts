@@ -81,6 +81,7 @@ export interface AgentModelDefinition {
   isDefault?: boolean;
   metadata?: AgentMetadata;
   contextWindowMaxTokens?: number;
+  maxOutputTokens?: number;
   thinkingOptions?: AgentSelectOption[];
   defaultThinkingOptionId?: string;
 }

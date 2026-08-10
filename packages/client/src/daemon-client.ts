@@ -5178,7 +5178,21 @@ export class DaemonClient {
     matchedId?: string;
     name?: string;
     contextWindowMaxTokens?: number;
+    maxOutputTokens?: number;
     providerId?: string;
+    inputModalities?: string[];
+    outputModalities?: string[];
+    capabilities?: string[];
+    candidates?: Array<{
+      providerId: string;
+      matchedId: string;
+      name?: string;
+      contextWindowMaxTokens: number;
+      maxOutputTokens?: number;
+      inputModalities?: string[];
+      outputModalities?: string[];
+      capabilities?: string[];
+    }>;
     error?: string | null;
   }> {
     const payload = await this.sendCorrelatedSessionRequest({
@@ -5197,7 +5211,18 @@ export class DaemonClient {
       ...(payload.contextWindowMaxTokens !== undefined
         ? { contextWindowMaxTokens: payload.contextWindowMaxTokens }
         : {}),
+      ...(payload.maxOutputTokens !== undefined
+        ? { maxOutputTokens: payload.maxOutputTokens }
+        : {}),
       ...(payload.providerId !== undefined ? { providerId: payload.providerId } : {}),
+      ...(payload.inputModalities !== undefined
+        ? { inputModalities: payload.inputModalities }
+        : {}),
+      ...(payload.outputModalities !== undefined
+        ? { outputModalities: payload.outputModalities }
+        : {}),
+      ...(payload.capabilities !== undefined ? { capabilities: payload.capabilities } : {}),
+      ...(payload.candidates !== undefined ? { candidates: payload.candidates } : {}),
       ...(payload.error !== undefined ? { error: payload.error } : {}),
     };
   }
