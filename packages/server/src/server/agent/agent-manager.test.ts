@@ -7776,7 +7776,7 @@ test("closeAgent persists one final closed snapshot", async () => {
   }
 });
 
-test("closeAgent can relocate the persisted cwd used by the next resume", async () => {
+test("relocateAgentForNextResume updates the final closed snapshot", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-close-relocate-"));
   const relocatedCwd = join(workdir, "relocated");
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -7792,12 +7792,57 @@ test("closeAgent can relocate the persisted cwd used by the next resume", async 
       workspaceId: "workspace-current",
     });
 
-    await manager.closeAgent(snapshot.id, { persistedCwd: relocatedCwd });
+    await manager.relocateAgentForNextResume(snapshot.id, relocatedCwd);
+    await manager.closeAgent(snapshot.id);
     await manager.flush();
     await storage.flush();
 
     expect((await storage.get(snapshot.id))?.cwd).toBe(relocatedCwd);
   } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("relocateAgentForNextResume repairs a snapshot captured by an in-flight close", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-close-relocate-race-"));
+  const relocatedCwd = join(workdir, "relocated");
+  const closeStarted = deferred<void>();
+  const closeAllowed = deferred<void>();
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          closeStarted.resolve();
+          await closeAllowed.promise;
+        }
+      })(config);
+    }
+  })();
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000219",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-current",
+    });
+
+    const close = manager.closeAgent(snapshot.id);
+    await closeStarted.promise;
+    const relocate = manager.relocateAgentForNextResume(snapshot.id, relocatedCwd);
+    closeAllowed.resolve();
+    await Promise.all([close, relocate]);
+    await storage.flush();
+
+    expect((await storage.get(snapshot.id))?.cwd).toBe(relocatedCwd);
+  } finally {
+    closeAllowed.resolve();
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });

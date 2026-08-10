@@ -5,7 +5,7 @@ import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "./workspace-registry.js";
 
 export interface CommitWorkspaceTransitionDependencies {
-  agentManager: Pick<AgentManager, "closeAgent">;
+  agentManager: Pick<AgentManager, "closeAgent" | "relocateAgentForNextResume">;
   agentStorage: Pick<AgentStorage, "list" | "upsert">;
   workspaceRegistry: Pick<WorkspaceRegistry, "remove" | "update" | "upsert">;
   killWorkspaceTerminals: (workspaceId: string) => Promise<void>;
@@ -88,6 +88,8 @@ export async function commitWorkspaceTransition(
       throw new Error("Current workspace disappeared during transition");
     }
 
+    await dependencies.agentManager.relocateAgentForNextResume(input.caller.id, transitioned.cwd);
+
     await dependencies.workspaceRegistry.remove(input.temporaryWorkspaceId).catch((error) => {
       dependencies.logger.warn(
         { err: error, workspaceId: input.temporaryWorkspaceId },
@@ -103,14 +105,12 @@ export async function commitWorkspaceTransition(
 
     const schedule = dependencies.schedule ?? ((callback: () => void) => setTimeout(callback, 0));
     schedule(() => {
-      void dependencies.agentManager
-        .closeAgent(input.caller.id, { persistedCwd: transitioned.cwd })
-        .catch((error) => {
-          dependencies.logger.warn(
-            { err: error, agentId: input.caller.id },
-            "Failed to close transitioned caller agent",
-          );
-        });
+      void dependencies.agentManager.closeAgent(input.caller.id).catch((error) => {
+        dependencies.logger.warn(
+          { err: error, agentId: input.caller.id },
+          "Failed to close transitioned caller agent",
+        );
+      });
     });
     return transitioned;
   } catch (error) {

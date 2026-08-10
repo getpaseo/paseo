@@ -47,20 +47,25 @@ describe("workspace transition", () => {
       [targetWorkspace.workspaceId, targetWorkspace],
     ]);
     const scheduled: Array<() => void> = [];
-    const closeAgent = vi.fn(async (agentId: string, options?: { persistedCwd?: string }) => {
+    const closeAgent = vi.fn(async (agentId: string) => {
       const live = liveAgents.get(agentId);
       const record = records.get(agentId);
       if (live && record) {
-        if (options?.persistedCwd !== undefined) live.cwd = options.persistedCwd;
         records.set(agentId, { ...record, cwd: live.cwd, lastStatus: "closed" });
       }
+    });
+    const relocateAgentForNextResume = vi.fn(async (agentId: string, cwd: string) => {
+      const live = liveAgents.get(agentId);
+      if (live) live.cwd = cwd;
+      const record = records.get(agentId);
+      if (record) records.set(agentId, { ...record, cwd });
     });
     const killWorkspaceTerminals = vi.fn(async () => undefined);
     const emitWorkspaceUpdate = vi.fn(async () => undefined);
 
     const transitioned = await commitWorkspaceTransition(
       {
-        agentManager: { closeAgent },
+        agentManager: { closeAgent, relocateAgentForNextResume },
         agentStorage: {
           list: async () => Array.from(records.values()),
           upsert: async (record) => {
@@ -113,11 +118,12 @@ describe("workspace transition", () => {
     expect(killWorkspaceTerminals).toHaveBeenCalledWith(sourceWorkspace.workspaceId);
     expect(emitWorkspaceUpdate).toHaveBeenCalledWith(sourceWorkspace.workspaceId);
     expect(caller.cwd).toBe(SOURCE_CWD);
-    expect(liveCaller.cwd).toBe(SOURCE_CWD);
+    expect(liveCaller.cwd).toBe(TARGET_CWD);
+    expect(relocateAgentForNextResume).toHaveBeenCalledWith(caller.id, TARGET_CWD);
 
     scheduled.forEach((callback) => callback());
     await vi.waitFor(() => expect(closeAgent).toHaveBeenCalledTimes(2));
-    expect(closeAgent).toHaveBeenCalledWith(caller.id, { persistedCwd: TARGET_CWD });
+    expect(closeAgent).toHaveBeenCalledWith(caller.id);
     expect(liveCaller.cwd).toBe(TARGET_CWD);
     expect(records.get(caller.id)).toMatchObject({ cwd: TARGET_CWD, lastStatus: "closed" });
   });
@@ -143,7 +149,10 @@ describe("workspace transition", () => {
     await expect(
       commitWorkspaceTransition(
         {
-          agentManager: { closeAgent: vi.fn(async () => undefined) },
+          agentManager: {
+            closeAgent: vi.fn(async () => undefined),
+            relocateAgentForNextResume: vi.fn(async () => undefined),
+          },
           agentStorage: {
             list: async () => [storedRecord],
             upsert: async (record) => {
@@ -198,7 +207,10 @@ describe("workspace transition", () => {
     await expect(
       commitWorkspaceTransition(
         {
-          agentManager: { closeAgent: vi.fn(async () => undefined) },
+          agentManager: {
+            closeAgent: vi.fn(async () => undefined),
+            relocateAgentForNextResume: vi.fn(async () => undefined),
+          },
           agentStorage: {
             list: async () => [storedAgent(caller.id, SOURCE_CWD)],
             upsert: async () => {
