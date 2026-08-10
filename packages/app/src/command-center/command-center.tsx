@@ -649,7 +649,6 @@ export function CommandCenter() {
     keyExtractor,
     getItemLayout,
     ListEmptyComponent: empty,
-    ListFooterComponent: fileSearchError,
     style: styles.results,
     testID: "command-center-results",
     keyboardShouldPersistTaps: KEYBOARD_SHOULD_PERSIST_TAPS,
@@ -730,6 +729,7 @@ export function CommandCenter() {
             label={t("shell.commandCenter.searchingFiles")}
           />
         </View>
+        {fileSearchError}
         <BottomSheetFlatList ref={bottomSheetListRef} {...commonListProps} />
       </IsolatedBottomSheetModal>
     );
@@ -765,6 +765,7 @@ export function CommandCenter() {
                 label={t("shell.commandCenter.searchingFiles")}
               />
             </View>
+            {fileSearchError}
             <FlatList ref={listRef} {...commonListProps} />
           </View>
         </View>
@@ -939,6 +940,8 @@ const styles = StyleSheet.create((theme) => ({
   errorText: {
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
     color: theme.colors.statusDanger,
     fontSize: theme.fontSize.sm,
   },

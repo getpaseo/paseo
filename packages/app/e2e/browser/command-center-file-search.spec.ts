@@ -9,7 +9,7 @@ import {
 } from "../support/helpers/command-center-file-search";
 import { expectFileTabOpen } from "../support/helpers/file-explorer";
 import { gotoWorkspace } from "../support/helpers/launcher";
-import { seedWorkspace } from "../support/helpers/seed-client";
+import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 
 const FILE_PATH =
   "packages/app/src/command-center/features/workspace-file-search/layout-stability/needle-layout-stability-command-center.tsx";
@@ -24,6 +24,17 @@ function paseoSizedFiles(): Array<{ path: string; content: string }> {
   }));
   files.push({ path: FILE_PATH, content: "export const layoutNeedle = true;\n" });
   return files;
+}
+
+async function seedMatchingWorkspaces(count: number): Promise<SeededWorkspace[]> {
+  return Promise.all(
+    Array.from({ length: count }, (_, index) =>
+      seedWorkspace({
+        repoPrefix: `command-center-file-search-error-${String(index).padStart(2, "0")}-`,
+        title: `Home failure ${String(index).padStart(2, "0")}`,
+      }),
+    ),
+  );
 }
 
 test.use({
@@ -104,23 +115,25 @@ test("dropping the files scope leaves the search row the same height", async ({ 
 test("unscoped command search keeps commands visible and reports file-search failures", async ({
   page,
 }) => {
-  const seeded = await seedWorkspace({
-    repoPrefix: "command-center-file-search-error-",
-    title: "File search error",
-  });
+  test.setTimeout(120_000);
+  const seeded = await seedMatchingWorkspaces(9);
 
   try {
     await failDirectorySuggestionRequests(page);
-    await gotoWorkspace(page, seeded.workspaceId);
+    await gotoWorkspace(page, seeded[0].workspaceId);
     const panel = await openCommandCenter(page);
     await panel.getByTestId("command-center-input").fill("home");
 
-    await expect(panel.getByRole("button", { name: "Home" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Home", exact: true })).toBeVisible();
+    await expect(panel.getByRole("button", { name: /Home failure 08/ })).toBeVisible();
     await expect(panel.getByTestId("command-center-file-search-error")).toHaveText(
       "Error: Test file search transport failure.",
     );
+    await expect(panel.getByTestId("command-center-file-search-error")).toBeInViewport({
+      ratio: 1,
+    });
     await expect(panel.getByText("No matches", { exact: true })).toHaveCount(0);
   } finally {
-    await seeded.cleanup();
+    await Promise.allSettled(seeded.map((workspace) => workspace.cleanup()));
   }
 });
