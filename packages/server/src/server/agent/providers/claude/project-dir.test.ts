@@ -5,9 +5,9 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 
-import { claudeProjectDir, claudeProjectDirSync } from "./project-dir.js";
+import { claudeProjectDir, claudeProjectDirSync, resolveClaudeConfigDir } from "./project-dir.js";
 
 // Parity oracle: the Claude SDK's getSessionInfo({ dir }) canonicalizes the
 // given dir with the SDK's own encoder and looks for `<sessionId>.jsonl` under
@@ -106,6 +106,64 @@ describe("claudeProjectDir parity with Claude Agent SDK", () => {
     const cwd = await ensureDir(join(workspaceRoot, "sync path with spaces"));
 
     await expect(claudeProjectDir(cwd)).resolves.toBe(claudeProjectDirSync(cwd));
+  });
+});
+
+describe("resolveClaudeConfigDir", () => {
+  const daemonConfigDir = join(tmpdir(), "paseo-claude-config-daemon");
+  const profileConfigDir = join(tmpdir(), "paseo-claude-config-profile");
+  let previousConfigDir: string | undefined;
+
+  beforeEach(() => {
+    previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = daemonConfigDir;
+  });
+
+  afterEach(() => {
+    if (previousConfigDir === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+    }
+  });
+
+  test("prefers a provider profile's CLAUDE_CONFIG_DIR over the daemon environment", () => {
+    expect(
+      resolveClaudeConfigDir({
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: profileConfigDir } },
+      }),
+    ).toBe(profileConfigDir);
+  });
+
+  test("falls back to the daemon environment when the profile sets no directory", () => {
+    expect(resolveClaudeConfigDir({ runtimeSettings: { env: {} } })).toBe(daemonConfigDir);
+    expect(resolveClaudeConfigDir()).toBe(daemonConfigDir);
+  });
+
+  test("an explicit configDir still wins over both", () => {
+    const explicit = join(tmpdir(), "paseo-claude-config-explicit");
+
+    expect(
+      resolveClaudeConfigDir({
+        configDir: explicit,
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: profileConfigDir } },
+      }),
+    ).toBe(explicit);
+  });
+
+  test("defaults to ~/.claude when nothing is configured", () => {
+    delete process.env.CLAUDE_CONFIG_DIR;
+
+    expect(resolveClaudeConfigDir()).toBe(join(homedir(), ".claude"));
+  });
+
+  test("session transcripts resolve under the profile directory", () => {
+    const cwd = join(tmpdir(), "paseo-profile-project");
+    const configDir = resolveClaudeConfigDir({
+      runtimeSettings: { env: { CLAUDE_CONFIG_DIR: profileConfigDir } },
+    });
+
+    expect(claudeProjectDirSync(cwd, { configDir })).toContain(profileConfigDir);
   });
 });
 
