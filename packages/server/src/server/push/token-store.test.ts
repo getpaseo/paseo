@@ -6,6 +6,7 @@ import { describe, expect, test } from "vitest";
 
 import { PRIVATE_FILE_MODE } from "../private-files.js";
 import { createPushNotifications } from "./index.js";
+import { PushTokenStore } from "./token-store.js";
 
 const MODE_MASK = 0o777;
 const PERMISSIVE_FILE_MODE = 0o644;
@@ -63,5 +64,41 @@ describe.skipIf(process.platform === "win32")("PushTokenStore file permissions",
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe("PushTokenStore persistence", () => {
+  test("does not apply a revocation until the updated subscriptions are durable", () => {
+    let rejectWrites = false;
+    let persisted = "";
+    const store = new PushTokenStore(
+      createLogger(),
+      path.join(tmpdir(), `missing-push-token-store-${process.pid}`, "push-tokens.json"),
+      () => Date.parse("2026-08-10T00:00:00.000Z"),
+      48 * 60 * 60 * 1000,
+      (_filePath, payload) => {
+        if (rejectWrites) throw new Error("disk full");
+        persisted = String(payload);
+      },
+    );
+
+    store.renewToken("ExponentPushToken[test]");
+    rejectWrites = true;
+
+    expect(() => store.revokeToken("ExponentPushToken[test]")).toThrow("disk full");
+    expect(store.getActiveTokens()).toEqual(["ExponentPushToken[test]"]);
+    expect(JSON.parse(persisted)).toEqual({
+      subscriptions: [
+        {
+          token: "ExponentPushToken[test]",
+          expiresAt: "2026-08-12T00:00:00.000Z",
+        },
+      ],
+    });
+
+    rejectWrites = false;
+    store.revokeToken("ExponentPushToken[test]");
+    expect(store.getActiveTokens()).toEqual([]);
+    expect(JSON.parse(persisted)).toEqual({ subscriptions: [] });
   });
 });

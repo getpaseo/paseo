@@ -1,8 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
+import type { RevokePushNotificationsInput, StartPushNotificationsInput } from "./types";
 
 const STORAGE_PREFIX = "@paseo:expo-push-token:";
 
@@ -57,7 +57,7 @@ async function resolveToken(serverId: string): Promise<string | null> {
   return token;
 }
 
-export function startSubscription(input: { client: DaemonClient; serverId: string }): () => void {
+export function startSubscription(input: StartPushNotificationsInput): () => void {
   let stopped = false;
   let token: string | null = null;
   const register = () => {
@@ -85,10 +85,7 @@ export function startSubscription(input: { client: DaemonClient; serverId: strin
   };
 }
 
-export async function revokeSubscription(input: {
-  client: DaemonClient | null;
-  serverId: string;
-}): Promise<void> {
+export async function revokeSubscription(input: RevokePushNotificationsInput): Promise<void> {
   const key = storageKey(input.serverId);
   const token = await AsyncStorage.getItem(key);
   if (

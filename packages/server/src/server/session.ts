@@ -2279,10 +2279,10 @@ export class Session {
         this.handleRegisterPushToken(msg.token);
         return;
       case "push.unregister.request":
+        this.pushNotifications.revoke(msg.token);
         if (this.registeredPushToken?.trim() === msg.token.trim()) {
           this.registeredPushToken = null;
         }
-        this.pushNotifications.revoke(msg.token);
         this.emit({
           type: "push.unregister.response",
           payload: { requestId: msg.requestId },

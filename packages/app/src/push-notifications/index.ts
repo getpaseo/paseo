@@ -1,15 +1,9 @@
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { RevokePushNotificationsInput, StartPushNotificationsInput } from "./internal/types";
 
-export function startPushNotifications(_input: {
-  client: DaemonClient;
-  serverId: string;
-}): () => void {
+export function startPushNotifications(_input: StartPushNotificationsInput): () => void {
   return () => undefined;
 }
 
-export async function revokePushNotifications(_input: {
-  client: DaemonClient | null;
-  serverId: string;
-}): Promise<void> {
+export async function revokePushNotifications(_input: RevokePushNotificationsInput): Promise<void> {
   // Push notifications are native-only.
 }
