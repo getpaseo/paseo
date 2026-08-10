@@ -1062,6 +1062,7 @@ export const ja: TranslationResources = {
         hideFromSidebar: "サイドバーから非表示",
         splitPane: "サイドパネルで開く",
         mainCheckout: "Main checkout",
+        nestedRepos: "リポジトリ",
         archiving: "アーカイブ中...",
         hiding: "非表示にしています...",
       },

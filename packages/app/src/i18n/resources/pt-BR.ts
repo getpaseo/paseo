@@ -1073,6 +1073,7 @@ export const ptBR: TranslationResources = {
         hideFromSidebar: "Ocultar da barra lateral",
         splitPane: "Abrir no painel lateral",
         mainCheckout: "Main checkout",
+        nestedRepos: "Repositórios",
         archiving: "Arquivando...",
         hiding: "Ocultando...",
       },

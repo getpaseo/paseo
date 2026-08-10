@@ -1081,6 +1081,7 @@ export const fr: TranslationResources = {
         hideFromSidebar: "Masquer de la barre latérale",
         splitPane: "Ouvrir dans un panneau latéral",
         mainCheckout: "Main checkout",
+        nestedRepos: "Dépôts",
         archiving: "Archivage...",
         hiding: "Dissimulation...",
       },

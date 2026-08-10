@@ -1082,6 +1082,7 @@ export const es: TranslationResources = {
         hideFromSidebar: "Ocultar de la barra lateral",
         splitPane: "Abrir en panel lateral",
         mainCheckout: "Main checkout",
+        nestedRepos: "Repositorios",
         archiving: "Archivando...",
         hiding: "Ocultación...",
       },

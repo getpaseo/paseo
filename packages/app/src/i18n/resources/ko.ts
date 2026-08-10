@@ -1058,6 +1058,7 @@ export const ko: TranslationResources = {
         hideFromSidebar: "사이드바에서 숨기기",
         splitPane: "사이드 패널에서 열기",
         mainCheckout: "Main checkout",
+        nestedRepos: "저장소",
         archiving: "보관하는 중...",
         hiding: "숨기는 중...",
       },

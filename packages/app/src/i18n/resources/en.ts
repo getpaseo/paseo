@@ -1061,6 +1061,7 @@ export const en = {
         hideFromSidebar: "Hide from sidebar",
         splitPane: "Open in side pane",
         mainCheckout: "Main checkout",
+        nestedRepos: "Repos",
         archiving: "Archiving...",
         hiding: "Hiding...",
       },

@@ -2113,6 +2113,12 @@ export const ProjectCreateDirectoryRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const ProjectNestedReposScanRequestSchema = z.object({
+  type: z.literal("project.nested_repos.scan_request"),
+  parentCwd: z.string(),
+  requestId: z.string(),
+});
+
 export const GithubRepositorySchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -2745,6 +2751,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   OpenProjectRequestSchema,
   ProjectAddRequestSchema,
   ProjectCreateDirectoryRequestSchema,
+  ProjectNestedReposScanRequestSchema,
   WorkspaceGithubSearchRepositoriesRequestSchema,
   ProjectGithubCloneRequestSchema,
   ArchiveWorkspaceRequestSchema,
@@ -3645,6 +3652,23 @@ export const ProjectCreateDirectoryResponseSchema = z.object({
     // Error codes are open-ended on the wire so older clients can still parse
     // responses after a newer daemon learns another failure reason.
     errorCode: z.string().nullable(),
+  }),
+});
+
+export const ProjectNestedReposScanResponseSchema = z.object({
+  type: z.literal("project.nested_repos.scan_response"),
+  payload: z.object({
+    parentCwd: z.string(),
+    repos: z.array(
+      z.object({
+        path: z.string(),
+        name: z.string(),
+        isWorktree: z.boolean(),
+        branch: z.string().nullable(),
+      }),
+    ),
+    error: z.string().nullable(),
+    requestId: z.string(),
   }),
 });
 
@@ -5610,6 +5634,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FetchWorkspacesResponseMessageSchema,
   ProjectAddResponseSchema,
   ProjectCreateDirectoryResponseSchema,
+  ProjectNestedReposScanResponseSchema,
   OpenProjectResponseMessageSchema,
   WorkspaceGithubSearchRepositoriesResponseSchema,
   ProjectGithubCloneResponseSchema,
@@ -5799,6 +5824,8 @@ export type FetchRecentProviderSessionsResponseMessage = z.infer<
 export type FetchWorkspacesResponseMessage = z.infer<typeof FetchWorkspacesResponseMessageSchema>;
 export type ProjectAddResponse = z.infer<typeof ProjectAddResponseSchema>;
 export type ProjectCreateDirectoryResponse = z.infer<typeof ProjectCreateDirectoryResponseSchema>;
+export type ProjectNestedReposScanRequest = z.infer<typeof ProjectNestedReposScanRequestSchema>;
+export type ProjectNestedReposScanResponse = z.infer<typeof ProjectNestedReposScanResponseSchema>;
 export type ScriptStatusUpdateMessage = z.infer<typeof ScriptStatusUpdateMessageSchema>;
 export type OpenProjectResponseMessage = z.infer<typeof OpenProjectResponseMessageSchema>;
 export type WorkspaceGithubSearchRepositoriesResponse = z.infer<

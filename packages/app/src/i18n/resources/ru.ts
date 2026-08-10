@@ -1073,6 +1073,7 @@ export const ru: TranslationResources = {
         hideFromSidebar: "Скрыть с боковой панели",
         splitPane: "Открыть в боковой панели",
         mainCheckout: "Main checkout",
+        nestedRepos: "Репозитории",
         archiving: "Архивирование...",
         hiding: "Скрытие...",
       },

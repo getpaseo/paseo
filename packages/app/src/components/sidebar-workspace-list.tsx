@@ -86,6 +86,7 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { ProjectLeadingVisual } from "@/components/sidebar/project-leading-visual";
+import { NestedReposSection } from "@/components/sidebar/nested-repos-section";
 import { useToast } from "@/contexts/toast-context";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
@@ -1942,6 +1943,12 @@ function ProjectBlock({
               expanded={workspacesExpanded}
               onPress={toggleWorkspacesExpanded}
               testID={`sidebar-project-show-more-${project.viewKey}`}
+            />
+          ) : null}
+          {project.hosts[0]?.serverId ? (
+            <NestedReposSection
+              serverId={project.hosts[0].serverId}
+              scanCwd={project.iconWorkingDir}
             />
           ) : null}
         </>

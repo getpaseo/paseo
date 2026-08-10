@@ -1051,6 +1051,7 @@ export const ar: TranslationResources = {
         hideFromSidebar: "إخفاء من الشريط الجانبي",
         splitPane: "فتح في اللوحة الجانبية",
         mainCheckout: "Main checkout",
+        nestedRepos: "المستودعات",
         archiving: "أرشفة...",
         hiding: "إخفاء...",
       },
