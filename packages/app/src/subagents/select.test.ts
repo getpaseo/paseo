@@ -1,16 +1,24 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import type { StateStorage } from "zustand/middleware";
 import { selectProviderSubagentsForParent, selectSubagentsForParent } from "./select";
-import { useProviderSubagentStore } from "./provider-store";
+import { createProviderSubagentStore } from "./provider-store";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 
-vi.mock("@react-native-async-storage/async-storage", () => ({
-  default: {
-    getItem: vi.fn().mockResolvedValue(null),
-    setItem: vi.fn().mockResolvedValue(undefined),
-    removeItem: vi.fn().mockResolvedValue(undefined),
-  },
-}));
+function createMemoryStorage(): StateStorage {
+  const values = new Map<string, string>();
+  return {
+    getItem: (name) => values.get(name) ?? null,
+    setItem: (name, value) => {
+      values.set(name, value);
+    },
+    removeItem: (name) => {
+      values.delete(name);
+    },
+  };
+}
+
+const useProviderSubagentStore = createProviderSubagentStore(createMemoryStorage());
 
 const SERVER_ID = "server-1";
 const AGENT_TIMESTAMP = new Date("2026-03-08T10:00:00.000Z");

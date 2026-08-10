@@ -130,6 +130,7 @@ function serializeProviderSubagentVisibility(state: ProviderSubagentState): {
 function mergeProviderSubagentVisibility(
   persistedState: unknown,
   currentState: ProviderSubagentState,
+  revealedKeys: ReadonlySet<string>,
 ): ProviderSubagentState {
   if (!persistedState || typeof persistedState !== "object" || Array.isArray(persistedState)) {
     return currentState;
@@ -138,12 +139,15 @@ function mergeProviderSubagentVisibility(
     ? Reflect.get(persistedState, "hiddenFromTrack")
     : undefined;
   if (!Array.isArray(hiddenFromTrack)) return currentState;
-  return {
-    ...currentState,
-    hiddenFromTrack: new Set(
-      hiddenFromTrack.filter((key): key is string => typeof key === "string"),
-    ),
-  };
+  const mergedHiddenFromTrack = new Set(
+    hiddenFromTrack.filter((key): key is string => typeof key === "string"),
+  );
+  for (const key of revealedKeys) mergedHiddenFromTrack.delete(key);
+  for (const key of currentState.hiddenFromTrack) mergedHiddenFromTrack.add(key);
+  for (const [key, descriptor] of currentState.descriptors) {
+    if (descriptor.status === "running") mergedHiddenFromTrack.delete(key);
+  }
+  return { ...currentState, hiddenFromTrack: mergedHiddenFromTrack };
 }
 
 const EMPTY_TIMELINE: ProviderSubagentTimelineState = {
@@ -378,13 +382,51 @@ const createProviderSubagentState: StateCreator<ProviderSubagentState> = (set) =
 });
 
 export function createProviderSubagentStore(storage: StateStorage = AsyncStorage) {
+  let hydrationInProgress = false;
+  const revealedKeys = new Set<string>();
+  // AsyncStorage can resolve after startup replay or a user action. Remember visibility wins
+  // observed during that window so the older snapshot cannot hide those children again.
+  const observedStateCreator: StateCreator<ProviderSubagentState> = (set, get, store) => {
+    const observedSet: typeof set = (...args) => {
+      const previousState = get();
+      const [nextState, replace] = args;
+      if (replace === true) {
+        set(
+          nextState as
+            | ProviderSubagentState
+            | ((state: ProviderSubagentState) => ProviderSubagentState),
+          true,
+        );
+      } else {
+        set(nextState, false);
+      }
+      if (!hydrationInProgress) return;
+      const currentState = get();
+      for (const key of previousState.hiddenFromTrack) {
+        if (!currentState.hiddenFromTrack.has(key)) revealedKeys.add(key);
+      }
+      for (const [key, descriptor] of currentState.descriptors) {
+        if (descriptor.status === "running") revealedKeys.add(key);
+      }
+    };
+    return createProviderSubagentState(observedSet, get, store);
+  };
   return create<ProviderSubagentState>()(
-    persist(createProviderSubagentState, {
+    persist(observedStateCreator, {
       name: "provider-subagent-visibility",
       version: 1,
       storage: createJSONStorage(() => storage),
       partialize: serializeProviderSubagentVisibility,
-      merge: mergeProviderSubagentVisibility,
+      merge: (persistedState, currentState) =>
+        mergeProviderSubagentVisibility(persistedState, currentState, revealedKeys),
+      onRehydrateStorage: () => {
+        hydrationInProgress = true;
+        revealedKeys.clear();
+        return () => {
+          hydrationInProgress = false;
+          revealedKeys.clear();
+        };
+      },
     }),
   );
 }

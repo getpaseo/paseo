@@ -1,19 +1,10 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import type { StateStorage } from "zustand/middleware";
 import {
   createProviderSubagentStore,
   hasHiddenProviderSubagentsForParent,
   providerSubagentKey,
-  useProviderSubagentStore,
 } from "./provider-store";
-
-vi.mock("@react-native-async-storage/async-storage", () => ({
-  default: {
-    getItem: vi.fn().mockResolvedValue(null),
-    setItem: vi.fn().mockResolvedValue(undefined),
-    removeItem: vi.fn().mockResolvedValue(undefined),
-  },
-}));
 
 const SERVER_ID = "server-1";
 const PARENT_ID = "parent-1";
@@ -30,6 +21,39 @@ function createMemoryStorage(): StateStorage {
       values.delete(name);
     },
   };
+}
+
+const useProviderSubagentStore = createProviderSubagentStore(createMemoryStorage());
+
+function createDeferredHydrationStorage(hiddenFromTrack: string[]): {
+  storage: StateStorage;
+  resolveRead(): void;
+} {
+  const snapshot = JSON.stringify({ state: { hiddenFromTrack }, version: 1 });
+  let resolveRead: ((value: string | null) => void) | undefined;
+  const read = new Promise<string | null>((resolve) => {
+    resolveRead = resolve;
+  });
+  return {
+    storage: {
+      getItem: () => read,
+      setItem: () => undefined,
+      removeItem: () => undefined,
+    },
+    resolveRead: () => {
+      resolveRead?.(snapshot);
+    },
+  };
+}
+
+function waitForHydration(store: ReturnType<typeof createProviderSubagentStore>): Promise<void> {
+  if (store.persist.hasHydrated()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = store.persist.onFinishHydration(() => {
+      unsubscribe();
+      resolve();
+    });
+  });
 }
 
 afterEach(() => {
@@ -233,6 +257,82 @@ describe("provider subagent client store", () => {
     expect(restoredStore.getState().hiddenFromTrack.has(key)).toBe(true);
     expect(restoredStore.getState().descriptors.size).toBe(0);
     expect(restoredStore.getState().timelines.size).toBe(0);
+  });
+
+  test("does not let stale hydration hide a child that ran during startup replay", async () => {
+    const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
+    const unrelatedKey = providerSubagentKey(SERVER_ID, "parent-2", "child-2");
+    const deferred = createDeferredHydrationStorage([key, unrelatedKey]);
+    const store = createProviderSubagentStore(deferred.storage);
+    const hydrated = waitForHydration(store);
+    const descriptor = {
+      id: SUBAGENT_ID,
+      parentAgentId: PARENT_ID,
+      provider: "codex" as const,
+      title: "Replayed child",
+      description: null,
+      status: "running" as const,
+      createdAt: "2026-07-12T10:00:00.000Z",
+      updatedAt: "2026-07-12T10:00:01.000Z",
+      toolCallId: "call-1",
+    };
+
+    store.getState().applyUpdate(SERVER_ID, { kind: "upsert", subagent: descriptor });
+    store.getState().applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        ...descriptor,
+        status: "completed",
+        updatedAt: "2026-07-12T10:00:02.000Z",
+      },
+    });
+    deferred.resolveRead();
+    await hydrated;
+
+    expect(store.getState().descriptors.get(key)?.status).toBe("completed");
+    expect(store.getState().hiddenFromTrack.has(key)).toBe(false);
+    expect(store.getState().hiddenFromTrack.has(unrelatedKey)).toBe(true);
+  });
+
+  test("does not let stale hydration undo a hide made while storage is loading", async () => {
+    const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
+    const deferred = createDeferredHydrationStorage([]);
+    const store = createProviderSubagentStore(deferred.storage);
+    const hydrated = waitForHydration(store);
+    store.getState().applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        id: SUBAGENT_ID,
+        parentAgentId: PARENT_ID,
+        provider: "codex",
+        title: "Finished child",
+        description: null,
+        status: "completed",
+        createdAt: "2026-07-12T10:00:00.000Z",
+        updatedAt: "2026-07-12T10:00:02.000Z",
+        toolCallId: "call-1",
+      },
+    });
+    store.getState().hideFinishedForParent(SERVER_ID, PARENT_ID);
+
+    deferred.resolveRead();
+    await hydrated;
+
+    expect(store.getState().hiddenFromTrack.has(key)).toBe(true);
+  });
+
+  test("does not let stale hydration undo an explicit reveal", async () => {
+    const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
+    const deferred = createDeferredHydrationStorage([key]);
+    const store = createProviderSubagentStore(deferred.storage);
+    const hydrated = waitForHydration(store);
+    store.setState({ hiddenFromTrack: new Set([key]) });
+
+    store.getState().showHiddenForParent(SERVER_ID, PARENT_ID);
+    deferred.resolveRead();
+    await hydrated;
+
+    expect(store.getState().hiddenFromTrack.has(key)).toBe(false);
   });
 
   test("keeps multiple finished provider children hidden after restart and history replay", () => {
