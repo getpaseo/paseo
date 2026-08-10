@@ -5,6 +5,7 @@ import { useSessionStore } from "@/stores/session-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import type { Agent } from "@/stores/session-store";
 import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
+import { hasRunningProviderSubagent, useProviderSubagentStore } from "@/subagents/provider-store";
 
 export interface AggregatedAgent extends AgentDirectoryEntry {
   serverId: string;
@@ -40,6 +41,7 @@ export function useAggregatedAgents(options?: {
       return result;
     }),
   );
+  const providerSubagentDescriptors = useProviderSubagentStore((state) => state.descriptors);
 
   const refreshAll = useCallback(() => {
     runtime.refreshAllAgentDirectories();
@@ -75,7 +77,11 @@ export function useAggregatedAgents(options?: {
           serverId,
           serverLabel,
           title: agent.title ?? null,
-          status: agent.status,
+          status:
+            agent.status === "idle" &&
+            hasRunningProviderSubagent(providerSubagentDescriptors, serverId, agent.id)
+              ? "running"
+              : agent.status,
           lastActivityAt: agent.lastActivityAt,
           cwd: agent.cwd,
           workspaceId: agent.workspaceId,
@@ -147,7 +153,14 @@ export function useAggregatedAgents(options?: {
       isInitialLoad,
       isRevalidating,
     };
-  }, [daemons, includeArchived, runtime, runtimeVersion, sessionAgents]);
+  }, [
+    daemons,
+    includeArchived,
+    providerSubagentDescriptors,
+    runtime,
+    runtimeVersion,
+    sessionAgents,
+  ]);
 
   return {
     ...result,
