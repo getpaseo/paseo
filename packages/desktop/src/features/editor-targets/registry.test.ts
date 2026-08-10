@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { listAvailableEditorTargets, openEditorTarget } from "./registry.js";
+import { EDITOR_TARGETS, listAvailableEditorTargets, openEditorTarget } from "./registry.js";
 import type { EditorTargetIcon, EditorTargetRuntime } from "./target.js";
 import { cursorTarget } from "./targets/cursor.js";
 import { devinTarget } from "./targets/devin-desktop.js";
@@ -152,6 +152,54 @@ describe("editor target registry", () => {
       {
         command: "/bin/code",
         args: ["/repo", "--goto", "/repo/src/app.ts:12:4"],
+      },
+    ]);
+  });
+
+  it("lists the Devin target through the real editor target registry", async () => {
+    const runtime = new FakeEditorTargets();
+    runtime.installCommand("devin-desktop");
+
+    const targets = await listAvailableEditorTargets(runtime, EDITOR_TARGETS);
+
+    expect(targets).toEqual([
+      {
+        id: "devin-desktop",
+        label: "Devin",
+        kind: "editor",
+        icon: { kind: "image", dataUrl: "data:image/png;base64,devin-desktop.png" },
+      },
+      {
+        id: "file-manager",
+        label: "Files",
+        kind: "file-manager",
+        icon: { kind: "symbol", name: "folder" },
+      },
+    ]);
+  });
+
+  it("opens a file through the real registry using the Devin target", async () => {
+    const runtime = new FakeEditorTargets();
+    runtime.installCommand("devin-desktop");
+    runtime.addPath("/repo");
+    runtime.addPath("/repo/src/app.ts");
+
+    await openEditorTarget(
+      {
+        editorId: "devin-desktop",
+        workspacePath: "/repo",
+        filePath: "/repo/src/app.ts",
+        line: 5,
+        column: 9,
+      },
+      runtime,
+      EDITOR_TARGETS,
+    );
+
+    expect(runtime.launches).toEqual([
+      {
+        command: "/bin/devin-desktop",
+        args: ["/repo", "--goto", "/repo/src/app.ts:5:9"],
       },
     ]);
   });
