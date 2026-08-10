@@ -149,6 +149,43 @@ const MANAGED_MCP_SERVER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 export const MAX_MANAGED_MCP_SERVERS = 64;
+export const MAX_AGENT_TEMPLATES = 128;
+
+const AGENT_TEMPLATE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const AgentTemplateIdSchema = z.string().trim().min(1).max(128).regex(AGENT_TEMPLATE_ID_PATTERN);
+
+export const AgentTemplateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(60),
+    description: z.string().trim().min(1).max(2_000),
+    instructions: z.string().trim().min(1).max(65_536),
+    enabled: z.boolean().optional(),
+    provider: z
+      .string()
+      .trim()
+      .min(3)
+      .max(512)
+      .refine(
+        (value) => {
+          const separator = value.indexOf("/");
+          return separator > 0 && separator < value.length - 1;
+        },
+        {
+          message: "provider must be provider/model, for example codex/gpt-5.4",
+        },
+      )
+      .optional(),
+  })
+  .strict();
+
+export const AgentTemplateRecordSchema = z
+  .record(AgentTemplateIdSchema, AgentTemplateSchema)
+  .refine(
+    (templates) => Object.keys(templates).length <= MAX_AGENT_TEMPLATES,
+    `A host supports at most ${MAX_AGENT_TEMPLATES} agent templates`,
+  );
+
+export type AgentTemplate = z.infer<typeof AgentTemplateSchema>;
 
 const ManagedMcpEnvironmentVariableNameSchema = z
   .string()
@@ -257,6 +294,7 @@ export const MutableDaemonConfigSchema = z
       })
       .passthrough(),
     browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
+    agentTemplates: AgentTemplateRecordSchema.optional(),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
     autoArchiveAfterMerge: z.boolean().default(false),
@@ -271,6 +309,8 @@ export const MutableDaemonConfigPatchSchema = z
     relay: MutableRelayConfigSchema.partial().optional(),
     mcp: MutableDaemonConfigSchema.shape.mcp.partial().optional(),
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
+    upsertAgentTemplates: AgentTemplateRecordSchema.optional(),
+    removeAgentTemplates: z.array(AgentTemplateIdSchema).max(MAX_AGENT_TEMPLATES).optional(),
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
@@ -3100,6 +3140,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerRemoval: z.boolean().optional(),
         // COMPAT(hostManagedMcpServers): added in v0.3.X, remove after 2027-08-10.
         hostManagedMcpServers: z.boolean().optional(),
+        // COMPAT(hostManagedAgentTemplates): added in v0.3.X, remove after 2027-08-10.
+        hostManagedAgentTemplates: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
         // COMPAT(forgeProviders): added in v0.1.106, drop the gate when daemon floor >= v0.1.106.

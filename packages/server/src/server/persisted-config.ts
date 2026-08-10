@@ -10,6 +10,7 @@ import {
 import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
 import { ensurePrivateFile, writePrivateFileAtomicSync } from "./private-files.js";
 import {
+  AgentTemplateRecordSchema,
   ManagedMcpServerConfigRecordSchema,
   MAX_MANAGED_MCP_SERVERS,
   TerminalProfileSchema,
@@ -256,6 +257,7 @@ export const PersistedConfigSchema = z
           })
           .passthrough()
           .optional(),
+        agentTemplates: AgentTemplateRecordSchema.optional(),
         git: z
           .object({
             maxProcessesPerSecond: z.number().int().positive().optional(),

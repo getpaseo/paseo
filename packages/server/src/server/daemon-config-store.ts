@@ -149,6 +149,36 @@ function isEqualValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+function applyAgentTemplatePatch(
+  current: MutableDaemonConfig["agentTemplates"],
+  upsert: MutableDaemonConfigPatch["upsertAgentTemplates"],
+  remove: readonly string[],
+): NonNullable<MutableDaemonConfig["agentTemplates"]> {
+  const next = { ...current, ...upsert };
+  for (const templateId of remove) {
+    delete next[templateId];
+  }
+  return next;
+}
+
+function hasRecordPatch(upsert: Record<string, unknown> | undefined, remove: readonly string[]) {
+  return Object.keys(upsert ?? {}).length > 0 || remove.length > 0;
+}
+
+function isNoopPatch(params: {
+  configChanged: boolean;
+  removedProviders: readonly string[];
+  hasMcpServerPatch: boolean;
+  hasAgentTemplatePatch: boolean;
+}): boolean {
+  return (
+    !params.configChanged &&
+    params.removedProviders.length === 0 &&
+    !params.hasMcpServerPatch &&
+    !params.hasAgentTemplatePatch
+  );
+}
+
 export function applyMutableProviderConfigToOverrides(
   baseOverrides: Record<string, ProviderOverride> | undefined,
   mutableProviders: MutableDaemonConfig["providers"] | undefined,
@@ -211,18 +241,25 @@ export class DaemonConfigStore {
       removeProviders = [],
       upsertMcpServers,
       removeMcpServers = [],
+      upsertAgentTemplates,
+      removeAgentTemplates = [],
       ...configPatch
     } = parsedPatch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
+    merged.agentTemplates = applyAgentTemplatePatch(
+      this.current.agentTemplates,
+      upsertAgentTemplates,
+      removeAgentTemplates,
+    );
     const previousManagedMcpServers = this.managedMcpServers;
     const managedMcpServers = applyManagedMcpServerPatch({
       current: previousManagedMcpServers,
       upsert: upsertMcpServers,
       remove: removeMcpServers,
     });
-    const hasMcpServerPatch =
-      Object.keys(upsertMcpServers ?? {}).length > 0 || removeMcpServers.length > 0;
+    const hasMcpServerPatch = hasRecordPatch(upsertMcpServers, removeMcpServers);
+    const hasAgentTemplatePatch = hasRecordPatch(upsertAgentTemplates, removeAgentTemplates);
     merged.mcp = {
       ...merged.mcp,
       servers: redactManagedMcpServers(managedMcpServers),
@@ -239,7 +276,14 @@ export class DaemonConfigStore {
     });
     const configChanged = !isEqualValue(this.current, next);
 
-    if (!configChanged && removedProviders.length === 0 && !hasMcpServerPatch) {
+    if (
+      isNoopPatch({
+        configChanged,
+        removedProviders,
+        hasMcpServerPatch,
+        hasAgentTemplatePatch,
+      })
+    ) {
       return this.current;
     }
 
@@ -403,6 +447,7 @@ function mergeMutableConfigIntoPersistedConfig(params: {
         ...persisted.daemon?.browserTools,
         enabled: browserToolsEnabled,
       },
+      agentTemplates: mutable.agentTemplates,
       autoArchiveAfterMerge: mutable.autoArchiveAfterMerge,
       enableTerminalAgentHooks: mutable.enableTerminalAgentHooks,
       appendSystemPrompt: mutable.appendSystemPrompt,

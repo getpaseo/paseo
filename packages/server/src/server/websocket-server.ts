@@ -1626,6 +1626,8 @@ export class VoiceAssistantWebSocketServer {
         providerRemoval: true,
         // COMPAT(hostManagedMcpServers): added in v0.3.X, remove after 2027-08-10.
         hostManagedMcpServers: true,
+        // COMPAT(hostManagedAgentTemplates): added in v0.3.X, remove after 2027-08-10.
+        hostManagedAgentTemplates: true,
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: true,
         // COMPAT(forgeProviders): added in v0.1.106, drop the gate when daemon floor >= v0.1.106.

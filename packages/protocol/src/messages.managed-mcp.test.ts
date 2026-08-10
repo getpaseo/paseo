@@ -111,3 +111,42 @@ describe("managed MCP protocol", () => {
     ).toThrow("cannot include credentials");
   });
 });
+
+describe("managed agent template protocol", () => {
+  test("accepts template upserts and removals", () => {
+    const patch = MutableDaemonConfigPatchSchema.parse({
+      upsertAgentTemplates: {
+        reviewer: {
+          name: "Code reviewer",
+          description: "Reviews implementation changes",
+          instructions: "Review the requested change and report actionable findings.",
+        },
+      },
+      removeAgentTemplates: ["old-reviewer"],
+    });
+
+    expect(patch.upsertAgentTemplates?.reviewer?.name).toBe("Code reviewer");
+    expect(patch.removeAgentTemplates).toEqual(["old-reviewer"]);
+  });
+
+  test("rejects unsafe IDs and incomplete templates", () => {
+    expect(() =>
+      MutableDaemonConfigPatchSchema.parse({
+        upsertAgentTemplates: {
+          "../reviewer": {
+            name: "Reviewer",
+            description: "Reviews code",
+            instructions: "Review code.",
+          },
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      MutableDaemonConfigPatchSchema.parse({
+        upsertAgentTemplates: {
+          reviewer: { name: "Reviewer", description: "Reviews code" },
+        },
+      }),
+    ).toThrow();
+  });
+});

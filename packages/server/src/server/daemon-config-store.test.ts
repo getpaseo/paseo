@@ -554,6 +554,49 @@ describe("DaemonConfigStore", () => {
     expect(persisted.daemon?.appendSystemPrompt).toBe("Prefer terse replies.");
   });
 
+  test("patch persists managed agent template upserts and removals", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      mcp: { injectIntoAgents: true },
+      browserTools: { enabled: false },
+      agentTemplates: {
+        old: {
+          name: "Old",
+          description: "Old template",
+          instructions: "Old instructions",
+        },
+      },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    store.patch({
+      upsertAgentTemplates: {
+        reviewer: {
+          name: "Reviewer",
+          description: "Reviews code",
+          instructions: "Review the requested implementation.",
+        },
+      },
+      removeAgentTemplates: ["old"],
+    });
+
+    expect(store.get().agentTemplates).toEqual({
+      reviewer: {
+        name: "Reviewer",
+        description: "Reviews code",
+        instructions: "Review the requested implementation.",
+      },
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.agentTemplates).toEqual(
+      store.get().agentTemplates,
+    );
+  });
+
   test("patch persists enable terminal agent hooks into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

@@ -1137,6 +1137,127 @@ describe("create_agent MCP tool", () => {
   });
   const ensureWorkspaceForCreate = async () => "workspace-created";
 
+  it("lists only enabled host-managed agent templates", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      getAgentTemplates: () => ({
+        reviewer: {
+          name: "Reviewer",
+          description: "Reviews code",
+          instructions: "Review code carefully.",
+        },
+        disabled: {
+          name: "Disabled",
+          description: "Unavailable role",
+          instructions: "Do not expose this role.",
+          enabled: false,
+        },
+      }),
+      logger,
+    });
+
+    const response = await registeredTool(server, "list_agent_templates").handler({});
+
+    expect(response.structuredContent).toEqual({
+      templates: [
+        {
+          id: "reviewer",
+          name: "Reviewer",
+          description: "Reviews code",
+        },
+      ],
+    });
+  });
+
+  it("applies a host-managed template to the created agent prompt", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const snapshot = {
+      id: "templated-agent",
+      provider: "codex",
+      cwd: existingCwd,
+      workspaceId: "workspace-created",
+      lifecycle: "idle",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Review change" },
+    } as ManagedAgent;
+    spies.agentManager.createAgent.mockResolvedValue(snapshot);
+    spies.agentManager.getAgent.mockReturnValue(snapshot);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      ensureWorkspaceForCreate,
+      getAgentTemplates: () => ({
+        reviewer: {
+          name: "Reviewer",
+          description: "Reviews code",
+          instructions: "Review code carefully.",
+        },
+      }),
+      logger,
+    });
+
+    await registeredTool(server, "create_agent").handler({
+      title: "Review change",
+      provider: "codex/gpt-5.4",
+      templateId: "reviewer",
+      initialPrompt: "Inspect the authentication diff.",
+      background: true,
+    });
+
+    expect(spies.agentManager.streamAgent).toHaveBeenCalledWith(
+      "templated-agent",
+      "Review code carefully.\n\n---\n\nTask:\nInspect the authentication diff.",
+      undefined,
+    );
+  });
+
+  it("rejects missing, disabled, and provider-incompatible templates", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      ensureWorkspaceForCreate,
+      getAgentTemplates: () => ({
+        disabled: {
+          name: "Disabled",
+          description: "Unavailable role",
+          instructions: "Unavailable instructions",
+          enabled: false,
+        },
+        claudeOnly: {
+          name: "Claude role",
+          description: "Claude-specific role",
+          instructions: "Use Claude-specific behavior.",
+          provider: "claude/sonnet",
+        },
+      }),
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+    const base = {
+      title: "Templated agent",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Do work",
+      background: true,
+    };
+
+    await expect(tool.handler({ ...base, templateId: "missing" })).rejects.toThrow(
+      "is not available",
+    );
+    await expect(tool.handler({ ...base, templateId: "disabled" })).rejects.toThrow(
+      "is not available",
+    );
+    await expect(tool.handler({ ...base, templateId: "claudeOnly" })).rejects.toThrow(
+      "requires provider 'claude/sonnet'",
+    );
+  });
+
   it("requires a concise title no longer than 60 characters", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const server = await createAgentMcpServer({

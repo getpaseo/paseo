@@ -438,6 +438,10 @@ function resolveBrowserToolsEnabled(persisted: ReturnType<typeof loadPersistedCo
   return persisted.daemon?.browserTools?.enabled ?? false;
 }
 
+function resolveAgentTemplates(persisted: ReturnType<typeof loadPersistedConfig>) {
+  return persisted.daemon?.agentTemplates ?? {};
+}
+
 function resolveMcpSettings(
   cli: CliConfigOverrides | undefined,
   persisted: ReturnType<typeof loadPersistedConfig>,
@@ -458,6 +462,7 @@ function resolveStaticLoadConfigSettings(
   return {
     ...resolveMcpSettings(cli, persisted),
     browserToolsEnabled: resolveBrowserToolsEnabled(persisted),
+    agentTemplates: resolveAgentTemplates(persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
     terminalProfiles: persisted.daemon?.terminalProfiles,
@@ -487,6 +492,7 @@ export function loadConfig(
     mcpInjectIntoAgents,
     managedMcpServers,
     browserToolsEnabled,
+    agentTemplates,
     autoArchiveAfterMerge,
     appendSystemPrompt,
     terminalProfiles,
@@ -527,6 +533,7 @@ export function loadConfig(
     mcpInjectIntoAgents,
     managedMcpServers,
     browserToolsEnabled,
+    agentTemplates,
     git: resolveGitProcessConfig(env, persisted),
     autoArchiveAfterMerge,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,

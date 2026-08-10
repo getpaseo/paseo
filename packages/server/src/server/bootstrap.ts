@@ -172,6 +172,7 @@ import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
 import type {
+  AgentTemplate,
   FirstAgentContext,
   ManagedMcpServerConfig,
   TerminalProfile,
@@ -396,6 +397,7 @@ export interface PaseoDaemonConfig {
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   managedMcpServers?: Record<string, ManagedMcpServerConfig>;
+  agentTemplates?: Record<string, AgentTemplate>;
   browserToolsEnabled?: boolean;
   git?: {
     maxProcessesPerSecond: number;
@@ -534,6 +536,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
       servers: redactManagedMcpServers(config.managedMcpServers),
     },
     browserTools: { enabled: config.browserToolsEnabled ?? false },
+    agentTemplates: config.agentTemplates ?? {},
     providers,
     metadataGeneration: {
       providers: config.metadataGeneration?.providers ?? [],
@@ -1265,6 +1268,7 @@ export async function createPaseoDaemon(
     getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
     scheduleService,
     providerSnapshotManager,
+    getAgentTemplates: () => daemonConfigStore.get().agentTemplates ?? {},
     github,
     workspaceGitService,
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
