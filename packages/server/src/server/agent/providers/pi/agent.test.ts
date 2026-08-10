@@ -85,20 +85,33 @@ function readUtf8File(pathname: string): string {
 }
 
 type PaseoExtensionListener = (event: unknown, context?: unknown) => unknown;
+type PaseoExtensionEventListener = (data: unknown) => void;
 
 async function loadPaseoExtensionListeners(
   extensionPath: string,
+  extensionEventListeners = new Map<string, Set<PaseoExtensionEventListener>>(),
 ): Promise<Map<string, PaseoExtensionListener>> {
   const listeners = new Map<string, PaseoExtensionListener>();
   const extension = (await import(pathToFileURL(extensionPath).href)) as {
     default: (piApi: {
       on: (event: string, listener: PaseoExtensionListener) => void;
       registerCommand: () => void;
+      events: {
+        on: (event: string, listener: PaseoExtensionEventListener) => () => void;
+      };
     }) => void;
   };
   extension.default({
     on: (event, listener) => listeners.set(event, listener),
     registerCommand: () => undefined,
+    events: {
+      on: (event, listener) => {
+        const eventListeners = extensionEventListeners.get(event) ?? new Set();
+        eventListeners.add(listener);
+        extensionEventListeners.set(event, eventListeners);
+        return () => eventListeners.delete(listener);
+      },
+    },
   });
   return listeners;
 }
@@ -229,6 +242,13 @@ class SessionEvents {
     );
   }
 
+  providerSubagentEvents() {
+    return this.events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "provider_subagent" }> =>
+        event.type === "provider_subagent",
+    );
+  }
+
   nextTurnCompletion(): Promise<Extract<AgentStreamEvent, { type: "turn_completed" }>> {
     return this.nextEvent(
       (event): event is Extract<AgentStreamEvent, { type: "turn_completed" }> =>
@@ -288,6 +308,47 @@ class SessionEvents {
 }
 
 describe("PiRpcAgentSession", () => {
+  test("maps Pi subagent lifecycle markers to provider subagents", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "subagent-started",
+      method: "notify",
+      message:
+        'PASEO_PI_SUBAGENT {"id":"run-1","title":"reviewer","description":"Review the change","status":"running","cwd":"/workspace"}',
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "subagent-completed",
+      method: "notify",
+      message: 'PASEO_PI_SUBAGENT {"id":"run-1","status":"completed"}',
+    });
+
+    expect(events.providerSubagentEvents()).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: {
+          type: "upsert",
+          id: "run-1",
+          title: "reviewer",
+          description: "Review the change",
+          status: "running",
+          cwd: "/workspace",
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: { type: "upsert", id: "run-1", status: "completed" },
+      },
+    ]);
+
+    await session.close();
+  });
+
   test("bridges Pi RPC select extension UI requests through question permissions", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
@@ -1028,6 +1089,41 @@ describe("PiRpcAgentSession", () => {
     expect(notifications).toEqual([
       'PASEO_SUBMITTED_USER_ENTRY {"entry":{"id":"entry-new","parentId":"entry-old-assistant","text":"new prompt"}}',
     ]);
+
+    await session.close();
+  });
+
+  test("reports pi-subagents async lifecycle through the Paseo extension", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const session = await client.createSession(createConfig());
+    const extensionPath = pi.recordedLaunches[0]?.extensionPaths[0];
+    expect(extensionPath).toBeDefined();
+    const extensionEvents = new Map<string, Set<PaseoExtensionEventListener>>();
+    const listeners = await loadPaseoExtensionListeners(extensionPath!, extensionEvents);
+    const notifications: string[] = [];
+    const context = {
+      sessionManager: { getEntries: () => [] },
+      ui: { notify: (message: string) => notifications.push(message) },
+    };
+
+    await listeners.get("session_start")?.({}, context);
+    extensionEvents.get("subagent:async-started")?.forEach((listener) =>
+      listener({
+        id: "run-1",
+        agent: "reviewer",
+        goal: "Review the change",
+        cwd: "/workspace",
+      }),
+    );
+    extensionEvents
+      .get("subagent:async-complete")
+      ?.forEach((listener) => listener({ runId: "run-1", state: "complete", success: true }));
+
+    expect(notifications).toContain(
+      'PASEO_PI_SUBAGENT {"id":"run-1","title":"reviewer","description":"Review the change","status":"running","cwd":"/workspace"}',
+    );
+    expect(notifications).toContain('PASEO_PI_SUBAGENT {"id":"run-1","status":"completed"}');
 
     await session.close();
   });

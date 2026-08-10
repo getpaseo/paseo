@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { providerSubagentKey, useProviderSubagentStore } from "./provider-store";
+import {
+  hasRunningProviderSubagent,
+  providerSubagentKey,
+  useProviderSubagentStore,
+} from "./provider-store";
 
 const SERVER_ID = "server-1";
 const PARENT_ID = "parent-1";
@@ -14,6 +18,31 @@ afterEach(() => {
 });
 
 describe("provider subagent client store", () => {
+  test("reports running activity for the parent session", () => {
+    useProviderSubagentStore.getState().applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        id: SUBAGENT_ID,
+        parentAgentId: PARENT_ID,
+        provider: "pi",
+        title: "reviewer",
+        description: "Review the change",
+        status: "running",
+        createdAt: "2026-07-12T10:00:00.000Z",
+        updatedAt: "2026-07-12T10:00:00.000Z",
+        toolCallId: null,
+      },
+    });
+
+    expect(
+      hasRunningProviderSubagent(
+        useProviderSubagentStore.getState().descriptors,
+        SERVER_ID,
+        PARENT_ID,
+      ),
+    ).toBe(true);
+  });
+
   test("builds a shared stream model from ordered provider updates", () => {
     const subagents = useProviderSubagentStore.getState();
     subagents.applyUpdate(SERVER_ID, {

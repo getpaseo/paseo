@@ -63,6 +63,18 @@ export function providerSubagentKey(
   return `${serverId}\0${parentAgentId}\0${subagentId}`;
 }
 
+export function hasRunningProviderSubagent(
+  descriptors: ReadonlyMap<string, ProviderSubagentDescriptorPayload>,
+  serverId: string,
+  parentAgentId: string,
+): boolean {
+  const prefix = parentPrefix(serverId, parentAgentId);
+  for (const [key, subagent] of descriptors) {
+    if (key.startsWith(prefix) && subagent.status === "running") return true;
+  }
+  return false;
+}
+
 export function providerSubagentLifecycleStatus(
   status: ProviderSubagentDescriptorPayload["status"],
 ): AgentLifecycleStatus {

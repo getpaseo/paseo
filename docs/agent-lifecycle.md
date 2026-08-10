@@ -129,7 +129,7 @@ The asymmetry is intentional: a subagent's persistent relationship lives in the 
 
 ## Workspace activity
 
-Agent lifecycle status stays literal: a parent agent is `idle` when its own turn is idle, even if a child is running.
+Stored agent lifecycle status stays literal: a parent agent is `idle` when its own turn is idle, even if a child is running. Session lists may project that parent as `running` while a provider-owned child runs; this does not make the parent turn busy.
 
 Workspace status is an aggregate activity signal computed **per `workspaceId`**. Ownership is never derived from `cwd` — many workspaces may share one directory, and same-`cwd` siblings do not clump under one status. Root agents and cross-workspace subagents contribute their normal state bucket to their own workspace. Same-workspace descendants contribute `running` to the nearest ancestor in that workspace; their non-running attention, permission, and error states stay in the parent's subagents track. This makes a cross-workspace subagent behave like a detached agent for workspace visibility and status without removing its parent relationship.
 
@@ -147,13 +147,17 @@ The rows combine two kinds of children:
 parentAgentId === thisAgent.id  AND  !archivedAt
 ```
 
-- **Provider subagents** are child executions owned by Claude, Codex, or OpenCode. They are not inserted into `AgentManager` as managed agents. Providers emit a separate descriptor and timeline stream through `agent.provider_subagents.*`; the client keeps that state outside the normal agent store and merges only the presentation rows into the track.
+- **Provider subagents** are child executions owned by Claude, Codex, OpenCode, or Pi. They are not inserted into `AgentManager` as managed agents. Providers emit a separate descriptor and timeline stream through `agent.provider_subagents.*`; the client keeps that state outside the normal agent store and merges only the presentation rows into the track.
 
 Clicking either kind opens a workspace tab. A Paseo subagent tab is a normal interactive agent pane. A provider subagent tab is a read-only timeline pane with no composer, archive, detach, rewind, or fork actions. Both panes use `AgentStreamView`, so message, reasoning, tool-call, and layout rendering stay identical.
 
 Provider timelines use the same structural timeline item format but deliberately have a separate lifecycle and transport. A provider thread/session identifier is not a Paseo agent identifier, and closing its tab is always layout-only.
 
 Provider descriptors may include one compact subtitle. The provider owns its contents and formatting; clients display and truncate it without interpreting provider-specific model, thinking, or usage fields.
+
+### Pi provider subagents
+
+Pi's RPC stream does not expose extension event-bus messages. Paseo's injected Pi extension listens for `pi-subagents` async start and completion events and forwards them through the RPC extension-notification channel. Foreground subagents need no bridge because their tool call keeps the parent turn running.
 
 ### Claude provider subagents: the task protocol
 
