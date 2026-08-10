@@ -144,6 +144,102 @@ const MutableRelayConfigSchema = z
     enabled: z.boolean(),
   })
   .passthrough();
+
+const MANAGED_MCP_SERVER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+export const MAX_MANAGED_MCP_SERVERS = 64;
+
+const ManagedMcpEnvironmentVariableNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(256)
+  .regex(ENVIRONMENT_VARIABLE_NAME_PATTERN);
+const ManagedMcpHeaderNameSchema = z.string().trim().min(1).max(256).regex(HEADER_NAME_PATTERN);
+const ManagedMcpDirectValueSchema = z.string().min(1).max(65_536);
+const ManagedMcpSecretValueSchema = z.discriminatedUnion("source", [
+  z.object({ source: z.literal("env"), name: ManagedMcpEnvironmentVariableNameSchema }).strict(),
+  z.object({ source: z.literal("value"), value: ManagedMcpDirectValueSchema }).strict(),
+]);
+
+const ManagedMcpSecretPatchSchema = z.discriminatedUnion("source", [
+  ...ManagedMcpSecretValueSchema.options,
+  z.object({ source: z.literal("existing") }).strict(),
+]);
+
+const ManagedMcpSecretViewSchema = z.discriminatedUnion("source", [
+  z.object({ source: z.literal("env"), name: ManagedMcpEnvironmentVariableNameSchema }).strict(),
+  z.object({ source: z.literal("value"), configured: z.literal(true) }).strict(),
+]);
+
+function createManagedMcpServerSchema<T extends z.ZodType>(secretSchema: T) {
+  const common = {
+    enabled: z.boolean().optional(),
+    alwaysLoad: z.boolean().optional(),
+  };
+  const environment = z.record(ManagedMcpEnvironmentVariableNameSchema, secretSchema);
+  const headers = z.record(ManagedMcpHeaderNameSchema, secretSchema);
+  const url = z.url({ protocol: /^https?$/ }).max(8_192);
+  return z.discriminatedUnion("type", [
+    z
+      .object({
+        ...common,
+        type: z.literal("stdio"),
+        command: z.string().trim().min(1).max(4_096),
+        args: z.array(z.string().max(8_192)).max(256).optional(),
+        env: environment.optional(),
+      })
+      .strict(),
+    z
+      .object({
+        ...common,
+        type: z.literal("http"),
+        url,
+        headers: headers.optional(),
+      })
+      .strict(),
+    z
+      .object({
+        ...common,
+        type: z.literal("sse"),
+        url,
+        headers: headers.optional(),
+      })
+      .strict(),
+  ]);
+}
+
+export const ManagedMcpServerConfigSchema = createManagedMcpServerSchema(
+  ManagedMcpSecretValueSchema,
+);
+export const ManagedMcpServerPatchSchema = createManagedMcpServerSchema(
+  ManagedMcpSecretPatchSchema,
+);
+export const ManagedMcpServerViewSchema = createManagedMcpServerSchema(ManagedMcpSecretViewSchema);
+const ManagedMcpServerNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(MANAGED_MCP_SERVER_NAME_PATTERN);
+export const ManagedMcpServerConfigRecordSchema = z.record(
+  ManagedMcpServerNameSchema,
+  ManagedMcpServerConfigSchema,
+);
+const ManagedMcpServerRecordSchema = z.record(
+  ManagedMcpServerNameSchema,
+  ManagedMcpServerViewSchema,
+);
+const ManagedMcpServerPatchRecordSchema = z.record(
+  ManagedMcpServerNameSchema,
+  ManagedMcpServerPatchSchema,
+);
+
+export type ManagedMcpServerConfig = z.infer<typeof ManagedMcpServerConfigSchema>;
+export type ManagedMcpServerPatch = z.infer<typeof ManagedMcpServerPatchSchema>;
+export type ManagedMcpServerView = z.infer<typeof ManagedMcpServerViewSchema>;
+
 export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
@@ -151,6 +247,7 @@ export const MutableDaemonConfigSchema = z
     mcp: z
       .object({
         injectIntoAgents: z.boolean(),
+        servers: ManagedMcpServerRecordSchema.optional(),
       })
       .passthrough(),
     browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
@@ -172,6 +269,8 @@ export const MutableDaemonConfigPatchSchema = z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
     removeProviders: z.array(z.string().min(1)).optional(),
+    upsertMcpServers: ManagedMcpServerPatchRecordSchema.optional(),
+    removeMcpServers: z.array(ManagedMcpServerNameSchema).max(MAX_MANAGED_MCP_SERVERS).optional(),
     metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
@@ -1240,6 +1339,12 @@ export const SetDaemonConfigRequestMessageSchema = z.object({
   type: z.literal("set_daemon_config_request"),
   requestId: z.string(),
   config: MutableDaemonConfigPatchSchema,
+});
+
+export const DaemonMcpServerTestRequestSchema = z.object({
+  type: z.literal("daemon.mcp.server.test.request"),
+  requestId: z.string(),
+  name: ManagedMcpServerNameSchema,
 });
 
 export const ReadProjectConfigRequestMessageSchema = z.object({
@@ -2617,6 +2722,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DiagnosticsRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
+  DaemonMcpServerTestRequestSchema,
   ReadProjectConfigRequestMessageSchema,
   WriteProjectConfigRequestMessageSchema,
   DictationStreamStartMessageSchema,
@@ -2986,6 +3092,8 @@ export const ServerInfoStatusPayloadSchema = z
         commitBaseClassification: z.boolean().optional(),
         // COMPAT(providerRemoval): added in v0.1.105, drop the gate when floor >= v0.1.105.
         providerRemoval: z.boolean().optional(),
+        // COMPAT(hostManagedMcpServers): added in v0.3.X, remove after 2027-08-10.
+        hostManagedMcpServers: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
         // COMPAT(forgeProviders): added in v0.1.106, drop the gate when daemon floor >= v0.1.106.
@@ -4063,6 +4171,20 @@ export const SetDaemonConfigResponseMessageSchema = z.object({
     .object({
       requestId: z.string(),
       config: MutableDaemonConfigSchema,
+    })
+    .passthrough(),
+});
+
+export const DaemonMcpServerTestResponseSchema = z.object({
+  type: z.literal("daemon.mcp.server.test.response"),
+  payload: z
+    .object({
+      requestId: z.string(),
+      name: ManagedMcpServerNameSchema,
+      status: z.enum(["success", "error"]),
+      latencyMs: z.number().int().nonnegative(),
+      toolCount: z.number().int().nonnegative().optional(),
+      error: z.string().max(2_000).optional(),
     })
     .passthrough(),
 });
@@ -5517,6 +5639,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   DiagnosticsResponseSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
+  DaemonMcpServerTestResponseSchema,
   ReadProjectConfigResponseMessageSchema,
   WriteProjectConfigResponseMessageSchema,
   SetAgentModeResponseMessageSchema,

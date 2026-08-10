@@ -450,6 +450,10 @@ type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
 type DaemonPairingOfferPayload = DaemonGetPairingOfferResponse["payload"];
 type DiagnosticsPayload = DiagnosticsResponse["payload"];
+type DaemonMcpServerTestPayload = Extract<
+  SessionOutboundMessage,
+  { type: "daemon.mcp.server.test.response" }
+>["payload"];
 type ReadProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "read_project_config_response" }
@@ -4590,6 +4594,19 @@ export class DaemonClient {
         config,
       },
       responseType: "set_daemon_config_response",
+    });
+  }
+
+  async testManagedMcpServer(
+    name: string,
+    requestId?: string,
+  ): Promise<DaemonMcpServerTestPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "daemon.mcp.server.test.request",
+        name,
+      },
     });
   }
 

@@ -4,6 +4,7 @@ import { observeI18nInit } from "./init";
 import { ar } from "./resources/ar";
 import { en } from "./resources/en";
 import { es } from "./resources/es";
+import { fa } from "./resources/fa";
 import { fr } from "./resources/fr";
 import { ja } from "./resources/ja";
 import { ko } from "./resources/ko";
@@ -22,6 +23,7 @@ observeI18nInit(
       ar: { translation: ar },
       en: { translation: en },
       es: { translation: es },
+      fa: { translation: fa },
       fr: { translation: fr },
       ja: { translation: ja },
       ko: { translation: ko },

@@ -1,4 +1,5 @@
 import { expect, test } from "../support/fixtures";
+import path from "node:path";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import { TEST_HOST_LABEL } from "../support/helpers/daemon-registry";
@@ -43,6 +44,37 @@ test.describe("Settings host page", () => {
     await openHostSection(page, serverId, "agents");
     await expectSettingsHeader(page, "Agents");
     await expectHostInjectMcpCard(page);
+  });
+
+  test("agents section manages and tests a host MCP server", async ({ page }) => {
+    const serverId = getServerId();
+    const fixturePath = path.resolve(
+      process.cwd(),
+      "../server/src/test-utils/managed-mcp-stdio-fixture.ts",
+    );
+
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsHost(page, serverId);
+    await openHostSection(page, serverId, "agents");
+
+    await page.getByTestId("managed-mcp-add").click();
+    await page.getByTestId("managed-mcp-name-input").fill("browser-test");
+    await page.getByTestId("managed-mcp-transport").getByText("stdio", { exact: true }).click();
+    await page.getByTestId("managed-mcp-target-input").fill(process.execPath);
+    await page
+      .getByTestId("managed-mcp-args-input")
+      .fill(["--import", "tsx", fixturePath].join("\n"));
+    await page.getByTestId("managed-mcp-save").click();
+
+    const row = page.getByTestId("managed-mcp-row-browser-test");
+    await expect(row).toBeVisible();
+    await page.getByTestId("managed-mcp-test-browser-test").click();
+    await expect(page.getByTestId("managed-mcp-test-result-browser-test")).toContainText("1 tools");
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByTestId("managed-mcp-remove-browser-test").click();
+    await expect(row).toHaveCount(0);
   });
 
   test("providers section shows the providers card", async ({ page }) => {

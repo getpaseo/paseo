@@ -693,4 +693,52 @@ describe("DaemonConfigStore", () => {
       env: {},
     });
   });
+
+  test("persists managed MCP secrets while returning only redacted config", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      mcp: { injectIntoAgents: false, servers: {} },
+      browserTools: { enabled: false },
+      providers: {},
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+      metadataGeneration: { providers: [] },
+    });
+
+    const publicConfig = store.patch({
+      upsertMcpServers: {
+        hub: {
+          type: "http",
+          url: "https://mcp.example.test/mcp",
+          headers: { Authorization: { source: "value", value: "first-token" } },
+        },
+      },
+    });
+
+    expect(publicConfig.mcp.servers).toEqual({
+      hub: {
+        type: "http",
+        url: "https://mcp.example.test/mcp",
+        headers: { Authorization: { source: "value", configured: true } },
+      },
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.mcp?.servers?.hub).toMatchObject({
+      headers: { Authorization: { source: "value", value: "first-token" } },
+    });
+
+    store.patch({
+      upsertMcpServers: {
+        hub: {
+          type: "http",
+          url: "https://mcp.example.test/mcp",
+          headers: { Authorization: { source: "value", value: "second-token" } },
+        },
+      },
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.mcp?.servers?.hub).toMatchObject({
+      headers: { Authorization: { source: "value", value: "second-token" } },
+    });
+  });
 });

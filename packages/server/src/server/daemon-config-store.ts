@@ -5,9 +5,16 @@ import {
 } from "./persisted-config.js";
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import {
+  type ManagedMcpServerConfig,
   MutableDaemonConfigSchema,
   MutableDaemonConfigPatchSchema,
 } from "@getpaseo/protocol/messages";
+import {
+  applyManagedMcpServerPatch,
+  redactManagedMcpServers,
+  resolveManagedMcpServer,
+  resolveManagedMcpServers,
+} from "./managed-mcp-config.js";
 
 export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 
@@ -168,12 +175,16 @@ export class DaemonConfigStore {
   private readonly changeListeners = new Set<ConfigListener>();
   private readonly fieldChangeHandlers = new Map<string, Set<FieldChangeHandler>>();
   private readonly relayEnabledMutable: boolean;
+  private managedMcpServers: Record<string, ManagedMcpServerConfig>;
 
   constructor(
     paseoHome: string,
     initial: MutableDaemonConfig,
     logger?: LoggerLike,
-    options: { relayEnabledMutable?: boolean } = {},
+    options: {
+      relayEnabledMutable?: boolean;
+      managedMcpServers?: Record<string, ManagedMcpServerConfig>;
+    } = {},
   ) {
     this.paseoHome = paseoHome;
     this.logger = getLogger(logger);
@@ -182,6 +193,7 @@ export class DaemonConfigStore {
       relay: initial.relay ?? { enabled: true },
     });
     this.relayEnabledMutable = options.relayEnabledMutable ?? true;
+    this.managedMcpServers = options.managedMcpServers ?? {};
   }
 
   public get(): MutableDaemonConfig {
@@ -195,9 +207,26 @@ export class DaemonConfigStore {
         "Relay is controlled by a daemon launch override. Remove PASEO_RELAY_ENABLED or the relay CLI flag before changing it here.",
       );
     }
-    const { removeProviders = [], ...configPatch } = parsedPatch;
+    const {
+      removeProviders = [],
+      upsertMcpServers,
+      removeMcpServers = [],
+      ...configPatch
+    } = parsedPatch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
+    const previousManagedMcpServers = this.managedMcpServers;
+    const managedMcpServers = applyManagedMcpServerPatch({
+      current: previousManagedMcpServers,
+      upsert: upsertMcpServers,
+      remove: removeMcpServers,
+    });
+    const hasMcpServerPatch =
+      Object.keys(upsertMcpServers ?? {}).length > 0 || removeMcpServers.length > 0;
+    merged.mcp = {
+      ...merged.mcp,
+      servers: redactManagedMcpServers(managedMcpServers),
+    };
     const next = MutableDaemonConfigSchema.parse(
       omitMetadataGenerationProvidersFromConfig(
         omitProvidersFromConfig(merged, removedProviders),
@@ -210,11 +239,12 @@ export class DaemonConfigStore {
     });
     const configChanged = !isEqualValue(this.current, next);
 
-    if (!configChanged && removedProviders.length === 0) {
+    if (!configChanged && removedProviders.length === 0 && !hasMcpServerPatch) {
       return this.current;
     }
 
-    const persistedBeforePatch = this.persistConfig(next, removedProviders);
+    const persistedBeforePatch = this.persistConfig(next, removedProviders, managedMcpServers);
+    this.managedMcpServers = managedMcpServers;
     if (!configChanged) return this.current;
 
     const previous = this.current;
@@ -235,6 +265,7 @@ export class DaemonConfigStore {
       }
     } catch (error) {
       this.current = previous;
+      this.managedMcpServers = previousManagedMcpServers;
       for (const change of appliedFieldChanges.toReversed()) {
         change.handler(change.previousValue);
       }
@@ -267,6 +298,21 @@ export class DaemonConfigStore {
     };
   }
 
+  public resolveEnabledMcpServers(
+    env: NodeJS.ProcessEnv = process.env,
+    excludedNames: readonly string[] = [],
+  ): ReturnType<typeof resolveManagedMcpServers> {
+    return resolveManagedMcpServers(this.managedMcpServers, env, excludedNames);
+  }
+
+  public resolveMcpServer(name: string, env: NodeJS.ProcessEnv = process.env) {
+    const server = this.managedMcpServers[name];
+    if (!server) {
+      throw new Error(`MCP server '${name}' is not configured`);
+    }
+    return resolveManagedMcpServer(name, server, env);
+  }
+
   public onChange(listener: ConfigListener): () => void {
     this.changeListeners.add(listener);
     return () => {
@@ -277,12 +323,14 @@ export class DaemonConfigStore {
   private persistConfig(
     config: MutableDaemonConfig,
     removeProviders: readonly string[],
+    managedMcpServers: Record<string, ManagedMcpServerConfig>,
   ): PersistedConfig {
     const persisted = loadPersistedConfig(this.paseoHome, this.logger);
     const nextPersisted = mergeMutableConfigIntoPersistedConfig({
       persisted,
       mutable: config,
       removeProviders,
+      managedMcpServers,
       persistRelayEnabled: this.relayEnabledMutable,
     });
     savePersistedConfig(this.paseoHome, nextPersisted, this.logger);
@@ -294,9 +342,10 @@ function mergeMutableConfigIntoPersistedConfig(params: {
   persisted: PersistedConfig;
   mutable: MutableDaemonConfig;
   removeProviders: readonly string[];
+  managedMcpServers: Record<string, ManagedMcpServerConfig>;
   persistRelayEnabled: boolean;
 }): PersistedConfig {
-  const { persisted, mutable, removeProviders, persistRelayEnabled } = params;
+  const { persisted, mutable, removeProviders, managedMcpServers, persistRelayEnabled } = params;
   if (!mutable.relay) {
     throw new Error("Mutable daemon config is missing relay state");
   }
@@ -348,6 +397,7 @@ function mergeMutableConfigIntoPersistedConfig(params: {
       mcp: {
         ...persisted.daemon?.mcp,
         injectIntoAgents: mutable.mcp.injectIntoAgents,
+        servers: managedMcpServers,
       },
       browserTools: {
         ...persisted.daemon?.browserTools,
