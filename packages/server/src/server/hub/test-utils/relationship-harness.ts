@@ -771,11 +771,9 @@ export class HubRelationshipHarness {
   }
 
   createAgentInWorkspace(workspaceId: string, cwd: string) {
-    return this.daemon!.agentManager.createAgent(
-      { provider: "codex", cwd },
-      undefined,
-      { workspaceId },
-    );
+    return this.daemon!.agentManager.createAgent({ provider: "codex", cwd }, undefined, {
+      workspaceId,
+    });
   }
 
   async ownedCreateResult(requestId: string): Promise<SessionOutboundMessage> {

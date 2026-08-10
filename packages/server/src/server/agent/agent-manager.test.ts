@@ -6690,6 +6690,43 @@ test("rejects a workspace registration that starts during release", async () => 
   rmSync(workdir, { recursive: true, force: true });
 });
 
+test("allows a workspace registration after its release callback fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-registration-after-release-failure-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "wks_registration_after_release_failure";
+  const finished = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000150",
+    { workspaceId },
+  );
+
+  await expect(
+    manager.releaseWorkspaceIfUnowned({
+      workspaceId,
+      finishedAgentId: finished.id,
+      release: async () => {
+        throw new Error("workspace release failed");
+      },
+    }),
+  ).rejects.toThrow("workspace release failed");
+
+  const replacement = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000151",
+    { workspaceId },
+  );
+  expect(replacement.workspaceId).toBe(workspaceId);
+
+  await manager.closeAgent(finished.id);
+  await manager.closeAgent(replacement.id);
+  rmSync(workdir, { recursive: true, force: true });
+});
+
 test("fires onAgentArchived for archived parent and cascaded children", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-hook-cascade-"));
   const storagePath = join(workdir, "agents");

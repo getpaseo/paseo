@@ -288,6 +288,7 @@ export interface ReleaseWorkspaceIfUnownedOptions {
 
 interface WorkspaceAgentRegistrationState {
   count: number;
+  succeeded: boolean;
   settled: Promise<void>;
   resolveSettled: () => void;
 }
@@ -1547,13 +1548,15 @@ export class AgentManager {
     // it. Registrations that already hold the claim may finish nested work.
     this.releasingWorkspaces.add(workspaceId);
     try {
-      await this.workspaceAgentRegistrations.get(workspaceId)?.settled;
+      const priorRegistrations = this.workspaceAgentRegistrations.get(workspaceId);
+      await priorRegistrations?.settled;
 
       const records = await this.requireRegistry().list();
       const finishedRecord = records.find((record) => record.id === finishedAgentId);
       if (
         !finishedRecord ||
         finishedRecord.workspaceId !== workspaceId ||
+        (!finishedRecord.archivedAt && priorRegistrations?.succeeded) ||
         records.some(
           (record) =>
             record.id !== finishedAgentId &&
@@ -4359,10 +4362,11 @@ export class AgentManager {
       const settled = new Promise<void>((settle) => {
         resolveSettled = settle;
       });
-      state = { count: 0, settled, resolveSettled };
+      state = { count: 0, succeeded: false, settled, resolveSettled };
       this.workspaceAgentRegistrations.set(workspaceId, state);
     }
     state.count += 1;
+    const registrationState = state;
 
     let registration: Promise<T>;
     try {
@@ -4374,7 +4378,12 @@ export class AgentManager {
       this.finishWorkspaceAgentRegistration(workspaceId);
       throw error;
     }
-    return registration.finally(() => this.finishWorkspaceAgentRegistration(workspaceId));
+    return registration
+      .then((value) => {
+        registrationState.succeeded = true;
+        return value;
+      })
+      .finally(() => this.finishWorkspaceAgentRegistration(workspaceId));
   }
 
   private finishWorkspaceAgentRegistration(workspaceId: string): void {
