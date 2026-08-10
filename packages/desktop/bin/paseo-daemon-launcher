@@ -1,0 +1,43 @@
+#!/bin/sh
+set -eu
+
+# LaunchAgents receive a small environment. Add stable command locations before
+# inherited entries without loading user shell startup files.
+STABLE_PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+if [ -n "${PATH:-}" ]; then
+  PATH="${STABLE_PATH}:${PATH}"
+else
+  PATH="${STABLE_PATH}"
+fi
+export PATH
+unset ENV BASH_ENV
+
+if [ -n "${PASEO_HOME:-}" ]; then
+  STOP_INTENT_PATH="${PASEO_HOME}/daemon-explicit-stop"
+else
+  STOP_INTENT_PATH="${HOME}/.paseo/daemon-explicit-stop"
+fi
+if [ -f "$STOP_INTENT_PATH" ]; then
+  rm -f -- "$STOP_INTENT_PATH"
+  exit 0
+fi
+
+SCRIPT_PATH=$0
+case "$SCRIPT_PATH" in
+  /*) ;;
+  *) SCRIPT_PATH="$(pwd)/$SCRIPT_PATH" ;;
+esac
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
+RESOURCES_DIR=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+
+export ELECTRON_RUN_AS_NODE=1
+export PASEO_NODE_ENV=production
+export PASEO_DESKTOP_MANAGED=1
+export PASEO_CLI="${RESOURCES_DIR}/bin/paseo"
+export PASEO_WEB_UI_ENABLED=false
+
+exec "${RESOURCES_DIR}/../Frameworks/Paseo Helper.app/Contents/MacOS/Paseo Helper" \
+  --disable-warning=DEP0040 \
+  "${RESOURCES_DIR}/app.asar.unpacked/dist/daemon/node-entrypoint-runner.js" \
+  node-script \
+  "${RESOURCES_DIR}/app.asar/node_modules/@getpaseo/server/dist/scripts/supervisor-entrypoint.js"

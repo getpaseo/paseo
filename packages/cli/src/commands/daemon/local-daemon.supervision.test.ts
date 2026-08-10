@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -133,6 +134,19 @@ describe("local daemon launch supervision", () => {
     expect(launch?.command).toBe(process.execPath);
     expectSupervisorLaunch(launch?.args ?? []);
     expect(launch?.args).toContain("--no-mcp");
+  });
+
+  test("detached start clears a pending explicit stop intent", async () => {
+    vi.useFakeTimers();
+    const home = await createPaseoHome({ version: 1 });
+    const stopIntentPath = path.join(home, "daemon-explicit-stop");
+    await writeFile(stopIntentPath, "4242\n");
+    const runtime = new FakeDaemonRuntime();
+
+    const resultPromise = startLocalDaemonDetached({ home }, runtime);
+    expect(existsSync(stopIntentPath)).toBe(false);
+    await vi.advanceTimersByTimeAsync(1200);
+    await resultPromise;
   });
 
   test("relay TLS flag is passed to the supervised daemon", async () => {

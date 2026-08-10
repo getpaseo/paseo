@@ -2,6 +2,7 @@ export interface DesktopStartupDependencies {
   hasPendingGuiLaunchRequest: boolean;
   runCliPassthroughIfRequested: () => Promise<boolean>;
   inheritLoginShellEnv: () => void;
+  reconcileLaunchAgent?: () => void;
   bootstrapGui: () => Promise<void>;
   autoUpdateInstalledSkills?: () => void;
 }
@@ -12,6 +13,7 @@ export async function runDesktopStartup(deps: DesktopStartupDependencies): Promi
   }
 
   deps.inheritLoginShellEnv();
+  deps.reconcileLaunchAgent?.();
   await deps.bootstrapGui();
   deps.autoUpdateInstalledSkills?.();
 }

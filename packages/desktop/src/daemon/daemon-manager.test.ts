@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
     env: {},
   })),
   spawnProcess: vi.fn(),
+  clearDaemonExplicitStopIntent: vi.fn(),
   logInfo: vi.fn(),
   logError: vi.fn(),
   appLogPath: "/tmp/paseo-desktop-daemon-manager-test-main.log",
@@ -52,6 +53,7 @@ vi.mock("electron-log/main", () => ({
 }));
 
 vi.mock("@getpaseo/server", () => ({
+  clearDaemonExplicitStopIntent: mocks.clearDaemonExplicitStopIntent,
   resolvePaseoHome: vi.fn(() => mocks.paseoHome),
   spawnProcess: mocks.spawnProcess,
 }));
@@ -117,6 +119,7 @@ describe("daemon-manager commands", () => {
     mocks.createNodeEntrypointInvocation.mockReset();
     mocks.createNodeEntrypointInvocation.mockReturnValue({ command: "node", args: [], env: {} });
     mocks.spawnProcess.mockReset();
+    mocks.clearDaemonExplicitStopIntent.mockReset();
     mocks.logInfo.mockReset();
     mocks.logError.mockReset();
     mocks.getElectronLogFile.mockReset();
@@ -441,6 +444,7 @@ describe("daemon-manager commands", () => {
     const message = thrown?.message ?? "";
     const recentLogsLabel = message.match(/Recent logs \(([^)]*)\):/)?.[1];
     expect(message).toContain("Daemon failed to start: exit code 1");
+    expect(mocks.clearDaemonExplicitStopIntent).toHaveBeenCalledWith(mocks.paseoHome);
     expect(recentLogsLabel?.split(/[\\/]/).at(-1)).toBe("daemon.log");
     expect(message).toContain("recent daemon failure");
     expect(mocks.createNodeEntrypointInvocation).toHaveBeenCalledWith(

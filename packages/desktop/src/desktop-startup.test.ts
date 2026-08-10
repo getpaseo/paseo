@@ -11,6 +11,7 @@ describe("desktop startup", () => {
         return true;
       }),
       inheritLoginShellEnv: vi.fn(() => calls.push("env")),
+      reconcileLaunchAgent: vi.fn(() => calls.push("launch-agent")),
       bootstrapGui: vi.fn(async () => {
         calls.push("gui");
       }),
@@ -34,6 +35,21 @@ describe("desktop startup", () => {
     });
 
     expect(calls).toEqual(["cli", "env", "gui"]);
+  });
+
+  it("reconciles the owned LaunchAgent after environment inheritance and before GUI startup", async () => {
+    const calls: string[] = [];
+    await runDesktopStartup({
+      hasPendingGuiLaunchRequest: false,
+      runCliPassthroughIfRequested: vi.fn(async () => false),
+      inheritLoginShellEnv: vi.fn(() => calls.push("env")),
+      reconcileLaunchAgent: vi.fn(() => calls.push("launch-agent")),
+      bootstrapGui: vi.fn(async () => {
+        calls.push("gui");
+      }),
+    });
+
+    expect(calls).toEqual(["env", "launch-agent", "gui"]);
   });
 
   it("starts skills auto-update after GUI startup", async () => {
