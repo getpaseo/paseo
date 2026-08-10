@@ -39,9 +39,9 @@ describe("Add Project navigation", () => {
     expect(currentAddProjectPage(state)).toEqual({
       kind: "method",
       hostId: "host-1",
-      query: "",
       activeIndex: 0,
       error: null,
+      isSubmitting: false,
     });
     expect(backAddProjectPage(state)).toBeNull();
   });

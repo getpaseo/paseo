@@ -2,7 +2,7 @@
 title: Hub activity
 description: Read what Hub did with an event, tell a filtered event from an unrouted one, and debug a trigger that did nothing.
 nav: Activity
-order: 71
+order: 72
 category: Hub
 ---
 
@@ -40,6 +40,7 @@ Work down this list.
 5. **Is the configuration you think is active actually active?** The Configuration tab shows the active revision and the last sync attempt. A failed push leaves the old revision serving.
 6. **Is the daemon connected?** An offline daemon fails dispatch with `daemon_not_connected`.
 7. **Did it run and stop early?** Check the execution. An agent that never reports back is ended by `idle_timeout` after 5 minutes by default, or `timeout` after an hour.
+8. **Did it run, but deliver nothing?** Check the step's prompt. An agent that is not told to call `hub.reply` and `hub.finish_execution` can answer in its own transcript and never report back. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).
 
 ## Sync failures
 

@@ -2,7 +2,7 @@
 title: Hub configuration
 description: Where a project's configuration comes from, how GitHub sync works, and how revisions activate and roll back.
 nav: Configuration
-order: 68
+order: 70
 category: Hub
 ---
 
@@ -38,13 +38,28 @@ paseo hub deploy --dry-run
 paseo hub deploy
 ```
 
-The default path is exactly `.paseo/hub.yml` relative to the current directory. The CLI does not search parent directories or alternate filenames. Use `paseo hub deploy path/to/config.yml` for another file. The bundle root remains the current directory, so partials are always read from `.paseo/partials/` under that directory. `-p, --project <slug>` overrides the file's `project` value without changing the YAML sent to Hub.
+Deploy reads exactly `.paseo/hub.yml` in the current directory; it does not search parent directories. Partials are read from `.paseo/partials/` under the same directory.
 
-For each prompt `include`, the CLI sends one `{ path, content }` entry whose path is relative to `.paseo/partials/`. It sends only files referenced by the main YAML; nested include-looking text inside a partial is not scanned. Missing, unsafe, duplicate, unreadable, non-file, or oversized inputs fail locally before the Hub request. A configuration with only inline prompt blocks sends no `partials` field.
+- `paseo hub deploy path/to/config.yml` deploys another file. The bundle root stays the current directory.
+- `-p, --project <slug>` overrides the file's `project` value without changing the YAML sent to Hub.
+- `--dry-run` sends the identical resolved YAML, project slug, and partial bundle to Hub's validator. Nothing is recorded or activated.
 
-`--dry-run` sends the identical resolved YAML, project slug, and prompt-partial bundle to `POST /api/v1/configurations/validate`. Hub performs the same compilation and resource resolution as installation but records and activates nothing.
+For each prompt `include`, the CLI sends one `{ path, content }` entry whose path is relative to `.paseo/partials/`. Only files referenced by the main YAML are sent; include-looking text inside a partial is not scanned. Missing, unsafe, duplicate, unreadable, non-file, or oversized inputs fail locally, and a configuration with only inline prompt blocks sends no `partials` field.
 
-Origin precedence is `--hub`, `PASEO_HUB_URL`, the active stored login, then `https://hub.paseo.sh`. Credential precedence is `--api-key`, `PASEO_HUB_API_KEY`, then an exact-origin stored login. API keys passed by flag or environment are not stored. A stored credential is organization-scoped and is never reused for a different Hub origin. Deploy and dry-run report the normalized destination before sending anything and include it in structured results.
+Origin precedence:
+
+1. `--hub`
+2. `PASEO_HUB_URL`
+3. The active stored login
+4. `https://hub.paseo.sh`
+
+Credential precedence:
+
+1. `--api-key`
+2. `PASEO_HUB_API_KEY`
+3. An exact-origin stored login
+
+Keys passed by flag or environment are not stored, and a stored credential is never reused for a different Hub origin. Deploy and dry-run print the normalized destination before sending anything.
 
 ## Sync
 
