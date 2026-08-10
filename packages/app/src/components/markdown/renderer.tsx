@@ -36,6 +36,8 @@ import {
   type MarkdownInlineImagePart,
 } from "./html-ish";
 import { resolveInlineImageSize, type InlineImageDimensions } from "./inline-image-size";
+import { isMermaidFence } from "./mermaid-fence";
+import { MermaidDiagram } from "./mermaid-diagram";
 import { groupMarkdownParts, type MarkdownPartGroup } from "./part-groups";
 
 export type MarkdownStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
@@ -605,15 +607,24 @@ export function createSharedMarkdownRules(): RenderRules {
       _parent: ASTNode[],
       styles: MarkdownStyles,
       inheritedStyles: TextStyle = {},
-    ) => (
-      <HighlightedCodeBlock
-        key={node.key}
-        code={node.content}
-        language={node.sourceInfo}
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.fence}
-      />
-    ),
+    ) => {
+      // This is a react-native-markdown-display render rule, not a component —
+      // it runs once per AST node with no re-render cycle for jsx-no-jsx-as-prop
+      // to protect against, so building the fallback once and passing it down
+      // to MermaidDiagram is safe.
+      // oxlint-disable-next-line react-perf/jsx-no-jsx-as-prop
+      const codeBlock = (
+        <HighlightedCodeBlock
+          key={node.key}
+          code={node.content}
+          language={node.sourceInfo}
+          inheritedStyles={inheritedStyles}
+          textStyle={styles.fence}
+        />
+      );
+      if (!isMermaidFence(node.sourceInfo)) return codeBlock;
+      return <MermaidDiagram key={node.key} code={node.content} fallback={codeBlock} />;
+    },
     code_inline: (
       node: ASTNode,
       _children: ReactNode[],
