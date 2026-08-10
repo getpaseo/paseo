@@ -21,6 +21,8 @@ A project configuration is one versioned bundle:
 
 `hub.yml` owns named environments and agents. Each direct-child workflow file owns one trigger and its ordered inline steps. Prompt partials referenced by those workflows live below `workflows/partials/`. Workflow discovery is fixed by convention; there is no manifest or include list.
 
+[single-repo-team-bot](https://github.com/getpaseo/hub/tree/main/examples/single-repo-team-bot) is a complete bundle in this shape: Discord, Slack, and GitHub workflows running a classifier and a worker on shared partials. Copy `.paseo/` into your repository and replace the placeholders its README lists.
+
 ## Sources
 
 A configuration comes from one source:

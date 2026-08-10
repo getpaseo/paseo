@@ -108,3 +108,7 @@ paseo hub logout
 ```
 
 Logging out does not disconnect the daemon. When the daemon is connected to the same Hub as the active CLI login, use `paseo hub logout --disconnect-daemon` to remove both relationships.
+
+## Next
+
+[single-repo-team-bot](https://github.com/getpaseo/hub/tree/main/examples/single-repo-team-bot) is a complete bundle covering all three providers, with a classifier, a worker, and shared prompt partials.
