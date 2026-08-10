@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { useWindowChromeRowPlacement, WindowChromeSafeArea } from "@/utils/desktop-window";
@@ -37,10 +37,6 @@ export function WindowChromeHeaderRow({
   testID,
 }: WindowChromeHeaderRowProps) {
   const placement = useWindowChromeRowPlacement();
-  const paddedStyle = useMemo(
-    () => [style, { paddingHorizontal: horizontalPadding }],
-    [horizontalPadding, style],
-  );
 
   if (placement === "inline") {
     return (
@@ -61,7 +57,11 @@ export function WindowChromeHeaderRow({
       <WindowChromeSafeArea placement="below" style={stripStyle}>
         <TitlebarDragRegion />
       </WindowChromeSafeArea>
-      <View onLayout={onLayout} style={paddedStyle} testID={testID}>
+      <View
+        onLayout={onLayout}
+        style={[style, { paddingHorizontal: horizontalPadding }]}
+        testID={testID}
+      >
         {children}
       </View>
     </>
