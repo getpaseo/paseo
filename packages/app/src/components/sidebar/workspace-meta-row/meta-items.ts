@@ -11,6 +11,7 @@ import type { WorkspaceServiceSummary } from "./service-summary";
  */
 export type MetaRowItem =
   | { kind: "host" }
+  | { kind: "project"; name: string }
   | { kind: "changeRequest"; hint: PrHint }
   | { kind: "checks"; summary: CheckSummary; label: boolean }
   | { kind: "services"; summary: WorkspaceServiceSummary };
@@ -26,17 +27,21 @@ export type MetaRowItem =
  * has no badge to hand down, so by the time a row sees one it is meant to be drawn.
  */
 export function selectMetaRowItems(input: {
+  projectName: string | null;
   hasHostBadge: boolean;
   prHint: PrHint | null;
   serviceSummary: WorkspaceServiceSummary | null;
   visible: SidebarRowItems;
   checksDisplay: SidebarChecksDisplay;
 }): MetaRowItem[] {
-  const { hasHostBadge, prHint, serviceSummary, visible, checksDisplay } = input;
+  const { projectName, hasHostBadge, prHint, serviceSummary, visible, checksDisplay } = input;
   const items: MetaRowItem[] = [];
 
   if (hasHostBadge) {
     items.push({ kind: "host" });
+  }
+  if (projectName) {
+    items.push({ kind: "project", name: projectName });
   }
   if (prHint && visible.changeRequest) {
     items.push({ kind: "changeRequest", hint: prHint });
