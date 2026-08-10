@@ -105,31 +105,50 @@ function createDeferredRunner(): TestRunner {
   };
 }
 
+interface QueuedDeferredRunnerCall {
+  resolve: (stdout: string) => void;
+  reject: (error: Error) => void;
+}
+
 function createQueuedDeferredRunner(): TestRunner & {
   resolveCall: (index: number, stdout: string) => void;
+  rejectCall: (index: number, error: Error) => void;
 } {
   const calls: RunnerCall[] = [];
-  const pending = new Map<number, (stdout: string) => void>();
+  const pending = new Map<number, QueuedDeferredRunnerCall>();
 
   return {
     calls,
     runner: (args: string[], options: GitHubCommandRunnerOptions) => {
       const index = calls.length;
       calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
-      return new Promise((resolve) => {
-        pending.set(index, (stdout: string) => {
-          pending.delete(index);
-          resolve({ stdout, stderr: "" });
+      return new Promise((resolve, reject) => {
+        pending.set(index, {
+          resolve: (stdout: string) => {
+            pending.delete(index);
+            resolve({ stdout, stderr: "" });
+          },
+          reject: (error: Error) => {
+            pending.delete(index);
+            reject(error);
+          },
         });
       });
     },
     resolveNext: () => {},
     resolveCall: (index: number, stdout: string) => {
-      const resolve = pending.get(index);
-      if (!resolve) {
+      const call = pending.get(index);
+      if (!call) {
         throw new Error(`Runner call ${index} is not waiting for resolution.`);
       }
-      resolve(stdout);
+      call.resolve(stdout);
+    },
+    rejectCall: (index: number, error: Error) => {
+      const call = pending.get(index);
+      if (!call) {
+        throw new Error(`Runner call ${index} is not waiting for rejection.`);
+      }
+      call.reject(error);
     },
   };
 }
@@ -904,6 +923,51 @@ describe("ForgeService", () => {
     expect(freshStatus).toHaveBeenLastCalledWith(
       expect.objectContaining({ title: "Fresh generation PR" }),
     );
+
+    freshSubscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("does not deliver an old same-key poll error into a newly retained target", async () => {
+    const runner = createQueuedDeferredRunner();
+    const service = createGitHubService({
+      ttlMs: 30_000,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+    });
+    const oldError = vi.fn();
+    const freshError = vi.fn();
+    const freshStatus = vi.fn();
+
+    const oldSubscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      onError: oldError,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.calls).toHaveLength(1);
+
+    oldSubscription?.unsubscribe();
+    const freshSubscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      onStatus: freshStatus,
+      onError: freshError,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.calls).toHaveLength(2);
+
+    runner.rejectCall(0, new Error("stale poll failed"));
+    await flushMicrotasks();
+
+    runner.resolveCall(1, currentPullRequestJson({ title: "Fresh generation PR" }));
+    await vi.waitFor(() => expect(runner.calls).toHaveLength(3));
+    runner.resolveCall(2, currentPullRequestGithubFactsJson());
+    await vi.waitFor(() => expect(freshStatus).toHaveBeenCalledTimes(1));
+
+    expect(oldError).not.toHaveBeenCalled();
+    expect(freshError).not.toHaveBeenCalled();
 
     freshSubscription?.unsubscribe();
     service.dispose?.();
