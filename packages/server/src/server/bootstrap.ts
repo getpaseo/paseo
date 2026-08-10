@@ -205,6 +205,11 @@ import { createWebUiMiddleware } from "./web-ui.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
 import { createGitMutationService } from "./session/git-mutation/git-mutation-service.js";
 import { workspaceIdsOnCheckout } from "./workspace-directory.js";
+import {
+  commitWorkspaceTransition,
+  resolveWorkspaceTransitionBaseRef,
+  WorkspaceTransitionPreservationRequiredError,
+} from "./workspace-transition.js";
 import { configureGitProcessPolicy } from "../utils/run-git-command.js";
 import { resolveGitProcessPolicy } from "../utils/git-process-scheduler.js";
 import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
@@ -1126,7 +1131,10 @@ export async function createPaseoDaemon(
         projectId: workspace.projectId,
         ...(input.worktreeSlug ? { worktreeSlug: input.worktreeSlug } : {}),
         ...(input.branchName ? { branchName: input.branchName } : {}),
-        ...(input.baseBranch ? { refName: input.baseBranch } : {}),
+        refName: resolveWorkspaceTransitionBaseRef({
+          requestedBaseBranch: input.baseBranch,
+          currentBranch: sourceSnapshot.git.currentBranch,
+        }),
         action: "branch-off",
         paseoHome: config.paseoHome,
         worktreesRoot: config.worktreesRoot,
@@ -1147,65 +1155,39 @@ export async function createPaseoDaemon(
           await runWorktreeSetupCommands({
             worktreePath: created.workspace.cwd,
             branchName: created.worktree.branchName,
-            cleanupOnFailure: true,
+            cleanupOnFailure: false,
             repoRootPath: created.repoRoot,
             runtimeEnv,
           });
         }
       }
 
-      await Promise.all(
-        liveAgents
-          .filter((agent) => agent.id !== input.callerAgentId)
-          .map((agent) => agentManager.closeAgent(agent.id)),
+      return await commitWorkspaceTransition(
+        {
+          agentManager,
+          agentStorage,
+          workspaceRegistry,
+          killWorkspaceTerminals: (workspaceId) =>
+            killTerminalsForWorkspace({ terminalManager, sessionLogger: logger }, workspaceId),
+          emitWorkspaceUpdate: (workspaceId) => emitWorkspaceUpdatesExternal([workspaceId]),
+          logger,
+        },
+        {
+          caller,
+          liveAgents,
+          sourceWorkspace: workspace,
+          targetWorkspace: created.workspace,
+          temporaryWorkspaceId: created.workspace.workspaceId,
+        },
       );
-      await killTerminalsForWorkspace(
-        { terminalManager, sessionLogger: logger },
-        workspace.workspaceId,
-      );
-
-      const transitioned = await workspaceRegistry.update(workspace.workspaceId, (existing) => ({
-        ...existing,
-        cwd: created.workspace.cwd,
-        kind: "worktree",
-        displayName: created.workspace.displayName,
-        branch: created.workspace.branch,
-        worktreeRoot: created.workspace.worktreeRoot,
-        baseBranch: created.workspace.baseBranch,
-        isPaseoOwnedWorktree: true,
-        mainRepoRoot: created.workspace.mainRepoRoot,
-        updatedAt: new Date().toISOString(),
-      }));
-      if (!transitioned) {
-        throw new Error("Current workspace disappeared during transition");
-      }
-
-      const records = await agentStorage.list();
-      await Promise.all(
-        records
-          .filter((record) => !record.archivedAt && record.workspaceId === workspace.workspaceId)
-          .map((record) =>
-            agentStorage.upsert({
-              ...record,
-              cwd: transitioned.cwd,
-              updatedAt: new Date().toISOString(),
-            }),
-          ),
-      );
-      await workspaceRegistry.remove(created.workspace.workspaceId);
-      await emitWorkspaceUpdatesExternal([workspace.workspaceId]);
-
-      // The calling agent must receive this MCP result before its old runtime is closed.
-      setTimeout(() => {
-        void agentManager.closeAgent(input.callerAgentId).catch((error) => {
-          logger.warn(
-            { err: error, agentId: input.callerAgentId },
-            "Failed to close transitioned caller agent",
-          );
-        });
-      }, 0);
-      return transitioned;
     } catch (error) {
+      if (error instanceof WorkspaceTransitionPreservationRequiredError) {
+        logger.error(
+          { err: error.originalError, worktreePath: created.worktree.worktreePath },
+          "Preserving worktree after incomplete workspace transition rollback",
+        );
+        throw error.originalError;
+      }
       await workspaceRegistry.remove(created.workspace.workspaceId).catch(() => undefined);
       if (created.created) {
         await rollbackCreatedPaseoWorktree(

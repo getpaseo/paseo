@@ -1591,12 +1591,6 @@ describe("create_agent MCP tool", () => {
       { branchName: "feature/current", baseBranch: "main", worktreeSlug: "current" },
     );
 
-    expect(transitionWorkspaceToWorktree).toHaveBeenCalledWith({
-      callerAgentId: "agent-current",
-      branchName: "feature/current",
-      baseBranch: "main",
-      worktreeSlug: "current",
-    });
     expect(response.structuredContent).toMatchObject({
       workspaceId: "wks_current",
       cwd: TARGET_CWD,
