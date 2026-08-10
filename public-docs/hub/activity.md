@@ -12,34 +12,28 @@ Every event Hub accepts is recorded, whether or not it ran anything. That record
 
 ## Where to look
 
-**Project → Activity** lists the events routed to that project: the event, its source, the result, and when it arrived.
+**Project → Activity** lists routed trigger runs and their execution state.
 
-The result column says what happened:
+**Connections → Known unrouted events** is the organization-level view of accepted provider events that did not start a configured trigger. Hub records one of four bounded reasons:
 
-| Result                | Meaning                                                           |
-| --------------------- | ----------------------------------------------------------------- |
-| A trigger name        | The event matched that trigger and dispatched                     |
-| A lifecycle state     | The execution is in progress or finished                          |
-| `no_matching_trigger` | The event reached the project, but no trigger's filters matched   |
-| `provider_unrouted`   | No project route existed for the resource that produced the event |
-
-**Project → Executions** lists the runs: which trigger, which configuration revision, which daemon, duration, and outcome.
-
-**Connections → Known unrouted events** is the organization-level view. It holds events whose credential belongs to your organization but which no project's configuration claimed. A repository you connected but never named in a trigger lands here.
-
-Those two are different problems. `no_matching_trigger` means your filters are wrong. An unrouted event means no configuration mentions that repository, workspace, or guild at all.
+| Reason                      | Meaning                                                      |
+| --------------------------- | ------------------------------------------------------------ |
+| `no_project_route`          | No project route is configured for the event                 |
+| `no_trigger_for_source`     | No configured trigger handles that event source              |
+| `trigger_filters_rejected`  | A trigger handles the source, but its filters rejected it    |
+| `configuration_unavailable` | A relevant configuration or connection could not be resolved |
 
 ## Nothing happened when I mentioned the bot
 
 Work down this list.
 
-1. **Is the event in the project's Activity?** If not, check **Connections → Known unrouted events**. If it is there, no trigger names that resource. Add `filters.repo`, `filters.workspace`, or `filters.guild` and push.
+1. **Is the event in the project's Activity?** If not, check **Connections → Known unrouted events** and use its reason to distinguish routing, source, filter, and configuration failures.
 2. **Is the event anywhere at all?** If not, the event never reached Hub. Check the provider's own delivery log: GitHub's App → Advanced → Recent Deliveries, or Slack's Event Subscriptions page. Then check that the app is subscribed to that event type.
 3. **Is your user in `from_users`?** This is the most common cause. GitHub uses your login; Slack and Discord use the user ID, not the display name.
-4. **Did the mention match?** On GitHub, `contains` must appear in the comment body. On Slack and Discord the bot must actually be mentioned, and `pattern` matches only at the start of the text after the mention.
+4. **Did the invocation match?** On GitHub, `contains` must appear in the comment body. On Slack and Discord the bot must be mentioned, and `pattern` or its legacy `contains` alias must prefix the text after the mention.
 5. **Is the configuration you think is active actually active?** The Configuration tab shows the active revision and the last sync attempt. A failed push leaves the old revision serving.
 6. **Is the daemon connected?** An offline daemon fails dispatch with `daemon_not_connected`.
-7. **Did it run and stop early?** Check the execution. An agent that never reports back is ended by `idle_timeout` after 5 minutes by default, or `timeout` after an hour.
+7. **Did it run and stop early?** Compare the execution with the step's authored `idle_timeout` and `max_runtime`, and the workflow's `max_runtime`. All three limits are explicit in the workflow.
 8. **Did it run, but deliver nothing?** Check the step's prompt. An agent that is not told to call `hub.reply` and `hub.finish_execution` can answer in its own transcript and never report back. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).
 
 ## Sync failures

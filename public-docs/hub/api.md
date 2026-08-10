@@ -54,10 +54,12 @@ API failures use RFC 9457 problem details. Missing, invalid, or revoked credenti
 
 ```json
 {
-  "type": "https://hub.example.com/problems/unauthorized",
-  "title": "Unauthorized",
+  "type": "https://paseo.sh/problems/unauthorized",
+  "title": "Authentication required",
   "status": 401,
-  "detail": "Provide a valid organization API key."
+  "detail": "Provide an active Paseo organization credential in the Authorization: Bearer header.",
+  "code": "unauthorized",
+  "requestId": "5e967c44-fc22-4f6d-8fc5-1bbff33121af"
 }
 ```
 
@@ -130,7 +132,8 @@ Limits:
 
 - Bundle: at most 100 files.
 - File path: at most 512 characters.
-- File content: at most 1,000,000 characters; partial byte limits are enforced during compilation.
+- File content: at most 1,000,000 characters.
+- Prompt partials: at most 1,000,000 bytes each and 5,000,000 bytes in total.
 
 On success, Hub returns `201`:
 
@@ -163,7 +166,7 @@ The trigger must exist in the active configuration, and `actor` must be listed
 in that trigger's `filters.from_users` allowlist.
 
 ```http
-POST /api/manual-runs
+POST /api/v1/manual-runs
 ```
 
 Request body:
@@ -181,32 +184,27 @@ Request body:
 
 - `expectedVersionId` is optional. When supplied, Hub rejects the dispatch if that revision is no longer active.
 - `input` is the same string a provider message uses: leading `key=value` tokens are parsed as declared inputs, and the remainder becomes `${{ paseo.prompt }}`.
-- `deliveryKey` should be unique and stable per dispatch. Reusing one resolves to the existing trigger instead of starting a duplicate run.
+- `deliveryKey` should be unique and stable per dispatch. Hub uses it for durable deduplication, but does not promise exactly-once dispatch or replay of an earlier response.
 
 On success, Hub returns `200`:
 
 ```json
 {
   "deliveryKey": "deploy-2026-08-04-001",
-  "triggerId": "00000000-0000-4000-8000-000000000000",
-  "executionId": "00000000-0000-4000-8000-000000000000",
-  "status": "spawning",
-  "daemonId": "00000000-0000-4000-8000-000000000000",
-  "agentId": "agent-id"
+  "providerEventReceiptId": "00000000-0000-4000-8000-000000000000",
+  "triggerRunId": "00000000-0000-4000-8000-000000000000",
+  "configuredTriggerName": "deploy",
+  "workflowStatus": "running"
 }
 ```
 
-Common responses are `400 {"error":"invalid_request"}`, `404` for an
-unknown project, missing configuration, or missing trigger, `403
-{"error":"actor_forbidden"}` when the actor is not allowed by the trigger,
-and `409` when the daemon is offline, the expected configuration is no longer
-current, or the run could not be dispatched.
+Common responses are `400` for an invalid request, `403` when the actor is not allowed by the trigger, `404` for an unknown project, configuration, or trigger, and `409` when the daemon is offline, the expected configuration is no longer current, or dispatch conflicts. Each uses the problem-details shape above.
 
 Example:
 
 ```bash
-curl --fail-with-body -sS -X POST "$HUB_URL/api/manual-runs" \
-  -H "Authorization: Bearer $PASEO_API_KEY" \
+curl --fail-with-body -sS -X POST "$PASEO_HUB_URL/api/v1/manual-runs" \
+  -H "Authorization: Bearer $PASEO_HUB_API_KEY" \
   -H "Content-Type: application/json" \
   --data '{
     "projectSlug": "my-project",
@@ -230,7 +228,7 @@ be used as one.
 POST /api/v1/daemons/enrollment-tokens
 ```
 
-Send an empty JSON object as the request body. On success, Hub returns `201`:
+No request body is required. On success, Hub returns `201`:
 
 ```json
 {
@@ -245,10 +243,8 @@ The token expires after 10 minutes and is consumed when the daemon enrolls.
 
 ```bash
 curl --fail-with-body -sS -X POST \
-  "$HUB_URL/api/v1/daemons/enrollment-tokens" \
-  -H "Authorization: Bearer $PASEO_API_KEY" \
-  -H "Content-Type: application/json" \
-  --data '{}'
+  "$PASEO_HUB_URL/api/v1/daemons/enrollment-tokens" \
+  -H "Authorization: Bearer $PASEO_HUB_API_KEY"
 ```
 
 Direct API consumers can pass the returned token to the daemon enrollment protocol. The Paseo CLI intentionally does not accept raw enrollment tokens; `connect` owns the authenticated single-flow exchange.

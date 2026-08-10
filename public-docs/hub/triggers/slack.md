@@ -34,7 +34,7 @@ steps:
       - { type: slack.reply, max: 1, required: true }
 ```
 
-Slack filters use IDs, not display names. `from_users` matches the author, `workspace` the team, and `channels` the channel. `pattern` checks the beginning of text after the mention; `contains` checks a substring. All filters must pass.
+Slack filters use IDs, not display names. `from_users` matches the author, `workspace` the team, and `channels` the channel. `pattern` is a required prefix after the mention; `contains` is its legacy alias and has the same prefix behavior. All filters must pass.
 
 The reply posts in the triggering thread. A root message gets a thread; a threaded message stays there. `slack.reply` grants `hub.reply`, but does not add reply instructions to the prompt.
 

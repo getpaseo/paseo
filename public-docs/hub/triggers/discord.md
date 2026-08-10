@@ -34,7 +34,7 @@ steps:
       - { type: discord.reply, max: 1, required: true }
 ```
 
-Turn on Discord Developer Mode to copy IDs. `from_users` matches the author; `guild` and `channels` constrain where the mention arrived. All filters must pass.
+Turn on Discord Developer Mode to copy IDs. `from_users` matches the author; `guild` and `channels` constrain where the mention arrived. `pattern` is a required prefix after the mention; `contains` is its legacy alias and has the same prefix behavior. All filters must pass.
 
 The reply posts in the triggering thread or channel. `discord.reply` grants `hub.reply`, but does not rewrite the prompt. A Discord trigger grants no GitHub credential; add a [`github` block](/docs/hub/github) to the step that needs one.
 
