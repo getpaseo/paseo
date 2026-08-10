@@ -46,10 +46,10 @@ interface FinishNotificationScenarioOptions {
 
 interface FinishNotificationScenario {
   startWatchingChild(): void;
-  requestChildPermission(): void;
-  resolveChildPermission(): void;
-  resolveChildPermissionFromState(): void;
-  resolveChildPermissionWhileIdle(): void;
+  requestChildPermission(requestId?: string): void;
+  resolveChildPermission(requestId?: string): void;
+  resolveChildPermissionFromState(requestId?: string): void;
+  resolveChildPermissionWhileIdle(requestId?: string): void;
   finishChild(): void;
   finishChildAndReadParentPrompt(): Promise<string>;
   parentPrompts(): string[];
@@ -131,10 +131,10 @@ function createFinishNotificationScenario(
         logger: options?.logger ?? createTestLogger(),
       });
     },
-    requestChildPermission() {
+    requestChildPermission(requestId = "permission-1") {
       childAgent.lifecycle = "running";
-      childAgent.pendingPermissions.set("permission-1", {
-        id: "permission-1",
+      childAgent.pendingPermissions.set(requestId, {
+        id: requestId,
         provider: "claude",
         kind: "tool",
         name: "Run command",
@@ -154,29 +154,29 @@ function createFinishNotificationScenario(
         event: {
           type: "permission_requested",
           provider: "codex",
-          request: childAgent.pendingPermissions.get("permission-1")!,
+          request: childAgent.pendingPermissions.get(requestId)!,
         },
       });
     },
-    resolveChildPermission() {
-      childAgent.pendingPermissions.delete("permission-1");
+    resolveChildPermission(requestId = "permission-1") {
+      childAgent.pendingPermissions.delete(requestId);
       subscriber?.({
         type: "agent_stream",
         agentId: "child-agent",
         event: {
           type: "permission_resolved",
           provider: "codex",
-          requestId: "permission-1",
+          requestId,
           resolution: { behavior: "allow" },
         },
       });
     },
-    resolveChildPermissionFromState() {
-      childAgent.pendingPermissions.delete("permission-1");
+    resolveChildPermissionFromState(requestId = "permission-1") {
+      childAgent.pendingPermissions.delete(requestId);
       subscriber?.({ type: "agent_state", agent: childAgent });
     },
-    resolveChildPermissionWhileIdle() {
-      childAgent.pendingPermissions.delete("permission-1");
+    resolveChildPermissionWhileIdle(requestId = "permission-1") {
+      childAgent.pendingPermissions.delete(requestId);
       childAgent.lifecycle = "idle";
       subscriber?.({ type: "agent_state", agent: childAgent });
       subscriber?.({
@@ -185,7 +185,7 @@ function createFinishNotificationScenario(
         event: {
           type: "permission_resolved",
           provider: "codex",
-          requestId: "permission-1",
+          requestId,
           resolution: { behavior: "allow" },
         },
       });
@@ -326,12 +326,39 @@ test("an idle permission resolution waits for the resumed run to finish", async 
   await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(1));
 
   scenario.resolveChildPermissionWhileIdle();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(scenario.parentPrompts()).toHaveLength(1);
-
-  scenario.finishChild();
+  scenario.requestChildPermission("permission-2");
   await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
-  expect(scenario.parentPrompts()[1]).toContain("finished.");
+  expect(scenario.parentPrompts().every((prompt) => prompt.includes("needs permission."))).toBe(
+    true,
+  );
+
+  scenario.resolveChildPermission("permission-2");
+  scenario.finishChild();
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(3));
+  expect(scenario.parentPrompts()[2]).toContain("finished.");
+});
+
+test("finish notifications report every concurrently pending permission", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  scenario.requestChildPermission("permission-1");
+  scenario.requestChildPermission("permission-2");
+
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
+  expect(
+    scenario.parentPrompts().map((prompt) => {
+      const payload = prompt.match(/<permission-request>\n([\s\S]+?)\n<\/permission-request>/)?.[1];
+      return JSON.parse(payload!).requestId;
+    }),
+  ).toEqual(["permission-1", "permission-2"]);
+
+  scenario.resolveChildPermission("permission-1");
+  scenario.resolveChildPermission("permission-2");
+  scenario.finishChild();
+
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(3));
+  expect(scenario.parentPrompts()[2]).toContain("finished.");
 });
 
 test("finish notifications survive repeated permission cycles", async () => {

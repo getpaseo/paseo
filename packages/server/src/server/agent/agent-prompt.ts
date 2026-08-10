@@ -301,7 +301,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   } = params;
   let hasSeenRunning = false;
   let stopped = false;
-  let permissionNotificationSent = false;
+  const notifiedPermissionRequestIds = new Set<string>();
   let unsubscribe: (() => void) | null = null;
   let notificationQueue = Promise.resolve();
 
@@ -367,8 +367,10 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       }
 
       if (event.type === "agent_state") {
-        if (event.agent.pendingPermissions.size === 0) {
-          permissionNotificationSent = false;
+        for (const requestId of notifiedPermissionRequestIds) {
+          if (!event.agent.pendingPermissions.has(requestId)) {
+            notifiedPermissionRequestIds.delete(requestId);
+          }
         }
         if (event.agent.lifecycle === "running") {
           if (event.agent.pendingPermissions.size === 0) {
@@ -396,8 +398,8 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
         // observed before it so an idle state during follow-up startup cannot
         // masquerade as the final completion.
         hasSeenRunning = false;
-        if (!permissionNotificationSent) {
-          permissionNotificationSent = true;
+        if (!notifiedPermissionRequestIds.has(event.event.request.id)) {
+          notifiedPermissionRequestIds.add(event.event.request.id);
           notifySafely("needs permission", {
             terminal: false,
             permissionRequest: event.event.request,
@@ -406,12 +408,12 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
         return;
       }
 
-      if (
-        event.event.type === "permission_resolved" &&
-        agentManager.getAgent(childAgentId)?.pendingPermissions.size === 0
-      ) {
-        permissionNotificationSent = false;
-        hasSeenRunning = agentManager.getAgent(childAgentId)?.lifecycle === "running";
+      if (event.event.type === "permission_resolved") {
+        notifiedPermissionRequestIds.delete(event.event.requestId);
+        const childAgent = agentManager.getAgent(childAgentId);
+        if (childAgent?.pendingPermissions.size === 0) {
+          hasSeenRunning = childAgent.lifecycle === "running";
+        }
       }
     },
     { agentId: childAgentId, replayState: false },
