@@ -170,6 +170,11 @@ interface PiThinkingOptionDefinition {
   description: string;
 }
 
+interface PiThinkingOptionMapping {
+  definition: PiThinkingOptionDefinition;
+  isDefault: boolean;
+}
+
 const PI_THINKING_OPTIONS: readonly PiThinkingOptionDefinition[] = [
   { id: "off", label: "Off", description: "No extra reasoning" },
   { id: "minimal", label: "Minimal", description: "Light reasoning" },
@@ -353,14 +358,11 @@ function parseAutoCompactMode(value: string | undefined): AutoCompactMode {
   return "unknown";
 }
 
-function mapThinkingOption(
-  option: PiThinkingOptionDefinition,
-  isDefault: boolean,
-): AgentSelectOption {
+function mapThinkingOption({ definition, isDefault }: PiThinkingOptionMapping): AgentSelectOption {
   const mappedOption: AgentSelectOption = {
-    id: option.id,
-    label: option.label,
-    description: option.description,
+    id: definition.id,
+    label: definition.label,
+    description: definition.description,
   };
   if (isDefault) {
     mappedOption.isDefault = true;
@@ -407,7 +409,10 @@ function resolvePiThinkingOptions(model: PiModel): AgentSelectOption[] | undefin
   );
   const defaultThinkingOptionId = resolveDefaultPiThinkingOptionId(supportedOptions);
   return supportedOptions.map((option) =>
-    mapThinkingOption(option, option.id === defaultThinkingOptionId),
+    mapThinkingOption({
+      definition: option,
+      isDefault: option.id === defaultThinkingOptionId,
+    }),
   );
 }
 
