@@ -165,6 +165,7 @@ class RecursiveFileObserver {
   private nativeAuditTimer: NodeJS.Timeout | null = null;
   private nativeFullAuditTimer: NodeJS.Timeout | null = null;
   private readonly pendingNativeAuditScopes = new Set<string>();
+  private readonly pendingNativeChangeAuditScopes = new Set<string>();
   private readonly pendingNativeRecursiveAuditScopes = new Set<string>();
   private nativeFullAuditRequested = false;
   private nativeAuditDirty = false;
@@ -284,6 +285,7 @@ class RecursiveFileObserver {
       pendingReconciliationWorkCount:
         this.pendingReconciliationScopes.size +
         this.pendingNativeAuditScopes.size +
+        this.pendingNativeChangeAuditScopes.size +
         this.pendingNativeRecursiveAuditScopes.size +
         this.pathClassifications.size +
         this.reconciliationQueueDepth +
@@ -404,9 +406,11 @@ class RecursiveFileObserver {
     if (!this.canCommitNativeAudit(generation)) return;
     const fullAudit = this.nativeFullAuditRequested;
     const localScopes = [...this.pendingNativeAuditScopes];
+    const changeScopes = [...this.pendingNativeChangeAuditScopes];
     const recursiveScopes = [...this.pendingNativeRecursiveAuditScopes];
     this.nativeFullAuditRequested = false;
     this.pendingNativeAuditScopes.clear();
+    this.pendingNativeChangeAuditScopes.clear();
     this.pendingNativeRecursiveAuditScopes.clear();
     if (fullAudit) {
       this.nativeSafetyAuditPending = false;
@@ -432,7 +436,7 @@ class RecursiveFileObserver {
         this.lastNativeFullAuditAt = performance.now();
         fullReconciliationCount += 1;
       } else {
-        await this.reconcileNativeScopes(localScopes, recursiveScopes, generation);
+        await this.reconcileNativeScopes(localScopes, changeScopes, recursiveScopes, generation);
         scopedReconciliationCount += 1;
       }
     } catch (error) {
@@ -513,15 +517,29 @@ class RecursiveFileObserver {
 
   private async reconcileNativeScopes(
     localScopes: string[],
+    changeScopes: string[],
     recursiveScopes: string[],
     generation: number,
   ): Promise<void> {
+    const forcedScopes = collapsePaths([...localScopes, ...recursiveScopes]);
     for (const directory of new Set(localScopes)) {
       await this.reconcileNativeDirectory(directory, generation);
       if (!this.canCommitNativeAudit(generation)) return;
     }
     for (const directory of new Set(recursiveScopes)) {
       await this.reconcileNativeSubtree(directory, generation);
+      if (!this.canCommitNativeAudit(generation)) return;
+    }
+    for (const directory of collapsePaths(changeScopes)) {
+      if (forcedScopes.some((scope) => isPathInside(scope, directory))) continue;
+      const inventoriedAt = this.nativeDirectoryInventoryAt.get(directory);
+      if (
+        inventoriedAt !== undefined &&
+        performance.now() - inventoriedAt < NATIVE_CHANGE_SCOPE_FRESH_MS
+      ) {
+        continue;
+      }
+      await this.reconcileNativeDirectory(directory, generation);
       if (!this.canCommitNativeAudit(generation)) return;
     }
   }
@@ -820,7 +838,15 @@ class RecursiveFileObserver {
       this.requestNativeSafetyAudit();
       return;
     }
-    this.requestNativeAudit(scope);
+    if (this.closed || this.failed) return;
+    this.pendingNativeChangeAuditScopes.add(scope);
+    this.requestNativeSafetyAudit();
+    const now = performance.now();
+    this.nativeAuditDirty = true;
+    this.nativeAuditDirtySince ??= now;
+    this.nativeAuditLastDirtyAt = now;
+    if (this.nativeAuditQueued || this.nativeAuditRunning) return;
+    this.scheduleNativeAudit();
   }
 
   private requestNativeSafetyAudit(): void {
@@ -930,6 +956,7 @@ class RecursiveFileObserver {
       this.nativeFullAuditTimer = null;
     }
     this.pendingNativeAuditScopes.clear();
+    this.pendingNativeChangeAuditScopes.clear();
     this.pendingNativeRecursiveAuditScopes.clear();
     this.nativeDirectoryInventoryAt.clear();
     this.nativeFullAuditRequested = false;
