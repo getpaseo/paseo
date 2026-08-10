@@ -19,6 +19,12 @@ let fullReconciliationCount = 0;
 let reconciliationFailureCount = 0;
 let observerFailureCount = 0;
 let directoryLimitFailureCount = 0;
+let nativeEventCount = 0;
+let nativeChangeEventCount = 0;
+let nativeRenameEventCount = 0;
+let nativePathlessEventCount = 0;
+let nativeClassificationCount = 0;
+let nativeShallowScanCount = 0;
 let lastReconciliationDurationMs = 0;
 let maxReconciliationDurationMs = 0;
 
@@ -54,6 +60,12 @@ export interface FileObserverDiagnostics {
   reconciliationFailureCount: number;
   observerFailureCount: number;
   directoryLimitFailureCount: number;
+  nativeEventCount: number;
+  nativeChangeEventCount: number;
+  nativeRenameEventCount: number;
+  nativePathlessEventCount: number;
+  nativeClassificationCount: number;
+  nativeShallowScanCount: number;
   lastReconciliationDurationMs: number;
   maxReconciliationDurationMs: number;
 }
@@ -85,6 +97,12 @@ export function getFileObserverDiagnostics(): FileObserverDiagnostics {
     reconciliationFailureCount,
     observerFailureCount,
     directoryLimitFailureCount,
+    nativeEventCount,
+    nativeChangeEventCount,
+    nativeRenameEventCount,
+    nativePathlessEventCount,
+    nativeClassificationCount,
+    nativeShallowScanCount,
     lastReconciliationDurationMs,
     maxReconciliationDurationMs,
   };
@@ -144,10 +162,12 @@ class RecursiveFileObserver {
   private nativeFullAuditRequested = false;
   private nativeAuditDirty = false;
   private nativeAuditDirtySince: number | null = null;
+  private nativeAuditLastDirtyAt: number | null = null;
   private nativeAuditQueued = false;
   private nativeAuditRunning = false;
   private nativeSafetyAuditPending = false;
   private nativeSafetyAuditDirtySince: number | null = null;
+  private nativeSafetyAuditLastDirtyAt: number | null = null;
   private lastNativeFullAuditAt = Number.NEGATIVE_INFINITY;
   private nativeInventoryGeneration = 0;
   private readonly pathClassifications = new Set<Promise<void>>();
@@ -275,7 +295,9 @@ class RecursiveFileObserver {
   private watchNativeRecursive(): void {
     const watcher = watch(this.root, { recursive: true }, (eventType, filename) => {
       if (this.closed || this.failed) return;
+      nativeEventCount += 1;
       if (!filename) {
+        nativePathlessEventCount += 1;
         this.queueEvent("update", this.root);
         this.requestNativeAudit(this.root);
         return;
@@ -283,11 +305,12 @@ class RecursiveFileObserver {
       const path = resolve(this.root, filename.toString());
       if (this.isIgnored(path)) return;
       if (eventType === "change") {
+        nativeChangeEventCount += 1;
         this.queueEvent("update", path);
-        this.requestNativeSafetyAudit();
-        return;
+      } else {
+        nativeRenameEventCount += 1;
+        this.classifyRenameEvent(path);
       }
-      this.classifyRenameEvent(path);
       this.requestNativeAudit(path === this.root ? this.root : dirname(path));
       if (this.nativeDirectories.has(path)) this.requestNativeAudit(path, false, true);
     });
@@ -359,6 +382,7 @@ class RecursiveFileObserver {
     if (fullAudit) {
       this.nativeSafetyAuditPending = false;
       this.nativeSafetyAuditDirtySince = null;
+      this.nativeSafetyAuditLastDirtyAt = null;
       if (this.nativeFullAuditTimer) {
         clearTimeout(this.nativeFullAuditTimer);
         this.nativeFullAuditTimer = null;
@@ -367,6 +391,7 @@ class RecursiveFileObserver {
     this.nativeAuditRunning = true;
     this.nativeAuditDirty = false;
     this.nativeAuditDirtySince = null;
+    this.nativeAuditLastDirtyAt = null;
     this.reconcileInFlight = true;
     const startedAt = performance.now();
     try {
@@ -537,6 +562,7 @@ class RecursiveFileObserver {
   }
 
   private async readNativeDirectoryEntry(directory: string): Promise<NativeDirectoryEntry | null> {
+    nativeShallowScanCount += 1;
     let children: Dirent[];
     try {
       children = await readdir(directory, { withFileTypes: true });
@@ -746,6 +772,7 @@ class RecursiveFileObserver {
     const now = performance.now();
     this.nativeAuditDirty = true;
     this.nativeAuditDirtySince ??= now;
+    this.nativeAuditLastDirtyAt = now;
     if (this.nativeAuditQueued || this.nativeAuditRunning) return;
     this.scheduleNativeAudit();
   }
@@ -755,6 +782,7 @@ class RecursiveFileObserver {
     const now = performance.now();
     this.nativeSafetyAuditPending = true;
     this.nativeSafetyAuditDirtySince ??= now;
+    this.nativeSafetyAuditLastDirtyAt = now;
     this.scheduleNativeFullAudit();
   }
 
@@ -764,18 +792,26 @@ class RecursiveFileObserver {
       this.failed ||
       !this.nativeAuditDirty ||
       this.nativeAuditQueued ||
-      this.nativeAuditRunning
+      this.nativeAuditRunning ||
+      this.nativeAuditTimer
     )
       return;
     const now = performance.now();
     const dirtySince = this.nativeAuditDirtySince ?? now;
-    const quietDeadline = now + NATIVE_AUDIT_QUIET_MS;
+    const quietDeadline = (this.nativeAuditLastDirtyAt ?? now) + NATIVE_AUDIT_QUIET_MS;
     const starvationDeadline = dirtySince + NATIVE_AUDIT_MAX_DIRTY_MS;
     const deadline = Math.min(quietDeadline, starvationDeadline);
-    if (this.nativeAuditTimer) clearTimeout(this.nativeAuditTimer);
     this.nativeAuditTimer = setTimeout(
       () => {
         this.nativeAuditTimer = null;
+        const nextNow = performance.now();
+        const nextQuietDeadline = (this.nativeAuditLastDirtyAt ?? nextNow) + NATIVE_AUDIT_QUIET_MS;
+        const nextStarvationDeadline =
+          (this.nativeAuditDirtySince ?? nextNow) + NATIVE_AUDIT_MAX_DIRTY_MS;
+        if (nextNow < Math.min(nextQuietDeadline, nextStarvationDeadline)) {
+          this.scheduleNativeAudit();
+          return;
+        }
         this.nativeAuditQueued = true;
         void this.enqueueNativeAudit(true, this.nativeInventoryGeneration).catch((error: unknown) =>
           this.fail(toError(error)),
@@ -787,13 +823,17 @@ class RecursiveFileObserver {
   }
 
   private scheduleNativeFullAudit(): void {
-    if (this.closed || this.failed || !this.nativeSafetyAuditPending) return;
-    if (this.nativeFullAuditTimer) clearTimeout(this.nativeFullAuditTimer);
-    this.nativeFullAuditTimer = null;
-    if (this.nativeAuditRunning) return;
+    if (
+      this.closed ||
+      this.failed ||
+      !this.nativeSafetyAuditPending ||
+      this.nativeAuditRunning ||
+      this.nativeFullAuditTimer
+    )
+      return;
     const now = performance.now();
     const dirtySince = this.nativeSafetyAuditDirtySince ?? now;
-    const quietDeadline = now + NATIVE_FULL_AUDIT_QUIET_MS;
+    const quietDeadline = (this.nativeSafetyAuditLastDirtyAt ?? now) + NATIVE_FULL_AUDIT_QUIET_MS;
     const intervalDeadline = this.lastNativeFullAuditAt + NATIVE_FULL_AUDIT_MIN_INTERVAL_MS;
     const starvationDeadline = dirtySince + NATIVE_FULL_AUDIT_MAX_DIRTY_MS;
     const deadline = Math.min(starvationDeadline, Math.max(intervalDeadline, quietDeadline));
@@ -802,6 +842,19 @@ class RecursiveFileObserver {
         this.nativeFullAuditTimer = null;
         if (this.closed || this.failed || !this.nativeSafetyAuditPending) return;
         if (this.nativeAuditRunning) return;
+        const nextNow = performance.now();
+        const nextQuietDeadline =
+          (this.nativeSafetyAuditLastDirtyAt ?? nextNow) + NATIVE_FULL_AUDIT_QUIET_MS;
+        const nextIntervalDeadline = this.lastNativeFullAuditAt + NATIVE_FULL_AUDIT_MIN_INTERVAL_MS;
+        const nextStarvationDeadline =
+          (this.nativeSafetyAuditDirtySince ?? nextNow) + NATIVE_FULL_AUDIT_MAX_DIRTY_MS;
+        if (
+          nextNow <
+          Math.min(nextStarvationDeadline, Math.max(nextIntervalDeadline, nextQuietDeadline))
+        ) {
+          this.scheduleNativeFullAudit();
+          return;
+        }
         this.nativeSafetyAuditPending = false;
         this.nativeFullAuditRequested = true;
         this.nativeAuditDirty = true;
@@ -835,11 +888,14 @@ class RecursiveFileObserver {
     this.nativeFullAuditRequested = false;
     this.nativeSafetyAuditPending = false;
     this.nativeSafetyAuditDirtySince = null;
+    this.nativeSafetyAuditLastDirtyAt = null;
     this.nativeAuditDirty = false;
     this.nativeAuditDirtySince = null;
+    this.nativeAuditLastDirtyAt = null;
   }
 
   private classifyRenameEvent(path: string): void {
+    nativeClassificationCount += 1;
     let classification!: Promise<void>;
     classification = stat(path)
       .then(() => this.queueEvent("create", path))

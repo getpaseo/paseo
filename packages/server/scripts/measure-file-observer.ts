@@ -37,6 +37,12 @@ interface Measurement {
   sustainedCpuMs: number;
   sustainedScopedReconciliationCount: number | null;
   sustainedFullReconciliationCount: number | null;
+  sustainedNativeEventCount: number | null;
+  sustainedNativeChangeEventCount: number | null;
+  sustainedNativeRenameEventCount: number | null;
+  sustainedNativePathlessEventCount: number | null;
+  sustainedNativeClassificationCount: number | null;
+  sustainedNativeShallowScanCount: number | null;
   sustainedMissedPaths: number;
   teardownMs: number;
   startupEvents: number;
@@ -232,6 +238,35 @@ async function measure(
         backend === "node"
           ? diagnosticsAfterSustained.fullReconciliationCount -
             diagnosticsBeforeSustained.fullReconciliationCount
+          : null,
+      sustainedNativeEventCount:
+        backend === "node"
+          ? diagnosticsAfterSustained.nativeEventCount - diagnosticsBeforeSustained.nativeEventCount
+          : null,
+      sustainedNativeChangeEventCount:
+        backend === "node"
+          ? diagnosticsAfterSustained.nativeChangeEventCount -
+            diagnosticsBeforeSustained.nativeChangeEventCount
+          : null,
+      sustainedNativeRenameEventCount:
+        backend === "node"
+          ? diagnosticsAfterSustained.nativeRenameEventCount -
+            diagnosticsBeforeSustained.nativeRenameEventCount
+          : null,
+      sustainedNativePathlessEventCount:
+        backend === "node"
+          ? diagnosticsAfterSustained.nativePathlessEventCount -
+            diagnosticsBeforeSustained.nativePathlessEventCount
+          : null,
+      sustainedNativeClassificationCount:
+        backend === "node"
+          ? diagnosticsAfterSustained.nativeClassificationCount -
+            diagnosticsBeforeSustained.nativeClassificationCount
+          : null,
+      sustainedNativeShallowScanCount:
+        backend === "node"
+          ? diagnosticsAfterSustained.nativeShallowScanCount -
+            diagnosticsBeforeSustained.nativeShallowScanCount
           : null,
       sustainedMissedPaths: sustainedPaths.filter(
         (path) => !delivered.some((event) => event.path === path),
