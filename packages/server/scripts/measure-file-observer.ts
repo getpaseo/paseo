@@ -35,6 +35,8 @@ interface Measurement {
   editLatencyP99Ms: number;
   sustainedDurationMs: number;
   sustainedCpuMs: number;
+  sustainedScopedReconciliationCount: number | null;
+  sustainedFullReconciliationCount: number | null;
   sustainedMissedPaths: number;
   teardownMs: number;
   startupEvents: number;
@@ -186,6 +188,7 @@ async function measure(
     if (error) throw error;
 
     const sustainedPaths: string[] = [];
+    const diagnosticsBeforeSustained = getFileObserverDiagnostics();
     const sustainedCpuBefore = process.cpuUsage();
     const sustainedStarted = performance.now();
     for (let index = 0; index < SUSTAINED_EDIT_COUNT; index += 1) {
@@ -202,6 +205,7 @@ async function measure(
     const sustainedDurationMs = performance.now() - sustainedStarted;
     const sustainedCpu = process.cpuUsage(sustainedCpuBefore);
     const sustainedCpuMs = (sustainedCpu.user + sustainedCpu.system) / 1_000;
+    const diagnosticsAfterSustained = getFileObserverDiagnostics();
 
     const teardownStarted = performance.now();
     await Promise.all(subscriptions.map((subscription) => subscription.unsubscribe()));
@@ -219,6 +223,16 @@ async function measure(
       editLatencyP99Ms: percentile(observedLatencies, 0.99),
       sustainedDurationMs,
       sustainedCpuMs,
+      sustainedScopedReconciliationCount:
+        backend === "node"
+          ? diagnosticsAfterSustained.scopedReconciliationCount -
+            diagnosticsBeforeSustained.scopedReconciliationCount
+          : null,
+      sustainedFullReconciliationCount:
+        backend === "node"
+          ? diagnosticsAfterSustained.fullReconciliationCount -
+            diagnosticsBeforeSustained.fullReconciliationCount
+          : null,
       sustainedMissedPaths: sustainedPaths.filter(
         (path) => !delivered.some((event) => event.path === path),
       ).length,
@@ -300,13 +314,9 @@ function evaluate(results: Measurement[]): {
     if (result.teardownMs >= 1_000) {
       failures.push(`${result.backend} teardown took ${result.teardownMs.toFixed(1)}ms`);
     }
-    if (
-      result.backend === "node" &&
-      (process.platform === "darwin" || process.platform === "win32") &&
-      (result.fullReconciliationCount ?? 0) > ROOT_COUNT
-    ) {
+    if (result.backend === "node" && (result.sustainedFullReconciliationCount ?? 0) > 0) {
       failures.push(
-        `node ran ${result.fullReconciliationCount} full reconciliations for ${ROOT_COUNT} roots`,
+        `node ran ${result.sustainedFullReconciliationCount} full reconciliations during sustained writes`,
       );
     }
   }

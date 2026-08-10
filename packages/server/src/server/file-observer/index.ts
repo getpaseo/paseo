@@ -277,14 +277,18 @@ class RecursiveFileObserver {
       if (this.closed || this.failed) return;
       if (!filename) {
         this.queueEvent("update", this.root);
-        this.requestNativeAudit(this.root, true);
+        this.requestNativeAudit(this.root);
         return;
       }
       const path = resolve(this.root, filename.toString());
       if (this.isIgnored(path)) return;
-      if (eventType === "change") this.queueEvent("update", path);
-      else this.classifyRenameEvent(path);
-      this.requestNativeAudit(dirname(path));
+      if (eventType === "change") {
+        this.queueEvent("update", path);
+        this.requestNativeSafetyAudit();
+        return;
+      }
+      this.classifyRenameEvent(path);
+      this.requestNativeAudit(path === this.root ? this.root : dirname(path));
       if (this.nativeDirectories.has(path)) this.requestNativeAudit(path, false, true);
     });
     this.attachWatcher(this.root, watcher);
@@ -732,22 +736,26 @@ class RecursiveFileObserver {
 
   private requestNativeAudit(scope: string, fullAudit = false, recursiveAudit = false): void {
     if (this.closed || this.failed) return;
-    const now = performance.now();
     if (fullAudit) {
-      this.nativeSafetyAuditPending = true;
-      this.nativeSafetyAuditDirtySince ??= now;
-      this.scheduleNativeFullAudit();
+      this.requestNativeSafetyAudit();
       return;
     }
     if (recursiveAudit) this.pendingNativeRecursiveAuditScopes.add(scope);
     else this.pendingNativeAuditScopes.add(scope);
-    this.nativeSafetyAuditPending = true;
-    this.nativeSafetyAuditDirtySince ??= now;
-    this.scheduleNativeFullAudit();
+    this.requestNativeSafetyAudit();
+    const now = performance.now();
     this.nativeAuditDirty = true;
     this.nativeAuditDirtySince ??= now;
     if (this.nativeAuditQueued || this.nativeAuditRunning) return;
     this.scheduleNativeAudit();
+  }
+
+  private requestNativeSafetyAudit(): void {
+    if (this.closed || this.failed) return;
+    const now = performance.now();
+    this.nativeSafetyAuditPending = true;
+    this.nativeSafetyAuditDirtySince ??= now;
+    this.scheduleNativeFullAudit();
   }
 
   private scheduleNativeAudit(): void {
