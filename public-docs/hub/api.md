@@ -1,6 +1,6 @@
 ---
 title: Hub public API
-description: Use organization API keys to install configuration, dispatch manual runs, and enroll daemons.
+description: Use organization credentials to list projects, validate or install configuration, dispatch runs, and enroll daemons.
 nav: Public API
 order: 78
 category: Hub
@@ -21,8 +21,9 @@ These are the canonical reference endpoints for the hosted Paseo Hub. A self-hos
 
 ## Authentication
 
-Create an organization API key from the Hub dashboard under **API keys**. Send
-it as a bearer token on every API request:
+Run `paseo hub login [origin]` for interactive CLI access. Hub returns a durable, revocable organization-scoped CLI credential after browser approval, and Paseo stores it privately under `PASEO_HOME` for that exact normalized origin. Without an explicit origin, the CLI uses `PASEO_HUB_URL`, then the active stored login origin, then `https://hub.paseo.sh`.
+
+For automation, create an organization API key from the Hub dashboard under **API keys**. Both credential types are bearer tokens:
 
 ```http
 Authorization: Bearer paseo_pk_...
@@ -36,14 +37,18 @@ organization is not accessible through the key.
 
 Each key has one or more selectable scopes:
 
-| Scope                   | Operation                                           |
-| ----------------------- | --------------------------------------------------- |
-| `configuration:install` | Replace and activate a project's configuration.     |
-| `runs:dispatch`         | Dispatch a configured manual trigger for a project. |
-| `daemons:enroll`        | Issue a short-lived daemon enrollment token.        |
+| Scope                    | Operation                                           |
+| ------------------------ | --------------------------------------------------- |
+| `projects:read`          | List active projects in the organization.           |
+| `configuration:validate` | Validate configuration without changing Hub state.  |
+| `configuration:install`  | Replace and activate a project's configuration.     |
+| `runs:dispatch`          | Dispatch a configured manual trigger for a project. |
+| `daemons:enroll`         | Issue a short-lived daemon enrollment token.        |
 
 API keys do not grant dashboard access. They cannot manage connections,
 projects, or organization members.
+
+CLI credentials have the current CLI operation scopes and remain revocable independently of daemon relationships. `paseo hub logout` deletes the active local CLI credential; it does not revoke or disconnect the daemon identity.
 
 API failures use RFC 9457 problem details. Missing, invalid, or revoked credentials return `401` with `application/problem+json`:
 
@@ -57,6 +62,37 @@ API failures use RFC 9457 problem details. Missing, invalid, or revoked credenti
 ```
 
 A valid key without the scope required by an endpoint returns `403` in the same format.
+
+## Project list
+
+`GET /api/v1/projects` returns active projects in the bearer credential's organization. `paseo hub projects` renders the projects as a table. With `--json`, it returns `{ "origin": "...", "projects": [...] }` so even an empty result records the resolved Hub.
+
+```json
+{
+  "projects": [
+    {
+      "id": "00000000-0000-4000-8000-000000000000",
+      "slug": "my-project",
+      "name": "My project"
+    }
+  ]
+}
+```
+
+## Configuration validation
+
+`POST /api/v1/configurations/validate` accepts the same `projectSlug`, `yaml`, and optional `partials` body as configuration install. It performs the same compilation and resource resolution without recording a revision or changing the active configuration.
+
+On success, Hub returns `200`:
+
+```json
+{
+  "projectSlug": "my-project",
+  "valid": true
+}
+```
+
+`paseo hub deploy --dry-run` calls this endpoint with the identical locally resolved payload that a deployment would send.
 
 ## Configuration install
 
@@ -107,7 +143,7 @@ curl --fail-with-body -sS -X POST "$PASEO_HUB_URL/api/v1/configurations/install"
   --data @configuration-install.json
 ```
 
-For a local YAML file, `paseo hub deploy [file]` calls this endpoint and preserves the file contents. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli) for project precedence, flags, environment variables, and the current authentication limits.
+For a local YAML file, `paseo hub deploy [file]` calls this endpoint and preserves the file contents. The command uses an exact-origin stored login when flags and environment credentials are absent. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli) for project precedence and credential precedence.
 
 ## Manual run dispatch
 
@@ -183,7 +219,7 @@ key mints this token; it is not the daemon's long-lived credential and must not
 be used as one.
 
 ```http
-POST /api/daemons/enrollment-tokens
+POST /api/v1/daemons/enrollment-tokens
 ```
 
 Send an empty JSON object as the request body. On success, Hub returns `201`:
@@ -196,18 +232,17 @@ Send an empty JSON object as the request body. On success, Hub returns `201`:
 ```
 
 The token expires after 10 minutes and is consumed when the daemon enrolls.
-Pass it to the Paseo CLI, which exchanges it for the daemon's connection
-credential:
+`paseo hub connect [origin]` performs this request with `--api-key`, `PASEO_HUB_API_KEY`, or the matching stored login, then passes the returned one-time token to the daemon's existing enrollment operation. Without an origin, it uses `PASEO_HUB_URL`, the active stored login origin, then `https://hub.paseo.sh`. The daemon generates and retains its own relationship credential.
 
 ```bash
-ENROLLMENT_TOKEN="$(curl --fail-with-body -sS -X POST \
-  "$HUB_URL/api/daemons/enrollment-tokens" \
+curl --fail-with-body -sS -X POST \
+  "$HUB_URL/api/v1/daemons/enrollment-tokens" \
   -H "Authorization: Bearer $PASEO_API_KEY" \
   -H "Content-Type: application/json" \
-  --data '{}' | jq -r .token)"
-
-paseo hub connect "$HUB_URL" --token "$ENROLLMENT_TOKEN"
+  --data '{}'
 ```
+
+Direct API consumers can pass the returned token to the daemon enrollment protocol. The Paseo CLI intentionally does not accept raw enrollment tokens; `connect` owns the authenticated single-flow exchange.
 
 An enrollment token cannot be reused. Revoking the API key immediately rejects
 future API requests and expires any unconsumed enrollment tokens that key

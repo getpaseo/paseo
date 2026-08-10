@@ -10,7 +10,6 @@ import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "@/utils/tool-call-parsers";
 import { highlightDiffLines } from "@/utils/diff-highlight";
@@ -741,15 +740,7 @@ function LoadingSkeleton({ containerStyle }: { containerStyle: StyleProp<ViewSty
   );
 }
 
-export function ToolCallDetailsContent({ ...props }: ToolCallDetailsContentProps) {
-  return (
-    <AppearanceStyleBoundary>
-      <ToolCallDetailsContentInner {...props} />
-    </AppearanceStyleBoundary>
-  );
-}
-
-function ToolCallDetailsContentInner({
+export function ToolCallDetailsContent({
   detail,
   errorText,
   maxHeight,

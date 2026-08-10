@@ -1262,7 +1262,6 @@ export const zhCN: TranslationResources = {
     },
   },
   rootError: {
-    kicker: "出现问题",
     title: "Paseo 遇到了问题。",
     body: "请重试以重新加载应用。如果问题持续发生，请在报告时附上下面的详细信息。",
     details: "详情",
@@ -1444,19 +1443,6 @@ export const zhCN: TranslationResources = {
         label: "高级",
         show: "显示高级选项",
         hide: "隐藏高级选项",
-      },
-      headers: {
-        title: "自定义请求头",
-        add: "添加请求头",
-        name: "名称",
-        value: "值",
-        remove: "删除请求头",
-        errors: {
-          missingName: "请为每个请求头输入名称",
-          invalidName: "{{name}} 不是有效的请求头名称",
-          invalidValue: "{{name}} 包含无效换行符",
-          duplicateName: "{{name}} 输入了多次",
-        },
       },
       passwordVisibility: {
         show: "显示密码",
@@ -1786,6 +1772,7 @@ export const zhCN: TranslationResources = {
       editor: "编辑器",
       shortcuts: "快捷键",
       integrations: "集成",
+      notifications: "通知",
       permissions: "权限",
       diagnostics: "诊断",
       about: "关于",
@@ -1794,6 +1781,21 @@ export const zhCN: TranslationResources = {
       title: "编辑器",
       vimKeybindings: "Vim 键位",
       vimHint: "适用于网页和桌面端的源文件。",
+    },
+    notifications: {
+      title: "通知",
+      permission: "通知权限",
+      refreshAccessibility: "刷新通知权限",
+      playSound: "播放声音",
+      playSoundHint: "收到桌面通知时播放声音",
+      test: "测试通知",
+      testHint: "使用当前设置发送测试通知",
+      permissionRequired: "测试前请允许访问通知",
+      send: "发送",
+      sending: "正在发送...",
+      sentTitle: "测试通知已发送",
+      sentDescription: "Paseo 已将通知交给操作系统。",
+      sendFailedTitle: "无法发送测试通知",
     },
     hostSections: {
       projects: "项目",
@@ -1943,6 +1945,7 @@ export const zhCN: TranslationResources = {
           midnight: "Midnight",
           claude: "Claude",
           ghostty: "Ghostty",
+          pureBlack: "纯黑",
           auto: "系统",
         },
       },
@@ -1980,11 +1983,15 @@ export const zhCN: TranslationResources = {
       searchPlaceholder: "搜索快捷键",
       unavailableOnMobile: "键盘快捷键仅在桌面端可用",
       capturePrompt: "按下快捷键...",
+      unassigned: "未设置",
       actions: {
+        menu: "{{name}} 的操作",
         done: "完成",
         cancel: "取消",
+        bind: "绑定",
         rebind: "重新绑定",
-        reset: "重置",
+        clear: "清除",
+        reset: "重置为默认",
         resetAll: "全部重置",
       },
       sections: {
@@ -2091,12 +2098,10 @@ export const zhCN: TranslationResources = {
     },
     permissions: {
       title: "权限",
-      notifications: "通知",
       microphone: "麦克风",
       refresh: "刷新",
       refreshing: "正在刷新...",
       refreshAccessibility: "刷新桌面端权限",
-      test: "测试",
       attention: {
         title: "Attention",
         intrusive: {
@@ -2186,7 +2191,6 @@ export const zhCN: TranslationResources = {
         granted: "已授权",
         request: "请求",
         requesting: "正在请求...",
-        busySuffix: "{{label}}...",
       },
     },
     host: {

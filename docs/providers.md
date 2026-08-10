@@ -2,6 +2,41 @@
 
 This guide walks through adding a new agent provider end-to-end. There are two integration patterns, and this doc covers both.
 
+## Provider-native session options
+
+`AgentSessionConfig.providerOptions` carries JSON-safe configuration for the selected provider. The
+names and nesting are the provider's native contract; options are not portable between providers.
+Paseo validates the object with the selected provider's strict schema before constructing a session.
+Unknown keys fail with their `providerOptions.*` path. Paseo-owned controls such as cwd, model,
+prompt, environment, session identity, MCP transport, callbacks, and hooks cannot be passed here.
+
+This Paseo version accepts these keys:
+
+- **Codex:** `approval_policy`, `sandbox_mode`,
+  `sandbox_workspace_write.{writable_roots,network_access,exclude_slash_tmp,exclude_tmpdir_env_var}`,
+  `web_search`, `features.multi_agent_v2`, and `features.network_proxy`. A network proxy object may
+  contain `enabled`, `proxy_url`, `socks_url`, `enable_socks5`, `enable_socks5_udp`,
+  `allow_local_binding`, `allow_upstream_proxy`, `dangerously_allow_all_unix_sockets`,
+  `dangerously_allow_non_loopback_proxy`, `domains`, and `unix_sockets`. See the
+  [Codex configuration reference](https://developers.openai.com/codex/config-reference).
+- **Claude:** `allowedTools`, `disallowedTools`, `additionalDirectories`, `sandbox`, and `settings`.
+  The accepted sandbox fields cover enablement, fail-if-unavailable behavior, excluded and
+  unsandboxed commands, filesystem read/write rules, network domain/socket/local-binding rules,
+  weaker nested sandboxing, ignored violations, and the ripgrep command. `settings` accepts native
+  `permissions.{allow,ask,deny}` and sandbox settings. See the
+  [Claude Agent SDK TypeScript reference](https://platform.claude.com/docs/en/agent-sdk/typescript)
+  and [Claude settings reference](https://code.claude.com/docs/en/settings).
+- **OpenCode:** `permission`, either one `ask`/`allow`/`deny` action or the native per-tool rule
+  object. Supported entries are `read`, `edit`, `glob`, `grep`, `list`, `bash`, `task`,
+  `external_directory`, `todowrite`, `question`, `webfetch`, `websearch`, `codesearch`,
+  `repo_clone`, `repo_overview`, `lsp`, `doom_loop`, and `skill`. See the
+  [OpenCode permissions reference](https://opencode.ai/docs/permissions/). OpenCode permissions are
+  application policy, not an OS sandbox.
+
+Each provider definition owns its option schema and exact MCP preapproval mapping. A new provider
+must fail closed for Hub unattended execution until it can approve one exact injected MCP server
+and tool identity without approving native tools.
+
 ## Two Integration Patterns
 
 ### ACP (Agent Client Protocol) -- recommended

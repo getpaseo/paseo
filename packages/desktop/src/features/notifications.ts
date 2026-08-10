@@ -1,6 +1,7 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { app, BrowserWindow, Notification, ipcMain, nativeImage } from "electron";
+import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
 
 interface NotificationInput {
   title?: unknown;
@@ -97,8 +98,10 @@ export function registerNotificationHandlers(): void {
     const body = toTrimmedString(rawInput?.body) ?? undefined;
     const data = toRecord(rawInput?.data);
     const icon = getNotificationIcon();
-    // Default silent true so accidental callers stay quiet; app passes silent:false when sound on.
-    const silent = rawInput?.silent !== false;
+    const settings = await getDesktopSettingsStore().get();
+    // Prefer explicit caller silent flag (attention sound path); else desktop playSound setting.
+    const silent =
+      typeof rawInput?.silent === "boolean" ? rawInput.silent : !settings.notifications.playSound;
     const notification = new Notification({
       title,
       ...(body ? { body } : {}),

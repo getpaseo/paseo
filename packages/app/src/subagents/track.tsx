@@ -200,7 +200,10 @@ function SubagentsTrackRow({
       >
         {({ pressed }) => (
           <View style={hovered || pressed ? styles.rowActive : styles.row}>
-            <WorkspaceTabIcon presentation={presentation} />
+            <WorkspaceTabIcon
+              presentation={presentation}
+              backdrop={hovered || pressed ? "surface2" : "surface1"}
+            />
             <Text style={styles.rowLabel} numberOfLines={1}>
               {displayLabel}
             </Text>

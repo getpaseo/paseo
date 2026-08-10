@@ -82,6 +82,20 @@ describe("Hub session protocol", () => {
     expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
   });
 
+  test("keeps the retired Hub workspace selector wire-compatible", () => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-retired-workspace",
+      executionId: "execution-retired-workspace",
+      provider: "codex",
+      cwd: "/workspace",
+      workspaceId: "caller-owned-workspace",
+      prompt: "Implement the requested change",
+    };
+
+    expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
+  });
+
   test("accepts an optional MCP server configuration on Hub creates", () => {
     const message = {
       type: "hub.execution.agent.create.request",
@@ -108,6 +122,43 @@ describe("Hub session protocol", () => {
       cwd: "/workspace",
       prompt: "Implement the requested change",
     });
+  });
+
+  test("round-trips native provider options and structured MCP preapproval", () => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-policy",
+      executionId: "execution-policy",
+      provider: "codex",
+      cwd: "/workspace",
+      prompt: "Classify and finish",
+      providerOptions: {
+        sandbox_mode: "workspace-write",
+        sandbox_workspace_write: { writable_roots: ["/var/cache/npm"] },
+      },
+      mcpServers: {
+        hub: { type: "http", url: "https://hub.example/executions/policy" },
+      },
+      toolPolicy: {
+        preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+      },
+    };
+
+    expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
+  });
+
+  test.each(["Bash", "Edit", "Write"])("cannot encode native %s tool preapproval", (tool) => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-native-tool",
+      executionId: "execution-native-tool",
+      provider: "claude",
+      cwd: "/workspace",
+      prompt: "Do work",
+      toolPolicy: { preapproved: [{ kind: "native", server: "claude", tool }] },
+    };
+
+    expect(SessionInboundMessageSchema.safeParse(message).success).toBe(false);
   });
 
   test.each([

@@ -523,6 +523,7 @@ export const SETTINGS_SECTION_SLUGS = [
   "editor",
   "shortcuts",
   "integrations",
+  "notifications",
   "permissions",
   "diagnostics",
   "about",

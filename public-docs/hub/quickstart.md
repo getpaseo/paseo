@@ -25,10 +25,11 @@ The connection appears with a generated slug like `yourname-github`.
 On the machine that will run agents:
 
 ```sh
-paseo hub connect https://your-hub.example.com
+paseo hub login https://your-hub.example.com
+paseo hub connect
 ```
 
-The CLI prints a verification code. In Hub, open **Daemons → Register a daemon**, enter the code, and choose a friendly slug. Hub normalizes `Build Studio` to `build-studio`. See [Daemons](/docs/hub/daemons).
+Approve the CLI login in the browser. `connect` selects that active login's origin and enrolls the daemon using the stored organization credential. The CLI login and daemon relationship remain separate identities. See [Daemons](/docs/hub/daemons).
 
 ## 4. Create a project
 
@@ -79,15 +80,15 @@ Push to the default branch. Hub fetches the file at that commit, validates it, a
 
 If the file is invalid, Hub records the failure and keeps the previous revision active.
 
-To deploy the file directly instead, create an organization API key with the `configuration:install` scope, then run:
+To inspect the authenticated organization's projects and deploy the file directly, run:
 
 ```sh
-export PASEO_HUB_URL=https://your-hub.example.com
-export PASEO_HUB_API_KEY=paseo_pk_...
+paseo hub projects
+paseo hub deploy --dry-run
 paseo hub deploy
 ```
 
-The command reads exactly `.paseo/hub.yml` from the current directory. It does not search parent directories. Use `paseo hub deploy path/to/config.yml` for another file. `-p, --project <slug>` overrides the file's `project` metadata. See [Hub configuration](/docs/hub/configuration#deploy-from-the-cli) for every deploy option and the current authentication limits.
+The commands use the active stored login. Origin precedence is explicit command origin or `--hub`, `PASEO_HUB_URL`, active login, then `https://hub.paseo.sh`. `--dry-run` sends the same YAML, project, and partial bundle to Hub's authoritative validator without recording or activating a revision. The command reads exactly `.paseo/hub.yml` from the current directory. Use `paseo hub deploy path/to/config.yml` for another file, or `-p, --project <slug>` to override the file's project metadata. An explicit `--api-key` or `PASEO_HUB_API_KEY` overrides the stored credential without persisting the key.
 
 ## 7. Trigger it
 
@@ -96,3 +97,5 @@ Comment `@paseo have a look at this` on an issue in that repository, from the ac
 Open the project's **Activity** tab. You should see the event received and routed, and an execution in **Executions**. The agent itself appears in the Paseo app on that machine.
 
 Nothing happened? [Activity](/docs/hub/activity) has the checklist.
+
+Before enabling the example for broader use, read [Hub security](/docs/hub/security) for trigger allowlists, host boundaries, provider-native controls, and output authority.

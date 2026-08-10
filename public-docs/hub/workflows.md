@@ -185,6 +185,8 @@ finish_execution({ output: { kind: "implementation" } })
 
 Hub validates that object against the schema. If it is invalid, the capability returns an MCP error and the same agent can correct and call it again. A valid output completes the step and makes it available as `${{ steps.classify.outputs.kind }}` to later steps.
 
+Use classification as defense in depth, then give reply or implementation authority only to the downstream step that needs it. [Hub security](/docs/hub/security) covers the trust boundary and provider-native controls.
+
 Steps run in order. When a step's `if` condition is false, Hub skips it and evaluates the next step. In this example, only one downstream condition can be true. If the answer step runs, the workflow ends without starting the implementation step.
 
 ## Deterministic input or classifier?

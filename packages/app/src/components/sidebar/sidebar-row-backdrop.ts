@@ -1,4 +1,4 @@
-import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
+import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 
 /**
  * Which surface a sidebar row is currently painting, so anything knocking out of it — the status
@@ -9,19 +9,19 @@ import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
  * here rather than three ternaries beside three stylesheets: drifting from them is how the badge
  * ends up with a halo, and a halo in one grouping mode but not the other is worse than either.
  *
- * The pressed background is deliberately absent. It lives in a Pressable style callback and lasts
- * as long as a finger is down, which is not long enough to see a mismatched ring.
  */
 export function getSidebarRowBackdrop({
   isDragging = false,
+  isPressed = false,
   selected = false,
   isHovered = false,
 }: {
   isDragging?: boolean;
+  isPressed?: boolean;
   selected?: boolean;
   isHovered?: boolean;
-}): SurfaceBackdrop {
-  if (isDragging) return "surface2";
+}): SidebarSurfaceBackdrop {
+  if (isDragging || isPressed) return "surface2";
   if (selected || isHovered) return "surfaceSidebarHover";
   return "surfaceSidebar";
 }
