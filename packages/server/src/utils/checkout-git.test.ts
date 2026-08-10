@@ -109,6 +109,10 @@ function initRepo(): { tempDir: string; repoDir: string } {
   return { tempDir, repoDir };
 }
 
+function readTextFile(path: string): string {
+  return readFileSync(path, "utf8").replaceAll("\r\n", "\n");
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -3725,7 +3729,7 @@ describe("discardChanges", () => {
 
       await discardChanges(repoDir, ["file.txt", "staged.txt", "junk"]);
 
-      expect(readFileSync(join(repoDir, "file.txt"), "utf8")).toBe("hello\n");
+      expect(readTextFile(join(repoDir, "file.txt"))).toBe("hello\n");
       expect(existsSync(join(repoDir, "staged.txt"))).toBe(false);
       expect(existsSync(join(repoDir, "junk"))).toBe(false);
       const status = execFileSync("git", ["status", "--porcelain"], { cwd: repoDir })
@@ -3744,7 +3748,7 @@ describe("discardChanges", () => {
 
       await discardChanges(repoDir, ["file.txt", "renamed.txt"]);
 
-      expect(readFileSync(join(repoDir, "file.txt"), "utf8")).toBe("hello\n");
+      expect(readTextFile(join(repoDir, "file.txt"))).toBe("hello\n");
       expect(existsSync(join(repoDir, "renamed.txt"))).toBe(false);
       expect(execFileSync("git", ["status", "--porcelain"], { cwd: repoDir }).toString()).toBe("");
     } finally {
@@ -3785,7 +3789,7 @@ describe("discardChanges", () => {
 
       await discardChanges(repoDir, ["nested"]);
 
-      expect(readFileSync(join(repoDir, "nested", "tracked.txt"), "utf8")).toBe("original\n");
+      expect(readTextFile(join(repoDir, "nested", "tracked.txt"))).toBe("original\n");
       expect(existsSync(join(repoDir, "nested", "untracked.txt"))).toBe(false);
       expect(readFileSync(join(repoDir, "outside.txt"), "utf8")).toBe("keep\n");
       expect(execFileSync("git", ["status", "--porcelain"], { cwd: repoDir }).toString()).toBe(
@@ -3801,7 +3805,7 @@ describe("discardChanges", () => {
     try {
       execFileSync("git", ["rm", "file.txt"], { cwd: repoDir });
       await discardChanges(repoDir, ["file.txt"]);
-      expect(readFileSync(join(repoDir, "file.txt"), "utf8")).toBe("hello\n");
+      expect(readTextFile(join(repoDir, "file.txt"))).toBe("hello\n");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -3813,8 +3817,29 @@ describe("discardChanges", () => {
       writeFileSync(join(repoDir, "file.txt"), "changed\n");
       writeFileSync(join(repoDir, "other.txt"), "keep\n");
       await discardChanges(repoDir, ["file.txt"]);
-      expect(readFileSync(join(repoDir, "file.txt"), "utf8")).toBe("hello\n");
+      expect(readTextFile(join(repoDir, "file.txt"))).toBe("hello\n");
       expect(readFileSync(join(repoDir, "other.txt"), "utf8")).toBe("keep\n");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("treats requested filenames as literal pathspecs", async () => {
+    const { tempDir, repoDir } = initRepo();
+    try {
+      writeFileSync(join(repoDir, "foo[ab].txt"), "literal original\n");
+      writeFileSync(join(repoDir, "fooa.txt"), "sibling original\n");
+      execFileSync("git", ["add", "foo[ab].txt", "fooa.txt"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add pathspec files"], {
+        cwd: repoDir,
+      });
+      writeFileSync(join(repoDir, "foo[ab].txt"), "literal changed\n");
+      writeFileSync(join(repoDir, "fooa.txt"), "sibling changed\n");
+
+      await discardChanges(repoDir, ["foo[ab].txt"]);
+
+      expect(readTextFile(join(repoDir, "foo[ab].txt"))).toBe("literal original\n");
+      expect(readTextFile(join(repoDir, "fooa.txt"))).toBe("sibling changed\n");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

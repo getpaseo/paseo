@@ -470,7 +470,9 @@ describe("CheckoutSession", () => {
           requestId: "discard-1",
         });
 
-        expect(readFileSync(join(cwd, "file.txt"), "utf8")).toBe("original\n");
+        expect(readFileSync(join(cwd, "file.txt"), "utf8").replaceAll("\r\n", "\n")).toBe(
+          "original\n",
+        );
         expect(gitMutationCalls.notifyGitMutation).toEqual([
           { cwd, reason: "discard-changes", options: undefined },
         ]);

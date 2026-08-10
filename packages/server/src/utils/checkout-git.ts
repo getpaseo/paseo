@@ -3332,25 +3332,31 @@ export async function discardChanges(cwd: string, pathspecs: string[]): Promise<
     return;
   }
   try {
-    await runGitCommand(["reset", "-q", "HEAD", "--", ...pathspecs], {
+    await runGitCommand(["--literal-pathspecs", "reset", "-q", "HEAD", "--", ...pathspecs], {
       cwd,
       timeout: DISCARD_CHANGES_TIMEOUT_MS,
     });
   } catch {
     // Why: unborn HEAD has no commit for reset, so remove the paths directly from the index.
-    await runGitCommand(["rm", "--cached", "-r", "-q", "--ignore-unmatch", "--", ...pathspecs], {
-      cwd,
-      timeout: DISCARD_CHANGES_TIMEOUT_MS,
-    });
+    await runGitCommand(
+      ["--literal-pathspecs", "rm", "--cached", "-r", "-q", "--ignore-unmatch", "--", ...pathspecs],
+      {
+        cwd,
+        timeout: DISCARD_CHANGES_TIMEOUT_MS,
+      },
+    );
   }
   // With everything unstaged, the remaining state is only worktree
   // modifications/deletions (restore from the index) and untracked files
   // (clean). Classify from porcelain so each path gets the command that
   // actually applies to it.
-  const status = await runGitCommand(["status", "--porcelain=v1", "-z", "--", ...pathspecs], {
-    cwd,
-    timeout: DISCARD_CHANGES_TIMEOUT_MS,
-  });
+  const status = await runGitCommand(
+    ["--literal-pathspecs", "status", "--porcelain=v1", "-z", "--", ...pathspecs],
+    {
+      cwd,
+      timeout: DISCARD_CHANGES_TIMEOUT_MS,
+    },
+  );
   const tracked: string[] = [];
   const untracked: string[] = [];
   const tokens = status.stdout.split("\0");
@@ -3372,13 +3378,13 @@ export async function discardChanges(cwd: string, pathspecs: string[]): Promise<
     tracked.push(filePath);
   }
   if (tracked.length > 0) {
-    await runGitCommand(["checkout", "-q", "--", ...tracked], {
+    await runGitCommand(["--literal-pathspecs", "checkout", "-q", "--", ...tracked], {
       cwd,
       timeout: DISCARD_CHANGES_TIMEOUT_MS,
     });
   }
   if (untracked.length > 0) {
-    await runGitCommand(["clean", "-fd", "-q", "--", ...untracked], {
+    await runGitCommand(["--literal-pathspecs", "clean", "-fd", "-q", "--", ...untracked], {
       cwd,
       timeout: DISCARD_CHANGES_TIMEOUT_MS,
     });

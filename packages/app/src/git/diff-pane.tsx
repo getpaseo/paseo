@@ -96,8 +96,6 @@ import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import { useToast } from "@/contexts/toast-context";
 import { useSessionStore } from "@/stores/session-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import { queryClient as appQueryClient } from "@/data/query-client";
-import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useOverlayFlatListScrollbar } from "@/components/ui/overlay-scrollbar/use-overlay-flat-list-scrollbar";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
@@ -252,7 +250,7 @@ function useDiscardChangesAction({
 }): ((path: string, oldPath?: string) => void) | undefined {
   const { t } = useTranslation();
   const toast = useToast();
-  const client = useSessionStore((s) => s.sessions[serverId]?.client);
+  const discardChanges = useCheckoutGitActionsStore((state) => state.discardChanges);
   // COMPAT(checkoutDiscardChanges): added in v0.3.0, remove gate after 2027-02-08.
   const discardSupported = useSessionStore(
     (s) => s.sessions[serverId]?.serverInfo?.features?.checkoutDiscardChanges === true,
@@ -266,23 +264,22 @@ function useDiscardChangesAction({
         cancelLabel: t("workspace.fileActions.confirmRevert.cancel"),
         destructive: true,
       });
-      if (!confirmed || !client) {
+      if (!confirmed) {
         return;
       }
       try {
-        const payload = await client.checkoutDiscardChanges(cwd, {
+        await discardChanges({
+          serverId,
+          cwd,
           paths: oldPath ? [path, oldPath] : [path],
         });
-        if (!payload.success) {
-          toast.error(payload.error?.message ?? t("workspace.fileActions.confirmRevert.failed"));
-          return;
-        }
-        void invalidateCheckoutGitQueriesForClient(appQueryClient, { serverId, cwd });
       } catch (cause) {
-        toast.error(cause instanceof Error ? cause.message : String(cause));
+        toast.error(
+          cause instanceof Error ? cause.message : t("workspace.fileActions.confirmRevert.failed"),
+        );
       }
     },
-    [client, cwd, serverId, t, toast],
+    [cwd, discardChanges, serverId, t, toast],
   );
   const handleDiscardPath = useCallback(
     (path: string, oldPath?: string) => {

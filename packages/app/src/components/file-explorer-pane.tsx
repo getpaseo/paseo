@@ -454,7 +454,14 @@ export function FileExplorerPane({
       : undefined,
   );
 
-  const { requestDirectoryListing, selectExplorerEntry } = useFileExplorerActions({
+  const {
+    requestDirectoryListing,
+    createEntry,
+    renameEntry,
+    duplicateEntry,
+    deleteEntry,
+    selectExplorerEntry,
+  } = useFileExplorerActions({
     serverId,
     workspaceId,
     workspaceRoot: normalizedWorkspaceRoot,
@@ -465,7 +472,6 @@ export function FileExplorerPane({
     isLocalExecution: isLocalDaemon,
   });
   const fileManagerTarget = desktopOpenTargets.find((target) => target.kind === "file-manager");
-  const client = useSessionStore((state) => state.sessions[serverId]?.client);
   // COMPAT(fsEntryOps): added in v0.3.0, remove gate after 2027-02-08.
   const fsEntryOpsEnabled = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.fsEntryOps === true,
@@ -682,24 +688,22 @@ export function FileExplorerPane({
     async (name: string) => {
       const edit = pendingEdit;
       setPendingEdit(null);
-      if (edit?.type !== "create" || !client) {
+      if (edit?.type !== "create") {
         return;
       }
       try {
-        const payload = await client.createFileEntry({
-          cwd: normalizedWorkspaceRoot,
+        const payload = await createEntry({
           parentPath: edit.parentPath,
           name,
           kind: edit.kind,
         });
+        if (!payload) {
+          return;
+        }
         if (!payload.success) {
           toast.error(payload.error ?? t("workspace.fileExplorer.errors.createFailed"));
           return;
         }
-        await requestDirectoryListing(edit.parentPath, {
-          recordHistory: false,
-          setCurrentPath: false,
-        });
         if (edit.kind === "file" && payload.path) {
           selectExplorerEntry(payload.path);
           onOpenFile?.(payload.path);
@@ -708,39 +712,31 @@ export function FileExplorerPane({
         toast.error(cause instanceof Error ? cause.message : String(cause));
       }
     },
-    [
-      client,
-      normalizedWorkspaceRoot,
-      onOpenFile,
-      pendingEdit,
-      requestDirectoryListing,
-      selectExplorerEntry,
-      t,
-      toast,
-    ],
+    [createEntry, onOpenFile, pendingEdit, selectExplorerEntry, t, toast],
   );
 
   const handleRenameCommit = useCallback(
     async (name: string) => {
       const edit = pendingEdit;
       setPendingEdit(null);
-      if (edit?.type !== "rename" || !client || name === edit.entry.name) {
+      if (edit?.type !== "rename" || name === edit.entry.name) {
         return;
       }
       const { entry } = edit;
       try {
-        const payload = await client.renameFileEntry({
-          cwd: normalizedWorkspaceRoot,
+        const payload = await renameEntry({
           path: entry.path,
           name,
         });
+        if (!payload) {
+          return;
+        }
         if (!payload.success || !payload.renamedPath) {
           toast.error(payload.error ?? t("workspace.fileExplorer.errors.renameFailed"));
           return;
         }
 
         const renamedPath = payload.renamedPath;
-        const parentPath = parentExplorerPath(entry.path);
         if (workspaceStateKey && entry.kind === "directory") {
           const expandedRenamedPaths = Array.from(expandedPaths)
             .filter((expandedPath) => isExplorerPathWithin(expandedPath, entry.path))
@@ -774,21 +770,16 @@ export function FileExplorerPane({
             onOpenFile?.(renamedSelection);
           }
         }
-        await requestDirectoryListing(parentPath, {
-          recordHistory: false,
-          setCurrentPath: false,
-        });
       } catch (cause) {
         toast.error(cause instanceof Error ? cause.message : String(cause));
       }
     },
     [
-      client,
       expandedPaths,
-      normalizedWorkspaceRoot,
       onOpenFile,
       pendingEdit,
       requestDirectoryListing,
+      renameEntry,
       selectExplorerEntry,
       selectedEntryPath,
       setExpandedPathsForWorkspace,
@@ -800,28 +791,21 @@ export function FileExplorerPane({
 
   const handleDuplicateEntry = useCallback(
     async (entry: ExplorerEntry) => {
-      if (!client) {
-        return;
-      }
       try {
-        const payload = await client.duplicateFileEntry({
-          cwd: normalizedWorkspaceRoot,
-          path: entry.path,
-        });
+        const payload = await duplicateEntry(entry.path);
+        if (!payload) {
+          return;
+        }
         if (!payload.success || !payload.duplicatedPath) {
           toast.error(payload.error ?? t("workspace.fileExplorer.errors.duplicateFailed"));
           return;
         }
         selectExplorerEntry(payload.duplicatedPath);
-        await requestDirectoryListing(parentExplorerPath(entry.path), {
-          recordHistory: false,
-          setCurrentPath: false,
-        });
       } catch (cause) {
         toast.error(cause instanceof Error ? cause.message : String(cause));
       }
     },
-    [client, normalizedWorkspaceRoot, requestDirectoryListing, selectExplorerEntry, t, toast],
+    [duplicateEntry, selectExplorerEntry, t, toast],
   );
 
   const handleDeleteEntry = useCallback(
@@ -836,14 +820,14 @@ export function FileExplorerPane({
         cancelLabel: t("workspace.fileActions.confirmDelete.cancel"),
         destructive: true,
       });
-      if (!confirmed || !client) {
+      if (!confirmed) {
         return;
       }
       try {
-        const payload = await client.deleteFileEntry({
-          cwd: normalizedWorkspaceRoot,
-          path: entry.path,
-        });
+        const payload = await deleteEntry(entry.path);
+        if (!payload) {
+          return;
+        }
         if (!payload.success) {
           toast.error(payload.error ?? t("workspace.fileExplorer.errors.deleteFailed"));
           return;
@@ -851,23 +835,11 @@ export function FileExplorerPane({
         if (selectedEntryPath === entry.path) {
           selectExplorerEntry(null);
         }
-        await requestDirectoryListing(parentExplorerPath(entry.path), {
-          recordHistory: false,
-          setCurrentPath: false,
-        });
       } catch (cause) {
         toast.error(cause instanceof Error ? cause.message : String(cause));
       }
     },
-    [
-      client,
-      normalizedWorkspaceRoot,
-      requestDirectoryListing,
-      selectExplorerEntry,
-      selectedEntryPath,
-      t,
-      toast,
-    ],
+    [deleteEntry, selectExplorerEntry, selectedEntryPath, t, toast],
   );
 
   const handleSortCycle = useCallback(() => {
@@ -1540,11 +1512,6 @@ function TreeRowDispatcher({
       testID={`file-explorer-row-${index}`}
     />
   );
-}
-
-function parentExplorerPath(entryPath: string): string {
-  const separatorIndex = entryPath.lastIndexOf("/");
-  return separatorIndex > 0 ? entryPath.slice(0, separatorIndex) : ".";
 }
 
 function isExplorerPathWithin(candidatePath: string, parentPath: string): boolean {

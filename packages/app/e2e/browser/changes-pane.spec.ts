@@ -19,6 +19,7 @@ interface WorkspaceFixtureOptions {
   includeDeletedFile?: boolean;
   includeNestedFolders?: boolean;
   includeRenamedFile?: boolean;
+  includeUntrackedFile?: boolean;
 }
 
 interface CleanupTask {
@@ -396,6 +397,35 @@ test("discarding a staged rename restores its source path", async ({ page }) => 
     .toBe("export const renamed = true;\n");
 });
 
+test("discarding an untracked file removes it from the working tree", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff({ includeUntrackedFile: true });
+  await useUnwrappedDiffLines(page);
+  await openWorkspaceChanges(page, workspace);
+
+  const untrackedToggle = page
+    .getByTestId(/^diff-file-\d+-toggle$/)
+    .filter({ hasText: "zz-untracked.txt" });
+  const toggleTestId = await untrackedToggle.getAttribute("data-testid");
+  expect(toggleTestId).not.toBeNull();
+  const rowTestId = toggleTestId!.slice(0, -"-toggle".length);
+  await untrackedToggle.click({ button: "right" });
+  const confirmation = new Promise<void>((resolve) => {
+    page.once("dialog", async (dialog) => {
+      await dialog.accept();
+      resolve();
+    });
+  });
+  await page.getByTestId(`${rowTestId}-revert`).click();
+  await confirmation;
+
+  await expect(page.getByText("zz-untracked.txt", { exact: true })).toHaveCount(0, {
+    timeout: 30_000,
+  });
+  await expect(
+    readFile(path.join(workspace.repoPath, "zz-untracked.txt"), "utf8"),
+  ).rejects.toThrow();
+});
+
 test("shows a revert error returned by the daemon", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await failNextDiscardRequest(page);
@@ -727,6 +757,9 @@ async function createWorkspaceWithMountedTabDiff(
   });
 
   await writeFile(path.join(repo.path, "src/use-mounted-tab-set.ts"), AFTER);
+  if (options.includeUntrackedFile) {
+    await writeFile(path.join(repo.path, "zz-untracked.txt"), "remove me\n");
+  }
   if (options.includeDeletedFile) {
     await unlink(path.join(repo.path, "src/zz-deleted.ts"));
   }

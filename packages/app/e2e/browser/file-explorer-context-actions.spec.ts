@@ -102,11 +102,11 @@ async function disconnectNextContextAction(page: Page): Promise<{ wait: () => Pr
   return { wait: () => requestSeen };
 }
 
-test.beforeAll(async () => {
+test.beforeEach(async () => {
   workspace = await seedWorkspace({ repoPrefix: "file-explorer-context-actions-" });
 });
 
-test.afterAll(async () => {
+test.afterEach(async () => {
   await workspace?.cleanup();
 });
 
