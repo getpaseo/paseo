@@ -2,6 +2,23 @@
 
 This is the low-plumbing path for maintaining a personal fork that carries local patches while still regularly pulling upstream changes.
 
+## Required sequence
+
+Always ship fork work in this order. Do not skip steps.
+
+1. **Open a PR** from the feature branch into `main`.
+2. **Merge the PR** into `main`.
+3. **Release from `main`** by tagging the merge commit (or dispatching workflows with `checkout_ref` set to `main` / that merge SHA).
+
+Rules:
+
+- Never push a `v*` release tag from an unmerged feature branch.
+- Never treat a local commit or feature-branch HEAD as the release target when `main` does not contain it yet.
+- If you already pushed a tag too early, delete the tag and any half-built GitHub Release, merge the PR, then recreate the tag on the `main` merge commit and push it again.
+- Version bumps for fork releases live in the tag / workflow inputs. Do not land package-version churn on the feature PR just to cut a release.
+
+After the tag is on `main`, the usual tag-triggered workflows publish desktop, npm global-install, Docker, and Android artifacts. You can also dispatch those workflows manually with the same tag and `checkout_ref=main`.
+
 ## What The Fork Publishes
 
 - Desktop installers and updater manifests are published to the fork's GitHub Releases.
