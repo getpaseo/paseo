@@ -12,11 +12,46 @@ import {
 } from "../../utils/timeline.js";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
-import type { AgentStreamEventPayload, AgentStreamMessage } from "@getpaseo/protocol/messages";
+import type {
+  AgentSnapshotPayload,
+  AgentStreamEventPayload,
+  AgentStreamMessage,
+  AgentUpdateMessage,
+} from "@getpaseo/protocol/messages";
 
 export interface AgentAttachOptions {
   host?: string;
   [key: string]: unknown;
+}
+
+export type AttachSignal = "SIGINT" | "SIGTERM";
+export type AttachAgentState = Pick<AgentSnapshotPayload, "id" | "status" | "archivedAt">;
+export type AttachAgentUpdate =
+  | { kind: "upsert"; agent: AttachAgentState }
+  | { kind: "remove"; agentId: string };
+
+export interface AttachSessionClient {
+  onAgentStream(listener: (agentId: string, event: AgentStreamEventPayload) => void): () => void;
+  onAgentUpdate(listener: (update: AttachAgentUpdate) => void): () => void;
+  startAgentUpdates(): Promise<void>;
+  fetchAgent(agentId: string): Promise<AttachAgentState | null>;
+  close(): Promise<void>;
+}
+
+export interface AttachSignalSource {
+  on(signal: AttachSignal, listener: () => void): void;
+  removeListener(signal: AttachSignal, listener: () => void): void;
+}
+
+interface RunAttachSessionInput {
+  agentId: string;
+  client: AttachSessionClient;
+  signalSource: AttachSignalSource;
+  fetchTimelineItems(): Promise<AgentTimelineItem[]>;
+  printTimelineItem(item: AgentTimelineItem): void;
+  printStreamEvent(event: AgentStreamEventPayload): void;
+  warnTimeline(error: unknown): void;
+  printDetach(): void;
 }
 
 /**
@@ -97,6 +132,109 @@ function printStreamEvent(event: AgentStreamEventPayload): void {
   }
 }
 
+function isAttachable(agent: AttachAgentState): boolean {
+  if (agent.archivedAt) return false;
+  return agent.status === "initializing" || agent.status === "running";
+}
+
+function isTerminalTurn(event: AgentStreamEventPayload): boolean {
+  return (
+    event.type === "turn_completed" ||
+    event.type === "turn_failed" ||
+    event.type === "turn_canceled"
+  );
+}
+
+export async function runAttachSession(input: RunAttachSessionInput): Promise<void> {
+  let completed = false;
+  let closePromise: Promise<void> | null = null;
+  let resolveCompletion: () => void = () => {};
+  const completion = new Promise<void>((resolve) => {
+    resolveCompletion = resolve;
+  });
+
+  function complete(): void {
+    if (completed) return;
+    completed = true;
+    resolveCompletion();
+    void closeClient().catch(() => {});
+  }
+
+  function closeClient(): Promise<void> {
+    closePromise ??= input.client.close();
+    return closePromise;
+  }
+
+  function detach(): void {
+    if (completed) return;
+    input.printDetach();
+    complete();
+  }
+
+  async function verifyTerminalState(): Promise<void> {
+    try {
+      const agent = await Promise.race([input.client.fetchAgent(input.agentId), completion]);
+      if (!completed && (!agent || !isAttachable(agent))) complete();
+    } catch {
+      return;
+    }
+  }
+
+  async function catchUpTimeline(): Promise<void> {
+    try {
+      const timelineItems = await Promise.race([input.fetchTimelineItems(), completion]);
+      if (completed) return;
+      for (const item of timelineItems ?? []) input.printTimelineItem(item);
+    } catch (error) {
+      if (!completed) input.warnTimeline(error);
+    }
+  }
+
+  const unsubscribeLifecycle = input.client.onAgentStream((agentId, event) => {
+    if (agentId !== input.agentId || !isTerminalTurn(event)) return;
+    void verifyTerminalState();
+  });
+  const unsubscribeUpdates = input.client.onAgentUpdate((update) => {
+    if (update.kind === "remove") {
+      if (update.agentId === input.agentId) complete();
+      return;
+    }
+    if (update.agent.id === input.agentId && !isAttachable(update.agent)) complete();
+  });
+  input.signalSource.on("SIGINT", detach);
+  input.signalSource.on("SIGTERM", detach);
+  let unsubscribeOutput: (() => void) | null = null;
+
+  try {
+    try {
+      await Promise.race([input.client.startAgentUpdates(), completion]);
+      if (!completed) {
+        const readback = await Promise.race([input.client.fetchAgent(input.agentId), completion]);
+        if (!completed && (!readback || !isAttachable(readback))) complete();
+      }
+    } catch (error) {
+      if (!completed) throw error;
+    }
+
+    if (!completed) await catchUpTimeline();
+
+    if (!completed) {
+      unsubscribeOutput = input.client.onAgentStream((agentId, event) => {
+        if (agentId === input.agentId) input.printStreamEvent(event);
+      });
+    }
+
+    await completion;
+  } finally {
+    unsubscribeOutput?.();
+    unsubscribeLifecycle();
+    unsubscribeUpdates();
+    input.signalSource.removeListener("SIGINT", detach);
+    input.signalSource.removeListener("SIGTERM", detach);
+    await closeClient();
+  }
+}
+
 /**
  * Attach to a running agent's output stream
  */
@@ -123,12 +261,18 @@ export async function runAttachCommand(
     process.exit(1);
   }
 
+  let closePromise: Promise<void> | null = null;
+  function closeClient(): Promise<void> {
+    closePromise ??= client.close();
+    return closePromise;
+  }
+
   try {
     const fetchResult = await client.fetchAgent({ agentId: id });
     if (!fetchResult) {
       console.error(`Error: No agent found matching: ${id}`);
       console.error("Use `paseo ls` to list available agents");
-      await client.close();
+      await closeClient();
       process.exit(1);
     }
     const resolvedId = fetchResult.agent.id;
@@ -137,56 +281,48 @@ export async function runAttachCommand(
     console.log(`Attaching to agent ${resolvedId.substring(0, 7)}...`);
     console.log(`(Press Ctrl+C to detach)\n`);
 
-    // Print existing output from timeline fetch.
-    try {
-      const timelineItems = await fetchProjectedTimelineItems({
-        client,
-        agentId: resolvedId,
-        timeoutMs: LIVE_HISTORY_FETCH_TIMEOUT_MS,
-      });
-      for (const item of timelineItems) {
-        printTimelineItem(item);
-      }
-    } catch (error) {
-      console.warn("Warning: failed to fetch existing timeline", error);
-    }
-
-    // Subscribe to new events
-    const unsubscribe = client.on("agent_stream", (msg: unknown) => {
-      const message = msg as AgentStreamMessage;
-      if (message.type !== "agent_stream") return;
-      if (message.payload.agentId !== resolvedId) return;
-
-      printStreamEvent(message.payload.event);
-    });
-
-    // Handle Ctrl+C to detach gracefully
-    let detached = false;
-    const detach = () => {
-      if (detached) return;
-      detached = true;
-
-      console.log("\n\nDetaching from agent...");
-      unsubscribe();
-      client
-        .close()
-        .then(() => {
-          process.exit(0);
-        })
-        .catch(() => {
-          process.exit(1);
+    await runAttachSession({
+      agentId: resolvedId,
+      client: {
+        onAgentStream(listener) {
+          return client.on("agent_stream", (message: AgentStreamMessage) => {
+            listener(message.payload.agentId, message.payload.event);
+          });
+        },
+        onAgentUpdate(listener) {
+          return client.on("agent_update", (message: AgentUpdateMessage) => {
+            listener(message.payload);
+          });
+        },
+        async startAgentUpdates() {
+          await client.fetchAgents({ subscribe: {} });
+        },
+        async fetchAgent(agentId) {
+          return (await client.fetchAgent({ agentId }))?.agent ?? null;
+        },
+        close() {
+          return closeClient();
+        },
+      },
+      signalSource: process,
+      fetchTimelineItems() {
+        return fetchProjectedTimelineItems({
+          client,
+          agentId: resolvedId,
+          timeoutMs: LIVE_HISTORY_FETCH_TIMEOUT_MS,
         });
-    };
-
-    process.on("SIGINT", detach);
-    process.on("SIGTERM", detach);
-
-    // Keep the process alive
-    await new Promise(() => {
-      // Wait indefinitely until interrupted
+      },
+      printTimelineItem,
+      printStreamEvent,
+      warnTimeline(error) {
+        console.warn("Warning: failed to fetch existing timeline", error);
+      },
+      printDetach() {
+        console.log("\n\nDetaching from agent...");
+      },
     });
   } catch (err) {
-    await client.close().catch(() => {});
+    await closeClient().catch(() => {});
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Error: Failed to attach to agent: ${message}`);
     process.exit(1);
