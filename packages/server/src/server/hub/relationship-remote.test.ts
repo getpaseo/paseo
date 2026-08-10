@@ -75,7 +75,10 @@ test.each([408, 429])("transient enrollment status %s remains retryable", async 
 });
 
 test("enrollment rejects a transport URL that cannot open a WebSocket", async () => {
-  const hubOrigin = await startEnrollmentHub("ftp://hub.test/daemon");
+  let enrolledHostname: string | undefined;
+  const hubOrigin = await startEnrollmentHub("ftp://hub.test/daemon", (enrollment) => {
+    enrolledHostname = enrollment.hostname;
+  });
   const remote = new DirectHubRelationshipRemote();
 
   await expect(
@@ -91,6 +94,7 @@ test("enrollment rejects a transport URL that cannot open a WebSocket", async ()
       scopes: ["hub.execution.*"],
     }),
   ).rejects.toThrow("Hub WebSocket URL must use ws or wss");
+  expect(enrolledHostname).toBe("test-daemon.local");
 });
 
 test("enrollment rejects a WebSocket URL with a fragment", async () => {
@@ -295,11 +299,15 @@ async function startHubReturning(status: number): Promise<string> {
   return `http://127.0.0.1:${address.port}`;
 }
 
-async function startEnrollmentHub(webSocketUrl: string): Promise<string> {
+async function startEnrollmentHub(
+  webSocketUrl: string,
+  onEnrollment?: (enrollment: { daemonId: string; hostname: string }) => void,
+): Promise<string> {
   const server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
-    const enrollment = JSON.parse(body) as { daemonId: string };
+    const enrollment = JSON.parse(body) as { daemonId: string; hostname: string };
+    onEnrollment?.(enrollment);
     response.writeHead(200, { "content-type": "application/json" }).end(
       JSON.stringify({
         daemonId: enrollment.daemonId,
