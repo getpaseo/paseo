@@ -36,6 +36,7 @@ import {
   createSharedMarkdownRules,
   MarkdownInheritedText,
   MarkdownRenderer,
+  type MarkdownStyleOverrides,
   type MarkdownStyles,
 } from "@/components/markdown/renderer";
 import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
@@ -62,6 +63,36 @@ const QUESTION_MARKDOWN_PARSER = createAssistantMarkdownParser();
 const QUESTION_MARKDOWN_WEB_STYLE = IS_WEB ? ({ userSelect: "text" } as ViewStyle) : undefined;
 
 type QuestionMarkdownVariant = "question" | "label" | "description";
+
+function createQuestionMarkdownStyle(variant: QuestionMarkdownVariant): MarkdownStyleOverrides {
+  return (theme) => {
+    const text =
+      variant === "description"
+        ? {
+            color: theme.colors.foregroundMuted,
+            fontSize: theme.fontSize.sm,
+            lineHeight: 20,
+          }
+        : {
+            color: theme.colors.foreground,
+            fontSize: theme.fontSize.base,
+            fontWeight:
+              variant === "question" ? theme.fontWeight.medium : theme.fontWeight.semibold,
+            lineHeight: 22,
+          };
+    return {
+      body: text,
+      text,
+      paragraph: { marginTop: 0, marginBottom: 0 },
+    };
+  };
+}
+
+const QUESTION_MARKDOWN_STYLES: Record<QuestionMarkdownVariant, MarkdownStyleOverrides> = {
+  question: createQuestionMarkdownStyle("question"),
+  label: createQuestionMarkdownStyle("label"),
+  description: createQuestionMarkdownStyle("description"),
+};
 
 interface QuestionMarkdownAstNode extends ASTNode {
   sourceInfo?: string;
@@ -137,30 +168,6 @@ function QuestionMarkdownText({
   variant: QuestionMarkdownVariant;
   testID?: string;
 }) {
-  const { theme } = useUnistyles();
-  const contentStyle = useMemo<TextStyle>(() => {
-    if (variant === "description") {
-      return {
-        color: theme.colors.foregroundMuted,
-        fontSize: theme.fontSize.sm,
-        lineHeight: 20,
-      };
-    }
-    return {
-      color: theme.colors.foreground,
-      fontSize: theme.fontSize.base,
-      fontWeight: variant === "question" ? theme.fontWeight.medium : theme.fontWeight.semibold,
-      lineHeight: 22,
-    };
-  }, [theme, variant]);
-  const markdownStyle = useMemo<Partial<MarkdownStyles>>(
-    () => ({
-      body: contentStyle as MarkdownStyles[string],
-      text: contentStyle as MarkdownStyles[string],
-      paragraph: { marginTop: 0, marginBottom: 0 },
-    }),
-    [contentStyle],
-  );
   return (
     <View
       testID={testID}
@@ -175,7 +182,7 @@ function QuestionMarkdownText({
         enableHtmlish={false}
         markdownit={QUESTION_MARKDOWN_PARSER}
         rules={QUESTION_MARKDOWN_RULES}
-        style={markdownStyle}
+        style={QUESTION_MARKDOWN_STYLES[variant]}
       />
     </View>
   );
@@ -216,6 +223,9 @@ function QuestionOptionRow({
 }: QuestionOptionRowProps) {
   const { theme } = useUnistyles();
 
+  const handlePressIn = useCallback(() => {
+    if (IS_WEB) window.getSelection()?.removeAllRanges();
+  }, []);
   const handlePress = useCallback(() => {
     if (IS_WEB && window.getSelection()?.toString()) return;
     onToggle(qIndex, optIndex, multiSelect);
@@ -255,6 +265,7 @@ function QuestionOptionRow({
   return (
     <Pressable
       style={pressableStyle}
+      onPressIn={handlePressIn}
       onPress={handlePress}
       disabled={isResponding}
       accessibilityRole={multiSelect ? "checkbox" : "radio"}

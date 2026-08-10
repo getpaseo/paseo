@@ -47,6 +47,7 @@ test.describe("Question prompt pagination", () => {
 
       const description = card.getByTestId("question-form-option-description-0-0");
       await expect(description).toHaveCSS("user-select", "text");
+      await expect(description.locator("span").first()).toHaveCSS("font-size", "14px");
       const selectedText = await description.evaluate((element) => {
         const selection = window.getSelection();
         const range = document.createRange();
@@ -60,6 +61,12 @@ test.describe("Question prompt pagination", () => {
       );
 
       const firstOption = card.getByRole("radio").first();
+      const secondOption = card.getByRole("radio").nth(1);
+      await secondOption.click();
+      await expect(secondOption).toHaveAttribute("aria-checked", "true");
+      await secondOption.click();
+      await expect(secondOption).toHaveAttribute("aria-checked", "false");
+
       await fileLink.click();
       await expect(firstOption).toHaveAttribute("aria-checked", "false");
     } finally {
