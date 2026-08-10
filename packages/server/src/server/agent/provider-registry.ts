@@ -74,6 +74,8 @@ export interface ProviderDefinition extends AgentProviderDefinition {
    * generic ACP providers (which only extend the literal "acp" sentinel).
    */
   derivedFromProviderId: string | null;
+  /** The command and environment this provider launches with, profile overrides merged in. */
+  runtimeSettings: ProviderRuntimeSettings | undefined;
   optionsSchema: z.ZodType<ProviderOptions>;
   supportsExactMcpPreapproval: boolean;
   validateOptions: (options: ProviderOptions | undefined) => ProviderOptions | undefined;
@@ -600,6 +602,7 @@ function createRegistryEntry(
     ...resolved.definition,
     enabled: resolved.enabled,
     derivedFromProviderId: resolved.derivedFromProviderId,
+    runtimeSettings: resolved.runtimeSettings,
     optionsSchema: resolved.contract.optionsSchema,
     supportsExactMcpPreapproval: resolved.contract.supportsExactMcpPreapproval,
     validateOptions: (options) =>

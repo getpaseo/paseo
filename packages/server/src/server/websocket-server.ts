@@ -76,6 +76,7 @@ import {
   type WebSocketRuntimeCounters,
   type WebSocketRuntimeDiagnosticSnapshot,
 } from "./websocket/runtime-metrics.js";
+import { providerUsageProfilesFrom } from "../services/quota-fetcher/profiles.js";
 import { ProviderUsageService } from "../services/quota-fetcher/service.js";
 import { getProcessMemoryDiagnostics, getProcessUptimeSeconds } from "./process-diagnostics.js";
 import {
@@ -715,6 +716,8 @@ export class VoiceAssistantWebSocketServer {
 
     this.providerUsageService = new ProviderUsageService({
       logger: this.logger,
+      listProfiles: () =>
+        providerUsageProfilesFrom(this.providerSnapshotManager.listProviderProfiles()),
     });
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);

@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { Logger } from "pino";
 import { z } from "zod";
@@ -10,6 +9,7 @@ import type {
   ProviderUsageDetail,
   ProviderUsageWindow,
 } from "../../../server/messages.js";
+import { resolveClaudeConfigDir } from "../../../server/agent/providers/claude/project-dir.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
 import {
   ApiNumberSchema,
@@ -90,6 +90,9 @@ interface ClaudeCredentialRecord {
 
 interface ClaudeQuotaProviderOptions {
   logger: Logger;
+  /** Set for a provider profile, which reports under its own id and label. */
+  providerId?: string;
+  displayName?: string;
   claudeHome?: string;
   claudeKeychainReader?: () => Promise<unknown | null>;
   platform?: typeof process.platform;
@@ -312,9 +315,21 @@ async function readClaudeKeychainCredentials(): Promise<unknown | null> {
   }
 }
 
+/**
+ * The directory whose `.credentials.json` describes an account.
+ *
+ * CLAUDE_HOME is paseo's own knob and stays first for anyone already setting it;
+ * everything below it is Claude Code's own resolution, so the card describes the
+ * directory the agent actually signs in to.
+ */
+function resolveClaudeUsageHome(claudeHome?: string): string {
+  return claudeHome || process.env["CLAUDE_HOME"] || resolveClaudeConfigDir();
+}
+
 export class ClaudeQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "claude";
-  readonly displayName = "Claude";
+  readonly providerId: string;
+  readonly displayName: string;
+  readonly accountKey: string;
 
   private readonly logger: Logger;
   private readonly claudeHome: string;
@@ -323,9 +338,15 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
   private readonly fetchApi: ProviderApiFetch;
 
   constructor(options: ClaudeQuotaProviderOptions) {
-    this.logger = options.logger.child({ module: "claude-quota-provider" });
-    this.claudeHome =
-      options.claudeHome || process.env["CLAUDE_HOME"] || join(homedir(), ".claude");
+    this.providerId = options.providerId ?? "claude";
+    this.displayName = options.displayName ?? "Claude";
+    this.logger = options.logger.child({
+      module: "claude-quota-provider",
+      providerId: this.providerId,
+    });
+    this.claudeHome = resolveClaudeUsageHome(options.claudeHome);
+    // Two profiles pointed at one directory read one account's credentials.
+    this.accountKey = resolve(this.claudeHome);
     this.readKeychainCredentials = options.claudeKeychainReader ?? readClaudeKeychainCredentials;
     this.platform = options.platform ?? process.platform;
     this.fetchApi = options.fetch ?? fetch;

@@ -14,6 +14,8 @@ import { GrokQuotaProvider } from "./providers/grok.js";
 import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
+import { createProviderUsageFetchers } from "./manifest.js";
+import { providerUsageProfilesFrom } from "./profiles.js";
 import { ProviderUsageService } from "./service.js";
 
 function writeClaudeCredentials(
@@ -1856,6 +1858,178 @@ describe("KimiQuotaProvider usage windows", () => {
     expect(usage.windows.map((window) => window.id)).toEqual([
       "coding_limit_300_time_unit_minute",
       "coding_limit_300_time_unit_minute_2",
+    ]);
+  });
+});
+
+// A Claude Code profile selects its config directory with CLAUDE_CONFIG_DIR, which is
+// also where its credentials live. The quota provider read CLAUDE_HOME — a variable
+// Claude Code itself never sets — so a daemon pointed at a non-default directory
+// reported "unavailable" while the agent it was describing was signed in.
+describe("ClaudeQuotaProvider config directory resolution", () => {
+  let configDir: string;
+
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), "paseo-claude-config-dir-"));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  it("reads credentials from CLAUDE_CONFIG_DIR when no home is injected", async () => {
+    vi.stubEnv("CLAUDE_HOME", undefined);
+    vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
+    writeClaudeCredentials(configDir, "at_config_dir");
+
+    const usage = await new ClaudeQuotaProvider({
+      logger: createLogger(),
+      claudeKeychainReader: async () => null,
+      fetch: mockFetch(
+        new Map([
+          [
+            "https://api.anthropic.com/api/oauth/usage",
+            () => jsonResponse({ seven_day: { utilization: 7, resets_at: null } }),
+          ],
+        ]),
+      ),
+    }).fetchUsage();
+
+    expect(usage.status).toBe("available");
+    expect(usage.windows).toEqual([expect.objectContaining({ id: "weekly", usedPct: 7 })]);
+  });
+});
+
+// A provider profile ("Claude (alt)") is its own account as far as usage goes: it signs in
+// to its own CLAUDE_CONFIG_DIR, so it needs its own card rather than borrowing the base
+// provider's numbers.
+describe("provider usage profiles", () => {
+  let profileHome: string;
+
+  beforeEach(() => {
+    profileHome = mkdtempSync(join(tmpdir(), "paseo-claude-profile-"));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(profileHome, { recursive: true, force: true });
+  });
+
+  function usageFor(fetchers: ProviderUsageFetcher[], providerId: string): Promise<ProviderUsage> {
+    const fetcher = fetchers.find((candidate) => candidate.providerId === providerId);
+    if (!fetcher) {
+      throw new Error(
+        `No usage fetcher for '${providerId}'. Got: ${fetchers.map((f) => f.providerId).join(", ")}`,
+      );
+    }
+    return fetcher.fetchUsage();
+  }
+
+  it("gives a Claude profile its own card, fed by the profile's config dir", async () => {
+    writeClaudeCredentials(profileHome, "at_profile");
+    const fetchers = createProviderUsageFetchers({
+      logger: createLogger(),
+      fetch: mockFetch(
+        new Map([
+          [
+            "https://api.anthropic.com/api/oauth/usage",
+            () => jsonResponse({ seven_day: { utilization: 42, resets_at: null } }),
+          ],
+        ]),
+      ),
+      profiles: providerUsageProfilesFrom([
+        {
+          providerId: "claude-alt",
+          baseProviderId: "claude",
+          label: "Claude (alt)",
+          env: { CLAUDE_CONFIG_DIR: profileHome },
+        },
+      ]),
+    });
+
+    const usage = await usageFor(fetchers, "claude-alt");
+
+    expect(usage.displayName).toBe("Claude (alt)");
+    expect(usage.windows).toEqual([expect.objectContaining({ id: "weekly", usedPct: 42 })]);
+  });
+
+  // Profiles are edited while the daemon runs, so the card list is resolved per refresh
+  // rather than frozen at construction.
+  it("picks up a profile added after startup, without a daemon restart", async () => {
+    const available = (providerId: string, displayName: string): ProviderUsage => ({
+      providerId,
+      displayName,
+      status: "available",
+      planLabel: null,
+      windows: [],
+    });
+    let fetchers = [usageFetcher(available("claude", "Claude"))];
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      cacheTtlMs: 0,
+      fetchers: () => fetchers,
+    });
+
+    await service.listUsage();
+    fetchers = [
+      usageFetcher(available("claude", "Claude")),
+      usageFetcher(available("claude-alt", "Claude (alt)")),
+    ];
+    const result = await service.listUsage();
+
+    expect(result.providers.map((provider) => provider.providerId)).toEqual([
+      "claude",
+      "claude-alt",
+    ]);
+  });
+
+  // Two cards on one credentials file would not just draw the same bars twice: both
+  // would refresh the same OAuth token, and the rotated token from one write would
+  // invalidate the other.
+  it("reports one card when two profiles share a config dir", () => {
+    const profile = (providerId: string, label: string) => ({
+      providerId,
+      baseProviderId: "claude",
+      label,
+      env: { CLAUDE_CONFIG_DIR: profileHome },
+    });
+
+    const fetchers = createProviderUsageFetchers({
+      logger: createLogger(),
+      fetch: mockFetch(new Map()),
+      profiles: providerUsageProfilesFrom([
+        profile("claude-fast", "Claude (fast)"),
+        profile("claude-smart", "Claude (smart)"),
+      ]),
+    });
+
+    expect(
+      fetchers
+        .filter((fetcher) => fetcher.providerId.startsWith("claude"))
+        .map((f) => f.providerId),
+    ).toEqual(["claude", "claude-fast"]);
+  });
+
+  it("skips a profile that shares the base provider's config dir", () => {
+    vi.stubEnv("CLAUDE_HOME", undefined);
+    vi.stubEnv("CLAUDE_CONFIG_DIR", profileHome);
+
+    const fetchers = createProviderUsageFetchers({
+      logger: createLogger(),
+      fetch: mockFetch(new Map()),
+      profiles: providerUsageProfilesFrom([
+        {
+          providerId: "claude-fast",
+          baseProviderId: "claude",
+          label: "Claude (fast)",
+          env: { CLAUDE_CONFIG_DIR: profileHome },
+        },
+      ]),
+    });
+
+    expect(fetchers.filter((fetcher) => fetcher.providerId.startsWith("claude"))).toEqual([
+      expect.objectContaining({ providerId: "claude" }),
     ]);
   });
 });

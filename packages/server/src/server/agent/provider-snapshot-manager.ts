@@ -89,6 +89,14 @@ function omitProviderOverrides(
 
 type ProviderSnapshotChangeListener = (entries: ProviderSnapshotEntry[], cwd: string) => void;
 
+/** A configured provider profile: which provider it extends, and how it launches. */
+export interface ProviderProfileSummary {
+  providerId: string;
+  baseProviderId: string;
+  label: string;
+  env?: Record<string, string>;
+}
+
 export interface ProviderSnapshotManagerOptions {
   logger: Logger;
   runtimeSettings?: AgentProviderRuntimeSettingsMap;
@@ -275,6 +283,31 @@ export class ProviderSnapshotManager {
 
   getProviderLabel(provider: AgentProvider): string {
     return this.providerRegistry[provider]?.label ?? provider;
+  }
+
+  /**
+   * The configured profiles — providers that extend another provider — with the
+   * environment they launch with. A caller that reports per account (quota cards) needs
+   * the env, because a profile pointed at another config directory is another account.
+   *
+   * That environment holds whatever the operator put in it, API keys included. It is for
+   * daemon-side decisions only; never put it in a message to a client.
+   */
+  listProviderProfiles(): ProviderProfileSummary[] {
+    return Object.entries(this.providerRegistry).flatMap(([providerId, definition]) => {
+      const baseProviderId = definition.derivedFromProviderId;
+      if (!definition.enabled || !baseProviderId) {
+        return [];
+      }
+      return [
+        {
+          providerId,
+          baseProviderId,
+          label: definition.label,
+          env: definition.runtimeSettings?.env,
+        },
+      ];
+    });
   }
 
   getAgentManagerProviderState(): AgentManagerProviderState {

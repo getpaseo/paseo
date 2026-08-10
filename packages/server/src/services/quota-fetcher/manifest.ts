@@ -20,6 +20,16 @@ export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry
         logger: options.logger,
         fetch: options.fetch,
       }),
+    createForProfile: (options, profile) =>
+      new ClaudeQuotaProvider({
+        logger: options.logger,
+        fetch: options.fetch,
+        providerId: profile.providerId,
+        displayName: profile.displayName,
+        // A profile that leaves CLAUDE_CONFIG_DIR alone lands on the base provider's
+        // directory, and the accountKey dedup drops it.
+        claudeHome: profile.env?.["CLAUDE_CONFIG_DIR"]?.trim(),
+      }),
   },
   {
     providerId: "codex",
@@ -58,5 +68,29 @@ export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry
 export function createProviderUsageFetchers(
   options: ProviderUsageFetcherFactoryOptions,
 ): ProviderUsageFetcher[] {
-  return PROVIDER_USAGE_FETCHERS.map((entry) => entry.create(options));
+  const profiles = options.profiles ?? [];
+  const fetchers: ProviderUsageFetcher[] = [];
+  const accounts = new Set<string>();
+
+  function keep(fetcher: ProviderUsageFetcher): void {
+    if (fetcher.accountKey) {
+      if (accounts.has(fetcher.accountKey)) {
+        return;
+      }
+      accounts.add(fetcher.accountKey);
+    }
+    fetchers.push(fetcher);
+  }
+
+  for (const entry of PROVIDER_USAGE_FETCHERS) {
+    // The base provider claims its account first, so a profile that only relabels it
+    // drops out rather than replacing the card the app has always shown.
+    keep(entry.create(options));
+    for (const profile of profiles) {
+      if (profile.baseProviderId === entry.providerId && entry.createForProfile) {
+        keep(entry.createForProfile(options, profile));
+      }
+    }
+  }
+  return fetchers;
 }
