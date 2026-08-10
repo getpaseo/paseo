@@ -1602,6 +1602,291 @@ describe("ClaudeAgentSession context window usage", () => {
     await session.close();
   });
 
+  test("retries a resumed prompt in the current cwd when Claude's native session cwd is gone", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-current-cwd-"));
+    const staleNativeCwd = path.join(cwd, "deleted-worktree");
+    const prompts: unknown[] = [];
+    let launchIndex = 0;
+    let markUserTimelineVisible: () => void = () => undefined;
+    const userTimelineVisible = new Promise<void>((resolve) => {
+      markUserTimelineVisible = resolve;
+    });
+    const asyncNoop = async () => undefined;
+    const asyncEmpty = async () => [];
+    const asyncRewind = async () => ({ canRewind: true });
+    const queryFactory = vi.fn(
+      ({
+        prompt,
+        options,
+      }: {
+        prompt: AsyncIterable<unknown>;
+        options: Record<string, unknown>;
+      }) => {
+        const thisLaunch = launchIndex;
+        launchIndex += 1;
+        return {
+          async *[Symbol.asyncIterator]() {
+            for await (const message of prompt) {
+              prompts.push(message);
+              if (thisLaunch === 0) {
+                await userTimelineVisible;
+                const stderr = options.stderr;
+                if (typeof stderr === "function") {
+                  stderr(`Path "${staleNativeCwd}" does not exist`);
+                }
+                throw new Error("Claude Code process exited with code 1");
+              }
+              const sessionId = String(options.sessionId);
+              yield message as SDKMessage;
+              yield createInitMessage(sessionId) as SDKMessage;
+              yield createSuccessResult({ session_id: sessionId }) as SDKMessage;
+            }
+          },
+          interrupt: vi.fn(asyncNoop),
+          return: vi.fn(asyncNoop),
+          close: vi.fn(),
+          setPermissionMode: vi.fn(asyncNoop),
+          setModel: vi.fn(asyncNoop),
+          getContextUsage: vi.fn(asyncNoop),
+          supportedModels: vi.fn(asyncEmpty),
+          supportedCommands: vi.fn(asyncEmpty),
+          rewindFiles: vi.fn(asyncRewind),
+        };
+      },
+    );
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.resumeSession({
+      provider: "claude",
+      sessionId: "stale-native-session",
+      nativeHandle: "stale-native-session",
+      metadata: { provider: "claude", cwd },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => {
+      events.push(event);
+      if (event.type === "timeline" && event.item.type === "user_message") {
+        markUserTimelineVisible();
+      }
+    });
+
+    try {
+      await expect(session.run("continue the task")).resolves.toMatchObject({
+        sessionId: expect.any(String),
+      });
+      expect(queryFactory).toHaveBeenCalledTimes(2);
+      expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({
+        cwd,
+        resume: "stale-native-session",
+      });
+      expect(queryFactory.mock.calls[1]?.[0].options).toMatchObject({
+        cwd,
+        sessionId: expect.any(String),
+      });
+      expect(queryFactory.mock.calls[1]?.[0].options.resume).toBeUndefined();
+      expect(prompts).toHaveLength(2);
+      const firstPrompt = prompts[0] as { session_id?: string; uuid?: string };
+      const retriedPrompt = prompts[1] as { session_id?: string; uuid?: string };
+      expect(firstPrompt.session_id).toBe("stale-native-session");
+      expect(retriedPrompt.session_id).toBe(queryFactory.mock.calls[1]?.[0].options.sessionId);
+      expect(retriedPrompt.uuid).toBe(firstPrompt.uuid);
+      expect(
+        events.filter((event) => event.type === "timeline" && event.item.type === "user_message"),
+      ).toHaveLength(1);
+      expect(events.some((event) => event.type === "turn_failed")).toBe(false);
+    } finally {
+      await session.close();
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("restores the stale session when the replacement query fails before provider activity", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-fallback-fail-"));
+    const staleNativeCwd = path.join(cwd, "deleted-worktree");
+    const asyncNoop = async () => undefined;
+    const asyncEmpty = async () => [];
+    const asyncRewind = async () => ({ canRewind: true });
+    let markUserTimelineVisible: () => void = () => undefined;
+    const userTimelineVisible = new Promise<void>((resolve) => {
+      markUserTimelineVisible = resolve;
+    });
+    let launchIndex = 0;
+    const queryFactory = vi.fn(
+      ({
+        prompt,
+        options,
+      }: {
+        prompt: AsyncIterable<unknown>;
+        options: Record<string, unknown>;
+      }) => ({
+        async *[Symbol.asyncIterator](): AsyncGenerator<SDKMessage, void, unknown> {
+          const thisLaunch = launchIndex;
+          launchIndex += 1;
+          for await (const message of prompt) {
+            if (thisLaunch === 0 || thisLaunch === 2) {
+              await userTimelineVisible;
+              const stderr = options.stderr;
+              if (typeof stderr === "function") {
+                stderr(`Path "${staleNativeCwd}" does not exist`);
+              }
+              throw new Error("Claude Code process exited with code 1");
+            }
+            if (thisLaunch === 1) {
+              throw new Error("fresh replacement query failed");
+            }
+            const sessionId = String(options.sessionId);
+            yield message as SDKMessage;
+            yield createInitMessage(sessionId) as SDKMessage;
+            yield createSuccessResult({ session_id: sessionId }) as SDKMessage;
+          }
+        },
+        interrupt: vi.fn(asyncNoop),
+        return: vi.fn(asyncNoop),
+        close: vi.fn(),
+        setPermissionMode: vi.fn(asyncNoop),
+        setModel: vi.fn(asyncNoop),
+        getContextUsage: vi.fn(asyncNoop),
+        supportedModels: vi.fn(asyncEmpty),
+        supportedCommands: vi.fn(asyncEmpty),
+        rewindFiles: vi.fn(asyncRewind),
+      }),
+    );
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.resumeSession({
+      provider: "claude",
+      sessionId: "stale-native-session",
+      nativeHandle: "stale-native-session",
+      metadata: { provider: "claude", cwd },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => {
+      events.push(event);
+      if (event.type === "timeline" && event.item.type === "user_message") {
+        markUserTimelineVisible();
+      }
+    });
+
+    try {
+      await expect(session.run("continue the task")).rejects.toThrow(
+        "fresh replacement query failed",
+      );
+      expect(events.filter((event) => event.type === "turn_failed")).toHaveLength(1);
+      expect(session.describePersistence()).toMatchObject({
+        sessionId: "stale-native-session",
+        nativeHandle: "stale-native-session",
+      });
+      await expect(session.run("retry the task")).resolves.toMatchObject({
+        sessionId: expect.any(String),
+      });
+      expect(queryFactory).toHaveBeenCalledTimes(4);
+      expect(session.describePersistence()?.sessionId).not.toBe("stale-native-session");
+    } finally {
+      await session.close();
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("rolls back the provisional session when canceled during fresh initialization", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-fallback-cancel-"));
+    const staleNativeCwd = path.join(cwd, "deleted-worktree");
+    const asyncNoop = async () => undefined;
+    const asyncEmpty = async () => [];
+    const asyncRewind = async () => ({ canRewind: true });
+    let markUserTimelineVisible: () => void = () => undefined;
+    const userTimelineVisible = new Promise<void>((resolve) => {
+      markUserTimelineVisible = resolve;
+    });
+
+    let markFreshEnsureStarted: () => void = () => undefined;
+    const freshEnsureStarted = new Promise<void>((resolve) => {
+      markFreshEnsureStarted = resolve;
+    });
+    let releaseFreshEnsure: () => void = () => undefined;
+    const freshEnsureRelease = new Promise<void>((resolve) => {
+      releaseFreshEnsure = resolve;
+    });
+    let binaryResolutionCount = 0;
+    const resolveBinary = vi.fn(async () => {
+      binaryResolutionCount += 1;
+      if (binaryResolutionCount === 2) {
+        markFreshEnsureStarted();
+        await freshEnsureRelease;
+      }
+      return "/test/claude/bin";
+    });
+    const queryFactory = vi.fn(
+      ({
+        prompt,
+        options,
+      }: {
+        prompt: AsyncIterable<unknown>;
+        options: Record<string, unknown>;
+      }) => ({
+        async *[Symbol.asyncIterator]() {
+          for await (const message of prompt) {
+            if (options.resume) {
+              await userTimelineVisible;
+              const stderr = options.stderr;
+              if (typeof stderr === "function") {
+                stderr(`Path "${staleNativeCwd}" does not exist`);
+              }
+              throw new Error("Claude Code process exited with code 1");
+            }
+            const sessionId = String(options.sessionId);
+            yield message as SDKMessage;
+            yield createInitMessage(sessionId) as SDKMessage;
+            yield createSuccessResult({ session_id: sessionId }) as SDKMessage;
+          }
+        },
+        interrupt: vi.fn(asyncNoop),
+        return: vi.fn(asyncNoop),
+        close: vi.fn(),
+        setPermissionMode: vi.fn(asyncNoop),
+        setModel: vi.fn(asyncNoop),
+        getContextUsage: vi.fn(asyncNoop),
+        supportedModels: vi.fn(asyncEmpty),
+        supportedCommands: vi.fn(asyncEmpty),
+        rewindFiles: vi.fn(asyncRewind),
+      }),
+    );
+    const client = new ClaudeAgentClient({ logger, queryFactory, resolveBinary });
+    const session = await client.resumeSession({
+      provider: "claude",
+      sessionId: "stale-native-session",
+      nativeHandle: "stale-native-session",
+      metadata: { provider: "claude", cwd },
+    });
+    session.subscribe((event) => {
+      if (event.type === "timeline" && event.item.type === "user_message") {
+        markUserTimelineVisible();
+      }
+    });
+
+    try {
+      const canceledRun = session.run("cancel during fresh initialization");
+      await freshEnsureStarted;
+      await session.interrupt();
+      await expect(canceledRun).resolves.toMatchObject({
+        sessionId: "stale-native-session",
+      });
+      expect(session.describePersistence()).toMatchObject({
+        sessionId: "stale-native-session",
+        nativeHandle: "stale-native-session",
+      });
+    } finally {
+      releaseFreshEnsure();
+      await session.close();
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("passes persistSession through to the Claude SDK query options", async () => {
     const createResultTurn = (sessionId: string) => [
       {

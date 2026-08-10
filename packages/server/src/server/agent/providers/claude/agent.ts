@@ -2055,12 +2055,16 @@ class ClaudeAgentSession implements AgentSession {
   private queryRestartNeeded = false;
   private pendingInterruptAbort = false;
   private foregroundHasVisibleActivity = false;
+  private foregroundHasProviderActivity = false;
   private activeTurnHasAssistantText = false;
+  private activeForegroundMessage: SDKUserMessage | null = null;
   private readonly contextUsage: ClaudeContextUsageState;
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
   private readonly rewindTurnAnchors: ClaudeRewindTurnAnchor[] = [];
   private pendingFreshSessionId: string | null = null;
+  private staleNativeCwdFallbackAvailable: boolean;
+  private pendingStaleNativeCwdFallbackRollback: (() => void) | null = null;
   private recentStderr = "";
   private closed = false;
 
@@ -2079,6 +2083,7 @@ class ClaudeAgentSession implements AgentSession {
       findClaudeModel(this.config.model)?.contextWindowMaxTokens,
     );
     const handle = options.handle;
+    this.staleNativeCwdFallbackAvailable = Boolean(handle);
 
     if (handle) {
       if (!handle.sessionId) {
@@ -2187,12 +2192,14 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const sdkMessage = this.toSdkUserMessage(prompt);
+    this.activeForegroundMessage = sdkMessage;
     const sdkUserMessageId =
       typeof sdkMessage.uuid === "string" && sdkMessage.uuid.length > 0 ? sdkMessage.uuid : null;
     this.rememberRewindUserAnchor(sdkUserMessageId);
     const turnId = this.createTurnId("foreground");
     this.activeForegroundTurnId = turnId;
     this.foregroundHasVisibleActivity = false;
+    this.foregroundHasProviderActivity = false;
     this.activeTurnHasAssistantText = false;
     this.contextUsage.beginTurn();
     this.transitionTurnState("foreground", "foreground turn started");
@@ -3400,6 +3407,7 @@ class ClaudeAgentSession implements AgentSession {
   private finishForegroundTurn(
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
+    this.settlePendingStaleNativeCwdFallback(event);
     if (event.type === "turn_failed" || event.type === "turn_canceled") {
       this.flushPendingToolCalls();
     }
@@ -3407,11 +3415,23 @@ class ClaudeAgentSession implements AgentSession {
     this.activeForegroundTurnId = null;
     this.cancelCurrentTurn = null;
     this.activeTurnHasAssistantText = false;
+    this.activeForegroundMessage = null;
     this.syncTurnState("foreground turn terminal");
   }
 
   private dispatchEvents(events: AgentStreamEvent[]): void {
     let terminalSeen = false;
+    const terminalEvent = events.find(
+      (
+        event,
+      ): event is Extract<
+        AgentStreamEvent,
+        { type: "turn_completed" | "turn_failed" | "turn_canceled" }
+      > => this.isTerminalTurnEvent(event),
+    );
+    if (terminalEvent) {
+      this.settlePendingStaleNativeCwdFallback(terminalEvent);
+    }
     for (const event of events) {
       this.notifySubscribers(event);
       terminalSeen ||= this.isTerminalTurnEvent(event);
@@ -3422,6 +3442,7 @@ class ClaudeAgentSession implements AgentSession {
         this.activeForegroundTurnId = null;
         this.cancelCurrentTurn = null;
         this.activeTurnHasAssistantText = false;
+        this.activeForegroundMessage = null;
         this.syncTurnState("foreground turn terminal");
       } else if (this.autonomousTurn) {
         this.autonomousTurn = null;
@@ -3613,7 +3634,7 @@ class ClaudeAgentSession implements AgentSession {
           }
           if (!this.closed && this.query === activeQuery) {
             await this.awaitRecentStderrAfterProcessExit(error);
-            this.failActiveTurns(error instanceof Error ? error.message : "Claude stream failed");
+            await this.handleQueryPumpFailure(error, activeQuery);
           }
           return;
         }
@@ -3624,6 +3645,201 @@ class ClaudeAgentSession implements AgentSession {
         this.input = null;
       }
     }
+  }
+
+  private async handleQueryPumpFailure(error: unknown, activeQuery: Query): Promise<void> {
+    try {
+      if (await this.retryAfterStaleNativeCwd(error, activeQuery)) {
+        return;
+      }
+    } catch (fallbackError) {
+      this.failActiveTurns(
+        fallbackError instanceof Error ? fallbackError.message : "Claude fallback failed",
+      );
+      return;
+    }
+    this.failActiveTurns(error instanceof Error ? error.message : "Claude stream failed");
+  }
+
+  private async retryAfterStaleNativeCwd(error: unknown, activeQuery: Query): Promise<boolean> {
+    const staleCwd = this.readStaleNativeCwdFromStderr();
+    const message = this.activeForegroundMessage;
+    const turnId = this.activeForegroundTurnId;
+    if (
+      !this.staleNativeCwdFallbackAvailable ||
+      !staleCwd ||
+      !message ||
+      !turnId ||
+      this.foregroundHasProviderActivity ||
+      !/\bprocess exited with code\s+1\b/i.test(errorToMessageString(error)) ||
+      fs.existsSync(staleCwd) ||
+      !this.isExistingDirectory(this.config.cwd) ||
+      path.resolve(staleCwd) === path.resolve(this.config.cwd)
+    ) {
+      return false;
+    }
+
+    const previousSessionState = this.captureConversationSessionState();
+    this.pendingStaleNativeCwdFallbackRollback = () => {
+      this.restoreConversationSessionState(previousSessionState);
+    };
+    this.staleNativeCwdFallbackAvailable = false;
+    this.logger.warn(
+      { staleCwd, cwd: this.config.cwd },
+      "Claude native session cwd no longer exists; retrying prompt in a fresh session",
+    );
+
+    const oldInput = this.input;
+    const retiredChild = this.childProcess;
+    this.query = null;
+    this.input = null;
+    this.childProcess = null;
+    oldInput?.end();
+    activeQuery.close?.();
+    await this.awaitWithTimeout(activeQuery.return?.(), "query return on stale native cwd");
+    try {
+      if (retiredChild) {
+        await terminateWithTreeKill(retiredChild, {
+          gracefulTimeoutMs: 2_000,
+          forceTimeoutMs: 2_000,
+        });
+      }
+    } catch {
+      // 프로세스가 이미 종료됐을 수 있다.
+    }
+
+    if (!this.canContinueStaleNativeCwdFallback(turnId, message)) {
+      this.rollbackPendingStaleNativeCwdFallback();
+      return true;
+    }
+
+    try {
+      this.startFreshConversationSession();
+      this.queryRestartNeeded = false;
+      const retryMessage = { ...message, session_id: this.claudeSessionId ?? "" };
+      this.activeForegroundMessage = retryMessage;
+      this.rememberUserMessageId(retryMessage.uuid);
+      this.rememberEmittedUserMessageId(retryMessage.uuid);
+      this.rememberRewindUserAnchor(retryMessage.uuid);
+      this.clearRecentStderr();
+      await this.ensureQuery();
+      if (!this.canContinueStaleNativeCwdFallback(turnId, retryMessage)) {
+        await this.retireCurrentQuerySilently();
+        this.rollbackPendingStaleNativeCwdFallback();
+        return true;
+      }
+      const retryInput = this.input as AsyncMessageInput<SDKUserMessage> | null;
+      if (!retryInput) {
+        throw new Error("Claude fallback input stream not initialized");
+      }
+      retryInput.push(retryMessage);
+      await this.runQueryPump();
+      return true;
+    } catch (fallbackError) {
+      await this.retireCurrentQuerySilently();
+      this.rollbackPendingStaleNativeCwdFallback();
+      throw fallbackError;
+    }
+  }
+
+  private rollbackPendingStaleNativeCwdFallback(): void {
+    const rollback = this.pendingStaleNativeCwdFallbackRollback;
+    this.pendingStaleNativeCwdFallbackRollback = null;
+    rollback?.();
+  }
+
+  private settlePendingStaleNativeCwdFallback(
+    event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
+  ): void {
+    if (event.type === "turn_completed") {
+      this.pendingStaleNativeCwdFallbackRollback = null;
+      return;
+    }
+    this.rollbackPendingStaleNativeCwdFallback();
+  }
+
+  private canContinueStaleNativeCwdFallback(turnId: string, message: SDKUserMessage): boolean {
+    return (
+      !this.closed &&
+      !this.pendingInterruptAbort &&
+      this.activeForegroundTurnId === turnId &&
+      this.activeForegroundMessage === message &&
+      this.cancelCurrentTurn !== null
+    );
+  }
+
+  private isExistingDirectory(candidate: string): boolean {
+    try {
+      return fs.statSync(candidate).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+
+  private captureConversationSessionState() {
+    return {
+      claudeSessionId: this.claudeSessionId,
+      pendingFreshSessionId: this.pendingFreshSessionId,
+      persistence: this.persistence,
+      cachedRuntimeInfo: this.cachedRuntimeInfo,
+      lastOptionsModel: this.lastOptionsModel,
+      queryRestartNeeded: this.queryRestartNeeded,
+      staleNativeCwdFallbackAvailable: this.staleNativeCwdFallbackAvailable,
+      persistedHistory: [...this.persistedHistory],
+      persistedProviderSubagentEvents: [...this.persistedProviderSubagentEvents],
+      historyPending: this.historyPending,
+      userMessageIds: [...this.userMessageIds],
+      emittedUserMessageIds: [...this.emittedUserMessageIds],
+      rewindTurnAnchors: this.rewindTurnAnchors.map((anchor) => ({ ...anchor })),
+    };
+  }
+
+  private restoreConversationSessionState(
+    state: ReturnType<ClaudeAgentSession["captureConversationSessionState"]>,
+  ): void {
+    this.claudeSessionId = state.claudeSessionId;
+    this.pendingFreshSessionId = state.pendingFreshSessionId;
+    this.persistence = state.persistence;
+    this.cachedRuntimeInfo = state.cachedRuntimeInfo;
+    this.lastOptionsModel = state.lastOptionsModel;
+    this.queryRestartNeeded = state.queryRestartNeeded;
+    this.staleNativeCwdFallbackAvailable = state.staleNativeCwdFallbackAvailable;
+    this.persistedHistory = state.persistedHistory;
+    this.persistedProviderSubagentEvents = state.persistedProviderSubagentEvents;
+    this.historyPending = state.historyPending;
+    this.userMessageIds = state.userMessageIds;
+    this.emittedUserMessageIds.clear();
+    for (const messageId of state.emittedUserMessageIds) {
+      this.emittedUserMessageIds.add(messageId);
+    }
+    this.rewindTurnAnchors.splice(0, this.rewindTurnAnchors.length, ...state.rewindTurnAnchors);
+  }
+
+  private async retireCurrentQuerySilently(): Promise<void> {
+    const retiredQuery = this.query;
+    const retiredInput = this.input;
+    const retiredChild = this.childProcess;
+    this.query = null;
+    this.input = null;
+    this.childProcess = null;
+    retiredInput?.end();
+    retiredQuery?.close?.();
+    await this.awaitWithTimeout(retiredQuery?.return?.(), "query return after fallback failure");
+    try {
+      if (retiredChild) {
+        await terminateWithTreeKill(retiredChild, {
+          gracefulTimeoutMs: 2_000,
+          forceTimeoutMs: 2_000,
+        });
+      }
+    } catch {
+      // 프로세스가 이미 종료됐을 수 있다.
+    }
+  }
+
+  private readStaleNativeCwdFromStderr(): string | null {
+    const match = this.recentStderr.match(/Path "([^"\r\n]+)" does not exist/);
+    return match?.[1] ?? null;
   }
 
   private shouldSuppressStaleResult(message: SDKMessage): boolean {
@@ -3703,19 +3919,28 @@ class ClaudeAgentSession implements AgentSession {
     ) {
       this.activeTurnHasAssistantText = true;
     }
+    this.markForegroundActivity(message, events);
+
+    this.dispatchEvents(events);
+  }
+
+  private markForegroundActivity(message: SDKMessage, events: AgentStreamEvent[]): void {
     if (
-      this.activeForegroundTurnId &&
-      events.some(
+      !this.activeForegroundTurnId ||
+      !events.some(
         (event) =>
           event.type === "timeline" ||
           event.type === "permission_requested" ||
           event.type === "permission_resolved",
       )
     ) {
-      this.foregroundHasVisibleActivity = true;
+      return;
     }
-
-    this.dispatchEvents(events);
+    this.foregroundHasVisibleActivity = true;
+    if (message.type !== "user") {
+      this.foregroundHasProviderActivity = true;
+      this.pendingStaleNativeCwdFallbackRollback = null;
+    }
   }
 
   private async buildPumpedMessageEvents(
