@@ -107,4 +107,4 @@ When you no longer need the local CLI login:
 paseo hub logout
 ```
 
-Logging out does not disconnect the daemon. Use `paseo hub logout --disconnect-daemon` when you want both relationships removed.
+Logging out does not disconnect the daemon. When the daemon is connected to the same Hub as the active CLI login, use `paseo hub logout --disconnect-daemon` to remove both relationships.
