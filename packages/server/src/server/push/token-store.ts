@@ -10,36 +10,53 @@ import { ensurePrivateFile, writePrivateFileAtomicSync } from "../private-files.
  */
 export class PushTokenStore {
   private readonly logger: pino.Logger;
-  private tokens: Set<string> = new Set();
+  private subscriptions = new Map<string, number>();
   private readonly filePath: string;
+  private readonly now: () => number;
+  private readonly leaseMs: number;
 
-  constructor(logger: pino.Logger, filePath: string) {
+  constructor(logger: pino.Logger, filePath: string, now: () => number, leaseMs: number) {
     this.logger = logger.child({ component: "token-store" });
     this.filePath = filePath;
+    this.now = now;
+    this.leaseMs = leaseMs;
     this.loadFromDisk();
   }
 
-  addToken(token: string): void {
+  renewToken(token: string): void {
     const normalized = token.trim();
     if (!normalized) return;
-    if (this.tokens.has(normalized)) return;
-    this.tokens.add(normalized);
+    const now = this.now();
+    const currentExpiry = this.subscriptions.get(normalized);
+    if (currentExpiry !== undefined && currentExpiry - now > this.leaseMs / 2) return;
+    this.subscriptions.set(normalized, now + this.leaseMs);
     this.persist();
-    this.logger.debug({ total: this.tokens.size }, "Added token");
+    this.logger.debug({ total: this.subscriptions.size }, "Renewed token");
   }
 
-  removeToken(token: string): void {
+  revokeToken(token: string): void {
     const normalized = token.trim();
     if (!normalized) return;
-    const deleted = this.tokens.delete(normalized);
+    const deleted = this.subscriptions.delete(normalized);
     if (deleted) {
       this.persist();
-      this.logger.debug({ total: this.tokens.size }, "Removed token");
+      this.logger.debug({ total: this.subscriptions.size }, "Revoked token");
     }
   }
 
-  getAllTokens(): string[] {
-    return Array.from(this.tokens);
+  getActiveTokens(): string[] {
+    const now = this.now();
+    let removedExpired = false;
+    for (const [token, expiresAt] of this.subscriptions) {
+      if (expiresAt <= now) {
+        this.subscriptions.delete(token);
+        removedExpired = true;
+      }
+    }
+    if (removedExpired) {
+      this.persist();
+    }
+    return Array.from(this.subscriptions.keys());
   }
 
   private loadFromDisk(): void {
@@ -49,12 +66,32 @@ export class PushTokenStore {
       }
       ensurePrivateFile(this.filePath);
       const raw = readFileSync(this.filePath, "utf-8");
-      const parsed = JSON.parse(raw) as { tokens?: unknown };
-      const tokens = Array.isArray(parsed.tokens)
-        ? parsed.tokens.filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+      const parsed = JSON.parse(raw) as { subscriptions?: unknown; tokens?: unknown };
+      const subscriptions = Array.isArray(parsed.subscriptions) ? parsed.subscriptions : [];
+      for (const value of subscriptions) {
+        if (!value || typeof value !== "object") continue;
+        const candidate = value as { token?: unknown; expiresAt?: unknown };
+        if (typeof candidate.token !== "string" || typeof candidate.expiresAt !== "string")
+          continue;
+        const token = candidate.token.trim();
+        const expiresAt = Date.parse(candidate.expiresAt);
+        if (token && Number.isFinite(expiresAt)) {
+          this.subscriptions.set(token, expiresAt);
+        }
+      }
+
+      const legacyTokens = Array.isArray(parsed.tokens)
+        ? parsed.tokens.filter((token): token is string => typeof token === "string")
         : [];
-      this.tokens = new Set(tokens.map((t) => t.trim()));
-      this.logger.info({ total: this.tokens.size }, "Loaded push tokens");
+      if (legacyTokens.length > 0) {
+        const expiresAt = this.now() + this.leaseMs;
+        for (const token of legacyTokens) {
+          const normalized = token.trim();
+          if (normalized) this.subscriptions.set(normalized, expiresAt);
+        }
+        this.persist();
+      }
+      this.logger.info({ total: this.subscriptions.size }, "Loaded push tokens");
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       this.logger.warn({ err }, "Failed to load push tokens");
@@ -63,7 +100,17 @@ export class PushTokenStore {
 
   private persist(): void {
     try {
-      const payload = JSON.stringify({ tokens: Array.from(this.tokens) }, null, 2) + "\n";
+      const payload =
+        JSON.stringify(
+          {
+            subscriptions: Array.from(this.subscriptions, ([token, expiresAt]) => ({
+              token,
+              expiresAt: new Date(expiresAt).toISOString(),
+            })),
+          },
+          null,
+          2,
+        ) + "\n";
       writePrivateFileAtomicSync(this.filePath, payload);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));

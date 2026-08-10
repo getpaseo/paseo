@@ -53,8 +53,12 @@ export function asDownloadTokenStore(): SessionOptions["downloadTokenStore"] {
   return createStub<SessionOptions["downloadTokenStore"]>({});
 }
 
-export function asPushTokenStore(): SessionOptions["pushTokenStore"] {
-  return createStub<SessionOptions["pushTokenStore"]>({});
+export function asPushNotifications(
+  stub: {
+    [K in keyof SessionOptions["pushNotifications"]]?: unknown;
+  } = {},
+): SessionOptions["pushNotifications"] {
+  return createStub<SessionOptions["pushNotifications"]>(stub);
 }
 
 export function asScheduleService(): SessionOptions["scheduleService"] {

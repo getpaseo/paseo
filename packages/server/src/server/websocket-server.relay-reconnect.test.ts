@@ -86,20 +86,12 @@ vi.mock("./session.js", () => ({
   Session: sessionMock.MockSession,
 }));
 
-vi.mock("./push/token-store.js", () => ({
-  PushTokenStore: class {
-    getAllTokens(): string[] {
-      return [];
-    }
-  },
-}));
-
-vi.mock("./push/push-service.js", () => ({
-  PushService: class {
-    async sendPush(): Promise<void> {
-      // no-op
-    }
-  },
+vi.mock("./push/index.js", () => ({
+  createPushNotifications: () => ({
+    renew: () => undefined,
+    revoke: () => undefined,
+    send: async () => undefined,
+  }),
 }));
 
 import { z } from "zod";

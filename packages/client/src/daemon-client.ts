@@ -1840,6 +1840,15 @@ export class DaemonClient {
     });
   }
 
+  async unregisterPushToken(token: string): Promise<void> {
+    const requestId = this.createRequestId();
+    await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "push.unregister.request", token, requestId },
+      responseType: "push.unregister.response",
+    });
+  }
+
   async ping(params?: { requestId?: string; timeoutMs?: number }): Promise<{
     requestId: string;
     clientSentAt: number;
