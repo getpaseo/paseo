@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, test } from "vitest";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   hasRunningProviderSubagent,
   providerSubagentKey,
+  refreshProviderSubagents,
+  resetProviderSubagents,
   useProviderSubagentStore,
 } from "./provider-store";
 
@@ -41,6 +44,50 @@ describe("provider subagent client store", () => {
         PARENT_ID,
       ),
     ).toBe(true);
+  });
+
+  test("clears disconnected activity and ignores an in-flight stale list", async () => {
+    type ListPayload = Awaited<ReturnType<DaemonClient["listProviderSubagents"]>>;
+    let resolveList!: (value: ListPayload) => void;
+    const client = {
+      listProviderSubagents: () =>
+        new Promise<ListPayload>((resolve) => {
+          resolveList = resolve;
+        }),
+    };
+    const running = {
+      id: SUBAGENT_ID,
+      parentAgentId: PARENT_ID,
+      provider: "pi" as const,
+      title: "reviewer",
+      description: "Review the change",
+      status: "running" as const,
+      createdAt: "2026-07-12T10:00:00.000Z",
+      updatedAt: "2026-07-12T10:00:00.000Z",
+      toolCallId: null,
+    };
+    useProviderSubagentStore.getState().applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: running,
+    });
+    const staleRefresh = refreshProviderSubagents(client, SERVER_ID, PARENT_ID);
+
+    resetProviderSubagents(client, SERVER_ID);
+    resolveList({
+      requestId: "stale-request",
+      parentAgentId: PARENT_ID,
+      subagents: [running],
+      error: null,
+    });
+    await staleRefresh;
+
+    expect(
+      hasRunningProviderSubagent(
+        useProviderSubagentStore.getState().descriptors,
+        SERVER_ID,
+        PARENT_ID,
+      ),
+    ).toBe(false);
   });
 
   test("builds a shared stream model from ordered provider updates", () => {

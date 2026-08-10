@@ -680,11 +680,16 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	function reportSubagentCompleted(ctx, payload) {
 	  const id = subagentId(payload);
 	  if (!id) return;
-	  const status = payload.stopped || payload.state === "stopped" || payload.state === "paused"
-	    ? "canceled"
-	    : payload.success === false || payload.state === "failed" || payload.state === "rejected"
-	      ? "failed"
-	      : "completed";
+	  let status = "completed";
+	  if (payload.stopped || payload.state === "stopped" || payload.state === "paused") {
+	    status = "canceled";
+	  } else if (
+	    payload.success === false ||
+	    payload.state === "failed" ||
+	    payload.state === "rejected"
+	  ) {
+	    status = "failed";
+	  }
 	  reportSubagent(ctx, { id, status });
 	}
 
