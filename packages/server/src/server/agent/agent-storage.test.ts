@@ -102,6 +102,7 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     id: overrides.id ?? "agent-test",
     provider: core.provider,
     cwd: core.cwd,
+    workspaceId: overrides.workspaceId,
     session: core.session,
     capabilities: overrides.capabilities ?? buildDefaultCapabilities(),
     config: core.config,
@@ -431,6 +432,47 @@ describe("AgentStorage", () => {
     const record = await storage.get("internal-agent");
     expect(record).not.toBeNull();
     expect(record?.internal).toBe(true);
+  });
+
+  test("queries agents by provider session and native handle", async () => {
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "matching-session",
+        provider: "codex",
+        persistence: {
+          provider: "codex",
+          sessionId: "session-1",
+          nativeHandle: "thread-1",
+        },
+      }),
+    );
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "other-session",
+        provider: "codex",
+        persistence: { provider: "codex", sessionId: "session-2" },
+      }),
+    );
+
+    await expect(storage.listByProviderSession("codex", "session-1")).resolves.toMatchObject([
+      { id: "matching-session" },
+    ]);
+    await expect(storage.listByProviderSession("codex", "thread-1")).resolves.toMatchObject([
+      { id: "matching-session" },
+    ]);
+  });
+
+  test("queries agents by workspace", async () => {
+    await storage.applySnapshot(
+      createManagedAgent({ id: "workspace-agent", workspaceId: "workspace-1" }),
+    );
+    await storage.applySnapshot(
+      createManagedAgent({ id: "other-workspace-agent", workspaceId: "workspace-2" }),
+    );
+
+    await expect(storage.listByWorkspace("workspace-1")).resolves.toMatchObject([
+      { id: "workspace-agent" },
+    ]);
   });
 
   test("internal flag is persisted and reloaded", async () => {

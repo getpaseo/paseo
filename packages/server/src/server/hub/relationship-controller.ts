@@ -137,6 +137,7 @@ export interface HubRelationshipRetryPolicy {
 
 export interface HubRelationshipControllerOptions {
   paseoHome: string;
+  hostname: string;
   serverId: string;
   daemonPublicKey: string;
   logger: pino.Logger;
@@ -324,6 +325,7 @@ export class HubRelationshipController implements HubRelationshipManagement {
       idempotencyKey: pending.relationship.idempotencyKey,
       hubOrigin: pending.relationship.hubOrigin,
       token: pending.enrollment.token,
+      hostname: this.options.hostname,
       serverId: pending.identity.serverId,
       daemonPublicKey: pending.identity.daemonPublicKey,
       credentialVerifier: verifier,

@@ -1,6 +1,14 @@
-import { useCallback, type PropsWithChildren, type ReactElement, type ReactNode } from "react";
+import {
+  forwardRef,
+  useCallback,
+  type PropsWithChildren,
+  type ReactElement,
+  type ReactNode,
+  type Ref,
+} from "react";
 import {
   Pressable,
+  type View,
   type PressableProps,
   type PressableStateCallbackType,
   type StyleProp,
@@ -49,13 +57,28 @@ export interface MenuTriggerProps extends Omit<PressableProps, "style" | "childr
   children: ReactNode | ((state: MenuTriggerState) => ReactNode);
 }
 
-export function MenuTrigger({
-  children,
-  disabled,
-  style,
-  ...props
-}: MenuTriggerProps): ReactElement {
+function assignRef<T>(ref: Ref<T> | undefined, value: T | null): void {
+  if (!ref) return;
+  if (typeof ref === "function") {
+    ref(value);
+    return;
+  }
+  Object.assign(ref, { current: value });
+}
+
+export const MenuTrigger = forwardRef<View, MenuTriggerProps>(function MenuTrigger(
+  { children, disabled, style, ...props },
+  forwardedRef,
+): ReactElement {
   const ctx = useMenuContext("MenuTrigger");
+
+  const handleTriggerRef = useCallback(
+    (node: View | null) => {
+      assignRef(ctx.triggerRef, node);
+      assignRef(forwardedRef, node);
+    },
+    [ctx.triggerRef, forwardedRef],
+  );
 
   const handlePress = useCallback(() => {
     if (disabled) return;
@@ -83,7 +106,7 @@ export function MenuTrigger({
   return (
     <Pressable
       {...props}
-      ref={ctx.triggerRef}
+      ref={handleTriggerRef}
       collapsable={false}
       disabled={disabled}
       onPress={handlePress}
@@ -92,4 +115,4 @@ export function MenuTrigger({
       {renderChildren}
     </Pressable>
   );
-}
+});

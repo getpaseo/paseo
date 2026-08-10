@@ -58,7 +58,7 @@ paseo send <agent-id> "add tests"
 paseo schedule create --cron "0 9 * * 1" "audit the codebase"
 ```
 
-`paseo run --host` connects to a remote daemon. `paseo schedule` runs an agent on a cron. `paseo loop` retries an agent until a verification command passes.
+`paseo run --host` connects to a remote daemon. `paseo schedule` runs an agent on a cron.
 
 Conductor does not have a CLI.
 
