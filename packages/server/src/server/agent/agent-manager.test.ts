@@ -182,6 +182,7 @@ class SessionRecordingAgentClient extends TestAgentClient {
 class HeldAgentCreationClient extends TestAgentClient {
   private readonly creationStarted = deferred<void>();
   private readonly creationAllowed = deferred<void>();
+  creationFailure: Error | null = null;
   createdSessionClosed = false;
 
   override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
@@ -195,6 +196,9 @@ class HeldAgentCreationClient extends TestAgentClient {
     })(config);
     this.creationStarted.resolve();
     await this.creationAllowed.promise;
+    if (this.creationFailure) {
+      throw this.creationFailure;
+    }
     return session;
   }
 
@@ -296,6 +300,8 @@ class NativeArchiveRecordingClient extends TestAgentClient {
   readArchivedAtDuringUnarchive: (() => Promise<string | null | undefined>) | null = null;
   archivedAtDuringUnarchive: string | null | undefined;
   unarchiveFailure: Error | null = null;
+  private unarchiveStarted: Deferred<void> | null = null;
+  private unarchiveAllowed: Deferred<void> | null = null;
 
   async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
     this.archivedHandles.push(handle);
@@ -303,12 +309,37 @@ class NativeArchiveRecordingClient extends TestAgentClient {
 
   async unarchiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
     this.unarchivedHandles.push(handle);
+    this.unarchiveStarted?.resolve();
+    if (this.unarchiveAllowed) {
+      await this.unarchiveAllowed.promise;
+    }
     if (this.readArchivedAtDuringUnarchive) {
       this.archivedAtDuringUnarchive = await this.readArchivedAtDuringUnarchive();
     }
     if (this.unarchiveFailure) {
       throw this.unarchiveFailure;
     }
+  }
+
+  holdNativeUnarchive(): void {
+    this.unarchiveStarted = deferred<void>();
+    this.unarchiveAllowed = deferred<void>();
+  }
+
+  waitForNativeUnarchive(): Promise<void> {
+    if (!this.unarchiveStarted) {
+      throw new Error("Native unarchive is not held");
+    }
+    return this.unarchiveStarted.promise;
+  }
+
+  finishNativeUnarchive(): void {
+    if (!this.unarchiveAllowed) {
+      throw new Error("Native unarchive is not held");
+    }
+    this.unarchiveAllowed.resolve();
+    this.unarchiveStarted = null;
+    this.unarchiveAllowed = null;
   }
 }
 
@@ -6480,6 +6511,222 @@ test("archiveAgent persists archivedAt and updatedAt before emitting closed stat
   expect(lifecycles.slice(-2)).toEqual(["idle", "closed"]);
 });
 
+test("releases a workspace after an archived agent is loaded only for history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-release-history-agent-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "wks_archived_history";
+  const finished = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000149",
+    { workspaceId },
+  );
+  await manager.archiveAgent(finished.id);
+
+  await ensureAgentLoaded(finished.id, {
+    agentManager: manager,
+    agentStorage: storage,
+    logger,
+  });
+  expect(manager.getAgent(finished.id)?.workspaceId).toBe(workspaceId);
+  expect((await storage.get(finished.id))?.archivedAt).toEqual(expect.any(String));
+
+  let released = false;
+  await expect(
+    manager.releaseWorkspaceIfUnowned({
+      workspaceId,
+      finishedAgentId: finished.id,
+      release: async () => {
+        released = true;
+      },
+    }),
+  ).resolves.toBe(true);
+
+  expect({ released, loadedAgent: manager.getAgent(finished.id) }).toEqual({
+    released: true,
+    loadedAgent: null,
+  });
+  rmSync(workdir, { recursive: true, force: true });
+});
+
+test("waits for an earlier workspace registration before checking ownership", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-release-pending-registration-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "wks_pending_registration";
+  const finished = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000140",
+    { workspaceId },
+  );
+  await manager.archiveAgent(finished.id);
+
+  const heldClient = new HeldAgentCreationClient();
+  manager.registerClient("codex", heldClient);
+  const rivalCreation = manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000141",
+    { workspaceId },
+  );
+  await heldClient.waitForCreationToStart();
+
+  let released = false;
+  const release = manager.releaseWorkspaceIfUnowned({
+    workspaceId,
+    finishedAgentId: finished.id,
+    release: async () => {
+      released = true;
+    },
+  });
+  const laterCreation = manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000144",
+    { workspaceId },
+  );
+
+  heldClient.finishCreating();
+
+  const rival = await rivalCreation;
+  await expect(laterCreation).rejects.toThrow(`Workspace ${workspaceId} is being released`);
+  await expect(release).resolves.toBe(false);
+  expect({ released, rivalWorkspaceId: rival.workspaceId }).toEqual({
+    released: false,
+    rivalWorkspaceId: workspaceId,
+  });
+  await manager.closeAgent(rival.id);
+  rmSync(workdir, { recursive: true, force: true });
+});
+
+test("releases a workspace after an earlier registration fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-release-failed-registration-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const heldClient = new HeldAgentCreationClient();
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "wks_failed_registration";
+  const finished = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000145",
+    { workspaceId },
+  );
+  await manager.archiveAgent(finished.id);
+
+  manager.registerClient("codex", heldClient);
+  heldClient.creationFailure = new Error("provider creation failed");
+  const rivalCreation = manager
+    .createAgent({ provider: "codex", cwd: workdir }, "00000000-0000-4000-8000-000000000146", {
+      workspaceId,
+    })
+    .catch((error: unknown) => error);
+  await heldClient.waitForCreationToStart();
+
+  let released = false;
+  const release = manager.releaseWorkspaceIfUnowned({
+    workspaceId,
+    finishedAgentId: finished.id,
+    release: async () => {
+      released = true;
+    },
+  });
+  heldClient.finishCreating();
+
+  await expect(rivalCreation).resolves.toEqual(
+    expect.objectContaining({ message: "provider creation failed" }),
+  );
+  await expect(release).resolves.toBe(true);
+  expect({ released, agents: manager.listAgents() }).toEqual({ released: true, agents: [] });
+  rmSync(workdir, { recursive: true, force: true });
+});
+
+test("rejects a workspace registration that starts during release", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-registration-during-release-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "wks_registration_during_release";
+  const finished = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000142",
+    { workspaceId },
+  );
+  await manager.archiveAgent(finished.id);
+
+  const releaseStarted = deferred<void>();
+  const releaseAllowed = deferred<void>();
+  const release = manager.releaseWorkspaceIfUnowned({
+    workspaceId,
+    finishedAgentId: finished.id,
+    release: async () => {
+      releaseStarted.resolve();
+      await releaseAllowed.promise;
+    },
+  });
+  await releaseStarted.promise;
+
+  const rivalCreation = manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000143",
+    { workspaceId },
+  );
+  releaseAllowed.resolve();
+
+  await expect(rivalCreation).rejects.toThrow(`Workspace ${workspaceId} is being released`);
+  await expect(release).resolves.toBe(true);
+  expect(manager.listAgents()).toEqual([]);
+  rmSync(workdir, { recursive: true, force: true });
+});
+
+test("allows a workspace registration after its release callback fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-registration-after-release-failure-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "wks_registration_after_release_failure";
+  const finished = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000150",
+    { workspaceId },
+  );
+
+  await expect(
+    manager.releaseWorkspaceIfUnowned({
+      workspaceId,
+      finishedAgentId: finished.id,
+      release: async () => {
+        throw new Error("workspace release failed");
+      },
+    }),
+  ).rejects.toThrow("workspace release failed");
+
+  const replacement = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000151",
+    { workspaceId },
+  );
+  expect(replacement.workspaceId).toBe(workspaceId);
+
+  await manager.closeAgent(finished.id);
+  await manager.closeAgent(replacement.id);
+  rmSync(workdir, { recursive: true, force: true });
+});
+
 test("fires onAgentArchived for archived parent and cascaded children", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-hook-cascade-"));
   const storagePath = join(workdir, "agents");
@@ -6671,6 +6918,79 @@ test("unarchiveSnapshot keeps the stored record archived when native unarchive f
   const stored = await storage.get(agent.id);
   expect(stored?.archivedAt).toEqual(expect.any(String));
   expect(client.unarchivedHandles).toHaveLength(1);
+});
+
+test("an earlier archived restore prevents workspace release", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-restore-before-release-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new NativeArchiveRecordingClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const workspaceId = "wks_restore_before_release";
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000147",
+    { workspaceId },
+  );
+  await manager.archiveAgent(agent.id);
+  client.holdNativeUnarchive();
+
+  const restore = manager.unarchiveSnapshot(agent.id);
+  await client.waitForNativeUnarchive();
+  let released = false;
+  const release = manager.releaseWorkspaceIfUnowned({
+    workspaceId,
+    finishedAgentId: agent.id,
+    release: async () => {
+      released = true;
+    },
+  });
+  const laterRestore = manager.unarchiveSnapshot(agent.id);
+  client.finishNativeUnarchive();
+
+  await expect(laterRestore).rejects.toThrow(`Workspace ${workspaceId} is being released`);
+  await expect(restore).resolves.toBe(true);
+  await expect(release).resolves.toBe(false);
+  expect({ released, archivedAt: (await storage.get(agent.id))?.archivedAt }).toEqual({
+    released: false,
+    archivedAt: null,
+  });
+  rmSync(workdir, { recursive: true, force: true });
+});
+
+test("a release-first archived restore cannot revive provider or persisted state", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-release-before-restore-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new NativeArchiveRecordingClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const workspaceId = "wks_release_before_restore";
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000148",
+    { workspaceId },
+  );
+  await manager.archiveAgent(agent.id);
+  const releaseStarted = deferred<void>();
+  const releaseAllowed = deferred<void>();
+
+  const release = manager.releaseWorkspaceIfUnowned({
+    workspaceId,
+    finishedAgentId: agent.id,
+    release: async () => {
+      releaseStarted.resolve();
+      await releaseAllowed.promise;
+    },
+  });
+  await releaseStarted.promise;
+  const priorNativeUnarchives = client.unarchivedHandles.length;
+  const restore = manager.unarchiveSnapshot(agent.id);
+  releaseAllowed.resolve();
+
+  await expect(restore).rejects.toThrow(`Workspace ${workspaceId} is being released`);
+  await expect(release).resolves.toBe(true);
+  expect(client.unarchivedHandles).toHaveLength(priorNativeUnarchives);
+  expect((await storage.get(agent.id))?.archivedAt).toEqual(expect.any(String));
+  expect(manager.getAgent(agent.id)).toBeNull();
+  rmSync(workdir, { recursive: true, force: true });
 });
 
 test("archiveAgent cascade archives in-memory children with the full archive contract", async () => {

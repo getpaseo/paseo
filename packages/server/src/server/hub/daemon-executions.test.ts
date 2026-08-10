@@ -27,6 +27,38 @@ test("sequential replay after reconstruction keeps one durable owned agent", asy
   expect(reconstructed.durableAgentCount).toBe(1);
 });
 
+test("concurrent creation-count waiters observe three sequential provider creations", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("creation-broadcast-1", "creation-broadcast-execution-1");
+  const first = await hub.ownedCreateResult("creation-broadcast-1");
+  expect(first).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, executionId: "creation-broadcast-execution-1" },
+  });
+
+  // Subscribe the higher threshold first. With one shared resettable deferred,
+  // its continuation could install a new signal that the lower threshold then
+  // replaced, leaving the first waiter orphaned after the third creation.
+  const thirdCreation = hub.agentCreationAttempts(3);
+  const secondCreation = hub.agentCreationAttempts(2);
+
+  hub.beginOwnedCreate("creation-broadcast-2", "creation-broadcast-execution-2");
+  await secondCreation;
+  const second = await hub.ownedCreateResult("creation-broadcast-2");
+  expect(second).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, executionId: "creation-broadcast-execution-2" },
+  });
+
+  hub.beginOwnedCreate("creation-broadcast-3", "creation-broadcast-execution-3");
+  await thirdCreation;
+  const third = await hub.ownedCreateResult("creation-broadcast-3");
+  expect(third).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, executionId: "creation-broadcast-execution-3" },
+  });
+});
+
 test("Hub MCP configuration reaches the provider alongside Paseo MCP without entering snapshots", async () => {
   const hub = await HubRelationshipHarness.startWithAgentMcp();
   await hub.beginConnect().result;
@@ -325,4 +357,78 @@ test("failed create never archives a reused worktree", async () => {
     payload: { success: false, executionId: "reused-execution" },
   });
   expect(await hub.worktreeState(worktreeCwd!)).toEqual({ exists: true, listed: true });
+});
+
+test("finishing an execution preserves a workspace being acquired by a rival", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("first-create", "first-execution", {
+    worktree: { mode: "branch-off", newBranch: "shared-finish-worktree" },
+  });
+  const first = await hub.ownedCreateResult("first-create");
+  const worktreeCwd = first.payload.agent?.cwd;
+  const workspaceId = first.payload.agent?.workspaceId;
+  expect(worktreeCwd).toEqual(expect.any(String));
+  expect(workspaceId).toEqual(expect.any(String));
+
+  const priorProviderCreations = hub.providerCreations();
+  hub.holdAgentCreationAtCwd(worktreeCwd!);
+  const rivalCreation = hub.createAgentInWorkspace(workspaceId!, worktreeCwd!);
+
+  let archiveResult;
+  let creationReleased = false;
+  try {
+    await hub.agentCreationAtCwd(worktreeCwd!, priorProviderCreations);
+    const archive = hub.archiveExecution("first-execution");
+    hub.finishAgentCreation();
+    creationReleased = true;
+    archiveResult = await archive;
+  } finally {
+    if (!creationReleased) {
+      hub.finishAgentCreation();
+    }
+  }
+  const rival = await rivalCreation;
+
+  expect(archiveResult).toMatchObject({ success: true, executionId: "first-execution" });
+  expect(rival.workspaceId).toBe(workspaceId);
+  expect(await hub.ownedAgentArchivedAt(first.payload.agentId!)).not.toBeNull();
+  expect(await hub.agentRemainsAvailable(rival.id)).toBe(true);
+  expect(await hub.worktreeState(worktreeCwd!)).toEqual({ exists: true, listed: true });
+});
+
+test("finishing an execution releases its workspace after a rival registration fails", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("first-create", "first-execution", {
+    worktree: { mode: "branch-off", newBranch: "failed-rival-finish-worktree" },
+  });
+  const first = await hub.ownedCreateResult("first-create");
+  const worktreeCwd = first.payload.agent?.cwd;
+  const workspaceId = first.payload.agent?.workspaceId;
+  expect(worktreeCwd).toEqual(expect.any(String));
+  expect(workspaceId).toEqual(expect.any(String));
+
+  const priorProviderCreations = hub.providerCreations();
+  hub.holdAgentCreationAtCwd(worktreeCwd!);
+  hub.failNextProviderCreation();
+  const rivalCreation = hub.createAgentInWorkspace(workspaceId!, worktreeCwd!);
+  let archiveResult;
+  let creationReleased = false;
+  try {
+    await hub.agentCreationAtCwd(worktreeCwd!, priorProviderCreations);
+    const archive = hub.archiveExecution("first-execution");
+    hub.finishAgentCreation();
+    creationReleased = true;
+    [archiveResult] = await Promise.all([
+      archive,
+      expect(rivalCreation).rejects.toThrow("Requested provider creation failure"),
+    ]);
+  } finally {
+    if (!creationReleased) {
+      hub.finishAgentCreation();
+    }
+  }
+
+  expect(archiveResult).toMatchObject({ success: true, executionId: "first-execution" });
+  expect(await hub.ownedAgentArchivedAt(first.payload.agentId!)).not.toBeNull();
+  expect(await hub.worktreeState(worktreeCwd!)).toEqual({ exists: false, listed: false });
 });

@@ -552,10 +552,13 @@ class ProviderImportHarness {
   readonly snapshot: ManagedAgent;
   readonly freshImports: unknown[] = [];
   readonly closedAgentIds: string[] = [];
+  readonly archiveRegistrationDepths: number[] = [];
+  readonly registrationWorkspaces: string[] = [];
   timeline: AgentTimelineItem[] = [];
   activeAgent: ManagedAgent | null = null;
   resumeError: Error | null = null;
   resumeAttempts = 0;
+  private registrationDepth = 0;
   private unarchiveWait: Promise<void> | null = null;
   private releaseUnarchive: (() => void) | null = null;
 
@@ -622,6 +625,7 @@ class ProviderImportHarness {
         this.activeAgent = null;
       },
       archiveSnapshot: async (agentId: string, archivedAt: string) => {
+        this.archiveRegistrationDepths.push(this.registrationDepth);
         const record = await this.storage.get(agentId);
         if (!record) {
           throw new Error("Agent not found: " + agentId);
@@ -629,6 +633,22 @@ class ProviderImportHarness {
         const archived = { ...record, archivedAt };
         await this.storage.upsert(archived);
         return archived;
+      },
+      runWorkspaceAgentRegistration: async <T>(
+        workspaceId: string | undefined,
+        register: () => Promise<T>,
+      ) => {
+        if (workspaceId) {
+          this.registrationWorkspaces.push(workspaceId);
+          this.registrationDepth += 1;
+        }
+        try {
+          return await register();
+        } finally {
+          if (workspaceId) {
+            this.registrationDepth -= 1;
+          }
+        }
       },
     } satisfies ImportSessionAgentManager;
   }
@@ -803,6 +823,8 @@ test("importProviderSession restores storage and closes a partial runtime when l
   expect(await harness.storage.get(harness.snapshot.id)).toEqual(archived);
   expect(harness.activeAgent).toBeNull();
   expect(harness.closedAgentIds).toEqual([harness.snapshot.id]);
+  expect(harness.registrationWorkspaces).toEqual(["ws-archived", "ws-restored"]);
+  expect(harness.archiveRegistrationDepths).toEqual([2]);
 });
 
 test("importProviderSession serializes legacy and native aliases for one archived session", async () => {

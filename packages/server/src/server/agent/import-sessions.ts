@@ -33,6 +33,7 @@ export type ImportSessionAgentManager = AgentLoaderManager &
     | "getTimeline"
     | "importProviderSession"
     | "notifyAgentState"
+    | "runWorkspaceAgentRegistration"
     | "unarchiveSnapshot"
   >;
 
@@ -200,6 +201,7 @@ async function importProviderSessionNow(
   }
   const archivedRecord = matchingRecords.find((record) => record.archivedAt);
   if (archivedRecord?.persistence && archivedRecord.archivedAt) {
+    const originalArchivedAt = archivedRecord.archivedAt;
     if (!createRealpathAwarePathMatcher(cwd)(archivedRecord.cwd)) {
       throw new Error(`Provider session cwd does not match import cwd: ${providerHandleId}`);
     }
@@ -211,24 +213,28 @@ async function importProviderSessionNow(
     ) {
       labelPatch[PARENT_AGENT_ID_LABEL] = requestedParentAgentId;
     }
-    await unarchiveAgentState(input.agentStorage, input.agentManager, archivedRecord.id, {
-      workspaceId,
-      labels: Object.keys(labelPatch).length > 0 ? labelPatch : undefined,
-    });
-    try {
-      const snapshot = await ensureAgentLoaded(archivedRecord.id, {
-        agentManager: input.agentManager,
-        agentStorage: input.agentStorage,
-        logger: input.logger,
-      });
-      return {
-        snapshot,
-        timelineSize: input.agentManager.getTimeline(snapshot.id).length,
-      };
-    } catch (error) {
-      await rollbackArchivedImport(input, archivedRecord, archivedRecord.archivedAt);
-      throw error;
-    }
+    return input.agentManager.runWorkspaceAgentRegistration(archivedRecord.workspaceId, () =>
+      input.agentManager.runWorkspaceAgentRegistration(workspaceId, async () => {
+        await unarchiveAgentState(input.agentStorage, input.agentManager, archivedRecord.id, {
+          workspaceId,
+          labels: Object.keys(labelPatch).length > 0 ? labelPatch : undefined,
+        });
+        try {
+          const snapshot = await ensureAgentLoaded(archivedRecord.id, {
+            agentManager: input.agentManager,
+            agentStorage: input.agentStorage,
+            logger: input.logger,
+          });
+          return {
+            snapshot,
+            timelineSize: input.agentManager.getTimeline(snapshot.id).length,
+          };
+        } catch (error) {
+          await rollbackArchivedImport(input, archivedRecord, originalArchivedAt);
+          throw error;
+        }
+      }),
+    );
   }
 
   const snapshot = await input.agentManager.importProviderSession({

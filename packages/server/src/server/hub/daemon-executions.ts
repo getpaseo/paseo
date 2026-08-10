@@ -269,7 +269,18 @@ export class DaemonExecutions implements HubExecutionAgents {
 
     const workspaceId = requireExecutionWorkspaceId(record);
     this.requireAuthority(authorityGeneration, "execution control");
-    await this.options.archiveWorkspace(workspaceId, input.requestId);
+    const released = await this.agentManager.releaseWorkspaceIfUnowned({
+      workspaceId,
+      finishedAgentId: record.id,
+      release: async () => {
+        this.requireAuthority(authorityGeneration, "execution control");
+        await this.options.archiveWorkspace(workspaceId, input.requestId);
+      },
+    });
+    if (!released && this.agentManager.getAgent(record.id)) {
+      this.requireAuthority(authorityGeneration, "execution control");
+      await this.agentManager.archiveAgent(record.id);
+    }
   }
 
   private resolveRecord(record: StoredAgentRecord): OwnedAgentSnapshot {
