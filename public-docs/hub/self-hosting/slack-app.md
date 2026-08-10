@@ -8,7 +8,7 @@ category: Hub
 
 # Slack for Hub
 
-Hub receives Slack mentions over the Events API. Socket Mode is not used, so your Hub needs a publicly reachable HTTPS origin with a valid certificate. See [Public ingress and TLS](/docs/hub/self-hosting#public-ingress-and-tls).
+Hub receives Slack mentions over the Events API. Socket Mode is not used, so your Hub needs a publicly reachable HTTPS origin with a valid certificate. See [Provider URLs](/docs/hub/self-hosting#provider-urls).
 
 ## Create the app
 
