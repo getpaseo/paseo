@@ -672,7 +672,8 @@ function waitForProvidersReady(
   return new Promise((resolve, reject) => {
     let settled = false;
     let requestId: string | null = null;
-    let readyUpdate: PaseoProviderSnapshotUpdate | null = null;
+    let snapshotCwd = snapshotOptions.cwd;
+    const pendingUpdates = new Map<string | undefined, PaseoProviderSnapshotUpdate>();
     let latestEntries: PaseoProviderSnapshotResult["entries"] = [];
 
     const cleanup = () => {
@@ -691,19 +692,17 @@ function waitForProvidersReady(
       cleanup();
       reject(error instanceof Error ? error : new Error(String(error)));
     };
-    const updateMatches = (update: PaseoProviderSnapshotUpdate) =>
-      update.cwd === snapshotOptions.cwd ||
-      (update.cwd === undefined && snapshotOptions.cwd === undefined);
+    const updateMatches = (update: PaseoProviderSnapshotUpdate) => update.cwd === snapshotCwd;
 
     const unsubscribe = daemonClient.on("providers_snapshot_update", (message) => {
       const update = message.payload;
+      if (!requestId) {
+        pendingUpdates.set(update.cwd, update);
+        return;
+      }
       if (!updateMatches(update)) return;
       latestEntries = update.entries;
       if (update.entries.some((entry) => entry.status === "loading")) return;
-      if (!requestId) {
-        readyUpdate = update;
-        return;
-      }
       finish({ ...update, requestId });
     });
 
@@ -725,13 +724,16 @@ function waitForProvidersReady(
       .getProvidersSnapshot(snapshotOptions)
       .then((snapshot) => {
         requestId = snapshot.requestId;
+        // COMPAT(providerSnapshotCwd): added in v0.3.2, remove after 2027-02-10 once daemon floor >= v0.3.2.
+        snapshotCwd = snapshot.cwd ?? snapshotOptions.cwd;
         latestEntries = snapshot.entries;
         if (!snapshot.entries.some((entry) => entry.status === "loading")) {
           finish(snapshot);
           return;
         }
-        if (readyUpdate) {
-          finish({ ...readyUpdate, requestId });
+        const pendingUpdate = pendingUpdates.get(snapshotCwd);
+        if (pendingUpdate && !pendingUpdate.entries.some((entry) => entry.status === "loading")) {
+          finish({ ...pendingUpdate, requestId });
         }
         return undefined;
       })

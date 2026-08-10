@@ -812,6 +812,38 @@ test("provider actions delegate to existing provider RPCs and local snapshot upd
     generatedAt: "2026-05-16T00:00:01.000Z",
   });
 
+  const canonicalReadyPromise = client.providers.waitForReady({
+    cwd: "/repo/./sdk",
+    timeoutMs: 5_000,
+  });
+  const canonicalReadyRequest = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "providers_snapshot_update",
+      payload: {
+        cwd: "/repo/sdk",
+        entries: [{ provider: "codex", status: "ready", enabled: true }],
+        generatedAt: "2026-05-16T00:00:02.000Z",
+      },
+    }),
+  );
+  ws.message(
+    sessionMessage({
+      type: "get_providers_snapshot_response",
+      payload: {
+        requestId: canonicalReadyRequest.requestId,
+        cwd: "/repo/sdk",
+        entries: [{ provider: "codex", status: "loading", enabled: true }],
+        generatedAt: "2026-05-16T00:00:01.000Z",
+      },
+    }),
+  );
+  await expect(canonicalReadyPromise).resolves.toMatchObject({
+    requestId: canonicalReadyRequest.requestId,
+    cwd: "/repo/sdk",
+    entries: [{ provider: "codex", status: "ready", enabled: true }],
+  });
+
   const refreshPromise = client.providers.refresh({
     cwd: "/repo/sdk",
     providers: ["codex"],
