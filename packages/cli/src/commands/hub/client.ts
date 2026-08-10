@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { HubDeployPartial } from "./deploy-input.js";
+import type { HubBundleFile } from "./deploy-bundle.js";
 import { HubCommandError } from "./error.js";
 
 const activationUrlSchema = z.url({ protocol: /^https?$/u });
@@ -75,8 +75,7 @@ interface HubConfigurationInput {
   origin: string;
   apiKey: string;
   projectSlug: string;
-  yaml: string;
-  partials?: readonly HubDeployPartial[];
+  files: readonly HubBundleFile[];
 }
 
 export class HubHttpClient {
@@ -213,10 +212,7 @@ interface RequestInput<T> {
 function configurationBody(input: HubConfigurationInput): object {
   return {
     projectSlug: input.projectSlug,
-    yaml: input.yaml,
-    ...(input.partials === undefined || input.partials.length === 0
-      ? {}
-      : { partials: input.partials }),
+    files: input.files,
   };
 }
 

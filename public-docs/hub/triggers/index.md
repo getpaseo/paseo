@@ -10,30 +10,28 @@ category: Hub
 
 A trigger says which provider event can start a workflow. The [Hub workflows](/docs/hub/workflows) page covers the steps, inputs, routing, prompts, and deadlines that run after a match.
 
+`.paseo/workflows/github-mention.yml`:
+
 ```yaml
-triggers:
-  - name: mention
-    on: github.issue_comment
-    filters:
-      repo: acme/api
-      contains: "@paseo"
-      from_users: [alice]
-    max_runtime: 2h
-    steps:
-      - id: work
-        environment: dev
-        max_runtime: 90m
-        idle_timeout: 10m
-        agent: { provider: codex, mode: full-access }
-        prompt:
-          - text: Call hub.finish_execution when the step is complete.
-          - text: |
-              <user-prompt>
-              ${{ paseo.prompt }}
-              </user-prompt>
+name: mention
+on: github.issue_comment
+filters:
+  repo: acme/api
+  contains: "@paseo"
+  from_users: [alice]
+max_runtime: 2h
+steps:
+  - id: work
+    environment: dev
+    max_runtime: 90m
+    idle_timeout: 10m
+    agent: codex
+    prompt:
+      - text: Call hub.finish_execution when the step is complete.
+      - text: ${{ paseo.prompt }}
 ```
 
-Field-by-field detail is in the [`hub.yml` reference](/docs/hub/configuration/hub-yml).
+Field-by-field detail is in the [configuration reference](/docs/hub/configuration/hub-yml).
 
 ## Events
 
