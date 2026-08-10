@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -359,6 +359,21 @@ test.skipIf(process.platform === "win32")(
   "repeating archive removes a residual worktree for an already-archived workspace",
   async () => {
     const repoDir = createGitRepo();
+    const allowTeardownPath = path.join(repoDir, "allow-teardown");
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: [`test -f ${JSON.stringify(allowTeardownPath)}`],
+        },
+      }),
+    );
+    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "commit", "-m", "add gated worktree teardown"],
+      { cwd: repoDir, stdio: "pipe" },
+    );
     const result = await ctx.client.createWorkspace({
       source: {
         kind: "worktree",
@@ -372,44 +387,19 @@ test.skipIf(process.platform === "win32")(
       throw new Error(result.error ?? "Failed to create worktree workspace");
     }
 
-    const writerStartedPath = path.join(repoDir, "writer-started");
-    const stopWriterPath = path.join(repoDir, "stop-writer");
-    const target = path.join(
-      workspace.workspaceDirectory,
-      "node_modules/react-native-svg/lib/typescript",
-    );
-    const writer = spawn(
-      process.execPath,
-      [
-        "-e",
-        `const fs=require('fs'),path=require('path');const target=${JSON.stringify(target)};const started=${JSON.stringify(writerStartedPath)};const stop=${JSON.stringify(stopWriterPath)};fs.writeFileSync(started,'started');while(!fs.existsSync(stop)){try{fs.mkdirSync(target,{recursive:true});fs.writeFileSync(path.join(target,'active'),String(Date.now()))}catch{}}`,
-      ],
-      { stdio: "ignore" },
-    );
-    const writerExit = new Promise<void>((resolve) => writer.once("exit", () => resolve()));
+    const firstArchive = await ctx.client.archiveWorkspace(workspace.id);
 
-    try {
-      await expect.poll(() => existsSync(writerStartedPath), { timeout: 10000 }).toBe(true);
+    expect(firstArchive.error).toBeNull();
+    expect(firstArchive.removedDirectory).toBe(false);
+    expect((await activeWorkspaceIds()).has(workspace.id)).toBe(false);
+    expect(existsSync(workspace.workspaceDirectory)).toBe(true);
 
-      const firstArchive = await ctx.client.archiveWorkspace(workspace.id);
+    writeFileSync(allowTeardownPath, "allow\n");
+    const retry = await ctx.client.archiveWorkspace(workspace.id);
 
-      expect(firstArchive.error).toBeNull();
-      expect(firstArchive.removedDirectory).toBe(false);
-      expect((await activeWorkspaceIds()).has(workspace.id)).toBe(false);
-      expect(existsSync(workspace.workspaceDirectory)).toBe(true);
-
-      writeFileSync(stopWriterPath, "stop\n");
-      await writerExit;
-
-      const retry = await ctx.client.archiveWorkspace(workspace.id);
-
-      expect(retry.error).toBeNull();
-      expect(retry.removedDirectory).toBe(true);
-      expect(existsSync(workspace.workspaceDirectory)).toBe(false);
-    } finally {
-      writeFileSync(stopWriterPath, "stop\n");
-      await writerExit;
-    }
+    expect(retry.error).toBeNull();
+    expect(retry.removedDirectory).toBe(true);
+    expect(existsSync(workspace.workspaceDirectory)).toBe(false);
   },
   60000,
 );
