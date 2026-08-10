@@ -4,6 +4,7 @@ import {
   shouldAcceptPromptIndexEpoch,
   promptTickMagnification,
   resolveActivePromptSeq,
+  resolvePreviousPromptSeq,
   OUTLINE_MAGNIFY_RADIUS,
   type ChatOutlinePrompt,
 } from "./model";
@@ -50,6 +51,21 @@ describe("resolveActivePromptSeq", () => {
     expect(resolveActivePromptSeq(prompts, 1)).toBeNull();
     expect(resolveActivePromptSeq(prompts, null)).toBeNull();
     expect(resolveActivePromptSeq([], 42)).toBeNull();
+  });
+});
+
+describe("resolvePreviousPromptSeq", () => {
+  const prompts = [prompt(2), prompt(9), prompt(20)];
+
+  it("returns the prompt immediately before the active prompt", () => {
+    expect(resolvePreviousPromptSeq(prompts, 20)).toBe(9);
+    expect(resolvePreviousPromptSeq(prompts, 9)).toBe(2);
+  });
+
+  it("returns nothing at the first prompt or without a matching active prompt", () => {
+    expect(resolvePreviousPromptSeq(prompts, 2)).toBeNull();
+    expect(resolvePreviousPromptSeq(prompts, null)).toBeNull();
+    expect(resolvePreviousPromptSeq(prompts, 99)).toBeNull();
   });
 });
 

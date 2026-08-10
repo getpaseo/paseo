@@ -50,6 +50,8 @@ import {
 } from "@/hooks/use-agent-screen-state-machine";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
+import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { reconcileMissingAgentStateWithPresentAgent } from "@/panels/agent-panel-load-state";
 import {
@@ -783,6 +785,18 @@ function ChatAgentContent({
     routeKey: string;
     reason: "initial-entry" | "resume";
   } | null>(null);
+  const handlePromptKeyboardAction = useCallback((action: KeyboardActionDefinition): boolean => {
+    if (action.id !== "agent.prompt.previous") return false;
+    return streamViewRef.current?.jumpToPreviousPrompt() ?? false;
+  }, []);
+  useKeyboardActionHandler({
+    handlerId: `agent-prompt-actions:${serverId}:${agentId ?? "pending"}`,
+    actions: ["agent.prompt.previous"],
+    enabled: isPaneFocused && Boolean(agentId),
+    priority: 100,
+    isActive: () => isPaneFocused,
+    handle: handlePromptKeyboardAction,
+  });
   const agentState = useSessionStore(
     useShallow((state) => selectChatAgentState(state, serverId, agentId)),
   );

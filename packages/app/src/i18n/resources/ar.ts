@@ -1928,6 +1928,7 @@ export const ar: TranslationResources = {
         jumpToWorkspace: "انتقل إلى مساحة العمل",
         jumpToTab: "انتقل إلى علامة التبويب",
         previousWorkspace: "مساحة العمل السابقة",
+        previousPrompt: "الموجه السابق",
         nextWorkspace: "مساحة العمل التالية",
         previousTab: "علامة التبويب السابقة",
         nextTab: "علامة التبويب التالية",

@@ -1976,6 +1976,7 @@ export const es: TranslationResources = {
         jumpToWorkspace: "Saltar al espacio de trabajo",
         jumpToTab: "Saltar a la pestaña",
         previousWorkspace: "Espacio de trabajo anterior",
+        previousPrompt: "Prompt anterior",
         nextWorkspace: "Siguiente espacio de trabajo",
         previousTab: "Pestaña anterior",
         nextTab: "Pestaña siguiente",

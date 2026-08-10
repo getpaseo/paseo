@@ -222,6 +222,18 @@ describe("keyboard-shortcuts", () => {
       payload: { delta: 1 },
     },
     {
+      name: "matches Cmd+Alt+Up to jump to the previous prompt on mac desktop",
+      event: { key: "ArrowUp", code: "ArrowUp", metaKey: true, altKey: true },
+      context: { isMac: true, isDesktop: true },
+      action: "agent.prompt.previous",
+    },
+    {
+      name: "matches Ctrl+Alt+Up to jump to the previous prompt on non-mac desktop",
+      event: { key: "ArrowUp", code: "ArrowUp", ctrlKey: true, altKey: true },
+      context: { isMac: false, isDesktop: true },
+      action: "agent.prompt.previous",
+    },
+    {
       name: "matches Mod+T to open new tab",
       event: { key: "t", code: "KeyT", metaKey: true },
       context: { isMac: true },
@@ -784,6 +796,7 @@ describe("keyboard-shortcut help sections", () => {
     const projects = sections.find((section) => section.id === "projects");
     const panels = sections.find((section) => section.id === "panels");
     const openProject = findRow(sections, "new-agent");
+    const previousPrompt = findRow(sections, "agent-prompt-previous");
     const cycleAgentMode = findRow(sections, "cycle-agent-mode");
     const showShortcuts = findRow(sections, "show-shortcuts");
 
@@ -791,6 +804,7 @@ describe("keyboard-shortcut help sections", () => {
     expect(panels?.titleKey).toBe("settings.shortcuts.sections.panels");
     expect(openProject?.labelKey).toBe("settings.shortcuts.help.openProject");
     expect(openProject?.label).toBe("Open project");
+    expect(previousPrompt?.labelKey).toBe("settings.shortcuts.help.previousPrompt");
     expect(cycleAgentMode?.labelKey).toBe("settings.shortcuts.help.cycleAgentMode");
     expect(showShortcuts?.noteKey).toBe("settings.shortcuts.helpNotes.showKeyboardShortcuts");
   });

@@ -232,6 +232,7 @@ function renderLiveHeadStreamItem(input: {
 export interface AgentStreamViewHandle {
   scrollToBottom(reason?: BottomAnchorLocalRequest["reason"]): void;
   prepareForViewportChange(): void;
+  jumpToPreviousPrompt(): boolean;
 }
 
 export interface AgentStreamViewProps {
@@ -551,6 +552,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       viewportRef,
       onJumpError: handleTimelineHistoryLoadError,
     });
+    const { jumpToPreviousPrompt } = chatOutline;
 
     useImperativeHandle(
       ref,
@@ -561,8 +563,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         prepareForViewportChange() {
           viewportRef.current?.prepareForViewportChange();
         },
+        jumpToPreviousPrompt() {
+          return jumpToPreviousPrompt();
+        },
       }),
-      [],
+      [jumpToPreviousPrompt],
     );
 
     const scrollToBottom = useCallback(() => {
