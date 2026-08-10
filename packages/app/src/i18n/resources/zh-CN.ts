@@ -1534,8 +1534,9 @@ export const zhCN: TranslationResources = {
     detachTooltip: "分离 subagent",
     archiveAction: "归档 {{label}}",
     archiveTooltip: "归档 subagent",
-    archiveFinishedAction: "归档已完成的 subagent",
-    archiveFinishedTooltip: "归档已完成项",
+    archiveFinishedAction: "隐藏已完成的子代理",
+    archiveFinishedTooltip: "隐藏已完成项",
+    showHiddenAction: "显示隐藏的子代理",
   },
   panels: {
     draft: {

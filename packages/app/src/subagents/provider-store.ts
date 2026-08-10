@@ -1,10 +1,12 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import type {
   AgentStreamEventPayload,
   ProviderSubagentDescriptorPayload,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { create } from "zustand";
+import { create, type StateCreator } from "zustand";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 import { applyStreamEvent } from "@/types/stream";
 import type { StreamItem } from "@/types/stream";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
@@ -29,11 +31,12 @@ export interface ProviderSubagentTimelineState {
   rows: Map<number, ProviderSubagentTimelineRow>;
 }
 
-interface ProviderSubagentState {
+export interface ProviderSubagentState {
   descriptors: Map<string, ProviderSubagentDescriptorPayload>;
   timelines: Map<string, ProviderSubagentTimelineState>;
   hiddenFromTrack: Set<string>;
   hideFinishedForParent(serverId: string, parentAgentId: string): void;
+  showHiddenForParent(serverId: string, parentAgentId: string): void;
   replaceList(
     serverId: string,
     parentAgentId: string,
@@ -104,6 +107,43 @@ export function refreshProviderSubagents(
 
 function parentPrefix(serverId: string, parentAgentId: string): string {
   return `${serverId}\0${parentAgentId}\0`;
+}
+
+export function hasHiddenProviderSubagentsForParent(
+  hiddenFromTrack: ReadonlySet<string>,
+  serverId: string,
+  parentAgentId: string,
+): boolean {
+  const prefix = parentPrefix(serverId, parentAgentId);
+  for (const key of hiddenFromTrack) {
+    if (key.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
+function serializeProviderSubagentVisibility(state: ProviderSubagentState): {
+  hiddenFromTrack: string[];
+} {
+  return { hiddenFromTrack: [...state.hiddenFromTrack] };
+}
+
+function mergeProviderSubagentVisibility(
+  persistedState: unknown,
+  currentState: ProviderSubagentState,
+): ProviderSubagentState {
+  if (!persistedState || typeof persistedState !== "object" || Array.isArray(persistedState)) {
+    return currentState;
+  }
+  const hiddenFromTrack = Object.hasOwn(persistedState, "hiddenFromTrack")
+    ? Reflect.get(persistedState, "hiddenFromTrack")
+    : undefined;
+  if (!Array.isArray(hiddenFromTrack)) return currentState;
+  return {
+    ...currentState,
+    hiddenFromTrack: new Set(
+      hiddenFromTrack.filter((key): key is string => typeof key === "string"),
+    ),
+  };
 }
 
 const EMPTY_TIMELINE: ProviderSubagentTimelineState = {
@@ -192,7 +232,7 @@ function buildTimelineResponseRows(
   return rows;
 }
 
-export const useProviderSubagentStore = create<ProviderSubagentState>((set) => ({
+const createProviderSubagentState: StateCreator<ProviderSubagentState> = (set) => ({
   descriptors: new Map(),
   timelines: new Map(),
   hiddenFromTrack: new Set(),
@@ -204,6 +244,16 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         if (key.startsWith(prefix) && subagent.status !== "running") {
           hiddenFromTrack.add(key);
         }
+      }
+      return { hiddenFromTrack };
+    });
+  },
+  showHiddenForParent(serverId, parentAgentId) {
+    set((state) => {
+      const prefix = parentPrefix(serverId, parentAgentId);
+      const hiddenFromTrack = new Set(state.hiddenFromTrack);
+      for (const key of hiddenFromTrack) {
+        if (key.startsWith(prefix)) hiddenFromTrack.delete(key);
       }
       return { hiddenFromTrack };
     });
@@ -325,4 +375,18 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
       return { timelines };
     });
   },
-}));
+});
+
+export function createProviderSubagentStore(storage: StateStorage = AsyncStorage) {
+  return create<ProviderSubagentState>()(
+    persist(createProviderSubagentState, {
+      name: "provider-subagent-visibility",
+      version: 1,
+      storage: createJSONStorage(() => storage),
+      partialize: serializeProviderSubagentVisibility,
+      merge: mergeProviderSubagentVisibility,
+    }),
+  );
+}
+
+export const useProviderSubagentStore = createProviderSubagentStore();

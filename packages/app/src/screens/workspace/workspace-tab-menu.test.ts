@@ -179,6 +179,69 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(onRenameTab).toHaveBeenCalledWith(tab);
   });
 
+  it("reveals hidden provider subagents from the parent agent tab menu", () => {
+    const onShowHiddenProviderSubagents = vi.fn();
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "mobile",
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-menu-agent_123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      hasHiddenProviderSubagents: true,
+      onShowHiddenProviderSubagents,
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const revealEntry = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "show-hidden-provider-subagents",
+    );
+    if (!revealEntry || revealEntry.kind !== "item") {
+      throw new Error("Show hidden provider subagents entry missing");
+    }
+    expect(revealEntry.label).toBe("Show hidden subagents");
+
+    revealEntry.onSelect();
+
+    expect(onShowHiddenProviderSubagents).toHaveBeenCalledWith("agent-123");
+  });
+
+  it("omits the hidden provider subagent action when there is no hidden history", () => {
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "mobile",
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-menu-agent_123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      hasHiddenProviderSubagents: false,
+      onShowHiddenProviderSubagents: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    expect(
+      entries.some(
+        (entry) => entry.kind === "item" && entry.key === "show-hidden-provider-subagents",
+      ),
+    ).toBe(false);
+  });
+
   it("includes copy id and rename for terminal tabs", () => {
     const onRenameTab = vi.fn();
     const onCopyTerminalId = vi.fn();

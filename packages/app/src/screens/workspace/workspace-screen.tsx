@@ -159,6 +159,10 @@ import {
   type WorkspacePaneContentModel,
 } from "@/screens/workspace/workspace-pane-content";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
+import {
+  hasHiddenProviderSubagentsForParent,
+  useProviderSubagentStore,
+} from "@/subagents/provider-store";
 import { WorkspaceFocusProvider } from "@/workspace/focus";
 import { shouldSeedEmptyWorkspaceDraft } from "@/screens/workspace/workspace-empty-draft-seed";
 import {
@@ -525,6 +529,8 @@ function MobileWorkspaceTabOption({
   onPress,
   onCopyResumeCommand,
   onCopyAgentId,
+  hasHiddenProviderSubagents,
+  onShowHiddenProviderSubagents,
   onCopyTerminalId,
   onCopyFilePath,
   onReloadAgent,
@@ -544,6 +550,8 @@ function MobileWorkspaceTabOption({
   onPress: () => void;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
+  hasHiddenProviderSubagents: boolean;
+  onShowHiddenProviderSubagents: (agentId: string) => void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
@@ -558,6 +566,7 @@ function MobileWorkspaceTabOption({
     () => ({
       copyResumeCommand: t("workspace.tabs.menu.copyResumeCommand"),
       copyAgentId: t("workspace.tabs.menu.copyAgentId"),
+      showHiddenSubagents: t("subagents.showHiddenAction"),
       copyTerminalId: t("workspace.tabs.menu.copyTerminalId"),
       copyFilePath: t("workspace.tabs.menu.copyFilePath"),
       rename: t("workspace.tabs.menu.rename"),
@@ -581,6 +590,8 @@ function MobileWorkspaceTabOption({
     menuTestIDBase,
     onCopyResumeCommand,
     onCopyAgentId,
+    hasHiddenProviderSubagents,
+    onShowHiddenProviderSubagents,
     onCopyTerminalId,
     onCopyFilePath,
     onReloadAgent,
@@ -660,6 +671,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
   onCloseOtherTabs,
 }: MobileWorkspaceTabSwitcherProps) {
   const { t } = useTranslation();
+  const hiddenProviderSubagents = useProviderSubagentStore((state) => state.hiddenFromTrack);
   const [isOpen, setIsOpen] = useState(false);
   const anchorRef = useRef<View>(null);
   const tabIndexByKey = useMemo(() => {
@@ -674,6 +686,12 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
     Keyboard.dismiss();
     setIsOpen(true);
   }, []);
+  const handleShowHiddenProviderSubagents = useCallback(
+    (agentId: string) => {
+      useProviderSubagentStore.getState().showHiddenForParent(normalizedServerId, agentId);
+    },
+    [normalizedServerId],
+  );
 
   const renderTabOption = useCallback(
     ({
@@ -695,6 +713,13 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
       if (tabIndex < 0) {
         return <View />;
       }
+      const hasHiddenProviderSubagents =
+        tab.target.kind === "agent" &&
+        hasHiddenProviderSubagentsForParent(
+          hiddenProviderSubagents,
+          normalizedServerId,
+          tab.target.agentId,
+        );
       return (
         <MobileWorkspaceTabOption
           tab={tab}
@@ -707,6 +732,8 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
           onPress={onPress}
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
+          hasHiddenProviderSubagents={hasHiddenProviderSubagents}
+          onShowHiddenProviderSubagents={handleShowHiddenProviderSubagents}
           onCopyTerminalId={onCopyTerminalId}
           onCopyFilePath={onCopyFilePath}
           onReloadAgent={onReloadAgent}
@@ -726,6 +753,8 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
       normalizedWorkspaceId,
       onCopyResumeCommand,
       onCopyAgentId,
+      hiddenProviderSubagents,
+      handleShowHiddenProviderSubagents,
       onCopyTerminalId,
       onCopyFilePath,
       onReloadAgent,

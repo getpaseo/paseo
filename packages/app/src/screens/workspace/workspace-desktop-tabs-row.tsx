@@ -89,6 +89,10 @@ import { runPinnedTabTarget, type TabTargetHandlers } from "@/workspace-pins/run
 import type { PinnedTabTarget } from "@/workspace-pins/target";
 import { PinnedTargetsRow } from "@/workspace-pins/pinned-targets-row";
 import { PinnableMenuItem } from "@/workspace-pins/pinnable-menu-item";
+import {
+  hasHiddenProviderSubagentsForParent,
+  useProviderSubagentStore,
+} from "@/subagents/provider-store";
 
 const DROPDOWN_WIDTH = 220;
 const LOADING_TAB_LABEL_SKELETON_WIDTH = 80;
@@ -790,6 +794,7 @@ export function WorkspaceDesktopTabsRow({
 }: WorkspaceDesktopTabsRowProps) {
   const { t } = useTranslation();
   const router = useRouter();
+  const hiddenProviderSubagents = useProviderSubagentStore((state) => state.hiddenFromTrack);
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const focusModeKeys = useShortcutKeys("toggle-focus");
   const splitRightKeys = useShortcutKeys("workspace-pane-split-right");
@@ -849,6 +854,7 @@ export function WorkspaceDesktopTabsRow({
     () => ({
       copyResumeCommand: t("workspace.tabs.menu.copyResumeCommand"),
       copyAgentId: t("workspace.tabs.menu.copyAgentId"),
+      showHiddenSubagents: t("subagents.showHiddenAction"),
       copyTerminalId: t("workspace.tabs.menu.copyTerminalId"),
       copyFilePath: t("workspace.tabs.menu.copyFilePath"),
       rename: t("workspace.tabs.menu.rename"),
@@ -898,6 +904,13 @@ export function WorkspaceDesktopTabsRow({
     onCreateDraftTab({ paneId });
   }, [onCreateDraftTab, paneId]);
 
+  const handleShowHiddenProviderSubagents = useCallback(
+    (agentId: string) => {
+      useProviderSubagentStore.getState().showHiddenForParent(normalizedServerId, agentId);
+    },
+    [normalizedServerId],
+  );
+
   const handleCreateTerminal = useCallback(() => {
     onCreateTerminalTab({ paneId });
   }, [onCreateTerminalTab, paneId]);
@@ -935,6 +948,13 @@ export function WorkspaceDesktopTabsRow({
         activeDragTabId !== null &&
         tabDropPreviewIndex === tabs.length &&
         index === tabs.length - 1;
+      const hasHiddenProviderSubagents =
+        item.tab.target.kind === "agent" &&
+        hasHiddenProviderSubagentsForParent(
+          hiddenProviderSubagents,
+          normalizedServerId,
+          item.tab.target.agentId,
+        );
 
       return (
         <ResolvedDesktopTabChip
@@ -948,6 +968,8 @@ export function WorkspaceDesktopTabsRow({
           normalizedWorkspaceId={normalizedWorkspaceId}
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
+          hasHiddenProviderSubagents={hasHiddenProviderSubagents}
+          onShowHiddenProviderSubagents={handleShowHiddenProviderSubagents}
           onCopyTerminalId={onCopyTerminalId}
           onCopyFilePath={onCopyFilePath}
           onReloadAgent={onReloadAgent}
@@ -973,6 +995,8 @@ export function WorkspaceDesktopTabsRow({
       isFocused,
       layout.closeButtonPolicy,
       layout.items,
+      hiddenProviderSubagents,
+      handleShowHiddenProviderSubagents,
       normalizedServerId,
       normalizedWorkspaceId,
       onCloseOtherTabs,
@@ -1102,6 +1126,8 @@ function ResolvedDesktopTabChip({
   normalizedWorkspaceId,
   onCopyResumeCommand,
   onCopyAgentId,
+  hasHiddenProviderSubagents,
+  onShowHiddenProviderSubagents,
   onCopyTerminalId,
   onCopyFilePath,
   onReloadAgent,
@@ -1129,6 +1155,8 @@ function ResolvedDesktopTabChip({
   normalizedWorkspaceId: string;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
+  hasHiddenProviderSubagents: boolean;
+  onShowHiddenProviderSubagents: (agentId: string) => void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
@@ -1156,6 +1184,8 @@ function ResolvedDesktopTabChip({
         tabCount,
         onCopyResumeCommand,
         onCopyAgentId,
+        hasHiddenProviderSubagents,
+        onShowHiddenProviderSubagents,
         onCopyTerminalId,
         onCopyFilePath,
         onReloadAgent,
@@ -1174,6 +1204,8 @@ function ResolvedDesktopTabChip({
       onCloseTabsToLeft,
       onCloseTabsToRight,
       onCopyAgentId,
+      hasHiddenProviderSubagents,
+      onShowHiddenProviderSubagents,
       onCopyTerminalId,
       onCopyFilePath,
       onCopyResumeCommand,

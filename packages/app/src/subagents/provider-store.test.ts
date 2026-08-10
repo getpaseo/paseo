@@ -1,9 +1,36 @@
-import { afterEach, describe, expect, test } from "vitest";
-import { providerSubagentKey, useProviderSubagentStore } from "./provider-store";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import type { StateStorage } from "zustand/middleware";
+import {
+  createProviderSubagentStore,
+  hasHiddenProviderSubagentsForParent,
+  providerSubagentKey,
+  useProviderSubagentStore,
+} from "./provider-store";
+
+vi.mock("@react-native-async-storage/async-storage", () => ({
+  default: {
+    getItem: vi.fn().mockResolvedValue(null),
+    setItem: vi.fn().mockResolvedValue(undefined),
+    removeItem: vi.fn().mockResolvedValue(undefined),
+  },
+}));
 
 const SERVER_ID = "server-1";
 const PARENT_ID = "parent-1";
 const SUBAGENT_ID = "child-1";
+
+function createMemoryStorage(): StateStorage {
+  const values = new Map<string, string>();
+  return {
+    getItem: (name) => values.get(name) ?? null,
+    setItem: (name, value) => {
+      values.set(name, value);
+    },
+    removeItem: (name) => {
+      values.delete(name);
+    },
+  };
+}
 
 afterEach(() => {
   useProviderSubagentStore.setState({
@@ -169,6 +196,107 @@ describe("provider subagent client store", () => {
     expect(state.timelines.get(key)?.tail).toEqual([
       expect.objectContaining({ kind: "assistant_message", text: "Finished output." }),
     ]);
+  });
+
+  test("restores hidden finished children without persisting runtime descriptors or timelines", () => {
+    const storage = createMemoryStorage();
+    const firstStore = createProviderSubagentStore(storage);
+    const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
+    firstStore.getState().applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        id: SUBAGENT_ID,
+        parentAgentId: PARENT_ID,
+        provider: "codex",
+        title: "Finished child",
+        description: null,
+        status: "completed",
+        createdAt: "2026-07-12T10:00:00.000Z",
+        updatedAt: "2026-07-12T10:00:02.000Z",
+        toolCallId: "call-1",
+      },
+    });
+    firstStore.getState().applyUpdate(SERVER_ID, {
+      kind: "timeline",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      epoch: "epoch-1",
+      seq: 1,
+      timestamp: "2026-07-12T10:00:01.000Z",
+      item: { type: "assistant_message", text: "Finished output." },
+    });
+    firstStore.getState().hideFinishedForParent(SERVER_ID, PARENT_ID);
+
+    const restoredStore = createProviderSubagentStore(storage);
+
+    expect(restoredStore.getState().hiddenFromTrack.has(key)).toBe(true);
+    expect(restoredStore.getState().descriptors.size).toBe(0);
+    expect(restoredStore.getState().timelines.size).toBe(0);
+  });
+
+  test("keeps multiple finished provider children hidden after restart and history replay", () => {
+    const storage = createMemoryStorage();
+    const firstStore = createProviderSubagentStore(storage);
+    const children = [
+      { id: "oneshot-supervisor", title: "oneshot_supervisor" },
+      { id: "taxi-supervisor", title: "taxi_supervisor" },
+    ];
+
+    for (const child of children) {
+      firstStore.getState().applyUpdate(SERVER_ID, {
+        kind: "upsert",
+        subagent: {
+          id: child.id,
+          parentAgentId: PARENT_ID,
+          provider: "codex",
+          title: child.title,
+          description: null,
+          status: "completed",
+          createdAt: "2026-07-12T10:00:00.000Z",
+          updatedAt: "2026-07-12T10:00:02.000Z",
+          toolCallId: `call-${child.id}`,
+        },
+      });
+    }
+    firstStore.getState().hideFinishedForParent(SERVER_ID, PARENT_ID);
+
+    const restoredStore = createProviderSubagentStore(storage);
+    restoredStore.getState().replaceList(
+      SERVER_ID,
+      PARENT_ID,
+      children.map((child) => ({
+        id: child.id,
+        parentAgentId: PARENT_ID,
+        provider: "codex" as const,
+        title: child.title,
+        description: null,
+        status: "completed" as const,
+        createdAt: "2026-07-12T10:00:00.000Z",
+        updatedAt: "2026-07-12T10:00:02.000Z",
+        toolCallId: `call-${child.id}`,
+      })),
+    );
+
+    expect(
+      children.every((child) =>
+        restoredStore
+          .getState()
+          .hiddenFromTrack.has(providerSubagentKey(SERVER_ID, PARENT_ID, child.id)),
+      ),
+    ).toBe(true);
+  });
+
+  test("reveals hidden history only for the selected parent", () => {
+    const firstKey = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
+    const secondKey = providerSubagentKey(SERVER_ID, "parent-2", "child-2");
+    useProviderSubagentStore.setState({ hiddenFromTrack: new Set([firstKey, secondKey]) });
+
+    useProviderSubagentStore.getState().showHiddenForParent(SERVER_ID, PARENT_ID);
+
+    const hiddenFromTrack = useProviderSubagentStore.getState().hiddenFromTrack;
+    expect(hasHiddenProviderSubagentsForParent(hiddenFromTrack, SERVER_ID, PARENT_ID)).toBe(false);
+    expect(hasHiddenProviderSubagentsForParent(hiddenFromTrack, SERVER_ID, "parent-2")).toBe(true);
   });
 
   test("reveals a hidden child when the provider reports it running again", () => {

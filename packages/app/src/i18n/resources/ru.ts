@@ -1588,8 +1588,9 @@ export const ru: TranslationResources = {
     detachTooltip: "Отсоединить субагент",
     archiveAction: "Архив{{label}}",
     archiveTooltip: "Архивный субагент",
-    archiveFinishedAction: "Архивировать завершенные субагенты",
-    archiveFinishedTooltip: "Архивировать завершенные",
+    archiveFinishedAction: "Скрыть завершённых субагентов",
+    archiveFinishedTooltip: "Скрыть завершённые",
+    showHiddenAction: "Показать скрытых субагентов",
   },
   panels: {
     draft: {

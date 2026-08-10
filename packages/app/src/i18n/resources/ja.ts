@@ -1570,8 +1570,9 @@ export const ja: TranslationResources = {
     detachTooltip: "サブエージェントを切り離す",
     archiveAction: "{{label}}をアーカイブ",
     archiveTooltip: "サブエージェントをアーカイブ",
-    archiveFinishedAction: "完了したサブエージェントをアーカイブ",
-    archiveFinishedTooltip: "完了した項目をアーカイブ",
+    archiveFinishedAction: "完了したサブエージェントを非表示",
+    archiveFinishedTooltip: "完了項目を非表示",
+    showHiddenAction: "非表示のサブエージェントを表示",
   },
   panels: {
     draft: {

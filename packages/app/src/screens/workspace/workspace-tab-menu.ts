@@ -8,6 +8,7 @@ export type WorkspaceTabMenuSurface = "desktop" | "mobile";
 export interface WorkspaceTabMenuLabels {
   copyResumeCommand: string;
   copyAgentId: string;
+  showHiddenSubagents: string;
   copyTerminalId: string;
   copyFilePath: string;
   rename: string;
@@ -24,6 +25,7 @@ export interface WorkspaceTabMenuLabels {
 export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   copyResumeCommand: i18n.t("workspace.tabs.menu.copyResumeCommand"),
   copyAgentId: i18n.t("workspace.tabs.menu.copyAgentId"),
+  showHiddenSubagents: i18n.t("subagents.showHiddenAction"),
   copyTerminalId: i18n.t("workspace.tabs.menu.copyTerminalId"),
   copyFilePath: i18n.t("workspace.tabs.menu.copyFilePath"),
   rename: i18n.t("workspace.tabs.menu.rename"),
@@ -70,6 +72,8 @@ interface BuildWorkspaceTabMenuEntriesInput {
   menuTestIDBase: string;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
+  hasHiddenProviderSubagents?: boolean;
+  onShowHiddenProviderSubagents?: (agentId: string) => void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
@@ -87,6 +91,8 @@ interface BuildWorkspaceDesktopTabActionsInput {
   tabCount: number;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
+  hasHiddenProviderSubagents?: boolean;
+  onShowHiddenProviderSubagents?: (agentId: string) => void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
@@ -179,6 +185,7 @@ export function buildWorkspaceTabMenuEntries(
   const isLastTab = index === tabCount - 1;
   const isOnlyTab = tabCount <= 1;
   const entries: WorkspaceTabMenuEntry[] = [];
+  const onShowHiddenProviderSubagents = input.onShowHiddenProviderSubagents;
 
   if (tab.target.kind === "agent") {
     const { agentId } = tab.target;
@@ -203,6 +210,17 @@ export function buildWorkspaceTabMenuEntries(
         void onCopyAgentId(agentId);
       },
     });
+    if (input.hasHiddenProviderSubagents && onShowHiddenProviderSubagents) {
+      entries.push({
+        kind: "item",
+        key: "show-hidden-provider-subagents",
+        label: labels.showHiddenSubagents,
+        testID: `${menuTestIDBase}-show-hidden-provider-subagents`,
+        onSelect: () => {
+          onShowHiddenProviderSubagents(agentId);
+        },
+      });
+    }
   }
 
   if (tab.target.kind === "terminal") {
@@ -326,6 +344,8 @@ export function buildWorkspaceDesktopTabActions(
       menuTestIDBase: contextMenuTestId,
       onCopyResumeCommand: input.onCopyResumeCommand,
       onCopyAgentId: input.onCopyAgentId,
+      hasHiddenProviderSubagents: input.hasHiddenProviderSubagents,
+      onShowHiddenProviderSubagents: input.onShowHiddenProviderSubagents,
       onCopyTerminalId: input.onCopyTerminalId,
       onCopyFilePath: input.onCopyFilePath,
       onReloadAgent: input.onReloadAgent,

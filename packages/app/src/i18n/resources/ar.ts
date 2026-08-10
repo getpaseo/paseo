@@ -1554,8 +1554,9 @@ export const ar: TranslationResources = {
     detachTooltip: "فصل الوكيل الفرعي",
     archiveAction: "أرشيف{{label}}",
     archiveTooltip: "أرشفة الوكيل الفرعي",
-    archiveFinishedAction: "أرشفة الوكلاء الفرعيين المكتملين",
-    archiveFinishedTooltip: "أرشفة المكتملين",
+    archiveFinishedAction: "إخفاء الوكلاء الفرعيين المكتملين",
+    archiveFinishedTooltip: "إخفاء المكتملين",
+    showHiddenAction: "إظهار الوكلاء الفرعيين المخفيين",
   },
   panels: {
     draft: {

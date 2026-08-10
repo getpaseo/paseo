@@ -1564,8 +1564,9 @@ export const ko: TranslationResources = {
     detachTooltip: "하위 에이전트 분리",
     archiveAction: "{{label}} 보관",
     archiveTooltip: "서브에이전트 보관",
-    archiveFinishedAction: "완료된 하위 에이전트 보관",
-    archiveFinishedTooltip: "아카이브 완료",
+    archiveFinishedAction: "완료된 하위 에이전트 숨기기",
+    archiveFinishedTooltip: "완료 항목 숨기기",
+    showHiddenAction: "숨긴 하위 에이전트 표시",
   },
   panels: {
     draft: {
