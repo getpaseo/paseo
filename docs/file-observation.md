@@ -16,6 +16,4 @@ Read aggregate health from the owning observer service. Runtime metrics include 
 
 Git owns Git-ignore evaluation. The observer accepts absolute excluded roots and applies updates without replacing the observation or exposing its watcher topology. This keeps tracked files inside otherwise ignored directories observable and keeps Git policy out of the filesystem module.
 
-Run the isolated stress measurement with `npm run measure:file-observer --workspace=@getpaseo/server`. Run the 1,000-cycle teardown soak with `npm run repro:file-observer-teardown --workspace=@getpaseo/server`.
-
-The `File observer stress` workflow is the dogfood gate and runs on matching pull requests or by manual dispatch. It runs real-filesystem contracts, an isolated daemon auto-archive lifecycle, burst and sustained-create measurement, and the teardown soak on Linux, macOS, and Windows. Start dogfood only after all three jobs pass and their evidence artifacts show zero missed or excluded events, observer handles returning to baseline, bounded teardown, bounded sustained CPU, and no callback after close.
+The real-filesystem contracts and daemon auto-archive lifecycle run in the normal server test suite. Use the scripts only for manual performance and soak work: `npm run measure:file-observer --workspace=@getpaseo/server` measures burst and sustained-create behavior, and `npm run repro:file-observer-teardown --workspace=@getpaseo/server` runs the teardown soak.
