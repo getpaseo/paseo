@@ -37,11 +37,18 @@ interface ProviderModel {
   description?: string;
 }
 
+interface ProviderListMode {
+  id: string;
+  label: string;
+}
+
 interface ProviderListRow {
   provider: string;
   label: string;
   status: string;
-  enabled: string;
+  enabled: boolean;
+  defaultModeId: string | null;
+  modes: ProviderListMode[];
 }
 
 const EXPECTED_CLAUDE_MODELS = [
@@ -236,12 +243,25 @@ try {
     for (const provider of ["claude", "codex", "opencode"] as const) {
       const row = rows.find((p) => p.provider === provider);
       assert(row, `should include ${provider}`);
-      assert.strictEqual(row.enabled, "Enabled", `${provider} should report Enabled`);
+      assert.strictEqual(row.enabled, true, `${provider} should report enabled`);
     }
+
+    const codex = rows.find((p) => p.provider === "codex");
+    assert(codex, "should include codex");
+    assert.strictEqual(codex.defaultModeId, "auto-review");
+    assert.deepStrictEqual(
+      codex.modes.map((mode) => mode.id),
+      ["auto", "auto-review", "full-access"],
+      "codex modes should expose IDs accepted by --mode",
+    );
+
+    const opencode = rows.find((p) => p.provider === "opencode");
+    assert(opencode, "should include opencode");
+    assert.strictEqual(opencode.defaultModeId, null, "missing defaults should stay null");
 
     const omp = rows.find((p) => p.provider === "omp");
     assert(omp, "should include omp");
-    assert.strictEqual(omp.enabled, "Disabled", "omp should report Disabled by default");
+    assert.strictEqual(omp.enabled, false, "omp should report disabled by default");
     console.log("✓ provider ls --json outputs valid JSON\n");
   }
 
@@ -274,11 +294,11 @@ try {
       const data = JSON.parse(result.stdout.trim()) as ProviderListRow[];
       const claude = data.find((p) => p.provider === "claude");
       assert(claude, "disabled claude provider should stay in provider ls");
-      assert.strictEqual(claude.enabled, "Disabled", "disabled provider should report Disabled");
+      assert.strictEqual(claude.enabled, false, "disabled provider should report disabled");
 
       const opencode = data.find((p) => p.provider === "opencode");
       assert(opencode, "enabled opencode provider should stay in provider ls");
-      assert.strictEqual(opencode.enabled, "Enabled", "enabled provider should report Enabled");
+      assert.strictEqual(opencode.enabled, true, "enabled provider should report enabled");
 
       const modelsResult = await runPaseoCli(disabledCtx, ["provider", "models", "claude"]);
       assert.notStrictEqual(
