@@ -38,6 +38,10 @@ class FakeDaemonClient {
   cancels: string[] = [];
   private readonly rawMessageListeners = new Set<FakeRawMessageListener>();
 
+  get rawMessageListenerCount(): number {
+    return this.rawMessageListeners.size;
+  }
+
   async startDictationStream(dictationId: string, format: string): Promise<void> {
     this.starts.push({ dictationId, format });
   }
@@ -91,6 +95,16 @@ class FakeDaemonClient {
 const tick = async () => {
   await Promise.resolve();
   await Promise.resolve();
+};
+
+const promiseOutcome = async <T>(promise: Promise<T>, timeoutMs: number) => {
+  return Promise.race([
+    promise.then(
+      () => "resolved" as const,
+      () => "rejected" as const,
+    ),
+    new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), timeoutMs)),
+  ]);
 };
 
 describe("DictationStreamSender", () => {
@@ -199,6 +213,18 @@ describe("DictationStreamSender", () => {
     expect(sender.getSegmentCount()).toBe(3);
   });
 
+  it("removes its raw-message listener when disposed", () => {
+    const client = new FakeDaemonClient();
+    const sender = new DictationStreamSender({
+      client,
+      format: "audio/pcm;rate=16000;bits=16",
+    });
+
+    expect(client.rawMessageListenerCount).toBe(1);
+    sender.dispose();
+    expect(client.rawMessageListenerCount).toBe(0);
+  });
+
   it("replays segments captured before, during, and after an outage from seq 0", async () => {
     const client = new FakeDaemonClient();
     const ids = ["d1", "d2"];
@@ -247,13 +273,7 @@ describe("DictationStreamSender", () => {
 
       client.setConnected(true);
       const finish = sender.finish(sender.getFinalSeq());
-      const outcome = Promise.race([
-        finish.then(
-          () => "resolved" as const,
-          () => "rejected" as const,
-        ),
-        new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 1)),
-      ]);
+      const outcome = promiseOutcome(finish, 1);
 
       await tick();
       client.setConnected(false);

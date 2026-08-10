@@ -103,6 +103,10 @@ export class DictationStreamSender {
     return this.segments.length;
   }
 
+  dispose(): void {
+    this.setClient(null);
+  }
+
   getFinalSeq(): number {
     return this.segments.length - 1;
   }
@@ -158,17 +162,17 @@ export class DictationStreamSender {
     }
 
     let sent = 0;
-    try {
-      while (this.sendSeq < this.segments.length && sent < MAX_CHUNKS_PER_FLUSH_TURN) {
-        const seq = this.sendSeq;
-        const audio = this.segments[seq];
+    while (this.sendSeq < this.segments.length && sent < MAX_CHUNKS_PER_FLUSH_TURN) {
+      const seq = this.sendSeq;
+      const audio = this.segments[seq];
+      try {
         client.sendDictationStreamChunk(dictationId, seq, audio, this.format);
-        this.sendSeq = seq + 1;
-        sent += 1;
+      } catch {
+        this.invalidateStream();
+        return sent;
       }
-    } catch {
-      this.invalidateStream();
-      return sent;
+      this.sendSeq = seq + 1;
+      sent += 1;
     }
 
     if (this.hasPendingSegments()) {
