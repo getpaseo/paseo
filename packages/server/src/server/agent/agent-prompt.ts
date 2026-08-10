@@ -4,7 +4,10 @@ import type { AgentPromptInput, AgentRunOptions } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
-import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import {
+  getExternalWaitIdFromLabels,
+  getParentAgentIdFromLabels,
+} from "@getpaseo/protocol/agent-labels";
 
 export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "unarchiveSnapshot">;
 
@@ -338,6 +341,10 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
           return;
         }
         if (event.agent.lifecycle === "idle" && hasSeenRunning) {
+          if (getExternalWaitIdFromLabels(event.agent.labels)) {
+            hasSeenRunning = false;
+            return;
+          }
           notifySafely("finished");
           return;
         }
