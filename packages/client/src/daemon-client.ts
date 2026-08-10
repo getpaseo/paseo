@@ -4329,6 +4329,54 @@ export class DaemonClient {
     return payload.result;
   }
 
+  async createFileEntry(input: {
+    cwd: string;
+    parentPath: string;
+    name: string;
+    kind: "file" | "directory";
+  }): Promise<CorrelatedResponsePayload<"fs.entry.create.response">> {
+    return this.sendNamespacedCorrelatedSessionRequest<"fs.entry.create.response">({
+      message: { type: "fs.entry.create.request", ...input },
+    });
+  }
+
+  async renameFileEntry(input: {
+    cwd: string;
+    path: string;
+    name: string;
+  }): Promise<CorrelatedResponsePayload<"fs.entry.rename.response">> {
+    return this.sendNamespacedCorrelatedSessionRequest<"fs.entry.rename.response">({
+      message: { type: "fs.entry.rename.request", ...input },
+    });
+  }
+
+  async duplicateFileEntry(input: {
+    cwd: string;
+    path: string;
+  }): Promise<CorrelatedResponsePayload<"fs.entry.duplicate.response">> {
+    return this.sendNamespacedCorrelatedSessionRequest<"fs.entry.duplicate.response">({
+      message: { type: "fs.entry.duplicate.request", ...input },
+    });
+  }
+
+  async deleteFileEntry(input: {
+    cwd: string;
+    path: string;
+  }): Promise<CorrelatedResponsePayload<"fs.entry.delete.response">> {
+    return this.sendNamespacedCorrelatedSessionRequest<"fs.entry.delete.response">({
+      message: { type: "fs.entry.delete.request", ...input },
+    });
+  }
+
+  async checkoutDiscardChanges(
+    cwd: string,
+    input: { paths: string[] },
+  ): Promise<CorrelatedResponsePayload<"checkout.discard_changes.response">> {
+    return this.sendNamespacedCorrelatedSessionRequest<"checkout.discard_changes.response">({
+      message: { type: "checkout.discard_changes.request", cwd, paths: input.paths },
+    });
+  }
+
   async uploadFile(input: FileUploadInput): Promise<FileUploadResult> {
     const bytes = asUint8Array(input.bytes);
     if (!bytes) {
