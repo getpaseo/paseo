@@ -2,12 +2,22 @@ import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { type FileChange, getFileObserverDiagnostics, subscribeToFileChanges } from "./index.js";
+import {
+  createFileObserver,
+  type FileChange,
+  type FileObserver,
+  type FileObserverCallback,
+  type FileObserverOptions,
+  type FileObserverSubscription,
+} from "./index.js";
 
 const roots = new Set<string>();
+const observers = new Set<FileObserver>();
 
 afterEach(async () => {
   vi.useRealTimers();
+  await Promise.all([...observers].map((observer) => observer.close()));
+  observers.clear();
   await Promise.all([...roots].map((root) => rm(root, { recursive: true, force: true })));
   roots.clear();
 });
@@ -269,25 +279,81 @@ test("unsubscribe cancels reconciliation queued by a write burst", async () => {
 
 test("aggregate diagnostics return to their lifecycle baseline", async () => {
   const root = await createRoot();
-  const baseline = getFileObserverDiagnostics();
-  const subscription = await subscribeToFileChanges(root, () => undefined);
+  const observer = createObserver();
+  const subscription = await observer.subscribe(root, () => undefined);
 
-  expect(getFileObserverDiagnostics()).toMatchObject({
-    activeObservationCount: baseline.activeObservationCount + 1,
+  expect(observer.getDiagnostics()).toMatchObject({
+    activeObservationCount: 1,
   });
-  expect(getFileObserverDiagnostics().nativeHandleCount).toBeGreaterThan(
-    baseline.nativeHandleCount,
-  );
+  expect(observer.getDiagnostics().nativeHandleCount).toBeGreaterThan(0);
 
   await subscription.unsubscribe();
-  expect(getFileObserverDiagnostics()).toMatchObject({
-    activeObservationCount: baseline.activeObservationCount,
-    nativeHandleCount: baseline.nativeHandleCount,
-    nativeTrackedFileCount: baseline.nativeTrackedFileCount,
-    pendingEventCount: baseline.pendingEventCount,
-    reconciliationInFlightCount: baseline.reconciliationInFlightCount,
+  expect(observer.getDiagnostics()).toMatchObject({
+    activeObservationCount: 0,
+    nativeHandleCount: 0,
+    nativeTrackedFileCount: 0,
+    pendingEventCount: 0,
+    reconciliationInFlightCount: 0,
   });
 });
+
+test("closing the observer service releases every subscription and rejects reuse", async () => {
+  const firstRoot = await createRoot();
+  const secondRoot = await createRoot();
+  const observer = createObserver();
+  await observer.subscribe(firstRoot, () => undefined);
+  await observer.subscribe(secondRoot, () => undefined);
+
+  await observer.close();
+
+  expect(observer.getDiagnostics()).toEqual({
+    activeObservationCount: 0,
+    nativeHandleCount: 0,
+    nativeTrackedFileCount: 0,
+    pendingEventCount: 0,
+    pendingReconciliationWorkCount: 0,
+    reconciliationInFlightCount: 0,
+    reconciliationCount: 0,
+    scopedReconciliationCount: 0,
+    fullReconciliationCount: 0,
+    reconciliationFailureCount: 0,
+    observerFailureCount: 0,
+    directoryLimitFailureCount: 0,
+    nativeEventCount: 0,
+    nativeChangeEventCount: 0,
+    nativeRenameEventCount: 0,
+    nativePathlessEventCount: 0,
+    nativeClassificationCount: 0,
+    nativeShallowScanCount: 0,
+    lastReconciliationDurationMs: 0,
+    maxReconciliationDurationMs: 0,
+  });
+  await expect(observer.subscribe(firstRoot, () => undefined)).rejects.toThrow(
+    "File observer is closed",
+  );
+});
+
+async function subscribeToFileChanges(
+  directory: string,
+  callback: FileObserverCallback,
+  options?: FileObserverOptions,
+): Promise<FileObserverSubscription> {
+  const observer = createObserver();
+  const subscription = await observer.subscribe(directory, callback, options);
+  return {
+    updateIgnore: (paths) => subscription.updateIgnore(paths),
+    unsubscribe: async () => {
+      await subscription.unsubscribe();
+      await observer.close();
+    },
+  };
+}
+
+function createObserver(): FileObserver {
+  const observer = createFileObserver();
+  observers.add(observer);
+  return observer;
+}
 
 async function createRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "paseo-file-observer-"));

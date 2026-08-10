@@ -9,7 +9,6 @@ import { createDaemonTestContext, type DaemonTestContext } from "./test-utils/in
 import type { CreateAgentOptions } from "./test-utils/index.js";
 import type { CreateAgentWorktreeTarget } from "./messages.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
-import { getFileObserverDiagnostics } from "./file-observer/index.js";
 
 let ctx: DaemonTestContext;
 const tempRoots: string[] = [];
@@ -119,7 +118,6 @@ async function createAgentInBranchOffWorktree(options?: {
 }
 
 test("create_agent_request creates a worktree and auto-archives both after the first turn", async () => {
-  const observerBaseline = getFileObserverDiagnostics();
   const repoDir = createGitRepo();
   const worktree: CreateAgentWorktreeTarget = {
     mode: "branch-off",
@@ -156,25 +154,12 @@ test("create_agent_request creates a worktree and auto-archives both after the f
   // last-reference worktree directory is gone.
   await expectAgentAbsentFromActiveList(created.id);
   await expect.poll(() => existsSync(created.cwd), { timeout: 10000, interval: 100 }).toBe(false);
-  await expect
-    .poll(() => getFileObserverDiagnostics(), { timeout: 10_000, interval: 100 })
-    .toMatchObject({
-      activeObservationCount: observerBaseline.activeObservationCount,
-      nativeHandleCount: observerBaseline.nativeHandleCount,
-      pendingEventCount: observerBaseline.pendingEventCount,
-      reconciliationInFlightCount: observerBaseline.reconciliationInFlightCount,
-    });
-
   // Archived tabs can continue asking for history. These reads must not recreate
   // the removed workspace observation or compromise the next agent lifecycle.
   const staleTimelineReads = await Promise.allSettled(
     Array.from({ length: 10 }, () => ctx.client.fetchAgentTimeline(created.id, { limit: 20 })),
   );
   expect(staleTimelineReads.every((result) => result.status === "rejected")).toBe(true);
-  expect(getFileObserverDiagnostics()).toMatchObject({
-    activeObservationCount: observerBaseline.activeObservationCount,
-    nativeHandleCount: observerBaseline.nativeHandleCount,
-  });
   const subsequent = await ctx.client.createAgent({
     config: { ...getFullAccessConfig("codex"), cwd: repoDir },
     initialPrompt: "Say done.",

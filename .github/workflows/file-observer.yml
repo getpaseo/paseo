@@ -7,15 +7,13 @@ on:
       - "packages/server/package.json"
       - "packages/server/scripts/measure-file-observer.ts"
       - "packages/server/scripts/reproduce-file-observer-teardown.ts"
-      - "packages/server/scripts/reproduce-parcel-archive-race.ts"
-      - "packages/server/scripts/support/parcel-file-observer.ts"
       - "packages/server/src/server/file-observer/**"
       - "packages/server/src/server/workspace-git-service*"
       - "packages/server/src/server/session.create-agent-worktree-autoarchive.e2e.test.ts"
   workflow_dispatch:
     inputs:
       directories:
-        description: Watched directories per root in the comparison fixture
+        description: Watched directories per root in the stress fixture
         default: "490"
         type: string
       roots:
@@ -35,7 +33,7 @@ on:
         default: "1000"
         type: string
       repetitions:
-        description: Isolated comparison runs per backend
+        description: Isolated measurement runs
         default: "5"
         type: string
       teardown_iterations:
@@ -80,30 +78,18 @@ jobs:
       - name: Run isolated daemon auto-archive lifecycle
         run: npx vitest run packages/server/src/server/session.create-agent-worktree-autoarchive.e2e.test.ts --bail=1 -t "creates a worktree and auto-archives both"
 
-      - name: Compare production observer with Parcel
+      - name: Measure production observer
         shell: bash
         run: |
           mkdir -p file-observer-artifacts
           set -o pipefail
-          npm run measure:file-observer --workspace=@getpaseo/server | tee file-observer-artifacts/comparison.json.log
+          npm run measure:file-observer --workspace=@getpaseo/server | tee file-observer-artifacts/measurement.json.log
 
       - name: Stress archive teardown under an external watchdog
         shell: bash
         run: |
           set -o pipefail
-          npm run repro:file-observer-teardown --workspace=@getpaseo/server -- --backend=node | tee file-observer-artifacts/teardown-soak.json.log
-
-      - name: Reproduce the Parcel teardown wedge and verify the production observer
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          PASEO_WATCH_RACE_RUNS: "5"
-          PASEO_WATCH_RACE_ITERATIONS: "10"
-          PASEO_WATCH_RACE_PRODUCTION_TIMEOUT_MS: "30000"
-          PASEO_WATCH_RACE_TIMEOUT_MS: "10000"
-        run: |
-          set -o pipefail
-          npm run repro:file-observer-archive-race --workspace=@getpaseo/server | tee file-observer-artifacts/archive-race.json.log
+          npm run repro:file-observer-teardown --workspace=@getpaseo/server | tee file-observer-artifacts/teardown-soak.json.log
 
       - name: Upload file observer evidence
         if: always()

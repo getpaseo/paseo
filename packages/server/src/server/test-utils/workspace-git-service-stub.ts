@@ -1,7 +1,6 @@
 import type { CheckoutDiffResult } from "../../utils/checkout-git.js";
 import { deriveProjectSlug } from "../workspace-git-metadata.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "../workspace-git-service.js";
-import { getFileObserverDiagnostics } from "../file-observer/index.js";
 
 export function createNoGitWorkspaceRuntimeSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
   return {
@@ -90,7 +89,28 @@ export function createNoopWorkspaceGitService(
       fetchInFlightCount: 0,
       snapshotUpdatedListenerCount: 0,
       watcherErrorCallbackCount: 0,
-      fileObserver: getFileObserverDiagnostics(),
+      fileObserver: {
+        activeObservationCount: 0,
+        nativeHandleCount: 0,
+        nativeTrackedFileCount: 0,
+        pendingEventCount: 0,
+        pendingReconciliationWorkCount: 0,
+        reconciliationInFlightCount: 0,
+        reconciliationCount: 0,
+        scopedReconciliationCount: 0,
+        fullReconciliationCount: 0,
+        reconciliationFailureCount: 0,
+        observerFailureCount: 0,
+        directoryLimitFailureCount: 0,
+        nativeEventCount: 0,
+        nativeChangeEventCount: 0,
+        nativeRenameEventCount: 0,
+        nativePathlessEventCount: 0,
+        nativeClassificationCount: 0,
+        nativeShallowScanCount: 0,
+        lastReconciliationDurationMs: 0,
+        maxReconciliationDurationMs: 0,
+      },
     }),
     dispose: () => {},
     ...overrides,

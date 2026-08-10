@@ -1937,6 +1937,10 @@ describe("WorkspaceGitService checkout observation", () => {
     await vi.waitFor(() => {
       expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(statusCallsBeforePoll);
     });
+    await vi.advanceTimersByTimeAsync(25_000);
+    await vi.waitFor(() => {
+      expect(getWatcherRecordsForDirectory(watcher, REPO_CWD)).toHaveLength(2);
+    });
 
     subscription.unsubscribe();
     service.dispose();

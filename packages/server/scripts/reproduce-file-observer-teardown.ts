@@ -4,12 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
-import {
-  getFileObserverDiagnostics,
-  type SubscribeToFileChanges,
-  subscribeToFileChanges,
-} from "../src/server/file-observer/index.js";
-import { subscribeToFileChangesWithParcel } from "./support/parcel-file-observer.js";
+import { createFileObserver } from "../src/server/file-observer/index.js";
 
 const execFileAsync = promisify(execFile);
 const ITERATIONS = readPositiveInteger("PASEO_WATCH_REPRO_ITERATIONS", 200);
@@ -34,71 +29,62 @@ interface ChildResult {
 }
 
 async function main(): Promise<void> {
-  const backend = process.argv.find((argument) => argument.startsWith("--backend="))?.split("=")[1];
   if (process.argv.includes("--child")) {
-    if (!backend) throw new Error("Child requires --backend");
-    const subscribe =
-      backend === "node" ? subscribeToFileChanges : subscribeToFileChangesWithParcel;
-    process.stdout.write(`${JSON.stringify(await runChild(backend, subscribe))}\n`);
+    process.stdout.write(`${JSON.stringify(await runChild())}\n`);
     return;
   }
 
-  const results = [];
-  for (const name of backend ? [backend] : ["node", "parcel"]) {
-    const startedAt = performance.now();
-    try {
-      const { stdout } = await execFileAsync(
-        process.execPath,
-        [...process.execArgv, process.argv[1], `--backend=${name}`, "--child"],
-        { env: process.env, maxBuffer: 1024 * 1024, timeout: CHILD_TIMEOUT_MS },
-      );
-      results.push({ ...JSON.parse(stdout.trim()), wedged: false });
-    } catch (error) {
-      const processError = error as Error & { killed?: boolean; signal?: string };
-      results.push({
-        backend: name,
-        iterations: ITERATIONS,
-        completed: 0,
-        teardownErrors: [processError.message],
-        elapsedMs: performance.now() - startedAt,
-        wedged: processError.killed === true || processError.signal === "SIGTERM",
-      });
-    }
+  const startedAt = performance.now();
+  let result;
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [...process.execArgv, process.argv[1], "--child"],
+      { env: process.env, maxBuffer: 1024 * 1024, timeout: CHILD_TIMEOUT_MS },
+    );
+    result = { ...JSON.parse(stdout.trim()), wedged: false };
+  } catch (error) {
+    const processError = error as Error & { killed?: boolean; signal?: string };
+    result = {
+      backend: "production",
+      iterations: ITERATIONS,
+      completed: 0,
+      teardownErrors: [processError.message],
+      elapsedMs: performance.now() - startedAt,
+      wedged: processError.killed === true || processError.signal === "SIGTERM",
+    };
   }
   process.stdout.write(
-    `${JSON.stringify({ platform: process.platform, node: process.version, results }, null, 2)}\n`,
+    `${JSON.stringify({ platform: process.platform, node: process.version, result }, null, 2)}\n`,
   );
-  const productionPassed = results
-    .filter((result) => result.backend === "node")
-    .every(
-      (result) =>
-        "assertionsPassed" in result && result.assertionsPassed && result.wedged === false,
-    );
+  const productionPassed =
+    "assertionsPassed" in result && result.assertionsPassed && result.wedged === false;
   if (!productionPassed) process.exitCode = 1;
 }
 
-async function runChild(backend: string, subscribe: SubscribeToFileChanges): Promise<ChildResult> {
-  const base = await mkdtemp(join(tmpdir(), `paseo-watch-repro-${backend}-`));
+async function runChild(): Promise<ChildResult> {
+  const base = await mkdtemp(join(tmpdir(), "paseo-watch-repro-"));
+  const observer = createFileObserver();
   const teardownErrors: string[] = [];
   const teardownDurations: number[] = [];
   const startedAt = performance.now();
   const warmupRoot = join(base, "warmup");
   await mkdir(warmupRoot);
-  const warmupSubscription = await subscribe(warmupRoot, () => undefined);
+  const warmupSubscription = await observer.subscribe(warmupRoot, () => undefined);
   await warmupSubscription.unsubscribe();
   await rm(warmupRoot, { recursive: true, force: true });
   const rssBefore = process.memoryUsage().rss;
   const fileDescriptorsBefore = await readFileDescriptorCount();
-  const diagnosticsBefore = getFileObserverDiagnostics();
+  const diagnosticsBefore = observer.getDiagnostics();
   let completed = 0;
   let callbacksAfterClose = 0;
-  const sharedSubscription = await subscribe(base, () => undefined);
+  const sharedSubscription = await observer.subscribe(base, () => undefined);
   try {
     for (let index = 0; index < ITERATIONS; index += 1) {
       const root = join(base, `worktree-${index}`);
       await mkdir(join(root, "nested"), { recursive: true });
       let closed = false;
-      const subscription = await subscribe(root, () => {
+      const subscription = await observer.subscribe(root, () => {
         if (closed) callbacksAfterClose += 1;
       });
 
@@ -126,10 +112,11 @@ async function runChild(backend: string, subscribe: SubscribeToFileChanges): Pro
     await sharedSubscription.unsubscribe().catch((error: unknown) => {
       teardownErrors.push(error instanceof Error ? error.message : String(error));
     });
+    await observer.close();
     await rm(base, { recursive: true, force: true });
   }
   await new Promise((resolve) => setTimeout(resolve, 25));
-  const diagnosticsAfter = getFileObserverDiagnostics();
+  const diagnosticsAfter = observer.getDiagnostics();
   const fileDescriptorsAfter = await readFileDescriptorCount();
   const rssGrowthMiB = (process.memoryUsage().rss - rssBefore) / 1024 / 1024;
   const teardownP99Ms = percentile(teardownDurations, 0.99);
@@ -147,7 +134,7 @@ async function runChild(backend: string, subscribe: SubscribeToFileChanges): Pro
     rssGrowthMiB < 128 &&
     teardownP99Ms < 1_000;
   return {
-    backend,
+    backend: "production",
     iterations: ITERATIONS,
     completed,
     teardownErrors: [...new Set(teardownErrors)],

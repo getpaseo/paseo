@@ -5,7 +5,7 @@ import type pino from "pino";
 import { afterEach, expect, test, vi } from "vitest";
 import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
-import { subscribeToFileChanges } from "./file-observer/index.js";
+import { createFileObserver } from "./file-observer/index.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import type { FileChange, SubscribeToFileChanges } from "./file-observer/index.js";
 
@@ -77,6 +77,7 @@ test("recursive observation updates tracked state and prunes ignored storms", as
   writeFileSync(newlyTrackedPath, "base\n");
 
   let activeWatcherCount = 0;
+  const observer = createFileObserver();
   let watcherStartCount = 0;
   let onWorkingTreeIgnoreUpdated: (() => void) | null = null;
   const deliveredEvents: Array<{
@@ -84,7 +85,7 @@ test("recursive observation updates tracked state and prunes ignored storms", as
     events: FileChange[];
   }> = [];
   const subscribe: SubscribeToFileChanges = async (directory, callback, options) => {
-    const subscription = await subscribeToFileChanges(
+    const subscription = await observer.subscribe(
       directory,
       (error, events) => {
         deliveredEvents.push({ directory, events });
@@ -108,6 +109,11 @@ test("recursive observation updates tracked state and prunes ignored storms", as
         activeWatcherCount -= 1;
       },
     };
+  };
+  const fileObserver = {
+    subscribe,
+    getDiagnostics: () => observer.getDiagnostics(),
+    close: () => observer.close(),
   };
   let observedPath = trackedPath;
   let observedRelativePath = "src/tracked.txt";
@@ -166,8 +172,8 @@ test("recursive observation updates tracked state and prunes ignored storms", as
   const service = new WorkspaceGitServiceImpl({
     logger: createLogger(),
     paseoHome: path.join(tempDir, "paseo-home"),
+    fileObserver,
     deps: {
-      subscribe,
       getCheckoutSnapshotFacts,
       getCheckoutStatus,
       getCheckoutShortstat,

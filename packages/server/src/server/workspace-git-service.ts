@@ -61,11 +61,11 @@ import {
   type FileChange,
   type FileObserverDiagnostics,
   type FileObserverCallback,
+  type FileObserver,
   type FileObserverOptions,
   type FileObserverSubscription,
   type SubscribeToFileChanges,
-  getFileObserverDiagnostics,
-  subscribeToFileChanges,
+  createFileObserver,
 } from "./file-observer/index.js";
 import { checkoutLiteFromGitSnapshot } from "./workspace-registry-model.js";
 
@@ -361,6 +361,7 @@ interface WorkspaceGitServiceOptions {
   logger: pino.Logger;
   paseoHome: string;
   worktreesRoot?: string;
+  fileObserver?: FileObserver;
   deps?: Partial<WorkspaceGitServiceDependencies>;
 }
 
@@ -479,9 +480,11 @@ interface WorkspaceForgePrStatusPollTarget {
   headRepositoryOwner?: string;
 }
 
-function buildDefaultWorkspaceGitServiceDeps(): WorkspaceGitServiceDependencies {
+function buildDefaultWorkspaceGitServiceDeps(
+  subscribe: SubscribeToFileChanges,
+): WorkspaceGitServiceDependencies {
   return {
-    subscribe: subscribeToFileChanges,
+    subscribe,
     getCheckoutSnapshotFacts,
     getCheckoutRefDerivedState,
     getCheckoutStatus,
@@ -503,15 +506,17 @@ function buildDefaultWorkspaceGitServiceDeps(): WorkspaceGitServiceDependencies 
 }
 
 function resolveWorkspaceGitServiceDeps(
+  subscribe: SubscribeToFileChanges,
   deps: Partial<WorkspaceGitServiceDependencies> | undefined,
 ): WorkspaceGitServiceDependencies {
-  return { ...buildDefaultWorkspaceGitServiceDeps(), ...deps };
+  return { ...buildDefaultWorkspaceGitServiceDeps(subscribe), ...deps };
 }
 
 export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly logger: pino.Logger;
   private readonly paseoHome: string;
   private readonly worktreesRoot: string | undefined;
+  private readonly fileObserver: FileObserver;
   private readonly deps: WorkspaceGitServiceDependencies;
   private readonly forgeResolver: ForgeResolver;
   private readonly workspaceRefreshLimit = pLimit({
@@ -564,7 +569,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.logger = options.logger.child({ module: "workspace-git-service" });
     this.paseoHome = options.paseoHome;
     this.worktreesRoot = options.worktreesRoot;
-    this.deps = resolveWorkspaceGitServiceDeps(options.deps);
+    this.fileObserver = options.fileObserver ?? createFileObserver();
+    this.deps = resolveWorkspaceGitServiceDeps(
+      this.fileObserver.subscribe.bind(this.fileObserver),
+      options.deps,
+    );
     this.forgeResolver = createForgeResolver({
       createService: (forge) => this.deps.forgeOverrides?.[forge] ?? createForgeService(forge),
     });
@@ -659,7 +668,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       fetchInFlightCount,
       snapshotUpdatedListenerCount: this.snapshotUpdatedListeners.size,
       watcherErrorCallbackCount: this.watcherErrorCallbackCount,
-      fileObserver: getFileObserverDiagnostics(),
+      fileObserver: this.fileObserver.getDiagnostics(),
     };
   }
 
@@ -975,6 +984,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.workingTreeWatchResolutions.clear();
     this.workingTreeWatchAliases.clear();
     this.snapshotUpdatedListeners.clear();
+    void this.fileObserver.close();
   }
 
   private assertNotDisposed(): void {
@@ -1659,6 +1669,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         target.subscription = null;
         if (!target.closed && !target.fallbackPolling) {
           this.startWorkingTreeWatchFallback(target, "watcher_update_failed");
+          this.scheduleWorkingTreeWatchRecovery(target);
         }
         this.logger.warn(
           { err: error, cwd: target.cwd },
