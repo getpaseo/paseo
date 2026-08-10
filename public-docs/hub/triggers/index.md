@@ -66,8 +66,8 @@ An allowlist is one layer of defense. It does not make a permitted account trust
 | `workspace`  | Slack          | Team id, `T01234567`                                            |
 | `guild`      | Discord        | Guild id                                                        |
 | `channels`   | Slack, Discord | Channel ids                                                     |
-| `contains`   | all            | Substring of the message text                                   |
-| `pattern`    | all            | Prefix of the message text                                      |
+| `contains`   | all            | GitHub substring; Slack and Discord invocation prefix           |
+| `pattern`    | all            | Invocation prefix                                               |
 | `connection` | all            | A connection slug, when the organization has several            |
 
 All conditions must pass. There is no `any` mode.

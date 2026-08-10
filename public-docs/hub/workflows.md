@@ -2,7 +2,7 @@
 title: Hub workflows
 description: Build ordered Hub workflows with prompts, routing, outputs, and provider authority.
 nav: Workflows
-order: 65
+order: 64
 category: Hub
 ---
 
@@ -55,6 +55,8 @@ A finite input can select among complete named environments:
 name: route-repository
 on: manual.run
 max_runtime: 1h
+filters:
+  from_users: [automation]
 inputs:
   repo:
     type: string
@@ -94,6 +96,8 @@ For dynamic routing, select complete named agents from a finite expression:
 name: route-agent
 on: manual.run
 max_runtime: 1h
+filters:
+  from_users: [automation]
 inputs:
   agent:
     type: string
@@ -192,6 +196,8 @@ Steps run in file order. `if` may read inputs, values, and prior step output:
 name: conditional-review
 on: manual.run
 max_runtime: 1h
+filters:
+  from_users: [automation]
 steps:
   - id: inspect
     environment: paseo
