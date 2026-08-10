@@ -1,5 +1,6 @@
 import { useMemo, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import {
+  type GestureResponderEvent,
   Platform,
   Pressable,
   Text,
@@ -55,6 +56,10 @@ export function AssistantMarkdownLink({
     event.stopPropagation();
     onAuxPress();
   });
+  const handlePress = useStableEvent((event: GestureResponderEvent) => {
+    event.stopPropagation();
+    onPress();
+  });
   const handleHoverIn = useStableEvent(() => {
     setHovered(true);
     onHoverIn();
@@ -65,8 +70,8 @@ export function AssistantMarkdownLink({
     [style, hovered],
   );
   const linkPress = useMemo<AssistantLinkPress>(
-    () => ({ onPress, accessibilityRole: "link" }),
-    [onPress],
+    () => ({ onPress: handlePress, accessibilityRole: "link" }),
+    [handlePress],
   );
   const unwrapForMarkdownCopy = source.sourceType === "inline-code" || source.markup === "linkify";
 
@@ -88,7 +93,7 @@ export function AssistantMarkdownLink({
       <MarkdownTextSpan
         accessibilityRole="link"
         monoSurface={monoSurface}
-        onPress={onPress}
+        onPress={handlePress}
         style={style}
       >
         {children}
@@ -116,7 +121,7 @@ export function AssistantMarkdownLink({
     >
       <Pressable
         accessibilityRole="link"
-        onPress={onPress}
+        onPress={handlePress}
         onHoverIn={handleHoverIn}
         onHoverOut={handleHoverOut}
       >

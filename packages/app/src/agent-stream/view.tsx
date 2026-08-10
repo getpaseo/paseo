@@ -843,14 +843,30 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [pendingPermissions, agentId],
     );
 
-    const pendingPermissionsNode = useMemo(
-      () =>
-        renderPendingPermissionsNode({
-          pendingPermissions: pendingPermissionItems,
-          client,
-        }),
-      [client, pendingPermissionItems],
-    );
+    const pendingPermissionsNode = useMemo(() => {
+      const node = renderPendingPermissionsNode({
+        pendingPermissions: pendingPermissionItems,
+        client,
+      });
+      return node ? (
+        <AssistantFileLinkResolverProvider
+          client={client}
+          serverId={resolvedServerId}
+          workspaceRoot={workspaceRoot}
+          onOpenWorkspaceFile={handleInlinePathPress}
+          toast={toast}
+        >
+          {node}
+        </AssistantFileLinkResolverProvider>
+      ) : null;
+    }, [
+      client,
+      handleInlinePathPress,
+      pendingPermissionItems,
+      resolvedServerId,
+      toast,
+      workspaceRoot,
+    ]);
     const turnFooterNode = useMemo(
       () =>
         isTurnActive || bottomTurnFooterHost ? (

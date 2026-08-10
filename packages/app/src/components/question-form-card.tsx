@@ -1,13 +1,44 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { useState, useCallback, useMemo } from "react";
-import { View, Text, TextInput, Pressable, type PressableStateCallbackType } from "react-native";
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useState,
+  useCallback,
+  useMemo,
+  type ReactNode,
+} from "react";
+import {
+  View,
+  Text,
+  TextInput,
+  Pressable,
+  type PressableStateCallbackType,
+  type StyleProp,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import type { ASTNode, RenderRules } from "react-native-markdown-display";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { Check, X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { isWeb } from "@/constants/platform";
+import {
+  AssistantInlineCodePathLink,
+  AssistantMarkdownLink,
+  type AssistantFileLinkSource,
+} from "@/assistant-file-links";
+import { isFileLookingAssistantToken } from "@/assistant-file-links/parse";
+import {
+  createSharedMarkdownRules,
+  MarkdownInheritedText,
+  MarkdownRenderer,
+  type MarkdownStyles,
+} from "@/components/markdown/renderer";
+import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
@@ -27,6 +58,128 @@ interface QuestionFormCardProps {
 }
 
 const IS_WEB = isWeb;
+const QUESTION_MARKDOWN_PARSER = createAssistantMarkdownParser();
+const QUESTION_MARKDOWN_WEB_STYLE = IS_WEB ? ({ userSelect: "text" } as ViewStyle) : undefined;
+
+type QuestionMarkdownVariant = "question" | "label" | "description";
+
+interface QuestionMarkdownAstNode extends ASTNode {
+  sourceInfo?: string;
+}
+
+function getMarkdownNodeText(node: ASTNode): string {
+  return node.children.length
+    ? node.children.map(getMarkdownNodeText).join("")
+    : (node.content ?? "");
+}
+
+function getQuestionLinkSource(node: QuestionMarkdownAstNode): AssistantFileLinkSource {
+  return {
+    href: typeof node.attributes?.href === "string" ? node.attributes.href : "",
+    text: getMarkdownNodeText(node),
+    title: typeof node.attributes?.title === "string" ? node.attributes.title : undefined,
+    markup: node.markup,
+    sourceInfo: node.sourceInfo,
+  };
+}
+
+const QUESTION_MARKDOWN_RULES: RenderRules = {
+  ...createSharedMarkdownRules(),
+  code_inline: (
+    node: ASTNode,
+    _children: ReactNode[],
+    _parent: ASTNode[],
+    styles: MarkdownStyles,
+    inheritedStyles: TextStyle = {},
+  ) => {
+    const content = node.content ?? "";
+    if (isFileLookingAssistantToken(content)) {
+      return (
+        <AssistantInlineCodePathLink
+          key={node.key}
+          content={content}
+          inheritedStyles={inheritedStyles}
+          codeInlineStyle={styles.code_inline}
+          linkStyle={styles.link}
+        />
+      );
+    }
+    return (
+      <MarkdownInheritedText
+        key={node.key}
+        inheritedStyles={inheritedStyles}
+        textStyle={styles.code_inline}
+        monoSurface
+      >
+        {content}
+      </MarkdownInheritedText>
+    );
+  },
+  link: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
+    <AssistantMarkdownLink key={node.key} source={getQuestionLinkSource(node)} style={styles.link}>
+      {Children.map(children, (child) => {
+        if (!isValidElement(child)) return child;
+        const childProps = child.props as { style?: StyleProp<TextStyle> };
+        return cloneElement(child, {
+          style: [childProps.style, { color: styles.link.color }],
+        } as Partial<{ style: StyleProp<TextStyle> }>);
+      })}
+    </AssistantMarkdownLink>
+  ),
+};
+
+function QuestionMarkdownText({
+  text,
+  variant,
+  testID,
+}: {
+  text: string;
+  variant: QuestionMarkdownVariant;
+  testID?: string;
+}) {
+  const { theme } = useUnistyles();
+  const contentStyle = useMemo<TextStyle>(() => {
+    if (variant === "description") {
+      return {
+        color: theme.colors.foregroundMuted,
+        fontSize: theme.fontSize.sm,
+        lineHeight: 20,
+      };
+    }
+    return {
+      color: theme.colors.foreground,
+      fontSize: theme.fontSize.base,
+      fontWeight: variant === "question" ? theme.fontWeight.medium : theme.fontWeight.semibold,
+      lineHeight: 22,
+    };
+  }, [theme, variant]);
+  const markdownStyle = useMemo<Partial<MarkdownStyles>>(
+    () => ({
+      body: contentStyle as MarkdownStyles[string],
+      text: contentStyle as MarkdownStyles[string],
+      paragraph: { marginTop: 0, marginBottom: 0 },
+    }),
+    [contentStyle],
+  );
+  return (
+    <View
+      testID={testID}
+      style={[
+        styles.markdownText,
+        variant === "question" && styles.questionText,
+        QUESTION_MARKDOWN_WEB_STYLE,
+      ]}
+    >
+      <MarkdownRenderer
+        text={text}
+        enableHtmlish={false}
+        markdownit={QUESTION_MARKDOWN_PARSER}
+        rules={QUESTION_MARKDOWN_RULES}
+        style={markdownStyle}
+      />
+    </View>
+  );
+}
 
 function getQuestionInputPlaceholder({
   question,
@@ -64,6 +217,7 @@ function QuestionOptionRow({
   const { theme } = useUnistyles();
 
   const handlePress = useCallback(() => {
+    if (IS_WEB && window.getSelection()?.toString()) return;
     onToggle(qIndex, optIndex, multiSelect);
   }, [onToggle, qIndex, optIndex, multiSelect]);
 
@@ -78,14 +232,6 @@ function QuestionOptionRow({
     [isSelected, theme.colors.surface2],
   );
 
-  const optionLabelStyle = useMemo(
-    () => [styles.optionLabel, { color: theme.colors.foreground }],
-    [theme.colors.foreground],
-  );
-  const optionDescriptionStyle = useMemo(
-    () => [styles.optionDescription, { color: theme.colors.foregroundMuted }],
-    [theme.colors.foregroundMuted],
-  );
   const accessibilityState = useMemo(() => ({ checked: isSelected }), [isSelected]);
 
   // Static left-side control: square for multi-select, circle for single-select.
@@ -124,9 +270,17 @@ function QuestionOptionRow({
           {isSelected && !multiSelect ? <View style={radioDotStyle} /> : null}
         </View>
         <View style={styles.optionTextBlock}>
-          <Text style={optionLabelStyle}>{option.label}</Text>
+          <QuestionMarkdownText
+            text={option.label}
+            variant="label"
+            testID={`question-form-option-label-${qIndex}-${optIndex}`}
+          />
           {option.description ? (
-            <Text style={optionDescriptionStyle}>{option.description}</Text>
+            <QuestionMarkdownText
+              text={option.description}
+              variant="description"
+              testID={`question-form-option-description-${qIndex}-${optIndex}`}
+            />
           ) : null}
         </View>
       </View>
@@ -476,10 +630,6 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     ],
     [theme.colors.surface1, theme.colors.border],
   );
-  const questionTextStyle = useMemo(
-    () => [styles.questionText, { color: theme.colors.foreground }],
-    [theme.colors.foreground],
-  );
   // Single-select radios need a group; checkboxes are valid standalone.
   const optionsGroupAccessibility = useMemo(
     () =>
@@ -524,9 +674,11 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
         onSelect={handleSelectQuestion}
       />
       <View style={styles.questionHeader}>
-        <Text testID="question-form-current-question" style={questionTextStyle}>
-          {activeQuestion?.question}
-        </Text>
+        <QuestionMarkdownText
+          text={activeQuestion?.question ?? ""}
+          variant="question"
+          testID="question-form-current-question"
+        />
       </View>
 
       {activeQuestion ? (
@@ -624,11 +776,11 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[1],
     flex: 1,
   },
+  markdownText: {
+    minWidth: 0,
+  },
   questionText: {
     flex: 1,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.medium,
-    lineHeight: 22,
   },
   optionsWrap: {
     gap: theme.spacing[1],
@@ -673,15 +825,6 @@ const styles = StyleSheet.create((theme) => ({
   optionTextBlock: {
     flex: 1,
     gap: theme.spacing[1],
-  },
-  optionLabel: {
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
-    lineHeight: 22,
-  },
-  optionDescription: {
-    fontSize: theme.fontSize.sm,
-    lineHeight: 20,
   },
   selectionControl: {
     width: 18,

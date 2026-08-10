@@ -201,6 +201,25 @@ function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRe
     return null;
   }
 
+  if (/linked content/i.test(text)) {
+    return {
+      questions: [
+        {
+          question: "Review [the docs](https://example.com/docs) before choosing.",
+          header: "linkedContent",
+          options: [
+            {
+              label: "Update `packages/app/src/components/question-form-card.tsx`",
+              description: "Compare https://example.com/reference first.",
+            },
+            { label: "Leave it unchanged" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    };
+  }
+
   if (/free[-\s]?write|freeform|text[-\s]?only/i.test(text)) {
     return {
       questions: [
