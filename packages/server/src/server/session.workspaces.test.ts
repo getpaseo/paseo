@@ -183,6 +183,9 @@ interface SessionTestAccess {
     peekSnapshot: (cwd: string) => WorkspaceGitRuntimeSnapshot | null;
     registerWorkspace: (params: { cwd: string }, listener: unknown) => { unsubscribe: () => void };
   };
+  workspaceGitObserver: {
+    syncObservers(entries: ReadonlyArray<Record<string, unknown>>): void;
+  };
   filesystem: {
     isDirectory(cwd: string): Promise<boolean>;
   };
@@ -2367,6 +2370,32 @@ test("non-git workspace uses deterministic directory name and no unknown branch 
   expect(result.entries).toHaveLength(1);
   expect(result.entries[0]?.name).toBe("non-git");
   expect(result.entries[0]?.name).not.toBe("Unknown branch");
+});
+
+test("one-shot workspace inventory does not register Git observers", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+  });
+  const syncObservers = vi.spyOn(session.workspaceGitObserver, "syncObservers");
+
+  await session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "req-one-shot-workspace-inventory",
+  });
+
+  expect(
+    emitted.find((message) => message.type === "fetch_workspaces_response")?.payload.requestId,
+  ).toBe("req-one-shot-workspace-inventory");
+  expect(syncObservers).not.toHaveBeenCalled();
+
+  await session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "req-subscribed-workspace-inventory",
+    subscribe: { subscriptionId: "workspace-updates" },
+  });
+
+  expect(syncObservers).toHaveBeenCalledTimes(1);
 });
 
 test("workspace placements preserve checkout facts independently from the project", async () => {
