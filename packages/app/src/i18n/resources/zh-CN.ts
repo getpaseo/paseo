@@ -1040,6 +1040,7 @@ export const zhCN: TranslationResources = {
         archiveWorkspace: "归档工作区",
         hideFromSidebar: "从侧边栏隐藏",
         splitPane: "在侧栏中打开",
+        editFiles: "编辑文件",
         mainCheckout: "Main checkout",
         nestedRepos: "仓库",
         tabs: "{{count}}个标签页",

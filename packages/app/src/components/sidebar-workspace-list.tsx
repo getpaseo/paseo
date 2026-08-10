@@ -103,6 +103,7 @@ import {
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { collectAllPanes } from "@/stores/workspace-layout-actions";
 import { useSessionStore } from "@/stores/session-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { SidebarBranchGroupRow } from "@/components/sidebar/sidebar-branch-group-row";
 import { buildSidebarBranchGroups, type SidebarBranchGroup } from "@/hooks/sidebar-branch-groups";
@@ -310,6 +311,7 @@ interface WorkspaceRowInnerProps {
   isPinned?: boolean;
   onTogglePin?: () => void;
   onSplitPane?: () => void;
+  onEditFiles?: () => void;
   reserveIdleStatusIndicatorSpace?: boolean;
 }
 
@@ -540,7 +542,9 @@ function ProjectMenuItem({
   children,
   ...props
 }: PropsWithChildren<
-  Omit<ComponentProps<typeof DropdownMenuItem>, "children"> & { surface: ProjectMenuSurface }
+  Omit<ComponentProps<typeof DropdownMenuItem>, "children"> & {
+    surface: ProjectMenuSurface;
+  }
 >) {
   if (surface === "context") {
     return <ContextMenuItem {...props}>{children}</ContextMenuItem>;
@@ -641,6 +645,7 @@ function WorkspaceRowRightGroup({
   isPinned,
   onTogglePin,
   onSplitPane,
+  onEditFiles,
 }: {
   workspace: SidebarWorkspaceEntry;
   isHovered: boolean;
@@ -660,6 +665,7 @@ function WorkspaceRowRightGroup({
   isPinned?: boolean;
   onTogglePin?: () => void;
   onSplitPane?: () => void;
+  onEditFiles?: () => void;
 }) {
   const workspacePath = workspace.workspaceDirectory ?? workspace.projectRootPath;
   const { t } = useTranslation();
@@ -708,6 +714,7 @@ function WorkspaceRowRightGroup({
                 isPinned={isPinned}
                 onTogglePin={onTogglePin}
                 onSplitPane={onSplitPane}
+                onEditFiles={onEditFiles}
                 openInFileManagerPath={workspacePath}
               />
             ) : null}
@@ -963,7 +970,12 @@ function ProjectHeaderRow({
           iconDataUri={iconDataUri}
           statusBucket={statusBucket}
           projectViewKey={project.viewKey}
-          backdrop={getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered })}
+          backdrop={getSidebarRowBackdrop({
+            isDragging,
+            isPressed,
+            selected,
+            isHovered,
+          })}
           chevron={chevron}
           showChevron={isHovered && chevron !== null}
           isArchiving={isArchiving}
@@ -1088,6 +1100,7 @@ function WorkspaceRowInner({
   isPinned,
   onTogglePin,
   onSplitPane,
+  onEditFiles,
   reserveIdleStatusIndicatorSpace = true,
 }: WorkspaceRowInnerProps) {
   const _isCompact = useIsCompactFormFactor();
@@ -1162,6 +1175,7 @@ function WorkspaceRowInner({
               isPinned={isPinned}
               onTogglePin={onTogglePin}
               onSplitPane={onSplitPane}
+              onEditFiles={onEditFiles}
               openInFileManagerPath={workspace.workspaceDirectory}
               disabled={isArchiving}
               aria-selected={selected}
@@ -1181,7 +1195,12 @@ function WorkspaceRowInner({
                 leadingProjectName={leadingProjectName}
                 leadingProjectIconDataUri={leadingProjectIconDataUri}
                 serviceSummary={serviceSummary}
-                backdrop={getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered })}
+                backdrop={getSidebarRowBackdrop({
+                  isDragging,
+                  isPressed,
+                  selected,
+                  isHovered,
+                })}
                 isHovered={isHovered}
                 isLoading={isArchiving || isCreating}
                 isCreating={isCreating}
@@ -1207,6 +1226,7 @@ function WorkspaceRowInner({
                   isPinned={isPinned}
                   onTogglePin={onTogglePin}
                   onSplitPane={onSplitPane}
+                  onEditFiles={onEditFiles}
                 />
               </SidebarWorkspaceRowContent>
             </SidebarWorkspaceContextMenu>
@@ -1367,10 +1387,39 @@ function WorkspaceRowWithMenu({
       .getState()
       .sessions[workspace.serverId]?.workspaceAgentActivity.get(workspace.workspaceId)?.agentId;
     if (rootAgentId) {
-      layoutStore.openTabFocused(workspace.workspaceKey, { kind: "agent", agentId: rootAgentId });
+      layoutStore.openTabFocused(workspace.workspaceKey, {
+        kind: "agent",
+        agentId: rootAgentId,
+      });
     }
   }, [workspace.serverId, workspace.workspaceId, workspace.workspaceKey]);
   const onSplitPane = platformIsWeb ? handleSplitPane : undefined;
+
+  const handleEditFiles = useCallback(() => {
+    const workspaceDirectory = workspace.workspaceDirectory;
+    if (!workspaceDirectory) {
+      return;
+    }
+    const panelStore = usePanelStore.getState();
+    panelStore.openFileExplorerForCheckout({
+      isCompact: false,
+      checkout: {
+        serverId: workspace.serverId,
+        cwd: workspaceDirectory,
+        isGit: workspace.currentBranch !== null,
+      },
+    });
+    navigateToWorkspace({
+      serverId: workspace.serverId,
+      workspaceId: workspace.workspaceId,
+    });
+  }, [
+    workspace.currentBranch,
+    workspace.serverId,
+    workspace.workspaceDirectory,
+    workspace.workspaceId,
+  ]);
+  const onEditFiles = platformIsWeb ? handleEditFiles : undefined;
 
   const archiveShortcutKeys = useShortcutKeys("archive-workspace");
   const { hasClearableAttention, clearAttention } = useClearWorkspaceAttention({
@@ -1423,6 +1472,7 @@ function WorkspaceRowWithMenu({
         isPinned={isPinned}
         onTogglePin={onTogglePin}
         onSplitPane={onSplitPane}
+        onEditFiles={onEditFiles}
         reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       />
       <AdaptiveRenameModal
@@ -1485,7 +1535,10 @@ function WorkspaceRowItem({
       return;
     }
     onWorkspacePress?.();
-    navigateToWorkspace({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
+    navigateToWorkspace({
+      serverId: workspace.serverId,
+      workspaceId: workspace.workspaceId,
+    });
   }, [onWorkspacePress, workspace.serverId, workspace.workspaceId]);
 
   return (
@@ -1859,7 +1912,9 @@ function ProjectBlock({
     void (async () => {
       const confirmed = await confirmDialog({
         title: t("sidebar.project.confirmations.removeTitle"),
-        message: t("sidebar.project.confirmations.removeMessage", { projectName: displayName }),
+        message: t("sidebar.project.confirmations.removeMessage", {
+          projectName: displayName,
+        }),
         confirmLabel: t("sidebar.project.confirmations.removeConfirm"),
         cancelLabel: t("sidebar.project.confirmations.cancel"),
         destructive: true,

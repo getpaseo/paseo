@@ -1081,6 +1081,7 @@ export const es: TranslationResources = {
         archiveWorkspace: "Archivar espacio de trabajo",
         hideFromSidebar: "Ocultar de la barra lateral",
         splitPane: "Abrir en panel lateral",
+        editFiles: "Editar archivos",
         mainCheckout: "Main checkout",
         nestedRepos: "Repositorios",
         tabs: "{{count}} pestañas",

@@ -6,6 +6,7 @@ import {
   Archive,
   CircleCheck,
   Copy,
+  FilePen,
   MoreVertical,
   PanelRightOpen,
   Pencil,
@@ -38,7 +39,9 @@ import {
   type WorkspaceServiceSummary,
 } from "@/components/sidebar/workspace-meta-row";
 
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+const foregroundColorMapping = (theme: Theme) => ({
+  color: theme.colors.foreground,
+});
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
@@ -51,6 +54,7 @@ const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedPin = withUnistyles(Pin);
 const ThemedPinOff = withUnistyles(PinOff);
 const ThemedPanelRightOpen = withUnistyles(PanelRightOpen);
+const ThemedFilePen = withUnistyles(FilePen);
 
 const copyLeadingIcon = <ThemedCopy size={14} uniProps={foregroundMutedColorMapping} />;
 const renameLeadingIcon = <ThemedPencil size={14} uniProps={foregroundMutedColorMapping} />;
@@ -63,6 +67,7 @@ const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorM
 const splitPaneLeadingIcon = (
   <ThemedPanelRightOpen size={14} uniProps={foregroundMutedColorMapping} />
 );
+const editFilesLeadingIcon = <ThemedFilePen size={14} uniProps={foregroundMutedColorMapping} />;
 
 function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
   return (
@@ -92,6 +97,10 @@ export interface SidebarWorkspaceMenuProps {
    */
   onSplitPane?: () => void;
   /**
+   * Navigate to the workspace and open its file explorer for editing. Only shown on web.
+   */
+  onEditFiles?: () => void;
+  /**
    * Lifted so the row that reveals the kebab can keep it mounted while its menu is up. See
    * `useOpenKebabMenuVisibility`.
    */
@@ -112,7 +121,9 @@ function WorkspaceMenuItem({
   children,
   ...props
 }: PropsWithChildren<
-  Omit<ComponentProps<typeof DropdownMenuItem>, "children"> & { surface: MenuSurface }
+  Omit<ComponentProps<typeof DropdownMenuItem>, "children"> & {
+    surface: MenuSurface;
+  }
 >) {
   if (surface === "context") {
     return <ContextMenuItem {...props}>{children}</ContextMenuItem>;
@@ -136,6 +147,7 @@ function SidebarWorkspaceMenuItems({
   onTogglePin,
   openInFileManagerPath,
   onSplitPane,
+  onEditFiles,
 }: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
   const { t } = useTranslation();
   const archiveTrailing = useMemo(
@@ -200,6 +212,16 @@ function SidebarWorkspaceMenuItems({
         path={openInFileManagerPath}
         testID={`sidebar-workspace-menu-open-folder-${workspaceKey}`}
       />
+      {onEditFiles ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-edit-files-${workspaceKey}`}
+          leading={editFilesLeadingIcon}
+          onSelect={onEditFiles}
+        >
+          {t("sidebar.workspace.actions.editFiles")}
+        </WorkspaceMenuItem>
+      ) : null}
       {onSplitPane ? (
         <WorkspaceMenuItem
           surface={surface}
@@ -242,6 +264,7 @@ export function SidebarWorkspaceMenu({
   onTogglePin,
   openInFileManagerPath,
   onSplitPane,
+  onEditFiles,
   open,
   onOpenChange,
 }: SidebarWorkspaceMenuProps) {
@@ -274,6 +297,7 @@ export function SidebarWorkspaceMenu({
           onTogglePin={onTogglePin}
           openInFileManagerPath={openInFileManagerPath}
           onSplitPane={onSplitPane}
+          onEditFiles={onEditFiles}
         />
       </DropdownMenuContent>
     </DropdownMenu>
@@ -307,6 +331,7 @@ export function SidebarWorkspaceContextMenu({
   onTogglePin,
   openInFileManagerPath,
   onSplitPane,
+  onEditFiles,
   accessibilityLabel,
   highlightStyle,
   ...triggerProps
@@ -339,7 +364,9 @@ export function SidebarWorkspaceContextMenu({
     hostBadgeLabel,
     pullRequestLabel,
     serviceLabel: serviceSummary
-      ? t(workspaceServiceLabelKey(serviceSummary), { name: serviceSummary.name })
+      ? t(workspaceServiceLabelKey(serviceSummary), {
+          name: serviceSummary.name,
+        })
       : null,
   });
 
@@ -374,6 +401,7 @@ export function SidebarWorkspaceContextMenu({
           onTogglePin={onTogglePin}
           openInFileManagerPath={openInFileManagerPath}
           onSplitPane={onSplitPane}
+          onEditFiles={onEditFiles}
         />
       </ContextMenuContent>
     </ContextMenu>

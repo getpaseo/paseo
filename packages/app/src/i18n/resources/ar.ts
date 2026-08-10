@@ -1050,6 +1050,7 @@ export const ar: TranslationResources = {
         archiveWorkspace: "أرشفة مساحة العمل",
         hideFromSidebar: "إخفاء من الشريط الجانبي",
         splitPane: "فتح في اللوحة الجانبية",
+        editFiles: "تحرير الملفات",
         mainCheckout: "Main checkout",
         nestedRepos: "المستودعات",
         tabs: "{{count}} علامات تبويب",
