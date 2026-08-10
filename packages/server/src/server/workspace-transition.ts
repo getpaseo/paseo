@@ -88,9 +88,6 @@ export async function commitWorkspaceTransition(
       throw new Error("Current workspace disappeared during transition");
     }
 
-    // closeAgent snapshots the live object, so relocate it before the delayed close.
-    input.caller.cwd = transitioned.cwd;
-
     await dependencies.workspaceRegistry.remove(input.temporaryWorkspaceId).catch((error) => {
       dependencies.logger.warn(
         { err: error, workspaceId: input.temporaryWorkspaceId },
@@ -106,12 +103,14 @@ export async function commitWorkspaceTransition(
 
     const schedule = dependencies.schedule ?? ((callback: () => void) => setTimeout(callback, 0));
     schedule(() => {
-      void dependencies.agentManager.closeAgent(input.caller.id).catch((error) => {
-        dependencies.logger.warn(
-          { err: error, agentId: input.caller.id },
-          "Failed to close transitioned caller agent",
-        );
-      });
+      void dependencies.agentManager
+        .closeAgent(input.caller.id, { persistedCwd: transitioned.cwd })
+        .catch((error) => {
+          dependencies.logger.warn(
+            { err: error, agentId: input.caller.id },
+            "Failed to close transitioned caller agent",
+          );
+        });
     });
     return transitioned;
   } catch (error) {

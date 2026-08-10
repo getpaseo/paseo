@@ -1414,7 +1414,10 @@ export class AgentManager {
     }
   }
 
-  closeAgent(agentId: string): Promise<void> {
+  closeAgent(agentId: string, options?: { persistedCwd?: string }): Promise<void> {
+    if (options?.persistedCwd !== undefined) {
+      this.requireAgent(agentId).cwd = options.persistedCwd;
+    }
     const existing = this.inFlightAgentCloses.get(agentId);
     if (existing) {
       return existing;

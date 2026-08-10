@@ -31,10 +31,11 @@ describe("workspace transition", () => {
       isPaseoOwnedWorktree: true,
       mainRepoRoot: SOURCE_CWD,
     });
-    const caller = managedAgent("agent-caller", SOURCE_CWD);
+    const liveCaller = managedAgent("agent-caller", SOURCE_CWD);
+    const caller = { ...liveCaller } as ManagedAgent;
     const sibling = managedAgent("agent-sibling", SOURCE_CWD);
     const liveAgents = new Map([
-      [caller.id, caller],
+      [liveCaller.id, liveCaller],
       [sibling.id, sibling],
     ]);
     const records = new Map([
@@ -46,10 +47,11 @@ describe("workspace transition", () => {
       [targetWorkspace.workspaceId, targetWorkspace],
     ]);
     const scheduled: Array<() => void> = [];
-    const closeAgent = vi.fn(async (agentId: string) => {
+    const closeAgent = vi.fn(async (agentId: string, options?: { persistedCwd?: string }) => {
       const live = liveAgents.get(agentId);
       const record = records.get(agentId);
       if (live && record) {
+        if (options?.persistedCwd !== undefined) live.cwd = options.persistedCwd;
         records.set(agentId, { ...record, cwd: live.cwd, lastStatus: "closed" });
       }
     });
@@ -110,10 +112,13 @@ describe("workspace transition", () => {
     expect(closeAgent).not.toHaveBeenCalledWith(caller.id);
     expect(killWorkspaceTerminals).toHaveBeenCalledWith(sourceWorkspace.workspaceId);
     expect(emitWorkspaceUpdate).toHaveBeenCalledWith(sourceWorkspace.workspaceId);
-    expect(caller.cwd).toBe(TARGET_CWD);
+    expect(caller.cwd).toBe(SOURCE_CWD);
+    expect(liveCaller.cwd).toBe(SOURCE_CWD);
 
     scheduled.forEach((callback) => callback());
-    await vi.waitFor(() => expect(closeAgent).toHaveBeenCalledWith(caller.id));
+    await vi.waitFor(() => expect(closeAgent).toHaveBeenCalledTimes(2));
+    expect(closeAgent).toHaveBeenCalledWith(caller.id, { persistedCwd: TARGET_CWD });
+    expect(liveCaller.cwd).toBe(TARGET_CWD);
     expect(records.get(caller.id)).toMatchObject({ cwd: TARGET_CWD, lastStatus: "closed" });
   });
 

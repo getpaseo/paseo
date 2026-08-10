@@ -7776,6 +7776,34 @@ test("closeAgent persists one final closed snapshot", async () => {
   }
 });
 
+test("closeAgent can relocate the persisted cwd used by the next resume", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-close-relocate-"));
+  const relocatedCwd = join(workdir, "relocated");
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000218",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-current",
+    });
+
+    await manager.closeAgent(snapshot.id, { persistedCwd: relocatedCwd });
+    await manager.flush();
+    await storage.flush();
+
+    expect((await storage.get(snapshot.id))?.cwd).toBe(relocatedCwd);
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("idle agents remain resident until an explicit lifecycle action closes them", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-residency-"));
   let closeCount = 0;
