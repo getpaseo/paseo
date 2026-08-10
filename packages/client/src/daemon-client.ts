@@ -4044,7 +4044,7 @@ export class DaemonClient {
   }
 
   async getPaseoWorktreeList(
-    input: { cwd?: string; repoRoot?: string },
+    input: { cwd?: string; repoRoot?: string; allRegisteredProjects?: true },
     requestId?: string,
   ): Promise<PaseoWorktreeListPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -4053,6 +4053,7 @@ export class DaemonClient {
         type: "paseo_worktree_list_request",
         cwd: input.cwd,
         repoRoot: input.repoRoot,
+        allRegisteredProjects: input.allRegisteredProjects,
       },
       responseType: "paseo_worktree_list_response",
     });
@@ -4063,6 +4064,8 @@ export class DaemonClient {
       worktreePath?: string;
       repoRoot?: string;
       branchName?: string;
+      expectedWorktreeIdentity?: string;
+      expectedWorktreePath?: string;
       workspaceId?: string;
       scope?: "workspace" | "worktree";
     },
@@ -4075,6 +4078,8 @@ export class DaemonClient {
         worktreePath: input.worktreePath,
         repoRoot: input.repoRoot,
         branchName: input.branchName,
+        expectedWorktreeIdentity: input.expectedWorktreeIdentity,
+        expectedWorktreePath: input.expectedWorktreePath,
         ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
         ...(input.scope !== undefined ? { scope: input.scope } : {}),
       },

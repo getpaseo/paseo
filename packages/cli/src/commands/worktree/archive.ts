@@ -31,6 +31,8 @@ export const archiveSchema: OutputSchema<WorktreeArchiveResult> = {
 
 export interface WorktreeArchiveOptions extends CommandOptions {
   host?: string;
+  cwd?: string;
+  repoRoot?: string;
 }
 
 export type WorktreeArchiveCommandResult = SingleResult<WorktreeArchiveResult>;
@@ -60,6 +62,15 @@ export async function runArchiveCommandWithDeps(
     throw error;
   }
 
+  if (!options.cwd && !options.repoRoot) {
+    const error: CommandError = {
+      code: "MISSING_WORKTREE_SELECTOR",
+      message: "Archive requires --cwd or --repo-root",
+      details: "Use --repo-root <path> or --cwd <path> to select one repository.",
+    };
+    throw error;
+  }
+
   let client: DaemonClient;
   try {
     client = await deps.connectToDaemon({ host: options.host });
@@ -75,7 +86,10 @@ export async function runArchiveCommandWithDeps(
 
   try {
     // Get the list of worktrees first to resolve the name
-    const listResponse = await client.getPaseoWorktreeList({});
+    const listResponse = await client.getPaseoWorktreeList({
+      cwd: options.cwd,
+      repoRoot: options.repoRoot,
+    });
 
     if (listResponse.error) {
       const error: CommandError = {
@@ -86,10 +100,26 @@ export async function runArchiveCommandWithDeps(
     }
 
     // Find the worktree by name or branch
-    const worktree = listResponse.worktrees.find((wt) => {
+    const matches = listResponse.worktrees.filter((wt) => {
       const name = path.basename(wt.worktreePath);
       return name === nameArg || wt.branchName === nameArg;
     });
+    if (matches.length > 1) {
+      const identities = matches.map(
+        (worktree) => `${worktree.worktreePath} (branch: ${worktree.branchName ?? "-"})`,
+      );
+      const error: CommandError = {
+        code: "WORKTREE_AMBIGUOUS",
+        message: `Multiple worktrees match: ${nameArg}`,
+        details: [
+          ...identities,
+          "Use --repo-root <path> or --cwd <path> to select one repository.",
+        ].join("\n"),
+      };
+      throw error;
+    }
+
+    const worktree = matches[0];
 
     if (!worktree) {
       const error: CommandError = {
@@ -103,7 +133,9 @@ export async function runArchiveCommandWithDeps(
     // Archive the worktree. scope:"worktree" archives every active workspace on
     // the directory and then removes the directory (Paseo-owned gated).
     const response = await client.archivePaseoWorktree({
-      worktreePath: worktree.worktreePath,
+      repoRoot: options.repoRoot ?? options.cwd,
+      expectedWorktreeIdentity: nameArg,
+      expectedWorktreePath: worktree.worktreePath,
       scope: "worktree",
     });
 

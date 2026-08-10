@@ -30,8 +30,10 @@ export function createWorktreeCommand(): Command {
   addJsonAndDaemonHostOptions(
     worktree
       .command("archive")
-      .description("Archive a worktree (removes worktree and associated branch)")
-      .argument("<name>", "Worktree name or branch name"),
+      .description("Archive a worktree in an explicitly selected repository")
+      .argument("<name>", "Worktree name or branch name")
+      .option("--cwd <path>", "Directory within the repository (required without --repo-root)")
+      .option("--repo-root <path>", "Repository root (required without --cwd; takes precedence)"),
   ).action(withOutput(runArchiveCommand));
 
   return worktree;

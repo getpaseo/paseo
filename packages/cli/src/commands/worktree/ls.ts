@@ -3,7 +3,13 @@ import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
-import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
+import {
+  renderTable,
+  type CommandOptions,
+  type SingleResult,
+  type OutputSchema,
+  type CommandError,
+} from "../../output/index.js";
 
 /** Worktree list item for display */
 export interface WorktreeListItem {
@@ -11,6 +17,13 @@ export interface WorktreeListItem {
   branch: string;
   cwd: string;
   agent: string;
+}
+
+export interface WorktreeListOutput {
+  inventoryScope: "current_registered_non_archived_git_projects";
+  allManagedWorktreesIncluded: false;
+  excludedProjectStates: ["archived", "removed"];
+  worktrees: WorktreeListItem[];
 }
 
 /** Shorten home directory in path */
@@ -40,8 +53,7 @@ function isAgentInManagedWorktree(agentCwd: string): boolean {
   return agentCwd === worktreesDir || agentCwd.startsWith(worktreesDir + sep);
 }
 
-/** Schema for worktree ls output */
-export const worktreeLsSchema: OutputSchema<WorktreeListItem> = {
+const worktreeLsTableSchema: OutputSchema<WorktreeListItem> = {
   idField: "name",
   columns: [
     { header: "NAME", field: "name", width: 20 },
@@ -51,7 +63,28 @@ export const worktreeLsSchema: OutputSchema<WorktreeListItem> = {
   ],
 };
 
-export type WorktreeLsResult = ListResult<WorktreeListItem>;
+const WORKTREE_INVENTORY_SCOPE_TEXT =
+  "Scope: current registered, non-archived Git projects only; this is not a complete inventory of all managed worktrees because archived or removed projects are excluded.";
+
+/** Schema for worktree ls output */
+export const worktreeLsSchema: OutputSchema<WorktreeListOutput> = {
+  idField: (output) => output.worktrees.map((worktree) => worktree.name).join("\n"),
+  columns: [],
+  renderHuman: (result, options) => {
+    const outputs = result.type === "single" ? [result.data] : result.data;
+    const table = renderTable<WorktreeListItem>(
+      {
+        type: "list",
+        data: outputs.flatMap((output) => output.worktrees),
+        schema: worktreeLsTableSchema,
+      },
+      options,
+    );
+    return table ? `${WORKTREE_INVENTORY_SCOPE_TEXT}\n${table}` : WORKTREE_INVENTORY_SCOPE_TEXT;
+  },
+};
+
+export type WorktreeLsResult = SingleResult<WorktreeListOutput>;
 
 export interface WorktreeLsOptions extends CommandOptions {
   host?: string;
@@ -61,11 +94,18 @@ export async function runLsCommand(
   options: WorktreeLsOptions,
   _command: Command,
 ): Promise<WorktreeLsResult> {
+  return runLsCommandWithDeps(options, { connectToDaemon });
+}
+
+export async function runLsCommandWithDeps(
+  options: WorktreeLsOptions,
+  deps: { connectToDaemon: typeof connectToDaemon },
+): Promise<WorktreeLsResult> {
   const host = getDaemonHost({ host: options.host });
 
   let client: DaemonClient;
   try {
-    client = await connectToDaemon({ host: options.host });
+    client = await deps.connectToDaemon({ host: options.host });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const error: CommandError = {
@@ -80,8 +120,7 @@ export async function runLsCommand(
     const agentsPayload = await client.fetchAgents({ filter: { includeArchived: true } });
     const agents = agentsPayload.entries.map((entry) => entry.agent);
 
-    // Get worktree list from daemon
-    const response = await client.getPaseoWorktreeList({});
+    const response = await client.getPaseoWorktreeList({ allRegisteredProjects: true });
 
     await client.close();
 
@@ -89,6 +128,15 @@ export async function runLsCommand(
       const error: CommandError = {
         code: "WORKTREE_LIST_FAILED",
         message: `Failed to list worktrees: ${response.error.message}`,
+      };
+      throw error;
+    }
+
+    if (response.repositoryErrors !== undefined) {
+      const error: CommandError = {
+        code: "WORKTREE_LIST_PARTIAL",
+        message: `Failed to list worktrees from ${response.repositoryErrors} registered ${response.repositoryErrors === 1 ? "repository" : "repositories"}`,
+        details: "Resolve the unavailable repositories and retry.",
       };
       throw error;
     }
@@ -109,8 +157,13 @@ export async function runLsCommand(
     }));
 
     return {
-      type: "list",
-      data: items,
+      type: "single",
+      data: {
+        inventoryScope: "current_registered_non_archived_git_projects",
+        allManagedWorktreesIncluded: false,
+        excludedProjectStates: ["archived", "removed"],
+        worktrees: items,
+      },
       schema: worktreeLsSchema,
     };
   } catch (err) {

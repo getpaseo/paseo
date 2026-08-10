@@ -11,8 +11,8 @@ import {
   type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
 } from "./messages.js";
-import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
-import type { WorkspaceGitService } from "./workspace-git-service.js";
+import type { PersistedWorkspaceRecord, ProjectRegistry } from "./workspace-registry.js";
+import type { WorkspaceGitService, WorkspaceGitWorktreeInfo } from "./workspace-git-service.js";
 import {
   runAsyncWorktreeBootstrap,
   applyWorktreeSetupProgressEvent,
@@ -24,7 +24,7 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type { CheckoutExistingBranchResult } from "../utils/checkout-git.js";
-import { expandTilde } from "../utils/path.js";
+import { expandTilde, normalizePathForIdentity } from "../utils/path.js";
 import {
   getWorktreeSetupCommands,
   resolveWorktreeRuntimeEnv,
@@ -399,12 +399,14 @@ export async function handlePaseoWorktreeListRequest(
     emit: EmitSessionMessage;
     paseoHome?: string;
     workspaceGitService: WorkspaceGitService;
+    projectRegistry: Pick<ProjectRegistry, "list">;
+    sessionLogger: Logger;
   },
   msg: Extract<SessionInboundMessage, { type: "paseo_worktree_list_request" }>,
 ): Promise<void> {
   const { requestId } = msg;
   const cwd = msg.repoRoot ?? msg.cwd;
-  if (!cwd) {
+  if (!cwd && msg.allRegisteredProjects !== true) {
     dependencies.emit({
       type: "paseo_worktree_list_response",
       payload: {
@@ -417,10 +419,62 @@ export async function handlePaseoWorktreeListRequest(
   }
 
   try {
-    const worktrees = await listPaseoWorktreesCommand(
-      { workspaceGitService: dependencies.workspaceGitService },
-      { cwd },
-    );
+    let repositoryErrors = 0;
+    let worktrees: WorkspaceGitWorktreeInfo[];
+    if (cwd) {
+      worktrees = await listPaseoWorktreesCommand(
+        { workspaceGitService: dependencies.workspaceGitService },
+        { cwd },
+      );
+    } else {
+      const projects = (await dependencies.projectRegistry.list()).filter(
+        (project) => !project.archivedAt && project.kind === "git",
+      );
+      const resolvedRepositories = await Promise.all(
+        projects.map(async (project) => {
+          try {
+            return await dependencies.workspaceGitService.resolveRepoRoot(project.rootPath);
+          } catch (error) {
+            repositoryErrors += 1;
+            dependencies.sessionLogger.warn(
+              { err: error, projectId: project.projectId, projectRoot: project.rootPath },
+              "Skipping project while listing Paseo worktrees",
+            );
+            return null;
+          }
+        }),
+      );
+      const repositoryRoots = new Map<string, string>();
+      for (const repoRoot of resolvedRepositories) {
+        if (repoRoot) {
+          repositoryRoots.set(normalizePathForIdentity(repoRoot), repoRoot);
+        }
+      }
+
+      const worktreesByRepository = await Promise.all(
+        Array.from(repositoryRoots.values()).map(async (repoRoot) => {
+          try {
+            return await listPaseoWorktreesCommand(
+              { workspaceGitService: dependencies.workspaceGitService },
+              { cwd: repoRoot },
+            );
+          } catch (error) {
+            repositoryErrors += 1;
+            dependencies.sessionLogger.warn(
+              { err: error, repoRoot },
+              "Skipping repository while listing Paseo worktrees",
+            );
+            return [];
+          }
+        }),
+      );
+      const worktreesByPath = new Map(
+        worktreesByRepository
+          .flat()
+          .map((worktree) => [normalizePathForIdentity(worktree.path), worktree] as const),
+      );
+      worktrees = Array.from(worktreesByPath.values());
+    }
     dependencies.emit({
       type: "paseo_worktree_list_response",
       payload: {
@@ -430,6 +484,7 @@ export async function handlePaseoWorktreeListRequest(
           branchName: entry.branchName ?? null,
           head: entry.head ?? null,
         })),
+        ...(repositoryErrors > 0 ? { repositoryErrors } : {}),
         error: null,
         requestId,
       },
@@ -465,6 +520,8 @@ export async function handlePaseoWorktreeArchiveRequest(
       worktreePath: msg.worktreePath,
       repoRoot: msg.repoRoot,
       branchName: msg.branchName,
+      expectedWorktreeIdentity: msg.expectedWorktreeIdentity,
+      expectedWorktreePath: msg.expectedWorktreePath,
       workspaceId: msg.workspaceId,
       scope: msg.scope,
     });

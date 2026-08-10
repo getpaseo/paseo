@@ -1,5 +1,6 @@
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
+import { areEquivalentPaths } from "../../utils/path.js";
 import { getPaseoWorktreesRoot, isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import {
   archiveByScope,
@@ -102,6 +103,8 @@ export interface ArchiveCommandInput {
   worktreePath?: string;
   worktreeSlug?: string;
   branchName?: string;
+  expectedWorktreeIdentity?: string;
+  expectedWorktreePath?: string;
   workspaceId?: string;
   scope?: ArchiveScope["kind"];
 }
@@ -180,6 +183,19 @@ async function resolveArchiveTarget(
   input: ArchiveCommandInput,
 ): Promise<string> {
   const repoRoot = input.repoRoot ?? null;
+  if (input.expectedWorktreeIdentity || input.expectedWorktreePath) {
+    if (!repoRoot || !input.expectedWorktreeIdentity || !input.expectedWorktreePath) {
+      throw new Error(
+        "repoRoot, expectedWorktreeIdentity, and expectedWorktreePath must be supplied together",
+      );
+    }
+    return resolveFreshArchiveIdentity(dependencies, {
+      repoRoot,
+      identity: input.expectedWorktreeIdentity,
+      expectedPath: input.expectedWorktreePath,
+    });
+  }
+
   if (input.worktreePath) {
     return input.worktreePath;
   }
@@ -192,15 +208,47 @@ async function resolveArchiveTarget(
   }
 
   if (repoRoot && input.branchName) {
-    const worktrees = await dependencies.workspaceGitService.listWorktrees(repoRoot);
-    const match = worktrees.find((entry) => entry.branchName === input.branchName);
-    if (!match) {
+    const worktrees = await dependencies.workspaceGitService.listWorktrees(repoRoot, {
+      force: true,
+      reason: "archive-worktree-branch",
+    });
+    const matches = worktrees.filter((entry) => entry.branchName === input.branchName);
+    if (matches.length === 0) {
       throw new Error(`Paseo worktree not found for branch ${input.branchName}`);
     }
-    return match.path;
+    if (matches.length > 1) {
+      throw new Error(`Multiple Paseo worktrees match branch ${input.branchName}`);
+    }
+    return matches[0]!.path;
   }
 
   throw new Error("worktreePath, worktreeSlug, or repoRoot+branchName is required");
+}
+
+async function resolveFreshArchiveIdentity(
+  dependencies: ArchiveCommandDependencies,
+  input: { repoRoot: string; identity: string; expectedPath: string },
+): Promise<string> {
+  const worktrees = await dependencies.workspaceGitService.listWorktrees(input.repoRoot, {
+    force: true,
+    reason: "archive-worktree-identity",
+  });
+  const matches = worktrees.filter(
+    (entry) => basename(entry.path) === input.identity || entry.branchName === input.identity,
+  );
+
+  if (matches.length === 0) {
+    throw new Error(`Paseo worktree no longer matches identity ${input.identity}`);
+  }
+  if (matches.length > 1) {
+    throw new Error(`Multiple Paseo worktrees match identity ${input.identity}`);
+  }
+
+  const match = matches[0]!;
+  if (!areEquivalentPaths(match.path, input.expectedPath)) {
+    throw new Error(`Paseo worktree identity ${input.identity} now matches a different path`);
+  }
+  return match.path;
 }
 
 async function resolveWorktreeSlugPath(

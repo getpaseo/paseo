@@ -2012,6 +2012,7 @@ export const PaseoWorktreeListRequestSchema = z.object({
   type: z.literal("paseo_worktree_list_request"),
   cwd: z.string().optional(),
   repoRoot: z.string().optional(),
+  allRegisteredProjects: z.literal(true).optional(),
   requestId: z.string(),
 });
 
@@ -2020,6 +2021,11 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
   worktreePath: z.string().optional(),
   repoRoot: z.string().optional(),
   branchName: z.string().optional(),
+  // COMPAT(worktreeArchiveExpectedIdentity): added in v0.2.6, remove optional after 2027-02-03.
+  // New destructive clients send both fields instead of worktreePath so an old
+  // daemon strips them and fails safely rather than trusting a stale cached path.
+  expectedWorktreeIdentity: z.string().optional(),
+  expectedWorktreePath: z.string().optional(),
   // COMPAT(worktreeArchiveWorkspaceId): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
   // Explicit workspace record to archive. A directory can back multiple workspaces
   // (Model B), so resolving the target by cwd alone picks the wrong record. When
@@ -4865,6 +4871,9 @@ export const PaseoWorktreeListResponseSchema = z.object({
   type: z.literal("paseo_worktree_list_response"),
   payload: z.object({
     worktrees: z.array(PaseoWorktreeSchema),
+    // Reports only failures observed while inspecting current registered projects.
+    // Absence does not assert that the inventory is complete.
+    repositoryErrors: z.number().int().positive().optional(),
     error: CheckoutErrorSchema.nullable(),
     requestId: z.string(),
   }),

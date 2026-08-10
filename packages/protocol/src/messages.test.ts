@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   FileExplorerRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
+  PaseoWorktreeListRequestSchema,
   parseServerInfoStatusPayload,
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
@@ -400,6 +401,11 @@ describe("file explorer request compatibility", () => {
 });
 
 describe("paseo worktree archive request compatibility", () => {
+  const legacyRequestSchema = PaseoWorktreeArchiveRequestSchema.omit({
+    expectedWorktreeIdentity: true,
+    expectedWorktreePath: true,
+  });
+
   test("omitted scope defaults to workspace", () => {
     const parsed = PaseoWorktreeArchiveRequestSchema.parse({
       type: "paseo_worktree_archive_request",
@@ -428,6 +434,103 @@ describe("paseo worktree archive request compatibility", () => {
     });
     expect(parsed).not.toHaveProperty("extraField");
     expect(parsed.scope).toBe("workspace");
+  });
+
+  test("old daemons strip expected identity fields and cannot receive a destructive path", () => {
+    const parsed = legacyRequestSchema.parse({
+      type: "paseo_worktree_archive_request",
+      repoRoot: "/repo",
+      expectedWorktreeIdentity: "feature",
+      expectedWorktreePath: "/paseo/worktrees/repo/feature",
+      scope: "worktree",
+      requestId: "req-new-cli-old-daemon",
+    });
+
+    expect(parsed).toEqual({
+      type: "paseo_worktree_archive_request",
+      repoRoot: "/repo",
+      scope: "worktree",
+      deleteWorktreeFromDisk: false,
+      requestId: "req-new-cli-old-daemon",
+    });
+    expect(parsed).not.toHaveProperty("worktreePath");
+  });
+
+  test("new daemons preserve the expected identity and path", () => {
+    const parsed = PaseoWorktreeArchiveRequestSchema.parse({
+      type: "paseo_worktree_archive_request",
+      repoRoot: "/repo",
+      expectedWorktreeIdentity: "feature",
+      expectedWorktreePath: "/paseo/worktrees/repo/feature",
+      scope: "worktree",
+      requestId: "req-new-cli-new-daemon",
+    });
+
+    expect(parsed).toMatchObject({
+      expectedWorktreeIdentity: "feature",
+      expectedWorktreePath: "/paseo/worktrees/repo/feature",
+    });
+  });
+});
+
+describe("paseo worktree list request compatibility", () => {
+  const legacyRequestSchema = PaseoWorktreeListRequestSchema.omit({
+    allRegisteredProjects: true,
+  });
+
+  test("old CLI and old daemon retain the unscoped legacy request shape", () => {
+    const parsed = legacyRequestSchema.parse({
+      type: "paseo_worktree_list_request",
+      requestId: "req-old-cli-old-daemon",
+    });
+
+    expect(parsed).toEqual({
+      type: "paseo_worktree_list_request",
+      requestId: "req-old-cli-old-daemon",
+    });
+  });
+
+  test("old daemon strips the new global inventory flag and returns its explicit error", () => {
+    const request = legacyRequestSchema.parse({
+      type: "paseo_worktree_list_request",
+      allRegisteredProjects: true,
+      requestId: "req-new-cli-old-daemon",
+    });
+    const response = SessionOutboundMessageSchema.parse({
+      type: "paseo_worktree_list_response",
+      payload: {
+        worktrees: [],
+        error: { code: "UNKNOWN", message: "cwd or repoRoot is required" },
+        requestId: "req-new-cli-old-daemon",
+      },
+    });
+
+    expect(request).toEqual({
+      type: "paseo_worktree_list_request",
+      requestId: "req-new-cli-old-daemon",
+    });
+    expect(response).toEqual({
+      type: "paseo_worktree_list_response",
+      payload: {
+        worktrees: [],
+        error: { code: "UNKNOWN", message: "cwd or repoRoot is required" },
+        requestId: "req-new-cli-old-daemon",
+      },
+    });
+  });
+
+  test("new daemon preserves the explicit global inventory flag", () => {
+    const parsed = PaseoWorktreeListRequestSchema.parse({
+      type: "paseo_worktree_list_request",
+      allRegisteredProjects: true,
+      requestId: "req-new-cli-new-daemon",
+    });
+
+    expect(parsed).toEqual({
+      type: "paseo_worktree_list_request",
+      allRegisteredProjects: true,
+      requestId: "req-new-cli-new-daemon",
+    });
   });
 });
 
