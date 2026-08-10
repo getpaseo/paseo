@@ -80,7 +80,9 @@ function parseSentFrame(
   return JSON.parse(data);
 }
 
-async function connectClient(): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
+async function connectClient(
+  features: Record<string, boolean> = { providersSnapshotCwd: true },
+): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
   vi.stubGlobal("WebSocket", FakeWebSocket);
   const client = createPaseoClient({
     url: "ws://daemon.test",
@@ -105,6 +107,7 @@ async function connectClient(): Promise<{ client: PaseoClient; ws: FakeWebSocket
         serverId: "srv_sdk_test",
         hostname: null,
         version: null,
+        features,
       },
     }),
   );
@@ -791,8 +794,19 @@ test("provider actions delegate to existing provider RPCs and local snapshot upd
       type: "get_providers_snapshot_response",
       payload: {
         requestId: readyRequest.requestId,
+        cwd: "/repo/sdk",
         entries: [{ provider: "codex", status: "loading", enabled: true }],
         generatedAt: "2026-05-16T00:00:00.000Z",
+      },
+    }),
+  );
+  ws.message(
+    sessionMessage({
+      type: "providers_snapshot_update",
+      payload: {
+        cwd: "/repo/other",
+        entries: [{ provider: "codex", status: "ready", enabled: true }],
+        generatedAt: "2026-05-16T00:00:30.000Z",
       },
     }),
   );
@@ -927,6 +941,18 @@ test("provider actions delegate to existing provider RPCs and local snapshot upd
   expect(snapshotModelDefaults).toEqual(["high"]);
 
   unsubscribe();
+  await client.close();
+});
+
+test("waitForReady requires canonical provider snapshot identity from the host", async () => {
+  const { client, ws } = await connectClient({});
+  const sentBeforeWait = ws.sent.length;
+
+  await expect(client.providers.waitForReady({ cwd: "/repo/./sdk" })).rejects.toThrow(
+    "Update the host to wait for provider discovery.",
+  );
+  expect(ws.sent).toHaveLength(sentBeforeWait);
+
   await client.close();
 });
 

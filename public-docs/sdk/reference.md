@@ -110,17 +110,17 @@ A workspace handle exposes `id`, `projectId`, `directory`, `name`, `status`, `cu
 
 ## `client.providers`
 
-| Method                           | Result                        | Behavior                                                         |
-| -------------------------------- | ----------------------------- | ---------------------------------------------------------------- |
-| `waitForReady(options?)`         | `PaseoProviderSnapshotResult` | Waits until no provider is loading. Default timeout: 60 seconds. |
-| `snapshot(options?)`             | `PaseoProviderSnapshotResult` | Returns the current catalog immediately.                         |
-| `refresh(options?)`              | Acknowledgement               | Forces catalog refresh for all or selected providers.            |
-| `listAvailable()`                | Availability result           | Reports installed provider availability.                         |
-| `listModels(provider, options?)` | Models result                 | Discovers models for one provider and directory.                 |
-| `listModes(provider, options?)`  | Modes result                  | Discovers permission or operating modes.                         |
-| `listFeatures(draftConfig)`      | Features result               | Discovers features for the current draft provider configuration. |
-| `diagnostic(provider)`           | Diagnostic result             | Returns human-readable setup diagnostics.                        |
-| `subscribe(handler)`             | Unsubscribe function          | Listens for catalog updates.                                     |
+| Method                           | Result                        | Behavior                                                                                                                                                 |
+| -------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `waitForReady(options?)`         | `PaseoProviderSnapshotResult` | Waits until no provider is loading. Default timeout: 60 seconds. Rejects with an update-host error when the daemon cannot correlate workspace snapshots. |
+| `snapshot(options?)`             | `PaseoProviderSnapshotResult` | Returns the current catalog immediately.                                                                                                                 |
+| `refresh(options?)`              | Acknowledgement               | Forces catalog refresh for all or selected providers.                                                                                                    |
+| `listAvailable()`                | Availability result           | Reports installed provider availability.                                                                                                                 |
+| `listModels(provider, options?)` | Models result                 | Discovers models for one provider and directory.                                                                                                         |
+| `listModes(provider, options?)`  | Modes result                  | Discovers permission or operating modes.                                                                                                                 |
+| `listFeatures(draftConfig)`      | Features result               | Discovers features for the current draft provider configuration.                                                                                         |
+| `diagnostic(provider)`           | Diagnostic result             | Returns human-readable setup diagnostics.                                                                                                                |
+| `subscribe(handler)`             | Unsubscribe function          | Listens for catalog updates.                                                                                                                             |
 
 ## `client.config`
 

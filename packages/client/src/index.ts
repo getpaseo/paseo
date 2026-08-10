@@ -667,12 +667,17 @@ function waitForProvidersReady(
   daemonClient: DaemonClient,
   options: PaseoProviderWaitOptions = {},
 ): Promise<PaseoProviderSnapshotResult> {
+  // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
+  if (daemonClient.getLastServerInfoMessage()?.features?.providersSnapshotCwd !== true) {
+    return Promise.reject(new Error("Update the host to wait for provider discovery."));
+  }
+
   const { timeoutMs = 60_000, ...snapshotOptions } = options;
 
   return new Promise((resolve, reject) => {
     let settled = false;
     let requestId: string | null = null;
-    let snapshotCwd = snapshotOptions.cwd;
+    let snapshotCwd: string | undefined;
     const pendingUpdates = new Map<string | undefined, PaseoProviderSnapshotUpdate>();
     let latestEntries: PaseoProviderSnapshotResult["entries"] = [];
 
@@ -724,8 +729,7 @@ function waitForProvidersReady(
       .getProvidersSnapshot(snapshotOptions)
       .then((snapshot) => {
         requestId = snapshot.requestId;
-        // COMPAT(providerSnapshotCwd): added in v0.3.2, remove after 2027-02-10 once daemon floor >= v0.3.2.
-        snapshotCwd = snapshot.cwd ?? snapshotOptions.cwd;
+        snapshotCwd = snapshot.cwd;
         latestEntries = snapshot.entries;
         if (!snapshot.entries.some((entry) => entry.status === "loading")) {
           finish(snapshot);
