@@ -122,6 +122,12 @@ import { createGitHubService } from "../services/github-service.js";
 import { createPaseoWorktree as createRegisteredPaseoWorktree } from "./paseo-worktree-service.js";
 import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import { createPaseoWorktreeWorkflow } from "./worktree-session.js";
+import {
+  getWorktreeSetupCommands,
+  resolveWorktreeRuntimeEnv,
+  rollbackCreatedPaseoWorktree,
+  runWorktreeSetupCommands,
+} from "../utils/worktree.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
 import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
@@ -1072,6 +1078,149 @@ export async function createPaseoDaemon(
   };
   const createAgent = (input: Parameters<typeof createAgentCommand>[1]) =>
     createAgentCommand(createAgentCommandDependencies, input);
+
+  const transitionWorkspaceToWorktree = async (input: {
+    callerAgentId: string;
+    branchName?: string;
+    baseBranch?: string;
+    worktreeSlug?: string;
+  }) => {
+    const caller = agentManager.getAgent(input.callerAgentId);
+    if (!caller?.workspaceId) {
+      throw new Error("Caller agent has no current workspace");
+    }
+    const workspace = await workspaceRegistry.get(caller.workspaceId);
+    if (!workspace || workspace.archivedAt) {
+      throw new Error("Current workspace is not available");
+    }
+    if (workspace.kind !== "local_checkout") {
+      throw new Error("Only a local Git workspace can move to a worktree");
+    }
+
+    const sourceSnapshot = await workspaceGitService.getSnapshot(workspace.cwd, {
+      force: true,
+      reason: "workspace_transition",
+    });
+    if (!sourceSnapshot.git.isGit) {
+      throw new Error("Only a Git workspace can move to a worktree");
+    }
+    if (sourceSnapshot.git.isDirty) {
+      throw new Error("Commit or stash local changes before moving this workspace to a worktree");
+    }
+
+    const liveAgents = agentManager
+      .listAgents()
+      .filter((agent) => agent.workspaceId === workspace.workspaceId);
+    const busyAgent = liveAgents.find(
+      (agent) =>
+        agent.id !== input.callerAgentId &&
+        (agent.lifecycle === "running" || agent.lifecycle === "initializing"),
+    );
+    if (busyAgent) {
+      throw new Error("Wait for other agents in this workspace to finish before moving it");
+    }
+
+    const created = await createRegisteredPaseoWorktree(
+      {
+        cwd: workspace.cwd,
+        projectId: workspace.projectId,
+        ...(input.worktreeSlug ? { worktreeSlug: input.worktreeSlug } : {}),
+        ...(input.branchName ? { branchName: input.branchName } : {}),
+        ...(input.baseBranch ? { refName: input.baseBranch } : {}),
+        action: "branch-off",
+        paseoHome: config.paseoHome,
+        worktreesRoot: config.worktreesRoot,
+      },
+      { github, workspaceGitService, workspaceProvisioning },
+    );
+
+    try {
+      if (created.created) {
+        const setupCommands = getWorktreeSetupCommands(created.workspace.cwd);
+        if (setupCommands.length > 0) {
+          const runtimeEnv = await resolveWorktreeRuntimeEnv({
+            worktreePath: created.worktree.worktreePath,
+            branchName: created.worktree.branchName,
+            repoRootPath: created.repoRoot,
+          });
+          terminalManager.registerCwdEnv({ cwd: created.workspace.cwd, env: runtimeEnv });
+          await runWorktreeSetupCommands({
+            worktreePath: created.workspace.cwd,
+            branchName: created.worktree.branchName,
+            cleanupOnFailure: true,
+            repoRootPath: created.repoRoot,
+            runtimeEnv,
+          });
+        }
+      }
+
+      await Promise.all(
+        liveAgents
+          .filter((agent) => agent.id !== input.callerAgentId)
+          .map((agent) => agentManager.closeAgent(agent.id)),
+      );
+      await killTerminalsForWorkspace(
+        { terminalManager, sessionLogger: logger },
+        workspace.workspaceId,
+      );
+
+      const transitioned = await workspaceRegistry.update(workspace.workspaceId, (existing) => ({
+        ...existing,
+        cwd: created.workspace.cwd,
+        kind: "worktree",
+        displayName: created.workspace.displayName,
+        branch: created.workspace.branch,
+        worktreeRoot: created.workspace.worktreeRoot,
+        baseBranch: created.workspace.baseBranch,
+        isPaseoOwnedWorktree: true,
+        mainRepoRoot: created.workspace.mainRepoRoot,
+        updatedAt: new Date().toISOString(),
+      }));
+      if (!transitioned) {
+        throw new Error("Current workspace disappeared during transition");
+      }
+
+      const records = await agentStorage.list();
+      await Promise.all(
+        records
+          .filter((record) => !record.archivedAt && record.workspaceId === workspace.workspaceId)
+          .map((record) =>
+            agentStorage.upsert({
+              ...record,
+              cwd: transitioned.cwd,
+              updatedAt: new Date().toISOString(),
+            }),
+          ),
+      );
+      await workspaceRegistry.remove(created.workspace.workspaceId);
+      await emitWorkspaceUpdatesExternal([workspace.workspaceId]);
+
+      // The calling agent must receive this MCP result before its old runtime is closed.
+      setTimeout(() => {
+        void agentManager.closeAgent(input.callerAgentId).catch((error) => {
+          logger.warn(
+            { err: error, agentId: input.callerAgentId },
+            "Failed to close transitioned caller agent",
+          );
+        });
+      }, 0);
+      return transitioned;
+    } catch (error) {
+      await workspaceRegistry.remove(created.workspace.workspaceId).catch(() => undefined);
+      if (created.created) {
+        await rollbackCreatedPaseoWorktree(
+          {
+            cwd: created.repoRoot,
+            worktreePath: created.worktree.worktreePath,
+            paseoHome: config.paseoHome,
+            worktreesBaseRoot: config.worktreesRoot,
+          },
+          error,
+        );
+      }
+      throw error;
+    }
+  };
   const archiveWorkspaceByIdExternal = (workspaceId: string, requestId: string) =>
     archiveByScope(
       {
@@ -1290,6 +1439,7 @@ export async function createPaseoDaemon(
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
     ensureWorkspaceForCreate: createAgentCommandDependencies.ensureWorkspaceForCreate,
     createPaseoWorktree: createAgentCommandDependencies.createPaseoWorktree,
+    transitionWorkspaceToWorktree,
     browserToolsEnabled: browserToolsPolicy.isEnabled(),
     browserToolsBroker,
     paseoHome: config.paseoHome,

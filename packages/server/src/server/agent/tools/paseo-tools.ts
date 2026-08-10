@@ -118,6 +118,12 @@ export interface PaseoToolHostDependencies {
   markWorkspaceArchiving?: ArchiveDependencies["markWorkspaceArchiving"];
   clearWorkspaceArchiving?: ArchiveDependencies["clearWorkspaceArchiving"];
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
+  transitionWorkspaceToWorktree?: (input: {
+    callerAgentId: string;
+    branchName?: string;
+    baseBranch?: string;
+    worktreeSlug?: string;
+  }) => Promise<PersistedWorkspaceRecord>;
   // Mints a fresh directory workspace for a cwd and returns its id.
   ensureWorkspaceForCreate?: (
     cwd: string,
@@ -1321,6 +1327,39 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         workspace = result.createdWorktree.workspace;
       }
 
+      return {
+        content: [],
+        structuredContent: ensureValidJson(toWorkspaceAutomationSummary(workspace)),
+      };
+    },
+  );
+
+  registerTool(
+    "transition_workspace_to_worktree",
+    {
+      title: "Move workspace to worktree",
+      description:
+        "Move your current local Git workspace into a new Paseo-managed worktree. The workspace keeps its identity; its checkout changes. Requires a clean checkout and no other running agents in the workspace.",
+      inputSchema: {
+        worktreeSlug: z.string().trim().min(1).optional(),
+        branchName: z.string().trim().min(1).optional(),
+        baseBranch: z.string().trim().min(1).optional(),
+      },
+      outputSchema: WorkspaceAutomationSummarySchema.shape,
+    },
+    async ({ worktreeSlug, branchName, baseBranch }) => {
+      if (!callerAgentId) {
+        throw new Error("transition_workspace_to_worktree requires an agent-scoped tool session");
+      }
+      if (!options.transitionWorkspaceToWorktree) {
+        throw new Error("Workspace transition is not configured");
+      }
+      const workspace = await options.transitionWorkspaceToWorktree({
+        callerAgentId,
+        ...(worktreeSlug ? { worktreeSlug } : {}),
+        ...(branchName ? { branchName } : {}),
+        ...(baseBranch ? { baseBranch } : {}),
+      });
       return {
         content: [],
         structuredContent: ensureValidJson(toWorkspaceAutomationSummary(workspace)),

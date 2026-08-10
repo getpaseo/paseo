@@ -1555,11 +1555,53 @@ describe("create_agent MCP tool", () => {
     expect(lookupTool(server, "create_workspace")).toBeDefined();
     expect(lookupTool(server, "list_workspaces")).toBeDefined();
     expect(lookupTool(server, "archive_workspace")).toBeDefined();
+    expect(lookupTool(server, "transition_workspace_to_worktree")).toBeDefined();
     expect(lookupTool(server, "create_worktree")).toBeUndefined();
     expect(lookupTool(server, "list_worktrees")).toBeUndefined();
     expect(lookupTool(server, "archive_worktree")).toBeUndefined();
     expect(lookupTool(server, "detach_agent")).toBeUndefined();
     expect(lookupTool(server, "update_heartbeat")).toBeUndefined();
+  });
+
+  it("transitions the calling agent workspace to a worktree", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const transitionWorkspaceToWorktree = vi.fn(async () =>
+      createPersistedWorkspaceRecord({
+        workspaceId: "wks_current",
+        projectId: "prj_current",
+        cwd: TARGET_CWD,
+        kind: "worktree",
+        displayName: "feature/current",
+        title: null,
+        createdAt: "2026-08-10T00:00:00.000Z",
+        updatedAt: "2026-08-10T00:00:00.000Z",
+      }),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      callerAgentId: "agent-current",
+      providerSnapshotManager: createOpenCodeManager().manager,
+      transitionWorkspaceToWorktree,
+      logger,
+    });
+
+    const response = await invokeToolWithParsedInput(
+      registeredTool(server, "transition_workspace_to_worktree"),
+      { branchName: "feature/current", baseBranch: "main", worktreeSlug: "current" },
+    );
+
+    expect(transitionWorkspaceToWorktree).toHaveBeenCalledWith({
+      callerAgentId: "agent-current",
+      branchName: "feature/current",
+      baseBranch: "main",
+      worktreeSlug: "current",
+    });
+    expect(response.structuredContent).toMatchObject({
+      workspaceId: "wks_current",
+      cwd: TARGET_CWD,
+      isolation: "worktree",
+    });
   });
 
   it("surfaces createAgent validation failures", async () => {
