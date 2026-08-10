@@ -272,8 +272,8 @@ export const ar: TranslationResources = {
     },
   },
   message: {
-    mermaid: {
-      diagram: "مخطط Mermaid",
+    diagram: {
+      diagram: "مخطط",
       zoomIn: "تكبير",
       zoomOut: "تصغير",
       resetZoom: "إعادة تعيين العرض",

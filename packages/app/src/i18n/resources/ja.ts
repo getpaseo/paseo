@@ -275,8 +275,8 @@ export const ja: TranslationResources = {
     },
   },
   message: {
-    mermaid: {
-      diagram: "Mermaid図",
+    diagram: {
+      diagram: "図",
       zoomIn: "拡大",
       zoomOut: "縮小",
       resetZoom: "表示をリセット",

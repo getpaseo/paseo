@@ -271,8 +271,8 @@ export const en = {
     },
   },
   message: {
-    mermaid: {
-      diagram: "Mermaid diagram",
+    diagram: {
+      diagram: "Diagram",
       zoomIn: "Zoom in",
       zoomOut: "Zoom out",
       resetZoom: "Reset view",

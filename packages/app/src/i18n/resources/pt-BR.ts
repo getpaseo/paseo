@@ -275,8 +275,8 @@ export const ptBR: TranslationResources = {
     },
   },
   message: {
-    mermaid: {
-      diagram: "Diagrama Mermaid",
+    diagram: {
+      diagram: "Diagrama",
       zoomIn: "Aproximar",
       zoomOut: "Afastar",
       resetZoom: "Redefinir visualização",

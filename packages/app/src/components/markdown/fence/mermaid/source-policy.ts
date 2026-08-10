@@ -1,7 +1,3 @@
-export function isMermaidFence(info: string | null | undefined): boolean {
-  return info?.trim().split(/\s+/)[0]?.toLowerCase() === "mermaid";
-}
-
 // Mermaid can fetch external resources while *rendering* — image shapes
 // (`A@{ img: "url" }`) construct an Image and await decode before any output
 // sanitization runs, and CSS can pull url()/@import — so a prompt-injected
@@ -10,10 +6,11 @@ export function isMermaidFence(info: string | null | undefined): boolean {
 // metadata object with yaml.JSON_SCHEMA semantics, including aliases and
 // explicit keys; matching those keys safely would require a real parser. We
 // therefore reject any `@{ ... }` shape-data construct up front and fall back
-// to the source code block. `<br>` is allowed because it is idiomatic in
-// mermaid labels; all other tags (and entity-encoded text that could smuggle
-// one) are rejected.
-const UNSAFE_MERMAID_SOURCE = /@\s*\{|url\s*\(|@import\b|themeCSS|&#|<(?!br\s*\/?>)[a-z!/]/i;
+// to the source code block. Formatting-only `<br>` and `<i>` tags are common
+// in generated labels and carry no resource-bearing attributes; all other
+// tags (and entity-encoded text that could smuggle one) are rejected.
+const UNSAFE_MERMAID_SOURCE =
+  /@\s*\{|url\s*\(|@import\b|themeCSS|&#|<(?!\/?(?:br|i)\s*\/?>)[a-z!/]/i;
 
 // Mermaid labels can contain escaped text. Decode the escape forms we care
 // about before running the denylist so disguised HTML still gets caught.

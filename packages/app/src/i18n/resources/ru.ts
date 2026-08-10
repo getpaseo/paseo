@@ -274,8 +274,8 @@ export const ru: TranslationResources = {
     },
   },
   message: {
-    mermaid: {
-      diagram: "Диаграмма Mermaid",
+    diagram: {
+      diagram: "Диаграмма",
       zoomIn: "Приблизить",
       zoomOut: "Отдалить",
       resetZoom: "Сбросить вид",

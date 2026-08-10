@@ -272,8 +272,8 @@ export const zhCN: TranslationResources = {
     },
   },
   message: {
-    mermaid: {
-      diagram: "Mermaid 图表",
+    diagram: {
+      diagram: "图表",
       zoomIn: "放大",
       zoomOut: "缩小",
       resetZoom: "重置视图",

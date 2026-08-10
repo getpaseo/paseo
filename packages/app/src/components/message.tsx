@@ -71,8 +71,8 @@ import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
-import { MermaidDiagram } from "@/components/mermaid-diagram";
-import { isMermaidFence } from "@/utils/mermaid-fence";
+import { MarkdownFenceBlock } from "@/components/markdown/fence";
+import type { MarkdownPhase } from "@/components/markdown/fence/types";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
@@ -741,6 +741,7 @@ interface AssistantMessageProps {
   serverId?: string;
   client?: DaemonClient | null;
   spacing?: "default" | "compactTop" | "compactBottom" | "compactBoth";
+  phase: MarkdownPhase;
 }
 
 export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
@@ -1452,6 +1453,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   serverId,
   client,
   spacing = "default",
+  phase,
 }: AssistantMessageProps) {
   const markdownParser = useMemo(createAssistantMarkdownParser, []);
 
@@ -1696,23 +1698,16 @@ export const AssistantMessage = memo(function AssistantMessage({
         _parent: ASTNode[],
         styles: MarkdownStyles,
         inheritedStyles: TextStyle = {},
-      ) =>
-        isMermaidFence(node.sourceInfo) ? (
-          <MermaidDiagram
-            key={node.key}
-            code={node.content}
-            inheritedStyles={inheritedStyles}
-            textStyle={styles.fence}
-          />
-        ) : (
-          <HighlightedCodeBlock
-            key={node.key}
-            code={node.content}
-            language={node.sourceInfo}
-            inheritedStyles={inheritedStyles}
-            textStyle={styles.fence}
-          />
-        ),
+      ) => (
+        <MarkdownFenceBlock
+          key={node.key}
+          code={node.content}
+          info={node.sourceInfo}
+          phase={phase}
+          inheritedStyles={inheritedStyles}
+          textStyle={styles.fence}
+        />
+      ),
       code_inline: (
         node: ASTNode,
         _children: ReactNode[],
@@ -1903,11 +1898,11 @@ export const AssistantMessage = memo(function AssistantMessage({
         );
       },
     };
-  }, [client, fileLinkActions, markdownParser, occurrenceKey, serverId, workspaceRoot]);
+  }, [client, fileLinkActions, markdownParser, occurrenceKey, phase, serverId, workspaceRoot]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
   const keyedBlocks = useMemo(
-    () => blocks.map((block, index) => ({ key: `${index}:${block.slice(0, 32)}`, block })),
+    () => blocks.map((block, index) => ({ key: `block:${index}`, block })),
     [blocks],
   );
 

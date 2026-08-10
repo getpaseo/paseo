@@ -276,8 +276,8 @@ export const fr: TranslationResources = {
     },
   },
   message: {
-    mermaid: {
-      diagram: "Diagramme Mermaid",
+    diagram: {
+      diagram: "Diagramme",
       zoomIn: "Zoomer",
       zoomOut: "Dézoomer",
       resetZoom: "Réinitialiser la vue",
