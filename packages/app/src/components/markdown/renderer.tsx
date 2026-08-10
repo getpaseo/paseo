@@ -39,10 +39,24 @@ import { resolveInlineImageSize, type InlineImageDimensions } from "./inline-ima
 import { groupMarkdownParts, type MarkdownPartGroup } from "./part-groups";
 
 export type MarkdownStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
+export type MarkdownStyleOverrides = (theme: Theme) => Partial<MarkdownStyles>;
+
+function mergeMarkdownStyles(
+  base: MarkdownStyles,
+  overrides: Partial<MarkdownStyles> | undefined,
+): MarkdownStyles {
+  if (!overrides) return base;
+  return Object.fromEntries(
+    Object.entries(base).map(([key, value]) => [
+      key,
+      overrides[key] ? { ...value, ...overrides[key] } : value,
+    ]),
+  ) as MarkdownStyles;
+}
 
 interface MarkdownWithStableRendererProps {
   children: ReactNode;
-  style: ReturnType<typeof createMarkdownStyles> | ReturnType<typeof createCompactMarkdownStyles>;
+  style: MarkdownStyles;
   rules?: RenderRules;
   markdownit?: ReturnType<typeof MarkdownIt>;
   onLinkPress?: (url: string) => boolean;
@@ -67,6 +81,7 @@ const MARKDOWN_LIST_ITEM_CONTENT_FLEX: ViewStyle = { flex: 1, flexShrink: 1, min
 export interface MarkdownRendererProps {
   text: string;
   compact?: boolean;
+  style?: MarkdownStyleOverrides;
   rules?: RenderRules;
   markdownit?: ReturnType<typeof MarkdownIt>;
   onLinkPress?: (url: string) => boolean;
@@ -78,6 +93,7 @@ export interface MarkdownRendererProps {
 export function MarkdownRenderer({
   text,
   compact = false,
+  style,
   rules,
   markdownit = defaultMarkdownParser,
   onLinkPress,
@@ -93,6 +109,7 @@ export function MarkdownRenderer({
   const rendererProps = useMemo(
     () => ({
       compact,
+      style,
       rules: markdownRules,
       markdownit,
       onLinkPress,
@@ -104,6 +121,7 @@ export function MarkdownRenderer({
       compact,
       markdownRules,
       markdownit,
+      style,
       onLinkPress,
       topLevelMaxExceededItem,
     ],
@@ -187,13 +205,27 @@ function MarkdownPart({
 function MarkdownFragment({
   text,
   compact,
+  style,
   rules,
   markdownit,
   onLinkPress,
   allowedImageHandlers,
   topLevelMaxExceededItem,
 }: MarkdownRendererProps & { rules: RenderRules }) {
-  const uniProps = compact ? compactMarkdownStyleMapping : markdownStyleMapping;
+  const customStyleMapping = useMemo(
+    () =>
+      (
+        theme: Parameters<typeof createMarkdownStyles>[0],
+      ): Partial<MarkdownWithStableRendererProps> => ({
+        style: mergeMarkdownStyles(
+          compact ? createCompactMarkdownStyles(theme) : createMarkdownStyles(theme),
+          style?.(theme),
+        ),
+      }),
+    [compact, style],
+  );
+  let uniProps = compact ? compactMarkdownStyleMapping : markdownStyleMapping;
+  if (style) uniProps = customStyleMapping;
   return (
     <ThemedMarkdown
       uniProps={uniProps}

@@ -11,7 +11,7 @@ import type { TextProps } from "react-native";
 // onPress to its own string children, where the native tap recognizer can find
 // it. Provided only on iOS (Android/web links tap fine via their own paths).
 export interface AssistantLinkPress {
-  onPress: () => void;
+  onPress: NonNullable<TextProps["onPress"]>;
   accessibilityRole?: TextProps["accessibilityRole"];
 }
 

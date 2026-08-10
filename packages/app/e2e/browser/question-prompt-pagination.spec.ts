@@ -1,4 +1,4 @@
-import { test } from "../support/fixtures";
+import { expect, test } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import {
   chooseQuestionOption,
@@ -24,6 +24,56 @@ const REPO_URL_QUESTION = "What is the GitHub private repo URL to push to?";
 const COMMIT_MESSAGE_QUESTION = "What should the first commit message be?";
 
 test.describe("Question prompt pagination", () => {
+  test("links and selects question content", async ({ page }) => {
+    test.setTimeout(180_000);
+
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "question-linked-content-",
+      title: "Question linked content e2e",
+      initialPrompt: "Emit synthetic questions with linked content.",
+    });
+
+    try {
+      await openAgentRoute(page, session);
+      await waitForQuestionPrompt(page, 120_000);
+
+      const card = page.getByTestId("question-form-card").first();
+      const docsLink = card.locator('a[href="https://example.com/docs"]');
+      const fileLink = card.locator('a[href="packages/app/src/components/question-form-card.tsx"]');
+      const referenceLink = card.locator('a[href="https://example.com/reference"]');
+      await expect(docsLink).toHaveText("the docs");
+      await expect(fileLink).toHaveText("packages/app/src/components/question-form-card.tsx");
+      await expect(referenceLink).toHaveText("https://example.com/reference");
+
+      const description = card.getByTestId("question-form-option-description-0-0");
+      await expect(description).toHaveCSS("user-select", "text");
+      await expect(description.locator("span").first()).toHaveCSS("font-size", "14px");
+      const selectedText = await description.evaluate((element) => {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return selection?.toString();
+      });
+      expect(selectedText?.replace(/\s+/g, " ")).toBe(
+        "Compare https://example.com/reference first.",
+      );
+
+      const firstOption = card.getByRole("radio").first();
+      const secondOption = card.getByRole("radio").nth(1);
+      await secondOption.click();
+      await expect(secondOption).toHaveAttribute("aria-checked", "true");
+      await secondOption.click();
+      await expect(secondOption).toHaveAttribute("aria-checked", "false");
+
+      await fileLink.click();
+      await expect(firstOption).toHaveAttribute("aria-checked", "false");
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("shows one question at a time with numbered navigation", async ({ page }) => {
     test.setTimeout(180_000);
 
