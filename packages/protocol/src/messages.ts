@@ -180,7 +180,13 @@ function createManagedMcpServerSchema<T extends z.ZodType>(secretSchema: T) {
   };
   const environment = z.record(ManagedMcpEnvironmentVariableNameSchema, secretSchema);
   const headers = z.record(ManagedMcpHeaderNameSchema, secretSchema);
-  const url = z.url({ protocol: /^https?$/ }).max(8_192);
+  const url = z
+    .url({ protocol: /^https?$/ })
+    .max(8_192)
+    .refine((value) => {
+      const parsed = new URL(value);
+      return !parsed.username && !parsed.password;
+    }, "MCP server URLs cannot include credentials");
   return z.discriminatedUnion("type", [
     z
       .object({

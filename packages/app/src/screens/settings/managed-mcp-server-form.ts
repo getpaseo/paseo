@@ -134,6 +134,9 @@ export function buildManagedMcpServerPatch(state: ManagedMcpServerFormState): {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(i18n.t("settings.host.orchestration.managedMcp.httpOnly"));
   }
+  if (url.username || url.password) {
+    throw new Error(i18n.t("settings.host.orchestration.managedMcp.invalidUrl"));
+  }
 
   return {
     name,

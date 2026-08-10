@@ -128,7 +128,13 @@ export function redactManagedMcpServers(
       if (server.type === "stdio") {
         return [name, { ...server, env: redactSecretRecord(server.env) }];
       }
-      return [name, { ...server, headers: redactSecretRecord(server.headers) }];
+      const url = new URL(server.url);
+      url.username = "";
+      url.password = "";
+      return [
+        name,
+        { ...server, url: url.toString(), headers: redactSecretRecord(server.headers) },
+      ];
     }),
   );
 }
@@ -169,6 +175,9 @@ function requireHttpUrl(serverName: string, rawUrl: string): string {
   const url = new URL(rawUrl);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`MCP server '${serverName}' URL must use http or https`);
+  }
+  if (url.username || url.password) {
+    throw new Error(`MCP server '${serverName}' URL cannot include credentials`);
   }
   return url.toString();
 }

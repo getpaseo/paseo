@@ -89,4 +89,25 @@ describe("managed MCP protocol", () => {
       }),
     ).toThrow();
   });
+
+  test("rejects credentials embedded in managed MCP URLs", () => {
+    expect(() =>
+      MutableDaemonConfigPatchSchema.parse({
+        upsertMcpServers: {
+          hub: { type: "http", url: "https://user:private-token@mcp.example.test/mcp" },
+        },
+      }),
+    ).toThrow("cannot include credentials");
+
+    expect(() =>
+      MutableDaemonConfigSchema.parse({
+        mcp: {
+          injectIntoAgents: true,
+          servers: {
+            hub: { type: "sse", url: "https://user:private-token@mcp.example.test/sse" },
+          },
+        },
+      }),
+    ).toThrow("cannot include credentials");
+  });
 });

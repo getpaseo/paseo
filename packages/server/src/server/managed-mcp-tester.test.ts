@@ -20,6 +20,30 @@ describe("managed MCP tester", () => {
     expect(result).toMatchObject({ status: "success", toolCount: 1 });
   });
 
+  test("passes only explicitly configured environment variables to stdio servers", async () => {
+    const previousValue = process.env.PASEO_MCP_TEST_UNRELATED_SECRET;
+    process.env.PASEO_MCP_TEST_UNRELATED_SECRET = "do-not-inherit";
+    try {
+      const result = await testManagedMcpServer({
+        config: {
+          type: "stdio",
+          command: process.execPath,
+          args: ["--import", "tsx", fixturePath, "--verify-env"],
+          env: { MCP_TEST_EXPLICIT: "allowed" },
+        },
+        timeoutMs: 5_000,
+      });
+
+      expect(result).toMatchObject({ status: "success", toolCount: 1 });
+    } finally {
+      if (previousValue === undefined) {
+        delete process.env.PASEO_MCP_TEST_UNRELATED_SECRET;
+      } else {
+        process.env.PASEO_MCP_TEST_UNRELATED_SECRET = previousValue;
+      }
+    }
+  });
+
   test("redacts direct secrets from connection failures", async () => {
     const secret = "private-command-token";
     const result = await testManagedMcpServer({

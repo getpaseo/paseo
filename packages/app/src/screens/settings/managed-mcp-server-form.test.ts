@@ -83,4 +83,12 @@ describe("managed MCP server form", () => {
     ];
     expect(() => buildManagedMcpServerPatch(state)).toThrow("must be unique");
   });
+
+  test("rejects credentials embedded in a server URL", () => {
+    const state = createManagedMcpServerFormState();
+    state.name = "hub";
+    state.target = "https://user:private-token@mcp.example.test/mcp";
+
+    expect(() => buildManagedMcpServerPatch(state)).toThrow("valid MCP server URL");
+  });
 });

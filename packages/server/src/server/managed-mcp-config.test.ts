@@ -98,6 +98,23 @@ describe("managed MCP config", () => {
     ).toThrow("requires environment variable 'MCP_TOKEN'");
   });
 
+  test("rejects URL credentials and strips them from defensive redaction", () => {
+    const serverWithCredentials = {
+      type: "http" as const,
+      url: "https://user:private-token@mcp.example.test/mcp",
+    };
+
+    expect(() => resolveManagedMcpServers({ hub: serverWithCredentials })).toThrow(
+      "URL cannot include credentials",
+    );
+    expect(redactManagedMcpServers({ hub: serverWithCredentials })).toEqual({
+      hub: {
+        type: "http",
+        url: "https://mcp.example.test/mcp",
+      },
+    });
+  });
+
   test("skips session-owned names before resolving host environment references", () => {
     expect(
       resolveManagedMcpServers(

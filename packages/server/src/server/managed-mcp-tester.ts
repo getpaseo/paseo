@@ -15,20 +15,13 @@ export interface ManagedMcpTestResult {
   error?: string;
 }
 
-function processEnvironment(): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(process.env).flatMap(([key, value]) =>
-      value === undefined ? [] : [[key, value]],
-    ),
-  );
-}
-
 function createTransport(config: McpServerConfig): Transport {
   if (config.type === "stdio") {
     return new StdioClientTransport({
       command: config.command,
       args: config.args,
-      env: config.env ? { ...processEnvironment(), ...config.env } : undefined,
+      env: config.env,
+      stderr: "pipe",
     });
   }
   const requestInit = config.headers ? { headers: config.headers } : undefined;

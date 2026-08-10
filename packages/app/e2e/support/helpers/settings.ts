@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import path from "node:path";
 import { buildCreateAgentPreferences, buildSeededHost, TEST_HOST_LABEL } from "./daemon-registry";
 import { getServerId } from "./server-id";
 import { expectAppRoute } from "./route-assertions";
@@ -313,6 +314,34 @@ export async function expectHostInjectMcpCard(page: Page): Promise<void> {
   const card = page.getByTestId("host-page-inject-mcp-card");
   await expect(card).toBeVisible();
   await expect(card.getByRole("switch", { name: "Inject Paseo tools" })).toBeVisible();
+}
+
+export async function exerciseManagedMcpServerLifecycle(page: Page): Promise<void> {
+  const name = "browser-test";
+  const fixturePath = path.resolve(
+    process.cwd(),
+    "../server/src/test-utils/managed-mcp-stdio-fixture.ts",
+  );
+
+  await page.getByRole("button", { name: "Add server", exact: true }).click();
+  const editor = page.getByTestId("managed-mcp-server-modal");
+  await expect(editor.getByText("Add MCP server", { exact: true })).toBeVisible();
+  await editor.getByTestId("managed-mcp-name-input").fill(name);
+  await editor.getByText("stdio", { exact: true }).click();
+  await editor.getByTestId("managed-mcp-target-input").fill(process.execPath);
+  await editor
+    .getByTestId("managed-mcp-args-input")
+    .fill(["--import", "tsx", fixturePath].join("\n"));
+  await editor.getByRole("button", { name: "Save", exact: true }).click();
+
+  const row = page.getByTestId(`managed-mcp-row-${name}`);
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: "Test", exact: true }).click();
+  await expect(row.getByText("1 tools", { exact: false })).toBeVisible();
+
+  page.once("dialog", (dialog) => void dialog.accept());
+  await row.getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(row).toHaveCount(0);
 }
 
 export async function openHostSection(
