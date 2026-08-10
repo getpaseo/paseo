@@ -33,6 +33,8 @@ interface Measurement {
   editLatencyP50Ms: number;
   editLatencyP95Ms: number;
   editLatencyP99Ms: number;
+  burstDurationMs: number;
+  burstCpuMs: number;
   sustainedDurationMs: number;
   sustainedCpuMs: number;
   sustainedScopedReconciliationCount: number | null;
@@ -170,6 +172,7 @@ async function measure(
     }
     const trackedPaths: string[] = [];
     const writtenAt = new Map<string, number>();
+    const burstCpuBefore = process.cpuUsage();
     const editStarted = performance.now();
     for (let index = 0; index < EDIT_COUNT; index += 1) {
       const target = roots[index % roots.length];
@@ -192,6 +195,19 @@ async function measure(
         (firstObservedAt.get(path) ?? performance.now()) - (writtenAt.get(path) ?? editStarted),
     );
     if (error) throw error;
+
+    const burstSettled = await waitFor(() => {
+      const diagnostics = getFileObserverDiagnostics();
+      return (
+        diagnostics.pendingEventCount === 0 &&
+        diagnostics.pendingReconciliationWorkCount === 0 &&
+        diagnostics.reconciliationInFlightCount === 0
+      );
+    }, 30_000);
+    if (!burstSettled) throw new Error("Timed out waiting for observer reconciliation to settle");
+    const burstDurationMs = performance.now() - editStarted;
+    const burstCpu = process.cpuUsage(burstCpuBefore);
+    const burstCpuMs = (burstCpu.user + burstCpu.system) / 1_000;
 
     const sustainedPaths: string[] = [];
     const diagnosticsBeforeSustained = getFileObserverDiagnostics();
@@ -227,6 +243,8 @@ async function measure(
       editLatencyP50Ms: percentile(observedLatencies, 0.5),
       editLatencyP95Ms: percentile(observedLatencies, 0.95),
       editLatencyP99Ms: percentile(observedLatencies, 0.99),
+      burstDurationMs,
+      burstCpuMs,
       sustainedDurationMs,
       sustainedCpuMs,
       sustainedScopedReconciliationCount:
@@ -336,60 +354,79 @@ function evaluate(results: Measurement[]): {
   const failures: string[] = [];
   const comparatorFindings: string[] = [];
   for (const result of results) {
-    const findings = result.backend === "node" ? failures : comparatorFindings;
-    if (result.missedTrackedPaths !== 0) {
-      findings.push(`${result.backend} missed ${result.missedTrackedPaths} tracked paths`);
-    }
-    if (result.ignoredEvents !== 0) {
-      findings.push(`${result.backend} emitted ${result.ignoredEvents} excluded events`);
-    }
-    if (result.sustainedMissedPaths !== 0) {
-      findings.push(`${result.backend} missed ${result.sustainedMissedPaths} sustained paths`);
-    }
-    if (result.teardownMs >= 1_000) {
-      failures.push(`${result.backend} teardown took ${result.teardownMs.toFixed(1)}ms`);
-    }
-    if (result.backend === "node" && (result.sustainedFullReconciliationCount ?? 0) > 0) {
-      failures.push(
-        `node ran ${result.sustainedFullReconciliationCount} full reconciliations during sustained writes`,
-      );
-    }
+    evaluateStandaloneResult(result, failures, comparatorFindings);
   }
   const nodeRuns = results.filter((result) => result.backend === "node");
   const parcelRuns = results.filter((result) => result.backend === "parcel");
   for (let index = 0; index < Math.min(nodeRuns.length, parcelRuns.length); index += 1) {
-    const node = nodeRuns[index];
-    const parcel = parcelRuns[index];
-    const setupBudgetMs = Math.max(process.platform === "win32" ? 4_000 : 400, parcel.setupMs * 4);
-    if (node.setupMs > setupBudgetMs) {
-      failures.push(
-        `node setup ${node.setupMs.toFixed(1)}ms exceeded ${setupBudgetMs.toFixed(1)}ms on run ${node.run}`,
-      );
-    }
-    if (
-      node.missedTrackedPaths === 0 &&
-      parcel.missedTrackedPaths === 0 &&
-      node.editLatencyMs > parcel.editLatencyMs * 4
-    ) {
-      failures.push(`node edit completion exceeded 4x Parcel on run ${node.run}`);
-    }
-    const eventLoopP99BudgetMs = Math.max(100, parcel.eventLoopDelayP99Ms * 4);
-    if (node.eventLoopDelayP99Ms > eventLoopP99BudgetMs) {
-      failures.push(
-        `node event-loop p99 ${node.eventLoopDelayP99Ms.toFixed(1)}ms exceeded ${eventLoopP99BudgetMs.toFixed(1)}ms on run ${node.run}`,
-      );
-    }
-    const sustainedCpuBudgetMs = Math.max(
-      parcel.sustainedCpuMs * 4,
-      node.sustainedDurationMs * 0.15,
-    );
-    if (node.sustainedCpuMs > sustainedCpuBudgetMs) {
-      failures.push(
-        `node sustained-create CPU ${node.sustainedCpuMs.toFixed(1)}ms exceeded ${sustainedCpuBudgetMs.toFixed(1)}ms on run ${node.run}`,
-      );
-    }
+    compareRuns(nodeRuns[index], parcelRuns[index], failures);
   }
   return { passed: failures.length === 0, failures, comparatorFindings };
+}
+
+function evaluateStandaloneResult(
+  result: Measurement,
+  failures: string[],
+  comparatorFindings: string[],
+): void {
+  const findings = result.backend === "node" ? failures : comparatorFindings;
+  if (result.missedTrackedPaths !== 0) {
+    findings.push(`${result.backend} missed ${result.missedTrackedPaths} tracked paths`);
+  }
+  if (result.ignoredEvents !== 0) {
+    findings.push(`${result.backend} emitted ${result.ignoredEvents} excluded events`);
+  }
+  if (result.sustainedMissedPaths !== 0) {
+    findings.push(`${result.backend} missed ${result.sustainedMissedPaths} sustained paths`);
+  }
+  if (result.teardownMs >= 1_000) {
+    failures.push(`${result.backend} teardown took ${result.teardownMs.toFixed(1)}ms`);
+  }
+  if (result.backend === "node" && (result.sustainedFullReconciliationCount ?? 0) > 0) {
+    failures.push(
+      `node ran ${result.sustainedFullReconciliationCount} full reconciliations during sustained writes`,
+    );
+  }
+}
+
+function compareRuns(node: Measurement, parcel: Measurement, failures: string[]): void {
+  const setupBudgetMs = Math.max(process.platform === "win32" ? 4_000 : 400, parcel.setupMs * 4);
+  if (node.setupMs > setupBudgetMs) {
+    failures.push(
+      `node setup ${node.setupMs.toFixed(1)}ms exceeded ${setupBudgetMs.toFixed(1)}ms on run ${node.run}`,
+    );
+  }
+  if (
+    node.missedTrackedPaths === 0 &&
+    parcel.missedTrackedPaths === 0 &&
+    node.editLatencyMs > parcel.editLatencyMs * 4
+  ) {
+    failures.push(`node edit completion exceeded 4x Parcel on run ${node.run}`);
+  }
+  const burstDurationBudgetMs = Math.max(30_000, parcel.burstDurationMs * 4);
+  if (node.burstDurationMs > burstDurationBudgetMs) {
+    failures.push(
+      `node burst recovery ${node.burstDurationMs.toFixed(1)}ms exceeded ${burstDurationBudgetMs.toFixed(1)}ms on run ${node.run}`,
+    );
+  }
+  const burstCpuBudgetMs = Math.max(parcel.burstCpuMs * 4, node.burstDurationMs * 0.25);
+  if (node.burstCpuMs > burstCpuBudgetMs) {
+    failures.push(
+      `node burst CPU ${node.burstCpuMs.toFixed(1)}ms exceeded ${burstCpuBudgetMs.toFixed(1)}ms on run ${node.run}`,
+    );
+  }
+  const eventLoopP99BudgetMs = Math.max(100, parcel.eventLoopDelayP99Ms * 4);
+  if (node.eventLoopDelayP99Ms > eventLoopP99BudgetMs) {
+    failures.push(
+      `node event-loop p99 ${node.eventLoopDelayP99Ms.toFixed(1)}ms exceeded ${eventLoopP99BudgetMs.toFixed(1)}ms on run ${node.run}`,
+    );
+  }
+  const sustainedCpuBudgetMs = Math.max(parcel.sustainedCpuMs * 4, node.sustainedDurationMs * 0.15);
+  if (node.sustainedCpuMs > sustainedCpuBudgetMs) {
+    failures.push(
+      `node sustained-create CPU ${node.sustainedCpuMs.toFixed(1)}ms exceeded ${sustainedCpuBudgetMs.toFixed(1)}ms on run ${node.run}`,
+    );
+  }
 }
 
 function percentile(values: number[], quantile: number): number {

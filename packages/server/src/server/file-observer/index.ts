@@ -54,6 +54,7 @@ export interface FileObserverDiagnostics {
   nativeHandleCount: number;
   nativeTrackedFileCount: number;
   pendingEventCount: number;
+  pendingReconciliationWorkCount: number;
   reconciliationInFlightCount: number;
   reconciliationCount: number;
   scopedReconciliationCount: number;
@@ -78,12 +79,14 @@ export function getFileObserverDiagnostics(): FileObserverDiagnostics {
   let nativeHandleCount = 0;
   let nativeTrackedFileCount = 0;
   let pendingEventCount = 0;
+  let pendingReconciliationWorkCount = 0;
   let reconciliationInFlightCount = 0;
   for (const observer of activeObservers) {
     const diagnostics = observer.getDiagnostics();
     nativeHandleCount += diagnostics.nativeHandleCount;
     nativeTrackedFileCount += diagnostics.nativeTrackedFileCount;
     pendingEventCount += diagnostics.pendingEventCount;
+    pendingReconciliationWorkCount += diagnostics.pendingReconciliationWorkCount;
     reconciliationInFlightCount += diagnostics.reconciliationInFlight ? 1 : 0;
   }
   return {
@@ -91,6 +94,7 @@ export function getFileObserverDiagnostics(): FileObserverDiagnostics {
     nativeHandleCount,
     nativeTrackedFileCount,
     pendingEventCount,
+    pendingReconciliationWorkCount,
     reconciliationInFlightCount,
     reconciliationCount,
     scopedReconciliationCount,
@@ -150,6 +154,7 @@ class RecursiveFileObserver {
   private failed = false;
   private closePromise: Promise<void> | null = null;
   private reconcileTail: Promise<void> = Promise.resolve();
+  private reconciliationQueueDepth = 0;
   private reconcileInFlight = false;
   private reconcileTimer: NodeJS.Timeout | null = null;
   private readonly pendingReconciliationScopes = new Set<string>();
@@ -269,12 +274,21 @@ class RecursiveFileObserver {
     nativeHandleCount: number;
     nativeTrackedFileCount: number;
     pendingEventCount: number;
+    pendingReconciliationWorkCount: number;
     reconciliationInFlight: boolean;
   } {
     return {
       nativeHandleCount: this.watchers.size,
       nativeTrackedFileCount: this.nativeFiles.size,
       pendingEventCount: this.pendingEvents.size,
+      pendingReconciliationWorkCount:
+        this.pendingReconciliationScopes.size +
+        this.pendingNativeAuditScopes.size +
+        this.pendingNativeRecursiveAuditScopes.size +
+        this.pathClassifications.size +
+        this.reconciliationQueueDepth +
+        Number(this.reconcileTimer !== null) +
+        Number(this.nativeAuditTimer !== null || this.nativeAuditQueued || this.nativeAuditDirty),
       reconciliationInFlight: this.reconcileInFlight,
     };
   }
@@ -364,13 +378,23 @@ class RecursiveFileObserver {
   }
 
   private enqueueReconcile(scopes: string[]): Promise<void> {
-    const result = this.reconcileTail.then(() => this.runQueuedReconcile(scopes));
+    this.reconciliationQueueDepth += 1;
+    const result = this.reconcileTail
+      .then(() => this.runQueuedReconcile(scopes))
+      .finally(() => {
+        this.reconciliationQueueDepth -= 1;
+      });
     this.reconcileTail = result.catch(() => undefined);
     return result;
   }
 
   private enqueueNativeAudit(emitDiff: boolean, generation: number): Promise<void> {
-    const result = this.reconcileTail.then(() => this.runNativeAudit(emitDiff, generation));
+    this.reconciliationQueueDepth += 1;
+    const result = this.reconcileTail
+      .then(() => this.runNativeAudit(emitDiff, generation))
+      .finally(() => {
+        this.reconciliationQueueDepth -= 1;
+      });
     this.reconcileTail = result.catch(() => undefined);
     return result;
   }
