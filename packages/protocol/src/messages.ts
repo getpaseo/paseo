@@ -3673,6 +3673,8 @@ export const ArchiveWorkspaceResponseMessageSchema = z.object({
     requestId: z.string(),
     workspaceId: z.string(),
     archivedAt: z.string().nullable(),
+    // COMPAT(workspaceArchiveCleanupReceipt): added in v0.3.2, remove after 2027-08-09 when old daemons are unsupported.
+    removedDirectory: z.boolean().optional(),
     error: z.string().nullable(),
   }),
 });

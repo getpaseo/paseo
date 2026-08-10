@@ -394,6 +394,7 @@ test.skipIf(process.platform === "win32")(
       const firstArchive = await ctx.client.archiveWorkspace(workspace.id);
 
       expect(firstArchive.error).toBeNull();
+      expect(firstArchive.removedDirectory).toBe(false);
       expect((await activeWorkspaceIds()).has(workspace.id)).toBe(false);
       expect(existsSync(workspace.workspaceDirectory)).toBe(true);
 
@@ -403,6 +404,7 @@ test.skipIf(process.platform === "win32")(
       const retry = await ctx.client.archiveWorkspace(workspace.id);
 
       expect(retry.error).toBeNull();
+      expect(retry.removedDirectory).toBe(true);
       expect(existsSync(workspace.workspaceDirectory)).toBe(false);
     } finally {
       writeFileSync(stopWriterPath, "stop\n");

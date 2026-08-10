@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   AgentSnapshotPayloadSchema,
   AgentTimelineItemPayloadSchema,
+  ArchiveWorkspaceResponseMessageSchema,
   ServerInfoStatusPayloadSchema,
   WSHelloMessageSchema,
 } from "./messages.js";
@@ -42,7 +43,39 @@ const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.extend({
   capabilities: LegacyAgentCapabilityFlagsSchema,
 });
 
+const LegacyArchiveWorkspaceResponseMessageSchema = z.object({
+  type: z.literal("archive_workspace_response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    archivedAt: z.string().nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
 describe("wire schema compatibility", () => {
+  test("workspace archive cleanup receipt is optional for old daemons and ignored by old clients", () => {
+    const legacyPayload = {
+      type: "archive_workspace_response" as const,
+      payload: {
+        requestId: "archive-1",
+        workspaceId: "workspace-1",
+        archivedAt: "2026-08-09T00:00:00.000Z",
+        error: null,
+      },
+    };
+    const currentPayload = {
+      ...legacyPayload,
+      payload: { ...legacyPayload.payload, removedDirectory: false },
+    };
+
+    expect(ArchiveWorkspaceResponseMessageSchema.parse(legacyPayload)).toEqual(legacyPayload);
+    expect(ArchiveWorkspaceResponseMessageSchema.parse(currentPayload)).toEqual(currentPayload);
+    expect(LegacyArchiveWorkspaceResponseMessageSchema.parse(currentPayload)).toEqual(
+      legacyPayload,
+    );
+  });
+
   test("hello parses with and without the project update capability", () => {
     const legacy = WSHelloMessageSchema.parse({
       type: "hello",
