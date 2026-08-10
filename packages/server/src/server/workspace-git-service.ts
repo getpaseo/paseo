@@ -221,7 +221,7 @@ export interface WorkspaceGitService {
   onWorkspaceStateMayHaveChanged(cwd: string): void;
   invalidateForge(cwd: string): void;
   getMetrics(): WorkspaceGitServiceMetrics;
-  dispose(): void;
+  dispose(): Promise<void>;
 }
 
 export interface WorkspaceGitServiceMetrics {
@@ -529,6 +529,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   });
   private readonly disposeController = new AbortController();
   private disposed = false;
+  private disposePromise: Promise<void> | null = null;
   private readonly snapshotUpdatedListeners = new Set<WorkspaceGitSnapshotUpdatedListener>();
   private readonly workspaceTargets = new Map<string, WorkspaceGitTarget>();
   private readonly repoTargets = new Map<string, RepoGitTarget>();
@@ -957,10 +958,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.forgeResolver.invalidate(resolve(cwd));
   }
 
-  dispose(): void {
-    if (this.disposed) {
-      return;
-    }
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
     this.disposed = true;
     this.disposeController.abort(new WorkspaceGitServiceDisposedError());
     this.workspaceRefreshLimit.clearQueue();
@@ -984,7 +983,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.workingTreeWatchResolutions.clear();
     this.workingTreeWatchAliases.clear();
     this.snapshotUpdatedListeners.clear();
-    void this.fileObserver.close();
+    this.disposePromise = this.fileObserver.close();
+    return this.disposePromise;
   }
 
   private assertNotDisposed(): void {

@@ -3,6 +3,7 @@ import type pino from "pino";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
+import type { FileObserver } from "./file-observer/index.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 
 const REPO_CWD = path.resolve("/tmp/paseo-observation-repo");
@@ -148,6 +149,7 @@ function createService(
   watcher: ReturnType<typeof createWatcherHarness>,
   overrides?: Record<string, unknown>,
   logger: pino.Logger = createLogger(),
+  fileObserver?: FileObserver,
 ) {
   const defaultGetCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
   const defaultGetCheckoutShortstat = vi.fn(async () => null);
@@ -160,6 +162,7 @@ function createService(
   return new WorkspaceGitServiceImpl({
     logger,
     paseoHome: "/tmp/paseo-home",
+    fileObserver,
     deps: {
       subscribe: watcher.subscribe,
       getCheckoutSnapshotFacts: vi.fn(async (cwd: string) => createCheckoutFacts(cwd)),
@@ -206,6 +209,38 @@ describe("WorkspaceGitService checkout observation", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  test("dispose waits for file observation to finish closing", async () => {
+    const watcher = createWatcherHarness();
+    const closeFinished = createDeferred<void>();
+    let closeCalls = 0;
+    const fileObserver: FileObserver = {
+      subscribe: watcher.subscribe as FileObserver["subscribe"],
+      getDiagnostics: () => {
+        throw new Error("Diagnostics are not used by this lifecycle test");
+      },
+      close: () => {
+        closeCalls += 1;
+        return closeFinished.promise;
+      },
+    };
+    const service = createService(watcher, undefined, createLogger(), fileObserver);
+
+    const disposal = service.dispose();
+    const repeatedDisposal = service.dispose();
+
+    expect(disposal).toBeInstanceOf(Promise);
+    expect(repeatedDisposal).toBe(disposal);
+    expect(closeCalls).toBe(1);
+    const status = await Promise.race([
+      disposal.then(() => "disposed" as const),
+      Promise.resolve("pending" as const),
+    ]);
+    expect(status).toBe("pending");
+
+    closeFinished.resolve();
+    await disposal;
   });
 
   test("shares one recursive checkout observer between cwd-equivalent consumers", async () => {

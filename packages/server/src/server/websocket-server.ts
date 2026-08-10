@@ -276,7 +276,7 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
         maxReconciliationDurationMs: 0,
       },
     }),
-    dispose: () => {},
+    dispose: async () => {},
   };
 }
 
@@ -1057,7 +1057,7 @@ export class VoiceAssistantWebSocketServer {
     await Promise.all(cleanupPromises);
     this.providerSnapshotManager.destroy();
     this.checkoutDiffManager.dispose();
-    this.workspaceGitService.dispose();
+    await this.workspaceGitService.dispose();
     this.pendingConnections.clear();
     this.sessions.clear();
     this.socketIdentities.clear();

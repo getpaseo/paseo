@@ -183,7 +183,7 @@ async function closeMeasuredService(input: {
   observer: ReturnType<typeof createFileObserver>;
   subscriptions: Set<FileObserverSubscription>;
 }): Promise<void> {
-  input.service.dispose();
+  await input.service.dispose();
   await waitFor(() => input.subscriptions.size === 0, "watchers to close");
   await input.observer.close();
 }

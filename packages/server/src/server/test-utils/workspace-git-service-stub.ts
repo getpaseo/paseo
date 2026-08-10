@@ -112,7 +112,7 @@ export function createNoopWorkspaceGitService(
         maxReconciliationDurationMs: 0,
       },
     }),
-    dispose: () => {},
+    dispose: async () => {},
     ...overrides,
   };
 

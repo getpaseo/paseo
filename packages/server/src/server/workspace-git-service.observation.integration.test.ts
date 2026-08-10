@@ -200,8 +200,8 @@ test("recursive observation updates tracked state and prunes ignored storms", as
     diffSubscription.unsubscribe();
     summarySubscription.unsubscribe();
     diffManager.dispose();
-    service.dispose();
-    await vi.waitFor(() => expect(activeWatcherCount).toBe(0), { timeout: 5_000 });
+    await service.dispose();
+    expect(activeWatcherCount).toBe(0);
     rmSync(tempDir, { recursive: true, force: true });
   });
 
