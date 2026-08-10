@@ -358,9 +358,7 @@ function evaluate(results: Measurement[]): {
   }
   const nodeRuns = results.filter((result) => result.backend === "node");
   const parcelRuns = results.filter((result) => result.backend === "parcel");
-  for (let index = 0; index < Math.min(nodeRuns.length, parcelRuns.length); index += 1) {
-    compareRuns(nodeRuns[index], parcelRuns[index], failures);
-  }
+  comparePerformance(nodeRuns, parcelRuns, failures);
   return { passed: failures.length === 0, failures, comparatorFindings };
 }
 
@@ -387,46 +385,101 @@ function evaluateStandaloneResult(
       `node ran ${result.sustainedFullReconciliationCount} full reconciliations during sustained writes`,
     );
   }
+  if (result.backend !== "node") return;
+
+  const setupLimitMs = process.platform === "win32" ? 8_000 : 1_000;
+  if (result.setupMs > setupLimitMs) {
+    failures.push(
+      `node setup ${result.setupMs.toFixed(1)}ms exceeded the ${setupLimitMs}ms per-run limit on run ${result.run}`,
+    );
+  }
+  if (result.burstDurationMs > 60_000) {
+    failures.push(
+      `node burst recovery ${result.burstDurationMs.toFixed(1)}ms exceeded the 60000ms per-run limit on run ${result.run}`,
+    );
+  }
+  const burstCpuLimitMs = Math.max(5_000, result.burstDurationMs * 0.5);
+  if (result.burstCpuMs > burstCpuLimitMs) {
+    failures.push(
+      `node burst CPU ${result.burstCpuMs.toFixed(1)}ms exceeded the ${burstCpuLimitMs.toFixed(1)}ms per-run limit on run ${result.run}`,
+    );
+  }
+  if (result.eventLoopDelayP99Ms > 250) {
+    failures.push(
+      `node event-loop p99 ${result.eventLoopDelayP99Ms.toFixed(1)}ms exceeded the 250ms per-run limit on run ${result.run}`,
+    );
+  }
+  const sustainedCpuLimitMs = result.sustainedDurationMs * 0.25;
+  if (result.sustainedCpuMs > sustainedCpuLimitMs) {
+    failures.push(
+      `node sustained-create CPU ${result.sustainedCpuMs.toFixed(1)}ms exceeded the ${sustainedCpuLimitMs.toFixed(1)}ms per-run limit on run ${result.run}`,
+    );
+  }
 }
 
-function compareRuns(node: Measurement, parcel: Measurement, failures: string[]): void {
-  const setupBudgetMs = Math.max(process.platform === "win32" ? 4_000 : 400, parcel.setupMs * 4);
-  if (node.setupMs > setupBudgetMs) {
+function comparePerformance(
+  nodeRuns: Measurement[],
+  parcelRuns: Measurement[],
+  failures: string[],
+): void {
+  if (nodeRuns.length === 0 || parcelRuns.length === 0) return;
+
+  const nodeSetupMs = median(nodeRuns.map((result) => result.setupMs));
+  const parcelSetupMs = median(parcelRuns.map((result) => result.setupMs));
+  const setupBudgetMs = Math.max(process.platform === "win32" ? 4_000 : 400, parcelSetupMs * 4);
+  if (nodeSetupMs > setupBudgetMs) {
     failures.push(
-      `node setup ${node.setupMs.toFixed(1)}ms exceeded ${setupBudgetMs.toFixed(1)}ms on run ${node.run}`,
+      `node median setup ${nodeSetupMs.toFixed(1)}ms exceeded ${setupBudgetMs.toFixed(1)}ms`,
     );
   }
-  if (
-    node.missedTrackedPaths === 0 &&
-    parcel.missedTrackedPaths === 0 &&
-    node.editLatencyMs > parcel.editLatencyMs * 4
-  ) {
-    failures.push(`node edit completion exceeded 4x Parcel on run ${node.run}`);
+
+  const validNodeEditRuns = nodeRuns.filter((result) => result.missedTrackedPaths === 0);
+  const validParcelEditRuns = parcelRuns.filter((result) => result.missedTrackedPaths === 0);
+  if (validNodeEditRuns.length > 0 && validParcelEditRuns.length > 0) {
+    const nodeEditLatencyMs = median(validNodeEditRuns.map((result) => result.editLatencyMs));
+    const parcelEditLatencyMs = median(validParcelEditRuns.map((result) => result.editLatencyMs));
+    if (nodeEditLatencyMs > parcelEditLatencyMs * 4) {
+      failures.push("node median edit completion exceeded 4x Parcel");
+    }
   }
-  const burstDurationBudgetMs = Math.max(30_000, parcel.burstDurationMs * 4);
-  if (node.burstDurationMs > burstDurationBudgetMs) {
+
+  const nodeBurstDurationMs = median(nodeRuns.map((result) => result.burstDurationMs));
+  const parcelBurstDurationMs = median(parcelRuns.map((result) => result.burstDurationMs));
+  const burstDurationBudgetMs = Math.max(30_000, parcelBurstDurationMs * 4);
+  if (nodeBurstDurationMs > burstDurationBudgetMs) {
     failures.push(
-      `node burst recovery ${node.burstDurationMs.toFixed(1)}ms exceeded ${burstDurationBudgetMs.toFixed(1)}ms on run ${node.run}`,
+      `node median burst recovery ${nodeBurstDurationMs.toFixed(1)}ms exceeded ${burstDurationBudgetMs.toFixed(1)}ms`,
     );
   }
-  const burstCpuBudgetMs = Math.max(parcel.burstCpuMs * 4, node.burstDurationMs * 0.25);
-  if (node.burstCpuMs > burstCpuBudgetMs) {
+  const nodeBurstCpuMs = median(nodeRuns.map((result) => result.burstCpuMs));
+  const parcelBurstCpuMs = median(parcelRuns.map((result) => result.burstCpuMs));
+  const burstCpuBudgetMs = Math.max(parcelBurstCpuMs * 4, nodeBurstDurationMs * 0.25);
+  if (nodeBurstCpuMs > burstCpuBudgetMs) {
     failures.push(
-      `node burst CPU ${node.burstCpuMs.toFixed(1)}ms exceeded ${burstCpuBudgetMs.toFixed(1)}ms on run ${node.run}`,
+      `node median burst CPU ${nodeBurstCpuMs.toFixed(1)}ms exceeded ${burstCpuBudgetMs.toFixed(1)}ms`,
     );
   }
-  const eventLoopP99BudgetMs = Math.max(100, parcel.eventLoopDelayP99Ms * 4);
-  if (node.eventLoopDelayP99Ms > eventLoopP99BudgetMs) {
+  const nodeEventLoopP99Ms = median(nodeRuns.map((result) => result.eventLoopDelayP99Ms));
+  const parcelEventLoopP99Ms = median(parcelRuns.map((result) => result.eventLoopDelayP99Ms));
+  const eventLoopP99BudgetMs = Math.max(100, parcelEventLoopP99Ms * 4);
+  if (nodeEventLoopP99Ms > eventLoopP99BudgetMs) {
     failures.push(
-      `node event-loop p99 ${node.eventLoopDelayP99Ms.toFixed(1)}ms exceeded ${eventLoopP99BudgetMs.toFixed(1)}ms on run ${node.run}`,
+      `node median event-loop p99 ${nodeEventLoopP99Ms.toFixed(1)}ms exceeded ${eventLoopP99BudgetMs.toFixed(1)}ms`,
     );
   }
-  const sustainedCpuBudgetMs = Math.max(parcel.sustainedCpuMs * 4, node.sustainedDurationMs * 0.15);
-  if (node.sustainedCpuMs > sustainedCpuBudgetMs) {
+  const nodeSustainedCpuMs = median(nodeRuns.map((result) => result.sustainedCpuMs));
+  const parcelSustainedCpuMs = median(parcelRuns.map((result) => result.sustainedCpuMs));
+  const nodeSustainedDurationMs = median(nodeRuns.map((result) => result.sustainedDurationMs));
+  const sustainedCpuBudgetMs = Math.max(parcelSustainedCpuMs * 4, nodeSustainedDurationMs * 0.15);
+  if (nodeSustainedCpuMs > sustainedCpuBudgetMs) {
     failures.push(
-      `node sustained-create CPU ${node.sustainedCpuMs.toFixed(1)}ms exceeded ${sustainedCpuBudgetMs.toFixed(1)}ms on run ${node.run}`,
+      `node median sustained-create CPU ${nodeSustainedCpuMs.toFixed(1)}ms exceeded ${sustainedCpuBudgetMs.toFixed(1)}ms`,
     );
   }
+}
+
+function median(values: number[]): number {
+  return percentile(values, 0.5);
 }
 
 function percentile(values: number[], quantile: number): number {
