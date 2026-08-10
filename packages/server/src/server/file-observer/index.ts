@@ -327,12 +327,18 @@ class RecursiveFileObserver {
         nativeChangeEventCount += 1;
         this.queueEvent("update", path);
         this.requestNativeChangeAudit(scope);
+        if (this.nativeDirectories.has(path)) this.requestNativeAudit(path, false, true);
       } else {
         nativeRenameEventCount += 1;
-        this.classifyRenameEvent(path);
+        const knownDirectory = this.nativeDirectories.has(path);
+        this.classifyRenameEvent(path, (isDirectory) => {
+          if (!isDirectory) return;
+          if (knownDirectory) this.requestNativeAudit(path, false, true);
+          else this.requestNativeAudit(scope);
+        });
         this.requestNativeChangeAudit(scope);
+        if (knownDirectory) this.requestNativeAudit(scope);
       }
-      if (this.nativeDirectories.has(path)) this.requestNativeAudit(path, false, true);
     });
     this.attachWatcher(this.root, watcher);
   }
@@ -974,11 +980,17 @@ class RecursiveFileObserver {
     this.nativeAuditLastDirtyAt = null;
   }
 
-  private classifyRenameEvent(path: string): void {
+  private classifyRenameEvent(path: string, onPresent?: (isDirectory: boolean) => void): void {
     nativeClassificationCount += 1;
     let classification!: Promise<void>;
     classification = stat(path)
-      .then(() => this.queueEvent("create", path))
+      .then((stats) => {
+        this.queueEvent("create", path);
+        if (!this.closed && !this.failed && !this.isIgnored(path)) {
+          onPresent?.(stats.isDirectory());
+        }
+        return undefined;
+      })
       .catch((error: unknown) => {
         if (isMissingPathError(error)) {
           this.queueEvent("delete", path);
