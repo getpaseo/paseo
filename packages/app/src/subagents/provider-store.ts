@@ -86,6 +86,19 @@ export function providerSubagentLifecycleStatus(
 type ProviderSubagentListClient = Pick<DaemonClient, "listProviderSubagents">;
 
 const pendingListRequests = new WeakMap<ProviderSubagentListClient, Map<string, Promise<void>>>();
+const serverGenerations = new Map<string, number>();
+
+export function resetProviderSubagents(client: ProviderSubagentListClient, serverId: string): void {
+  serverGenerations.set(serverId, (serverGenerations.get(serverId) ?? 0) + 1);
+  const prefix = `${serverId}\0`;
+  const requests = pendingListRequests.get(client);
+  for (const key of requests?.keys() ?? []) {
+    if (key.startsWith(prefix)) requests?.delete(key);
+  }
+  useProviderSubagentStore.setState((state) => ({
+    descriptors: new Map([...state.descriptors].filter(([key]) => !key.startsWith(prefix))),
+  }));
+}
 
 export function refreshProviderSubagents(
   client: ProviderSubagentListClient,
@@ -101,14 +114,17 @@ export function refreshProviderSubagents(
   const pending = clientRequests.get(requestKey);
   if (pending) return pending;
 
-  const request = client
+  const generation = serverGenerations.get(serverId) ?? 0;
+  let request: Promise<void>;
+  request = client
     .listProviderSubagents(parentAgentId)
     .then((payload) => {
+      if ((serverGenerations.get(serverId) ?? 0) !== generation) return;
       useProviderSubagentStore.getState().replaceList(serverId, parentAgentId, payload.subagents);
       return undefined;
     })
     .finally(() => {
-      clientRequests?.delete(requestKey);
+      if (clientRequests?.get(requestKey) === request) clientRequests.delete(requestKey);
     });
   clientRequests.set(requestKey, request);
   return request;

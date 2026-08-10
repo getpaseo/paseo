@@ -37,7 +37,11 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSessionConfig } from "@getpaseo/protocol/agent-types";
 import type { GitSetupOptions } from "@getpaseo/protocol/messages";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
-import { getHostRuntimeStore, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import {
+  getHostRuntimeStore,
+  useHostRuntimeAgentDirectoryStatus,
+  useHostRuntimeIsConnected,
+} from "@/runtime/host-runtime";
 import { useVoiceAudioEngineOptional, useVoiceRuntimeOptional } from "@/contexts/voice-context";
 import type { AudioPlaybackSource } from "@/voice/audio-engine-types";
 import {
@@ -65,7 +69,11 @@ import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import { applyCheckoutStatusUpdateFromEvent } from "@/git/checkout-status-cache";
-import { useProviderSubagentStore } from "@/subagents/provider-store";
+import {
+  refreshProviderSubagents,
+  resetProviderSubagents,
+  useProviderSubagentStore,
+} from "@/subagents/provider-store";
 import { revalidateSessionAfterResume } from "@/contexts/session-resume-revalidation";
 
 // Re-export types from session-store and draft-store for backward compatibility
@@ -338,6 +346,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const voiceAudioEngine = useVoiceAudioEngineOptional();
   const queryClient = useQueryClient();
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const agentDirectoryStatus = useHostRuntimeAgentDirectoryStatus(serverId);
   const toast = useToast();
 
   // Zustand store actions
@@ -367,6 +376,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const updateSessionServerInfo = useSessionStore((state) => state.updateSessionServerInfo);
   const setViewedTimelineSync = useSessionStore((state) => state.setViewedTimelineSync);
   const upsertWorkspaceSetupProgress = useWorkspaceSetupStore((state) => state.upsertProgress);
+  const providerSubagentsSupported = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.providerSubagents === true,
+  );
 
   // Track focused agent for heartbeat
   const focusedAgentId = useSessionStore(
@@ -536,8 +548,17 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     if (!isConnected) {
       flushAgentLastActivity();
       setInitializingAgents(serverId, new Map());
+      resetProviderSubagents(client, serverId);
     }
-  }, [flushAgentLastActivity, serverId, isConnected, setInitializingAgents]);
+  }, [client, flushAgentLastActivity, serverId, isConnected, setInitializingAgents]);
+
+  useEffect(() => {
+    if (!isConnected || !providerSubagentsSupported || agentDirectoryStatus !== "ready") return;
+    const agents = useSessionStore.getState().sessions[serverId]?.agents;
+    for (const parentAgentId of agents?.keys() ?? []) {
+      void refreshProviderSubagents(client, serverId, parentAgentId).catch(() => undefined);
+    }
+  }, [agentDirectoryStatus, client, isConnected, providerSubagentsSupported, serverId]);
 
   useEffect(
     () =>
