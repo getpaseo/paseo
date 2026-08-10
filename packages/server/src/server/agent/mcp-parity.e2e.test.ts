@@ -225,6 +225,19 @@ async function createChildAgent(args?: Partial<StructuredContent>): Promise<stri
   return str(payload.agentId);
 }
 
+// Same child, canonical placement: no `relationship`, no `workspace`, so the
+// agent-scoped branch resolves it instead of the COMPAT nested one.
+async function createCanonicalChildAgent(args?: Partial<StructuredContent>): Promise<string> {
+  const payload = await callToolStructured(agentScopedClient, "create_agent", {
+    title: "Parity canonical child",
+    provider: "claude/claude-test-model",
+    initialPrompt: "say done and stop",
+    notifyOnFinish: false,
+    ...args,
+  });
+  return str(payload.agentId);
+}
+
 async function archiveAgentIfPresent(agentId: string | null | undefined): Promise<void> {
   if (!agentId) {
     return;
@@ -346,6 +359,32 @@ describe("Suite A: Core Fixes", () => {
       agentId = await createChildAgent({ relationship: { kind: "detached" } });
       const snapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
       expect(snapshot?.labels?.[PARENT_AGENT_ID_LABEL]).toBeUndefined();
+    } finally {
+      await archiveAgentIfPresent(agentId);
+    }
+  });
+
+  // The canonical shape carries no `relationship`, so `detached` is the only way
+  // to ask for a root agent without the COMPAT nested placement.
+  test("create_agent detached:true omits the parent agent label", async () => {
+    let agentId: string | null = null;
+    try {
+      agentId = await createCanonicalChildAgent({ detached: true });
+      const snapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
+      expect(snapshot?.labels?.[PARENT_AGENT_ID_LABEL]).toBeUndefined();
+    } finally {
+      await archiveAgentIfPresent(agentId);
+    }
+  });
+
+  test("create_agent without detached keeps the parent agent label", async () => {
+    let agentId: string | null = null;
+    try {
+      agentId = await createCanonicalChildAgent();
+      const snapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
+      expect(snapshot?.labels).toMatchObject({
+        [PARENT_AGENT_ID_LABEL]: parentAgentId,
+      });
     } finally {
       await archiveAgentIfPresent(agentId);
     }
