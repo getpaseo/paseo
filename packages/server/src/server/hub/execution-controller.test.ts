@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import type {
   AgentSnapshotPayload,
   HubExecutionAgentCreateRequest,
+  HubExecutionAgentValidateRequest,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 
@@ -81,11 +82,44 @@ class RejectingHubExecutionAgents implements HubExecutionAgents {
 }
 
 describe("HubExecutionController", () => {
+  test("validates a named agent through the daemon provider registry", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const validateAgentConfiguration = async (
+      message: Omit<HubExecutionAgentValidateRequest, "type" | "requestId">,
+    ) =>
+      message.model === "missing" ? [{ path: ["model"], message: "Model is unavailable" }] : [];
+    const controller = new HubExecutionController({
+      agents: new ControlledHubExecutionAgents(),
+      validateAgentConfiguration,
+      send: (message) => messages.push(message),
+    });
+
+    await controller.validateAgent({
+      type: "hub.execution.agent.validate.request",
+      requestId: "validate-agent",
+      provider: "codex",
+      model: "missing",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "hub.execution.agent.validate.response",
+        payload: {
+          requestId: "validate-agent",
+          valid: false,
+          issues: [{ path: ["model"], message: "Model is unavailable" }],
+          error: null,
+        },
+      },
+    ]);
+  });
+
   test("cleanup fences in-flight creates before the dead session can receive a response", async () => {
     const agents = new ControlledHubExecutionAgents();
     const messages: SessionOutboundMessage[] = [];
     const controller = new HubExecutionController({
       agents,
+      validateAgentConfiguration: async () => [],
       send: (message) => messages.push(message),
     });
 
@@ -111,6 +145,7 @@ describe("HubExecutionController", () => {
     const messages: SessionOutboundMessage[] = [];
     const controller = new HubExecutionController({
       agents,
+      validateAgentConfiguration: async () => [],
       send: (message) => messages.push(message),
     });
 
@@ -165,6 +200,7 @@ describe("HubExecutionController", () => {
     const messages: SessionOutboundMessage[] = [];
     const controller = new HubExecutionController({
       agents: new RejectingHubExecutionAgents(error),
+      validateAgentConfiguration: async () => [],
       send: (message) => messages.push(message),
     });
 

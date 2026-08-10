@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { withOutput } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
 import { resolveHubCredential, resolveHubOrigin } from "./authority.js";
-import type { HubHttpClient } from "./client.js";
+import type { HubHttpClient } from "./hub-client/index.js";
 import type { HubCredentialStore } from "./credentials.js";
 import type { HubDaemonConnection } from "./daemon-client.js";
 import { withHubDaemon } from "./daemon-client.js";

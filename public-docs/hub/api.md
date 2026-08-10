@@ -81,7 +81,7 @@ A valid key without the scope required by an endpoint returns `403` in the same 
 
 ## Configuration validation
 
-`POST /api/v1/configurations/validate` accepts the same `projectSlug`, `yaml`, and optional `partials` body as configuration install. It performs the same compilation and resource resolution without recording a revision or changing the active configuration.
+`POST /api/v1/configurations/validate` accepts the same `projectSlug` and complete `files` bundle as configuration install. It performs the same compilation and resource resolution without recording a revision or changing the active configuration.
 
 On success, Hub returns `200`:
 
@@ -96,9 +96,7 @@ On success, Hub returns `200`:
 
 ## Configuration install
 
-`configuration:install` replaces the project's current configuration with the
-supplied YAML after Hub validates and compiles it, then activates the new
-revision.
+`configuration:install` validates the supplied canonical bundle, stores the exact authored files, and activates a new revision.
 
 ```http
 POST /api/v1/configurations/install
@@ -109,26 +107,30 @@ Request body:
 ```json
 {
   "projectSlug": "my-project",
-  "yaml": "environments:\n  - name: production\n    kind: daemon\n    daemon: build-server\n    cwd: /workspace\ntriggers:\n  - name: deploy\n    on: manual.run\n    max_runtime: 2h\n    filters:\n      from_users: [automation]\n    steps:\n      - id: deploy\n        environment: production\n        max_runtime: 90m\n        idle_timeout: 10m\n        agent:\n          provider: opencode\n          mode: full-access\n        prompt:\n          - text: Deploy the project",
-  "partials": [
+  "files": [
     {
-      "path": "docs/safety.md",
+      "path": ".paseo/hub.yml",
+      "content": "environments:\n  production:\n    kind: daemon\n    daemon: build-server\n    cwd: /workspace\nagents:\n  codex:\n    provider: codex\n"
+    },
+    {
+      "path": ".paseo/workflows/deploy.yml",
+      "content": "name: deploy\non: manual.run\nmax_runtime: 2h\nfilters:\n  from_users: [automation]\nsteps:\n  - id: deploy\n    environment: production\n    max_runtime: 90m\n    idle_timeout: 10m\n    agent: codex\n    prompt:\n      - include: partials/safety.md\n"
+    },
+    {
+      "path": ".paseo/workflows/partials/safety.md",
       "content": "Follow the safety checklist."
     }
   ]
 }
 ```
 
-`projectSlug` picks the target project; the API key fixes the organization. Replace the example daemon, working directory, and trigger values with resources in your organization.
-
-`partials` is optional for inline-only configurations. When the YAML uses prompt `include` blocks, send exactly one entry per referenced file, with a path relative to `.paseo/partials/` and the file's UTF-8 content. Hub rejects missing, extra, duplicate, unsafe, or oversized entries.
+`projectSlug` picks the target project; the bearer credential fixes the organization. `files` contains `.paseo/hub.yml`, every direct workflow `.yml`, and each referenced workflow partial. Hub rejects missing, extra, duplicate, unsafe, or noncanonical paths.
 
 Limits:
 
-- YAML: 1,000,000 characters.
-- Partials: at most 100 files.
-- Partial path: canonical, at most 512 characters.
-- Partial content: at most 1,000,000 bytes per file, 5,000,000 bytes combined.
+- Bundle: at most 100 files.
+- File path: at most 512 characters.
+- File content: at most 1,000,000 characters; partial byte limits are enforced during compilation.
 
 On success, Hub returns `201`:
 
@@ -152,7 +154,7 @@ curl --fail-with-body -sS -X POST "$PASEO_HUB_URL/api/v1/configurations/install"
   --data @configuration-install.json
 ```
 
-For a local YAML file, `paseo hub deploy [file]` calls this endpoint and preserves the file contents. The command uses an exact-origin stored login when flags and environment credentials are absent. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli) for project precedence and credential precedence.
+`paseo hub deploy -p <project>` calls this endpoint with the discovered local bundle. The command uses an exact-origin stored login when flags and environment credentials are absent. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli).
 
 ## Manual run dispatch
 
