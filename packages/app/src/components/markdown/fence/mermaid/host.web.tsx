@@ -17,6 +17,7 @@ import type { MarkdownFenceRendererProps } from "../types";
 import type { MermaidRenderRequest } from "./render-model";
 import { mermaidRuntimeHtml } from "./runtime/html.gen";
 import { parseMermaidRuntimeMessage, type MermaidRuntimeRenderMessage } from "./runtime/messages";
+import { MermaidRuntimeRequestDriver } from "./runtime/request-driver";
 import { useMermaidRenderModel } from "./use-render-model";
 import { getDiagramBoxStyle } from "./presentation";
 
@@ -44,9 +45,8 @@ function MermaidIframeRuntime({
   onRenderFailed,
 }: MermaidIframeRuntimeProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const requestRef = useRef(request);
-  const isReadyRef = useRef(false);
-  requestRef.current = request;
+  const driverRef = useRef<MermaidRuntimeRequestDriver | null>(null);
+  driverRef.current ??= new MermaidRuntimeRequestDriver();
   const iframeStyle = useMemo<React.CSSProperties>(
     () => ({
       display: "block",
@@ -59,10 +59,9 @@ function MermaidIframeRuntime({
     [height],
   );
 
-  const sendRequest = useCallback(() => {
-    const current = requestRef.current;
+  const sendRequest = useCallback((current: MermaidRenderRequest | null) => {
     const target = iframeRef.current?.contentWindow;
-    if (!current || !target || !isReadyRef.current) {
+    if (!current || !target) {
       return;
     }
     const message: MermaidRuntimeRenderMessage = {
@@ -76,7 +75,7 @@ function MermaidIframeRuntime({
   }, []);
 
   useEffect(() => {
-    sendRequest();
+    sendRequest(driverRef.current?.update(request) ?? null);
   }, [request, sendRequest]);
 
   useEffect(() => {
@@ -89,15 +88,16 @@ function MermaidIframeRuntime({
         return;
       }
       if (message.type === "bridgeReady") {
-        isReadyRef.current = true;
-        sendRequest();
+        sendRequest(driverRef.current?.ready() ?? null);
         return;
       }
       if (message.type === "renderError") {
         onRenderFailed(message.revision);
+        sendRequest(driverRef.current?.settled(message.revision, false) ?? null);
         return;
       }
       onRendered(message);
+      sendRequest(driverRef.current?.settled(message.revision, true) ?? null);
     }
     window.addEventListener("message", receiveMessage);
     return () => window.removeEventListener("message", receiveMessage);

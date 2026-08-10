@@ -77,6 +77,7 @@ export function useMermaidRenderModel({
         type: "rendered",
         revision: response.revision,
         source: response.source,
+        colorScheme: response.colorScheme,
         dimensions: response.dimensions,
       });
     },

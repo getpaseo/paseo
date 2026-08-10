@@ -22,6 +22,7 @@ import {
   serializeMermaidRuntimeRenderMessage,
   type MermaidRuntimeRenderMessage,
 } from "./runtime/messages";
+import { MermaidRuntimeRequestDriver } from "./runtime/request-driver";
 import { useMermaidRenderModel } from "./use-render-model";
 import { getDiagramBoxStyle } from "./presentation";
 
@@ -55,30 +56,31 @@ function MermaidWebView({
   style,
 }: MermaidWebViewProps) {
   const webViewRef = useRef<WebView | null>(null);
-  const isReadyRef = useRef(false);
-  const requestRef = useRef(request);
-  requestRef.current = request;
+  const driverRef = useRef<MermaidRuntimeRequestDriver | null>(null);
+  driverRef.current ??= new MermaidRuntimeRequestDriver();
 
-  const sendRequest = useCallback(() => {
-    const current = requestRef.current;
-    if (!current || !isReadyRef.current || !webViewRef.current) {
-      return;
-    }
-    const message: MermaidRuntimeRenderMessage = {
-      type: "render",
-      revision: current.revision,
-      source: current.source,
-      colorScheme: current.colorScheme,
-      interactive,
-    };
-    const payload = serializeMermaidRuntimeRenderMessage(message);
-    webViewRef.current.injectJavaScript(
-      `window.__PASEO_MERMAID_RUNTIME_RECEIVE__ && window.__PASEO_MERMAID_RUNTIME_RECEIVE__(${payload}); true;`,
-    );
-  }, [interactive]);
+  const sendRequest = useCallback(
+    (current: MermaidRenderRequest | null) => {
+      if (!current || !webViewRef.current) {
+        return;
+      }
+      const message: MermaidRuntimeRenderMessage = {
+        type: "render",
+        revision: current.revision,
+        source: current.source,
+        colorScheme: current.colorScheme,
+        interactive,
+      };
+      const payload = serializeMermaidRuntimeRenderMessage(message);
+      webViewRef.current.injectJavaScript(
+        `window.__PASEO_MERMAID_RUNTIME_RECEIVE__ && window.__PASEO_MERMAID_RUNTIME_RECEIVE__(${payload}); true;`,
+      );
+    },
+    [interactive],
+  );
 
   useEffect(() => {
-    sendRequest();
+    sendRequest(driverRef.current?.update(request) ?? null);
   }, [request, sendRequest]);
 
   const handleMessage = useCallback(
@@ -94,15 +96,16 @@ function MermaidWebView({
         return;
       }
       if (message.type === "bridgeReady") {
-        isReadyRef.current = true;
-        sendRequest();
+        sendRequest(driverRef.current?.ready() ?? null);
         return;
       }
       if (message.type === "renderError") {
         onRenderFailed(message.revision);
+        sendRequest(driverRef.current?.settled(message.revision, false) ?? null);
         return;
       }
       onRendered(message);
+      sendRequest(driverRef.current?.settled(message.revision, true) ?? null);
     },
     [onRenderFailed, onRendered, sendRequest],
   );
@@ -177,24 +180,28 @@ function MermaidDiagramViewer({
   return (
     <Modal transparent animationType="fade" statusBarTranslucent visible onRequestClose={onClose}>
       <View style={viewerStyles.backdrop}>
-        {showSource ? (
-          <ScrollView style={viewerStyles.webView} contentContainerStyle={viewerStyles.source}>
-            <HighlightedCodeBlock
-              code={code}
-              language="mermaid"
-              inheritedStyles={inheritedStyles}
-              textStyle={textStyle}
-            />
-          </ScrollView>
-        ) : (
+        <View style={viewerStyles.webView}>
           <MermaidWebView
             request={request}
             interactive
             onRendered={handleRendered}
             onRenderFailed={renderFailed}
-            style={viewerStyles.webView}
+            style={viewerStyles.runtime}
           />
-        )}
+          {showSource ? (
+            <ScrollView
+              style={viewerStyles.sourceOverlay}
+              contentContainerStyle={viewerStyles.source}
+            >
+              <HighlightedCodeBlock
+                code={code}
+                language="mermaid"
+                inheritedStyles={inheritedStyles}
+                textStyle={textStyle}
+              />
+            </ScrollView>
+          ) : null}
+        </View>
         <View style={viewerStyles.actions}>
           <Pressable
             onPress={toggleSource}
@@ -237,6 +244,12 @@ const viewerStyles = StyleSheet.create((theme, runtime) => ({
     flex: 1,
     marginTop: runtime.insets.top,
     marginBottom: runtime.insets.bottom,
+  },
+  runtime: { flex: 1 },
+  sourceOverlay: {
+    position: "absolute",
+    inset: 0,
+    backgroundColor: theme.colors.surface0,
   },
   source: {
     paddingTop: theme.spacing[12],

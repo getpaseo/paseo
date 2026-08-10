@@ -41,9 +41,47 @@ export type MermaidRenderAction =
       type: "rendered";
       revision: number;
       source: string;
+      colorScheme: DiagramColorScheme;
       dimensions: DiagramDimensions;
     }
   | { type: "renderFailed"; revision: number };
+
+function reduceRendered(
+  state: MermaidRenderModel,
+  action: Extract<MermaidRenderAction, { type: "rendered" }>,
+): MermaidRenderModel {
+  if (action.colorScheme !== state.colorScheme) {
+    return state;
+  }
+  if (action.revision !== state.revision || action.source !== state.source) {
+    const isStreamingPrefix =
+      state.phase === "streaming" &&
+      action.revision < state.revision &&
+      state.source.startsWith(action.source);
+    const isNewerPreview =
+      state.visible === null || action.source.length > state.visible.source.length;
+    if (!isStreamingPrefix || !isNewerPreview) {
+      return state;
+    }
+    return {
+      ...state,
+      visible: {
+        source: action.source,
+        colorScheme: action.colorScheme,
+        ...action.dimensions,
+      },
+    };
+  }
+  return {
+    ...state,
+    status: "rendered",
+    visible: {
+      source: action.source,
+      colorScheme: action.colorScheme,
+      ...action.dimensions,
+    },
+  };
+}
 
 export function createMermaidRenderModel(input: MermaidRenderInput): MermaidRenderModel {
   if (input.rejected) {
@@ -71,18 +109,7 @@ export function reduceMermaidRenderModel(
   action: MermaidRenderAction,
 ): MermaidRenderModel {
   if (action.type === "rendered") {
-    if (action.revision !== state.revision || action.source !== state.source) {
-      return state;
-    }
-    return {
-      ...state,
-      status: "rendered",
-      visible: {
-        source: action.source,
-        colorScheme: state.colorScheme,
-        ...action.dimensions,
-      },
-    };
+    return reduceRendered(state, action);
   }
 
   if (action.type === "renderFailed") {

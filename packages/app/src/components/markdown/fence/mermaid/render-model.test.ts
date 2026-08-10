@@ -23,6 +23,7 @@ function renderCurrent(state: MermaidRenderModel): MermaidRenderModel {
     type: "rendered",
     revision: state.revision,
     source: state.source,
+    colorScheme: state.colorScheme,
     dimensions: { height: 120, width: 240 },
   });
 }
@@ -102,6 +103,7 @@ describe("Mermaid render model", () => {
       type: "rendered",
       revision: initial.revision,
       source: initial.source,
+      colorScheme: initial.colorScheme,
       dimensions: { height: 90, width: 180 },
     });
 
@@ -111,6 +113,25 @@ describe("Mermaid render model", () => {
       source: "flowchart TD\nA --> C",
       colorScheme: "dark",
     });
+  });
+
+  it("uses an obsolete successful prefix as the first streaming preview", () => {
+    const initial = createMermaidRenderModel(input());
+    const newer = reduceMermaidRenderModel(initial, {
+      type: "inputChanged",
+      input: input({ source: "flowchart TD\nA --> B\nB --" }),
+    });
+    const preview = reduceMermaidRenderModel(newer, {
+      type: "rendered",
+      revision: initial.revision,
+      source: initial.source,
+      colorScheme: initial.colorScheme,
+      dimensions: { height: 90, width: 180 },
+    });
+
+    expect(preview.status).toBe("pending");
+    expect(preview.visible?.source).toBe(initial.source);
+    expect(getMermaidRenderRequest(preview)?.source).toBe("flowchart TD\nA --> B\nB --");
   });
 
   it("keeps the last preview when source policy rejects a streaming revision", () => {
