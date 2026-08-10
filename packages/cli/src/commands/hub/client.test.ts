@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, it } from "vitest";
 import { HubHttpClient } from "./client.js";
+import { HubCommandError } from "./error.js";
 
 const servers: Array<ReturnType<typeof createServer>> = [];
 
@@ -123,11 +124,12 @@ describe("Hub HTTP client", () => {
         files: [{ path: ".paseo/hub.yml", content: "sensitive bundle content" }],
       }),
       (error: unknown) => {
-        assert.ok(error instanceof Error);
-        const serialized = JSON.stringify(error, Object.getOwnPropertyNames(error));
-        assert.equal(serialized.includes("operator-secret"), false);
-        assert.equal(serialized.includes("sensitive bundle content"), false);
-        assert.match(serialized, /\.paseo\/workflows\/answer\.yml\.steps\.work\.agent/u);
+        assert.ok(error instanceof HubCommandError);
+        assert.equal(error.message.includes("operator-secret"), false);
+        assert.equal(error.details?.includes("operator-secret"), false);
+        assert.equal(error.message.includes("sensitive bundle content"), false);
+        assert.equal(error.details?.includes("sensitive bundle content"), false);
+        assert.match(error.details ?? "", /\.paseo\/workflows\/answer\.yml\.steps\.work\.agent/u);
         return true;
       },
     );
