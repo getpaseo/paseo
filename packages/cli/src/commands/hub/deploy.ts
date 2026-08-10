@@ -2,7 +2,11 @@ import type { Command } from "commander";
 import { withOutput, type OutputSchema, type SingleResult } from "../../output/index.js";
 import { addJsonOption } from "../../utils/command-options.js";
 import { resolveHubCredential, resolveHubOrigin } from "./authority.js";
-import { HubHttpClient, type HubInstallResult, type HubValidationResult } from "./client.js";
+import {
+  HubHttpClient,
+  type HubInstallResult,
+  type HubValidationResult,
+} from "./hub-client/index.js";
 import { PrivateHubCredentialStore, type HubCredentialStore } from "./credentials.js";
 import { discoverHubBundle } from "./deploy-bundle.js";
 import { processHubReporter, reportHubProgress, type HubReporter } from "./reporter.js";

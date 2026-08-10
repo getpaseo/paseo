@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, it } from "vitest";
-import { HubHttpClient } from "./client.js";
+import { HubHttpClient } from "./hub-client/index.js";
 import { HubCommandError } from "./error.js";
 
 const servers: Array<ReturnType<typeof createServer>> = [];
