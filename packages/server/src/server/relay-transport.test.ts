@@ -28,6 +28,7 @@ function hasLogMessage(logger: TestLogger, level: "info" | "warn", message: stri
 class FakeRelayWebSocket {
   static readonly CONNECTING = 0;
   static readonly OPEN = 1;
+  static readonly CLOSING = 2;
   static readonly CLOSED = 3;
 
   readyState = FakeRelayWebSocket.CONNECTING;
@@ -67,6 +68,12 @@ class FakeRelayWebSocket {
   }
 
   send(data: string | Uint8Array | ArrayBuffer, callback?: (error?: Error) => void) {
+    if (this.readyState === FakeRelayWebSocket.CLOSING) {
+      // The underlying ws library surfaces a CLOSING send via the callback with an
+      // error rather than throwing. Mirror it so the adapter callback branch runs.
+      callback?.(new Error(`WebSocket is not open: readyState ${this.readyState} (CLOSING)`));
+      return;
+    }
     if (this.readyState !== FakeRelayWebSocket.OPEN) {
       throw new Error(`WebSocket not open (readyState=${this.readyState})`);
     }
@@ -349,4 +356,62 @@ describe("relay-transport control lifecycle", () => {
     expect(relay.sockets[0]?.url).toMatch(/^wss:\/\/\[::1\]\/ws\?/);
     expect(relay.sockets[1]?.url).toMatch(/^wss:\/\/\[::1\]\/ws\?/);
   });
+  test("does not reject a send when the physical relay socket is mid-close", async () => {
+    const logger = createMockLogger();
+    const daemonKeyPair = generateKeyPair();
+    let resolveAttached: ((socket: unknown) => void) | undefined;
+    const attached = new Promise<unknown>((resolve) => {
+      resolveAttached = resolve;
+    });
+    const controller = startRelayTransport({
+      logger: logger as unknown as pino.Logger,
+      attachSocket: async (socket) => resolveAttached?.(socket),
+      relayEndpoint: "relay.paseo.sh:443",
+      relayUseTls: true,
+      serverId: "srv_test",
+      daemonKeyPair,
+      createWebSocket: relay.createWebSocket,
+    });
+    controllers.push(controller);
+
+    const control = relay.sockets[0];
+    control.open();
+    control.message(JSON.stringify({ type: "sync", connectionIds: [] }), false);
+    control.message(JSON.stringify({ type: "connected", connectionId: "clt_test" }), false);
+
+    const dataSocket = relay.sockets[1];
+    dataSocket.open();
+    let clientTransport: Transport = {
+      send: (data) => dataSocket.message(data, data instanceof ArrayBuffer),
+      close: () => undefined,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    dataSocket.onSend = (data) => {
+      clientTransport.onmessage?.(
+        data instanceof Uint8Array ? data.slice().buffer : data,
+        data instanceof ArrayBuffer || data instanceof Uint8Array,
+      );
+    };
+    let resolveClientOpen: (() => void) | undefined;
+    const clientOpen = new Promise<void>((resolve) => {
+      resolveClientOpen = resolve;
+    });
+    await createClientChannel(clientTransport, exportPublicKey(daemonKeyPair.publicKey), {
+      onopen: () => resolveClientOpen?.(),
+    });
+    await clientOpen;
+
+    const encryptedSocket = (await attached) as {
+      send: (data: Uint8Array) => void | Promise<void>;
+    };
+    // Simulate the underlying relay socket closing before the encrypted wrapper
+    // observes it: this is the race that previously produced relay_socket_send_failed.
+    dataSocket.readyState = FakeRelayWebSocket.CLOSING;
+
+    await expect(encryptedSocket.send(new Uint8Array([1, 2, 3]))).resolves.toBeUndefined();
+    expect(hasLogMessage(logger, "warn", "relay_socket_send_failed")).toBe(false);
+  });
+
 });

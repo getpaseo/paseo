@@ -469,6 +469,14 @@ function createRelayTransportAdapter(
   const relayTransport: RelayTransport = {
     send: (data) =>
       new Promise<void>((resolve, reject) => {
+        // A physical relay socket in the middle of closing must not fail a send.
+        // Mirrors websocket/physical-socket.ts (sendBoundedPhysicalFrame returns
+        // false for a non-OPEN socket) so a dying relay leg cannot poison the
+        // shared fan-out to healthy direct peers on the same session.
+        if (socket.readyState !== WebSocket.OPEN) {
+          resolve();
+          return;
+        }
         try {
           socket.send(data, (error) => {
             if (!error) {
