@@ -107,7 +107,7 @@ export function WorkspaceTabGroupDropdown({
               uniProps={hovered || pressed ? foregroundColorMapping : foregroundMutedColorMapping}
             />
             <Text numberOfLines={1} style={styles.headerText}>
-              {t("sidebar.workspace.tabs", { count: tabs.length })}
+              {t("sidebar.workspace.actions.tabs", { count: tabs.length })}
             </Text>
           </>
         )}

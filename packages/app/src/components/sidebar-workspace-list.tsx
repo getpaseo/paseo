@@ -1376,6 +1376,24 @@ function WorkspaceRowWithMenu({
     if (!targetPaneId) {
       return;
     }
+    const rootAgentId = useSessionStore
+      .getState()
+      .sessions[workspace.serverId]?.workspaceAgentActivity.get(workspace.workspaceId)?.agentId;
+    if (!rootAgentId) {
+      return;
+    }
+    const existingTabId = layoutStore
+      .getWorkspaceTabs(workspace.workspaceKey)
+      .find((tab) => tab.target.kind === "agent" && tab.target.agentId === rootAgentId)?.tabId;
+    if (existingTabId) {
+      // Already open: move that tab into a new pane beside the focused one.
+      layoutStore.splitPane(workspace.workspaceKey, {
+        tabId: existingTabId,
+        targetPaneId,
+        position: "right",
+      });
+      return;
+    }
     const paneId = layoutStore.splitPaneEmpty(workspace.workspaceKey, {
       targetPaneId,
       position: "right",
@@ -1383,15 +1401,7 @@ function WorkspaceRowWithMenu({
     if (!paneId) {
       return;
     }
-    const rootAgentId = useSessionStore
-      .getState()
-      .sessions[workspace.serverId]?.workspaceAgentActivity.get(workspace.workspaceId)?.agentId;
-    if (rootAgentId) {
-      layoutStore.openTabFocused(workspace.workspaceKey, {
-        kind: "agent",
-        agentId: rootAgentId,
-      });
-    }
+    layoutStore.openTabFocused(workspace.workspaceKey, { kind: "agent", agentId: rootAgentId });
   }, [workspace.serverId, workspace.workspaceId, workspace.workspaceKey]);
   const onSplitPane = platformIsWeb ? handleSplitPane : undefined;
 
