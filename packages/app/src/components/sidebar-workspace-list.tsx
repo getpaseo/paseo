@@ -87,6 +87,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ProjectLeadingVisual } from "@/components/sidebar/project-leading-visual";
 import { NestedReposSection } from "@/components/sidebar/nested-repos-section";
+import { WorkspaceTabGroupDropdown } from "@/components/sidebar/workspace-tab-group-dropdown";
 import { useToast } from "@/contexts/toast-context";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
@@ -1209,6 +1210,12 @@ function WorkspaceRowInner({
                 />
               </SidebarWorkspaceRowContent>
             </SidebarWorkspaceContextMenu>
+            {workspace.serverId ? (
+              <WorkspaceTabGroupDropdown
+                serverId={workspace.serverId}
+                workspaceId={workspace.workspaceId}
+              />
+            ) : null}
           </View>
         );
       }}

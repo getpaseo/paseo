@@ -1063,6 +1063,7 @@ export const ja: TranslationResources = {
         splitPane: "サイドパネルで開く",
         mainCheckout: "Main checkout",
         nestedRepos: "リポジトリ",
+        tabs: "{{count}}タブ",
         archiving: "アーカイブ中...",
         hiding: "非表示にしています...",
       },

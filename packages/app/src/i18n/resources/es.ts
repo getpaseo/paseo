@@ -1083,6 +1083,7 @@ export const es: TranslationResources = {
         splitPane: "Abrir en panel lateral",
         mainCheckout: "Main checkout",
         nestedRepos: "Repositorios",
+        tabs: "{{count}} pestañas",
         archiving: "Archivando...",
         hiding: "Ocultación...",
       },

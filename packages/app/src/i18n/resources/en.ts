@@ -1062,6 +1062,7 @@ export const en = {
         splitPane: "Open in side pane",
         mainCheckout: "Main checkout",
         nestedRepos: "Repos",
+        tabs: "{{count}} tabs",
         archiving: "Archiving...",
         hiding: "Hiding...",
       },

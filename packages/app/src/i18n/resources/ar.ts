@@ -1052,6 +1052,7 @@ export const ar: TranslationResources = {
         splitPane: "فتح في اللوحة الجانبية",
         mainCheckout: "Main checkout",
         nestedRepos: "المستودعات",
+        tabs: "{{count}} علامات تبويب",
         archiving: "أرشفة...",
         hiding: "إخفاء...",
       },

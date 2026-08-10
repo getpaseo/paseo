@@ -1074,6 +1074,7 @@ export const ptBR: TranslationResources = {
         splitPane: "Abrir no painel lateral",
         mainCheckout: "Main checkout",
         nestedRepos: "Repositórios",
+        tabs: "{{count}} abas",
         archiving: "Arquivando...",
         hiding: "Ocultando...",
       },

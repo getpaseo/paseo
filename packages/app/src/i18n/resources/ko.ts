@@ -1059,6 +1059,7 @@ export const ko: TranslationResources = {
         splitPane: "사이드 패널에서 열기",
         mainCheckout: "Main checkout",
         nestedRepos: "저장소",
+        tabs: "{{count}}개 탭",
         archiving: "보관하는 중...",
         hiding: "숨기는 중...",
       },

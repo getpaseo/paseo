@@ -2,6 +2,7 @@ export interface CollapsedProjectsState {
   collapsedProjectKeys: Set<string>;
   collapsedStatusGroupKeys: Set<string>;
   collapsedBranchGroupKeys: Set<string>;
+  collapsedTabGroupKeys: Set<string>;
   collapsedPinned: boolean;
 }
 
@@ -9,6 +10,7 @@ export interface PersistedCollapsedProjects {
   collapsedProjectKeys?: unknown;
   collapsedStatusGroupKeys?: unknown;
   collapsedBranchGroupKeys?: unknown;
+  collapsedTabGroupKeys?: unknown;
   collapsedPinned?: unknown;
 }
 
@@ -55,6 +57,19 @@ export function toggleBranchGroupCollapsed(
   return { ...state, collapsedBranchGroupKeys: next };
 }
 
+export function toggleTabGroupCollapsed(
+  state: CollapsedProjectsState,
+  tabGroupKey: string,
+): CollapsedProjectsState {
+  const next = new Set(state.collapsedTabGroupKeys);
+  if (next.has(tabGroupKey)) {
+    next.delete(tabGroupKey);
+  } else {
+    next.add(tabGroupKey);
+  }
+  return { ...state, collapsedTabGroupKeys: next };
+}
+
 export function setProjectCollapsed(
   state: CollapsedProjectsState,
   projectKey: string,
@@ -73,12 +88,14 @@ export function serializeCollapsedProjects(state: CollapsedProjectsState): {
   collapsedProjectKeys: string[];
   collapsedStatusGroupKeys: string[];
   collapsedBranchGroupKeys: string[];
+  collapsedTabGroupKeys: string[];
   collapsedPinned: boolean;
 } {
   return {
     collapsedProjectKeys: Array.from(state.collapsedProjectKeys),
     collapsedStatusGroupKeys: Array.from(state.collapsedStatusGroupKeys),
     collapsedBranchGroupKeys: Array.from(state.collapsedBranchGroupKeys),
+    collapsedTabGroupKeys: Array.from(state.collapsedTabGroupKeys),
     collapsedPinned: state.collapsedPinned,
   };
 }
@@ -91,6 +108,7 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
     !persisted?.collapsedProjectKeys &&
     !persisted?.collapsedStatusGroupKeys &&
     !persisted?.collapsedBranchGroupKeys &&
+    !persisted?.collapsedTabGroupKeys &&
     persisted?.collapsedPinned === undefined
   ) {
     return current;
@@ -98,6 +116,7 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
   const restoredProjects = deserializeCollapsedKeys(persisted.collapsedProjectKeys);
   const restoredStatusGroups = deserializeCollapsedKeys(persisted.collapsedStatusGroupKeys);
   const restoredBranchGroups = deserializeCollapsedKeys(persisted.collapsedBranchGroupKeys);
+  const restoredTabGroups = deserializeCollapsedKeys(persisted.collapsedTabGroupKeys);
   const restoredPinned =
     typeof persisted.collapsedPinned === "boolean"
       ? persisted.collapsedPinned
@@ -106,6 +125,7 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
     areSetsEqual(current.collapsedProjectKeys, restoredProjects) &&
     areSetsEqual(current.collapsedStatusGroupKeys, restoredStatusGroups) &&
     areSetsEqual(current.collapsedBranchGroupKeys, restoredBranchGroups) &&
+    areSetsEqual(current.collapsedTabGroupKeys, restoredTabGroups) &&
     current.collapsedPinned === restoredPinned
   ) {
     return current;
@@ -115,6 +135,7 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
     collapsedProjectKeys: restoredProjects,
     collapsedStatusGroupKeys: restoredStatusGroups,
     collapsedBranchGroupKeys: restoredBranchGroups,
+    collapsedTabGroupKeys: restoredTabGroups,
     collapsedPinned: restoredPinned,
   };
 }

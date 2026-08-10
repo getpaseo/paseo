@@ -1074,6 +1074,7 @@ export const ru: TranslationResources = {
         splitPane: "Открыть в боковой панели",
         mainCheckout: "Main checkout",
         nestedRepos: "Репозитории",
+        tabs: "{{count}} вкладок",
         archiving: "Архивирование...",
         hiding: "Скрытие...",
       },

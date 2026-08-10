@@ -1042,6 +1042,7 @@ export const zhCN: TranslationResources = {
         splitPane: "在侧栏中打开",
         mainCheckout: "Main checkout",
         nestedRepos: "仓库",
+        tabs: "{{count}}个标签页",
         archiving: "正在归档...",
         hiding: "正在隐藏...",
       },

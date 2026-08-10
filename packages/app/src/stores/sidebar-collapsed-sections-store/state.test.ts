@@ -8,6 +8,7 @@ import {
   togglePinnedCollapsed,
   toggleProjectCollapsed,
   toggleStatusGroupCollapsed,
+  toggleTabGroupCollapsed,
 } from "@/stores/sidebar-collapsed-sections-store/state";
 
 function emptyState(): CollapsedProjectsState {
@@ -15,6 +16,7 @@ function emptyState(): CollapsedProjectsState {
     collapsedProjectKeys: new Set(),
     collapsedStatusGroupKeys: new Set(),
     collapsedBranchGroupKeys: new Set(),
+    collapsedTabGroupKeys: new Set(),
     collapsedPinned: false,
   };
 }
@@ -28,10 +30,12 @@ describe("sidebar collapsed projects transitions", () => {
     state = toggleProjectCollapsed(state, "project-a");
     state = toggleStatusGroupCollapsed(state, "running");
     state = toggleBranchGroupCollapsed(state, "proj:feature-x");
+    state = toggleTabGroupCollapsed(state, "srv:ws");
 
     expect(Array.from(state.collapsedProjectKeys)).toEqual(["project-b"]);
     expect(Array.from(state.collapsedStatusGroupKeys)).toEqual(["running"]);
     expect(Array.from(state.collapsedBranchGroupKeys)).toEqual(["proj:feature-x"]);
+    expect(Array.from(state.collapsedTabGroupKeys)).toEqual(["srv:ws"]);
   });
 
   it("serializes collapsed project keys for preference storage", () => {
@@ -39,6 +43,7 @@ describe("sidebar collapsed projects transitions", () => {
       collapsedProjectKeys: new Set(["project-a", "project-b"]),
       collapsedStatusGroupKeys: new Set(["running"]),
       collapsedBranchGroupKeys: new Set(["proj:feature-x"]),
+      collapsedTabGroupKeys: new Set(["srv:ws"]),
       collapsedPinned: true,
     };
 
@@ -46,6 +51,7 @@ describe("sidebar collapsed projects transitions", () => {
       collapsedProjectKeys: ["project-a", "project-b"],
       collapsedStatusGroupKeys: ["running"],
       collapsedBranchGroupKeys: ["proj:feature-x"],
+      collapsedTabGroupKeys: ["srv:ws"],
       collapsedPinned: true,
     });
   });

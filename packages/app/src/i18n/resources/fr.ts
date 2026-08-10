@@ -1082,6 +1082,7 @@ export const fr: TranslationResources = {
         splitPane: "Ouvrir dans un panneau latéral",
         mainCheckout: "Main checkout",
         nestedRepos: "Dépôts",
+        tabs: "{{count}} onglets",
         archiving: "Archivage...",
         hiding: "Dissimulation...",
       },
