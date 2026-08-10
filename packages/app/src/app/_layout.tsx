@@ -680,10 +680,8 @@ function DesktopWindowControlsSync({ enabled }: { enabled: boolean }) {
   const foreground = theme.colors.foreground;
   const pathname = usePathname();
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
-  const liftTrafficLights =
-    getIsElectronRuntimeMac() &&
-    isFocusModeEnabled &&
-    parseHostWorkspaceRouteFromPathname(pathname) !== null;
+  const isWorkspaceRoute = parseHostWorkspaceRouteFromPathname(pathname) !== null;
+  const liftTrafficLights = getIsElectronRuntimeMac() && isFocusModeEnabled && isWorkspaceRoute;
 
   useEffect(() => {
     if (!enabled || isNative) return;
@@ -694,7 +692,7 @@ function DesktopWindowControlsSync({ enabled }: { enabled: boolean }) {
     }).catch((error) => {
       console.warn("[DesktopWindow] Failed to update window controls overlay", error);
     });
-  }, [enabled, surface0, foreground, liftTrafficLights]);
+  }, [enabled, foreground, liftTrafficLights, surface0]);
 
   return null;
 }

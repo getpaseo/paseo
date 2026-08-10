@@ -11,7 +11,7 @@ import Animated, { useAnimatedStyle, useSharedValue, runOnJS } from "react-nativ
 import { scheduleOnRN } from "react-native-worklets";
 import { Gesture } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { X } from "lucide-react-native";
+import { PanelRight } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import {
   formatPrTabLabel,
@@ -27,12 +27,17 @@ import { usePanelStore, selectIsFileExplorerOpen, type ExplorerTab } from "@/sto
 import { useToast } from "@/contexts/toast-context";
 import { useCloseFileExplorerGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
-import { HEADER_INNER_HEIGHT } from "@/constants/layout";
+import {
+  getIsElectronRuntime,
+  getIsElectronRuntimeMac,
+  HEADER_INNER_HEIGHT,
+} from "@/constants/layout";
+import { updateDesktopWindowControls } from "@/desktop/electron/window";
 import { GitDiffPane } from "@/git/diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
-import { useHasOwnedWindowChromeObstruction, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import { WindowChromeHeaderRow } from "@/components/desktop/window-chrome-header-row";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
@@ -319,8 +324,26 @@ function ExplorerSidebarContent({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const toast = useToast();
-  const hasRightWindowControls = useHasOwnedWindowChromeObstruction("top-right");
   const canQueryPullRequest = isGit && Boolean(workspaceRoot);
+
+  useEffect(() => {
+    if (!getIsElectronRuntime() || getIsElectronRuntimeMac()) return;
+
+    const backgroundColor = isOpen ? theme.colors.surfaceSidebar : theme.colors.surface0;
+    void updateDesktopWindowControls({ backgroundColor }).catch((error) => {
+      console.warn("[DesktopWindow] Failed to update window controls background", error);
+    });
+
+    return () => {
+      if (!isOpen) return;
+      void updateDesktopWindowControls({ backgroundColor: theme.colors.surface0 }).catch(
+        (error) => {
+          console.warn("[DesktopWindow] Failed to reset window controls background", error);
+        },
+      );
+    };
+  }, [isOpen, theme.colors.surface0, theme.colors.surfaceSidebar]);
+
   const prPane = usePrPaneData({
     serverId,
     cwd: workspaceRoot,
@@ -347,10 +370,10 @@ function ExplorerSidebarContent({
   return (
     <View style={styles.sidebarContent} pointerEvents="auto">
       {/* Header with tabs and close button */}
-      <WindowChromeSafeArea
-        placement="inline"
+      <WindowChromeHeaderRow
         horizontalPadding={theme.spacing[2]}
         style={styles.header}
+        stripStyle={styles.windowChromeStrip}
         testID="explorer-header"
       >
         <TitlebarDragRegion />
@@ -390,29 +413,25 @@ function ExplorerSidebarContent({
           )}
         </View>
         <View style={styles.headerRightSection}>
-          {!hasRightWindowControls && (
-            <Pressable
-              onPress={onClose}
-              style={styles.closeButton}
-              testID="explorer-close"
-              nativeID="explorer-close"
-              accessible
-              accessibilityRole="button"
-              accessibilityLabel={t("workspace.tabs.explorer.close")}
-              hitSlop={8}
-            >
-              {({ hovered, pressed }) => (
-                <X
-                  size={18}
-                  color={
-                    hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
-                  }
-                />
-              )}
-            </Pressable>
-          )}
+          <Pressable
+            onPress={onClose}
+            style={styles.closeButton}
+            testID="explorer-close"
+            nativeID="explorer-close"
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel={t("workspace.tabs.explorer.close")}
+            hitSlop={8}
+          >
+            {({ hovered, pressed }) => (
+              <PanelRight
+                size={18}
+                color={hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted}
+              />
+            )}
+          </Pressable>
         </View>
-      </WindowChromeSafeArea>
+      </WindowChromeHeaderRow>
 
       {/* Content based on active tab */}
       <View style={styles.contentArea} testID="explorer-content-area">
@@ -575,6 +594,13 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
     overflow: "hidden",
+  },
+  // Band reserved for top-right window controls (Windows/Linux only — macOS keeps the row
+  // inline). Carries the sidebar surface so it matches the native overlay colour the
+  // explorer pushes while it is open.
+  windowChromeStrip: {
+    position: "relative",
+    backgroundColor: theme.colors.surfaceSidebar,
   },
   header: {
     position: "relative",

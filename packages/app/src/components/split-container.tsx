@@ -41,6 +41,7 @@ import {
   type WindowChromeCorners,
 } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import { WindowChromeHeaderRow } from "@/components/desktop/window-chrome-header-row";
 import {
   computeTabDropPreview,
   type TabDropPreview,
@@ -1038,7 +1039,7 @@ function SplitPaneView({
   return (
     <RenderProfile id={`SplitPaneView:${pane.id}`}>
       <View ref={paneRef} collapsable={false} style={styles.pane}>
-        <WindowChromeSafeArea placement="inline" style={styles.paneTabs}>
+        <WindowChromeHeaderRow style={styles.paneTabs} stripStyle={styles.windowChromeStrip}>
           <TitlebarDragRegion />
           <WorkspaceDesktopTabsRow
             paneId={pane.id}
@@ -1073,7 +1074,7 @@ function SplitPaneView({
             focusModeEnabled={Boolean(focusModeEnabled)}
             onExitFocusMode={onExitFocusMode}
           />
-        </WindowChromeSafeArea>
+        </WindowChromeHeaderRow>
 
         <View style={styles.paneContent}>
           {mountedPaneTabIds.length > 0
@@ -1170,6 +1171,12 @@ const styles = StyleSheet.create((theme) => ({
   paneTabs: {
     position: "relative",
     minWidth: 0,
+  },
+  // Band reserved for top-right window controls (Windows/Linux only — macOS keeps the tabs
+  // row inline). Inherits styles.pane's background so it cannot drift from the surface it
+  // belongs to, and only has to be a positioned box for TitlebarDragRegion's children.
+  windowChromeStrip: {
+    position: "relative",
   },
   paneContent: {
     position: "relative",

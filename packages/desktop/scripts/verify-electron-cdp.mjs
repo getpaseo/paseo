@@ -62,7 +62,7 @@ function getWindowChromeObstruction(platform, innerWidth) {
     left: innerWidth - 140,
     top: 0,
     width: 140,
-    height: 48,
+    height: 29,
   };
 }
 
@@ -376,12 +376,9 @@ async function inspectFullscreenWindowChrome(page, platform) {
         : Boolean(
             before.detailHeaderLeftRect &&
             fullscreen.detailHeaderLeftRect &&
-            before.innerWidth -
-              (before.detailHeaderLeftRect.left + before.detailHeaderLeftRect.width) >=
-              140 &&
-            fullscreen.innerWidth -
-              (fullscreen.detailHeaderLeftRect.left + fullscreen.detailHeaderLeftRect.width) <
-              40,
+            before.detailHeaderLeftRect.top >= 29 &&
+            fullscreen.detailHeaderLeftRect.top < 29 &&
+            fullscreen.detailHeaderLeftRect.top < before.detailHeaderLeftRect.top,
           );
 
     return {

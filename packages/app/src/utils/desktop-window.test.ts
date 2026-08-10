@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   intersectWindowChromeCorners,
-  resolveHasOwnedWindowChromeObstruction,
   resolveWindowChromeObstruction,
+  resolveWindowChromeRowPlacement,
   resolveWindowChromeSafeArea,
 } from "@/utils/desktop-window";
 
@@ -22,7 +22,30 @@ describe("window chrome", () => {
     ).toEqual({ topLeft: { width: 78, height: 45 }, topRight: null });
     expect(
       resolveWindowChromeObstruction({ isElectron: true, isMac: false, isFullscreen: false }),
-    ).toEqual({ topLeft: null, topRight: { width: 140, height: 48 } });
+    ).toEqual({ topLeft: null, topRight: { width: 140, height: 29 } });
+  });
+
+  it("keeps rows inline under top-left controls and below top-right ones", () => {
+    const mac = resolveWindowChromeObstruction({
+      isElectron: true,
+      isMac: true,
+      isFullscreen: false,
+    });
+    const windows = resolveWindowChromeObstruction({
+      isElectron: true,
+      isMac: false,
+      isFullscreen: false,
+    });
+
+    expect(resolveWindowChromeRowPlacement(mac)).toBe("inline");
+    expect(resolveWindowChromeRowPlacement(windows)).toBe("below");
+    // Browser, native, and fullscreen have no controls, so they keep the inline row.
+    expect(resolveWindowChromeRowPlacement({ topLeft: null, topRight: null })).toBe("inline");
+    expect(
+      resolveWindowChromeRowPlacement(
+        resolveWindowChromeObstruction({ isElectron: true, isMac: false, isFullscreen: true }),
+      ),
+    ).toBe("inline");
   });
 
   it("insets and reserves only claimed corners", () => {
@@ -49,34 +72,5 @@ describe("window chrome", () => {
     expect(intersectWindowChromeCorners("both", "top-left")).toBe("top-left");
     expect(intersectWindowChromeCorners("top-right", "both")).toBe("top-right");
     expect(intersectWindowChromeCorners("top-left", "top-right")).toBe("none");
-  });
-
-  it("reports an obstruction only when the surface owns its corner", () => {
-    const obstruction = {
-      topLeft: { width: 78, height: 45 },
-      topRight: { width: 140, height: 48 },
-    };
-
-    expect(
-      resolveHasOwnedWindowChromeObstruction({
-        obstruction,
-        corners: "top-left",
-        corner: "top-left",
-      }),
-    ).toBe(true);
-    expect(
-      resolveHasOwnedWindowChromeObstruction({
-        obstruction,
-        corners: "top-left",
-        corner: "top-right",
-      }),
-    ).toBe(false);
-    expect(
-      resolveHasOwnedWindowChromeObstruction({
-        obstruction: { topLeft: null, topRight: null },
-        corners: "both",
-        corner: "top-right",
-      }),
-    ).toBe(false);
   });
 });

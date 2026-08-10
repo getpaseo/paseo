@@ -12,7 +12,7 @@ import { getDesktopWindow } from "@/desktop/electron/window";
 import { isNative } from "@/constants/platform";
 
 export type WindowChromeCorners = "none" | "top-left" | "top-right" | "both";
-type WindowChromeSafeAreaPlacement = "inline" | "below";
+export type WindowChromeSafeAreaPlacement = "inline" | "below";
 
 interface WindowChromeCornerObstruction {
   width: number;
@@ -46,20 +46,14 @@ export function windowChromeCornersInclude(
   return corners === "both" || corners === corner;
 }
 
-export function resolveHasOwnedWindowChromeObstruction(input: {
-  obstruction: WindowChromeObstruction;
-  corners: WindowChromeCorners;
-  corner: WindowChromeCorner;
-}): boolean {
-  if (!windowChromeCornersInclude(input.corners, input.corner)) return false;
-  return input.corner === "top-left"
-    ? input.obstruction.topLeft !== null
-    : input.obstruction.topRight !== null;
-}
-
 export function useHasWindowChromeObstruction(corner: WindowChromeCorner): boolean {
   const obstruction = useContext(WindowChromeContext);
   return corner === "top-left" ? obstruction.topLeft !== null : obstruction.topRight !== null;
+}
+
+export function useWindowChromeRowPlacement(): WindowChromeSafeAreaPlacement {
+  const obstruction = useContext(WindowChromeContext);
+  return resolveWindowChromeRowPlacement(obstruction);
 }
 
 export function intersectWindowChromeCorners(
@@ -92,6 +86,25 @@ export function resolveWindowChromeObstruction(input: {
     topLeft: null,
     topRight: { width: DESKTOP_WINDOW_CONTROLS_WIDTH, height: DESKTOP_WINDOW_CONTROLS_HEIGHT },
   };
+}
+
+/**
+ * Where a header row sits relative to the native window controls.
+ *
+ * macOS keeps the row inline: the traffic lights sit in the top-left, ahead of the row's
+ * leading content, and padding past them costs nothing. Windows/Linux reserve instead: the
+ * controls sit in the top-right, on top of the row's trailing actions, where padding would
+ * squash the actions into the middle — so the owning surface reserves the controls' height
+ * in a strip and starts its row below them.
+ *
+ * Read from the obstruction rather than the platform, so it stays correct while the Electron
+ * bridge is still resolving. Only top-right controls move the row: browser, native, and
+ * fullscreen have no obstruction at all and keep the inline row they always had.
+ */
+export function resolveWindowChromeRowPlacement(
+  obstruction: WindowChromeObstruction,
+): WindowChromeSafeAreaPlacement {
+  return obstruction.topRight !== null ? "below" : "inline";
 }
 
 export function resolveWindowChromeSafeArea(input: {
@@ -238,12 +251,6 @@ export function useWindowChromeCorners(): WindowChromeCorners {
 export function useOwnsWindowChromeCorner(corner: WindowChromeCorner): boolean {
   const corners = useContext(WindowChromeCornersContext);
   return windowChromeCornersInclude(corners, corner);
-}
-
-export function useHasOwnedWindowChromeObstruction(corner: WindowChromeCorner): boolean {
-  const obstruction = useContext(WindowChromeContext);
-  const corners = useContext(WindowChromeCornersContext);
-  return resolveHasOwnedWindowChromeObstruction({ obstruction, corners, corner });
 }
 
 type WindowChromeSafeAreaProps = ViewProps & {

@@ -169,6 +169,13 @@ export function readWindowControlsOverlayUpdate(
   };
 }
 
+/**
+ * Runtime overlay options. The height is VS Code's titlebar height minus its 1px bottom
+ * border, so the overlay a runtime update installs is a pixel shorter than the one
+ * getTitleBarOverlayOptions() set at construction. The app reserves the taller value
+ * (DESKTOP_WINDOW_CONTROLS_HEIGHT in packages/app/src/constants/layout.ts) so its header
+ * strip clears the overlay in both states.
+ */
 export function resolveRuntimeTitleBarOverlayOptions(
   state: WindowControlsOverlayState,
 ): Electron.TitleBarOverlayOptions {

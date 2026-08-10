@@ -9,8 +9,8 @@ import {
   HEADER_TOP_PADDING_MOBILE,
   useIsCompactFormFactor,
 } from "@/constants/layout";
-import { WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import { WindowChromeHeaderRow } from "@/components/desktop/window-chrome-header-row";
 
 interface ScreenHeaderProps {
   left?: ReactNode;
@@ -51,16 +51,16 @@ export function ScreenHeader({
   return (
     <View style={styles.header}>
       <View style={innerStyle}>
-        <WindowChromeSafeArea
-          placement="inline"
+        <WindowChromeHeaderRow
           horizontalPadding={baseHorizontalPadding}
           onLayout={onRowLayout}
           style={rowStyle}
+          stripStyle={styles.windowChromeStrip}
         >
           <TitlebarDragRegion />
           <View style={leftCombinedStyle}>{left}</View>
           <View style={rightCombinedStyle}>{right}</View>
-        </WindowChromeSafeArea>
+        </WindowChromeHeaderRow>
       </View>
     </View>
   );
@@ -71,6 +71,12 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
   },
   inner: {},
+  // Band reserved for top-right window controls (Windows/Linux only — macOS keeps the row
+  // inline). Inherits styles.header's background so it cannot drift from the surface it
+  // belongs to, and only has to be a positioned box for TitlebarDragRegion's children.
+  windowChromeStrip: {
+    position: "relative",
+  },
   row: {
     position: "relative",
     height: {

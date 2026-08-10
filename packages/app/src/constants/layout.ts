@@ -3,9 +3,12 @@ import { isWeb } from "@/constants/platform";
 
 export const FOOTER_HEIGHT = 75;
 
-// Shared header inner height (excluding safe area insets and border)
-// Used by both agent header (ScreenHeader) and explorer sidebar header
-// This ensures both headers have the same visual height
+// Shared header row height (excluding safe area insets and border)
+// Used by both agent header (ScreenHeader) and explorer sidebar header, so the two rows
+// are the same height. On Windows/Linux Electron their top edges need not be level: the
+// surface owning the top-right controls reserves their height above its row
+// (WindowChromeHeaderRow), so it sits that much lower than a surface owning no corner.
+// macOS pads its row past the top-left traffic lights instead and stays level.
 export const HEADER_INNER_HEIGHT = 48;
 export const HEADER_INNER_HEIGHT_MOBILE = 56;
 export const WORKSPACE_SECONDARY_HEADER_HEIGHT = 36;
@@ -29,7 +32,11 @@ export const DESKTOP_TRAFFIC_LIGHT_HEIGHT = 45;
 
 // Windows/Linux window controls (minimize/maximize/close) — top-right
 export const DESKTOP_WINDOW_CONTROLS_WIDTH = 140;
-export const DESKTOP_WINDOW_CONTROLS_HEIGHT = 48;
+// Keep in sync with getTitleBarOverlayOptions() in packages/desktop/src/window/window-manager.ts,
+// the height Electron gets at window construction. Runtime overlay updates apply height - 1
+// (resolveRuntimeTitleBarOverlayOptions), so the live overlay is a pixel shorter once the app
+// pushes its first colour update. Reserve the taller value — it covers both.
+export const DESKTOP_WINDOW_CONTROLS_HEIGHT = 29;
 
 export {
   getIsElectron as getIsElectronRuntime,
