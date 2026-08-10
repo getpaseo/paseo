@@ -63,7 +63,7 @@ paseo hub logout --disconnect-daemon --force   # drop local authority when Hub i
 
 ```yaml
 environments:
-  - name: dev
+  dev:
     kind: daemon
     daemon: my-macbook
     cwd: /Users/you/code/your-repo

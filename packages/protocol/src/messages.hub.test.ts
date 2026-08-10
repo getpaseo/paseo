@@ -66,6 +66,34 @@ const PreviousHubAgentCreateWithAutoArchiveRequestSchema =
   });
 
 describe("Hub session protocol", () => {
+  test("round-trips named-agent validation", () => {
+    const request = {
+      type: "hub.execution.agent.validate.request" as const,
+      requestId: "validate-codex",
+      provider: "codex",
+      model: "gpt-5.5",
+      thinkingOptionId: "xhigh",
+      providerOptions: {
+        sandbox_workspace_write: {
+          writable_roots: ["/var/cache/npm"],
+          network_access: false,
+        },
+      },
+    };
+    const response = {
+      type: "hub.execution.agent.validate.response" as const,
+      payload: {
+        requestId: request.requestId,
+        valid: true,
+        issues: [],
+        error: null,
+      },
+    };
+
+    expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
+    expect(SessionOutboundMessageSchema.parse(response)).toEqual(response);
+  });
+
   test("accepts the Hub execution create request", () => {
     const message = {
       type: "hub.execution.agent.create.request",

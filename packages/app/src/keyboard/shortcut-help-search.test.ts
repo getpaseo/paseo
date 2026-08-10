@@ -99,12 +99,12 @@ describe("filterShortcutHelpSections", () => {
   });
 
   it("keeps every row of a section whose own title matches", () => {
-    const projects = filter("projects").find((section) => section.id === "projects");
-    const allProjects = buildKeyboardShortcutHelpSections(MAC_DESKTOP).find(
-      (section) => section.id === "projects",
+    const matched = filter("layout").find((section) => section.id === "layout");
+    const all = buildKeyboardShortcutHelpSections(MAC_DESKTOP).find(
+      (section) => section.id === "layout",
     );
 
-    expect(projects?.rows).toHaveLength(allProjects?.rows.length ?? 0);
+    expect(matched?.rows).toHaveLength(all?.rows.length ?? 0);
   });
 
   it("drops a section whose rows all miss", () => {

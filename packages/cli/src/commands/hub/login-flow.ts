@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { platform } from "node:os";
-import type { CliAuthorizationPoll, HubHttpClient } from "./client.js";
+import type { CliAuthorizationPoll, HubHttpClient } from "./hub-client/index.js";
 
 export interface LoginWaiter {
   wait(milliseconds: number): Promise<void>;

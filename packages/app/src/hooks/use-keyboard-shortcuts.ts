@@ -201,7 +201,9 @@ export function useKeyboardShortcuts({
               setCommandCenterFocusRestoreElement(browserFocusRestoreElement);
             }
           }
-          useKeyboardShortcutsStore.getState().setCommandCenterOpen(action.nextOpen);
+          useKeyboardShortcutsStore
+            .getState()
+            .setCommandCenterOpen(action.nextOpen, action.scope ?? null);
           return true;
         }
         case "shortcuts-dialog-toggle":

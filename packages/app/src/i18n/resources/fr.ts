@@ -55,9 +55,13 @@ export const fr: TranslationResources = {
       close: "Fermer le menu",
     },
     commandCenter: {
-      placeholder: "Rechercher des commandes, espaces de travail et agents…",
+      placeholder:
+        "Rechercher des commandes, fichiers, espaces de travail et agents…",
+      filePlaceholder: "Rechercher des fichiers…",
+      searchingFiles: "Recherche de fichiers…",
       noMatches: "Aucune correspondance",
       actions: "Actions",
+      files: "Fichiers",
       workspaces: "Espaces de travail",
       agents: "Agents",
       newAgent: "Nouvel agent",
@@ -80,7 +84,8 @@ export const fr: TranslationResources = {
   },
   composer: {
     placeholders: {
-      desktop: "Écrivez à l’agent, mentionnez des @files ou utilisez des /commands et /skills",
+      desktop:
+        "Écrivez à l’agent, mentionnez des @files ou utilisez des /commands et /skills",
       mobile: "Message, @files, /commands",
       fallback: "Message…",
       terminal: "Invite",
@@ -112,7 +117,8 @@ export const fr: TranslationResources = {
       unmuteVoice: "Réactiver la voix",
       muteVoice: "Couper la voix",
       dictation: "Dictée",
-      interruptBeforeVoice: "Interrompre l’agent avant de démarrer le mode vocal",
+      interruptBeforeVoice:
+        "Interrompre l’agent avant de démarrer le mode vocal",
     },
     attachments: {
       addImage: "Ajouter une image",
@@ -210,9 +216,11 @@ export const fr: TranslationResources = {
       notFound: "Agent introuvable",
       failedToLoad: "Échec du chargement de l’agent",
       reconnecting: "Reconnexion",
-      timelineSyncFailed: "Impossible d’actualiser l’historique de l’agent. Nouvelle tentative…",
+      timelineSyncFailed:
+        "Impossible d’actualiser l’historique de l’agent. Nouvelle tentative…",
       archivingTitle: "Archivage de l’agent…",
-      archivingSubtitle: "Veuillez patienter pendant que nous archivons cet agent.",
+      archivingSubtitle:
+        "Veuillez patienter pendant que nous archivons cet agent.",
     },
     unavailable: {
       selectedHost: "Hôte sélectionné",
@@ -225,7 +233,8 @@ export const fr: TranslationResources = {
       showSoon: "Cet agent s’affichera dans un instant.",
       showWhenOnline: "Cet agent s’affichera dès que l’hôte sera en ligne.",
       reconnectingTo: "Reconnexion à {{serverLabel}}…",
-      showAgainWhenReachable: "Cet agent s’affichera à nouveau dès que l’hôte sera joignable.",
+      showAgainWhenReachable:
+        "Cet agent s’affichera à nouveau dès que l’hôte sera joignable.",
     },
     archived: {
       callout: "Cet agent est archivé",
@@ -268,7 +277,8 @@ export const fr: TranslationResources = {
     },
     archiveSheet: {
       hostOffline: "Hôte hors ligne",
-      runningAgent: "Cet agent est toujours en cours d’exécution. L’archiver arrêtera l’agent.",
+      runningAgent:
+        "Cet agent est toujours en cours d’exécution. L’archiver arrêtera l’agent.",
       archive: "Archiver",
     },
   },
@@ -370,13 +380,15 @@ export const fr: TranslationResources = {
       hostOffline: "{{hostName}} est hors ligne",
       cannotReachHost: "Impossible de joindre {{hostName}}",
       hostStatus: "État de l’hôte : {{status}}",
-      needsHostUpgrade: "Mettez à jour votre hôte pour restaurer cet espace de travail",
+      needsHostUpgrade:
+        "Mettez à jour votre hôte pour restaurer cet espace de travail",
       manageHost: "Gérer l’hôte",
       recovery: {
         archivedTitle: "Espace de travail archivé",
         restoreDescription:
           "{{workspaceName}} a été archivé et son worktree supprimé. Restaurez la branche {{branch}} pour le rouvrir.",
-        unarchiveDescription: "{{workspaceName}} est archivé. Désarchivez-le pour le rouvrir.",
+        unarchiveDescription:
+          "{{workspaceName}} est archivé. Désarchivez-le pour le rouvrir.",
         restoreAction: "Restaurer",
         unarchiveAction: "Désarchiver",
         restoringTitle: "Restauration de l’espace de travail",
@@ -394,9 +406,33 @@ export const fr: TranslationResources = {
     fileActions: {
       openFile: "Ouvrir le fichier",
       copyPath: "Copier le chemin",
+      copyRelativePath: "Copier le chemin relatif",
+      revealIn: "Afficher dans {{target}}",
       download: "Télécharger",
       addToChat: "Ajouter à la discussion",
       moreActions: "Plus d’actions",
+      newFile: "Nouveau fichier",
+      newFolder: "Nouveau dossier",
+      collapseFolder: "Replier le dossier",
+      rename: "Renommer",
+      duplicate: "Dupliquer",
+      revert: "Abandonner les modifications",
+      delete: "Supprimer",
+      confirmDelete: {
+        fileTitle: "Supprimer le fichier ?",
+        folderTitle: "Supprimer le dossier ?",
+        message: "« {{name}} » sera définitivement supprimé.",
+        confirm: "Supprimer",
+        cancel: "Annuler",
+      },
+      confirmRevert: {
+        title: "Abandonner les modifications ?",
+        message:
+          "Les modifications de « {{name}} » seront définitivement abandonnées.",
+        confirm: "Abandonner",
+        cancel: "Annuler",
+        failed: "Échec de l’abandon des modifications",
+      },
     },
     fileExplorer: {
       sort: {
@@ -426,6 +462,15 @@ export const fr: TranslationResources = {
       },
       errors: {
         failedToListDirectory: "Impossible d’afficher le contenu du répertoire",
+        createFailed: "Échec de la création de l’entrée",
+        renameFailed: "Échec du renommage de l’entrée",
+        duplicateFailed: "Échec de la duplication de l’entrée",
+        revealFailed: "Échec de l’affichage de l’entrée",
+        deleteFailed: "Échec de la suppression de l’entrée",
+      },
+      draft: {
+        filePlaceholder: "Nom du fichier",
+        folderPlaceholder: "Nom du dossier",
       },
     },
     setup: {
@@ -443,10 +488,12 @@ export const fr: TranslationResources = {
       },
       waiting: "Configuration de l’espace de travail…",
       empty: {
-        noCommands: "Aucune commande de configuration n’a été exécutée pour cet espace de travail.",
+        noCommands:
+          "Aucune commande de configuration n’a été exécutée pour cet espace de travail.",
       },
       accessibility: {
-        noCommands: "Aucune commande de configuration n’a été exécutée pour cet espace de travail",
+        noCommands:
+          "Aucune commande de configuration n’a été exécutée pour cet espace de travail",
         log: "Journal de configuration de l’espace de travail",
       },
       log: {
@@ -456,7 +503,8 @@ export const fr: TranslationResources = {
     browser: {
       unavailable: {
         title: "Le navigateur est uniquement disponible sur ordinateur",
-        subtitle: "Ouvrez cet espace de travail dans Electron pour utiliser le navigateur intégré.",
+        subtitle:
+          "Ouvrez cet espace de travail dans Electron pour utiliser le navigateur intégré.",
       },
       session: "Session de navigateur {{browserId}}",
       controls: {
@@ -487,7 +535,8 @@ export const fr: TranslationResources = {
       errors: {
         failedToLoad: "Échec du chargement de la page",
         invalidUrl: "URL de navigateur invalide",
-        unsupportedProtocol: "URL bloquée : protocole non pris en charge ({{protocol}})",
+        unsupportedProtocol:
+          "URL bloquée : protocole non pris en charge ({{protocol}})",
       },
     },
     terminal: {
@@ -592,7 +641,8 @@ export const fr: TranslationResources = {
             "Cela archivera {{agents}} agents et fermera {{terminals}} terminaux. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
           terminalsAndTabs:
             "Cela fermera {{terminals}} terminaux et {{tabs}} onglets. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
-          agentsAndTabs: "Cela archivera {{agents}} agents et fermera {{tabs}} onglets.",
+          agentsAndTabs:
+            "Cela archivera {{agents}} agents et fermera {{tabs}} onglets.",
           terminals:
             "Cela fermera {{terminals}} terminaux. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
           tabs: "Cela fermera {{tabs}} onglets.",
@@ -612,7 +662,8 @@ export const fr: TranslationResources = {
         showSetup: "Afficher la configuration",
       },
       toasts: {
-        workspacePathUnavailable: "Le chemin de l’espace de travail n’est pas encore disponible",
+        workspacePathUnavailable:
+          "Le chemin de l’espace de travail n’est pas encore disponible",
         branchNameUnavailable: "Nom de la branche indisponible",
         terminalQueued:
           "Préparation de l’espace de travail : le terminal s’ouvrira dès qu’il sera prêt…",
@@ -730,12 +781,14 @@ export const fr: TranslationResources = {
             "Impossible d’effectuer un pull : cette branche n’est pas encore associée à un dépôt distant",
           pullDirty:
             "Impossible d’effectuer un pull tant que des modifications locales ne sont pas validées ou remisées",
-          pullUpToDate: "Impossible d’effectuer un pull : cette branche est déjà à jour",
+          pullUpToDate:
+            "Impossible d’effectuer un pull : cette branche est déjà à jour",
           pushNoRemote:
             "Impossible d’effectuer un push : cette branche n’est pas encore associée à un dépôt distant",
           pushBehind:
             "Impossible d’effectuer un push : vous devez d’abord récupérer les nouvelles modifications",
-          pushNothing: "Impossible d’effectuer un push : il n’y a rien de nouveau à envoyer",
+          pushNothing:
+            "Impossible d’effectuer un push : il n’y a rien de nouveau à envoyer",
           pullAndPushNoRemote:
             "Impossible d’effectuer un pull et un push : cette branche n’est pas encore associée à un dépôt distant",
           pullAndPushDirty:
@@ -750,7 +803,8 @@ export const fr: TranslationResources = {
             "Impossible de créer {{noun}} pour le moment, car {{brand}} n’est pas connecté",
           createPrNoCommits:
             "Impossible de créer une PR : cette branche ne contient encore aucun nouveau commit",
-          mergeNoBase: "Impossible de fusionner : la branche de base n’a pas pu être déterminée",
+          mergeNoBase:
+            "Impossible de fusionner : la branche de base n’a pas pu être déterminée",
           mergeDirty:
             "Impossible de fusionner tant que des modifications locales ne sont pas validées ou remisées",
           mergeNothing:
@@ -767,11 +821,16 @@ export const fr: TranslationResources = {
             "Impossible d’archiver cet espace de travail, car il n’a pas été créé comme worktree Paseo",
           mergePrNoForge:
             "Impossible de fusionner {{noun}} pour le moment, car {{brand}} n’est pas connecté",
-          mergePrMissing: "Impossible de fusionner la PR : aucune pull request n’existe encore",
-          mergePrDraft: "Impossible de fusionner la PR : la pull request est encore un brouillon",
-          mergePrMerged: "Impossible de fusionner la PR : la pull request a déjà été fusionnée",
-          mergePrClosed: "Impossible de fusionner la PR : la pull request est fermée",
-          mergePrConflicts: "Impossible de fusionner la PR : la pull request présente des conflits",
+          mergePrMissing:
+            "Impossible de fusionner la PR : aucune pull request n’existe encore",
+          mergePrDraft:
+            "Impossible de fusionner la PR : la pull request est encore un brouillon",
+          mergePrMerged:
+            "Impossible de fusionner la PR : la pull request a déjà été fusionnée",
+          mergePrClosed:
+            "Impossible de fusionner la PR : la pull request est fermée",
+          mergePrConflicts:
+            "Impossible de fusionner la PR : la pull request présente des conflits",
           mergePrQueue:
             "Impossible de fusionner la PR : ce dépôt utilise une file d’attente de fusion",
           mergePrNotReady:
@@ -786,8 +845,10 @@ export const fr: TranslationResources = {
           failedPullAndPush: "Échec du pull et du push",
           failedCreatePr: "Échec de la création de la PR",
           failedMergePr: "Échec de la fusion de la PR",
-          failedEnableAutoMerge: "Échec de l’activation de la fusion automatique",
-          failedDisableAutoMerge: "Échec de la désactivation de la fusion automatique",
+          failedEnableAutoMerge:
+            "Échec de l’activation de la fusion automatique",
+          failedDisableAutoMerge:
+            "Échec de la désactivation de la fusion automatique",
           baseRefUnavailable: "Référence de base indisponible",
           failedMerge: "Échec de la fusion",
           failedMergeFromBase: "Échec de la fusion à partir de la base",
@@ -797,7 +858,8 @@ export const fr: TranslationResources = {
           confirm: "Archiver",
           cancel: "Annuler",
           uncommittedChanges: "Modifications non validées",
-          uncommittedChangesWithDiff: "Modifications non validées ({{diffStat}})",
+          uncommittedChangesWithDiff:
+            "Modifications non validées ({{diffStat}})",
           addedLine: "{{count}} ligne ajoutée",
           addedLines: "{{count}} lignes ajoutées",
           deletedLine: "{{count}} ligne supprimée",
@@ -811,8 +873,10 @@ export const fr: TranslationResources = {
         closeChangesTab: "Fermer l’onglet Modifications",
         binaryFile: "Fichier binaire",
         tooLarge: "Diff trop grand pour être affiché",
-        previewTooLargeTitle: "Ce diff est trop volumineux pour être prévisualisé",
-        previewTooLargeDescription: "Réduisez la comparaison pour la prévisualiser ici",
+        previewTooLargeTitle:
+          "Ce diff est trop volumineux pour être prévisualisé",
+        previewTooLargeDescription:
+          "Réduisez la comparaison pour la prévisualiser ici",
         unified: "Diff unifié",
         split: "Diff côte à côte",
         switchToUnified: "Passer au diff unifié",
@@ -832,7 +896,8 @@ export const fr: TranslationResources = {
         refresh: "Actualiser",
         refreshState: "Actualiser l’état de Git et de {{brand}}",
         failedRefresh: "Échec de l’actualisation de l’état Git.",
-        emptyHiddenWhitespace: "Aucun changement visible après avoir masqué les espaces",
+        emptyHiddenWhitespace:
+          "Aucun changement visible après avoir masqué les espaces",
         emptyUncommitted: "Aucune modification non validée",
         emptyAgainstBase: "Aucune modification par rapport à {{baseRef}}",
         checkingRepository: "Vérification du dépôt…",
@@ -883,7 +948,8 @@ export const fr: TranslationResources = {
         empty: {
           noJobs: "Aucune tâche",
           loadingPipeline: "Chargement du pipeline…",
-          pipelineJobsLoadFailed: "Impossible de charger les tâches du pipeline",
+          pipelineJobsLoadFailed:
+            "Impossible de charger les tâches du pipeline",
           allowedToFail: "autorisé à échouer",
         },
         approvals: "{{given}} sur {{required}} approbations",
@@ -911,13 +977,17 @@ export const fr: TranslationResources = {
         },
         errors: {
           statusLoadFailed: "Impossible de charger l’état de la pull request",
-          activityLoadFailed: "Impossible de charger l’activité de la pull request",
+          activityLoadFailed:
+            "Impossible de charger l’activité de la pull request",
         },
       },
       forgeSetup: {
-        installCli: "Installez la CLI {{cli}} pour utiliser les fonctionnalités {{brand}}.",
-        signIn: "Exécutez {{command}} pour utiliser les fonctionnalités {{brand}}.",
-        generic: "Configurez {{brand}} sur cet hôte pour utiliser ses fonctionnalités.",
+        installCli:
+          "Installez la CLI {{cli}} pour utiliser les fonctionnalités {{brand}}.",
+        signIn:
+          "Exécutez {{command}} pour utiliser les fonctionnalités {{brand}}.",
+        generic:
+          "Configurez {{brand}} sur cet hôte pour utiliser ses fonctionnalités.",
       },
     },
   },
@@ -1134,7 +1204,8 @@ export const fr: TranslationResources = {
           "Le démon intégré a démarré, mais Paseo n’a pas pu enregistrer la connexion localhost. Désactivez puis réactivez la gestion du démon, ou ajoutez localhost manuellement.",
         pausedStopFailed:
           "La gestion du démon intégré a été suspendue, mais Paseo n’a pas pu arrêter le démon.",
-        updateFailed: "Impossible de mettre à jour la gestion des démons intégrés.",
+        updateFailed:
+          "Impossible de mettre à jour la gestion des démons intégrés.",
       },
       keepRunning: {
         title: "Laisser le démon fonctionner après la fermeture",
@@ -1169,24 +1240,29 @@ export const fr: TranslationResources = {
         checking: "Vérification des mises à jour de l’application…",
         installing: "Installation de la mise à jour de l’application…",
         upToDate: "L’application est à jour.",
-        upToDateWithLastChecked: "L’application est à jour. Dernière vérification à {{time}}.",
+        upToDateWithLastChecked:
+          "L’application est à jour. Dernière vérification à {{time}}.",
         pending: "Nous vous informerons lorsque la mise à jour sera prête.",
         pendingWithLastChecked:
           "Nous vous informerons lorsque la mise à jour sera prête. Dernière vérification à {{time}}.",
-        pendingWithVersion: "Mise à jour trouvée : {{version}}. Téléchargement…",
+        pendingWithVersion:
+          "Mise à jour trouvée : {{version}}. Téléchargement…",
         pendingWithVersionAndLastChecked:
           "Mise à jour trouvée : {{version}}. Téléchargement… Dernière vérification à {{time}}.",
         availableWithVersion: "Mise à jour prête : {{version}}",
         availableWithVersionAndLastChecked:
           "Mise à jour prête : {{version}}. Dernière vérification à {{time}}.",
-        available: "Une mise à jour de l’application est prête à être installée.",
+        available:
+          "Une mise à jour de l’application est prête à être installée.",
         availableWithLastChecked:
           "Une mise à jour de l’application est prête à être installée. Dernière vérification à {{time}}.",
-        installed: "Mise à jour de l’application installée. Redémarrage requis.",
+        installed:
+          "Mise à jour de l’application installée. Redémarrage requis.",
         failed: "Échec de la mise à jour de l’application.",
         idle: "L’état de la mise à jour n’a pas encore été vérifié.",
       },
-      installError: "Impossible d’installer la mise à jour de l’application de bureau.",
+      installError:
+        "Impossible d’installer la mise à jour de l’application de bureau.",
       callout: {
         installingTitle: "Installation de la mise à jour",
         failedTitle: "La mise à jour a échoué",
@@ -1208,14 +1284,16 @@ export const fr: TranslationResources = {
     },
     rosetta: {
       title: "Télécharger la version Apple Silicon",
-      runningIntel: "Vous exécutez la version Intel de Paseo avec Rosetta sur Apple Silicon.",
+      runningIntel:
+        "Vous exécutez la version Intel de Paseo avec Rosetta sur Apple Silicon.",
       highCpu:
         "Cela entraîne une utilisation élevée du processeur. Téléchargez la version Apple Silicon pour corriger le problème.",
       download: "Télécharger",
     },
     permissions: {
       notifications: {
-        allowed: "Les notifications sont autorisées par le système d’exploitation.",
+        allowed:
+          "Les notifications sont autorisées par le système d’exploitation.",
         denied: "Les notifications sont refusées dans les paramètres système.",
         notGranted: "Les notifications n’ont pas encore été autorisées.",
         webOnly:
@@ -1223,25 +1301,33 @@ export const fr: TranslationResources = {
         supported: "Les notifications de bureau sont prises en charge.",
         unsupported:
           "Les notifications de bureau ne sont pas prises en charge sur cette plateforme.",
-        apiUnavailable: "L’API de notification Web n’est pas disponible dans cet environnement.",
+        apiUnavailable:
+          "L’API de notification Web n’est pas disponible dans cet environnement.",
         requestsWebOnly:
           "Les demandes de notifications de bureau sont uniquement disponibles dans l’environnement Web.",
-        requestUnavailable: "L’API de notification Web requestPermission() n’est pas disponible.",
-        requestFailed: "Échec de la demande d’autorisation des notifications : {{message}}",
-        unexpectedState: "État inattendu de l’autorisation des notifications : {{state}}",
+        requestUnavailable:
+          "L’API de notification Web requestPermission() n’est pas disponible.",
+        requestFailed:
+          "Échec de la demande d’autorisation des notifications : {{message}}",
+        unexpectedState:
+          "État inattendu de l’autorisation des notifications : {{state}}",
       },
       microphone: {
         webOnly:
           "L’état du microphone de bureau est uniquement disponible dans l’environnement d’exécution Web.",
-        navigatorUnavailable: "Le navigateur n’est pas disponible dans cet environnement.",
+        navigatorUnavailable:
+          "Le navigateur n’est pas disponible dans cet environnement.",
         granted: "L’accès au microphone est accordé.",
         denied: "L’accès au microphone est refusé dans les paramètres système.",
         notGranted: "L’autorisation du microphone n’a pas encore été accordée.",
-        unexpectedState: "État inattendu de l’autorisation du microphone : {{state}}",
+        unexpectedState:
+          "État inattendu de l’autorisation du microphone : {{state}}",
         statusApiUnavailable:
           "L’API d’état du microphone n’est pas disponible dans cet environnement. Utilisez « Demander » pour vérifier l’accès.",
-        queryFailed: "Impossible de vérifier l’état du microphone : {{message}}",
-        captureUnavailable: "La capture du microphone n’est pas disponible dans cet environnement.",
+        queryFailed:
+          "Impossible de vérifier l’état du microphone : {{message}}",
+        captureUnavailable:
+          "La capture du microphone n’est pas disponible dans cet environnement.",
         permissionApiUnavailable:
           "L’API d’état des autorisations n’est pas disponible. Utilisez « Demander » pour vérifier l’accès.",
         requestsWebOnly:
@@ -1251,7 +1337,8 @@ export const fr: TranslationResources = {
         requestDenied:
           "L’autorisation du microphone a été refusée par l’utilisateur ou le système.",
         noDevice: "Aucun microphone n’a été trouvé.",
-        requestFailed: "Échec de la demande d’autorisation du microphone : {{message}}",
+        requestFailed:
+          "Échec de la demande d’autorisation du microphone : {{message}}",
       },
       empty: {
         notifications: "L’état de la notification n’a pas encore été vérifié.",
@@ -1267,14 +1354,19 @@ export const fr: TranslationResources = {
     },
     integrations: {
       cli: {
-        statusFailed: "Impossible de vérifier l’état de l’installation de la CLI.",
+        statusFailed:
+          "Impossible de vérifier l’état de l’installation de la CLI.",
         installFailed: "Impossible d’installer la CLI Paseo.",
       },
       skills: {
-        statusFailed: "Impossible de vérifier l’état des compétences d’orchestration.",
-        installFailed: "Impossible d’installer les compétences d’orchestration.",
-        updateFailed: "Impossible de mettre à jour les compétences d’orchestration.",
-        uninstallFailed: "Impossible de désinstaller les compétences d’orchestration.",
+        statusFailed:
+          "Impossible de vérifier l’état des compétences d’orchestration.",
+        installFailed:
+          "Impossible d’installer les compétences d’orchestration.",
+        updateFailed:
+          "Impossible de mettre à jour les compétences d’orchestration.",
+        uninstallFailed:
+          "Impossible de désinstaller les compétences d’orchestration.",
         saveSelectionFailed:
           "Impossible d’enregistrer la sélection des compétences d’orchestration.",
       },
@@ -1328,7 +1420,8 @@ export const fr: TranslationResources = {
     openPath: "Ouvrir le chemin",
   },
   branchSwitcher: {
-    currentBranch: "Branche actuelle : {{branchName}}. Appuyez pour changer de branche.",
+    currentBranch:
+      "Branche actuelle : {{branchName}}. Appuyez pour changer de branche.",
     placeholder: "Changer de branche…",
     searchPlaceholder: "Filtrer les branches…",
     empty: "Aucune branche trouvée.",
@@ -1358,7 +1451,8 @@ export const fr: TranslationResources = {
   },
   imageAttachmentPicker: {
     permissionTitle: "Autorisation requise",
-    permissionMessage: "Veuillez autoriser l’accès à votre photothèque pour joindre des images.",
+    permissionMessage:
+      "Veuillez autoriser l’accès à votre photothèque pour joindre des images.",
     errorTitle: "Erreur",
     failedToSelect: "Échec de la sélection de l’image",
     dialogTitle: "Joindre des images",
@@ -1371,7 +1465,8 @@ export const fr: TranslationResources = {
       failedOpenProject: "Échec de l’ouverture du projet",
       selectModel: "Sélectionnez un modèle",
       hostDisconnected: "L’hôte n’est pas connecté",
-      pendingRequired: "Aucune configuration d’espace de travail n’est en attente",
+      pendingRequired:
+        "Aucune configuration d’espace de travail n’est en attente",
       composerStateRequired:
         "L’état du composeur de configuration de l’espace de travail est requis",
     },
@@ -1429,9 +1524,12 @@ export const fr: TranslationResources = {
     readiness: {
       initialPromptRequired: "Une invite initiale est requise",
       noProviders: "Aucun fournisseur disponible sur l’hôte sélectionné",
-      modelDefaultsLoading: "Les valeurs par défaut du modèle sont toujours en cours de chargement",
-      noModelAvailable: "Aucun modèle n’est disponible pour le fournisseur sélectionné",
-      workspaceDirectoryNotFound: "Répertoire de l’espace de travail introuvable",
+      modelDefaultsLoading:
+        "Les valeurs par défaut du modèle sont toujours en cours de chargement",
+      noModelAvailable:
+        "Aucun modèle n’est disponible pour le fournisseur sélectionné",
+      workspaceDirectoryNotFound:
+        "Répertoire de l’espace de travail introuvable",
       hostDisconnected: "L’hôte n’est pas connecté",
     },
   },
@@ -1483,10 +1581,13 @@ export const fr: TranslationResources = {
         failedTitle: "La connexion a échoué",
         failedToConnect: "Impossible de se connecter à {{endpoint}}.",
         noAdditionalDetails: "{{detail}} (aucun détail supplémentaire fourni)",
-        timedOut: "Le délai de connexion a expiré. Vérifiez l’hôte, le port et votre réseau.",
-        refused: "Connexion refusée. Le serveur fonctionne-t-il à cette adresse ?",
+        timedOut:
+          "Le délai de connexion a expiré. Vérifiez l’hôte, le port et votre réseau.",
+        refused:
+          "Connexion refusée. Le serveur fonctionne-t-il à cette adresse ?",
         hostNotFound: "Hôte introuvable. Vérifiez le nom d’hôte et réessayez.",
-        hostUnreachable: "L’hôte est inaccessible. Vérifiez votre réseau et votre pare-feu.",
+        hostUnreachable:
+          "L’hôte est inaccessible. Vérifiez votre réseau et votre pare-feu.",
         tlsError:
           "Erreur TLS. Les connexions directes utilisent SSL uniquement lorsqu’un terminateur TLS se trouve devant le démon.",
         unableToConnect:
@@ -1531,7 +1632,8 @@ export const fr: TranslationResources = {
     device: {
       loadingOffer: "Chargement de l’offre d’association…",
       failedToLoadOffer: "Échec du chargement de l’offre d’association.",
-      relayDisabled: "Le relais n’est pas activé. Activez-le pour associer un appareil.",
+      relayDisabled:
+        "Le relais n’est pas activé. Activez-le pour associer un appareil.",
       enableTitle: "Activer le relais ?",
       enableDescription:
         "Le relais permet à cet appareil de se connecter depuis n’importe où. Le trafic d’association est chiffré de bout en bout.",
@@ -1542,7 +1644,8 @@ export const fr: TranslationResources = {
       notNow: "Pas maintenant",
       directConnectionHint:
         "Sans relais, connectez-vous directement via TCP, Tailscale ou un autre VPN. Aucun code QR n’est créé.",
-      updateRequired: "Mettez à jour l’hôte pour activer le relais depuis Paseo Desktop.",
+      updateRequired:
+        "Mettez à jour l’hôte pour activer le relais depuis Paseo Desktop.",
       unavailable: "Offre d’association indisponible.",
       hint: "Scannez ce code QR avec Paseo sur votre téléphone ou copiez le lien ci-dessous.",
       qrUnavailable: "Code QR indisponible.",
@@ -1627,7 +1730,8 @@ export const fr: TranslationResources = {
         deletedTitle: "Fichier supprimé du disque",
         checkFailedTitle: "Impossible de vérifier le fichier sur le disque",
         preservedDescription: "La copie ouverte est conservée.",
-        conflictDescription: "Le contenu local a été conservé. Choisissez la version à garder.",
+        conflictDescription:
+          "Le contenu local a été conservé. Choisissez la version à garder.",
         overwrite: "Écraser",
         reload: "Recharger",
         reloadTitle: "Recharger depuis le disque ?",
@@ -1643,7 +1747,8 @@ export const fr: TranslationResources = {
       directoryMissing: "Répertoire de l’espace de travail introuvable.",
       empty: "Aucune modification",
       loadError: "Échec du chargement du diff",
-      capabilityMissing: "Mettez l’hôte à jour pour afficher les diffs des commits.",
+      capabilityMissing:
+        "Mettez l’hôte à jour pour afficher les diffs des commits.",
     },
   },
   toolCallDetails: {
@@ -1723,7 +1828,8 @@ export const fr: TranslationResources = {
     enableBuiltInDaemon: "Activer le démon intégré",
     projects: "Projets",
     projectList: {
-      hostLoadFailed: "Impossible de charger les projets depuis l’hôte {{hostName}} : {{message}}",
+      hostLoadFailed:
+        "Impossible de charger les projets depuis l’hôte {{hostName}} : {{message}}",
       editProject: "Modifier {{projectName}}",
     },
     groupInfo: "À propos de {{title}}",
@@ -1741,7 +1847,8 @@ export const fr: TranslationResources = {
     editor: {
       title: "Éditeur",
       vimKeybindings: "Raccourcis Vim",
-      vimHint: "S’applique aux fichiers source sur le Web et dans l’application de bureau.",
+      vimHint:
+        "S’applique aux fichiers source sur le Web et dans l’application de bureau.",
     },
     notifications: {
       title: "Notifications",
@@ -1755,7 +1862,8 @@ export const fr: TranslationResources = {
       send: "Envoyer",
       sending: "Envoi…",
       sentTitle: "Notification de test envoyée",
-      sentDescription: "Paseo a transmis la notification au système d’exploitation.",
+      sentDescription:
+        "Paseo a transmis la notification au système d’exploitation.",
       sendFailedTitle: "Impossible d’envoyer la notification de test",
     },
     hostSections: {
@@ -1778,7 +1886,8 @@ export const fr: TranslationResources = {
         clear: "Effacer les données du navigateur",
         clearing: "Effacement…",
         confirmTitle: "Effacer les données du navigateur ?",
-        confirmMessage: "Vous serez déconnecté des sites et les onglets ouverts seront rechargés.",
+        confirmMessage:
+          "Vous serez déconnecté des sites et les onglets ouverts seront rechargés.",
         success: "Données du navigateur effacées.",
         error: "Impossible d’effacer les données du navigateur.",
       },
@@ -1797,7 +1906,8 @@ export const fr: TranslationResources = {
       },
       serviceUrls: {
         label: "URL de services",
-        description: "Où ouvrir les URL à partir de scripts en cours d’exécution",
+        description:
+          "Où ouvrir les URL à partir de scripts en cours d’exécution",
         options: {
           ask: "Demander",
           inApp: "Dans Paseo",
@@ -1811,12 +1921,15 @@ export const fr: TranslationResources = {
       },
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",
-        description: "Développer entièrement le raisonnement de l’agent par défaut",
+        description:
+          "Développer entièrement le raisonnement de l’agent par défaut",
       },
       toolCallDetail: {
         label: "Affichage des appels d’outils",
-        description: "Comment les appels d’outils apparaissent dans la chronologie",
-        accessibilityLabel: "Sélectionner l’affichage des appels d’outils ({{value}})",
+        description:
+          "Comment les appels d’outils apparaissent dans la chronologie",
+        accessibilityLabel:
+          "Sélectionner l’affichage des appels d’outils ({{value}})",
         options: {
           overview: "Résumé",
           detailed: "Détails complets",
@@ -1843,7 +1956,8 @@ export const fr: TranslationResources = {
       title: "Diagnostics",
       legacyTerminalRenderer: {
         label: "Utiliser l’ancien rendu du terminal",
-        description: "Utilise l’ancien terminal WebView après la réouverture d’un terminal",
+        description:
+          "Utilise l’ancien terminal WebView après la réouverture d’un terminal",
         accessibilityLabel: "Utiliser l’ancien rendu du terminal",
       },
       testAudio: "Tester le son",
@@ -1894,7 +2008,8 @@ export const fr: TranslationResources = {
         check: "Vérifier",
         checking: "Vérification…",
         alertTitle: "Erreur",
-        alertMessage: "Impossible d’ouvrir la boîte de dialogue de confirmation de mise à jour.",
+        alertMessage:
+          "Impossible d’ouvrir la boîte de dialogue de confirmation de mise à jour.",
       },
     },
     appearance: {
@@ -1938,15 +2053,18 @@ export const fr: TranslationResources = {
       syntax: {
         title: "Syntaxe",
         highlightTheme: "Thème de coloration syntaxique",
-        highlightThemeHint: "Couleurs du code, indépendamment du thème de l’application",
+        highlightThemeHint:
+          "Couleurs du code, indépendamment du thème de l’application",
         highlightThemeAccessibility: "Thème de coloration : {{value}}",
-        previewAccessibility: "Aperçu en direct du thème de syntaxe et de la police de code",
+        previewAccessibility:
+          "Aperçu en direct du thème de syntaxe et de la police de code",
       },
     },
     shortcuts: {
       dialogTitle: "Raccourcis",
       searchPlaceholder: "Rechercher des raccourcis",
-      unavailableOnMobile: "Les raccourcis clavier ne sont disponibles que sur le bureau",
+      unavailableOnMobile:
+        "Les raccourcis clavier ne sont disponibles que sur le bureau",
       capturePrompt: "Appuyez sur le raccourci…",
       unassigned: "Non défini",
       actions: {
@@ -1960,10 +2078,10 @@ export const fr: TranslationResources = {
         resetAll: "Tout réinitialiser",
       },
       sections: {
-        navigation: "Navigation",
+        general: "Général",
+        workspaces: "Projets et espaces de travail",
         tabsPanes: "Onglets et volets",
-        projects: "Projets",
-        panels: "Panneaux",
+        layout: "Disposition",
         agentInput: "Saisie de l’agent",
       },
       help: {
@@ -1991,6 +2109,7 @@ export const fr: TranslationResources = {
         moveTabDown: "Déplacer l’onglet vers le bas",
         closePane: "Fermer le volet",
         newTerminal: "Nouveau terminal",
+        searchFiles: "Rechercher des fichiers",
         toggleCommandCenter: "Afficher ou masquer le centre de commande",
         showKeyboardShortcuts: "Afficher les raccourcis clavier",
         toggleLeftSidebar: "Afficher ou masquer la barre latérale gauche",
@@ -2024,14 +2143,16 @@ export const fr: TranslationResources = {
       },
       commandLine: {
         title: "Ligne de commande",
-        description: "Contrôler et automatiser les agents depuis votre terminal",
+        description:
+          "Contrôler et automatiser les agents depuis votre terminal",
       },
       skills: {
         title: "Compétences en orchestration",
         description: "Apprendre à vos agents à orchestrer via la CLI",
         updateAvailable: "Mise à jour disponible",
         updateTitle: "Mettre à jour les compétences Paseo ?",
-        updateFallback: "Synchronisez les compétences intégrées sur votre machine.",
+        updateFallback:
+          "Synchronisez les compétences intégrées sur votre machine.",
         uninstallTitle: "Désinstaller les compétences Paseo ?",
         uninstallMessage:
           "Supprime toutes les compétences d’orchestration Paseo de ~/.agents, ~/.claude et ~/.codex.",
@@ -2128,7 +2249,8 @@ export const fr: TranslationResources = {
       pairDevices: {
         title: "Associer des appareils",
         rowTitle: "Associer un appareil",
-        rowHint: "Scannez un code QR ou copiez un lien pour connecter votre téléphone à cet hôte",
+        rowHint:
+          "Scannez un code QR ou copiez un lien pour connecter votre téléphone à cet hôte",
       },
       orchestration: {
         title: "Orchestration",
@@ -2154,10 +2276,12 @@ export const fr: TranslationResources = {
         unavailable: "Connectez-vous à cet hôte pour gérer les agents",
       },
       workspaces: {
-        unavailable: "Connectez-vous à cet hôte pour gérer les espaces de travail",
+        unavailable:
+          "Connectez-vous à cet hôte pour gérer les espaces de travail",
       },
       terminalProfiles: {
-        unavailable: "Connectez-vous à cet hôte pour gérer les profils de terminal",
+        unavailable:
+          "Connectez-vous à cet hôte pour gérer les profils de terminal",
         sectionTitle: "Profils de terminal",
         editProfile: "Modifier le profil",
         addProfileTitle: "Ajouter un profil de terminal",
@@ -2244,9 +2368,12 @@ export const fr: TranslationResources = {
           title: "Supprimer l’hôte",
           localTitle: "Supprimer la connexion localhost",
           hint: "Supprime cet hôte et ses connexions enregistrées de cet appareil",
-          localHint: "Supprime localhost de cet appareil et arrête le démon intégré",
-          localConfirmTitle: "Supprimer la connexion localhost et arrêter le démon ?",
-          confirmMessage: "Supprimer {{name}} ? Ses connexions enregistrées seront supprimées.",
+          localHint:
+            "Supprime localhost de cet appareil et arrête le démon intégré",
+          localConfirmTitle:
+            "Supprimer la connexion localhost et arrêter le démon ?",
+          confirmMessage:
+            "Supprimer {{name}} ? Ses connexions enregistrées seront supprimées.",
           localConfirmMessage:
             "La connexion localhost sera supprimée, la gestion du démon intégré sera désactivée et le démon géré sera arrêté. Les hôtes distants resteront connectés.",
           errorTitle: "Erreur",
@@ -2336,7 +2463,8 @@ export const fr: TranslationResources = {
       },
       readFailures: {
         invalidTitle: "paseo.json n’a pas pu être analysé",
-        invalidDescription: "Corrigez le fichier sur le disque, puis rechargez.",
+        invalidDescription:
+          "Corrigez le fichier sur le disque, puis rechargez.",
         missingTitle: "Cet hôte n’a pas ce projet",
         missingSingleHost: "L’hôte sélectionné n’a aucune trace de ce projet.",
         transportTitle: "Impossible de charger paseo.json",
@@ -2374,7 +2502,8 @@ export const fr: TranslationResources = {
         newScript: "Nouveau script",
         editScript: "Modifier {{name}}",
         runAsService: "Exécuter en tant que service",
-        serviceHint: "Paseo supervise le processus et attribue un port via $PASEO_PORT",
+        serviceHint:
+          "Paseo supervise le processus et attribue un port via $PASEO_PORT",
         actions: {
           add: "Ajouter un script",
           edit: "Modifier",
@@ -2388,16 +2517,19 @@ export const fr: TranslationResources = {
         branchNamePlaceholder:
           "Préfixez les branches avec feat/ ou fix/, mb/ pour les branches personnelles",
         commitMessage: "Messages de commit",
-        commitMessagePlaceholder: "Utiliser des commits conventionnels avec une portée",
+        commitMessagePlaceholder:
+          "Utiliser des commits conventionnels avec une portée",
         pullRequest: "Pull requests",
         pullRequestPlaceholder:
           "Commencez avec un résumé d’un paragraphe, incluez une section sur le plan de test",
       },
       writeFailures: {
         staleTitle: "Configuration modifiée sur le disque",
-        staleDescription: "Rechargez le dernier paseo.json avant d’enregistrer.",
+        staleDescription:
+          "Rechargez le dernier paseo.json avant d’enregistrer.",
         failedTitle: "Impossible d’enregistrer paseo.json",
-        failedDescription: "Réessayez ou rechargez la dernière version à partir du disque.",
+        failedDescription:
+          "Réessayez ou rechargez la dernière version à partir du disque.",
       },
       actions: {
         reload: "Recharger",
