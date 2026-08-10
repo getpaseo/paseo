@@ -521,7 +521,8 @@ class RecursiveFileObserver {
     recursiveScopes: string[],
     generation: number,
   ): Promise<void> {
-    const forcedScopes = collapsePaths([...localScopes, ...recursiveScopes]);
+    const forcedLocalScopes = new Set(localScopes);
+    const forcedRecursiveScopes = collapsePaths(recursiveScopes);
     for (const directory of new Set(localScopes)) {
       await this.reconcileNativeDirectory(directory, generation);
       if (!this.canCommitNativeAudit(generation)) return;
@@ -531,7 +532,12 @@ class RecursiveFileObserver {
       if (!this.canCommitNativeAudit(generation)) return;
     }
     for (const directory of collapsePaths(changeScopes)) {
-      if (forcedScopes.some((scope) => isPathInside(scope, directory))) continue;
+      if (
+        forcedLocalScopes.has(directory) ||
+        forcedRecursiveScopes.some((scope) => isPathInside(scope, directory))
+      ) {
+        continue;
+      }
       const inventoriedAt = this.nativeDirectoryInventoryAt.get(directory);
       if (
         inventoriedAt !== undefined &&
