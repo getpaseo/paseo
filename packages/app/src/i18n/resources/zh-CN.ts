@@ -199,6 +199,7 @@ export const zhCN: TranslationResources = {
       deny: "拒绝",
       accept: "接受",
       implement: "实施",
+      chooseImplementMode: "选择实施模式",
       question: "你想如何继续？",
       proposedPlan: "建议计划",
     },

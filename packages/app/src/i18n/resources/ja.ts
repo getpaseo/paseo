@@ -199,6 +199,7 @@ export const ja: TranslationResources = {
       deny: "拒否",
       accept: "承認",
       implement: "実装",
+      chooseImplementMode: "実装モードを選択",
       question: "どのように続けますか？",
       proposedPlan: "提案されたプラン",
     },

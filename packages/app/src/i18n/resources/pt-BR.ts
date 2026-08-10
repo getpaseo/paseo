@@ -199,6 +199,7 @@ export const ptBR: TranslationResources = {
       deny: "Negar",
       accept: "Aceitar",
       implement: "Implementar",
+      chooseImplementMode: "Escolher modo de implementação",
       question: "Como você quer prosseguir?",
       proposedPlan: "Plano proposto",
     },

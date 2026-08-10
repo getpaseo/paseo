@@ -417,6 +417,17 @@ export interface AgentPermissionAction {
   intent?: "implement" | "implement_resume" | "dismiss";
 }
 
+/**
+ * A permission mode a `plan` request offers as an implementation choice,
+ * carried in the request's `metadata.implementModes`. Metadata rather than
+ * `actions` so that clients which predate the picker keep rendering the plain
+ * two-button plan card instead of one button per mode.
+ */
+export interface AgentPlanImplementMode {
+  id: string;
+  label: string;
+}
+
 export interface AgentPermissionRequest {
   id: string;
   provider: AgentProvider;
@@ -435,6 +446,12 @@ export type AgentPermissionResponse =
   | {
       behavior: "allow";
       selectedActionId?: string;
+      /**
+       * Permission mode the agent should switch to as part of this approval.
+       * Only meaningful for `plan` requests, and only honored when the mode was
+       * offered by the request itself (see `implementModes` in its metadata).
+       */
+      mode?: string;
       updatedInput?: AgentMetadata;
       updatedPermissions?: AgentPermissionUpdate[];
     }

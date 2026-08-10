@@ -4,9 +4,21 @@ export async function waitForPermissionPrompt(page: Page, timeout = 30_000): Pro
   await expect(page.getByTestId("permission-request-question").first()).toBeVisible({ timeout });
 }
 
+/**
+ * On a plan card this button approves in the mode named on it, which comes from
+ * client storage. E2E runs start with empty storage, so it is always the
+ * "Accept File Edits" default — asserted rather than assumed, because a change
+ * to that default silently changes what every plan-approving spec approves with.
+ * The mode picker beside it is what marks a card as a plan card; other
+ * permission cards have no mode and no such text.
+ */
 export async function allowPermission(page: Page): Promise<void> {
   const acceptButton = page.getByTestId("permission-request-accept").first();
   await expect(acceptButton).toBeVisible({ timeout: 5_000 });
+  const modePicker = page.getByTestId("permission-request-implement-mode").first();
+  if (await modePicker.isVisible()) {
+    await expect(acceptButton).toContainText("Accept File Edits");
+  }
   await acceptButton.click();
 }
 

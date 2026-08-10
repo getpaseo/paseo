@@ -406,6 +406,7 @@ export const AgentPermissionResponseSchema: z.ZodType<AgentPermissionResponse> =
     z.object({
       behavior: z.literal("allow"),
       selectedActionId: z.string().optional(),
+      mode: z.string().optional(),
       updatedInput: z.record(z.string(), z.unknown()).optional(),
       updatedPermissions: z.array(AgentPermissionUpdateSchema).optional(),
     }),

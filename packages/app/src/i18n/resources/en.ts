@@ -197,6 +197,7 @@ export const en = {
       deny: "Deny",
       accept: "Accept",
       implement: "Implement",
+      chooseImplementMode: "Choose implement mode",
       question: "How would you like to proceed?",
       proposedPlan: "Proposed plan",
     },

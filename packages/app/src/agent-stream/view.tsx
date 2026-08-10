@@ -9,6 +9,7 @@ import React, {
   useRef,
   useState,
   type ComponentProps,
+  type ComponentType,
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -47,7 +48,22 @@ import type {
   AgentCapabilityFlags,
   AgentPermissionAction,
   AgentPermissionResponse,
+  AgentPlanImplementMode,
 } from "@getpaseo/protocol/agent-types";
+import { AGENT_PROVIDER_DEFINITIONS } from "@getpaseo/protocol/provider-manifest";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { getAgentModeOptionIcon, type AgentControlIcon } from "@/agent-controls/icons";
+import {
+  getPlanImplementModes,
+  getPlanImplementModeScope,
+  resolvePlanImplementMode,
+} from "./plan-implement-modes";
+import { usePreferredPlanImplementMode } from "@/hooks/use-preferred-plan-implement-mode";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
 import { useSessionStore } from "@/stores/session-store";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
@@ -125,6 +141,7 @@ function renderLiveAuxiliaryNode(input: {
 function renderPendingPermissionsNode(input: {
   pendingPermissions: PendingPermission[];
   client: DaemonClient | null;
+  planImplementModeScope: string;
 }): ReactNode {
   if (input.pendingPermissions.length === 0) {
     return null;
@@ -132,7 +149,12 @@ function renderPendingPermissionsNode(input: {
   return (
     <View style={stylesheet.permissionsContainer}>
       {input.pendingPermissions.map((permission) => (
-        <PermissionRequestCard key={permission.key} permission={permission} client={input.client} />
+        <PermissionRequestCard
+          key={permission.key}
+          permission={permission}
+          client={input.client}
+          planImplementModeScope={input.planImplementModeScope}
+        />
       ))}
     </View>
   );
@@ -843,13 +865,23 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [pendingPermissions, agentId],
     );
 
+    const planImplementModeScope = useMemo(
+      () =>
+        getPlanImplementModeScope({
+          projectKey: context.projectPlacement?.projectKey,
+          cwd: context.cwd,
+        }),
+      [context.projectPlacement?.projectKey, context.cwd],
+    );
+
     const pendingPermissionsNode = useMemo(
       () =>
         renderPendingPermissionsNode({
           pendingPermissions: pendingPermissionItems,
           client,
+          planImplementModeScope,
         }),
-      [client, pendingPermissionItems],
+      [client, pendingPermissionItems, planImplementModeScope],
     );
     const turnFooterNode = useMemo(
       () =>
@@ -1177,28 +1209,199 @@ function ToolCallSlot({
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedCheckIcon = withUnistyles(Check);
 const ThemedXIcon = withUnistyles(X);
+const ThemedChevronDown = withUnistyles(ChevronDown);
 
-const primaryColorMapping = (theme: Theme) => ({
-  color: theme.colors.foreground,
-});
 const mutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
 
-const pressableStyle = ({
+function buildPressableStyle(isPrimary: boolean) {
+  // Every `permissionStyles` read stays inside the callback: the stylesheet is
+  // created at the bottom of this module, after these constants are assigned.
+  return ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
+    const hoveredStyle = isPrimary
+      ? permissionStyles.optionButtonPrimaryHovered
+      : permissionStyles.optionButtonHovered;
+    return [
+      permissionStyles.optionButton,
+      isPrimary ? permissionStyles.optionButtonPrimary : null,
+      hovered ? hoveredStyle : null,
+      pressed ? permissionStyles.optionButtonPressed : null,
+    ];
+  };
+}
+
+const pressableStyle = buildPressableStyle(false);
+const primaryPressableStyle = buildPressableStyle(true);
+
+const accentColorMapping = (theme: Theme) => ({
+  color: theme.colors.accentForeground,
+});
+
+const implementActionStyle = ({
   pressed,
   hovered = false,
 }: PressableStateCallbackType & { hovered?: boolean }) => [
-  permissionStyles.optionButton,
-  hovered ? permissionStyles.optionButtonHovered : null,
-  pressed ? permissionStyles.optionButtonPressed : null,
+  permissionStyles.implementAction,
+  hovered || pressed ? permissionStyles.optionButtonPrimaryHovered : null,
 ];
+
+const implementCaretStyle = ({
+  hovered,
+  pressed,
+  open,
+}: {
+  hovered: boolean;
+  pressed: boolean;
+  open: boolean;
+}) => [
+  permissionStyles.implementCaret,
+  hovered || pressed || open ? permissionStyles.optionButtonPrimaryHovered : null,
+];
+
+/**
+ * `withUnistyles` wrappers for the mode icons, cached by icon component. The
+ * icon is picked per mode at render time, so wrapping inline would hand React a
+ * new component type on every render and remount the icon each time.
+ */
+const themedModeIcons = new Map<AgentControlIcon, ComponentType<{ size: number }>>();
+
+function getThemedModeIcon(icon: AgentControlIcon): ComponentType<{ size: number }> {
+  const cached = themedModeIcons.get(icon);
+  if (cached) {
+    return cached;
+  }
+  const themed = withUnistyles(icon, mutedColorMapping);
+  themedModeIcons.set(icon, themed);
+  return themed;
+}
+
+interface PlanImplementButtonProps {
+  label: string;
+  provider: string;
+  modes: AgentPlanImplementMode[];
+  selectedMode: AgentPlanImplementMode | null;
+  isResponding: boolean;
+  isRespondingImplement: boolean;
+  onSelectMode: (mode: AgentPlanImplementMode) => void;
+  onImplement: () => void;
+}
+
+/**
+ * Approve the plan, and pick the permission mode the agent continues in.
+ *
+ * One accent surface, split by a hairline rather than a border, so it reads as a
+ * single call to action carrying its setting — the shape a merge button uses for
+ * its merge strategy. Built out of separate bordered boxes it read as a third
+ * action next to Reject and Implement; parked beside the question line it read as
+ * an unrelated control. Picking a mode only changes what the button will do.
+ */
+function PlanImplementButton({
+  label,
+  provider,
+  modes,
+  selectedMode,
+  isResponding,
+  isRespondingImplement,
+  onSelectMode,
+  onImplement,
+}: PlanImplementButtonProps) {
+  const { t } = useTranslation();
+  // Until the stored mode lands there is no honest label, and a pick made now
+  // would be overwritten by it a moment later.
+  const isHydrating = selectedMode === null;
+
+  return (
+    <View style={permissionStyles.implementButton}>
+      <Pressable
+        accessibilityRole="button"
+        testID="permission-request-accept"
+        style={implementActionStyle}
+        onPress={onImplement}
+        disabled={isResponding || isHydrating}
+      >
+        {isRespondingImplement || !selectedMode ? (
+          <ThemedLoadingSpinner size="small" uniProps={accentColorMapping} />
+        ) : (
+          <View style={permissionStyles.optionContent}>
+            <ThemedCheckIcon size={14} uniProps={accentColorMapping} />
+            <Text style={[permissionStyles.optionText, permissionStyles.optionTextPrimary]}>
+              {label}
+            </Text>
+            <Text style={permissionStyles.implementModeText} numberOfLines={1}>
+              {selectedMode.label}
+            </Text>
+          </View>
+        )}
+      </Pressable>
+      <View style={permissionStyles.implementDivider} />
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          testID="permission-request-implement-mode"
+          style={implementCaretStyle}
+          accessibilityRole="button"
+          accessibilityLabel={t("agentStream.permission.chooseImplementMode")}
+          disabled={isResponding || isHydrating}
+        >
+          <ThemedChevronDown size={14} uniProps={accentColorMapping} />
+        </DropdownMenuTrigger>
+        {/* No `side` override: opening down reads better on a wide card, and the anchor
+            already flips the menu up on its own where there is no room below. */}
+        <DropdownMenuContent align="end" minWidth={192} testID="permission-request-mode-menu">
+          {modes.map((mode) => (
+            <PlanImplementModeMenuItem
+              key={mode.id}
+              provider={provider}
+              mode={mode}
+              isSelected={mode.id === selectedMode?.id}
+              onSelect={onSelectMode}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
+function PlanImplementModeMenuItem({
+  provider,
+  mode,
+  isSelected,
+  onSelect,
+}: {
+  provider: string;
+  mode: AgentPlanImplementMode;
+  isSelected: boolean;
+  onSelect: (mode: AgentPlanImplementMode) => void;
+}) {
+  const icon = getAgentModeOptionIcon(provider, mode.id, AGENT_PROVIDER_DEFINITIONS);
+  const handleSelect = useCallback(() => onSelect(mode), [onSelect, mode]);
+  const leading = useMemo(() => {
+    if (!icon) {
+      return null;
+    }
+    const Icon = getThemedModeIcon(icon);
+    return <Icon size={16} />;
+  }, [icon]);
+  return (
+    <DropdownMenuItem
+      testID={`permission-request-implement-mode-${mode.id}`}
+      onSelect={handleSelect}
+      selected={isSelected}
+      showSelectedCheck
+      leading={leading}
+    >
+      {mode.label}
+    </DropdownMenuItem>
+  );
+}
 
 interface PermissionActionButtonProps {
   action: AgentPermissionAction;
   isRespondingAction: boolean;
   isResponding: boolean;
   isPrimary: boolean;
+  isDisabled?: boolean;
   Icon: typeof ThemedCheckIcon;
   testID: string;
   onPress: (action: AgentPermissionAction) => void;
@@ -1209,6 +1412,7 @@ function PermissionActionButton({
   isRespondingAction,
   isResponding,
   isPrimary,
+  isDisabled = false,
   Icon,
   testID,
   onPress,
@@ -1217,14 +1421,14 @@ function PermissionActionButton({
   const optionTextStyle = isPrimary
     ? [permissionStyles.optionText, permissionStyles.optionTextPrimary]
     : permissionStyles.optionText;
-  const colorMapping = isPrimary ? primaryColorMapping : mutedColorMapping;
+  const colorMapping = isPrimary ? accentColorMapping : mutedColorMapping;
   return (
     <Pressable
       accessibilityRole="button"
       testID={testID}
-      style={pressableStyle}
+      style={isPrimary ? primaryPressableStyle : pressableStyle}
       onPress={handlePress}
-      disabled={isResponding}
+      disabled={isResponding || isDisabled}
     >
       {isRespondingAction ? (
         <ThemedLoadingSpinner size="small" uniProps={colorMapping} />
@@ -1241,9 +1445,11 @@ function PermissionActionButton({
 function PermissionRequestCard({
   permission,
   client,
+  planImplementModeScope,
 }: {
   permission: PendingPermission;
   client: DaemonClient | null;
+  planImplementModeScope: string;
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
@@ -1329,11 +1535,32 @@ function PermissionRequestCard({
   } = permissionMutation;
 
   const [respondingActionId, setRespondingActionId] = useState<string | null>(null);
+  const [chosenImplementMode, setChosenImplementMode] = useState<AgentPlanImplementMode | null>(
+    null,
+  );
 
   useEffect(() => {
     resetPermissionMutation();
     setRespondingActionId(null);
+    setChosenImplementMode(null);
   }, [permission.request.id, resetPermissionMutation]);
+
+  const implementModes = useMemo(() => getPlanImplementModes(request), [request]);
+  const showImplementModePicker = isPlanRequest && implementModes.length > 1;
+  const { preferredPlanImplementModeId, updatePreferredPlanImplementMode } =
+    usePreferredPlanImplementMode(planImplementModeScope);
+  const hydratedImplementMode = resolvePlanImplementMode(
+    implementModes,
+    preferredPlanImplementModeId,
+  );
+  // Pin the mode as soon as storage answers, so the button's label cannot change
+  // under a user who is already reading it.
+  useEffect(() => {
+    if (hydratedImplementMode) {
+      setChosenImplementMode((current) => current ?? hydratedImplementMode);
+    }
+  }, [hydratedImplementMode]);
+
   const handleResponse = useCallback(
     (response: AgentPermissionResponse) => {
       respondToPermission({
@@ -1353,6 +1580,7 @@ function PermissionRequestCard({
         handleResponse({
           behavior: "allow",
           selectedActionId: action.id,
+          ...(chosenImplementMode ? { mode: chosenImplementMode.id } : {}),
         });
         return;
       }
@@ -1362,7 +1590,24 @@ function PermissionRequestCard({
         message: "Denied by user",
       });
     },
-    [handleResponse],
+    [chosenImplementMode, handleResponse],
+  );
+
+  const handleImplementPress = useCallback(() => {
+    const implementAction = resolvedActions.find((action) => action.behavior === "allow");
+    if (implementAction) {
+      handleActionPress(implementAction);
+    }
+  }, [handleActionPress, resolvedActions]);
+
+  // Picking from the menu only changes what the button will do, and is
+  // remembered right away so the next plan card opens on the same mode.
+  const handleSelectImplementMode = useCallback(
+    (mode: AgentPlanImplementMode) => {
+      setChosenImplementMode(mode);
+      updatePreferredPlanImplementMode(mode.id);
+    },
+    [updatePreferredPlanImplementMode],
   );
 
   const optionsContainerStyle = useMemo(
@@ -1394,6 +1639,21 @@ function PermissionRequestCard({
           const isPrimary = action.variant === "primary";
           const isRespondingAction = respondingActionId === action.id;
           const Icon = action.behavior === "allow" ? ThemedCheckIcon : ThemedXIcon;
+          if (showImplementModePicker && action.behavior === "allow") {
+            return (
+              <PlanImplementButton
+                key={action.id}
+                label={action.label}
+                provider={request.provider}
+                modes={implementModes}
+                selectedMode={chosenImplementMode}
+                isResponding={isResponding}
+                isRespondingImplement={isRespondingAction}
+                onSelectMode={handleSelectImplementMode}
+                onImplement={handleImplementPress}
+              />
+            );
+          }
           let testID: string;
           if (action.behavior === "deny") testID = "permission-request-deny";
           else if (action.id === "accept" || action.id === "implement")
@@ -1593,6 +1853,13 @@ const permissionStyles = StyleSheet.create((theme) => ({
   optionButtonHovered: {
     backgroundColor: theme.colors.surface2,
   },
+  optionButtonPrimary: {
+    backgroundColor: theme.colors.accent,
+    borderColor: theme.colors.accent,
+  },
+  optionButtonPrimaryHovered: {
+    opacity: 0.9,
+  },
   optionButtonPressed: {
     opacity: 0.9,
   },
@@ -1607,7 +1874,49 @@ const permissionStyles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
   },
   optionTextPrimary: {
-    color: theme.colors.foreground,
+    color: theme.colors.accentForeground,
+  },
+  implementButton: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    borderRadius: theme.borderRadius.md,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.accent,
+    backgroundColor: theme.colors.accent,
+    overflow: "hidden",
+  },
+  // flex, not flexShrink: when the card stacks its buttons full width the label
+  // group centres like Reject's does and the caret stays pinned to the trailing
+  // edge, instead of the whole thing bunching up on the left.
+  implementAction: {
+    flex: 1,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  // A hairline, not a border: the two halves are one surface, and a full-strength
+  // divider is what made the earlier split read as two buttons.
+  implementDivider: {
+    width: theme.borderWidth[1],
+    backgroundColor: theme.colors.accentForeground,
+    opacity: 0.2,
+    marginVertical: theme.spacing[2],
+  },
+  implementCaret: {
+    paddingHorizontal: theme.spacing[2],
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  implementModeText: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+    color: theme.colors.accentForeground,
+    opacity: 0.7,
+    flexShrink: 1,
+  },
+  splitButtonSegmentHovered: {
+    backgroundColor: theme.colors.surface2,
   },
 }));
 

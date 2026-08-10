@@ -1035,7 +1035,36 @@ test("preserves bypass capability across query restarts triggered by thinking ch
   }
 });
 
-test("plan approval exposes a resume-bypass action and can return to bypassPermissions", async () => {
+interface PlanPermissionInternals {
+  handlePermissionRequest: (
+    toolName: string,
+    input: Record<string, unknown>,
+    options: Record<string, unknown>,
+  ) => Promise<unknown>;
+}
+
+async function openPlanPermission(
+  session: Awaited<ReturnType<typeof createSession>>,
+  events: AgentStreamEvent[],
+) {
+  await session.setMode("plan");
+  const internal: PlanPermissionInternals = asInternals(session);
+  const resolution = internal.handlePermissionRequest(
+    "ExitPlanMode",
+    { plan: "- Implement the approved plan" },
+    {},
+  );
+  const requestEvent = events.find(
+    (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+      event.type === "permission_requested" && event.request.kind === "plan",
+  );
+  if (!requestEvent) {
+    throw new Error("Expected plan permission request");
+  }
+  return { resolution, request: requestEvent.request };
+}
+
+test("plan request keeps the two-button action list and offers the modes in metadata", async () => {
   const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
   sdkQueryFactory.mockImplementation(() => queryMock);
 
@@ -1044,30 +1073,11 @@ test("plan approval exposes a resume-bypass action and can return to bypassPermi
   session.subscribe((event) => events.push(event));
 
   try {
-    await session.setMode("bypassPermissions");
-    await session.setMode("plan");
+    const { resolution, request } = await openPlanPermission(session, events);
 
-    const internal: {
-      handlePermissionRequest: (
-        toolName: string,
-        input: Record<string, unknown>,
-        options: Record<string, unknown>,
-      ) => Promise<unknown>;
-    } = asInternals(session);
-
-    const pendingResolution = internal.handlePermissionRequest(
-      "ExitPlanMode",
-      { plan: "- Implement the approved plan" },
-      {},
-    );
-
-    const requestEvent = events.find(
-      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
-        event.type === "permission_requested" && event.request.kind === "plan",
-    );
-
-    expect(requestEvent).toBeDefined();
-    expect(requestEvent?.request.actions).toEqual([
+    // An app that predates the mode picker renders one button per action, so the
+    // extra modes must not arrive as actions.
+    expect(request.actions).toEqual([
       {
         id: "reject",
         label: "Reject",
@@ -1082,30 +1092,169 @@ test("plan approval exposes a resume-bypass action and can return to bypassPermi
         variant: "primary",
         intent: "implement",
       },
-      {
-        id: "implement_resume",
-        label: "Implement with Bypass",
-        behavior: "allow",
-        variant: "secondary",
-        intent: "implement_resume",
-      },
+    ]);
+    expect(request.metadata?.implementModes).toEqual([
+      { id: "default", label: "Always Ask" },
+      { id: "acceptEdits", label: "Accept File Edits" },
+      { id: "auto", label: "Auto mode" },
+      { id: "bypassPermissions", label: "Bypass" },
     ]);
 
-    if (!requestEvent) {
-      throw new Error("Expected plan permission request");
+    await session.respondToPermission(request.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+    await expect(resolution).resolves.toMatchObject({ behavior: "allow" });
+  } finally {
+    await session.close();
+  }
+});
+
+for (const transport of ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"] as const) {
+  test(`plan request omits Auto mode when ${transport} is set`, async () => {
+    vi.stubEnv(transport, "1");
+    const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+    sdkQueryFactory.mockImplementation(() => queryMock);
+
+    const session = await createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      const { resolution, request } = await openPlanPermission(session, events);
+      expect(request.metadata?.implementModes).toEqual([
+        { id: "default", label: "Always Ask" },
+        { id: "acceptEdits", label: "Accept File Edits" },
+        { id: "bypassPermissions", label: "Bypass" },
+      ]);
+
+      await session.respondToPermission(request.id, {
+        behavior: "allow",
+        selectedActionId: "implement",
+      });
+      await expect(resolution).resolves.toMatchObject({ behavior: "allow" });
+    } finally {
+      await session.close();
+      vi.unstubAllEnvs();
     }
+  });
+}
 
-    await session.respondToPermission(requestEvent.request.id, {
+for (const modeId of ["default", "acceptEdits", "auto", "bypassPermissions"] as const) {
+  test(`plan approval switches to the offered mode '${modeId}'`, async () => {
+    const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+    sdkQueryFactory.mockImplementation(() => queryMock);
+
+    const session = await createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      const { resolution, request } = await openPlanPermission(session, events);
+      await session.respondToPermission(request.id, {
+        behavior: "allow",
+        selectedActionId: "implement",
+        mode: modeId,
+      });
+
+      await expect(resolution).resolves.toMatchObject({
+        behavior: "allow",
+        updatedInput: { plan: "- Implement the approved plan" },
+      });
+      expect(queryMock.setPermissionMode).toHaveBeenLastCalledWith(modeId);
+      expect(await session.getCurrentMode()).toBe(modeId);
+    } finally {
+      await session.close();
+    }
+  });
+}
+
+for (const [name, mode] of [
+  ["no mode at all", undefined],
+  ["a mode the request never offered", "somethingElse"],
+  ["plan mode, which is never offered", "plan"],
+] as const) {
+  test(`plan approval falls back to acceptEdits for ${name}`, async () => {
+    const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+    sdkQueryFactory.mockImplementation(() => queryMock);
+
+    const session = await createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      const { resolution, request } = await openPlanPermission(session, events);
+      await session.respondToPermission(request.id, {
+        behavior: "allow",
+        selectedActionId: "implement",
+        ...(mode === undefined ? {} : { mode }),
+      });
+
+      await expect(resolution).resolves.toMatchObject({ behavior: "allow" });
+      expect(queryMock.setPermissionMode).toHaveBeenLastCalledWith("acceptEdits");
+      expect(await session.getCurrentMode()).toBe("acceptEdits");
+
+      // The rejected choice stays visible, so a client asking for a mode that was
+      // never offered is diagnosable from the timeline.
+      const planApproval = events.find(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.name === "plan_approval",
+      );
+      if (planApproval?.type !== "timeline" || planApproval.item.type !== "tool_call") {
+        throw new Error("Expected a plan_approval tool call");
+      }
+      expect(planApproval.item.detail).toMatchObject({
+        output: { requestedMode: mode ?? null, targetMode: "acceptEdits", mode: "acceptEdits" },
+      });
+    } finally {
+      await session.close();
+    }
+  });
+}
+
+test("plan approval still resolves and reports an error when the mode switch fails", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+
+  const session = await createSession();
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+
+  try {
+    const { resolution, request } = await openPlanPermission(session, events);
+    queryMock.setPermissionMode.mockRejectedValueOnce(new Error("transport closed"));
+
+    await session.respondToPermission(request.id, {
       behavior: "allow",
-      selectedActionId: "implement_resume",
+      selectedActionId: "implement",
+      mode: "bypassPermissions",
     });
 
-    await expect(pendingResolution).resolves.toMatchObject({
-      behavior: "allow",
-      updatedInput: { plan: "- Implement the approved plan" },
+    // The pending entry is deleted before the mode switch, so a throw there would
+    // strand the request forever.
+    await expect(resolution).resolves.toMatchObject({ behavior: "allow" });
+
+    const errorItem = events.find(
+      (event) => event.type === "timeline" && event.item.type === "error",
+    );
+    expect(errorItem).toBeDefined();
+
+    const planApproval = events.find(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.name === "plan_approval",
+    );
+    expect(planApproval).toBeDefined();
+    if (planApproval?.type !== "timeline" || planApproval.item.type !== "tool_call") {
+      throw new Error("Expected a plan_approval tool call");
+    }
+    expect(planApproval.item.detail).toMatchObject({
+      output: { requestedMode: "bypassPermissions", mode: "plan" },
     });
-    expect(queryMock.setPermissionMode).toHaveBeenLastCalledWith("bypassPermissions");
-    expect(await session.getCurrentMode()).toBe("bypassPermissions");
+    expect(await session.getCurrentMode()).toBe("plan");
   } finally {
     await session.close();
   }

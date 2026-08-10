@@ -99,6 +99,7 @@ import {
   type AgentModelDefinition,
   type AgentPermissionRequest,
   type AgentPermissionRequestKind,
+  type AgentPlanImplementMode,
   type AgentPermissionResponse,
   type AgentPermissionUpdate,
   type AgentPersistenceHandle,
@@ -1055,14 +1056,8 @@ function buildClaudeQuestionPermissionSummary(
   return labels.length > 0 ? { title, description: labels.join(" / ") } : { title };
 }
 
-function getClaudeModeLabel(modeId: PermissionMode): string {
-  return DEFAULT_MODES.find((mode) => mode.id === modeId)?.label ?? modeId;
-}
-
-function buildClaudePlanPermissionActions(
-  resumeMode: PermissionMode | null,
-): AgentPermissionAction[] {
-  const actions: AgentPermissionAction[] = [
+function buildClaudePlanPermissionActions(): AgentPermissionAction[] {
+  return [
     {
       id: "reject",
       label: "Reject",
@@ -1078,18 +1073,52 @@ function buildClaudePlanPermissionActions(
       intent: "implement",
     },
   ];
+}
 
-  if (resumeMode === "bypassPermissions") {
-    actions.push({
-      id: "implement_resume",
-      label: `Implement with ${getClaudeModeLabel(resumeMode)}`,
-      behavior: "allow",
-      variant: "secondary",
-      intent: "implement_resume",
-    });
+/**
+ * Permission modes the client may pick from when approving a plan.
+ *
+ * These ride in the request's `metadata` rather than as extra `actions`: the
+ * request is built once and broadcast to every connected client, so an app that
+ * predates the mode picker would render one button per action. It ignores
+ * metadata it does not understand, so the old card stays a two-button card.
+ */
+function buildClaudePlanImplementModes(env: NodeJS.ProcessEnv): AgentPlanImplementMode[] {
+  return DEFAULT_MODES.filter((mode) => mode.id !== "plan")
+    .filter(
+      // Auto mode is unusable on these transports and setMode() throws for it.
+      (mode) => mode.id !== "auto" || detectIneligibleAutoModeTransport(env) === null,
+    )
+    .map((mode) => ({ id: mode.id, label: mode.label }));
+}
+
+function readClaudePlanImplementModes(request: AgentPermissionRequest): AgentPlanImplementMode[] {
+  const raw = request.metadata?.implementModes;
+  if (!Array.isArray(raw)) {
+    return [];
   }
+  return raw.flatMap((entry) => {
+    if (!isMetadata(entry) || typeof entry.id !== "string" || typeof entry.label !== "string") {
+      return [];
+    }
+    return [{ id: entry.id, label: entry.label }];
+  });
+}
 
-  return actions;
+/**
+ * The mode a plan approval should land in: whatever the client picked, but only
+ * if the request itself offered it. Anything else falls back to the historical
+ * behavior so an old or malformed client cannot pick a mode we never advertised.
+ */
+function resolveClaudePlanApprovalMode(
+  request: AgentPermissionRequest,
+  requestedMode: string | undefined,
+): PermissionMode {
+  if (!requestedMode || !isPermissionMode(requestedMode)) {
+    return "acceptEdits";
+  }
+  const offered = readClaudePlanImplementModes(request);
+  return offered.some((mode) => mode.id === requestedMode) ? requestedMode : "acceptEdits";
 }
 
 interface TimelineFragment {
@@ -2015,7 +2044,6 @@ class ClaudeAgentSession implements AgentSession {
   private claudeSessionId: string | null;
   private persistence: AgentPersistenceHandle | null;
   private currentMode: PermissionMode;
-  private planResumeMode: PermissionMode | null = null;
   private availableModes: AgentMode[] = DEFAULT_MODES;
   private toolUseCache = new Map<string, ToolUseCacheEntry>();
   private toolUseIndexToId = new Map<number, string>();
@@ -2101,9 +2129,6 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     this.currentMode = isPermissionMode(config.modeId) ? config.modeId : "default";
-    if (this.currentMode !== "plan") {
-      this.planResumeMode = this.currentMode;
-    }
   }
 
   get id(): string | null {
@@ -2305,16 +2330,8 @@ class ClaudeAgentSession implements AgentSession {
 
     const normalized = isPermissionMode(modeId) ? modeId : "default";
     assertClaudeAutoModeEligible(normalized, this.buildSdkEnv());
-    const previousMode = this.currentMode;
     const activeQuery = await this.ensureQuery();
     await activeQuery.setPermissionMode(normalized);
-    if (normalized === "plan") {
-      if (previousMode !== "plan") {
-        this.planResumeMode = previousMode;
-      }
-    } else {
-      this.planResumeMode = normalized;
-    }
     this.currentMode = normalized;
   }
 
@@ -2409,6 +2426,56 @@ class ClaudeAgentSession implements AgentSession {
     return Array.from(this.pendingPermissions.values()).map((entry) => entry.request);
   }
 
+  /**
+   * Switch to the mode the client approved the plan in, and record what actually
+   * happened. Never throws: the caller has already removed the pending entry and
+   * has yet to resolve it, so an escaping error would hang the agent on a promise
+   * nobody can settle.
+   */
+  private async applyPlanApproval(
+    request: AgentPermissionRequest,
+    response: Extract<AgentPermissionResponse, { behavior: "allow" }>,
+  ): Promise<void> {
+    const targetMode = resolveClaudePlanApprovalMode(request, response.mode);
+    if (response.mode && response.mode !== targetMode) {
+      this.logger.warn(
+        { requestedMode: response.mode, targetMode },
+        "Plan approval requested a mode this request did not offer",
+      );
+    }
+    let landedMode: PermissionMode = targetMode;
+    try {
+      await this.setMode(targetMode);
+    } catch (error) {
+      landedMode = this.currentMode ?? "default";
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        { targetMode, landedMode, error: message },
+        "Failed to apply plan approval mode",
+      );
+      this.enqueueTimeline({
+        type: "error",
+        message: `Could not switch to ${targetMode}. The plan was approved in ${landedMode} instead. ${message}`,
+      });
+    }
+    this.pushToolCall(
+      mapClaudeCompletedToolCall({
+        name: "plan_approval",
+        callId: request.id,
+        input: request.input ?? null,
+        output: {
+          approved: true,
+          actionId: response.selectedActionId ?? "implement",
+          // What the client asked for, what we agreed to apply, and where we
+          // ended up — a rejected or failed mode switch is otherwise invisible.
+          requestedMode: response.mode ?? null,
+          targetMode,
+          mode: landedMode,
+        },
+      }),
+    );
+  }
+
   async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
@@ -2419,24 +2486,7 @@ class ClaudeAgentSession implements AgentSession {
 
     if (response.behavior === "allow") {
       if (pending.request.kind === "plan") {
-        const selectedActionId = response.selectedActionId;
-        const shouldResumePriorMode =
-          selectedActionId === "implement_resume" && this.planResumeMode === "bypassPermissions";
-        const targetMode: PermissionMode = shouldResumePriorMode
-          ? "bypassPermissions"
-          : "acceptEdits";
-        await this.setMode(targetMode);
-        this.pushToolCall(
-          mapClaudeCompletedToolCall({
-            name: "plan_approval",
-            callId: pending.request.id,
-            input: pending.request.input ?? null,
-            output: {
-              approved: true,
-              actionId: selectedActionId ?? "implement",
-            },
-          }),
-        );
+        await this.applyPlanApproval(pending.request, response);
       }
       const updatedInput =
         pending.request.kind === "question"
@@ -4304,9 +4354,6 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.availableModes = DEFAULT_MODES;
     this.currentMode = message.permissionMode;
-    if (this.currentMode !== "plan") {
-      this.planResumeMode = this.currentMode;
-    }
     this.persistence = null;
     if (message.model) {
       const normalizedRuntimeModel = normalizeClaudeRuntimeModelId(message.model);
@@ -4367,6 +4414,9 @@ class ClaudeAgentSession implements AgentSession {
     if (toolName === "ExitPlanMode" && typeof input.plan === "string") {
       metadata.planText = input.plan;
     }
+    if (kind === "plan") {
+      metadata.implementModes = buildClaudePlanImplementModes(this.buildSdkEnv());
+    }
     const toolDetail =
       kind === "tool"
         ? mapClaudeRunningToolCall({
@@ -4388,7 +4438,7 @@ class ClaudeAgentSession implements AgentSession {
       suggestions: options.suggestions?.map((suggestion) => ({
         ...suggestion,
       })),
-      actions: kind === "plan" ? buildClaudePlanPermissionActions(this.planResumeMode) : undefined,
+      actions: kind === "plan" ? buildClaudePlanPermissionActions() : undefined,
       metadata: Object.keys(metadata).length ? metadata : undefined,
     };
 

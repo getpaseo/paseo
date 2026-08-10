@@ -199,6 +199,7 @@ export const ko: TranslationResources = {
       deny: "거부",
       accept: "수락",
       implement: "구현",
+      chooseImplementMode: "구현 모드 선택",
       question: "어떻게 진행할까요?",
       proposedPlan: "제안된 계획",
     },

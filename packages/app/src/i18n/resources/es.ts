@@ -199,6 +199,7 @@ export const es: TranslationResources = {
       deny: "Denegar",
       accept: "Aceptar",
       implement: "Implementar",
+      chooseImplementMode: "Elegir modo de implementación",
       question: "¿Cómo le gustaría proceder?",
       proposedPlan: "Plan propuesto",
     },
