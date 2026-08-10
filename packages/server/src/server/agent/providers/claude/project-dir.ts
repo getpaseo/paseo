@@ -11,15 +11,13 @@ import { join } from "node:path";
 
 const PROJECT_DIR_LENGTH_CAP = 200;
 
-export interface ClaudeConfigDirOptions {
+export interface ClaudeProjectDirOptions {
   configDir?: string;
   // Provider profile settings. A profile that sets its own CLAUDE_CONFIG_DIR
   // launches Claude Code against that directory, so its transcripts live there
   // too — it must win over the daemon-wide environment.
   runtimeSettings?: { env?: Record<string, string> };
 }
-
-export type ClaudeProjectDirOptions = ClaudeConfigDirOptions;
 
 export async function claudeProjectDir(
   cwd: string,
@@ -72,7 +70,7 @@ function hashSuffix(input: string): string {
   return Math.abs(hash).toString(36);
 }
 
-export function resolveClaudeConfigDir(options?: ClaudeConfigDirOptions): string {
+export function resolveClaudeConfigDir(options?: ClaudeProjectDirOptions): string {
   return (
     options?.configDir ??
     options?.runtimeSettings?.env?.CLAUDE_CONFIG_DIR ??

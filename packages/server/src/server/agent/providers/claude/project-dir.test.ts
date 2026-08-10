@@ -5,7 +5,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { claudeProjectDir, claudeProjectDirSync, resolveClaudeConfigDir } from "./project-dir.js";
 
@@ -112,19 +112,13 @@ describe("claudeProjectDir parity with Claude Agent SDK", () => {
 describe("resolveClaudeConfigDir", () => {
   const daemonConfigDir = join(tmpdir(), "paseo-claude-config-daemon");
   const profileConfigDir = join(tmpdir(), "paseo-claude-config-profile");
-  let previousConfigDir: string | undefined;
 
   beforeEach(() => {
-    previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
-    process.env.CLAUDE_CONFIG_DIR = daemonConfigDir;
+    vi.stubEnv("CLAUDE_CONFIG_DIR", daemonConfigDir);
   });
 
   afterEach(() => {
-    if (previousConfigDir === undefined) {
-      delete process.env.CLAUDE_CONFIG_DIR;
-    } else {
-      process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
-    }
+    vi.unstubAllEnvs();
   });
 
   test("prefers a provider profile's CLAUDE_CONFIG_DIR over the daemon environment", () => {
@@ -152,7 +146,7 @@ describe("resolveClaudeConfigDir", () => {
   });
 
   test("defaults to ~/.claude when nothing is configured", () => {
-    delete process.env.CLAUDE_CONFIG_DIR;
+    vi.stubEnv("CLAUDE_CONFIG_DIR", undefined);
 
     expect(resolveClaudeConfigDir()).toBe(join(homedir(), ".claude"));
   });
