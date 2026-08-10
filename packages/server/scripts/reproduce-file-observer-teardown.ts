@@ -97,19 +97,9 @@ async function runChild(backend: string, subscribe: SubscribeToFileChanges): Pro
     for (let index = 0; index < ITERATIONS; index += 1) {
       const root = join(base, `worktree-${index}`);
       await mkdir(join(root, "nested"), { recursive: true });
-      let teardown: Promise<void> | null = null;
       let closed = false;
-      let subscription!: Awaited<ReturnType<SubscribeToFileChanges>>;
-      subscription = await subscribe(root, (_error, events) => {
+      const subscription = await subscribe(root, () => {
         if (closed) callbacksAfterClose += 1;
-        if (events.some((event) => event.path === join(root, "archive-trigger"))) {
-          teardown ??= rm(root, { recursive: true, force: true }).then(() =>
-            subscription.unsubscribe().then(() => {
-              closed = true;
-              return undefined;
-            }),
-          );
-        }
       });
 
       const command = process.platform === "win32" ? "cmd.exe" : "true";
@@ -119,16 +109,16 @@ async function runChild(backend: string, subscribe: SubscribeToFileChanges): Pro
         execFileAsync(command, commandArgs),
       ]);
       await writeFile(join(root, "archive-trigger"), "archive\n");
-      await waitFor(() => teardown !== null, 5_000);
       const teardownStartedAt = performance.now();
       try {
-        await teardown;
+        await rm(root, { recursive: true, force: true });
       } catch (error) {
         teardownErrors.push(error instanceof Error ? error.message : String(error));
       }
       await subscription.unsubscribe().catch((error: unknown) => {
         teardownErrors.push(error instanceof Error ? error.message : String(error));
       });
+      closed = true;
       teardownDurations.push(performance.now() - teardownStartedAt);
       completed += 1;
     }
@@ -181,14 +171,6 @@ function percentile(values: number[], quantile: number): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((left, right) => left - right);
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * quantile) - 1)] ?? 0;
-}
-
-async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<void> {
-  const deadline = performance.now() + timeoutMs;
-  while (!predicate()) {
-    if (performance.now() >= deadline) throw new Error("Timed out waiting for archive teardown");
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
 }
 
 function readPositiveInteger(name: string, fallback: number): number {
