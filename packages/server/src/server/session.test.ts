@@ -310,6 +310,7 @@ interface SessionForTestOptions {
   getDaemonTcpPort?: () => number | null;
   getDaemonTcpHost?: () => string | null;
   providerSnapshotManager?: ProviderSnapshotManager;
+  hubExecutionAgents?: SessionOptions["hubExecutionAgents"];
   stt?: SessionOptions["stt"];
   voice?: SessionOptions["voice"];
   paseoHome?: string;
@@ -412,6 +413,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     terminalManager: options.terminalManager ?? null,
     providerSnapshotManager:
       options.providerSnapshotManager ?? createProviderSnapshotManagerStub().manager,
+    hubExecutionAgents: options.hubExecutionAgents,
     serviceProxy: options.serviceProxy,
     scriptRuntimeStore: options.scriptRuntimeStore,
     getDaemonTcpPort: options.getDaemonTcpPort,
@@ -426,6 +428,44 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
 }
 
 describe("session authorization scopes", () => {
+  test("routes named-agent validation through the session source", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const providers = createProviderSnapshotManagerStub();
+    providers.validateAgentConfiguration.mockResolvedValue([
+      { path: ["model"], message: "Model is unavailable" },
+    ]);
+    const session = createSessionForTest({
+      messages,
+      providerSnapshotManager: providers.manager,
+      hubExecutionAgents: {
+        create: vi.fn(),
+        control: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+        invalidateAuthority: vi.fn(),
+      },
+    });
+
+    await session.handleMessage({
+      type: "hub.execution.agent.validate.request",
+      requestId: "validate-agent",
+      provider: "codex",
+      model: "missing",
+    });
+
+    expect(providers.validateAgentConfiguration).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "codex", model: "missing" }),
+    );
+    expect(messages).toContainEqual({
+      type: "hub.execution.agent.validate.response",
+      payload: {
+        requestId: "validate-agent",
+        valid: false,
+        issues: [{ path: ["model"], message: "Model is unavailable" }],
+        error: null,
+      },
+    });
+  });
+
   test("rejects an RPC outside an exact grant with the generic RPC error", async () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({

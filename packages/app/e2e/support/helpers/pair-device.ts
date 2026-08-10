@@ -17,6 +17,49 @@ interface PairingHostInput {
   endpoint: string;
 }
 
+export async function prepareLocalPairingHost(
+  page: Page,
+  daemon: IsolatedHostDaemon | OutdatedDaemon,
+  additionalHosts: PairingHostInput[] = [],
+): Promise<void> {
+  await page.addInitScript((localServerId) => {
+    (window as unknown as { paseoDesktop: unknown }).paseoDesktop = {
+      platform: "darwin",
+      invoke: async (command: string) => {
+        if (command === "desktop_daemon_status") {
+          return {
+            serverId: localServerId,
+            status: "running",
+            listen: null,
+            hostname: null,
+            pid: null,
+            home: "",
+            version: null,
+            desktopManaged: true,
+            error: null,
+          };
+        }
+        if (command === "get_desktop_settings") {
+          return {
+            releaseChannel: "stable",
+            daemon: { manageBuiltInDaemon: false, keepRunningAfterQuit: true },
+          };
+        }
+        return null;
+      },
+      getPendingOpenProject: async () => null,
+      events: { on: async () => () => undefined },
+      opener: {
+        openUrl: async (url: string) => {
+          localStorage.setItem("@paseo:e2e-opened-url", url);
+        },
+      },
+    };
+  }, daemon.serverId);
+
+  await preparePairingHost(page, daemon, additionalHosts);
+}
+
 export async function preparePairingHost(
   page: Page,
   daemon: IsolatedHostDaemon | OutdatedDaemon,

@@ -1,52 +1,41 @@
 ---
 title: Discord triggers
-description: Configure Discord mentions as Hub triggers and route them into durable workflows.
+description: Configure Discord mentions and replies in one workflow file.
 nav: Discord
-order: 67
+order: 69
 category: Hub
 ---
 
 # Discord triggers
 
-## Events
+`discord.mention` fires when the bot or a managed role is mentioned in a guild channel or thread.
 
-| `on`              | Fires when                                                                     |
-| ----------------- | ------------------------------------------------------------------------------ |
-| `discord.mention` | The bot or one of its managed roles is mentioned in a guild channel or thread. |
-
-## Filters
-
-Discord filters use quoted snowflake IDs:
+`.paseo/workflows/discord-help.yml`:
 
 ```yaml
+name: discord-help
+on: discord.mention
+max_runtime: 1h
 filters:
   guild: "123456789012345678"
   channels: ["234567890123456789"]
   from_users: ["345678901234567890"]
+steps:
+  - id: answer
+    environment: dev
+    max_runtime: 30m
+    idle_timeout: 5m
+    agent: codex
+    prompt:
+      - text: |
+          Answer with hub.reply, then call hub.finish_execution.
+          ${{ paseo.prompt }}
+    allow_outputs:
+      - { type: discord.reply, max: 1, required: true }
 ```
 
-Turn on Developer Mode to copy IDs. `from_users` matches the author's user id, `guild` matches the connected guild, and `channels` matches the channel or thread parent. `pattern` matches the start of the text after the mention. All filters must pass.
+Turn on Discord Developer Mode to copy IDs. `from_users` matches the author; `guild` and `channels` constrain where the mention arrived. All filters must pass.
 
-## Invocation
+The reply posts in the triggering thread or channel. `discord.reply` grants `hub.reply`, but does not rewrite the prompt. A Discord trigger grants no GitHub credential; add a [`github` block](/docs/hub/github) to the step that needs one.
 
-Put leading inputs directly after the mention:
-
-```text
-@Paseo repo=project investigate the failed sync
-```
-
-Hub consumes only declared consecutive headers and passes `investigate the failed sync` as `${{ paseo.prompt }}`. See [Hub workflows](/docs/hub/workflows) for the provider-neutral input contract.
-
-## Replies and repository access
-
-Put the reply capability on a step:
-
-```yaml
-allow_outputs:
-  - type: discord.reply
-    max: 5
-```
-
-The reply is posted in the triggering thread or channel. A Discord trigger has no implicit GitHub credential. If a step needs another connection, configure that connection through the supported step environment for your deployment; Hub does not guess between GitHub installations.
-
-See the [workflow examples](/docs/hub/configuration/examples) for complete step configurations.
+Leading declared inputs follow the mention. Hub exposes the remaining text as `${{ paseo.prompt }}`. See [Workflows](/docs/hub/workflows).

@@ -1,15 +1,13 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import parcelWatcher from "@parcel/watcher";
 import type pino from "pino";
 import { afterEach, expect, test, vi } from "vitest";
 import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
-import {
-  subscribeToWorkspaceFileChanges,
-  WorkspaceGitServiceImpl,
-} from "./workspace-git-service.js";
+import { createFileObserver } from "./file-observer/index.js";
+import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
+import type { FileChange, SubscribeToFileChanges } from "./file-observer/index.js";
 
 function createLogger(): pino.Logger {
   const logger = {
@@ -64,7 +62,7 @@ afterEach(async () => {
   }
 });
 
-test("native recursive observation updates tracked state and prunes ignored storms", async () => {
+test("recursive observation updates tracked state and prunes ignored storms", async () => {
   const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-git-observation-")));
   const repoDir = path.join(tempDir, "repo");
   const trackedPath = path.join(repoDir, "src", "tracked.txt");
@@ -79,14 +77,15 @@ test("native recursive observation updates tracked state and prunes ignored stor
   writeFileSync(newlyTrackedPath, "base\n");
 
   let activeWatcherCount = 0;
+  const observer = createFileObserver();
   let watcherStartCount = 0;
-  let onWorkingTreeWatcherStopped: (() => void) | null = null;
+  let onWorkingTreeIgnoreUpdated: (() => void) | null = null;
   const deliveredEvents: Array<{
     directory: string;
-    events: parcelWatcher.Event[];
+    events: FileChange[];
   }> = [];
-  const subscribe: typeof parcelWatcher.subscribe = async (directory, callback, options) => {
-    const subscription = await subscribeToWorkspaceFileChanges(
+  const subscribe: SubscribeToFileChanges = async (directory, callback, options) => {
+    const subscription = await observer.subscribe(
       directory,
       (error, events) => {
         deliveredEvents.push({ directory, events });
@@ -97,28 +96,50 @@ test("native recursive observation updates tracked state and prunes ignored stor
     activeWatcherCount += 1;
     watcherStartCount += 1;
     return {
+      updateIgnore: async (paths) => {
+        await subscription.updateIgnore(paths);
+        if (directory === repoDir) {
+          const onUpdated = onWorkingTreeIgnoreUpdated;
+          onWorkingTreeIgnoreUpdated = null;
+          onUpdated?.();
+        }
+      },
       unsubscribe: async () => {
         await subscription.unsubscribe();
         activeWatcherCount -= 1;
-        if (directory === repoDir) {
-          const onStopped = onWorkingTreeWatcherStopped;
-          onWorkingTreeWatcherStopped = null;
-          onStopped?.();
-        }
       },
     };
   };
-  const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => createFacts(cwd));
-  const getCheckoutStatus = vi.fn(async (cwd: string) => createStatus(cwd));
-  const getCheckoutShortstat = vi.fn(async () => ({ additions: 0, deletions: 0 }));
+  const fileObserver = {
+    subscribe,
+    getDiagnostics: () => observer.getDiagnostics(),
+    close: () => observer.close(),
+  };
   let observedPath = trackedPath;
   let observedRelativePath = "src/tracked.txt";
+  const readObservedState = () => {
+    const contents = readFileSync(observedPath, "utf8");
+    const isDirty = contents !== "base\n";
+    return {
+      isDirty,
+      additions: isDirty ? contents.trim().split("\n").length : 0,
+    };
+  };
+  const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => createFacts(cwd));
+  const getCheckoutStatus = vi.fn(async (cwd: string) => ({
+    ...createStatus(cwd),
+    isDirty: readObservedState().isDirty,
+  }));
+  const getCheckoutShortstat = vi.fn(async () => ({
+    additions: readObservedState().additions,
+    deletions: 0,
+  }));
   const getCheckoutWorktreeState = vi.fn(async () => {
-    const additions = readFileSync(observedPath, "utf8").trim().split("\n").length;
+    const additions = readObservedState().additions;
     return { isDirty: true, diffStat: { additions, deletions: 0 } };
   });
   const getCheckoutDiff = vi.fn(async () => {
-    const additions = readFileSync(observedPath, "utf8").trim().split("\n").length;
+    const additions = readObservedState().additions;
     return {
       diff: "",
       structured: [
@@ -151,8 +172,8 @@ test("native recursive observation updates tracked state and prunes ignored stor
   const service = new WorkspaceGitServiceImpl({
     logger: createLogger(),
     paseoHome: path.join(tempDir, "paseo-home"),
+    fileObserver,
     deps: {
-      subscribe,
       getCheckoutSnapshotFacts,
       getCheckoutStatus,
       getCheckoutShortstat,
@@ -179,8 +200,8 @@ test("native recursive observation updates tracked state and prunes ignored stor
     diffSubscription.unsubscribe();
     summarySubscription.unsubscribe();
     diffManager.dispose();
-    service.dispose();
-    await vi.waitFor(() => expect(activeWatcherCount).toBe(0), { timeout: 5_000 });
+    await service.dispose();
+    expect(activeWatcherCount).toBe(0);
     rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -294,16 +315,16 @@ test("native recursive observation updates tracked state and prunes ignored stor
   buildIgnored = false;
   observedPath = newlyTrackedPath;
   observedRelativePath = "build/tracked.txt";
-  let editedDuringWatcherHandoff = false;
-  onWorkingTreeWatcherStopped = () => {
-    editedDuringWatcherHandoff = true;
+  let editedDuringIgnoreUpdate = false;
+  onWorkingTreeIgnoreUpdated = () => {
+    editedDuringIgnoreUpdate = true;
     writeFileSync(newlyTrackedPath, "first\nsecond\n");
   };
   writeFileSync(path.join(repoDir, ".git", "index"), "force-added\n");
   await vi.waitFor(
     () => {
-      expect(editedDuringWatcherHandoff).toBe(true);
-      expect(watcherStartCount).toBe(3);
+      expect(editedDuringIgnoreUpdate).toBe(true);
+      expect(watcherStartCount).toBe(2);
       expect(activeWatcherCount).toBe(2);
       expect(summaryListener).toHaveBeenLastCalledWith(
         expect.objectContaining({

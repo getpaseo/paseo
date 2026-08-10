@@ -1,5 +1,5 @@
 import { createHubCommand } from "../../../../../cli/src/commands/hub/index.js";
-import { HubHttpClient } from "../../../../../cli/src/commands/hub/client.js";
+import { HubHttpClient } from "../../../../../cli/src/commands/hub/hub-client/index.js";
 
 const CONTRACT_API_KEY_PREFIX = "hub-contract-api-key:";
 

@@ -1471,19 +1471,6 @@ export const fr: TranslationResources = {
         show: "Afficher avancé",
         hide: "Masquer avancé",
       },
-      headers: {
-        title: "En-têtes personnalisés",
-        add: "Ajouter un en-tête",
-        name: "Nom",
-        value: "Valeur",
-        remove: "Supprimer l'en-tête",
-        errors: {
-          missingName: "Saisissez un nom pour chaque en-tête",
-          invalidName: "{{name}} n'est pas un nom d'en-tête valide",
-          invalidValue: "{{name}} contient un saut de ligne non valide",
-          duplicateName: "{{name}} est saisi plusieurs fois",
-        },
-      },
       passwordVisibility: {
         show: "Afficher le mot de passe",
         hide: "Masquer le mot de passe",

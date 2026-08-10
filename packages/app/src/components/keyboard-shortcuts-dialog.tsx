@@ -6,36 +6,15 @@ import { getIsElectronRuntime } from "@/constants/layout";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
-import { formatShortcut } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import {
   buildEffectiveBindings,
   buildKeyboardShortcutHelpSections,
 } from "@/keyboard/keyboard-shortcuts";
+import { filterShortcutHelpSections } from "@/keyboard/shortcut-help-search";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 
 const SNAP_POINTS: string[] = ["70%", "92%"];
-
-function shortcutSearchAliases(keys: string[], shortcutOs: "mac" | "non-mac"): string {
-  const aliases = keys.map((key) => {
-    if (shortcutOs === "mac") {
-      if (key === "mod" || key === "meta") return ["cmd", "command"];
-      if (key === "alt") return ["alt", "option"];
-    } else {
-      if (key === "mod" || key === "ctrl") return ["ctrl", "control"];
-      if (key === "meta") return ["win", "windows"];
-    }
-    return [key];
-  });
-  const combinations = aliases.reduce<string[][]>(
-    (prefixes, choices) =>
-      prefixes.flatMap((prefix) => choices.map((choice) => [...prefix, choice])),
-    [[]],
-  );
-  return combinations
-    .flatMap((combination) => [combination.join(" "), combination.join("+")])
-    .join(" ");
-}
 
 export function KeyboardShortcutsDialog() {
   const { t } = useTranslation();
@@ -54,33 +33,10 @@ export function KeyboardShortcutsDialog() {
     () => buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp }, bindings),
     [bindings, isDesktopApp, isMac],
   );
-  const visibleSections = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase();
-    if (!normalizedQuery) return sections;
-
-    return sections.flatMap((section) => {
-      const sectionTitle = t(section.titleKey);
-      if (sectionTitle.toLocaleLowerCase().includes(normalizedQuery)) {
-        return [section];
-      }
-
-      const rows = section.rows.filter((row) => {
-        const searchText = [
-          t(row.labelKey),
-          row.noteKey ? t(row.noteKey) : row.note,
-          row.keys.join(" "),
-          formatShortcut(row.keys, shortcutOs),
-          shortcutSearchAliases(row.keys, shortcutOs),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLocaleLowerCase();
-        return searchText.includes(normalizedQuery);
-      });
-
-      return rows.length > 0 ? [{ ...section, rows }] : [];
-    });
-  }, [query, sections, shortcutOs, t]);
+  const visibleSections = useMemo(
+    () => filterShortcutHelpSections({ sections, query, translate: t, shortcutOs }),
+    [query, sections, shortcutOs, t],
+  );
 
   useEffect(() => {
     if (!open) setQuery("");
@@ -114,14 +70,18 @@ export function KeyboardShortcutsDialog() {
             <Text style={styles.sectionTitle}>{t(section.titleKey)}</Text>
             <View style={styles.rows}>
               {section.rows.map((row) => (
-                <View key={row.id} style={styles.row}>
+                <View key={row.id} style={styles.row} testID={`shortcut-help-row-${row.id}`}>
                   <View style={styles.rowText}>
                     <Text style={styles.rowLabel}>{t(row.labelKey)}</Text>
                     {row.note ? (
                       <Text style={styles.rowNote}>{row.noteKey ? t(row.noteKey) : row.note}</Text>
                     ) : null}
                   </View>
-                  <Shortcut keys={row.keys} style={styles.rowShortcut} />
+                  {row.chord === null ? (
+                    <Text style={styles.rowUnassigned}>{t("settings.shortcuts.unassigned")}</Text>
+                  ) : (
+                    <Shortcut chord={row.chord} style={styles.rowShortcut} />
+                  )}
                 </View>
               ))}
             </View>
@@ -178,6 +138,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   rowShortcut: {
     alignSelf: "flex-start",
+  },
+  // Matches the settings row's unassigned label, so the two screens describe the
+  // same state the same way.
+  rowUnassigned: {
+    alignSelf: "flex-start",
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
   },
   empty: {
     paddingVertical: theme.spacing[6],

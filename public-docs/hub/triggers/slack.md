@@ -1,53 +1,47 @@
 ---
 title: Slack triggers
-description: Configure Slack mentions as Hub triggers and route them into durable workflows.
+description: Configure Slack mentions and thread replies in one workflow file.
 nav: Slack
-order: 66
+order: 68
 category: Hub
 ---
 
 # Slack triggers
 
-## Events
+`slack.mention` fires when the bot is mentioned in a channel where it is present. Direct messages, slash commands, and interactive components do not produce this trigger.
 
-| `on`            | Fires when                                                |
-| --------------- | --------------------------------------------------------- |
-| `slack.mention` | The bot is mentioned in a channel it has been invited to. |
-
-The mention is required. Direct messages, slash commands, and interactive components do not produce this trigger.
-
-## Filters
-
-Slack filters use IDs, not display names:
+`.paseo/workflows/slack-help.yml`:
 
 ```yaml
+name: slack-help
+on: slack.mention
+max_runtime: 1h
 filters:
   workspace: T01234567
   channels: [C01234567]
   from_users: [U01234567]
-  pattern: "repo="
+steps:
+  - id: answer
+    environment: dev
+    max_runtime: 30m
+    idle_timeout: 5m
+    agent: codex
+    prompt:
+      - text: |
+          Answer with hub.reply, then call hub.finish_execution.
+          ${{ paseo.prompt }}
+    allow_outputs:
+      - { type: slack.reply, max: 1, required: true }
 ```
 
-`from_users` matches the author's Slack user id. `workspace` is the team id. `channels` matches the channel id. `pattern` (or `contains`) matches the start of the text after the mention. All filters must pass.
+Slack filters use IDs, not display names. `from_users` matches the author, `workspace` the team, and `channels` the channel. `pattern` checks the beginning of text after the mention; `contains` checks a substring. All filters must pass.
 
-## Invocation
+The reply posts in the triggering thread. A root message gets a thread; a threaded message stays there. `slack.reply` grants `hub.reply`, but does not add reply instructions to the prompt.
 
-Put leading inputs directly after the mention:
+Leading declared inputs follow the mention:
 
 ```text
 @Paseo repo=project agent=claude investigate the failed sync
 ```
 
-Hub consumes only declared consecutive headers and passes `investigate the failed sync` as `${{ paseo.prompt }}`. See [Hub workflows](/docs/hub/workflows) for input types, defaults, choices, and rejection behavior.
-
-## Replies and workflow shape
-
-Put the reply capability on a step:
-
-```yaml
-allow_outputs:
-  - type: slack.reply
-    max: 5
-```
-
-The reply is posted in the triggering thread. A root message gets a new thread; a threaded message stays in that thread. Use the shared [workflow examples](/docs/hub/configuration/examples) for complete configurations.
+Hub consumes consecutive declared headers and exposes the remainder as `${{ paseo.prompt }}`. See [Workflows](/docs/hub/workflows).

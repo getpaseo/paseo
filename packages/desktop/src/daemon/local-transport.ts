@@ -6,13 +6,6 @@ interface TransportTarget {
   transportPath: string;
 }
 
-export interface WebSocketTransportTarget {
-  transportType: "websocket";
-  url: string;
-  headers?: Record<string, string>;
-  protocols?: string[];
-}
-
 interface TransportEventPayload {
   sessionId: string;
   kind: "open" | "message" | "close" | "error";
@@ -30,7 +23,6 @@ interface Session {
 }
 
 const WS_ENDPOINT_PATH = "/ws";
-const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 let nextSessionId = 0;
 const sessions = new Map<string, Session>();
@@ -60,28 +52,6 @@ function describeTransportTarget(target: TransportTarget): string {
   return target.transportType === "pipe" ? "local daemon pipe" : "local daemon socket";
 }
 
-function normalizeWebSocketTarget(target: WebSocketTransportTarget): WebSocketTransportTarget {
-  const parsed = new URL(target.url);
-  if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
-    throw new Error(`Unsupported WebSocket transport URL: ${target.url}`);
-  }
-
-  const headers: Record<string, string> = {};
-  for (const [name, value] of Object.entries(target.headers ?? {})) {
-    if (!HTTP_HEADER_NAME_PATTERN.test(name) || typeof value !== "string" || /[\r\n]/.test(value)) {
-      throw new Error("Invalid WebSocket transport header.");
-    }
-    headers[name] = value;
-  }
-
-  return {
-    transportType: "websocket",
-    url: parsed.toString(),
-    ...(Object.keys(headers).length > 0 ? { headers } : {}),
-    ...(target.protocols?.length ? { protocols: [...target.protocols] } : {}),
-  };
-}
-
 function decodeTransportMessage(input: { text?: string; binaryBase64?: string }): string | Buffer {
   if (typeof input.text === "string") {
     return input.text;
@@ -95,28 +65,11 @@ function decodeTransportMessage(input: { text?: string; binaryBase64?: string })
 }
 
 export function openLocalTransportSession(target: TransportTarget): Promise<string> {
-  return openTransportSession(buildLocalWebSocketUrl(target), describeTransportTarget(target));
-}
-
-export function openWebSocketTransportSession(target: WebSocketTransportTarget): Promise<string> {
-  const normalized = normalizeWebSocketTarget(target);
-  return openTransportSession(normalized.url, "remote daemon", {
-    headers: normalized.headers,
-    protocols: normalized.protocols,
-  });
-}
-
-function openTransportSession(
-  url: string,
-  targetDescription: string,
-  options?: { headers?: Record<string, string>; protocols?: string[] },
-): Promise<string> {
   const sessionId = `local-session-${++nextSessionId}`;
+  const url = buildLocalWebSocketUrl(target);
 
   return new Promise((resolve, reject) => {
-    const ws = options?.protocols
-      ? new WebSocket(url, options.protocols, { headers: options.headers })
-      : new WebSocket(url, { headers: options?.headers });
+    const ws = new WebSocket(url);
     const session: Session = {
       id: sessionId,
       ws,
@@ -168,7 +121,9 @@ function openTransportSession(
       sessions.delete(sessionId);
 
       if (!openSettled) {
-        finalizeOpenFailure(`${targetDescription} closed before the session became ready.`);
+        finalizeOpenFailure(
+          `${describeTransportTarget(target)} closed before the session became ready.`,
+        );
         return;
       }
 
@@ -184,7 +139,9 @@ function openTransportSession(
 
     ws.on("error", (err: Error) => {
       if (!openSettled) {
-        finalizeOpenFailure(`Failed to connect to ${targetDescription}: ${err.message}`);
+        finalizeOpenFailure(
+          `Failed to connect to ${describeTransportTarget(target)}: ${err.message}`,
+        );
         return;
       }
 

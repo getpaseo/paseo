@@ -1467,19 +1467,6 @@ export const es: TranslationResources = {
         show: "Mostrar avanzado",
         hide: "Ocultar avanzado",
       },
-      headers: {
-        title: "Encabezados personalizados",
-        add: "Añadir encabezado",
-        name: "Nombre",
-        value: "Valor",
-        remove: "Eliminar encabezado",
-        errors: {
-          missingName: "Introduce un nombre para cada encabezado",
-          invalidName: "{{name}} no es un nombre de encabezado válido",
-          invalidValue: "{{name}} contiene un salto de línea no válido",
-          duplicateName: "{{name}} se ha introducido más de una vez",
-        },
-      },
       passwordVisibility: {
         show: "Mostrar contraseña",
         hide: "Ocultar contraseña",

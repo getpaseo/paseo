@@ -43,7 +43,8 @@ export interface KeyboardShortcutHelpRow {
   id: string;
   label: string;
   labelKey: string;
-  keys: ShortcutKey[];
+  /** The keys that actually fire this action, or `null` when it has none. */
+  chord: ShortcutKey[][] | null;
   note?: string;
   noteKey?: string;
 }
@@ -88,7 +89,14 @@ interface ShortcutHelp {
   id: string;
   section: ShortcutSectionId;
   label: string;
-  keys: ShortcutKey[];
+  /**
+   * Display keys to show instead of the combo. Set this only when the combo
+   * cannot express what the row means — the `Digit` wildcard, which stands for
+   * any of 1-9, and `Shift+?`, whose Shift is implied by the character itself.
+   * Every other row derives its keys from `combo`, so a rebound shortcut shows
+   * what it now does rather than what it shipped as.
+   */
+  defaultDisplayKeys?: ShortcutKey[];
   note?: string;
 }
 
@@ -194,7 +202,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "new-agent",
       section: "projects",
       label: "Open project",
-      keys: ["mod", "O"],
     },
   },
   {
@@ -206,7 +213,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "new-agent",
       section: "projects",
       label: "Open project",
-      keys: ["mod", "O"],
     },
   },
 
@@ -220,7 +226,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "new-workspace",
       section: "projects",
       label: "New workspace",
-      keys: ["mod", "N"],
     },
   },
   {
@@ -232,7 +237,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "new-workspace",
       section: "projects",
       label: "New workspace",
-      keys: ["mod", "N"],
     },
   },
 
@@ -246,7 +250,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "switch-project",
       section: "projects",
       label: "Switch project",
-      keys: ["mod", "P"],
     },
   },
   {
@@ -258,7 +261,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "switch-project",
       section: "projects",
       label: "Switch project",
-      keys: ["mod", "P"],
     },
   },
 
@@ -274,7 +276,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "archive-workspace",
       section: "projects",
       label: "Archive workspace",
-      keys: ["mod", "shift", "Backspace"],
     },
   },
   {
@@ -288,7 +289,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "archive-workspace",
       section: "projects",
       label: "Archive workspace",
-      keys: ["mod", "shift", "Backspace"],
     },
   },
 
@@ -302,7 +302,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "pin-workspace",
       section: "projects",
       label: "Pin chat",
-      keys: ["mod", "shift", "P"],
     },
   },
   {
@@ -314,7 +313,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "pin-workspace",
       section: "projects",
       label: "Pin chat",
-      keys: ["mod", "shift", "P"],
     },
   },
 
@@ -328,7 +326,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-tab-new",
       section: "tabs-panes",
       label: "New tab",
-      keys: ["mod", "T"],
     },
   },
   {
@@ -340,7 +337,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-tab-new",
       section: "tabs-panes",
       label: "New tab",
-      keys: ["mod", "T"],
     },
   },
   {
@@ -352,7 +348,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-tab-close-current",
       section: "tabs-panes",
       label: "Close current tab",
-      keys: ["meta", "W"],
     },
   },
   {
@@ -364,7 +359,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-tab-close-current",
       section: "tabs-panes",
       label: "Close current tab",
-      keys: ["ctrl", "W"],
     },
   },
   {
@@ -376,7 +370,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-tab-close-current",
       section: "tabs-panes",
       label: "Close current tab",
-      keys: ["alt", "shift", "W"],
     },
   },
 
@@ -391,7 +384,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-jump-index",
       section: "navigation",
       label: "Jump to workspace",
-      keys: ["mod", "1-9"],
+      defaultDisplayKeys: ["mod", "1-9"],
     },
   },
   {
@@ -404,7 +397,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-jump-index",
       section: "navigation",
       label: "Jump to workspace",
-      keys: ["mod", "1-9"],
+      defaultDisplayKeys: ["mod", "1-9"],
     },
   },
   {
@@ -417,7 +410,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-jump-index",
       section: "navigation",
       label: "Jump to workspace",
-      keys: ["alt", "1-9"],
+      defaultDisplayKeys: ["alt", "1-9"],
     },
   },
 
@@ -432,7 +425,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-tab-jump-index",
       section: "navigation",
       label: "Jump to tab",
-      keys: ["mod", "alt", "1-9"],
+      defaultDisplayKeys: ["mod", "alt", "1-9"],
     },
   },
   {
@@ -445,7 +438,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-tab-jump-index",
       section: "navigation",
       label: "Jump to tab",
-      keys: ["alt", "1-9"],
+      defaultDisplayKeys: ["alt", "1-9"],
     },
   },
   {
@@ -458,7 +451,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-tab-jump-index",
       section: "navigation",
       label: "Jump to tab",
-      keys: ["alt", "shift", "1-9"],
+      defaultDisplayKeys: ["alt", "shift", "1-9"],
     },
   },
 
@@ -473,7 +466,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-prev",
       section: "navigation",
       label: "Previous workspace",
-      keys: ["mod", "["],
     },
   },
   {
@@ -486,7 +478,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-prev",
       section: "navigation",
       label: "Previous workspace",
-      keys: ["mod", "["],
     },
   },
   {
@@ -499,7 +490,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-next",
       section: "navigation",
       label: "Next workspace",
-      keys: ["mod", "]"],
     },
   },
   {
@@ -512,7 +502,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-next",
       section: "navigation",
       label: "Next workspace",
-      keys: ["mod", "]"],
     },
   },
   {
@@ -525,7 +514,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-prev",
       section: "navigation",
       label: "Previous workspace",
-      keys: ["alt", "["],
     },
   },
   {
@@ -538,7 +526,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-next",
       section: "navigation",
       label: "Next workspace",
-      keys: ["alt", "]"],
     },
   },
 
@@ -553,7 +540,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-tab-prev",
       section: "navigation",
       label: "Previous tab",
-      keys: ["alt", "shift", "["],
     },
   },
   {
@@ -566,7 +552,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-tab-next",
       section: "navigation",
       label: "Next tab",
-      keys: ["alt", "shift", "]"],
     },
   },
 
@@ -580,7 +565,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-pane-split-right",
       section: "tabs-panes",
       label: "Split pane right",
-      keys: ["mod", "\\"],
     },
   },
   {
@@ -592,7 +576,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-pane-split-down",
       section: "tabs-panes",
       label: "Split pane down",
-      keys: ["mod", "shift", "\\"],
     },
   },
   {
@@ -604,7 +587,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-pane-focus-left",
       section: "tabs-panes",
       label: "Focus pane left",
-      keys: ["mod", "shift", "Left"],
     },
   },
   {
@@ -616,7 +598,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-pane-focus-right",
       section: "tabs-panes",
       label: "Focus pane right",
-      keys: ["mod", "shift", "Right"],
     },
   },
   {
@@ -628,7 +609,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-pane-focus-up",
       section: "tabs-panes",
       label: "Focus pane up",
-      keys: ["mod", "shift", "Up"],
     },
   },
   {
@@ -640,7 +620,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-pane-focus-down",
       section: "tabs-panes",
       label: "Focus pane down",
-      keys: ["mod", "shift", "Down"],
     },
   },
   {
@@ -652,7 +631,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-pane-move-tab-left",
       section: "tabs-panes",
       label: "Move tab left",
-      keys: ["mod", "shift", "alt", "Left"],
     },
   },
   {
@@ -664,7 +642,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-pane-move-tab-right",
       section: "tabs-panes",
       label: "Move tab right",
-      keys: ["mod", "shift", "alt", "Right"],
     },
   },
   {
@@ -676,7 +653,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-pane-move-tab-up",
       section: "tabs-panes",
       label: "Move tab up",
-      keys: ["mod", "shift", "alt", "Up"],
     },
   },
   {
@@ -688,7 +664,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-pane-move-tab-down",
       section: "tabs-panes",
       label: "Move tab down",
-      keys: ["mod", "shift", "alt", "Down"],
     },
   },
   {
@@ -700,7 +675,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-pane-close",
       section: "tabs-panes",
       label: "Close pane",
-      keys: ["mod", "shift", "W"],
     },
   },
 
@@ -714,7 +688,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-terminal-new",
       section: "panels",
       label: "New terminal",
-      keys: ["mod", "shift", "T"],
     },
   },
   {
@@ -726,7 +699,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-terminal-new",
       section: "panels",
       label: "New terminal",
-      keys: ["mod", "shift", "T"],
     },
   },
 
@@ -740,7 +712,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "toggle-command-center",
       section: "panels",
       label: "Toggle command center",
-      keys: ["mod", "K"],
     },
   },
   {
@@ -752,7 +723,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "toggle-command-center",
       section: "panels",
       label: "Toggle command center",
-      keys: ["mod", "K"],
     },
   },
 
@@ -767,7 +737,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "show-shortcuts",
       section: "panels",
       label: "Show keyboard shortcuts",
-      keys: ["?"],
+      defaultDisplayKeys: ["?"],
       note: "Available when focus is not in a text field or terminal.",
     },
   },
@@ -782,7 +752,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "toggle-left-sidebar",
       section: "panels",
       label: "Toggle left sidebar",
-      keys: ["mod", "B"],
     },
   },
   {
@@ -794,7 +763,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "toggle-left-sidebar",
       section: "panels",
       label: "Toggle left sidebar",
-      keys: ["mod", "B"],
     },
   },
   {
@@ -806,7 +774,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "toggle-right-sidebar",
       section: "panels",
       label: "Toggle right sidebar",
-      keys: ["mod", "E"],
     },
   },
   {
@@ -818,7 +785,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "toggle-right-sidebar",
       section: "panels",
       label: "Toggle right sidebar",
-      keys: ["mod", "E"],
     },
   },
   {
@@ -838,7 +804,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "toggle-both-sidebars",
       section: "panels",
       label: "Toggle both sidebars",
-      keys: ["mod", "."],
     },
   },
   {
@@ -850,7 +815,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "toggle-both-sidebars",
       section: "panels",
       label: "Toggle both sidebars",
-      keys: ["mod", "."],
     },
   },
 
@@ -864,7 +828,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "toggle-settings",
       section: "panels",
       label: "Toggle settings",
-      keys: ["mod", ","],
     },
   },
   {
@@ -876,7 +839,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "toggle-settings",
       section: "panels",
       label: "Toggle settings",
-      keys: ["mod", ","],
     },
   },
 
@@ -890,7 +852,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "toggle-focus",
       section: "panels",
       label: "Toggle focus mode",
-      keys: ["mod", "shift", "F"],
     },
   },
   {
@@ -902,7 +863,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "toggle-focus",
       section: "panels",
       label: "Toggle focus mode",
-      keys: ["mod", "shift", "F"],
     },
   },
 
@@ -916,7 +876,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "cycle-theme",
       section: "panels",
       label: "Cycle theme",
-      keys: ["mod", "alt", "T"],
     },
   },
   {
@@ -928,7 +887,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "cycle-theme",
       section: "panels",
       label: "Cycle theme",
-      keys: ["mod", "alt", "T"],
     },
   },
 
@@ -943,7 +901,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "focus-message-input",
       section: "agent-input",
       label: "Focus message input",
-      keys: ["mod", "L"],
     },
   },
   {
@@ -956,7 +913,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "focus-message-input",
       section: "agent-input",
       label: "Focus message input",
-      keys: ["mod", "L"],
     },
   },
   {
@@ -970,7 +926,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "cycle-agent-mode",
       section: "agent-input",
       label: "Cycle agent mode",
-      keys: ["shift", "Tab"],
     },
   },
   {
@@ -984,7 +939,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "voice-toggle",
       section: "agent-input",
       label: "Toggle voice mode",
-      keys: ["mod", "shift", "D"],
     },
   },
   {
@@ -998,7 +952,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "voice-toggle",
       section: "agent-input",
       label: "Toggle voice mode",
-      keys: ["mod", "shift", "D"],
     },
   },
   {
@@ -1011,7 +964,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "dictation-toggle",
       section: "agent-input",
       label: "Start/stop dictation",
-      keys: ["mod", "D"],
     },
   },
   {
@@ -1024,7 +976,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "dictation-toggle",
       section: "agent-input",
       label: "Start/stop dictation",
-      keys: ["mod", "D"],
     },
   },
   {
@@ -1038,7 +989,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "agent-interrupt",
       section: "agent-input",
       label: "Interrupt agent",
-      keys: ["Esc"],
     },
   },
   {
@@ -1060,7 +1010,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "voice-mute-toggle",
       section: "agent-input",
       label: "Mute/unmute voice mode",
-      keys: ["Space"],
     },
   },
 ];
@@ -1123,7 +1072,11 @@ export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShor
     if (binding.repeat === false && lastCombo) {
       lastCombo.repeat = false;
     }
-    return { ...binding, combo: override, parsedChord };
+    if (!binding.help?.defaultDisplayKeys) {
+      return { ...binding, combo: override, parsedChord };
+    }
+    const { defaultDisplayKeys: _defaultDisplayKeys, ...help } = binding.help;
+    return { ...binding, combo: override, parsedChord, help };
   });
 }
 
@@ -1422,11 +1375,33 @@ export function getBindingIdForAction(
   return null;
 }
 
+/**
+ * The keys to display for one binding, derived from the combo that actually
+ * fires so a rebound shortcut never advertises the keys it shipped with.
+ *
+ * `help.defaultDisplayKeys` wins where it is set, but only on the shipped
+ * binding. Effective bindings discard it when an override replaces the combo,
+ * so rebound rows still derive the keys that now fire.
+ * `parsedChord` is the single source of truth for "has no keys": it is derived
+ * from `combo`, so it covers both a user-unassigned shortcut and a binding
+ * authored without a default.
+ */
+function displayChordForBinding(binding: ParsedShortcutBinding): ShortcutKey[][] | null {
+  if (binding.parsedChord.length === 0) {
+    return null;
+  }
+  const displayKeys = binding.help?.defaultDisplayKeys;
+  if (displayKeys) {
+    return [displayKeys];
+  }
+  return chordStringToShortcutKeys(binding.combo);
+}
+
 export function getDefaultKeysForAction(
   actionId: string,
   platform: { isMac: boolean; isDesktop: boolean },
   bindings: readonly ParsedShortcutBinding[] = DEFAULT_BINDINGS,
-): ShortcutKey[] | null {
+): ShortcutKey[][] | null {
   for (const binding of bindings) {
     if (binding.help?.id !== actionId) {
       continue;
@@ -1434,13 +1409,7 @@ export function getDefaultKeysForAction(
     if (!helpMatchesPlatform(binding.when, platform)) {
       continue;
     }
-    // `help.keys` is hand-authored, so it cannot be trusted to be empty for a
-    // binding that ships without a default combo. The parsed chord is derived
-    // from `combo`, so it is the single source of truth for "has no keys".
-    if (binding.parsedChord.length === 0) {
-      return null;
-    }
-    return binding.help.keys;
+    return displayChordForBinding(binding);
   }
   return null;
 }
@@ -1464,8 +1433,7 @@ export function resolveShortcutKeysForAction(
     return null;
   }
 
-  const defaultKeys = getDefaultKeysForAction(actionId, platform);
-  const defaultChord = defaultKeys ? [defaultKeys] : null;
+  const defaultChord = getDefaultKeysForAction(actionId, platform);
 
   const override = overrides[bindingId];
   if (override === UNASSIGNED_COMBO || override === "") {
@@ -1566,8 +1534,7 @@ export function buildKeyboardShortcutHelpSections(
       id: help.id,
       label: help.label,
       labelKey: SHORTCUT_HELP_LABEL_KEYS[help.id] ?? help.label,
-      // An empty chord has no keys to show, whatever `help.keys` was authored as.
-      keys: binding.parsedChord.length === 0 ? [] : help.keys,
+      chord: displayChordForBinding(binding),
       ...(help.note ? { note: help.note } : {}),
       ...(SHORTCUT_HELP_NOTE_KEYS[help.id] ? { noteKey: SHORTCUT_HELP_NOTE_KEYS[help.id] } : {}),
     });

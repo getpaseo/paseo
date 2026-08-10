@@ -51,6 +51,17 @@ async function openRowMenu(page: Page) {
   await expect(page.getByTestId(`shortcut-bind-${SHORTCUTS_ROW}`)).toBeVisible();
 }
 
+/** Reachable from the sidebar even when the cheat sheet's own shortcut is gone. */
+async function openCheatSheet(page: Page) {
+  await gotoAppShell(page);
+  await page.getByTestId("sidebar-help").click();
+  await expect(page.getByTestId("sidebar-help-menu")).toBeVisible();
+  await page.getByTestId("sidebar-help-shortcuts").click();
+  const dialog = page.getByTestId("keyboard-shortcuts-dialog");
+  await expect(dialog).toBeVisible({ timeout: 10_000 });
+  return dialog;
+}
+
 async function closeRowMenu(page: Page) {
   await page.keyboard.press("Escape");
   await expect(page.getByTestId(`shortcut-bind-${SHORTCUTS_ROW}`)).toHaveCount(0);
@@ -120,20 +131,38 @@ test("an unassigned shortcut lists no keys in the shortcuts cheat sheet", async 
   await page.getByTestId(`shortcut-clear-${SHORTCUTS_ROW}`).click();
   await expect(page.getByText("Not set", { exact: true })).toBeVisible();
 
-  // Reachable from the sidebar even with its own shortcut unassigned.
-  await gotoAppShell(page);
-  await page.getByTestId("sidebar-help").click();
-  await expect(page.getByTestId("sidebar-help-menu")).toBeVisible();
-  await page.getByTestId("sidebar-help-shortcuts").click();
+  const dialog = await openCheatSheet(page);
 
-  const dialog = page.getByTestId("keyboard-shortcuts-dialog");
-  await expect(dialog).toBeVisible({ timeout: 10_000 });
-
-  const row = dialog
-    .locator("div")
-    .filter({ hasText: /^Show keyboard shortcuts$/ })
-    .first();
+  // Addressed by testID rather than by filtering on its own text: an anchored
+  // `hasText` matches only the innermost node holding exactly that label, so a
+  // row-scoped assertion about anything *else* in the row finds nothing.
+  const row = dialog.getByTestId(`shortcut-help-row-${SHORTCUTS_ROW}`);
   await expect(row).toBeVisible();
   // No badge pill, blank or otherwise, for a shortcut with no keys.
   await expect(dialog.getByText("?", { exact: true })).toHaveCount(0);
+  // It says so, rather than leaving a silent gap where the keys were. Same words
+  // the settings row uses for the same state.
+  await expect(row.getByText("Not set", { exact: true })).toBeVisible();
+});
+
+test("a rebound shortcut lists its new keys in the shortcuts cheat sheet", async ({ page }) => {
+  await openShortcutsSettings(page);
+
+  const defaultKeys = page.getByText("?", { exact: true });
+  await expect(defaultKeys).toBeVisible();
+
+  await page.getByTestId(`shortcut-actions-${SHORTCUTS_ROW}`).click();
+  await page.getByTestId(`shortcut-bind-${SHORTCUTS_ROW}`).click();
+  await page.keyboard.press("Alt+Shift+K");
+  await page.getByText("Done", { exact: true }).click();
+
+  const reboundKeys = page.getByText("⌥+Shift+K", { exact: true });
+  await expect(reboundKeys).toBeVisible();
+  await expect(defaultKeys).toHaveCount(0);
+
+  const dialog = await openCheatSheet(page);
+  const row = dialog.getByTestId(`shortcut-help-row-${SHORTCUTS_ROW}`);
+  await expect(row.getByText("⌥+Shift+K", { exact: true })).toBeVisible();
+  // The whole point: the cheat sheet stops advertising the shipped default.
+  await expect(row.getByText("?", { exact: true })).toHaveCount(0);
 });

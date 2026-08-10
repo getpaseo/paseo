@@ -69,7 +69,7 @@ import {
 import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { getIsElectronRuntime } from "@/constants/layout";
-import { isWeb } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 import { pickDirectory } from "@/desktop/pick-directory";
 import { useFetchQuery } from "@/data/query";
 import { getOpenProjectFailureReason, registerProjectDescriptor } from "@/hooks/open-project";
@@ -222,12 +222,12 @@ function pageTitle(page: AddProjectPage): string {
   }
 }
 
-function pagePlaceholder(page: AddProjectPage): string {
+type AddProjectInputPage = Exclude<AddProjectPage, { kind: "method" }>;
+
+function pagePlaceholder(page: AddProjectInputPage): string {
   switch (page.kind) {
     case "host":
       return "Search hosts...";
-    case "method":
-      return "Search methods...";
     case "directory-search":
       return "Search directories or enter a path...";
     case "github-search":
@@ -240,7 +240,7 @@ function pagePlaceholder(page: AddProjectPage): string {
   }
 }
 
-function pageInput(page: AddProjectPage): string {
+function pageInput(page: AddProjectInputPage): string {
   return page.kind === "new-directory-name" ? page.name : page.query;
 }
 
@@ -374,7 +374,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const inputRef = useRef<TextInput>(null);
   const submissionInFlightRef = useRef(false);
   const browseInFlightRef = useRef(false);
-  const query = page.kind === "new-directory-name" ? "" : page.query;
+  const query = page.kind === "new-directory-name" || page.kind === "method" ? "" : page.query;
   const [debouncedQuery, setDebouncedQuery] = useState(query);
 
   useEffect(() => {
@@ -599,23 +599,15 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     }
     if (page.kind === "method") {
       if (!host) return [];
-      const normalized = page.query.trim().toLowerCase();
-      return buildAddProjectMethods(host)
-        .filter(
-          (method) =>
-            !normalized ||
-            method.label.toLowerCase().includes(normalized) ||
-            method.description.toLowerCase().includes(normalized),
-        )
-        .map((method) => ({
-          id: method.id,
-          title: method.label,
-          subtitle: method.description,
-          icon: methodIcon(method.id),
-          disabled: method.disabled,
-          testID: `add-project-flow-method-${method.id}`,
-          select: () => selectMethod(method.id),
-        }));
+      return buildAddProjectMethods(host).map((method) => ({
+        id: method.id,
+        title: method.label,
+        subtitle: method.description,
+        icon: methodIcon(method.id),
+        disabled: method.disabled,
+        testID: `add-project-flow-method-${method.id}`,
+        select: () => selectMethod(method.id),
+      }));
     }
     if (page.kind === "directory-search") {
       return pathOptions.map((option) => {
@@ -863,21 +855,41 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
                 ) : null}
               </View>
             </View>
-            <ThemedTextInput
-              key={page.kind}
-              ref={inputRef}
-              value={pageInput(page)}
-              onChangeText={handleInputChange}
-              onKeyPress={isWeb ? undefined : handleNativeKeyPress}
-              onSubmitEditing={isWeb ? undefined : submitActive}
-              placeholder={pagePlaceholder(page)}
-              style={styles.input}
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={!isSubmitting}
-              returnKeyType="go"
-              testID="add-project-flow-input"
-            />
+            {page.kind === "method" && isNative ? (
+              // Native hardware-keyboard events need a focused responder even without a visible field.
+              <TextInput
+                key={page.kind}
+                ref={inputRef}
+                onKeyPress={handleNativeKeyPress}
+                onSubmitEditing={submitActive}
+                showSoftInputOnFocus={false}
+                caretHidden
+                contextMenuHidden
+                accessible={false}
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                pointerEvents="none"
+                style={styles.keyboardCapture}
+                testID="add-project-flow-keyboard-capture"
+              />
+            ) : null}
+            {page.kind !== "method" ? (
+              <ThemedTextInput
+                key={page.kind}
+                ref={inputRef}
+                value={pageInput(page)}
+                onChangeText={handleInputChange}
+                onKeyPress={isWeb ? undefined : handleNativeKeyPress}
+                onSubmitEditing={isWeb ? undefined : submitActive}
+                placeholder={pagePlaceholder(page)}
+                style={styles.input}
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!isSubmitting}
+                returnKeyType="go"
+                testID="add-project-flow-input"
+              />
+            ) : null}
           </View>
           <ScrollView
             style={styles.results}
@@ -1012,6 +1024,12 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[1],
     outlineStyle: "none",
   } as object,
+  keyboardCapture: {
+    position: "absolute",
+    width: 1,
+    height: 1,
+    opacity: 0,
+  },
   results: { flexGrow: 0, flexShrink: 1, minHeight: 0 },
   resultsContent: { paddingVertical: theme.spacing[2] },
   row: {

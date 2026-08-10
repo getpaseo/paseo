@@ -2,7 +2,7 @@
 title: Self-hosting Hub
 description: Deploy Paseo Hub with PostgreSQL and a public HTTPS origin, using Docker Compose or Fly.
 nav: Self-hosting
-order: 73
+order: 74
 category: Hub
 ---
 

@@ -2,7 +2,7 @@
 title: Hub public API
 description: Use organization credentials to list projects, validate or install configuration, dispatch runs, and enroll daemons.
 nav: Public API
-order: 78
+order: 79
 category: Hub
 ---
 
@@ -21,7 +21,7 @@ These are the canonical reference endpoints for the hosted Paseo Hub. A self-hos
 
 ## Authentication
 
-Run `paseo hub login [origin]` for interactive CLI access. Hub returns a durable, revocable organization-scoped CLI credential after browser approval, and Paseo stores it privately under `PASEO_HOME` for that exact normalized origin. Without an explicit origin, the CLI uses `PASEO_HUB_URL`, then the active stored login origin, then `https://hub.paseo.sh`.
+Run `paseo hub login [origin]` for interactive CLI access. After browser approval, Paseo stores a durable, revocable organization credential under `PASEO_HOME` for that exact origin. Without an explicit origin, the CLI uses `PASEO_HUB_URL`, then the active stored login, then `https://hub.paseo.sh`.
 
 For automation, create an organization API key from the Hub dashboard under **API keys**. Both credential types are bearer tokens:
 
@@ -81,7 +81,7 @@ A valid key without the scope required by an endpoint returns `403` in the same 
 
 ## Configuration validation
 
-`POST /api/v1/configurations/validate` accepts the same `projectSlug`, `yaml`, and optional `partials` body as configuration install. It performs the same compilation and resource resolution without recording a revision or changing the active configuration.
+`POST /api/v1/configurations/validate` accepts the same `projectSlug` and complete `files` bundle as configuration install. It performs the same compilation and resource resolution without recording a revision or changing the active configuration.
 
 On success, Hub returns `200`:
 
@@ -96,9 +96,7 @@ On success, Hub returns `200`:
 
 ## Configuration install
 
-`configuration:install` replaces the project's current configuration with the
-supplied YAML after Hub validates and compiles it, then activates the new
-revision.
+`configuration:install` validates the supplied canonical bundle, stores the exact authored files, and activates a new revision.
 
 ```http
 POST /api/v1/configurations/install
@@ -109,17 +107,30 @@ Request body:
 ```json
 {
   "projectSlug": "my-project",
-  "yaml": "environments:\n  - name: production\n    kind: daemon\n    daemon: build-server\n    cwd: /workspace\ntriggers:\n  - name: deploy\n    on: manual.run\n    max_runtime: 2h\n    filters:\n      from_users: [automation]\n    steps:\n      - id: deploy\n        environment: production\n        max_runtime: 90m\n        idle_timeout: 10m\n        agent:\n          provider: opencode\n          mode: full-access\n        prompt:\n          - text: Deploy the project",
-  "partials": [
+  "files": [
     {
-      "path": "docs/safety.md",
+      "path": ".paseo/hub.yml",
+      "content": "environments:\n  production:\n    kind: daemon\n    daemon: build-server\n    cwd: /workspace\nagents:\n  codex:\n    provider: codex\n"
+    },
+    {
+      "path": ".paseo/workflows/deploy.yml",
+      "content": "name: deploy\non: manual.run\nmax_runtime: 2h\nfilters:\n  from_users: [automation]\nsteps:\n  - id: deploy\n    environment: production\n    max_runtime: 90m\n    idle_timeout: 10m\n    agent: codex\n    prompt:\n      - include: partials/safety.md\n"
+    },
+    {
+      "path": ".paseo/workflows/partials/safety.md",
       "content": "Follow the safety checklist."
     }
   ]
 }
 ```
 
-The YAML must describe a valid Hub configuration and its string value is limited to 1,000,000 characters. `projectSlug` is deployment metadata and determines the target project; the API key determines its organization. `partials` is optional for inline-only configurations. When the YAML uses prompt `include` blocks, send exactly one entry for each referenced file, with a path relative to `.paseo/partials/` and the file's UTF-8 content. The bundle accepts at most 100 files, each with a canonical path no longer than 512 characters and content no larger than 1,000,000 bytes; combined partial content may not exceed 5,000,000 bytes. Hub rejects missing, extra, duplicate, unsafe, or oversized entries. Replace the example daemon, working directory, and trigger values with resources in your organization.
+`projectSlug` picks the target project; the bearer credential fixes the organization. `files` contains `.paseo/hub.yml`, every direct workflow `.yml`, and each referenced workflow partial. Hub rejects missing, extra, duplicate, unsafe, or noncanonical paths.
+
+Limits:
+
+- Bundle: at most 100 files.
+- File path: at most 512 characters.
+- File content: at most 1,000,000 characters; partial byte limits are enforced during compilation.
 
 On success, Hub returns `201`:
 
@@ -143,7 +154,7 @@ curl --fail-with-body -sS -X POST "$PASEO_HUB_URL/api/v1/configurations/install"
   --data @configuration-install.json
 ```
 
-For a local YAML file, `paseo hub deploy [file]` calls this endpoint and preserves the file contents. The command uses an exact-origin stored login when flags and environment credentials are absent. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli) for project precedence and credential precedence.
+`paseo hub deploy -p <project>` calls this endpoint with the discovered local bundle. The command uses an exact-origin stored login when flags and environment credentials are absent. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli).
 
 ## Manual run dispatch
 
@@ -168,12 +179,9 @@ Request body:
 }
 ```
 
-`expectedVersionId` is optional. When supplied, Hub rejects the dispatch if
-that configuration revision is no longer active. `input` is the same string
-used by a provider message: consecutive leading `key=value` tokens are parsed
-as the trigger's declared inputs, and the remainder becomes `${{ paseo.prompt }}`.
-Use a unique, stable `deliveryKey` for each dispatch. Reusing it makes the
-request resolve to the existing trigger instead of starting a duplicate run.
+- `expectedVersionId` is optional. When supplied, Hub rejects the dispatch if that revision is no longer active.
+- `input` is the same string a provider message uses: leading `key=value` tokens are parsed as declared inputs, and the remainder becomes `${{ paseo.prompt }}`.
+- `deliveryKey` should be unique and stable per dispatch. Reusing one resolves to the existing trigger instead of starting a duplicate run.
 
 On success, Hub returns `200`:
 
@@ -232,7 +240,8 @@ Send an empty JSON object as the request body. On success, Hub returns `201`:
 ```
 
 The token expires after 10 minutes and is consumed when the daemon enrolls.
-`paseo hub connect [origin]` performs this request with `--api-key`, `PASEO_HUB_API_KEY`, or the matching stored login, then passes the returned one-time token to the daemon's existing enrollment operation. Without an origin, it uses `PASEO_HUB_URL`, the active stored login origin, then `https://hub.paseo.sh`. The daemon generates and retains its own relationship credential.
+
+`paseo hub connect [origin]` performs this request with `--api-key`, `PASEO_HUB_API_KEY`, or the matching stored login, then passes the one-time token to the daemon's enrollment operation. The daemon generates and keeps its own relationship credential.
 
 ```bash
 curl --fail-with-body -sS -X POST \

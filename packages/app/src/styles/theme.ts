@@ -165,11 +165,18 @@ const darkStatusColors = {
 // for them. Same four hues and the same generation rule as the status colors above, but its
 // own band, because a dot is doing a different job than a check icon or a host badge.
 //
-// A dot is 6-8pt of solid color with no shape to read and no label attached. At the status
+// A dot is 6pt of solid color with no shape to read and no label attached. At the status
 // band's lightness the dots read dimmer than the static text and icons beside them on the same
-// row, which is backwards — the dot is the row's state. So the band is pushed away from the
-// surface rather than toward it (darker in light, lighter in dark) and carries more chroma:
-// 90% of gamut max against the status family's 55-60%.
+// row, which is backwards — the dot is the row's state. The loudness comes from chroma: 90% of
+// gamut max against the status family's 55-60%.
+//
+// Lightness is set by hue separation, not by distance from the surface. A dark dot on a light
+// surface has plenty of contrast but the four hues collapse into each other at 6pt — dark green,
+// dark red, dark amber and dark blue all read as "dark blob", and the point of the dot is telling
+// them apart at a glance. So the light band runs as bright as the contrast floor allows: L=0.62
+// is the last step where all four clear 3:1 against the sidebar's surface2 (success is the
+// binding one at 3.10, and drops under 3 by L=0.64), which is WCAG's non-text minimum for a
+// control that carries state.
 //
 // All four move together. A dot matching its siblings in lightness and chroma says only which
 // state the row is in; one that does not says "this row matters more", which is a claim the
@@ -178,14 +185,16 @@ const darkStatusColors = {
 // 90% and not 100%: at the gamut edge the lopsidedness is worst — green reaches C=0.215 while
 // blue manages 0.116 — so the set stops reading as one family and green wins. Red running out
 // of chroma as lightness climbs is what caps the dark band at L=0.72; higher turns the failed
-// dot pink. Running is blue at hue 250, clear of identity-colors' blue at 256.6 so a blue host
-// badge and a working dot on the same row do not read as related.
+// dot pink, and the light band pastels out the same way just above its own cap. Running is blue
+// at hue 250, clear of
+// identity-colors' blue at 256.6 so a blue host badge and a working dot on the same row do not
+// read as related.
 const lightStatusDotColors = {
-  // L=0.46, chroma 90% of gamut max
-  statusDotSuccess: "#186933",
-  statusDotDanger: "#a11c1c",
-  statusDotWarning: "#774e14",
-  statusDotRunning: "#165a96",
+  // L=0.62, chroma 90% of gamut max
+  statusDotSuccess: "#299f51",
+  statusDotDanger: "#f12e2f",
+  statusDotWarning: "#b37824",
+  statusDotRunning: "#268ae0",
 };
 
 const darkStatusDotColors = {
