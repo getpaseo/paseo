@@ -198,6 +198,14 @@ export function buildSelectedTriggerLabel(modelLabel: string): string {
   return modelLabel;
 }
 
+/**
+ * Cross-provider result rows need the provider named up front: the same model
+ * label ships on several providers at once.
+ */
+export function buildProviderQualifiedDescription(row: ProviderSelectionModelRow): string {
+  return row.description ? `${row.providerLabel} · ${row.description}` : row.providerLabel;
+}
+
 export function matchesModelSearch(
   row: ProviderSelectionModelRow,
   normalizedQuery: string,

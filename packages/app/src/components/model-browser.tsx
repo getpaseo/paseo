@@ -25,6 +25,7 @@ import { getProviderIcon } from "@/components/provider-icons";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import {
+  buildProviderQualifiedDescription,
   buildSelectedTriggerLabel,
   filterAndRankModelRows,
   getAllProviderModelRows,
@@ -38,6 +39,7 @@ import { useCurrentOverlayLayer } from "@/lib/overlay-root";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {
   resolveInitialModelBrowserView,
+  resolveModelBrowserAllView,
   type ModelBrowserView,
 } from "@/components/model-browser-view";
 
@@ -260,9 +262,13 @@ export function useModelBrowser({
     reset();
   }, [reset]);
 
-  const drillDown = useCallback((providerId: string, providerLabel: string) => {
-    setView({ kind: "provider", providerId, providerLabel });
-  }, []);
+  const drillDown = useCallback(
+    (providerId: string, providerLabel: string) => {
+      setView({ kind: "provider", providerId, providerLabel });
+      reset();
+    },
+    [reset],
+  );
 
   const handleSearchQueryChange = useCallback((value: string) => {
     setSearchQuery(value);
@@ -271,7 +277,16 @@ export function useModelBrowser({
   const singleProviderView = providers.length === 1;
   const header = useMemo<SheetHeader>(() => {
     if (view.kind === "all") {
-      return { title: t("modelSelector.title") };
+      return {
+        title: t("modelSelector.title"),
+        search: {
+          onChange: handleSearchQueryChange,
+          resetKey: `all:${searchResetKey}`,
+          placeholder: t("modelSelector.searchAllPlaceholder"),
+          autoFocus: isWeb,
+          testID: "model-search-all-input",
+        },
+      };
     }
     return {
       title: view.providerLabel,
@@ -533,6 +548,7 @@ function ModelRow({
   isSelected,
   isFavorite,
   elevated = false,
+  showProviderLabel = false,
   onPress,
   onToggleFavorite,
 }: {
@@ -540,6 +556,7 @@ function ModelRow({
   isSelected: boolean;
   isFavorite: boolean;
   elevated?: boolean;
+  showProviderLabel?: boolean;
   onPress: () => void;
   onToggleFavorite?: (provider: string, modelId: string) => void;
 }) {
@@ -570,16 +587,19 @@ function ModelRow({
     [handleToggleFavorite, isFavorite, onToggleFavorite, row.modelId, row.provider, t],
   );
 
+  const description = showProviderLabel ? buildProviderQualifiedDescription(row) : row.description;
+
   return (
     <ModelBrowserRow
       label={row.modelLabel}
-      description={row.description}
+      description={description}
       selected={isSelected}
       selectionIndicator
       tone={elevated ? "elevated" : "default"}
       onPress={onPress}
       leadingSlot={leadingSlot}
       trailingSlot={trailingSlot}
+      testID={`model-row-${row.provider}-${row.modelId}`}
     />
   );
 }
@@ -589,6 +609,7 @@ function SelectableModelRow({
   isSelected,
   isFavorite,
   elevated,
+  showProviderLabel,
   onSelect,
   onToggleFavorite,
 }: {
@@ -596,6 +617,7 @@ function SelectableModelRow({
   isSelected: boolean;
   isFavorite: boolean;
   elevated?: boolean;
+  showProviderLabel?: boolean;
   onSelect: (provider: string, modelId: string) => void;
   onToggleFavorite?: (provider: string, modelId: string) => void;
 }) {
@@ -608,6 +630,7 @@ function SelectableModelRow({
       isSelected={isSelected}
       isFavorite={isFavorite}
       elevated={elevated}
+      showProviderLabel={showProviderLabel}
       onPress={handlePress}
       onToggleFavorite={onToggleFavorite}
     />
@@ -809,7 +832,7 @@ function IndependentProviderList({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ProviderModelRows({
+function ModelRowList({
   rows,
   selectedProvider,
   selectedModel,
@@ -817,6 +840,7 @@ function ProviderModelRows({
   onSelect,
   onToggleFavorite,
   normalizedQuery,
+  showProviderLabel = false,
   scrolling,
 }: {
   rows: ProviderSelectionModelRow[];
@@ -826,6 +850,7 @@ function ProviderModelRows({
   onSelect: (provider: string, modelId: string) => void;
   onToggleFavorite?: (provider: string, modelId: string) => void;
   normalizedQuery: string;
+  showProviderLabel?: boolean;
   scrolling: "sheet" | "independent";
 }) {
   const isCompact = useIsCompactFormFactor();
@@ -839,11 +864,12 @@ function ProviderModelRows({
         row={item}
         isSelected={item.provider === selectedProvider && item.modelId === selectedModel}
         isFavorite={favoriteKeys.has(item.favoriteKey)}
+        showProviderLabel={showProviderLabel}
         onSelect={onSelect}
         onToggleFavorite={onToggleFavorite}
       />
     ),
-    [favoriteKeys, onSelect, onToggleFavorite, selectedModel, selectedProvider],
+    [favoriteKeys, onSelect, onToggleFavorite, selectedModel, selectedProvider, showProviderLabel],
   );
   const keyExtractor = useCallback((row: ProviderSelectionModelRow) => row.favoriteKey, []);
 
@@ -936,6 +962,10 @@ function ModelBrowserContent({
     () => getAllProviderModelRows(providers).filter((row) => favoriteKeys.has(row.favoriteKey)),
     [favoriteKeys, providers],
   );
+  const allView = useMemo(
+    () => resolveModelBrowserAllView({ providers, normalizedQuery }),
+    [normalizedQuery, providers],
+  );
   const hasResults = favoriteRows.length > 0 || providers.length > 0;
   const emptyState = (
     <View style={styles.emptyState}>
@@ -969,7 +999,7 @@ function ModelBrowserContent({
     }
     if (visibleRows.length === 0) return emptyState;
     return (
-      <ProviderModelRows
+      <ModelRowList
         rows={visibleRows}
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
@@ -977,6 +1007,33 @@ function ModelBrowserContent({
         onSelect={onSelect}
         onToggleFavorite={onToggleFavorite}
         normalizedQuery={normalizedQuery}
+        scrolling={scrolling}
+      />
+    );
+  }
+
+  if (allView.kind === "noSearchMatches") {
+    return (
+      <View style={styles.emptyState} testID="model-search-empty">
+        <ThemedSearch size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
+        <Text style={styles.emptyStateText}>
+          {t("modelSelector.noMatchesForQuery", { query: searchQuery.trim() })}
+        </Text>
+      </View>
+    );
+  }
+
+  if (allView.kind === "searchResults") {
+    return (
+      <ModelRowList
+        rows={allView.rows}
+        selectedProvider={selectedProvider}
+        selectedModel={selectedModel}
+        favoriteKeys={favoriteKeys}
+        onSelect={onSelect}
+        onToggleFavorite={onToggleFavorite}
+        normalizedQuery={normalizedQuery}
+        showProviderLabel
         scrolling={scrolling}
       />
     );

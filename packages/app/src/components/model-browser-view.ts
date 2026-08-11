@@ -1,8 +1,36 @@
-import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
+import {
+  filterAndRankModelRows,
+  getAllProviderModelRows,
+  type ProviderSelectionModelRow,
+  type ProviderSelectorProvider,
+} from "@/provider-selection/provider-selection";
 
 export type ModelBrowserView =
   | { kind: "all" }
   | { kind: "provider"; providerId: string; providerLabel: string };
+
+/** What the root view shows: the provider drill-down, or ranked cross-provider results. */
+export type ModelBrowserAllView =
+  | { kind: "browse" }
+  | { kind: "searchResults"; rows: ProviderSelectionModelRow[] }
+  | { kind: "noSearchMatches" };
+
+export function resolveModelBrowserAllView({
+  providers,
+  normalizedQuery,
+}: {
+  providers: ProviderSelectorProvider[];
+  normalizedQuery: string;
+}): ModelBrowserAllView {
+  if (!normalizedQuery) {
+    return { kind: "browse" };
+  }
+  const rows = filterAndRankModelRows(getAllProviderModelRows(providers), normalizedQuery);
+  if (rows.length === 0) {
+    return { kind: "noSearchMatches" };
+  }
+  return { kind: "searchResults", rows };
+}
 
 export function resolveInitialModelBrowserView({
   providers,
