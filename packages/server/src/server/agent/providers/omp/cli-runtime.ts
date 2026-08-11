@@ -2,7 +2,11 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
-import { JsonlRpcProcess, type JsonlRpcLaunch } from "../jsonl-rpc-process.js";
+import {
+  JSONL_RPC_DEFAULT_TIMEOUT_MS,
+  JsonlRpcProcess,
+  type JsonlRpcLaunch,
+} from "../jsonl-rpc-process.js";
 import {
   buildOmpLaunch,
   type OmpRuntime,
@@ -40,6 +44,8 @@ import {
 
 const DEFAULT_OMP_COMMAND: [string, ...string[]] = [process.env.OMP_COMMAND ?? "omp"];
 const DEFAULT_COMMANDS_RPC_NAME = "get_available_commands";
+/** How long to wait for OMP's startup `ready` frame before assuming protocol v1. */
+const OMP_READY_TIMEOUT_MS = 10_000;
 
 export interface OmpCliRuntimeOptions {
   logger: Logger;
@@ -81,8 +87,61 @@ export class OmpCliRuntime implements OmpRuntime {
       ...(spawn ? { spawn: () => spawn(launch) } : {}),
     };
     const process = new JsonlRpcProcess(processOptions);
+    await negotiateOmpProtocolV2(process, this.options.logger);
     return new OmpCliRuntimeSession(process, this.commandsRpcName);
   }
+}
+
+/**
+ * Wait for OMP to advertise readiness and negotiate RPC protocol v2 when it is
+ * supported. OMP caps protocol-v1 single-line frames at 1 MiB; `get_available_models`
+ * (and other large payloads) can exceed that and are returned as an overflow error.
+ * Protocol v2 lifts the ceiling to 64 MiB by chunking oversized frames, which the
+ * JSONL transport reassembles. Modern OMP always sends a `ready` frame immediately
+ * after launch; if none arrives (very old binaries) we proceed on protocol v1.
+ */
+async function negotiateOmpProtocolV2(process: JsonlRpcProcess, logger: Logger): Promise<void> {
+  const ready = await waitForOmpReadyFrame(process);
+  const supported = ready?.supportedProtocolVersions;
+  if (!Array.isArray(supported) || !supported.includes(2)) {
+    return;
+  }
+  try {
+    const response = (await process.request(
+      { type: "negotiate_protocol", protocolVersion: 2 },
+      JSONL_RPC_DEFAULT_TIMEOUT_MS,
+    )) as { protocolVersion?: unknown } | undefined;
+    if (response?.protocolVersion === 2) {
+      logger.debug({}, "Negotiated OMP RPC protocol v2 (chunked frame transport)");
+    } else {
+      logger.warn({ response }, "OMP did not accept RPC protocol v2; continuing on protocol v1");
+    }
+  } catch (error) {
+    logger.warn({ error }, "OMP RPC protocol v2 negotiation failed; continuing on protocol v1");
+  }
+}
+
+function waitForOmpReadyFrame(
+  process: JsonlRpcProcess,
+): Promise<Record<string, unknown> | undefined> {
+  const ready = new Promise<Record<string, unknown>>((resolve) => {
+    const unsubscribe = process.onMessage((message) => {
+      if (message.type === "ready") {
+        unsubscribe();
+        resolve(message);
+      }
+    });
+  });
+  let timer: NodeJS.Timeout | null = null;
+  const timeout = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), OMP_READY_TIMEOUT_MS);
+  });
+  void ready.finally(() => {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+  });
+  return Promise.race([ready, timeout]);
 }
 
 class OmpCliRuntimeSession implements OmpRuntimeSession {

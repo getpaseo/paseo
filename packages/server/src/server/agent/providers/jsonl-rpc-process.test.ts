@@ -219,4 +219,55 @@ describe("JsonlRpcProcess", () => {
 
     await rejection;
   });
+
+  test("reassembles protocol v2 chunked responses into the logical frame", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+
+    try {
+      let buffer = "";
+      const sentRequest = new Promise<Record<string, unknown>>((resolve) => {
+        child.stdin.on("data", (chunk) => {
+          buffer += chunk.toString();
+          const newlineIndex = buffer.indexOf("\n");
+          if (newlineIndex === -1) return;
+          resolve(JSON.parse(buffer.slice(0, newlineIndex)) as Record<string, unknown>);
+        });
+      });
+
+      const request = transport.request({ type: "chunked" });
+      const command = await sentRequest;
+
+      // Emit a logical response split into protocol v2 chunk frames.
+      const logical = JSON.stringify({
+        id: command.id,
+        type: "response",
+        command: command.type,
+        success: true,
+        data: { value: "chunked-ok" },
+      });
+      const bytes = Buffer.from(logical, "utf8");
+      const chunkPayload = 64;
+      const count = Math.ceil(bytes.length / chunkPayload);
+      expect(count).toBeGreaterThan(1);
+      for (let index = 0; index < count; index++) {
+        child.stdout.write(
+          `${JSON.stringify({
+            type: "rpc_chunk",
+            chunkId: "seq1",
+            index,
+            count,
+            byteLength: bytes.length,
+            data: bytes
+              .subarray(index * chunkPayload, (index + 1) * chunkPayload)
+              .toString("base64"),
+          })}\n`,
+        );
+      }
+
+      await expect(request).resolves.toEqual({ value: "chunked-ok" });
+    } finally {
+      await transport.close();
+    }
+  });
 });
