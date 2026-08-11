@@ -1,7 +1,48 @@
-import { createElement, isValidElement } from "react";
-import { describe, expect, it } from "vitest";
+/**
+ * @vitest-environment jsdom
+ */
+import * as React from "react";
+import { createElement, type ReactNode } from "react";
+import { fireEvent, render } from "@testing-library/react";
+import { Text, type StyleProp, type TextStyle } from "react-native";
+import { describe, expect, it, vi } from "vitest";
 import { resolveInlineImageSize } from "./inline-image-size";
-import { colorMarkdownLinkChildren, markdownLinkTextStyle } from "./link-children";
+import { colorMarkdownLinkChildren } from "./link-children";
+import { MarkdownLinkText } from "./link-text";
+
+vi.stubGlobal("React", React);
+
+vi.mock("react-native", () => ({
+  Pressable: ({
+    accessibilityRole,
+    children,
+    onHoverIn,
+    onHoverOut,
+    onPress,
+  }: {
+    accessibilityRole?: string;
+    children?: ReactNode;
+    onHoverIn?(): void;
+    onHoverOut?(): void;
+    onPress?(): void;
+  }) =>
+    createElement(
+      "div",
+      {
+        role: accessibilityRole,
+        onClick: onPress,
+        onMouseEnter: onHoverIn,
+        onMouseLeave: onHoverOut,
+      },
+      children,
+    ),
+  Text: ({ children, style }: { children?: ReactNode; style?: StyleProp<TextStyle> }) =>
+    createElement("span", { style: flattenStyle(style) }, children),
+}));
+
+function flattenStyle(style: StyleProp<TextStyle>): TextStyle {
+  return Object.assign({}, ...(Array.isArray(style) ? style.filter(Boolean) : [style]));
+}
 
 describe("resolveInlineImageSize", () => {
   it("respects a one-sided explicit width using natural aspect ratio", () => {
@@ -31,21 +72,28 @@ describe("resolveInlineImageSize", () => {
 });
 
 describe("shared Markdown links", () => {
-  it("applies the accent color to child text spans", () => {
-    const child = createElement("span", { style: { color: "foreground" } }, "Paseo");
-    const renderedChildren = colorMarkdownLinkChildren([child], "accent");
-    const renderedChild = Array.isArray(renderedChildren) ? renderedChildren[0] : renderedChildren;
-    if (!isValidElement<{ style: unknown }>(renderedChild)) {
-      throw new Error("Markdown link color did not preserve its child element");
-    }
+  it("renders accent text and underlines it while hovered", () => {
+    const onPress = vi.fn();
+    const children = colorMarkdownLinkChildren(
+      createElement(Text, { style: { color: "white" } }, "Paseo"),
+      "rgb(0, 122, 255)",
+    );
+    const view = render(
+      createElement(MarkdownLinkText, { style: { color: "rgb(0, 122, 255)" }, onPress }, children),
+    );
+    const link = view.getByRole("link");
+    const linkText = link.firstElementChild as HTMLElement;
 
-    expect(renderedChild.props.style).toEqual([{ color: "foreground" }, { color: "accent" }]);
-  });
+    expect((view.getByText("Paseo") as HTMLElement).style.color).toBe("rgb(0, 122, 255)");
+    expect(linkText.style.textDecorationLine).toBe("");
 
-  it("underlines link text while hovered", () => {
-    expect(markdownLinkTextStyle({ color: "accent" }, true)).toEqual([
-      { color: "accent" },
-      { textDecorationLine: "underline" },
-    ]);
+    fireEvent.mouseEnter(link);
+    expect(linkText.style.textDecorationLine).toBe("underline");
+
+    fireEvent.mouseLeave(link);
+    expect(linkText.style.textDecorationLine).toBe("");
+
+    fireEvent.click(link);
+    expect(onPress).toHaveBeenCalledOnce();
   });
 });

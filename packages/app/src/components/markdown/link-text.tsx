@@ -8,7 +8,7 @@ interface MarkdownLinkTextProps {
   dataSet?: Record<string, string>;
   onPress(): void;
   onHoverIn?(): void;
-  children: ReactNode;
+  children?: ReactNode;
 }
 
 export function MarkdownLinkText({
