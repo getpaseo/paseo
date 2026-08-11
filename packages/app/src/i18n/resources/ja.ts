@@ -275,6 +275,14 @@ export const ja: TranslationResources = {
     },
   },
   message: {
+    diagram: {
+      diagram: "図",
+      zoomIn: "拡大",
+      zoomOut: "縮小",
+      resetZoom: "表示をリセット",
+      viewSource: "ソースを表示",
+      viewDiagram: "図を表示",
+    },
     actions: {
       copyCode: "コードをコピー",
       copyTurn: "ターンをコピー",
