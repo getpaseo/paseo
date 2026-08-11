@@ -8,14 +8,16 @@ import type {
   WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
-import { aggregateSidebarStateBuckets } from "@/utils/sidebar-agent-state";
+import { aggregateSidebarStateBuckets, type SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { shortenPath } from "@/utils/shorten-path";
 import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
-export type SidebarStateBucket = WorkspaceDescriptor["status"];
+// The sidebar bucket is a superset of the wire bucket: `pending_question` is derived
+// client-side only (see utils/sidebar-agent-state).
+export type { SidebarStateBucket };
 
 export interface SidebarWorkspacePlacement {
   workspaceKey: string;
@@ -128,7 +130,7 @@ export function areSidebarWorkspaceSessionsEqual(
 }
 
 interface EffectiveWorkspaceStatus {
-  status: WorkspaceDescriptor["status"];
+  status: SidebarStateBucket;
   enteredAt: Date | null;
 }
 

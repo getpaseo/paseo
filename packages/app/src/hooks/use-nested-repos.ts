@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { useSessionStore } from "@/stores/session-store";
 
 export interface NestedRepo {
   path: string;
@@ -31,13 +32,21 @@ export function useNestedRepos(
     error: null,
   });
   const [refreshCount, setRefreshCount] = useState(0);
+  // COMPAT(projectNestedRepos): added in v0.3.2, remove gate after 2027-08-11.
+  // Older daemons reject the scan RPC, so skip it entirely instead of surfacing
+  // an access-denied error (or a request timeout) in the sidebar.
+  const supportsNestedRepos = useSessionStore(
+    (sessionState) =>
+      serverId !== null &&
+      sessionState.sessions[serverId]?.serverInfo?.features?.projectNestedRepos === true,
+  );
   // Keep the client accessor in a ref so parent re-renders (new function identity)
   // don't retrigger the scan effect below.
   const getClientRef = useRef(getClient);
   getClientRef.current = getClient;
 
   useEffect(() => {
-    if (!serverId || !parentCwd) {
+    if (!serverId || !parentCwd || !supportsNestedRepos) {
       return;
     }
     const client = getClientRef.current(serverId);
@@ -68,7 +77,7 @@ export function useNestedRepos(
     return () => {
       cancelled = true;
     };
-  }, [parentCwd, refreshCount, serverId]);
+  }, [parentCwd, refreshCount, serverId, supportsNestedRepos]);
 
   const refresh = useCallback(() => {
     setRefreshCount((current) => current + 1);

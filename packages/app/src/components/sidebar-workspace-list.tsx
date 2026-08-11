@@ -1280,6 +1280,7 @@ function WorkspaceRowWithMenu({
 }) {
   const { t } = useTranslation();
   const toast = useToast();
+  const isCompactFormFactor = useIsCompactFormFactor();
   const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const isArchiving = workspace.archivingAt !== null || isHidingWorkspace;
@@ -1412,7 +1413,7 @@ function WorkspaceRowWithMenu({
     }
     const panelStore = usePanelStore.getState();
     panelStore.openFileExplorerForCheckout({
-      isCompact: false,
+      isCompact: isCompactFormFactor,
       checkout: {
         serverId: workspace.serverId,
         cwd: workspaceDirectory,
@@ -1424,6 +1425,7 @@ function WorkspaceRowWithMenu({
       workspaceId: workspace.workspaceId,
     });
   }, [
+    isCompactFormFactor,
     workspace.currentBranch,
     workspace.serverId,
     workspace.workspaceDirectory,
