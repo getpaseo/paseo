@@ -9,6 +9,10 @@ import { join, relative } from "node:path";
 // the patch's node_modules/... paths relative to its working directory.
 const patchedPackages = [
   {
+    nodeModulesPath: "node_modules/@react-native/virtualized-lists",
+    patchPrefix: "@react-native+virtualized-lists+",
+  },
+  {
     nodeModulesPath: "node_modules/react-native-markdown-display",
     patchPrefix: "react-native-markdown-display+",
   },
