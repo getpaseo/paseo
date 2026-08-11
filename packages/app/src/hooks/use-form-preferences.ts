@@ -1,13 +1,8 @@
 import { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  buildFavoriteModelKey,
   DEFAULT_FORM_PREFERENCES,
-  isFavoriteModel,
   mergeProviderPreferences,
-  toggleFavoriteModel,
-  type FavoriteModelPreference,
-  type FavoriteModelRow,
   type FormPreferences,
   type ProviderPreferences,
 } from "@/create-agent-preferences/preferences";
@@ -18,9 +13,9 @@ import {
 
 const FORM_PREFERENCES_QUERY_KEY = ["form-preferences"];
 
-export type { FavoriteModelPreference, FavoriteModelRow, FormPreferences, ProviderPreferences };
+export type { FormPreferences, ProviderPreferences };
 
-export { buildFavoriteModelKey, isFavoriteModel, mergeProviderPreferences, toggleFavoriteModel };
+export { mergeProviderPreferences };
 
 async function loadFormPreferences(): Promise<FormPreferences> {
   return createAgentPreferencesService.load();

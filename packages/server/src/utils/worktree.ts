@@ -207,13 +207,6 @@ export interface CreateWorktreeOptions {
   worktreesRoot?: string;
 }
 
-interface ResolveExistingWorktreeForSlugOptions {
-  slug: string;
-  repoRoot: string;
-  paseoHome?: string;
-  worktreesRoot?: string;
-}
-
 export class BranchAlreadyCheckedOutError extends Error {
   readonly branchName: string;
 
@@ -1063,38 +1056,6 @@ export async function listPaseoWorktrees({
     );
 }
 
-export async function resolveExistingWorktreeForSlug({
-  slug,
-  repoRoot,
-  paseoHome,
-  worktreesRoot,
-}: ResolveExistingWorktreeForSlugOptions): Promise<WorktreeConfig | null> {
-  const worktrees = await listPaseoWorktrees({
-    cwd: repoRoot,
-    paseoHome,
-    worktreesRoot,
-  });
-  const slugSuffix = `${sep}${slug}`;
-  const existingWorktree = worktrees.find((worktree) => worktree.path.endsWith(slugSuffix));
-  if (!existingWorktree) {
-    return null;
-  }
-
-  const { stdout } = await runGitCommand(["branch", "--show-current"], {
-    cwd: existingWorktree.path,
-    envOverlay: READ_ONLY_GIT_ENV,
-  });
-  const branchName = stdout.trim();
-  if (!branchName) {
-    throw new Error(`Unable to resolve branch for existing worktree: ${existingWorktree.path}`);
-  }
-
-  return {
-    branchName,
-    worktreePath: existingWorktree.path,
-  };
-}
-
 export interface DeletePaseoWorktreeOptions {
   cwd: string | null;
   worktreePath?: string;
@@ -1375,7 +1336,12 @@ async function resolveWorktreeSourcePlan({
         }
       }
       if (await isBranchCheckedOut(cwd, source.branchName)) {
-        throw new BranchAlreadyCheckedOutError(source.branchName);
+        const branchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
+        return {
+          branchName,
+          metadataBaseRefName: source.branchName,
+          addArguments: ["-b", branchName, "--no-track", source.branchName],
+        };
       }
 
       return {

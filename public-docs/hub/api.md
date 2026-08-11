@@ -54,10 +54,12 @@ API failures use RFC 9457 problem details. Missing, invalid, or revoked credenti
 
 ```json
 {
-  "type": "https://hub.example.com/problems/unauthorized",
-  "title": "Unauthorized",
+  "type": "https://paseo.sh/problems/unauthorized",
+  "title": "Authentication required",
   "status": 401,
-  "detail": "Provide a valid organization API key."
+  "detail": "Provide an active Paseo organization credential in the Authorization: Bearer header.",
+  "code": "unauthorized",
+  "requestId": "5e967c44-fc22-4f6d-8fc5-1bbff33121af"
 }
 ```
 
@@ -81,7 +83,7 @@ A valid key without the scope required by an endpoint returns `403` in the same 
 
 ## Configuration validation
 
-`POST /api/v1/configurations/validate` accepts the same `projectSlug`, `yaml`, and optional `partials` body as configuration install. It performs the same compilation and resource resolution without recording a revision or changing the active configuration.
+`POST /api/v1/configurations/validate` accepts the same `projectSlug` and complete `files` bundle as configuration install. It performs the same compilation and resource resolution without recording a revision or changing the active configuration.
 
 On success, Hub returns `200`:
 
@@ -96,9 +98,7 @@ On success, Hub returns `200`:
 
 ## Configuration install
 
-`configuration:install` replaces the project's current configuration with the
-supplied YAML after Hub validates and compiles it, then activates the new
-revision.
+`configuration:install` validates the supplied canonical bundle, stores the exact authored files, and activates a new revision.
 
 ```http
 POST /api/v1/configurations/install
@@ -109,26 +109,31 @@ Request body:
 ```json
 {
   "projectSlug": "my-project",
-  "yaml": "environments:\n  - name: production\n    kind: daemon\n    daemon: build-server\n    cwd: /workspace\ntriggers:\n  - name: deploy\n    on: manual.run\n    max_runtime: 2h\n    filters:\n      from_users: [automation]\n    steps:\n      - id: deploy\n        environment: production\n        max_runtime: 90m\n        idle_timeout: 10m\n        agent:\n          provider: opencode\n          mode: full-access\n        prompt:\n          - text: Deploy the project",
-  "partials": [
+  "files": [
     {
-      "path": "docs/safety.md",
+      "path": ".paseo/hub.yml",
+      "content": "environments:\n  production:\n    kind: daemon\n    daemon: build-server\n    cwd: /workspace\nagents:\n  codex:\n    provider: codex\n"
+    },
+    {
+      "path": ".paseo/workflows/deploy.yml",
+      "content": "name: deploy\non: manual.run\nmax_runtime: 2h\nfilters:\n  from_users: [automation]\nsteps:\n  - id: deploy\n    environment: production\n    max_runtime: 90m\n    idle_timeout: 10m\n    agent: codex\n    prompt:\n      - include: partials/safety.md\n"
+    },
+    {
+      "path": ".paseo/workflows/partials/safety.md",
       "content": "Follow the safety checklist."
     }
   ]
 }
 ```
 
-`projectSlug` picks the target project; the API key fixes the organization. Replace the example daemon, working directory, and trigger values with resources in your organization.
-
-`partials` is optional for inline-only configurations. When the YAML uses prompt `include` blocks, send exactly one entry per referenced file, with a path relative to `.paseo/partials/` and the file's UTF-8 content. Hub rejects missing, extra, duplicate, unsafe, or oversized entries.
+`projectSlug` picks the target project; the bearer credential fixes the organization. `files` contains `.paseo/hub.yml`, every direct workflow `.yml`, and each referenced workflow partial. Hub rejects missing, extra, duplicate, unsafe, or noncanonical paths.
 
 Limits:
 
-- YAML: 1,000,000 characters.
-- Partials: at most 100 files.
-- Partial path: canonical, at most 512 characters.
-- Partial content: at most 1,000,000 bytes per file, 5,000,000 bytes combined.
+- Bundle: at most 100 files.
+- File path: at most 512 characters.
+- File content: at most 1,000,000 characters.
+- Prompt partials: at most 1,000,000 bytes each and 5,000,000 bytes in total.
 
 On success, Hub returns `201`:
 
@@ -152,7 +157,7 @@ curl --fail-with-body -sS -X POST "$PASEO_HUB_URL/api/v1/configurations/install"
   --data @configuration-install.json
 ```
 
-For a local YAML file, `paseo hub deploy [file]` calls this endpoint and preserves the file contents. The command uses an exact-origin stored login when flags and environment credentials are absent. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli) for project precedence and credential precedence.
+`paseo hub deploy -p <project>` calls this endpoint with the discovered local bundle. The command uses an exact-origin stored login when flags and environment credentials are absent. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli).
 
 ## Manual run dispatch
 
@@ -161,7 +166,7 @@ The trigger must exist in the active configuration, and `actor` must be listed
 in that trigger's `filters.from_users` allowlist.
 
 ```http
-POST /api/manual-runs
+POST /api/v1/manual-runs
 ```
 
 Request body:
@@ -179,32 +184,27 @@ Request body:
 
 - `expectedVersionId` is optional. When supplied, Hub rejects the dispatch if that revision is no longer active.
 - `input` is the same string a provider message uses: leading `key=value` tokens are parsed as declared inputs, and the remainder becomes `${{ paseo.prompt }}`.
-- `deliveryKey` should be unique and stable per dispatch. Reusing one resolves to the existing trigger instead of starting a duplicate run.
+- `deliveryKey` should be unique and stable per dispatch. Hub uses it for durable deduplication, but does not promise exactly-once dispatch or replay of an earlier response.
 
 On success, Hub returns `200`:
 
 ```json
 {
   "deliveryKey": "deploy-2026-08-04-001",
-  "triggerId": "00000000-0000-4000-8000-000000000000",
-  "executionId": "00000000-0000-4000-8000-000000000000",
-  "status": "spawning",
-  "daemonId": "00000000-0000-4000-8000-000000000000",
-  "agentId": "agent-id"
+  "providerEventReceiptId": "00000000-0000-4000-8000-000000000000",
+  "triggerRunId": "00000000-0000-4000-8000-000000000000",
+  "configuredTriggerName": "deploy",
+  "workflowStatus": "running"
 }
 ```
 
-Common responses are `400 {"error":"invalid_request"}`, `404` for an
-unknown project, missing configuration, or missing trigger, `403
-{"error":"actor_forbidden"}` when the actor is not allowed by the trigger,
-and `409` when the daemon is offline, the expected configuration is no longer
-current, or the run could not be dispatched.
+Common responses are `400` for an invalid request, `403` when the actor is not allowed by the trigger, `404` for an unknown project, configuration, or trigger, and `409` when the daemon is offline, the expected configuration is no longer current, or dispatch conflicts. Each uses the problem-details shape above.
 
 Example:
 
 ```bash
-curl --fail-with-body -sS -X POST "$HUB_URL/api/manual-runs" \
-  -H "Authorization: Bearer $PASEO_API_KEY" \
+curl --fail-with-body -sS -X POST "$PASEO_HUB_URL/api/v1/manual-runs" \
+  -H "Authorization: Bearer $PASEO_HUB_API_KEY" \
   -H "Content-Type: application/json" \
   --data '{
     "projectSlug": "my-project",
@@ -228,7 +228,7 @@ be used as one.
 POST /api/v1/daemons/enrollment-tokens
 ```
 
-Send an empty JSON object as the request body. On success, Hub returns `201`:
+No request body is required. On success, Hub returns `201`:
 
 ```json
 {
@@ -243,10 +243,8 @@ The token expires after 10 minutes and is consumed when the daemon enrolls.
 
 ```bash
 curl --fail-with-body -sS -X POST \
-  "$HUB_URL/api/v1/daemons/enrollment-tokens" \
-  -H "Authorization: Bearer $PASEO_API_KEY" \
-  -H "Content-Type: application/json" \
-  --data '{}'
+  "$PASEO_HUB_URL/api/v1/daemons/enrollment-tokens" \
+  -H "Authorization: Bearer $PASEO_HUB_API_KEY"
 ```
 
 Direct API consumers can pass the returned token to the daemon enrollment protocol. The Paseo CLI intentionally does not accept raw enrollment tokens; `connect` owns the authenticated single-flow exchange.

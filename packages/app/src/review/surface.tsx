@@ -260,6 +260,7 @@ export function InlineReviewGutterCell({
   onStartComment,
   style,
   actionTestID,
+  testID,
 }: {
   children: ReactNode;
   reviewTarget: ReviewableDiffTarget | null | undefined;
@@ -270,6 +271,7 @@ export function InlineReviewGutterCell({
   onStartComment: (target: ReviewableDiffTarget) => void;
   style?: StyleProp<ViewStyle>;
   actionTestID?: string;
+  testID?: string;
 }) {
   const { t } = useTranslation();
   const canComment = Boolean(reviewTarget);
@@ -309,7 +311,6 @@ export function InlineReviewGutterCell({
     }
   }, [isInteractionActive]);
 
-  const pressableStyle = useCallback((): StyleProp<ViewStyle> => style, [style]);
   const lineHeightStyle = useMemo<StyleProp<ViewStyle>>(
     () =>
       lineHeight !== undefined
@@ -318,13 +319,15 @@ export function InlineReviewGutterCell({
     [lineHeight],
   );
 
-  const labelStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.gutterLabel, lineHeightStyle, hasComments && styles.gutterLabelActive],
-    [hasComments, lineHeightStyle],
-  );
-  const innerStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.gutterInner, lineHeightStyle],
-    [lineHeightStyle],
+  const pressableStyle = useCallback(
+    (): StyleProp<ViewStyle> => [
+      style,
+      styles.gutterInner,
+      styles.gutterLabel,
+      lineHeightStyle,
+      hasComments && styles.gutterLabelActive,
+    ],
+    [hasComments, lineHeightStyle, style],
   );
   const actionIconStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
@@ -346,17 +349,14 @@ export function InlineReviewGutterCell({
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}
       style={pressableStyle}
+      testID={testID}
     >
-      <View style={innerStyle}>
-        <View style={labelStyle}>
-          {children}
-          {showAction ? (
-            <View style={actionIconStyle} testID={actionTestID}>
-              <ThemedPlus size={16} strokeWidth={2.4} uniProps={accentForegroundIconColorMapping} />
-            </View>
-          ) : null}
+      {children}
+      {showAction ? (
+        <View style={actionIconStyle} testID={actionTestID}>
+          <ThemedPlus size={16} strokeWidth={2.4} uniProps={accentForegroundIconColorMapping} />
         </View>
-      </View>
+      ) : null}
     </Pressable>
   );
 }

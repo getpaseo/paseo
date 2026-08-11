@@ -55,7 +55,7 @@ Read both responses. Challenge them — do not accept at face value:
 
 - "Why does <underlying thing> happen? Symptom or cause?"
 - Verify any assumption the plan makes about the code.
-- "What did you considered and reject?"
+- "What did you consider and reject?"
 
 Send follow-ups until the plan addresses root cause.
 

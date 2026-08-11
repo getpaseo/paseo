@@ -2,7 +2,6 @@
 /* eslint-disable max-nested-callbacks */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
-  BranchAlreadyCheckedOutError,
   createWorktree as createWorktreePrimitive,
   deriveWorktreeProjectHash,
   deletePaseoWorktree,
@@ -299,22 +298,17 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(currentBranch).toBe("release/1.1.15");
     });
 
-    it("throws a typed error when checking out a branch already checked out in the main repo", async () => {
-      let caughtError: unknown;
-      try {
-        await createLegacyWorktreeForTest({
-          cwd: repoDir,
-          worktreeSlug: "dev-worktree",
-          source: { kind: "checkout-branch", branchName: "main" },
-          runSetup: true,
-          paseoHome,
-        });
-      } catch (error) {
-        caughtError = error;
-      }
+    it("creates a suffixed branch when checking out a branch already checked out in the main repo", async () => {
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "dev-worktree",
+        source: { kind: "checkout-branch", branchName: "main" },
+        runSetup: true,
+        paseoHome,
+      });
 
-      expect(caughtError).toBeInstanceOf(BranchAlreadyCheckedOutError);
-      expect((caughtError as BranchAlreadyCheckedOutError).branchName).toBe("main");
+      expect(result.branchName).toBe("main-1");
+      expect(existsSync(result.worktreePath)).toBe(true);
     });
 
     it("fetches a GitHub PR branch, checks it out, writes metadata, and runs setup", async () => {

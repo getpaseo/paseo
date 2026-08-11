@@ -2,7 +2,8 @@ import { strict as assert } from "node:assert";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, it } from "vitest";
-import { HubHttpClient } from "./client.js";
+import { HubHttpClient } from "./hub-client/index.js";
+import { HubCommandError } from "./error.js";
 
 const servers: Array<ReturnType<typeof createServer>> = [];
 
@@ -89,11 +90,56 @@ describe("Hub HTTP client", () => {
       ["/api/v1/projects", "/api/v1/daemons/enrollment-tokens"],
     );
   });
+
+  it("renders file-aware Hub validation issues without exposing credentials or response bodies", async () => {
+    const requests: Array<{ url: string | undefined; body: string }> = [];
+    const origin = await startServer(
+      () => ({
+        status: 422,
+        contentType: "application/problem+json",
+        body: {
+          type: "https://hub.test/problems/invalid-configuration-bundle",
+          title: "Invalid configuration bundle",
+          status: 422,
+          detail: "Correct the canonical Hub bundle files. operator-secret",
+          code: "invalid_configuration_bundle",
+          requestId: "request-1",
+          issues: [
+            {
+              path: [".paseo/workflows/answer.yml", "steps", "work", "agent"],
+              message: "unknown named agent operator-secret",
+            },
+          ],
+        },
+      }),
+      requests,
+    );
+    const hub = new HubHttpClient();
+
+    await assert.rejects(
+      hub.validateConfiguration({
+        origin,
+        apiKey: "operator-secret",
+        projectSlug: "studio",
+        files: [{ path: ".paseo/hub.yml", content: "sensitive bundle content" }],
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof HubCommandError);
+        assert.equal(error.message.includes("operator-secret"), false);
+        assert.equal(error.details?.includes("operator-secret"), false);
+        assert.equal(error.message.includes("sensitive bundle content"), false);
+        assert.equal(error.details?.includes("sensitive bundle content"), false);
+        assert.match(error.details ?? "", /\.paseo\/workflows\/answer\.yml\.steps\.work\.agent/u);
+        return true;
+      },
+    );
+  });
 });
 
 interface TestResponse {
   status: number;
   body: unknown;
+  contentType?: string;
 }
 
 async function startServer(
@@ -109,7 +155,9 @@ async function startServer(
     request.on("end", () => {
       requests.push({ url: request.url, body });
       const configured = responseFor(request.url);
-      response.writeHead(configured.status, { "content-type": "application/json" });
+      response.writeHead(configured.status, {
+        "content-type": configured.contentType ?? "application/json",
+      });
       response.end(JSON.stringify(configured.body));
     });
   });

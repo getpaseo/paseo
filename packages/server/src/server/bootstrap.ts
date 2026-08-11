@@ -144,9 +144,7 @@ import {
   FileBackedWorkspaceRegistry,
   type WorkspaceArchiveContext,
 } from "./workspace-registry.js";
-import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
-import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
@@ -166,11 +164,11 @@ import { createConfiguredTerminalManager } from "../terminal/terminal-manager-fa
 import { applyTerminalAgentHookSetting } from "../terminal/agent-hooks/terminal-agent-hook-setting.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { createRelayRuntime, type RelayRuntime } from "./relay-runtime.js";
-import type { PushNotificationSender } from "./push/notifications.js";
+import type { PushNotificationSender } from "./push/index.js";
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
-import type { FirstAgentContext, TerminalProfile } from "@getpaseo/protocol/messages";
+import type { AgentProfile, FirstAgentContext, TerminalProfile } from "@getpaseo/protocol/messages";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
@@ -399,6 +397,7 @@ export interface PaseoDaemonConfig {
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
+  agentProfiles?: AgentProfile[];
   staticDir: string;
   mcpDebug: boolean;
   isDev?: boolean;
@@ -536,6 +535,10 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
 
   if (config.terminalProfiles !== undefined) {
     initialConfig.terminalProfiles = config.terminalProfiles;
+  }
+
+  if (config.agentProfiles !== undefined) {
+    initialConfig.agentProfiles = config.agentProfiles;
   }
 
   return initialConfig;
@@ -798,10 +801,6 @@ export async function createPaseoDaemon(
     path.join(config.paseoHome, "projects", "workspaces.json"),
     logger,
   );
-  const chatService = new FileBackedChatService({
-    paseoHome: config.paseoHome,
-    logger,
-  });
   const github = createGitHubService();
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger,
@@ -882,8 +881,6 @@ export async function createPaseoDaemon(
   void workspaceReconciliation.reconcileNow().catch((error) => {
     logger.warn({ err: error }, "Initial workspace reconciliation failed");
   });
-  await chatService.initialize();
-  logger.info({ elapsed: elapsed() }, "Chat service initialized");
   const checkoutDiffManager = new CheckoutDiffManager({
     logger,
     paseoHome: config.paseoHome,
@@ -1119,6 +1116,7 @@ export async function createPaseoDaemon(
   });
   const hubRelationships = new HubRelationshipController({
     paseoHome: config.paseoHome,
+    hostname: getHostname(),
     serverId,
     daemonPublicKey: daemonKeyPair.publicKeyB64,
     logger,
@@ -1143,15 +1141,6 @@ export async function createPaseoDaemon(
       }),
   });
 
-  const loopService = new LoopService({
-    paseoHome: config.paseoHome,
-    logger,
-    agentManager,
-    createAgent,
-    ensureWorkspaceForCreate: ensureWorkspaceForCreateAndBroadcastExternal,
-  });
-  await loopService.initialize();
-  logger.info({ elapsed: elapsed() }, "Loop service initialized");
   const createScheduleLocalWorkspaceExternal = async (input: {
     cwd: string;
     firstAgentContext: FirstAgentContext;
@@ -1251,6 +1240,7 @@ export async function createPaseoDaemon(
     getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
     scheduleService,
     providerSnapshotManager,
+    daemonConfigStore,
     github,
     workspaceGitService,
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
@@ -1538,8 +1528,6 @@ export async function createPaseoDaemon(
               },
               projectRegistry,
               workspaceRegistry,
-              chatService,
-              loopService,
               scheduleService,
               checkoutDiffManager,
               serviceProxy,

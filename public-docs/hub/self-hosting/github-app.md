@@ -16,6 +16,8 @@ Go to **Settings → Developer settings → GitHub Apps → New GitHub App** on 
 
 Replace `hub.example.com` with your `PASEO_HUB_APP_URL`.
 
+The webhook URL must be reachable from GitHub. Keep GitHub's default SSL verification enabled; see [Provider URLs](/docs/hub/self-hosting#provider-urls).
+
 | Setting            | Value                                                      |
 | ------------------ | ---------------------------------------------------------- |
 | Homepage URL       | `https://hub.example.com`                                  |
@@ -29,7 +31,7 @@ Repository permissions:
 
 | Permission    | Access       | Why                                       |
 | ------------- | ------------ | ----------------------------------------- |
-| Contents      | Read & write | Read `.paseo/hub.yml`, let agents push    |
+| Contents      | Read & write | Read the `.paseo` bundle, let agents push |
 | Issues        | Read & write | Read comments, add reactions              |
 | Pull requests | Read & write | Read review comments, let agents open PRs |
 | Metadata      | Read         | Required by GitHub                        |
@@ -42,7 +44,7 @@ Subscribe to events:
 - Pull request review comment
 - Push
 
-Push is what makes configuration sync work. Without it, Hub never learns that `.paseo/hub.yml` changed.
+Push is what makes configuration sync work. Without it, Hub never learns that the `.paseo` bundle changed.
 
 ## Configure Hub
 
@@ -74,7 +76,7 @@ Connect as many installations as you need. A personal account and several organi
 ## What the connection gives you
 
 - **Events.** Comments, issues, and reviews from every repository the installation can see. See [GitHub triggers](/docs/hub/triggers/github).
-- **Configuration sync.** Any repository in the installation can hold `.paseo/hub.yml`. See [Configuration](/docs/hub/configuration).
+- **Configuration sync.** Any repository in the installation can hold the canonical `.paseo` bundle. See [Configuration](/docs/hub/configuration).
 - **Tokens.** Scoped, per-execution GitHub credentials.
 
 Which repositories the installation covers is a GitHub setting. Change it on GitHub, not in Paseo.

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { platform } from "node:os";
+import { hostname, platform } from "node:os";
 import { afterEach, describe, expect, test } from "vitest";
 import { HubRelationshipHarness } from "./test-utils/relationship-harness.js";
 
@@ -88,6 +88,7 @@ describe("Hub relationship", () => {
         .update(secret ?? "")
         .digest("base64url"),
     );
+    expect(enrollment.hostname).toBe(hostname());
     relationship.completeEnrollment();
     await connecting.result;
     await relationship.socketDialed();

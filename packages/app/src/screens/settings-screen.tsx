@@ -36,6 +36,7 @@ import {
   SquareTerminal,
   Code2,
   Smartphone,
+  Sparkles,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -107,6 +108,7 @@ import {
   HostWorkspacesPage,
   HostTerminalsPage,
 } from "@/screens/settings/host-page";
+import { MetadataGenerationPage } from "@/screens/settings/metadata-generation-page";
 import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
 import { SETTINGS_DESKTOP_SIDEBAR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
@@ -184,6 +186,7 @@ const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "connections", labelKey: "settings.hostSections.connections", icon: Network },
   { id: "pair-device", labelKey: "openProject.tiles.pairDevice.title", icon: Smartphone },
   { id: "agents", labelKey: "settings.hostSections.agents", icon: Bot },
+  { id: "metadata", labelKey: "settings.hostSections.metadata", icon: Sparkles },
   { id: "workspaces", labelKey: "settings.hostSections.workspaces", icon: FolderGit2 },
   { id: "providers", labelKey: "settings.hostSections.providers", icon: Boxes },
   { id: "usage", labelKey: "settings.hostSections.usage", icon: Gauge },
@@ -203,6 +206,8 @@ function renderHostSettingsContent(
       return <HostPairDevicePage serverId={view.serverId} />;
     case "agents":
       return <HostAgentsPage serverId={view.serverId} />;
+    case "metadata":
+      return <MetadataGenerationPage serverId={view.serverId} />;
     case "workspaces":
       return <HostWorkspacesPage serverId={view.serverId} />;
     case "providers":

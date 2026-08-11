@@ -1,6 +1,6 @@
 ---
 title: GitHub access
-description: Grant a workflow step a scoped GitHub token and a working git setup, minted per execution and revoked when the step ends.
+description: Grant one workflow step a scoped GitHub token and git setup.
 nav: GitHub access
 order: 65
 category: Hub
@@ -8,185 +8,69 @@ category: Hub
 
 # GitHub access
 
-A step gets GitHub authority from a `github` block:
+A trigger grants no GitHub credential. Put a `github` block on the step that needs repository authority:
 
 ```yaml
+name: implement-request
+on: github.issue_comment
+max_runtime: 2h
+filters:
+  repo: example/project
+  contains: "@paseo"
+  from_users: [maintainer]
 steps:
   - id: implement
     environment: development
     max_runtime: 90m
     idle_timeout: 10m
+    agent: codex
     github:
       connection: example-github
-      repositories:
-        - example/project
+      repositories: [example/project]
       permissions:
         contents: write
         pull_requests: write
-    agent:
-      provider: codex
-      mode: full-access
     prompt:
       - text: |
-          Implement the request, commit, push the branch, and open a
-          pull request with `gh pr create`.
-
-          Call hub.finish_execution when the step is complete.
-      - text: |
-          <user-prompt>
+          Implement the request, push a branch, and open a pull request with gh.
+          Call hub.finish_execution when done.
           ${{ paseo.prompt }}
-          </user-prompt>
 ```
 
-The agent can clone, commit, push, and call `gh` in the listed repositories. Nothing is configured on the daemon host.
+The agent can use `git` and `gh` within the declared repositories and permissions. Hub mints the token when the step starts and revokes it when execution ends.
 
-Nothing else grants GitHub authority. A run triggered from a GitHub event has no token and no git configuration unless its step declares the block.
+## Fields
 
-## The block
+| Field          | Notes                                                                                                                                  |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `connection`   | Project GitHub connection slug.                                                                                                        |
+| `repositories` | Repositories the token can reach. On a GitHub-triggered run, this defaults to the triggering repository. Required for other providers. |
+| `permissions`  | Installation-token permissions such as `contents`, `pull_requests`, and `issues`. Defaults to `contents: read`.                        |
+| `duration`     | Positive token lifetime up to `1h`. Defaults to `1h`, GitHub's maximum.                                                                |
 
-| Field          | Notes                                                                                                                                     |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `connection`   | The project's GitHub connection slug.                                                                                                     |
-| `repositories` | The repositories the token can reach. On a GitHub-triggered run, this defaults to the triggering repository. Required for other triggers. |
-| `permissions`  | GitHub installation-token permission names, such as `contents`, `pull_requests`, `issues`. Defaults to `contents: read`.                  |
-| `duration`     | How long the token lives. Defaults to `1h`, the GitHub maximum. Shorter revokes early; longer is invalid.                                 |
+Requested authority cannot exceed the GitHub App installation. Activation and dispatch fail clearly when the connection, repository, or permissions cannot be resolved.
 
-Permissions cannot exceed what the GitHub App installation was granted. A block asking for `contents: write` on an installation that only has read fails.
+## Agent environment
 
-Hub mints the token when the step starts and revokes it when the execution ends, whatever the outcome.
+Hub supplies `GH_TOKEN` and process-scoped git configuration through environment variables:
 
-## What the agent's environment contains
+- Commits use the App bot login as `user.name` and `<app-id>+<bot-login>@users.noreply.github.com` as `user.email`.
+- `git@github.com:` and `ssh://git@github.com/` remotes are rewritten to HTTPS.
+- `gh auth git-credential` handles GitHub credentials for the step.
+- User-global and system git configuration are ignored, and terminal credential prompts are disabled.
+- The daemon host's git identity and credentials are not read or changed.
 
-Hub supplies `GH_TOKEN` and git configuration through environment variables alone:
+`GH_TOKEN` and Hub's git configuration variables are reserved when a step has a `github` block; workflow `env` cannot replace them.
 
-- Commits author as the App's bot account, with its GitHub noreply email.
-- `git@github.com` remote URLs are rewritten to HTTPS, and the credential helper answers with the token.
-- Global and system git config are ignored, and nothing prompts a terminal.
+## Keep authority on the worker
 
-The daemon host's own git identity and credentials are never used or changed.
+A classifier can read untrusted request text without GitHub authority. Put the `github` block only on the later branch that makes a change. [Workflow routing](/docs/hub/workflows#route-from-a-classifier) shows the ordered classifier/worker shape.
 
-## Only the step that needs it
-
-Authority is per step, so a routed workflow grants it only to the branch that does the work. A Slack-triggered run:
+Connection values for other integrations remain explicit step environment values:
 
 ```yaml
-environments:
-  - name: triage
-    kind: daemon
-    daemon: my-macbook
-    cwd: /Users/you/code/project
-
-  - name: development
-    kind: daemon
-    daemon: my-macbook
-    cwd: /Users/you/code/project
-    worktree:
-      mode: branch-off
-      newBranch: hub/work
-      base: origin/main
-
-triggers:
-  - name: slack-work
-    on: slack.mention
-    max_runtime: 3h
-    filters:
-      workspace: T01234567
-      channels: [C01234567]
-      from_users: [U01234567]
-    steps:
-      - id: classify
-        environment: triage
-        max_runtime: 2m
-        idle_timeout: 30s
-        agent:
-          provider: codex
-          options:
-            approval_policy: never
-            sandbox_mode: read-only
-            web_search: disabled
-        prompt:
-          - text: |
-              Decide whether this request needs an answer or a change.
-
-              Call hub.finish_execution with the decision as the structured result.
-          - text: |
-              <user-prompt>
-              ${{ paseo.prompt }}
-              </user-prompt>
-        output:
-          schema:
-            type: object
-            additionalProperties: false
-            required: [kind]
-            properties:
-              kind:
-                enum: [answer, change]
-
-      - id: answer
-        if: ${{ steps.classify.outputs.kind == 'answer' }}
-        environment: triage
-        max_runtime: 10m
-        idle_timeout: 2m
-        agent:
-          provider: codex
-          options:
-            approval_policy: never
-            sandbox_mode: read-only
-            web_search: disabled
-        prompt:
-          - text: |
-              Answer the request without changing files.
-
-              Call hub.reply to send your answer to the originating conversation.
-              Call hub.finish_execution when the step is complete.
-          - text: |
-              <user-prompt>
-              ${{ paseo.prompt }}
-              </user-prompt>
-        allow_outputs:
-          - type: slack.reply
-
-      - id: change
-        if: ${{ steps.classify.outputs.kind == 'change' }}
-        environment: development
-        max_runtime: 90m
-        idle_timeout: 10m
-        github:
-          connection: example-github
-          repositories:
-            - example/project
-          permissions:
-            contents: write
-            pull_requests: write
-        agent:
-          provider: codex
-          mode: full-access
-        prompt:
-          - text: |
-              Make the change, verify it, commit, push the branch, and open a
-              pull request with `gh pr create`.
-
-              Call hub.reply with a link to the pull request.
-              Call hub.finish_execution when the step is complete.
-          - text: |
-              <user-prompt>
-              ${{ paseo.prompt }}
-              </user-prompt>
-        allow_outputs:
-          - type: slack.reply
+env:
+  SOME_TOKEN: "${{ paseo.connections.some-connection.token }}"
 ```
 
-The classifier and the answer step read untrusted text with no GitHub authority. Only the selected worker holds a token, scoped to one repository. [Hub security](/docs/hub/security) covers the rest of the authority model.
-
-## Other integrations
-
-Any connection value can be supplied explicitly through a step's environment:
-
-```yaml
-steps:
-  - id: use-connection
-    env:
-      SOME_TOKEN: "${{ paseo.connections.some-connection.token }}"
-```
-
-Hub resolves the value when it launches the step and does not persist it. The `github` block adds repository and permission restrictions plus the git setup needed for GitHub work.
+Hub resolves the value for the step and does not persist it. See [Hub security](/docs/hub/security) for provider and host boundaries.

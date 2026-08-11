@@ -1878,7 +1878,13 @@ describe("OpenCode adapter startTurn error handling", () => {
         provider: "opencode",
         item: {
           type: "todo",
-          items: [{ text: "Inspect current directory and existing files", completed: true }],
+          items: [
+            {
+              text: "Inspect current directory and existing files",
+              status: "completed",
+              completed: true,
+            },
+          ],
         },
       },
     ]);
