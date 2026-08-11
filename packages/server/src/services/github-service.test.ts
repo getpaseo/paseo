@@ -311,6 +311,15 @@ function noPullRequestError(args: string[] = ["pr", "view"]): GitHubCommandError
   });
 }
 
+function detachedHeadError(args: string[] = ["pr", "view"]): GitHubCommandError {
+  return new GitHubCommandError({
+    args,
+    cwd: "/repo",
+    exitCode: 1,
+    stderr: "could not determine current branch: failed to run git: not on any branch\n",
+  });
+}
+
 function statusCheckRollupPermissionError(args: string[]): GitHubCommandError {
   return new GitHubCommandError({
     args,
@@ -2782,6 +2791,58 @@ describe("ForgeService", () => {
       headRefName: "feature/fork",
     });
     expect(runner.calls[2]?.args).toContain("forkOwner:feature/fork");
+  });
+
+  it("falls back to the known head ref when the checkout has detached HEAD", async () => {
+    const runner = createScriptedRunner([
+      { error: detachedHeadError() },
+      JSON.stringify([
+        {
+          number: 89,
+          url: "https://github.com/repoOwner/repo/pull/89",
+          title: "Detached worktree PR",
+          state: "OPEN",
+          isDraft: false,
+          baseRefName: "main",
+          headRefName: "feature/detached",
+          mergedAt: null,
+          statusCheckRollup: [],
+          reviewDecision: null,
+          headRepositoryOwner: { login: "repoOwner" },
+        },
+      ]),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/detached",
+      headRepositoryOwner: "repoOwner",
+    });
+
+    expect(status).toMatchObject({
+      number: 89,
+      headRefName: "feature/detached",
+    });
+    expect(runner.calls.slice(0, 2).map((call) => call.args)).toEqual([
+      ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
+      [
+        "pr",
+        "list",
+        "--state",
+        "all",
+        "--head",
+        "feature/detached",
+        "--limit",
+        "10",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
+      ],
+    ]);
   });
 
   it("propagates DNS errors while resolving the current PR view", async () => {
