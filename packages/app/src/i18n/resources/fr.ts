@@ -276,6 +276,14 @@ export const fr: TranslationResources = {
     },
   },
   message: {
+    diagram: {
+      diagram: "Diagramme",
+      zoomIn: "Zoomer",
+      zoomOut: "Dézoomer",
+      resetZoom: "Réinitialiser la vue",
+      viewSource: "Afficher la source",
+      viewDiagram: "Afficher le diagramme",
+    },
     actions: {
       copyCode: "Copier le code",
       copyTurn: "Copier le tour",
