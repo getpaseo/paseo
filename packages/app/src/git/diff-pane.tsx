@@ -2061,6 +2061,9 @@ interface SharedDiffViewProps {
       };
 }
 
+type WorkingTreeDiffMode = Extract<SharedDiffViewProps["mode"], { kind: "working_tree" }>;
+const EMPTY_WORKING_TREE_DIFF_MODE: Partial<WorkingTreeDiffMode> = {};
+
 export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffViewProps) {
   const isCompact = useIsCompactFormFactor();
   const { layout, wrapLines, codeFontSize, monoFontFamily } = displayPreferences;
@@ -2074,7 +2077,22 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       ...(trimmedMonoFontFamily ? { fontFamily: trimmedMonoFontFamily } : null),
     };
   }, [codeFontSize, diffBodyLineHeight, monoFontFamily]);
-  const viewMode = mode.kind === "working_tree" ? mode.viewMode : "flat";
+  const workingTreeMode = mode.kind === "working_tree" ? mode : EMPTY_WORKING_TREE_DIFF_MODE;
+  const {
+    viewMode = "flat",
+    collapsedFolders: collapsedFoldersArray = EMPTY_PATH_LIST,
+    onFilePress,
+    onOpenFile,
+    onAddToChat,
+    workspaceFileDragScope,
+    onCopyPath,
+    onCopyRelativePath,
+    onReveal,
+    revealTargetName,
+    onDownload,
+    onDuplicate,
+    onRevert,
+  } = workingTreeMode;
   const expandedPathsArray = useMemo(() => {
     if (mode.kind === "working_tree") {
       return mode.expandedPaths;
@@ -2085,26 +2103,12 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
     return files.map((file) => file.path);
   }, [files, mode]);
   const expandedPaths = useMemo(() => new Set(expandedPathsArray), [expandedPathsArray]);
-  const collapsedFoldersArray =
-    mode.kind === "working_tree" ? mode.collapsedFolders : EMPTY_PATH_LIST;
   const collapsedFolders = useMemo(() => new Set(collapsedFoldersArray), [collapsedFoldersArray]);
   const stickyHeaders = mode.kind !== "commit";
   const interactive = mode.kind !== "commit";
   const reviewActions = mode.kind === "commit" ? undefined : mode.reviewActions;
-  const onFilePress = mode.kind === "working_tree" ? mode.onFilePress : undefined;
   const focusPath = mode.kind === "working_tab" ? mode.focusPath : undefined;
   const focusRequestId = mode.kind === "working_tab" ? mode.focusRequestId : undefined;
-  const onOpenFile = mode.kind === "working_tree" ? mode.onOpenFile : undefined;
-  const onAddToChat = mode.kind === "working_tree" ? mode.onAddToChat : undefined;
-  const workspaceFileDragScope =
-    mode.kind === "working_tree" ? mode.workspaceFileDragScope : undefined;
-  const onCopyPath = mode.kind === "working_tree" ? mode.onCopyPath : undefined;
-  const onCopyRelativePath = mode.kind === "working_tree" ? mode.onCopyRelativePath : undefined;
-  const onReveal = mode.kind === "working_tree" ? mode.onReveal : undefined;
-  const revealTargetName = mode.kind === "working_tree" ? mode.revealTargetName : undefined;
-  const onDownload = mode.kind === "working_tree" ? mode.onDownload : undefined;
-  const onDuplicate = mode.kind === "working_tree" ? mode.onDuplicate : undefined;
-  const onRevert = mode.kind === "working_tree" ? mode.onRevert : undefined;
   // Keep selection independent from expansion so future keyboard actions (such as R to rename)
   // can target the current VCS file or folder without changing its open state.
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
