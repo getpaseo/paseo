@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
-import {
-  useHasWindowChromeObstruction,
-  useWindowChromeRowPlacement,
-  WindowChromeSafeArea,
-} from "@/utils/desktop-window";
+import { useWindowChromeRowPlacement, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { isWeb } from "@/constants/platform";
 
 interface WindowChromeHeaderRowProps {
@@ -74,19 +70,11 @@ export function WindowChromeHeaderRow({
     });
   }, [horizontalPadding]);
 
-  const hasTopRightControls = useHasWindowChromeObstruction("top-right");
   const placement = useWindowChromeRowPlacement({
     availableWidth,
     contentWidth,
     previousPlacement,
   });
-
-  // Sharing the line with the controls means the row is only as wide as the padding leaves it,
-  // so spreading its children wastes that width on a gap and pushes the trailing button toward
-  // the controls. Pack them instead. A row with a growing child looks the same either way --
-  // the child still fills the middle -- so only rows that were relying on the gap change.
-  const contentStyle =
-    placement === "inline" && hasTopRightControls ? styles.packedContent : styles.content;
 
   useEffect(() => {
     setPreviousPlacement((current) => (current === placement ? current : placement));
@@ -111,7 +99,12 @@ export function WindowChromeHeaderRow({
   const handleContentLayout = useCallback(() => measureContentWidth(), [measureContentWidth]);
 
   const content = (
-    <View ref={contentRef} collapsable={false} onLayout={handleContentLayout} style={contentStyle}>
+    <View
+      ref={contentRef}
+      collapsable={false}
+      onLayout={handleContentLayout}
+      style={styles.content}
+    >
       {children}
     </View>
   );
@@ -153,12 +146,5 @@ const styles = {
     flexDirection: "row" as const,
     alignItems: "center" as const,
     justifyContent: "space-between" as const,
-  },
-  packedContent: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    justifyContent: "flex-start" as const,
   },
 };
