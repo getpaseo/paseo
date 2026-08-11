@@ -320,10 +320,10 @@ const CATALOG_DATA = [
     id: "reasonix",
     title: "Reasonix",
     description: "Cache-first DeepSeek coding agent for the terminal",
-    version: "manual",
+    version: "1.24.1",
     iconId: "reasonix",
     installLink: "https://github.com/esengine/DeepSeek-Reasonix",
-    command: ["reasonix", "acp"],
+    command: ["npx", "-y", "reasonix@1.24.1", "acp"],
   },
   {
     id: "sigit",
