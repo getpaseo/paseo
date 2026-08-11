@@ -14,6 +14,8 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
   readonly modelCalls: Array<{ agentId: string; modelId: string | null }> = [];
   readonly featureCalls: Array<{ agentId: string; featureId: string; value: unknown }> = [];
   readonly thinkingCalls: Array<{ agentId: string; thinkingOptionId: string | null }> = [];
+  /** Cross-operation ordering, which the per-operation arrays above cannot show. */
+  readonly callLog: string[] = [];
   modeNotice: AgentProviderNotice | null = null;
   thinkingNotice: AgentProviderNotice | null = null;
   loadFailure: Error | null = null;
@@ -26,17 +28,20 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
 
   async setMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
     this.modeCalls.push({ agentId, modeId });
+    this.callLog.push("mode");
     if (this.failWith) throw this.failWith;
     return this.modeNotice;
   }
 
   async setModel(agentId: string, modelId: string | null): Promise<void> {
     this.modelCalls.push({ agentId, modelId });
+    this.callLog.push("model");
     if (this.failWith) throw this.failWith;
   }
 
   async setFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
     this.featureCalls.push({ agentId, featureId, value });
+    this.callLog.push(`feature:${featureId}`);
     if (this.failWith) throw this.failWith;
   }
 
@@ -45,6 +50,7 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
     thinkingOptionId: string | null,
   ): Promise<AgentProviderNotice | null> {
     this.thinkingCalls.push({ agentId, thinkingOptionId });
+    this.callLog.push("thinking");
     if (this.failWith) throw this.failWith;
     return this.thinkingNotice;
   }
@@ -300,6 +306,125 @@ describe("AgentConfigSession", () => {
     expect(emitted[1]).toEqual({
       type: "set_agent_thinking_response",
       payload: { requestId: "req-1", agentId: "agent-1", accepted: false, error: "thinking boom" },
+    });
+  });
+
+  test("apply: sets model before thinking and features last, in one accepted response", async () => {
+    const { subsystem, emitted, operations } = makeSubsystem();
+
+    await subsystem.handleAgentConfigApplyRequest({
+      type: "agent.config.apply.request",
+      agentId: "agent-1",
+      config: {
+        modelId: "opus-5",
+        modeId: "plan",
+        thinkingOptionId: "high",
+        featureValues: { webSearch: true },
+      },
+      requestId: "req-1",
+    });
+
+    expect(operations.callLog).toEqual(["model", "mode", "thinking", "feature:webSearch"]);
+    expect(operations.modelCalls).toEqual([{ agentId: "agent-1", modelId: "opus-5" }]);
+    expect(operations.modeCalls).toEqual([{ agentId: "agent-1", modeId: "plan" }]);
+    expect(operations.thinkingCalls).toEqual([{ agentId: "agent-1", thinkingOptionId: "high" }]);
+    expect(operations.featureCalls).toEqual([
+      { agentId: "agent-1", featureId: "webSearch", value: true },
+    ]);
+    expect(operations.loadedAgentIds).toEqual(["agent-1"]);
+    expect(emitted).toEqual([
+      {
+        type: "agent.config.apply.response",
+        payload: {
+          requestId: "req-1",
+          agentId: "agent-1",
+          accepted: true,
+          error: null,
+          notice: null,
+        },
+      },
+    ]);
+  });
+
+  test("apply: leaves omitted fields alone", async () => {
+    const { subsystem, operations } = makeSubsystem();
+
+    await subsystem.handleAgentConfigApplyRequest({
+      type: "agent.config.apply.request",
+      agentId: "agent-1",
+      config: { modelId: "haiku-4.5" },
+      requestId: "req-1",
+    });
+
+    expect(operations.callLog).toEqual(["model"]);
+  });
+
+  test("apply: clears model and thinking when they are explicitly null", async () => {
+    const { subsystem, operations } = makeSubsystem();
+
+    await subsystem.handleAgentConfigApplyRequest({
+      type: "agent.config.apply.request",
+      agentId: "agent-1",
+      config: { modelId: null, thinkingOptionId: null },
+      requestId: "req-1",
+    });
+
+    expect(operations.modelCalls).toEqual([{ agentId: "agent-1", modelId: null }]);
+    expect(operations.thinkingCalls).toEqual([{ agentId: "agent-1", thinkingOptionId: null }]);
+  });
+
+  test("apply: reports the first notice and still runs the rest of the bundle", async () => {
+    const { subsystem, emitted, operations } = makeSubsystem();
+    operations.modeNotice = { type: "info", message: "Switched to plan mode" };
+    operations.thinkingNotice = { type: "warning", message: "Thinking budget reduced" };
+
+    await subsystem.handleAgentConfigApplyRequest({
+      type: "agent.config.apply.request",
+      agentId: "agent-1",
+      config: { modeId: "plan", thinkingOptionId: "high", featureValues: { webSearch: true } },
+      requestId: "req-1",
+    });
+
+    expect(operations.callLog).toEqual(["mode", "thinking", "feature:webSearch"]);
+    expect(emitted).toEqual([
+      {
+        type: "agent.config.apply.response",
+        payload: {
+          requestId: "req-1",
+          agentId: "agent-1",
+          accepted: true,
+          error: null,
+          notice: { type: "info", message: "Switched to plan mode" },
+        },
+      },
+    ]);
+  });
+
+  test("apply: a mid-bundle failure rejects the whole request", async () => {
+    const { subsystem, emitted, operations } = makeSubsystem();
+    operations.failWith = new Error("apply boom");
+
+    await subsystem.handleAgentConfigApplyRequest({
+      type: "agent.config.apply.request",
+      agentId: "agent-1",
+      config: { modelId: "opus-5", modeId: "plan" },
+      requestId: "req-1",
+    });
+
+    expect(operations.callLog).toEqual(["model"]);
+    expect(emitted.map((m) => m.type)).toEqual(["activity_log", "agent.config.apply.response"]);
+    expect(emitted[0]).toEqual({
+      type: "activity_log",
+      payload: {
+        id: expect.any(String),
+        timestamp: expect.any(Date),
+        type: "error",
+        content: "Failed to apply agent config: apply boom",
+      },
+    });
+    expect(emitted[1]).toEqual({
+      type: "agent.config.apply.response",
+      payload: { requestId: "req-1", agentId: "agent-1", accepted: false, error: "apply boom" },
     });
   });
 });

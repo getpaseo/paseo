@@ -1,12 +1,13 @@
 import type pino from "pino";
 import { v4 as uuidv4 } from "uuid";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
+import type { AgentConfigApply } from "@getpaseo/protocol/messages";
 import type { AgentProviderNotice } from "../../agent/agent-sdk-types.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 
 /**
- * The four agent-config response messages share one payload shape; deriving the
- * type keeps it pinned to the protocol schema instead of restating it.
+ * The agent-config response messages share one payload shape; deriving the type
+ * keeps it pinned to the protocol schema instead of restating it.
  */
 type AgentActionResponsePayload = Extract<
   SessionOutboundMessage,
@@ -51,11 +52,11 @@ interface ConfigChange {
 }
 
 /**
- * A client's per-agent config surface: set mode, model, feature, and thinking
- * option. Each request shares one envelope — log, run the mutation, then emit the
- * accepted response, or on failure emit an activity_log error frame followed by
- * the rejected response. Reaches no state beyond the injected operations and the
- * outbound channel.
+ * A client's per-agent config surface: set mode, model, feature, or thinking
+ * option one at a time, or apply all of them together. Each request shares one
+ * envelope — log, run the mutation, then emit the accepted response, or on
+ * failure emit an activity_log error frame followed by the rejected response.
+ * Reaches no state beyond the injected operations and the outbound channel.
  */
 export class AgentConfigSession {
   private readonly host: AgentConfigSessionHost;
@@ -132,6 +133,53 @@ export class AgentConfigSession {
       run: () => this.operations.setThinking(agentId, thinkingOptionId),
       emitResponse: (payload) => this.host.emit({ type: "set_agent_thinking_response", payload }),
     });
+  }
+
+  handleAgentConfigApplyRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.config.apply.request" }>,
+  ): Promise<void> {
+    const { agentId, config, requestId } = msg;
+    return this.applyConfigChange({
+      agentId,
+      requestId,
+      logLabel: "agent.config.apply.request",
+      logFields: { agentId, requestId, config },
+      failureText: "Failed to apply agent config",
+      run: () => this.applyBundle(agentId, config),
+      emitResponse: (payload) => this.host.emit({ type: "agent.config.apply.response", payload }),
+    });
+  }
+
+  /**
+   * Model first, because a thinking option only means anything against the model
+   * that offers it; features last so they settle on top of the rest. An omitted
+   * field is left alone. The first notice produced is the one the client sees —
+   * later steps still run, so a notice never truncates the bundle.
+   */
+  private async applyBundle(
+    agentId: string,
+    config: AgentConfigApply,
+  ): Promise<AgentProviderNotice | null> {
+    let notice: AgentProviderNotice | null = null;
+
+    if (config.modelId !== undefined) {
+      await this.operations.setModel(agentId, config.modelId);
+    }
+    if (config.modeId !== undefined) {
+      // Await first, assign second: `notice ??= await ...` would skip the call
+      // entirely once an earlier step produced a notice.
+      const modeNotice = await this.operations.setMode(agentId, config.modeId);
+      notice ??= modeNotice;
+    }
+    if (config.thinkingOptionId !== undefined) {
+      const thinkingNotice = await this.operations.setThinking(agentId, config.thinkingOptionId);
+      notice ??= thinkingNotice;
+    }
+    for (const [featureId, value] of Object.entries(config.featureValues ?? {})) {
+      await this.operations.setFeature(agentId, featureId, value);
+    }
+
+    return notice;
   }
 
   private async applyConfigChange(change: ConfigChange): Promise<void> {

@@ -110,7 +110,11 @@ import type {
   AgentProvider,
   AgentSessionConfig,
 } from "@getpaseo/protocol/agent-types";
-import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
+import type {
+  AgentConfigApply,
+  MutableDaemonConfig,
+  MutableDaemonConfigPatch,
+} from "@getpaseo/protocol/messages";
 import { isRelayClientWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
 import {
@@ -3127,6 +3131,43 @@ export class DaemonClient {
     });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setAgentThinkingOption rejected");
+    }
+    return payload.notice ?? null;
+  }
+
+  /**
+   * Applies a whole agent-config bundle in one request. Use this instead of
+   * chaining the single-field setters when the values belong together — a chain
+   * that fails halfway leaves the agent in a config the caller never asked for.
+   * Gated on `server_info.features.agentConfigApply`.
+   */
+  async applyAgentConfig(
+    agentId: string,
+    config: AgentConfigApply,
+  ): Promise<AgentProviderNotice | null> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.config.apply.request",
+      agentId,
+      config,
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "agent.config.apply.response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "applyAgentConfig rejected");
     }
     return payload.notice ?? null;
   }
