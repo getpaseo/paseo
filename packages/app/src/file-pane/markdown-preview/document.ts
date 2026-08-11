@@ -18,6 +18,14 @@ export function parseMarkdownPreviewDocument(source: string): MarkdownPreviewDoc
     return { frontMatter: [], body: source };
   }
 
+  try {
+    return parseFrontMatter(match, source);
+  } catch {
+    return { frontMatter: [], body: source };
+  }
+}
+
+function parseFrontMatter(match: RegExpExecArray, source: string): MarkdownPreviewDocument {
   const document = parseDocument(match[1], { schema: "core" });
   if (document.errors.length > 0) {
     return { frontMatter: [], body: source };

@@ -53,6 +53,21 @@ Body
     });
   });
 
+  it("leaves the document intact when YAML conversion rejects excessive aliases", () => {
+    const aliases = Array.from({ length: 101 }, () => "*item").join(", ");
+    const source = `---
+item: &item value
+items: [${aliases}]
+---
+Body
+`;
+
+    expect(parseMarkdownPreviewDocument(source)).toEqual({
+      frontMatter: [],
+      body: source,
+    });
+  });
+
   it("does not treat a thematic break inside the document as front matter", () => {
     const source = `Introduction
 
