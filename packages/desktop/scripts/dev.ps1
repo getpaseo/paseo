@@ -32,7 +32,7 @@ try {
 
 # Set EXPO_DEV_URL in the environment so Electron inherits it
 $env:EXPO_DEV_URL = "http://localhost:$($env:EXPO_PORT)"
-$DevBuildLabel = (git -C $RootDir branch --show-current).Trim()
+$env:EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL = (git -C $RootDir branch --show-current).Trim()
 
 $env:PASEO_DEV_ROOT = $RootDir
 $env:PASEO_DEV_RUNTIME_FALLBACK_ROOT = $RootDir
@@ -115,5 +115,5 @@ concurrently `
     --kill-others `
     --names "metro,electron" `
     --prefix-colors "magenta,cyan" `
-    "cd `"$AppDir`" && cross-env PASEO_WEB_PLATFORM=electron EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL=$DevBuildLabel npx expo start --port $($env:EXPO_PORT)" `
+    "cd `"$AppDir`" && cross-env PASEO_WEB_PLATFORM=electron npx expo start --port $($env:EXPO_PORT)" `
     "npx wait-on tcp:$($env:EXPO_PORT) && npx electron `"$DesktopDir`""
