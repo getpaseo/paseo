@@ -23,6 +23,18 @@ paseo logs <id>                      # View agent timeline
 paseo stop <id>                      # Stop an agent
 ```
 
+## Provider diagnostics
+
+Ask the daemon to inspect the provider environment it actually uses:
+
+```bash
+paseo provider diagnostic claude
+paseo provider diagnostic codex --json
+paseo provider diagnostic opencode --host devbox:6767
+```
+
+The diagnostic includes the configured command, daemon `PATH` and shell, matching binaries, resolved path, version, model count, and provider status. Use `--host` for a remote daemon. This is the same diagnostic shown under **Settings → your host → Providers → provider → Diagnostic**.
+
 ## Running agents
 
 Use `paseo run` to start a new agent with a task:
