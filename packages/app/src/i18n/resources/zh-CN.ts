@@ -1592,6 +1592,24 @@ export const zhCN: TranslationResources = {
       binaryPreviewUnavailable: "二进制预览不可用",
       failedToLoad: "加载文件失败",
       failedToLoadPreview: "加载文件预览失败",
+      table: {
+        empty: "没有数据行",
+        noMatches: "没有匹配的行",
+        filter: "筛选",
+        filterColumn: "筛选{{column}}",
+        sortColumn: "按{{column}}排序",
+        sortedAscending: "{{column}}，升序",
+        sortedDescending: "{{column}}，降序",
+        unnamedColumn: "未命名列",
+        rowCount: {
+          one: "{{count}} 行",
+          other: "{{count}} 行",
+        },
+        filteredRowCount: {
+          one: "{{count}} 行中的 {{visible}} 行",
+          other: "{{count}} 行中的 {{visible}} 行",
+        },
+      },
       editor: {
         fileSize: "文件大小 {{size}}",
         lines: "{{count}} 行",

@@ -1612,6 +1612,24 @@ export const ar: TranslationResources = {
       binaryPreviewUnavailable: "المعاينة الثنائية غير متاحة",
       failedToLoad: "فشل تحميل الملف",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
+      table: {
+        empty: "لا توجد صفوف",
+        noMatches: "لا توجد صفوف مطابقة",
+        filter: "تصفية",
+        filterColumn: "تصفية {{column}}",
+        sortColumn: "ترتيب حسب {{column}}",
+        sortedAscending: "{{column}}، مرتبة تصاعديًا",
+        sortedDescending: "{{column}}، مرتبة تنازليًا",
+        unnamedColumn: "عمود بدون اسم",
+        rowCount: {
+          one: "{{count}} صف",
+          other: "{{count}} صفوف",
+        },
+        filteredRowCount: {
+          one: "{{visible}} من {{count}} صف",
+          other: "{{visible}} من {{count}} صفوف",
+        },
+      },
       editor: {
         fileSize: "حجم الملف {{size}}",
         lines: "{{count}} سطر",

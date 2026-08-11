@@ -1655,6 +1655,24 @@ export const es: TranslationResources = {
       binaryPreviewUnavailable: "Vista previa binaria no disponible",
       failedToLoad: "No se pudo cargar el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",
+      table: {
+        empty: "Sin filas",
+        noMatches: "Ninguna fila coincide",
+        filter: "Filtrar",
+        filterColumn: "Filtrar {{column}}",
+        sortColumn: "Ordenar por {{column}}",
+        sortedAscending: "{{column}}, orden ascendente",
+        sortedDescending: "{{column}}, orden descendente",
+        unnamedColumn: "Columna sin nombre",
+        rowCount: {
+          one: "{{count}} fila",
+          other: "{{count}} filas",
+        },
+        filteredRowCount: {
+          one: "{{visible}} de {{count}} fila",
+          other: "{{visible}} de {{count}} filas",
+        },
+      },
       editor: {
         fileSize: "Tamaño {{size}}",
         lines: "{{count}} líneas",

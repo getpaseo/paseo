@@ -1646,6 +1646,24 @@ export const ru: TranslationResources = {
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",
       failedToLoad: "Не удалось загрузить файл",
       failedToLoadPreview: "Не удалось загрузить предварительный просмотр файла.",
+      table: {
+        empty: "Нет строк",
+        noMatches: "Нет подходящих строк",
+        filter: "Фильтр",
+        filterColumn: "Фильтровать {{column}}",
+        sortColumn: "Сортировать по {{column}}",
+        sortedAscending: "{{column}}, по возрастанию",
+        sortedDescending: "{{column}}, по убыванию",
+        unnamedColumn: "Столбец без названия",
+        rowCount: {
+          one: "{{count}} строка",
+          other: "{{count}} строк",
+        },
+        filteredRowCount: {
+          one: "{{visible}} из {{count}} строки",
+          other: "{{visible}} из {{count}} строк",
+        },
+      },
       editor: {
         fileSize: "Размер файла {{size}}",
         lines: "Строк: {{count}}",

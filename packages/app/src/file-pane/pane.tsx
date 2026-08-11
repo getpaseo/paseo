@@ -20,7 +20,10 @@ import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
-import { filePreviewRenderKind } from "@/components/file-pane-render-mode";
+import {
+  filePreviewRenderKind,
+  type FilePreviewRenderKind,
+} from "@/components/file-pane-render-mode";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes } from "@/attachments/service";
@@ -36,6 +39,7 @@ import { useAppSettings } from "@/hooks/use-settings";
 import { useLiveFile } from "./live-file/hook";
 import { FilePanelBar } from "./bar";
 import { FileHtmlPreview } from "./html-preview";
+import { FileTablePreview } from "./table/view";
 import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } from "./editor/model";
 import { createFileObservationSource } from "./editor/observation-source";
 import { FileEditorView } from "./editor/view";
@@ -209,6 +213,50 @@ const codeLineStyles = StyleSheet.create((theme) => ({
   },
 }));
 
+interface RenderedTextPreviewProps {
+  renderKind: FilePreviewRenderKind;
+  content: string;
+  filePath: string;
+}
+
+function RenderedTextPreview({ renderKind, content, filePath }: RenderedTextPreviewProps) {
+  if (renderKind === "html") {
+    // The HTML document owns its own scrolling, so no ScrollView wrapper here.
+    return (
+      <View style={styles.previewScrollContainer}>
+        <FileHtmlPreview html={content} testID="file-html-preview" />
+      </View>
+    );
+  }
+
+  if (renderKind === "table") {
+    // Keyed by path so sort and filter state belongs to the file being read, not
+    // to whichever file the pane opened first.
+    return (
+      <View style={styles.previewScrollContainer}>
+        <FileTablePreview
+          key={filePath}
+          content={content}
+          filePath={filePath}
+          testID="file-table-preview"
+        />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.previewScrollContainer}>
+      <RNScrollView
+        style={styles.previewContent}
+        contentContainerStyle={styles.previewMarkdownScrollContent}
+        showsVerticalScrollIndicator
+      >
+        <MarkdownRenderer text={content} />
+      </RNScrollView>
+    </View>
+  );
+}
+
 function FilePreviewBody({
   preview,
   mode,
@@ -290,27 +338,13 @@ function FilePreviewBody({
   }
 
   if (preview.kind === "text") {
-    if (renderKind === "html") {
-      // The HTML document owns its own scrolling, so no ScrollView wrapper here.
+    if (renderKind) {
       return (
-        <View style={styles.previewScrollContainer}>
-          <FileHtmlPreview html={preview.content ?? ""} testID="file-html-preview" />
-        </View>
-      );
-    }
-
-    if (renderKind === "markdown") {
-      return (
-        <View style={styles.previewScrollContainer}>
-          <RNScrollView
-            ref={previewScrollRef}
-            style={styles.previewContent}
-            contentContainerStyle={styles.previewMarkdownScrollContent}
-            showsVerticalScrollIndicator
-          >
-            <MarkdownRenderer text={preview.content ?? ""} />
-          </RNScrollView>
-        </View>
+        <RenderedTextPreview
+          renderKind={renderKind}
+          content={preview.content ?? ""}
+          filePath={filePath}
+        />
       );
     }
 

@@ -1659,6 +1659,24 @@ export const fr: TranslationResources = {
       binaryPreviewUnavailable: "Aperçu binaire indisponible",
       failedToLoad: "Échec du chargement du fichier",
       failedToLoadPreview: "Échec du chargement de l'aperçu du fichier",
+      table: {
+        empty: "Aucune ligne",
+        noMatches: "Aucune ligne correspondante",
+        filter: "Filtrer",
+        filterColumn: "Filtrer {{column}}",
+        sortColumn: "Trier par {{column}}",
+        sortedAscending: "{{column}}, tri croissant",
+        sortedDescending: "{{column}}, tri décroissant",
+        unnamedColumn: "Colonne sans nom",
+        rowCount: {
+          one: "{{count}} ligne",
+          other: "{{count}} lignes",
+        },
+        filteredRowCount: {
+          one: "{{visible}} sur {{count}} ligne",
+          other: "{{visible}} sur {{count}} lignes",
+        },
+      },
       editor: {
         fileSize: "Taille {{size}}",
         lines: "{{count}} lignes",

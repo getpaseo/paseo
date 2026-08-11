@@ -1628,6 +1628,24 @@ export const ja: TranslationResources = {
       binaryPreviewUnavailable: "バイナリプレビューが利用できません",
       failedToLoad: "ファイルの読み込みに失敗しました",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
+      table: {
+        empty: "行がありません",
+        noMatches: "一致する行がありません",
+        filter: "絞り込み",
+        filterColumn: "{{column}}を絞り込み",
+        sortColumn: "{{column}}で並べ替え",
+        sortedAscending: "{{column}}、昇順",
+        sortedDescending: "{{column}}、降順",
+        unnamedColumn: "名称のない列",
+        rowCount: {
+          one: "{{count}}行",
+          other: "{{count}}行",
+        },
+        filteredRowCount: {
+          one: "{{count}}行中{{visible}}行",
+          other: "{{count}}行中{{visible}}行",
+        },
+      },
       editor: {
         fileSize: "ファイルサイズ {{size}}",
         lines: "{{count}} 行",

@@ -1623,6 +1623,24 @@ export const en = {
       binaryPreviewUnavailable: "Binary preview unavailable",
       failedToLoad: "Failed to load file",
       failedToLoadPreview: "Failed to load file preview",
+      table: {
+        empty: "No rows",
+        noMatches: "No matching rows",
+        filter: "Filter",
+        filterColumn: "Filter {{column}}",
+        sortColumn: "Sort by {{column}}",
+        sortedAscending: "{{column}}, sorted ascending",
+        sortedDescending: "{{column}}, sorted descending",
+        unnamedColumn: "Unnamed column",
+        rowCount: {
+          one: "{{count}} row",
+          other: "{{count}} rows",
+        },
+        filteredRowCount: {
+          one: "{{visible}} of {{count}} row",
+          other: "{{visible}} of {{count}} rows",
+        },
+      },
       editor: {
         fileSize: "File size {{size}}",
         lines: "{{count}} lines",
