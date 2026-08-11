@@ -52,10 +52,11 @@ $env:APP_VARIANT = "development"
 $env:EXPO_PUBLIC_LOCAL_DAEMON = "localhost:6768"
 $env:PASEO_LISTEN = "127.0.0.1:6768"
 $env:BROWSER = "none"
+$DevBuildLabel = (git branch --show-current).Trim()
 
 # Run both with concurrently
 concurrently `
     --names "daemon,metro" `
     --prefix-colors "cyan,magenta" `
     "npm run dev:server:watch" `
-    "cd packages/app && npx expo start"
+    "cd packages/app && cross-env EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL=$DevBuildLabel npx expo start"
