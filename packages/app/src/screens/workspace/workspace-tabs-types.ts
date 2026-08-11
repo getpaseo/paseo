@@ -5,4 +5,5 @@ export interface WorkspaceTabDescriptor {
   tabId: string;
   kind: WorkspaceTabTarget["kind"];
   target: WorkspaceTabTarget;
+  title?: string;
 }

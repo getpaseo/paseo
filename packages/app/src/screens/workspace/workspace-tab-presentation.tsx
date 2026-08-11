@@ -79,6 +79,7 @@ function WorkspaceTabPresentationResolverInner({
     serverId,
     workspaceId,
     tabId: tab.tabId,
+    title: tab.title,
   });
   const attributes = usePanelInstanceAttributes({ serverId, workspaceId, tabId: tab.tabId });
 

@@ -54,9 +54,11 @@ function normalizeWorkspaceTab(tab: WorkspaceTab): WorkspaceTab | null {
   if (!target) {
     return null;
   }
+  const title = trimNonEmpty(tab.title);
   return {
     tabId,
     target,
+    ...(title ? { title } : {}),
     createdAt: tab.createdAt,
   };
 }
@@ -98,6 +100,7 @@ function normalizeWorkspacePaneTabs(tabs: WorkspaceTab[]): NormalizeWorkspacePan
         tabId: normalizedTab.tabId,
         kind: normalizedTab.target.kind,
         target: normalizedTab.target,
+        ...(normalizedTab.title ? { title: normalizedTab.title } : {}),
       },
     });
   }

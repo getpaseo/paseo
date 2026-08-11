@@ -104,6 +104,7 @@ interface SplitContainerProps {
   onCloseOtherTabs: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCreateDraftTab: (input: { paneId?: string }) => void;
   onCreateTerminalTab: (input: { paneId?: string; profile?: TerminalProfileInput }) => void;
+  onCreateFileTab: (input: { paneId?: string }) => void;
   onCreateBrowserTab: (input: { paneId?: string }) => void;
   showCreateBrowserTab?: boolean;
   buildPaneContentModel: (input: {
@@ -383,6 +384,7 @@ export function SplitContainer({
   onCloseOtherTabs,
   onCreateDraftTab,
   onCreateTerminalTab,
+  onCreateFileTab,
   onCreateBrowserTab,
   showCreateBrowserTab,
   buildPaneContentModel,
@@ -603,6 +605,7 @@ export function SplitContainer({
           onCloseOtherTabs={onCloseOtherTabs}
           onCreateDraftTab={onCreateDraftTab}
           onCreateTerminalTab={onCreateTerminalTab}
+          onCreateFileTab={onCreateFileTab}
           onCreateBrowserTab={onCreateBrowserTab}
           showCreateBrowserTab={showCreateBrowserTab}
           buildPaneContentModel={buildPaneContentModel}
@@ -655,6 +658,7 @@ function DragOverlayTabChip({
             tabId: tab.tabId,
             kind: tab.target.kind,
             target: tab.target,
+            ...(tab.title ? { title: tab.title } : {}),
           }
         : null,
     [tab],
@@ -750,6 +754,7 @@ function SplitNodeView({
   onCloseOtherTabs,
   onCreateDraftTab,
   onCreateTerminalTab,
+  onCreateFileTab,
   onCreateBrowserTab,
   showCreateBrowserTab,
   buildPaneContentModel,
@@ -808,6 +813,7 @@ function SplitNodeView({
           onCloseOtherTabs={onCloseOtherTabs}
           onCreateDraftTab={onCreateDraftTab}
           onCreateTerminalTab={onCreateTerminalTab}
+          onCreateFileTab={onCreateFileTab}
           onCreateBrowserTab={onCreateBrowserTab}
           showCreateBrowserTab={showCreateBrowserTab}
           buildPaneContentModel={buildPaneContentModel}
@@ -858,6 +864,7 @@ function SplitNodeView({
               onCloseOtherTabs={onCloseOtherTabs}
               onCreateDraftTab={onCreateDraftTab}
               onCreateTerminalTab={onCreateTerminalTab}
+              onCreateFileTab={onCreateFileTab}
               onCreateBrowserTab={onCreateBrowserTab}
               showCreateBrowserTab={showCreateBrowserTab}
               buildPaneContentModel={buildPaneContentModel}
@@ -914,6 +921,7 @@ function SplitPaneView({
   onCloseOtherTabs,
   onCreateDraftTab,
   onCreateTerminalTab,
+  onCreateFileTab,
   onCreateBrowserTab,
   showCreateBrowserTab,
   buildPaneContentModel,
@@ -1060,6 +1068,7 @@ function SplitPaneView({
             onCloseOtherTabs={handleCloseOtherTabs}
             onCreateDraftTab={onCreateDraftTab}
             onCreateTerminalTab={onCreateTerminalTab}
+            onCreateFileTab={onCreateFileTab}
             onCreateBrowserTab={onCreateBrowserTab}
             showCreateBrowserTab={showCreateBrowserTab}
             onReorderTabs={handleReorderTabs}

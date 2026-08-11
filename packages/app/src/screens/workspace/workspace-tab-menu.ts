@@ -151,6 +151,9 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "working_diff") {
     return `workspace-working-diff-close-${encodeFilePathForPathSegment(buildDeterministicWorkspaceTabId(tab.target))}`;
   }
+  if (tab.target.kind === "scratch_file") {
+    return `workspace-scratch-file-close-${encodeFilePathForPathSegment(tab.target.fileId)}`;
+  }
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
 }
 
@@ -234,7 +237,12 @@ export function buildWorkspaceTabMenuEntries(
     });
   }
 
-  if (tab.target.kind === "agent" || tab.target.kind === "terminal") {
+  if (
+    tab.target.kind === "agent" ||
+    tab.target.kind === "terminal" ||
+    tab.target.kind === "file" ||
+    tab.target.kind === "scratch_file"
+  ) {
     entries.push({
       kind: "item",
       key: "rename",

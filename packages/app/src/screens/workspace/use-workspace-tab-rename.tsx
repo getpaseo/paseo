@@ -8,7 +8,7 @@ import { useSessionStore } from "@/stores/session-store";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
 interface RenamingTabState {
-  kind: "terminal" | "agent";
+  kind: "terminal" | "agent" | "file" | "scratch_file";
   id: string;
   currentTitle: string;
 }
@@ -16,6 +16,8 @@ interface RenamingTabState {
 interface UseWorkspaceTabRenameInput {
   client: DaemonClient | null;
   normalizedServerId: string;
+  workspaceKey: string | null;
+  renameWorkspaceTab: (workspaceKey: string, tabId: string, title: string) => void;
   queryClient: QueryClient;
   terminalsData: ListTerminalsResponse["payload"] | undefined;
   terminalsQueryKey: readonly unknown[];
@@ -31,7 +33,15 @@ interface UseWorkspaceTabRenameResult {
 export function useWorkspaceTabRename(
   input: UseWorkspaceTabRenameInput,
 ): UseWorkspaceTabRenameResult {
-  const { client, normalizedServerId, queryClient, terminalsData, terminalsQueryKey } = input;
+  const {
+    client,
+    normalizedServerId,
+    workspaceKey,
+    renameWorkspaceTab,
+    queryClient,
+    terminalsData,
+    terminalsQueryKey,
+  } = input;
   const { t } = useTranslation();
   const [renamingTab, setRenamingTab] = useState<RenamingTabState | null>(null);
 
@@ -50,18 +60,34 @@ export function useWorkspaceTabRename(
           useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
         const currentTitle = agent?.title ?? "";
         setRenamingTab({ kind: "agent", id: agentId, currentTitle });
+        return;
+      }
+      if (tab.target.kind === "file" || tab.target.kind === "scratch_file") {
+        const currentTitle =
+          tab.title?.trim() ||
+          (tab.target.kind === "file"
+            ? (tab.target.path.split("/").findLast(Boolean) ?? tab.target.path)
+            : t("workspace.tabs.fallback.file"));
+        setRenamingTab({ kind: tab.target.kind, id: tab.tabId, currentTitle });
       }
     },
-    [normalizedServerId, terminalsData],
+    [normalizedServerId, t, terminalsData],
   );
 
   const handleRenameModalSubmit = useCallback(
     async (nextTitle: string) => {
       if (!renamingTab) return;
+      const trimmed = nextTitle.trim();
+      if (renamingTab.kind === "file" || renamingTab.kind === "scratch_file") {
+        if (!workspaceKey) {
+          throw new Error(t("workspace.terminal.hostDisconnected"));
+        }
+        renameWorkspaceTab(workspaceKey, renamingTab.id, trimmed);
+        return;
+      }
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      const trimmed = nextTitle.trim();
       if (renamingTab.kind === "terminal") {
         const result = await client.renameTerminal({
           terminalId: renamingTab.id,
@@ -81,7 +107,16 @@ export function useWorkspaceTabRename(
         queryKey: ["allAgents", normalizedServerId],
       });
     },
-    [client, normalizedServerId, queryClient, renamingTab, terminalsQueryKey, t],
+    [
+      client,
+      normalizedServerId,
+      queryClient,
+      renameWorkspaceTab,
+      renamingTab,
+      terminalsQueryKey,
+      t,
+      workspaceKey,
+    ],
   );
 
   const handleRenameModalClose = useCallback(() => {
@@ -108,10 +143,12 @@ export function WorkspaceTabRenameModal({
   onSubmit,
 }: WorkspaceTabRenameModalProps) {
   const { t } = useTranslation();
-  const title =
-    renamingTab?.kind === "terminal"
-      ? t("workspace.tabs.menu.renameTerminal")
-      : t("workspace.tabs.menu.renameAgent");
+  let title = t("workspace.tabs.menu.renameFile");
+  if (renamingTab?.kind === "terminal") {
+    title = t("workspace.tabs.menu.renameTerminal");
+  } else if (renamingTab?.kind === "agent") {
+    title = t("workspace.tabs.menu.renameAgent");
+  }
   const initialValue = renamingTab?.currentTitle ?? "";
   const testID = renamingTab
     ? `workspace-tab-rename-modal-${renamingTab.kind}-${renamingTab.id}`

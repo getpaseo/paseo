@@ -23,6 +23,7 @@ import {
   ChevronDown,
   Columns2,
   Copy,
+  FileText,
   Pencil,
   RotateCw,
   Rows2,
@@ -106,6 +107,7 @@ const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedGlobe = withUnistyles(Globe);
+const ThemedFileText = withUnistyles(FileText);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedRows2 = withUnistyles(Rows2);
 const ThemedPlus = withUnistyles(Plus);
@@ -115,6 +117,7 @@ const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMut
 const AGENT_ICON = <ThemedSquarePen size={14} uniProps={mutedColorMapping} />;
 const TERMINAL_ICON = <ThemedSquareTerminal size={14} uniProps={mutedColorMapping} />;
 const BROWSER_ICON = <ThemedGlobe size={14} uniProps={mutedColorMapping} />;
+const FILE_ICON = <ThemedFileText size={14} uniProps={mutedColorMapping} />;
 
 const DRAFT_TARGET: PinnedTabTarget = { kind: "draft" };
 const TERMINAL_TARGET: PinnedTabTarget = { kind: "terminal" };
@@ -211,6 +214,7 @@ function WorkspaceInlineAddTabButton({
 interface WorkspaceTabRowExtrasProps {
   onCreateAgentTab: () => void;
   onCreateTerminal: () => void;
+  onCreateFile: () => void;
   onCreateBrowser: () => void;
   onCreateTerminalWithProfile: (profile: TerminalProfileInput) => void;
   onEditProfiles: () => void;
@@ -222,6 +226,7 @@ interface WorkspaceTabRowExtrasProps {
 function WorkspaceTabRowExtras({
   onCreateAgentTab,
   onCreateTerminal,
+  onCreateFile,
   onCreateBrowser,
   onCreateTerminalWithProfile,
   onEditProfiles,
@@ -289,6 +294,13 @@ function WorkspaceTabRowExtras({
             disabled={terminalDisabled}
             onSelect={terminalDisabled ? undefined : onCreateTerminal}
           />
+          <DropdownMenuItem
+            testID="workspace-new-tab-menu-file"
+            leading={FILE_ICON}
+            onSelect={onCreateFile}
+          >
+            {t("workspace.tabs.actions.newFile")}
+          </DropdownMenuItem>
           {showCreateBrowserTab ? (
             <PinnableMenuItem
               testID="workspace-new-tab-menu-browser"
@@ -428,6 +440,7 @@ interface WorkspaceDesktopTabsRowProps {
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
   onCreateDraftTab: (input: { paneId?: string }) => void;
   onCreateTerminalTab: (input: { paneId?: string; profile?: TerminalProfileInput }) => void;
+  onCreateFileTab: (input: { paneId?: string }) => void;
   onCreateBrowserTab: (input: { paneId?: string }) => void;
   showCreateBrowserTab?: boolean;
   disableCreateTerminal?: boolean;
@@ -445,10 +458,20 @@ interface WorkspaceDesktopTabsRowProps {
 
 function getFallbackTabLabel(
   tab: WorkspaceTabDescriptor,
-  labels: { newAgent: string; setup: string; terminal: string; agent: string; changes: string },
+  labels: {
+    newAgent: string;
+    setup: string;
+    terminal: string;
+    file: string;
+    agent: string;
+    changes: string;
+  },
 ): string {
   if (tab.target.kind === "draft") {
     return labels.newAgent;
+  }
+  if (tab.title?.trim()) {
+    return tab.title.trim();
   }
   if (tab.target.kind === "setup") {
     return labels.setup;
@@ -458,6 +481,9 @@ function getFallbackTabLabel(
   }
   if (tab.target.kind === "file") {
     return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
+  }
+  if (tab.target.kind === "scratch_file") {
+    return labels.file;
   }
   if (tab.target.kind === "working_diff") {
     return labels.changes;
@@ -774,6 +800,7 @@ export function WorkspaceDesktopTabsRow({
   onCloseOtherTabs,
   onCreateDraftTab,
   onCreateTerminalTab,
+  onCreateFileTab,
   onCreateBrowserTab,
   showCreateBrowserTab = false,
   disableCreateTerminal = false,
@@ -840,6 +867,7 @@ export function WorkspaceDesktopTabsRow({
       newAgent: t("workspace.tabs.fallback.newAgent"),
       setup: t("workspace.tabs.fallback.setup"),
       terminal: t("workspace.tabs.fallback.terminal"),
+      file: t("workspace.tabs.fallback.file"),
       agent: t("workspace.tabs.fallback.agent"),
       changes: t("panels.diff.changesLabel"),
     }),
@@ -901,6 +929,10 @@ export function WorkspaceDesktopTabsRow({
   const handleCreateTerminal = useCallback(() => {
     onCreateTerminalTab({ paneId });
   }, [onCreateTerminalTab, paneId]);
+
+  const handleCreateFile = useCallback(() => {
+    onCreateFileTab({ paneId });
+  }, [onCreateFileTab, paneId]);
 
   const handleCreateTerminalWithProfile = useCallback(
     (profile: TerminalProfileInput) => {
@@ -1063,6 +1095,7 @@ export function WorkspaceDesktopTabsRow({
         <WorkspaceTabRowExtras
           onCreateAgentTab={handleCreateAgentTab}
           onCreateTerminal={handleCreateTerminal}
+          onCreateFile={handleCreateFile}
           onCreateBrowser={handleCreateBrowser}
           onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
           onEditProfiles={handleEditProfiles}

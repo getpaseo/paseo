@@ -233,6 +233,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
 
   it("includes copy file path for file tabs", () => {
     const onCopyFilePath = vi.fn();
+    const onRenameTab = vi.fn();
     const fileTab: WorkspaceTabDescriptor = {
       key: "file_abc",
       tabId: "file_abc",
@@ -250,7 +251,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyTerminalId: vi.fn(),
       onCopyFilePath,
       onReloadAgent: vi.fn(),
-      onRenameTab: vi.fn(),
+      onRenameTab,
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -261,7 +262,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(labels[0]).toBe("Copy file path");
     expect(labels).not.toContain("Copy resume command");
     expect(labels).not.toContain("Copy agent id");
-    expect(labels).not.toContain("Rename");
+    expect(labels).toContain("Rename");
     expect(labels).not.toContain("Reload agent");
 
     const copyFilePathEntry = entries.find(
@@ -272,6 +273,49 @@ describe("buildWorkspaceTabMenuEntries", () => {
     }
     copyFilePathEntry.onSelect();
     expect(onCopyFilePath).toHaveBeenCalledWith("/some/path.ts");
+
+    const renameEntry = entries.find((entry) => entry.kind === "item" && entry.key === "rename");
+    if (!renameEntry || renameEntry.kind !== "item") {
+      throw new Error("Rename entry missing");
+    }
+    renameEntry.onSelect();
+    expect(onRenameTab).toHaveBeenCalledWith(fileTab);
+  });
+
+  it("allows scratch file tabs to be renamed and uses a stable close id", () => {
+    const onRenameTab = vi.fn();
+    const scratchTab: WorkspaceTabDescriptor = {
+      key: "scratch_file_scratch-1",
+      tabId: "scratch_file_scratch-1",
+      kind: "scratch_file",
+      target: { kind: "scratch_file", fileId: "scratch-1" },
+    };
+    const actions = buildWorkspaceDesktopTabActions({
+      tab: scratchTab,
+      index: 0,
+      tabCount: 1,
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab,
+      onCloseTab: vi.fn(),
+      onCloseTabsToLeft: vi.fn(),
+      onCloseTabsToRight: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const renameEntry = actions.menuEntries.find(
+      (entry) => entry.kind === "item" && entry.key === "rename",
+    );
+    if (!renameEntry || renameEntry.kind !== "item") {
+      throw new Error("Rename entry missing");
+    }
+    renameEntry.onSelect();
+
+    expect(onRenameTab).toHaveBeenCalledWith(scratchTab);
+    expect(actions.closeButtonTestId).toBe("workspace-scratch-file-close-c2NyYXRjaC0x");
   });
 
   it("uses a Changes close id for the working diff tab", () => {

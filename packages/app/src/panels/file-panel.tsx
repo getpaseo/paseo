@@ -15,13 +15,17 @@ const CENTERED_PADDED_STYLE = {
   padding: 16,
 } as const;
 
-function useFilePanelDescriptor(target: { kind: "file"; path: string }) {
+function useFilePanelDescriptor(
+  target: { kind: "file"; path: string },
+  context: { title?: string },
+) {
   const fileName = target.path.split("/").findLast(Boolean) ?? target.path;
+  const label = context.title?.trim() || fileName;
   const icon = useMemo(() => createMaterialFileIcon(fileName), [fileName]);
   return {
-    label: fileName,
+    label,
     subtitle: target.path,
-    tooltip: target.path,
+    tooltip: label === fileName ? target.path : `${label} - ${target.path}`,
     titleState: "ready" as const,
     icon,
     statusBucket: null,

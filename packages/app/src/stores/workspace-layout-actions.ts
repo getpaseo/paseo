@@ -219,6 +219,14 @@ function trimNonEmpty(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeTabTitle(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const title = value.trim();
+  return title ? title.slice(0, 200) : undefined;
+}
+
 function normalizeTabIds(list: unknown): string[] {
   if (!Array.isArray(list)) {
     return [];
@@ -299,6 +307,7 @@ function normalizeWorkspaceTab(value: unknown): WorkspaceTab | null {
   return {
     tabId,
     target,
+    ...(normalizeTabTitle(tab.title) ? { title: normalizeTabTitle(tab.title) } : {}),
     createdAt: typeof tab.createdAt === "number" ? tab.createdAt : Date.now(),
   };
 }
@@ -1228,6 +1237,37 @@ export function focusTabInLayout(input: FocusTabInLayoutInput): WorkspaceLayout 
   return withNormalizedParentTabMap({
     root: focusTabInPane(layout.root, pane.id, input.tabId),
     focusedPaneId: pane.id,
+    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+  });
+}
+
+export function renameTabInLayout(input: {
+  layout: WorkspaceLayout;
+  tabId: string;
+  title: string;
+}): WorkspaceLayout | null {
+  const layout = asInternalLayout(input.layout);
+  const pane = findPaneContainingTab(layout.root, input.tabId);
+  if (!pane) {
+    return null;
+  }
+
+  const title = normalizeTabTitle(input.title);
+  return withNormalizedParentTabMap({
+    root: updatePaneInTree(layout.root, {
+      paneId: pane.id,
+      updater: (currentPane) => ({
+        ...currentPane,
+        tabs: currentPane.tabs.map((tab) => {
+          if (tab.tabId !== input.tabId) {
+            return tab;
+          }
+          const { title: _previousTitle, ...tabWithoutTitle } = tab;
+          return title ? { ...tabWithoutTitle, title } : tabWithoutTitle;
+        }),
+      }),
+    }),
+    focusedPaneId: layout.focusedPaneId,
     parentTabIdByTabId: input.layout.parentTabIdByTabId,
   });
 }

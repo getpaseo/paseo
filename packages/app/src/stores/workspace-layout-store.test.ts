@@ -387,6 +387,43 @@ describe("workspace-layout-store actions", () => {
     ]);
   });
 
+  it("opens scratch file tabs and renames them without changing identity", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    const target = { kind: "scratch_file" as const, fileId: "scratch-1" };
+    const tabId = store.openTabFocused(workspaceKey, target);
+
+    store.renameTab(workspaceKey, tabId!, "Notes");
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(tabId).toBe("scratch_file_scratch-1");
+    expect(collectAllTabs(layout.root)).toEqual([
+      {
+        tabId,
+        target,
+        title: "Notes",
+        createdAt: expect.any(Number),
+      },
+    ]);
+
+    const partialize = workspaceLayoutStore.persist.getOptions().partialize;
+    expect(partialize).toBeTypeOf("function");
+    if (!partialize) {
+      throw new Error("Workspace layout partialize function is missing");
+    }
+    expect(partialize(workspaceLayoutStore.getState())).toMatchObject({
+      layoutByWorkspace: {
+        [workspaceKey]: expect.objectContaining({
+          root: expect.objectContaining({
+            pane: expect.objectContaining({
+              tabs: [expect.objectContaining({ tabId, title: "Notes" })],
+            }),
+          }),
+        }),
+      },
+    });
+  });
+
   it("openTabInBackground inserts a tab without stealing focus", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();

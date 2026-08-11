@@ -30,6 +30,7 @@ import {
   removeTabFromTree,
   reorderFocusedPaneTabsInLayout,
   reorderPaneTabsInLayout,
+  renameTabInLayout,
   retargetTabInLayout,
   splitPaneEmptyInLayout,
   splitPaneInLayout,
@@ -83,6 +84,7 @@ interface WorkspaceLayoutStore {
   closeTab: (workspaceKey: string, tabId: string) => void;
   focusTab: (workspaceKey: string, tabId: string) => void;
   retargetTab: (workspaceKey: string, tabId: string, target: WorkspaceTabTarget) => string | null;
+  renameTab: (workspaceKey: string, tabId: string, title: string) => void;
   convertDraftToAgent: (workspaceKey: string, tabId: string, agentId: string) => string | null;
   reconcileTabs: (workspaceKey: string, snapshot: WorkspaceTabSnapshot) => void;
   resolvePendingAgent: (workspaceKey: string, agentId: string) => void;
@@ -378,6 +380,30 @@ export function createWorkspaceLayoutStore(
               },
             };
           });
+        },
+        renameTab: (workspaceKey, tabId, title) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedTabId = trimNonEmpty(tabId);
+          if (!normalizedWorkspaceKey || !normalizedTabId) {
+            return;
+          }
+
+          const nextLayout = renameTabInLayout({
+            layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
+            tabId: normalizedTabId,
+            title,
+          });
+          if (!nextLayout) {
+            return;
+          }
+
+          set((state) => ({
+            ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            layoutByWorkspace: {
+              ...state.layoutByWorkspace,
+              [normalizedWorkspaceKey]: nextLayout,
+            },
+          }));
         },
         retargetTab: (workspaceKey, tabId, target) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);

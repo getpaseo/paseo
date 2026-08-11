@@ -23,6 +23,7 @@ import {
   ChevronDown,
   Copy,
   Ellipsis,
+  FileText,
   Globe,
   Import as ImportIcon,
   PanelRight,
@@ -81,6 +82,7 @@ import {
   buildWorkspaceTabPersistenceKey,
   type WorkspaceTab,
   type WorkspaceTabTarget,
+  generateWorkspaceScratchFileId,
 } from "@/workspace-tabs/model";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
@@ -172,6 +174,7 @@ import {
   getPanelInstanceAttributes,
   useModifiedPanelTabIds,
 } from "@/panels/panel-instance-attributes";
+import { buildScratchFileStorageKey, useScratchFileStore } from "@/stores/scratch-file-store";
 import { findAdjacentPane } from "@/utils/split-navigation";
 import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
 import { getIsElectron, isNative, isWeb } from "@/constants/platform";
@@ -246,6 +249,7 @@ const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
+const ThemedFileText = withUnistyles(FileText);
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedImport = withUnistyles(ImportIcon);
 const ThemedSettings = withUnistyles(Settings);
@@ -275,6 +279,7 @@ const sourceControlPanelStrokeWidth15 = { strokeWidth: 1.5 };
 
 const MENU_NEW_AGENT_ICON = <ThemedSquarePen size={16} uniProps={mutedColorMapping} />;
 const MENU_NEW_TERMINAL_ICON = <ThemedSquareTerminal size={16} uniProps={mutedColorMapping} />;
+const MENU_NEW_FILE_ICON = <ThemedFileText size={16} uniProps={mutedColorMapping} />;
 const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} uniProps={mutedColorMapping} />;
 const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
@@ -339,12 +344,16 @@ function getFallbackTabOptionLabel(
     setup: string;
     terminal: string;
     browser: string;
+    file: string;
     agent: string;
     changes: string;
   },
 ): string {
   if (tab.target.kind === "draft") {
     return labels.newAgent;
+  }
+  if (tab.title?.trim()) {
+    return tab.title.trim();
   }
   if (tab.target.kind === "setup") {
     return labels.setup;
@@ -357,6 +366,9 @@ function getFallbackTabOptionLabel(
   }
   if (tab.target.kind === "file") {
     return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
+  }
+  if (tab.target.kind === "scratch_file") {
+    return labels.file;
   }
   if (tab.target.kind === "working_diff") {
     return labels.changes;
@@ -375,6 +387,7 @@ function getFallbackTabOptionDescription(
     agent: string;
     terminal: string;
     browser: string;
+    file: string;
     changes: string;
   },
 ): string {
@@ -393,6 +406,15 @@ function getFallbackTabOptionDescription(
   if (tab.target.kind === "browser") {
     return labels.browser;
   }
+  if (tab.target.kind === "file") {
+    return tab.target.path;
+  }
+  if (tab.target.kind === "scratch_file") {
+    return tab.title?.trim() || labels.file;
+  }
+  if (tab.title?.trim()) {
+    return tab.title.trim();
+  }
   if (tab.target.kind === "provider_subagent") {
     return labels.agent;
   }
@@ -402,7 +424,7 @@ function getFallbackTabOptionDescription(
   if (tab.target.kind === "working_diff") {
     return labels.changes;
   }
-  return tab.target.path;
+  return labels.agent;
 }
 
 interface MobileWorkspaceTabSwitcherProps {
@@ -598,6 +620,7 @@ function MobileWorkspaceTabOption({
       setup: t("workspace.tabs.fallback.setup"),
       terminal: t("workspace.tabs.fallback.terminal"),
       browser: t("workspace.tabs.fallback.browser"),
+      file: t("workspace.tabs.fallback.file"),
       agent: t("workspace.tabs.fallback.agent"),
       changes: t("panels.diff.changesLabel"),
     }),
@@ -830,6 +853,7 @@ function useStableTabDescriptorMap(tabDescriptors: WorkspaceTabDescriptor[]) {
         cachedDescriptor &&
         cachedDescriptor.key === tabDescriptor.key &&
         cachedDescriptor.kind === tabDescriptor.kind &&
+        cachedDescriptor.title === tabDescriptor.title &&
         workspaceTabTargetsEqual(cachedDescriptor.target, tabDescriptor.target)
       ) {
         next.set(tabDescriptor.tabId, cachedDescriptor);
@@ -909,12 +933,14 @@ interface WorkspaceHeaderMenuProps {
   copyPathDisabled: boolean;
   menuNewAgentIcon: ReactElement;
   menuNewTerminalIcon: ReactElement;
+  menuNewFileIcon: ReactElement;
   menuNewBrowserIcon: ReactElement;
   menuImportIcon: ReactElement;
   menuCopyIcon: ReactElement;
   menuSettingsIcon: ReactElement;
   onCreateDraftTab: () => void;
   onCreateTerminal: () => void;
+  onCreateFile: () => void;
   onCreateTerminalWithProfile: (profile: TerminalProfileInput) => void;
   onCreateBrowser: () => void;
   onOpenImportSheet: () => void;
@@ -984,12 +1010,14 @@ function WorkspaceHeaderMenu({
   copyPathDisabled,
   menuNewAgentIcon,
   menuNewTerminalIcon,
+  menuNewFileIcon,
   menuNewBrowserIcon,
   menuImportIcon,
   menuCopyIcon,
   menuSettingsIcon,
   onCreateDraftTab,
   onCreateTerminal,
+  onCreateFile,
   onCreateTerminalWithProfile,
   onCreateBrowser,
   onOpenImportSheet,
@@ -1096,6 +1124,13 @@ function WorkspaceHeaderMenu({
         >
           {t("workspace.header.actions.newTerminal")}
         </DropdownMenuItem>
+        <DropdownMenuItem
+          testID="workspace-header-new-file"
+          leading={menuNewFileIcon}
+          onSelect={onCreateFile}
+        >
+          {t("workspace.header.actions.newFile")}
+        </DropdownMenuItem>
         {profiles.map((profile) => (
           <HeaderMenuProfileItem
             key={profile.id}
@@ -1175,12 +1210,14 @@ interface WorkspaceHeaderTitleBarProps {
   copyPathDisabled: boolean;
   menuNewAgentIcon: ReactElement;
   menuNewTerminalIcon: ReactElement;
+  menuNewFileIcon: ReactElement;
   menuNewBrowserIcon: ReactElement;
   menuImportIcon: ReactElement;
   menuCopyIcon: ReactElement;
   menuSettingsIcon: ReactElement;
   onCreateDraftTab: () => void;
   onCreateTerminal: () => void;
+  onCreateFile: () => void;
   onCreateTerminalWithProfile: (profile: TerminalProfileInput) => void;
   onCreateBrowser: () => void;
   onOpenImportSheet: () => void;
@@ -1210,12 +1247,14 @@ function WorkspaceHeaderTitleBar({
   copyPathDisabled,
   menuNewAgentIcon,
   menuNewTerminalIcon,
+  menuNewFileIcon,
   menuNewBrowserIcon,
   menuImportIcon,
   menuCopyIcon,
   menuSettingsIcon,
   onCreateDraftTab,
   onCreateTerminal,
+  onCreateFile,
   onCreateTerminalWithProfile,
   onCreateBrowser,
   onOpenImportSheet,
@@ -1256,12 +1295,14 @@ function WorkspaceHeaderTitleBar({
           copyPathDisabled={copyPathDisabled}
           menuNewAgentIcon={menuNewAgentIcon}
           menuNewTerminalIcon={menuNewTerminalIcon}
+          menuNewFileIcon={menuNewFileIcon}
           menuNewBrowserIcon={menuNewBrowserIcon}
           menuImportIcon={menuImportIcon}
           menuCopyIcon={menuCopyIcon}
           menuSettingsIcon={menuSettingsIcon}
           onCreateDraftTab={onCreateDraftTab}
           onCreateTerminal={onCreateTerminal}
+          onCreateFile={onCreateFile}
           onCreateTerminalWithProfile={onCreateTerminalWithProfile}
           onCreateBrowser={onCreateBrowser}
           onOpenImportSheet={onOpenImportSheet}
@@ -1983,6 +2024,7 @@ function WorkspaceScreenContent({
   const unpinWorkspaceAgent = useWorkspaceLayoutStore((state) => state.unpinAgent);
   const hideWorkspaceAgent = useWorkspaceLayoutStore((state) => state.hideAgent);
   const retargetWorkspaceTab = useWorkspaceLayoutStore((state) => state.retargetTab);
+  const renameWorkspaceTab = useWorkspaceLayoutStore((state) => state.renameTab);
   const reconcileWorkspaceTabs = useWorkspaceLayoutStore((state) => state.reconcileTabs);
   const splitWorkspacePane = useWorkspaceLayoutStore((state) => state.splitPane);
   const splitWorkspacePaneEmpty = useWorkspaceLayoutStore((state) => state.splitPaneEmpty);
@@ -2022,9 +2064,25 @@ function WorkspaceScreenContent({
         removeResidentBrowserWebview(browserId);
         void getDesktopHost()?.browser?.unregisterWorkspaceBrowser?.(browserId);
       }
+      if (input.target?.kind === "scratch_file") {
+        useScratchFileStore.getState().removeContent(
+          buildScratchFileStorageKey({
+            serverId: normalizedServerId,
+            workspaceId: normalizedWorkspaceId,
+            tabId: normalizedTabId,
+          }),
+        );
+      }
       closeWorkspaceTab(persistenceKey, normalizedTabId);
     },
-    [closeWorkspaceTab, hideWorkspaceAgent, persistenceKey, unpinWorkspaceAgent],
+    [
+      closeWorkspaceTab,
+      hideWorkspaceAgent,
+      normalizedServerId,
+      normalizedWorkspaceId,
+      persistenceKey,
+      unpinWorkspaceAgent,
+    ],
   );
 
   const focusedPaneTabState = useMemo(
@@ -2448,6 +2506,8 @@ function WorkspaceScreenContent({
     useWorkspaceTabRename({
       client,
       normalizedServerId,
+      workspaceKey: persistenceKey,
+      renameWorkspaceTab,
       queryClient,
       terminalsData: terminalsQuery.data,
       terminalsQueryKey,
@@ -2469,6 +2529,7 @@ function WorkspaceScreenContent({
         tabId: tab.tabId,
         kind: tab.target.kind,
         target: tab.target,
+        ...(tab.title ? { title: tab.title } : {}),
       });
     }
     return map;
@@ -2512,6 +2573,7 @@ function WorkspaceScreenContent({
       workspaceSetup: t("workspace.tabs.fallback.workspaceSetup"),
       terminal: t("workspace.tabs.fallback.terminal"),
       browser: t("workspace.tabs.fallback.browser"),
+      file: t("workspace.tabs.fallback.file"),
       agent: t("workspace.tabs.fallback.agent"),
       changes: t("panels.diff.changesLabel"),
     }),
@@ -2536,6 +2598,22 @@ function WorkspaceScreenContent({
       openWorkspaceDraftTab();
     },
     [focusWorkspacePane, openWorkspaceDraftTab, persistenceKey],
+  );
+
+  const handleCreateFileTab = useCallback(
+    (input?: { paneId?: string }) => {
+      if (!persistenceKey) {
+        return;
+      }
+      if (input?.paneId) {
+        focusWorkspacePane(persistenceKey, input.paneId);
+      }
+      openWorkspaceTabFocused(persistenceKey, {
+        kind: "scratch_file",
+        fileId: generateWorkspaceScratchFileId(),
+      });
+    },
+    [focusWorkspacePane, openWorkspaceTabFocused, persistenceKey],
   );
 
   const handleCreateTerminal = useStableEvent(createTerminal);
@@ -3659,6 +3737,7 @@ function WorkspaceScreenContent({
         onCloseOtherTabs={handleCloseOtherTabsInPane}
         onCreateDraftTab={handleCreateDraftTab}
         onCreateTerminalTab={handleCreateTerminal}
+        onCreateFileTab={handleCreateFileTab}
         onCreateBrowserTab={handleCreateBrowserTab}
         showCreateBrowserTab={showCreateBrowserTab}
         buildPaneContentModel={buildDesktopPaneContentModel}
@@ -3696,6 +3775,7 @@ function WorkspaceScreenContent({
     handleCloseOtherTabsInPane,
     handleCreateDraftTab,
     handleCreateTerminal,
+    handleCreateFileTab,
     handleCreateBrowserTab,
     showCreateBrowserTab,
     buildDesktopPaneContentModel,
@@ -3735,12 +3815,14 @@ function WorkspaceScreenContent({
                 copyPathDisabled={!workspaceDirectory}
                 menuNewAgentIcon={menuNewAgentIcon}
                 menuNewTerminalIcon={menuNewTerminalIcon}
+                menuNewFileIcon={MENU_NEW_FILE_ICON}
                 menuNewBrowserIcon={MENU_NEW_BROWSER_ICON}
                 menuImportIcon={MENU_IMPORT_ICON}
                 menuCopyIcon={menuCopyIcon}
                 menuSettingsIcon={menuSettingsIcon}
                 onCreateDraftTab={handleCreateDraftTab}
                 onCreateTerminal={handleCreateTerminal}
+                onCreateFile={handleCreateFileTab}
                 onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
                 onCreateBrowser={handleCreateBrowserTab}
                 onOpenImportSheet={openImportSheet}
@@ -3801,6 +3883,7 @@ function WorkspaceScreenContent({
           onCloseOtherTabs={handleCloseOtherTabs}
           onCreateDraftTab={handleCreateDraftTab}
           onCreateTerminalTab={handleCreateTerminal}
+          onCreateFileTab={handleCreateFileTab}
           onCreateBrowserTab={handleCreateBrowserTab}
           showCreateBrowserTab={showCreateBrowserTab}
           disableCreateTerminal={createTerminalMutation.isPending}

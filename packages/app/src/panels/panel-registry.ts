@@ -20,6 +20,7 @@ export interface PanelDescriptorContext {
   serverId: string;
   workspaceId: string;
   tabId: string;
+  title?: string;
 }
 
 export interface PanelRegistration<

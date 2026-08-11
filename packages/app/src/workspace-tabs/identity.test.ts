@@ -132,3 +132,31 @@ describe("commit diff tab identity", () => {
     ).toBeNull();
   });
 });
+
+describe("scratch file tab identity", () => {
+  it("normalizes and compares scratch file ids", () => {
+    const target = normalizeWorkspaceTabTarget({
+      kind: "scratch_file",
+      fileId: " scratch-1 ",
+    });
+
+    expect(target).toEqual({ kind: "scratch_file", fileId: "scratch-1" });
+    expect(
+      target && workspaceTabTargetsEqual(target, { kind: "scratch_file", fileId: "scratch-1" }),
+    ).toBe(true);
+    expect(
+      target && workspaceTabTargetsEqual(target, { kind: "scratch_file", fileId: "scratch-2" }),
+    ).toBe(false);
+  });
+
+  it("builds a deterministic id without colliding with real file tabs", () => {
+    const scratchId = buildDeterministicWorkspaceTabId({
+      kind: "scratch_file",
+      fileId: "scratch-1",
+    });
+    const fileId = buildDeterministicWorkspaceTabId({ kind: "file", path: "scratch-1" });
+
+    expect(scratchId).toBe("scratch_file_scratch-1");
+    expect(scratchId).not.toBe(fileId);
+  });
+});

@@ -29,6 +29,10 @@ export function normalizeWorkspaceTabTarget(
   if (value.kind === "file") {
     return normalizeFileTabTarget(value);
   }
+  if (value.kind === "scratch_file") {
+    const fileId = trimNonEmpty(value.fileId);
+    return fileId ? { kind: "scratch_file", fileId } : null;
+  }
   if (value.kind === "working_diff") {
     return normalizeWorkingDiffTabTarget(value);
   }
@@ -118,6 +122,9 @@ function secondaryWorkspaceTabTargetsEqual(
   if (left.kind === "file" && right.kind === "file") {
     return workspaceFileLocationsEqual(left, right);
   }
+  if (left.kind === "scratch_file" && right.kind === "scratch_file") {
+    return left.fileId === right.fileId;
+  }
   if (left.kind === "working_diff" && right.kind === "working_diff") {
     return left.focusPath === right.focusPath && left.focusRequestId === right.focusRequestId;
   }
@@ -178,6 +185,9 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   }
   if (target.kind === "browser") {
     return `browser_${target.browserId}`;
+  }
+  if (target.kind === "scratch_file") {
+    return `scratch_file_${target.fileId}`;
   }
   if (target.kind === "setup") {
     return `setup_${target.workspaceId}`;
