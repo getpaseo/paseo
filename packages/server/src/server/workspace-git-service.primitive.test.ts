@@ -19,7 +19,6 @@ import {
 } from "../utils/checkout-git.js";
 import { runGitCommand as runGitCommandReal } from "../utils/run-git-command.js";
 import {
-  getWorkspaceFileWatcherBackend,
   getWorkspaceGitSelfHealPhaseMs,
   WorkspaceGitServiceImpl,
   type WorkspaceGitRuntimeSnapshot,
@@ -47,7 +46,10 @@ function createDeferred<T>() {
 }
 
 function createAsyncSubscription() {
-  return { unsubscribe: vi.fn(() => Promise.resolve()) };
+  return {
+    updateIgnore: vi.fn(() => Promise.resolve()),
+    unsubscribe: vi.fn(() => Promise.resolve()),
+  };
 }
 
 async function flushPromises(): Promise<void> {
@@ -332,8 +334,15 @@ interface CreateServiceOptions {
 
 function buildDefaultServiceDeps() {
   return {
-    subscribe: vi.fn(async () => ({ unsubscribe: vi.fn(async () => {}) })),
+    subscribe: vi.fn(async () => ({
+      updateIgnore: vi.fn(async () => {}),
+      unsubscribe: vi.fn(async () => {}),
+    })),
     getCheckoutSnapshotFacts: vi.fn(async (cwd: string) => createCheckoutFacts(cwd)),
+    getCheckoutRefDerivedState: vi.fn(async (_cwd, facts, current) => ({
+      ...current,
+      upstreamStatus: facts.upstreamStatus,
+    })),
     getCheckoutStatus: vi.fn(async (cwd: string) => createCheckoutStatus(cwd)),
     getCheckoutShortstat: vi.fn(async () => ({
       additions: 1,
@@ -349,7 +358,10 @@ function buildDefaultServiceDeps() {
     forgeOverrides: { github: createGitHubServiceStub() },
     resolveAbsoluteGitDir: vi.fn(async () => join(REPO_CWD, ".git")),
     hasOriginRemote: vi.fn(async () => false),
-    runGitFetch: vi.fn(() => createDeferred<void>().promise),
+    runGitFetch: vi.fn(async () => {
+      await createDeferred<void>().promise;
+      return { changes: [], error: null };
+    }),
     runGitCommand: vi.fn(async () => ({
       stdout: `${REPO_CWD}\n`,
       stderr: "",
@@ -890,20 +902,6 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
   test("self-heal phase is stable across process restarts", () => {
     expect(getWorkspaceGitSelfHealPhaseMs("/tmp/repo")).toBe(54_185);
     expect(getWorkspaceGitSelfHealPhaseMs("/tmp/staggered-repo")).toBe(9_817);
-  });
-
-  test.each([
-    ["darwin", "fs-events"],
-    ["linux", "inotify"],
-    ["win32", "windows"],
-  ] as const)("uses the native %s file watcher backend", (platform, backend) => {
-    expect(getWorkspaceFileWatcherBackend(platform)).toBe(backend);
-  });
-
-  test("rejects unsupported watcher platforms instead of using backend auto-detection", () => {
-    expect(() => getWorkspaceFileWatcherBackend("freebsd")).toThrow(
-      "No native workspace file watcher configured for freebsd",
-    );
   });
 
   test("self-heal staggers workspaces and settles into a 120 second cadence", async () => {
@@ -2134,16 +2132,19 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     service.dispose();
   });
 
-  test("working tree observation prunes gitignored directories", async () => {
+  test("working tree observation prunes ignored trees but retains trees with tracked files", async () => {
     const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "workspace-git-service-ignored-")));
     const repoDir = join(tempDir, "repo");
     mkdirSync(join(repoDir, "ignored", "deep"), { recursive: true });
+    mkdirSync(join(repoDir, "mixed"), { recursive: true });
     mkdirSync(join(repoDir, "kept"), { recursive: true });
     execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "pipe" });
-    writeFileSync(join(repoDir, ".gitignore"), "ignored/\n");
+    writeFileSync(join(repoDir, ".gitignore"), "ignored/\nmixed/\n");
     writeFileSync(join(repoDir, "ignored", "log.txt"), "noise\n");
     writeFileSync(join(repoDir, "ignored", "deep", "log.txt"), "noise\n");
+    writeFileSync(join(repoDir, "mixed", "tracked.txt"), "tracked\n");
     writeFileSync(join(repoDir, "kept", "file.txt"), "keep\n");
+    execFileSync("git", ["add", "-f", "mixed/tracked.txt"], { cwd: repoDir, stdio: "pipe" });
 
     const subscribe = vi.fn(async () => createAsyncSubscription());
 

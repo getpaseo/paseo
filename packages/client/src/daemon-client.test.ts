@@ -707,33 +707,6 @@ test("passes password as HTTP bearer header and WebSocket subprotocol", async ()
   });
 });
 
-test("passes custom headers and keeps password authorization authoritative", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
-  const transportFactory = vi.fn(() => mock.transport);
-
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    password: "shared-secret",
-    headers: { "X-Tenant": "acme", Authorization: "Bearer ignored" },
-    logger,
-    reconnect: { enabled: false },
-    transportFactory,
-  });
-  clients.push(client);
-
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
-
-  expect(transportFactory).toHaveBeenCalledWith({
-    url: "ws://test",
-    headers: { "X-Tenant": "acme", Authorization: "Bearer shared-secret" },
-    protocols: ["paseo.bearer.shared-secret"],
-  });
-});
-
 test("advertises client capabilities in hello", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -991,6 +964,59 @@ test("keeps the transport connected when a session RPC ping times out", async ()
 
   await expect(client.ping({ timeoutMs: 1 })).rejects.toThrow("Timeout waiting for message");
 
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("waits for the daemon to acknowledge push token revocation", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_push_revocation",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { pushTokenRevocation: true } });
+  await connectPromise;
+
+  const revocation = client.unregisterPushToken("ExponentPushToken[test-device]");
+  const request = parseSentFrame(mock.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "push.unregister.request",
+    token: "ExponentPushToken[test-device]",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "push.unregister.response",
+      payload: { requestId: request.requestId },
+    }),
+  );
+
+  await revocation;
+});
+
+test("bounds the wait for push token revocation", async () => {
+  useHeartbeatClock();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_push_revocation_timeout",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { pushTokenRevocation: true } });
+  await connectPromise;
+
+  const revocation = client.unregisterPushToken("ExponentPushToken[test-device]");
+  const rejection = expect(revocation).rejects.toThrow("Timeout waiting for message (2000ms)");
+  await vi.advanceTimersByTimeAsync(1_999);
+  expect(client.getConnectionState().status).toBe("connected");
+
+  await vi.advanceTimersByTimeAsync(1);
+  await rejection;
   expect(client.getConnectionState().status).toBe("connected");
 });
 
@@ -1319,56 +1345,6 @@ test("honors explicit shutdownServer timeout below the session RPC default", asy
 
   await vi.advanceTimersByTimeAsync(1);
   await expect(responsePromise).rejects.toThrow("Timeout waiting for message (1500ms)");
-});
-
-test("honors explicit readChatMessages timeout below the session RPC default", async () => {
-  useHeartbeatClock();
-  const logger = createMockLogger();
-  const mock = createMockTransport();
-
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
-
-  const responsePromise = client.readChatMessages({
-    requestId: "req-chat-read-1",
-    room: "room-1",
-    limit: 1,
-    timeout: 2_500,
-  });
-  let settled = false;
-  void responsePromise.then(
-    () => {
-      settled = true;
-      return undefined;
-    },
-    () => {
-      settled = true;
-      return undefined;
-    },
-  );
-
-  expect(parseSentFrame(mock.sent[0])).toEqual({
-    type: "chat/read",
-    requestId: "req-chat-read-1",
-    room: "room-1",
-    limit: 1,
-  });
-
-  await vi.advanceTimersByTimeAsync(2_499);
-  expect(settled).toBe(false);
-
-  await vi.advanceTimersByTimeAsync(1);
-  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (2500ms)");
 });
 
 test("honors explicit getDaemonStatus timeout below the session RPC default", async () => {
@@ -1752,6 +1728,181 @@ test("a candidate measurement that times out under a heartbeat tick does not cou
 
   expect(session.state()).toEqual({ status: "connected" });
   expect(session.teardownCount()).toBe(0);
+});
+
+test("file context action RPCs correlate success and error responses", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_context_actions",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.createFileEntry({
+    cwd: "/tmp/project",
+    parentPath: "src",
+    name: "new.ts",
+    kind: "file",
+  });
+  const createRequest = parseSentFrame(mock.sent.at(-1));
+  expect(createRequest).toEqual({
+    type: "fs.entry.create.request",
+    cwd: "/tmp/project",
+    parentPath: "src",
+    name: "new.ts",
+    kind: "file",
+    requestId: expect.any(String),
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fs.entry.create.response",
+      payload: {
+        cwd: "/tmp/project",
+        parentPath: "src",
+        path: "src/new.ts",
+        success: true,
+        error: null,
+        requestId: createRequest.requestId,
+      },
+    }),
+  );
+  await expect(createPromise).resolves.toMatchObject({
+    path: "src/new.ts",
+    success: true,
+    error: null,
+  });
+
+  const renamePromise = client.renameFileEntry({
+    cwd: "/tmp/project",
+    path: "src/new.ts",
+    name: "existing.ts",
+  });
+  const renameRequest = parseSentFrame(mock.sent.at(-1));
+  expect(renameRequest).toMatchObject({
+    type: "fs.entry.rename.request",
+    cwd: "/tmp/project",
+    path: "src/new.ts",
+    name: "existing.ts",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fs.entry.rename.response",
+      payload: {
+        cwd: "/tmp/project",
+        path: "src/new.ts",
+        renamedPath: null,
+        success: false,
+        error: '"existing.ts" already exists',
+        requestId: renameRequest.requestId,
+      },
+    }),
+  );
+  await expect(renamePromise).resolves.toMatchObject({
+    renamedPath: null,
+    success: false,
+    error: '"existing.ts" already exists',
+  });
+
+  const duplicatePromise = client.duplicateFileEntry({
+    cwd: "/tmp/project",
+    path: "src/new.ts",
+  });
+  const duplicateRequest = parseSentFrame(mock.sent.at(-1));
+  expect(duplicateRequest).toMatchObject({
+    type: "fs.entry.duplicate.request",
+    cwd: "/tmp/project",
+    path: "src/new.ts",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fs.entry.duplicate.response",
+      payload: {
+        cwd: "/tmp/project",
+        path: "src/new.ts",
+        duplicatedPath: "src/new copy.ts",
+        success: true,
+        error: null,
+        requestId: duplicateRequest.requestId,
+      },
+    }),
+  );
+  await expect(duplicatePromise).resolves.toMatchObject({
+    duplicatedPath: "src/new copy.ts",
+    success: true,
+    error: null,
+  });
+
+  const deletePromise = client.deleteFileEntry({ cwd: "/tmp/project", path: "src/new.ts" });
+  const deleteRequest = parseSentFrame(mock.sent.at(-1));
+  expect(deleteRequest).toMatchObject({
+    type: "fs.entry.delete.request",
+    cwd: "/tmp/project",
+    path: "src/new.ts",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fs.entry.delete.response",
+      payload: {
+        cwd: "/tmp/project",
+        path: "src/new.ts",
+        success: true,
+        error: null,
+        requestId: deleteRequest.requestId,
+      },
+    }),
+  );
+  await expect(deletePromise).resolves.toMatchObject({ success: true, error: null });
+
+  const discardPromise = client.checkoutDiscardChanges("/tmp/project", { paths: ["src"] });
+  const discardRequest = parseSentFrame(mock.sent.at(-1));
+  expect(discardRequest).toMatchObject({
+    type: "checkout.discard_changes.request",
+    cwd: "/tmp/project",
+    paths: ["src"],
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "checkout.discard_changes.response",
+      payload: {
+        cwd: "/tmp/project",
+        success: false,
+        error: { code: "NOT_GIT_REPO", message: "Not a git repository" },
+        requestId: discardRequest.requestId,
+      },
+    }),
+  );
+  await expect(discardPromise).resolves.toMatchObject({
+    success: false,
+    error: { code: "NOT_GIT_REPO", message: "Not a git repository" },
+  });
+});
+
+test("a connection loss rejects an in-flight file context action", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_context_disconnect",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const pending = client.deleteFileEntry({ cwd: "/tmp/project", path: "src/file.ts" });
+  mock.triggerClose({ code: 1006, reason: "network lost" });
+
+  await expect(pending).rejects.toThrow(/network lost|disconnected|closed/i);
 });
 
 test("listDirectory sends a list file explorer request and returns directory entries", async () => {

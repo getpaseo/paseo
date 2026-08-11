@@ -20,21 +20,15 @@ import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
 import { DiffStat } from "@/components/diff-stat";
 import {
-  CopyX,
-  ArrowLeftToLine,
-  ArrowRightToLine,
   ChevronDown,
   Copy,
   Ellipsis,
   Globe,
   Import as ImportIcon,
   PanelRight,
-  Pencil,
-  RotateCw,
   Settings,
   SquarePen,
   SquareTerminal,
-  X,
 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -128,13 +122,13 @@ import {
   useWorkspaceTabRename,
   WorkspaceTabRenameModal,
 } from "@/screens/workspace/use-workspace-tab-rename";
+import { MobileTabTrailingAccessory } from "@/screens/workspace/workspace-tab-trailing-accessory";
 import {
   WorkspaceDesktopTabsRow,
   type WorkspaceDesktopTabRowItem,
 } from "@/screens/workspace/workspace-desktop-tabs-row";
 import {
   buildWorkspaceTabMenuEntries,
-  type WorkspaceTabMenuEntry,
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
 import { useDesktopBrowserNewTabRequests } from "@/desktop/browser/new-tab-requests";
@@ -181,6 +175,7 @@ import {
 import { findAdjacentPane } from "@/utils/split-navigation";
 import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
 import { getIsElectron, isNative, isWeb } from "@/constants/platform";
+import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import {
   buildHostRootRoute,
@@ -249,12 +244,6 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedCopy = withUnistyles(Copy);
-const ThemedRotateCw = withUnistyles(RotateCw);
-const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
-const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
-const ThemedCopyX = withUnistyles(CopyX);
-const ThemedPencil = withUnistyles(Pencil);
-const ThemedX = withUnistyles(X);
 const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedGlobe = withUnistyles(Globe);
@@ -441,10 +430,12 @@ function MobileActiveTabTrigger({
   activeTab,
   normalizedServerId,
   normalizedWorkspaceId,
+  backdrop,
 }: {
   activeTab: WorkspaceTabDescriptor | null;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
+  backdrop: SurfaceBackdrop;
 }) {
   if (!activeTab) {
     return null;
@@ -455,6 +446,7 @@ function MobileActiveTabTrigger({
       activeTab={activeTab}
       normalizedServerId={normalizedServerId}
       normalizedWorkspaceId={normalizedWorkspaceId}
+      backdrop={backdrop}
     />
   );
 }
@@ -463,10 +455,12 @@ function ResolvedMobileActiveTabTrigger({
   activeTab,
   normalizedServerId,
   normalizedWorkspaceId,
+  backdrop,
 }: {
   activeTab: WorkspaceTabDescriptor;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
+  backdrop: SurfaceBackdrop;
 }) {
   const { t } = useTranslation();
   return (
@@ -478,7 +472,7 @@ function ResolvedMobileActiveTabTrigger({
       {(presentation) => (
         <>
           <View style={styles.switcherTriggerIcon} testID="workspace-active-tab-icon">
-            <WorkspaceTabIcon presentation={presentation} active />
+            <WorkspaceTabIcon presentation={presentation} active backdrop={backdrop} />
           </View>
 
           <Text style={styles.switcherTriggerText} numberOfLines={1}>
@@ -516,93 +510,8 @@ function WorkspaceDocumentTitleEffect({
 
 function noop() {}
 
-function mobileTabMenuTriggerStyle({ open, pressed }: { open?: boolean; pressed?: boolean }) {
-  return [
-    styles.mobileTabMenuTrigger,
-    (Boolean(open) || Boolean(pressed)) && styles.mobileTabMenuTriggerActive,
-  ];
-}
-
 function switcherTriggerStyle({ pressed }: { pressed?: boolean }) {
   return [styles.switcherTrigger, Boolean(pressed) && styles.switcherTriggerPressed];
-}
-
-function MobileTabTrailingAccessory({
-  menuTestIDBase,
-  presentationLabel,
-  menuEntries,
-}: {
-  menuTestIDBase: string;
-  presentationLabel: string;
-  menuEntries: WorkspaceTabMenuEntry[];
-}) {
-  const { t } = useTranslation();
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        testID={`${menuTestIDBase}-trigger`}
-        accessibilityRole="button"
-        accessibilityLabel={t("workspace.tabs.menu.openFor", { label: presentationLabel })}
-        hitSlop={8}
-        style={mobileTabMenuTriggerStyle}
-      >
-        <ThemedEllipsis size={14} uniProps={mutedColorMapping} />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent side="bottom" align="end" width={220} testID={menuTestIDBase}>
-        {menuEntries.map((entry) =>
-          entry.kind === "separator" ? (
-            <DropdownMenuSeparator key={entry.key} />
-          ) : (
-            <MobileTabDropdownMenuItem key={entry.key} entry={entry} />
-          ),
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function MobileTabDropdownMenuItem({
-  entry,
-}: {
-  entry: Extract<WorkspaceTabMenuEntry, { kind: "item" }>;
-}) {
-  const leading = useMemo(() => {
-    switch (entry.icon) {
-      case "copy":
-        return <ThemedCopy size={16} uniProps={mutedColorMapping} />;
-      case "rotate-cw":
-        return <ThemedRotateCw size={16} uniProps={mutedColorMapping} />;
-      case "arrow-left-to-line":
-        return <ThemedArrowLeftToLine size={16} uniProps={mutedColorMapping} />;
-      case "arrow-right-to-line":
-        return <ThemedArrowRightToLine size={16} uniProps={mutedColorMapping} />;
-      case "copy-x":
-        return <ThemedCopyX size={16} uniProps={mutedColorMapping} />;
-      case "pencil":
-        return <ThemedPencil size={16} uniProps={mutedColorMapping} />;
-      case "x":
-        return <ThemedX size={16} uniProps={mutedColorMapping} />;
-      default:
-        return undefined;
-    }
-  }, [entry.icon]);
-  const trailing = useMemo(
-    () => (entry.hint ? <Text style={styles.menuItemHint}>{entry.hint}</Text> : undefined),
-    [entry.hint],
-  );
-  return (
-    <DropdownMenuItem
-      testID={entry.testID}
-      disabled={entry.disabled}
-      destructive={entry.destructive}
-      onSelect={entry.onSelect}
-      tooltip={entry.tooltip}
-      leading={leading}
-      trailing={trailing}
-    >
-      {entry.label}
-    </DropdownMenuItem>
-  );
 }
 
 function MobileWorkspaceTabOption({
@@ -838,14 +747,19 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
         style={switcherTriggerStyle}
         onPress={handleOpenSwitcher}
       >
-        <View style={styles.switcherTriggerLeft}>
-          <MobileActiveTabTrigger
-            activeTab={activeTab}
-            normalizedServerId={normalizedServerId}
-            normalizedWorkspaceId={normalizedWorkspaceId}
-          />
-        </View>
-        <ThemedChevronDown size={14} uniProps={mutedColorMapping} />
+        {({ pressed }) => (
+          <>
+            <View style={styles.switcherTriggerLeft}>
+              <MobileActiveTabTrigger
+                activeTab={activeTab}
+                normalizedServerId={normalizedServerId}
+                normalizedWorkspaceId={normalizedWorkspaceId}
+                backdrop={pressed ? "surface1" : "surface0"}
+              />
+            </View>
+            <ThemedChevronDown size={14} uniProps={mutedColorMapping} />
+          </>
+        )}
       </Pressable>
 
       <Combobox
@@ -4169,20 +4083,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-  },
-  mobileTabMenuTrigger: {
-    width: 28,
-    height: 28,
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  mobileTabMenuTriggerActive: {
-    backgroundColor: theme.colors.surface2,
-  },
-  menuItemHint: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
   },
   headerMenuProfileIconWrapper: {
     width: 16,

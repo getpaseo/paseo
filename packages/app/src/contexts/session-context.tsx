@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useClientActivity } from "@/hooks/use-client-activity";
 import { useAppVisible } from "@/hooks/use-app-visible";
-import { usePushTokenRegistration } from "@/hooks/use-push-token-registration";
+import { startPushNotifications } from "@/push-notifications";
 import {
   createSetAgentInitializing,
   refreshAgentInitializationTimeout,
@@ -418,7 +418,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   // Client activity tracking (heartbeat, push token registration)
   useClientActivity({ client, focusedAgentId, focusedTerminalId, onAppResumed: handleAppResumed });
-  usePushTokenRegistration({ client, serverId });
+  useEffect(() => startPushNotifications({ client, serverId }), [client, serverId]);
 
   const notifyAgentAttention = useCallback(
     (params: {

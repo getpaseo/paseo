@@ -209,7 +209,7 @@ function createSessionForWireCompatTest(options?: {
     onMessage: (message) => messages.push(message),
     logger: pino({ level: "silent" }),
     downloadTokenStore: {} as SessionOptions["downloadTokenStore"],
-    pushTokenStore: {} as SessionOptions["pushTokenStore"],
+    pushNotifications: {} as SessionOptions["pushNotifications"],
     paseoHome: "/tmp/paseo-home",
     agentManager: new InMemoryAgentManager(
       options?.rows ?? rows,
@@ -218,9 +218,7 @@ function createSessionForWireCompatTest(options?: {
     projectRegistry: new EmptyProjectRegistry() as unknown as SessionOptions["projectRegistry"],
     workspaceRegistry:
       new EmptyWorkspaceRegistry() as unknown as SessionOptions["workspaceRegistry"],
-    chatService: {} as SessionOptions["chatService"],
     scheduleService: {} as SessionOptions["scheduleService"],
-    loopService: {} as SessionOptions["loopService"],
     checkoutDiffManager: {
       scheduleRefreshForCwd() {},
       onWorkspaceStateMayHaveChanged() {},

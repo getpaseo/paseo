@@ -32,8 +32,8 @@ export interface ArchiveDependencies {
   paseoWorktreesBaseRoot?: string;
   github: ForgeService;
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
-  agentManager: Pick<AgentManager, "listAgents" | "archiveAgent" | "archiveSnapshot">;
-  agentStorage: Pick<AgentStorage, "list">;
+  agentManager: Pick<AgentManager, "listAgents" | "getAgent" | "archiveAgent" | "archiveSnapshot">;
+  agentStorage: Pick<AgentStorage, "listByWorkspace">;
   // Resolves the worktree at a path to its workspaceId for archive-by-path. The
   // path uniquely identifies a worktree workspace; this is a directory lookup for
   // the archive target, not status/ownership.
@@ -452,27 +452,29 @@ export async function archiveWorkspaceContents(
 
   let storedRecords: StoredAgentRecord[] = [];
   try {
-    storedRecords = await dependencies.agentStorage.list();
+    storedRecords = await dependencies.agentStorage.listByWorkspace(workspaceId);
   } catch (error) {
     dependencies.sessionLogger?.warn(
       { err: error, workspaceId },
       "Failed to list stored agents during workspace archive; continuing",
     );
   }
-  const liveAgentIds = new Set(liveAgents.map((agent) => agent.id));
-  const matchingStoredRecords = storedRecords.filter(
-    (record) => record.workspaceId === workspaceId,
-  );
+  const matchingStoredRecords = storedRecords;
   for (const record of matchingStoredRecords) {
     archivedAgents.add(record.id);
   }
 
   const archivedAt = new Date().toISOString();
+  const agentIdsToArchive = new Set([
+    ...liveAgents.map((agent) => agent.id),
+    ...matchingStoredRecords.filter((record) => !record.archivedAt).map((record) => record.id),
+  ]);
   const archiveResults = await Promise.allSettled([
-    ...liveAgents.map((agent) => dependencies.agentManager.archiveAgent(agent.id)),
-    ...matchingStoredRecords
-      .filter((record) => !liveAgentIds.has(record.id) && !record.archivedAt)
-      .map((record) => dependencies.agentManager.archiveSnapshot(record.id, archivedAt)),
+    ...[...agentIdsToArchive].map((agentId) =>
+      dependencies.agentManager.getAgent(agentId)
+        ? dependencies.agentManager.archiveAgent(agentId)
+        : dependencies.agentManager.archiveSnapshot(agentId, archivedAt),
+    ),
     dependencies.killTerminalsForWorkspace(workspaceId),
   ]);
 

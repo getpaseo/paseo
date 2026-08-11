@@ -61,7 +61,7 @@ describe("Codex app-server provider (real)", () => {
         model: model.id,
         cwd,
         thinkingOptionId: "medium",
-        extra: { codex: { features: { multi_agent_v2: true } } },
+        providerOptions: { features: { multi_agent_v2: true } },
       });
       const events: AgentStreamEvent[] = [];
       const unsubscribe = session.subscribe((event) => events.push(event));

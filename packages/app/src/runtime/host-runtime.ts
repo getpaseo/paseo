@@ -36,7 +36,6 @@ import {
 import {
   buildLocalDaemonTransportUrl,
   createDesktopLocalDaemonTransportFactory,
-  createDesktopWebSocketTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
 import { getDesktopHost } from "@/desktop/host";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
@@ -58,6 +57,7 @@ import { encodeImages } from "@/utils/encode-images";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
 import { ReplicaCache } from "@/runtime/replica-cache";
 import { nativePerformanceTrace } from "@/performance/native-trace";
+import { revokePushNotifications } from "@/push-notifications";
 import { createAppWebSocketFactory } from "./websocket-factory";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
@@ -479,10 +479,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
   return {
     createClient: ({ host, connection, clientId, runtimeGeneration }) => {
       const localTransportFactory = createDesktopLocalDaemonTransportFactory();
-      const webSocketTransportFactory = createDesktopWebSocketTransportFactory();
-      const webSocketConfig = webSocketTransportFactory
-        ? { transportFactory: webSocketTransportFactory }
-        : { webSocketFactory: createAppWebSocketFactory() };
+      const webSocketConfig = { webSocketFactory: createAppWebSocketFactory() };
       const base = {
         suppressSendErrors: true,
         clientId,
@@ -510,7 +507,6 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
             useTls: connection.useTls ?? false,
           }),
           ...(connection.password ? { password: connection.password } : {}),
-          ...(connection.headers ? { headers: connection.headers } : {}),
         });
       }
       return new DaemonClient({
@@ -1371,11 +1367,17 @@ export class HostRuntimeStore {
   private bootPromise: Promise<void> | null = null;
   private storage: HostRuntimeStorage;
   private replicaCache: ReplicaCache;
+  private readonly revokePushNotifications: typeof revokePushNotifications;
 
-  constructor(input?: { deps?: HostRuntimeControllerDeps; storage?: HostRuntimeStorage }) {
+  constructor(input?: {
+    deps?: HostRuntimeControllerDeps;
+    storage?: HostRuntimeStorage;
+    revokePushNotifications?: typeof revokePushNotifications;
+  }) {
     this.deps = input?.deps ?? createDefaultDeps();
     this.storage = input?.storage ?? AsyncStorage;
     this.replicaCache = new ReplicaCache(this.storage);
+    this.revokePushNotifications = input?.revokePushNotifications ?? revokePushNotifications;
   }
 
   // --- Host registry ---
@@ -1651,7 +1653,6 @@ export class HostRuntimeStore {
     endpoint: string;
     useTls?: boolean;
     password?: string;
-    headers?: Record<string, string>;
     label?: string;
     existingClient?: DaemonClient;
   }): Promise<HostProfile> {
@@ -1666,7 +1667,6 @@ export class HostRuntimeStore {
         endpoint,
         useTls: input.useTls ?? false,
         ...(password ? { password } : {}),
-        ...(input.headers ? { headers: input.headers } : {}),
       },
       existingClient: input.existingClient,
     });
@@ -1708,7 +1708,6 @@ export class HostRuntimeStore {
     endpoint: string;
     useTls?: boolean;
     password?: string;
-    headers?: Record<string, string>;
     label?: string;
   }): Promise<{ profile: HostProfile; serverId: string; hostname: string | null }> {
     const endpoint = normalizeHostPort(input.endpoint);
@@ -1721,7 +1720,6 @@ export class HostRuntimeStore {
         endpoint,
         useTls: input.useTls ?? false,
         ...(password ? { password } : {}),
-        ...(input.headers ? { headers: input.headers } : {}),
       },
     });
   }
@@ -1858,12 +1856,18 @@ export class HostRuntimeStore {
   }
 
   async removeHost(serverId: string): Promise<void> {
+    await this.revokePushNotifications({ client: this.getClient(serverId), serverId });
     const remaining = this.hosts.filter((daemon) => daemon.serverId !== serverId);
     this.setHostsAndSync(remaining);
     await this.persistHosts();
   }
 
   async removeConnection(serverId: string, connectionId: string): Promise<void> {
+    const host = this.hosts.find((candidate) => candidate.serverId === serverId);
+    if (host?.connections.length === 1 && host.connections[0]?.id === connectionId) {
+      await this.removeHost(serverId);
+      return;
+    }
     const now = new Date().toISOString();
     const next = this.hosts
       .map((daemon) => {
@@ -2463,14 +2467,12 @@ export interface HostMutations {
     endpoint: string;
     useTls?: boolean;
     password?: string;
-    headers?: Record<string, string>;
     label?: string;
   }) => Promise<HostProfile>;
   probeAndUpsertDirectConnection: (input: {
     endpoint: string;
     useTls?: boolean;
     password?: string;
-    headers?: Record<string, string>;
     label?: string;
   }) => Promise<{ profile: HostProfile; serverId: string; hostname: string | null }>;
   upsertRelayConnection: (input: {

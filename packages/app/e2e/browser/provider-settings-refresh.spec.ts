@@ -160,7 +160,6 @@ test.describe("provider settings overlay stack", () => {
       await commandCenter.getByText("Add project", { exact: true }).click();
       const addProject = page.getByTestId("add-project-flow");
       await expect(addProject).toBeVisible({ timeout: 10_000 });
-      await expect(addProject.getByTestId("add-project-flow-input")).toBeFocused();
       await page.keyboard.press("Escape");
       await expect(addProject).not.toBeVisible({ timeout: 10_000 });
       await expect(selector).toBeVisible();

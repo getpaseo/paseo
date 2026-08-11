@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, ChevronRight, Folder } from "lucide-react-native";
+import { Check, ChevronRight, Folder, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   BottomSheetBackdrop,
@@ -22,6 +22,8 @@ import {
   type BottomSheetFlatListMethods,
 } from "@gorhom/bottom-sheet";
 import { AgentStatusDot } from "@/components/agent-status-dot";
+import { MaterialFileIcon } from "@/components/material-file-icon";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Shortcut } from "@/components/ui/shortcut";
 import {
   IsolatedBottomSheetModal,
@@ -37,7 +39,10 @@ import {
   useWebOverlayRegistration,
 } from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
-import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
+import {
+  useKeyboardShortcutsStore,
+  type CommandCenterScope,
+} from "@/stores/keyboard-shortcuts-store";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import {
@@ -56,11 +61,13 @@ import {
   preserveActiveResultId,
   projectCommandCenterRows,
   type CommandCenterAgentResult,
+  type CommandCenterFileResult,
   type CommandCenterListRow,
   type CommandCenterResult,
   type CommandCenterResultSection,
   type CommandCenterWorkspaceResult,
 } from "./results";
+import { useWorkspaceFileSearch } from "./workspace-file-search";
 
 const ThemedBottomSheetTextInput = withUnistyles(BottomSheetTextInput, (theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
@@ -71,6 +78,10 @@ const ThemedTextInput = withUnistyles(TextInput, (theme) => ({
 const ThemedFolder = withUnistyles(Folder, (theme) => ({ color: theme.colors.foregroundMuted }));
 const ThemedCheck = withUnistyles(Check, (theme) => ({ color: theme.colors.foreground }));
 const ThemedChevronRight = withUnistyles(ChevronRight, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
+const ThemedX = withUnistyles(X, (theme) => ({ color: theme.colors.foregroundMuted }));
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
 const COMMAND_CENTER_SNAP_POINTS = ["60%", "90%"];
@@ -191,6 +202,8 @@ function useBuiltInSections(open: boolean, query: string): CommandCenterResultSe
 
 interface CommandCenterState {
   open: boolean;
+  scope: CommandCenterScope;
+  clearScope(): void;
   query: string;
   setQuery(query: string): void;
   activeId: string | null;
@@ -199,27 +212,58 @@ interface CommandCenterState {
   rowIndexByResultId: ReadonlyMap<string, number>;
   offsets: readonly number[];
   inputRef: React.RefObject<TextInput | null>;
+  fileSearchLoading: boolean;
+  fileSearchError: string | null;
   close(): void;
   select(result: CommandCenterResult): void;
   key(key: string): boolean;
 }
 
 function useCommandCenterState(): CommandCenterState {
+  const { t } = useTranslation();
   const open = useKeyboardShortcutsStore((state) => state.commandCenterOpen);
+  const scope = useKeyboardShortcutsStore((state) => state.commandCenterScope);
   const setOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
+  const setScope = useKeyboardShortcutsStore((state) => state.setCommandCenterScope);
   const snapshot = useCommandCenterContributions();
   const inputRef = useRef<TextInput>(null);
   const previousOpenRef = useRef(open);
   const [query, setQuery] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const builtInSections = useBuiltInSections(open, query);
+  const {
+    entries: fileSearchEntries,
+    loading: fileSearchLoading,
+    error: fileSearchError,
+    openFile,
+  } = useWorkspaceFileSearch({
+    enabled: open && (scope === "files" || Boolean(query.trim())),
+    query,
+  });
+  const fileSections = useMemo<CommandCenterResultSection[]>(() => {
+    const results = fileSearchEntries.map<CommandCenterFileResult>((entry) => ({
+      kind: "file",
+      id: `file:${entry.path}`,
+      filePath: entry.path,
+      title: entry.name,
+      subtitle: entry.directory,
+      searchText: entry.path.toLowerCase(),
+      run: () => openFile(entry.path),
+    }));
+    return [{ id: "files", rank: 4, title: t("shell.commandCenter.files"), results }];
+  }, [fileSearchEntries, openFile, t]);
   const contributionSections = useMemo(
     () => buildContributionSections(snapshot.contributions, query),
     [query, snapshot.contributions],
   );
   const projection = useMemo(
-    () => projectCommandCenterRows([...contributionSections, ...builtInSections]),
-    [builtInSections, contributionSections],
+    () =>
+      projectCommandCenterRows(
+        scope === "files"
+          ? fileSections
+          : [...contributionSections, ...fileSections, ...builtInSections],
+      ),
+    [builtInSections, contributionSections, fileSections, scope],
   );
   const resolvedActiveId = preserveActiveResultId(activeId, projection.selectableResults);
 
@@ -239,6 +283,10 @@ function useCommandCenterState(): CommandCenterState {
         close();
         return true;
       }
+      if (pressed === "Backspace" && !query.trim() && scope) {
+        setScope(null);
+        return true;
+      }
       if (pressed === "Enter") {
         const selected = results.find((result) => result.id === resolvedActiveId);
         if (!selected) return false;
@@ -251,7 +299,7 @@ function useCommandCenterState(): CommandCenterState {
       setActiveId(moveActiveResultId(resolvedActiveId, results, direction));
       return true;
     },
-    [close, open, projection.selectableResults, resolvedActiveId, select],
+    [close, open, projection.selectableResults, query, resolvedActiveId, scope, select, setScope],
   );
 
   useEffect(() => {
@@ -277,6 +325,8 @@ function useCommandCenterState(): CommandCenterState {
 
   return {
     open,
+    scope,
+    clearScope: () => setScope(null),
     query,
     setQuery,
     activeId: resolvedActiveId,
@@ -285,6 +335,8 @@ function useCommandCenterState(): CommandCenterState {
     rowIndexByResultId: projection.rowIndexByResultId,
     offsets: projection.offsets,
     inputRef,
+    fileSearchLoading,
+    fileSearchError,
     close,
     select,
     key,
@@ -303,7 +355,10 @@ const ResultRow = memo(function ResultRow({ result, active, onSelect }: ResultRo
     result.kind === "contribution" && result.contribution.presentation.kind === "choice"
       ? result.contribution.presentation
       : null;
-  const accessibilityLabel = choice?.path.join(" › ");
+  const accessibilityLabel =
+    result.kind === "file"
+      ? [result.title, result.subtitle].filter(Boolean).join(" ")
+      : choice?.path.join(" › ");
   const accessibilityState = useMemo(
     () => (isNative && choice ? { selected: choice.selected } : undefined),
     [choice],
@@ -329,7 +384,9 @@ const ResultRow = memo(function ResultRow({ result, active, onSelect }: ResultRo
       accessibilityLabel={accessibilityLabel}
       accessibilityState={accessibilityState}
       aria-pressed={isWeb ? choice?.selected : undefined}
-      testID={choice?.testId}
+      testID={
+        result.kind === "file" ? `command-center-file-row-${result.filePath}` : choice?.testId
+      }
     >
       <ResultContent result={result} />
     </Pressable>
@@ -337,6 +394,28 @@ const ResultRow = memo(function ResultRow({ result, active, onSelect }: ResultRo
 });
 
 function ResultContent({ result }: { result: CommandCenterResult }) {
+  if (result.kind === "file") {
+    return (
+      <View style={styles.rowContent}>
+        <View style={styles.rowMain}>
+          <View style={styles.iconSlot} testID="command-center-file-icon">
+            <MaterialFileIcon fileName={result.title} size={16} />
+          </View>
+          <Text style={styles.fileLine} numberOfLines={1} testID="command-center-file-line">
+            <Text style={styles.fileName} testID="command-center-file-name">
+              {result.title}
+            </Text>
+            {result.subtitle ? (
+              <Text style={styles.filePath} testID="command-center-file-path">
+                {" "}
+                {result.subtitle}
+              </Text>
+            ) : null}
+          </Text>
+        </View>
+      </View>
+    );
+  }
   if (result.kind === "agent") {
     const agent = result.agent;
     return (
@@ -545,8 +624,24 @@ export function CommandCenter() {
   );
   const keyExtractor = useCallback((row: CommandCenterListRow) => row.key, []);
   const empty = useMemo(
-    () => <Text style={styles.emptyText}>{t("shell.commandCenter.noMatches")}</Text>,
-    [t],
+    () =>
+      state.fileSearchError || state.fileSearchLoading ? null : (
+        <Text style={styles.emptyText}>{t("shell.commandCenter.noMatches")}</Text>
+      ),
+    [state.fileSearchError, state.fileSearchLoading, t],
+  );
+  const fileSearchError = useMemo(
+    () =>
+      state.fileSearchError ? (
+        <Text
+          accessibilityLiveRegion="polite"
+          style={styles.errorText}
+          testID="command-center-file-search-error"
+        >
+          {t("common.errors.error")}: {state.fileSearchError}
+        </Text>
+      ) : null,
+    [state.fileSearchError, t],
   );
   const commonListProps = {
     data: state.rows,
@@ -554,6 +649,8 @@ export function CommandCenter() {
     keyExtractor,
     getItemLayout,
     ListEmptyComponent: empty,
+    style: styles.results,
+    testID: "command-center-results",
     keyboardShouldPersistTaps: KEYBOARD_SHOULD_PERSIST_TAPS,
     showsVerticalScrollIndicator: false,
     initialNumToRender: 12,
@@ -606,7 +703,10 @@ export function CommandCenter() {
         keyboardBlurBehavior="restore"
         accessible={false}
       >
-        <View style={styles.bottomSheetHeader}>
+        <View style={[styles.bottomSheetHeader, styles.searchRow]} testID="command-center-header">
+          {state.scope === "files" ? (
+            <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
+          ) : null}
           <ThemedBottomSheetTextInput
             testID="command-center-input"
             ref={bottomSheetInputRef}
@@ -614,13 +714,22 @@ export function CommandCenter() {
             onChangeText={state.setQuery}
             onKeyPress={keyPress}
             onSubmitEditing={submit}
-            placeholder={t("shell.commandCenter.placeholder")}
-            style={styles.input}
+            placeholder={
+              state.scope === "files"
+                ? t("shell.commandCenter.filePlaceholder")
+                : t("shell.commandCenter.placeholder")
+            }
+            style={[styles.input, styles.growingInput]}
             autoCapitalize="none"
             autoCorrect={false}
             autoFocus
           />
+          <FileSearchLoadingIndicator
+            loading={state.fileSearchLoading}
+            label={t("shell.commandCenter.searchingFiles")}
+          />
         </View>
+        {fileSearchError}
         <BottomSheetFlatList ref={bottomSheetListRef} {...commonListProps} />
       </IsolatedBottomSheetModal>
     );
@@ -632,24 +741,71 @@ export function CommandCenter() {
         <View style={styles.overlay}>
           <Pressable style={styles.backdrop} onPress={state.close} />
           <View ref={setWebOverlayScope} testID="command-center-panel" style={styles.panel}>
-            <View style={styles.header}>
+            <View style={[styles.header, styles.searchRow]} testID="command-center-header">
+              {state.scope === "files" ? (
+                <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
+              ) : null}
               <ThemedTextInput
                 testID="command-center-input"
                 ref={state.inputRef}
                 value={state.query}
                 onChangeText={state.setQuery}
-                placeholder={t("shell.commandCenter.placeholder")}
-                style={styles.input}
+                placeholder={
+                  state.scope === "files"
+                    ? t("shell.commandCenter.filePlaceholder")
+                    : t("shell.commandCenter.placeholder")
+                }
+                style={[styles.input, styles.growingInput]}
                 autoCapitalize="none"
                 autoCorrect={false}
                 autoFocus
               />
+              <FileSearchLoadingIndicator
+                loading={state.fileSearchLoading}
+                label={t("shell.commandCenter.searchingFiles")}
+              />
             </View>
-            <FlatList ref={listRef} style={styles.results} {...commonListProps} />
+            {fileSearchError}
+            <FlatList ref={listRef} {...commonListProps} />
           </View>
         </View>
       </Modal>
     </OverlayLayerProvider>
+  );
+}
+
+function FileSearchLoadingIndicator({ loading, label }: { loading: boolean; label: string }) {
+  return (
+    <View style={styles.fileSearchStatus} testID="command-center-file-search-status">
+      {loading ? (
+        <View
+          accessibilityLabel={label}
+          accessibilityRole="progressbar"
+          testID="command-center-file-search-loading"
+        >
+          <ThemedLoadingSpinner size={14} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+// The chip sits at the input's own height and type size so it reads as the scope of the field
+// rather than a badge dropped into the query. Its 28px matches the input's line box, so showing or
+// dropping the scope cannot resize the header.
+function ScopeChip({ label, onRemove }: { label: string; onRemove(): void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onRemove}
+      style={styles.scopeChip}
+      testID="command-center-files-scope"
+    >
+      <ThemedFolder size={14} strokeWidth={2.2} />
+      <Text style={styles.scopeChipLabel}>{label}</Text>
+      <ThemedX size={12} strokeWidth={2.2} />
+    </Pressable>
   );
 }
 
@@ -663,6 +819,7 @@ const styles = StyleSheet.create((theme) => ({
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0, 0, 0, 0.5)" },
   panel: {
     width: 640,
+    height: 560,
     maxWidth: "92%",
     maxHeight: "80%",
     borderWidth: 1,
@@ -690,7 +847,29 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     outlineWidth: 0,
   },
-  results: { flexGrow: 0 },
+  growingInput: { flex: 1, minWidth: 0 },
+  searchRow: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
+  fileSearchStatus: { width: 14, height: 14, alignItems: "center", justifyContent: "center" },
+  scopeChip: {
+    // Stretching to the row rather than setting a height keeps the chip exactly as tall as the
+    // input's line box, so showing or dropping the scope can never resize the header.
+    alignSelf: "stretch",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+    marginRight: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.borderAccent,
+    backgroundColor: theme.colors.surface2,
+  },
+  scopeChipLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "500",
+  },
+  results: { flex: 1 },
   sectionLabel: {
     paddingHorizontal: theme.spacing[4],
     paddingBottom: theme.spacing[2],
@@ -726,6 +905,9 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 18,
     flexShrink: 1,
   },
+  fileLine: { flex: 1, minWidth: 0, fontSize: theme.fontSize.sm, lineHeight: 20 },
+  fileName: { color: theme.colors.foreground },
+  filePath: { color: theme.colors.foregroundMuted },
   subtitle: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.xs, lineHeight: 16 },
   iconSlot: { width: 16, height: 20, alignItems: "center", justifyContent: "center" },
   rowShortcut: { flexShrink: 0 },
@@ -753,6 +935,14 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[6],
     textAlign: "center",
     color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  errorText: {
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    color: theme.colors.statusDanger,
     fontSize: theme.fontSize.sm,
   },
   sheetBackground: { backgroundColor: theme.colors.surface0 },

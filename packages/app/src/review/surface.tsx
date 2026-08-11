@@ -16,6 +16,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { Shortcut } from "@/components/ui/shortcut";
 import { isWeb } from "@/constants/platform";
+import { useHasFinePointer } from "@/hooks/use-fine-pointer";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -44,33 +45,6 @@ function getWebTextInputElement(input: TextInput | null): HTMLElement | null {
   const webInput = input as WebTextInputRef;
   const element = webInput.getNativeElement?.() ?? webInput.getNativeRef?.() ?? input;
   return element instanceof HTMLElement ? element : null;
-}
-
-function getCanShowReviewKeyboardHints(): boolean {
-  if (!isWeb || typeof window === "undefined" || typeof window.matchMedia !== "function") {
-    return false;
-  }
-  return window.matchMedia("(hover: hover) and (pointer: fine)").matches;
-}
-
-function useCanShowReviewKeyboardHints(): boolean {
-  const [canShowHints, setCanShowHints] = useState(getCanShowReviewKeyboardHints);
-
-  useEffect(() => {
-    if (!isWeb || typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return;
-    }
-
-    const mediaQuery = window.matchMedia("(hover: hover) and (pointer: fine)");
-    const handleChange = () => setCanShowHints(mediaQuery.matches);
-    handleChange();
-    mediaQuery.addEventListener?.("change", handleChange);
-    return () => {
-      mediaQuery.removeEventListener?.("change", handleChange);
-    };
-  }, []);
-
-  return canShowHints;
 }
 
 export const INLINE_REVIEW_COMMENT_HEIGHT = 72;
@@ -286,6 +260,7 @@ export function InlineReviewGutterCell({
   onStartComment,
   style,
   actionTestID,
+  testID,
 }: {
   children: ReactNode;
   reviewTarget: ReviewableDiffTarget | null | undefined;
@@ -296,6 +271,7 @@ export function InlineReviewGutterCell({
   onStartComment: (target: ReviewableDiffTarget) => void;
   style?: StyleProp<ViewStyle>;
   actionTestID?: string;
+  testID?: string;
 }) {
   const { t } = useTranslation();
   const canComment = Boolean(reviewTarget);
@@ -335,7 +311,6 @@ export function InlineReviewGutterCell({
     }
   }, [isInteractionActive]);
 
-  const pressableStyle = useCallback((): StyleProp<ViewStyle> => style, [style]);
   const lineHeightStyle = useMemo<StyleProp<ViewStyle>>(
     () =>
       lineHeight !== undefined
@@ -344,13 +319,15 @@ export function InlineReviewGutterCell({
     [lineHeight],
   );
 
-  const labelStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.gutterLabel, lineHeightStyle, hasComments && styles.gutterLabelActive],
-    [hasComments, lineHeightStyle],
-  );
-  const innerStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.gutterInner, lineHeightStyle],
-    [lineHeightStyle],
+  const pressableStyle = useCallback(
+    (): StyleProp<ViewStyle> => [
+      style,
+      styles.gutterInner,
+      styles.gutterLabel,
+      lineHeightStyle,
+      hasComments && styles.gutterLabelActive,
+    ],
+    [hasComments, lineHeightStyle, style],
   );
   const actionIconStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
@@ -372,17 +349,14 @@ export function InlineReviewGutterCell({
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}
       style={pressableStyle}
+      testID={testID}
     >
-      <View style={innerStyle}>
-        <View style={labelStyle}>
-          {children}
-          {showAction ? (
-            <View style={actionIconStyle} testID={actionTestID}>
-              <ThemedPlus size={16} strokeWidth={2.4} uniProps={accentForegroundIconColorMapping} />
-            </View>
-          ) : null}
+      {children}
+      {showAction ? (
+        <View style={actionIconStyle} testID={actionTestID}>
+          <ThemedPlus size={16} strokeWidth={2.4} uniProps={accentForegroundIconColorMapping} />
         </View>
-      </View>
+      ) : null}
     </Pressable>
   );
 }
@@ -533,7 +507,7 @@ export function InlineReviewEditor({
   const { t } = useTranslation();
   const inputRef = useRef<TextInput | null>(null);
   const focus = useWorkspaceFocusRestoration();
-  const canShowKeyboardHints = useCanShowReviewKeyboardHints();
+  const canShowKeyboardHints = useHasFinePointer();
   const [body, setBody] = useState(initialBody);
   const [isFocused, setIsFocused] = useState(false);
   const trimmedBody = body.trim();

@@ -19,23 +19,22 @@ The first carves shipped as **deep modules with a narrow Host seam**, not the `d
 
 - **#1640 — VoiceSession** (`session/voice/voice-session.ts`, seam `VoiceSessionHost`): the STT/TTS/dictation/turn-detection subsystem. _(Originally landed at `server/voice/`; relocated under `session/` so all session subsystems share one home.)_
 - **#1644 — CheckoutSession, read side** (`session/checkout/checkout-session.ts`, seam `CheckoutSessionHost`, port `CheckoutDiffSubscriber`): status, branch validate/suggest, diff subscribe/unsubscribe, manual refresh. The workspace-git observer already delegates `emitStatusUpdate`/`scheduleDiffRefresh` to it.
+- **ScheduleSession** (`session/schedule/schedule-session.ts`, seam `ScheduleSessionHost`): scheduled-agent request handling.
 
 **Next carve — CheckoutSession mutation side (Slice 4 below).** The 17 checkout _write_ handlers still inline in `session.ts` (`dispatchCheckoutMessage`, ~2010) — branch switch/rename, commit, merge, merge-from-base, pull, push, PR create/merge, github set-auto-merge/get-check-details, PR status, PR timeline, github search, stash save/pop/list — move into the existing `session/checkout/checkout-session.ts` behind `CheckoutSessionHost`. The Slice-3 observer entanglement the table fears is already resolved: #1644 moved the status/diff read side into CheckoutSession, so the workspace observer delegates today and this no longer blocks on the WorkspaceController split.
 
 ### Why this is safe at the dispatch seam (verified)
 
-`dispatchInboundMessage` builds `a() ?? b() ?? ... ?? dispatchMiscMessage()` and short-circuits on the first non-`undefined` **Promise object** (not its resolved value). Message-type spaces are **disjoint** (no duplicate `case` labels across switches), so at most one dispatcher matches any message — collapsing to delegation cannot change which handler runs. `dispatchTerminalMessage` (2150-2153) already proves this. Two quirks preserved verbatim: schedule/\* is reached via the chat dispatcher's OWN `default` arm (2183), not the top-level `??`; and `start_workspace_script_request` (a workspace type) is special-cased before terminal delegation (2150).
+`dispatchInboundMessage` builds `a() ?? b() ?? ... ?? dispatchMiscMessage()` and short-circuits on the first non-`undefined` **Promise object** (not its resolved value). Message-type spaces are **disjoint** (no duplicate `case` labels across switches), so at most one dispatcher matches any message — collapsing to delegation cannot change which handler runs. `dispatchTerminalMessage` (2150-2153) already proves this. `start_workspace_script_request` (a workspace type) is special-cased before terminal delegation (2150).
 
 Rejected alternatives: **feature-module** (free functions + wide context bag) cannot own the live state machines (workspaceUpdatesSubscription, agentUpdatesSubscription, ~25 voice fields) and adds a competing idiom; **mixin-composition** preserves the shared-`this` god object verbatim and requires widening ~325 private fields to protected.
 
 ## Slice ordering (least-coupled first)
 
-The task recommended **git/checkout as the first slice — OVERRIDDEN.** Verification: `emitCheckoutStatusUpdate` is called from exactly ONE site (session.ts:4915), inside the workspace-owned `syncWorkspaceGitObserver` callback that ALSO fires workspace effects over shared watch-target maps. Extracting checkout first forces splitting the hardest workspace/git seam before workspace is touched. The strictly safer first cuts are **chat-schedule-loop** (only knot: `handleChatPostRequest`; touches no shared observer/git/voice state) and **provider-catalog** (one shared collaborator + injected predicates).
+The task recommended **git/checkout as the first slice — OVERRIDDEN.** Verification: `emitCheckoutStatusUpdate` is called from exactly ONE site (session.ts:4915), inside the workspace-owned `syncWorkspaceGitObserver` callback that ALSO fires workspace effects over shared watch-target maps. Extracting checkout first forces splitting the hardest workspace/git seam before workspace is touched. The safer first cut is **provider-catalog** (one shared collaborator + injected predicates).
 
 | #   | Slice                                                                         | Effort | Risk   |
 | --- | ----------------------------------------------------------------------------- | ------ | ------ |
-| 0   | Test net + disjointness tripwire (no extraction)                              | M      | low    |
-| 1   | ChatScheduleLoopController — **STOP FOR REVIEW after green**                  | M      | low    |
 | 2   | ProviderCatalogController                                                     | M      | medium |
 | 3   | Split shared workspace-git observer + agent-subscribe fan-out (no controller) | M      | high   |
 | 4   | GitCheckoutController                                                         | L      | medium |
@@ -44,34 +43,6 @@ The task recommended **git/checkout as the first slice — OVERRIDDEN.** Verific
 | 7   | VoiceSessionController                                                        | XL     | high   |
 | 8a  | Agent-lifecycle config setters                                                | M      | medium |
 | 8b  | AgentLifecycleController                                                      | XL     | high   |
-
----
-
-## Slice 0 — Test net + disjointness tripwire (prerequisite)
-
-No production code moves. Add `session.dispatch-seam.test.ts`. This is the gate the whole plan rests on, because chat/schedule/loop have **zero** handleMessage coverage today (verified).
-
-Write RED-then-GREEN against the **current in-place** Session:
-
-- `chat/post` happy path (asserts `chat/post` response emitted) + fanout-limit error path (asserts the `chat/post` error envelope, NOT a bubbled `rpc_error`).
-- one `schedule/*` and one `loop/*` round-trip.
-- a handler that throws **synchronously** emits `rpc_error{code:"handler_error"}` + an `activity_log` error frame.
-- a handler that **rejects async** emits the SAME pair.
-- a table-driven assertion that the union of all controllers' owned-type `ReadonlySet`s is pairwise disjoint and covers the dispatched `SessionInboundMessage` union (grows as controllers land).
-
-**Tests:** `session.dispatch-seam.test.ts`, `session.test.ts`.
-
----
-
-## Slice 1 — ChatScheduleLoopController ← STOP FOR HUMAN REVIEW after this ships green
-
-**Move:** all 21 handlers (`handleChat*` ×7, `handleSchedule*` ×9, `handleLoop*` ×5), the three rpc-error emitters (`emitChatRpcError`/`emitScheduleRpcError`/`emitLoopRpcError` — **kept separate, not merged**), `toScheduleSummary` → `packages/server/src/server/chat/chat-schedule-loop-controller.ts`. Collapse `dispatchChatScheduleLoopMessage` + `dispatchScheduleMessage` to `return this.chatScheduleLoopController.dispatch(msg)`.
-
-**SessionContext surface:** `emit`, `sessionLogger`, `clientId` (authorAgentId fallback), `chatService`, `scheduleService`, `loopService`, and a narrow agent-control port `{ listAgents, resolveAgentIdentifier, agentStorage.list }` for `handleChatPostRequest` mention fanout.
-
-**Owned-type set MUST include all 7 `chat/*` + 5 `loop/*` + 9 `schedule/*` types** — schedule/\* is currently routed via the chat dispatcher's own `default` arm, so it must stay inside this one controller, or schedule requests silently no-op.
-
-**Behavior note:** least-coupled domain. Move the three rpc-error emitters verbatim (they differ in default code + the `ChatServiceError` branch). **Tests:** `session.dispatch-seam.test.ts`, `loop-service.test.ts`, `session.test.ts`.
 
 ---
 

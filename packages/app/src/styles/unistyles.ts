@@ -1,22 +1,8 @@
 import { StyleSheet } from "react-native-unistyles";
-import {
-  lightTheme,
-  darkTheme,
-  darkZincTheme,
-  darkMidnightTheme,
-  darkClaudeTheme,
-  darkGhosttyTheme,
-} from "./theme";
+import { REGISTERED_THEMES } from "./theme";
 
 StyleSheet.configure({
-  themes: {
-    light: lightTheme,
-    dark: darkTheme,
-    darkZinc: darkZincTheme,
-    darkMidnight: darkMidnightTheme,
-    darkClaude: darkClaudeTheme,
-    darkGhostty: darkGhosttyTheme,
-  },
+  themes: REGISTERED_THEMES,
   breakpoints: {
     xs: 0,
     sm: 576,
@@ -30,14 +16,7 @@ StyleSheet.configure({
 });
 
 // Type augmentation for TypeScript
-interface AppThemes {
-  light: typeof lightTheme;
-  dark: typeof darkTheme;
-  darkZinc: typeof darkZincTheme;
-  darkMidnight: typeof darkMidnightTheme;
-  darkClaude: typeof darkClaudeTheme;
-  darkGhostty: typeof darkGhosttyTheme;
-}
+type AppThemes = typeof REGISTERED_THEMES;
 
 interface AppBreakpoints {
   xs: number;

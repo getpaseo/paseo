@@ -1,5 +1,4 @@
 import { expect, test } from "../../app/e2e/support/fixtures";
-import type { Page } from "@playwright/test";
 import {
   startIsolatedHostDaemon,
   type IsolatedHostDaemon,
@@ -19,31 +18,16 @@ import {
   openPairDeviceFromHome,
   openRelaySecurityDocs,
   observePairingOfferRequests,
-  preparePairingHost,
+  prepareLocalPairingHost,
   reloadAndOpenPairDevice,
   retryRelayAndExpectFailure,
   switchPairDeviceToHost,
 } from "../../app/e2e/support/helpers/pair-device";
-import { installDesktopRuntime } from "./support/runtime";
 
 interface RelayConfigDaemonClient {
   close(): Promise<void>;
   connect(): Promise<void>;
   patchDaemonConfig(config: { relay: { enabled: boolean } }): Promise<unknown>;
-}
-
-async function prepareLocalPairingHost(
-  page: Page,
-  daemon: Parameters<typeof preparePairingHost>[1],
-  additionalHosts: Parameters<typeof preparePairingHost>[2] = [],
-): Promise<void> {
-  const endpoint = "port" in daemon ? `127.0.0.1:${daemon.port}` : daemon.endpoint;
-  await installDesktopRuntime(page, {
-    serverId: daemon.serverId,
-    daemonListen: endpoint,
-    manageBuiltInDaemon: false,
-  });
-  await preparePairingHost(page, daemon, additionalHosts);
 }
 
 test.describe("local device relay pairing", () => {

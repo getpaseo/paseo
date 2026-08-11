@@ -190,7 +190,11 @@ describe("translation resources", () => {
     expect(en.shell.menu.toggleSidebar).toBe("Toggle sidebar");
     expect(en.shell.menu.open).toBe("Open menu");
     expect(en.shell.menu.close).toBe("Close menu");
-    expect(en.shell.commandCenter.placeholder).toBe("Search commands, workspaces, and agents...");
+    expect(en.shell.commandCenter.placeholder).toBe(
+      "Search commands, files, workspaces, and agents...",
+    );
+    expect(en.shell.commandCenter.filePlaceholder).toBe("Search files...");
+    expect(en.shell.commandCenter.files).toBe("Files");
     expect(en.shell.commandCenter.noMatches).toBe("No matches");
     expect(en.shell.commandCenter.actions).toBe("Actions");
     expect(en.shell.commandCenter.workspaces).toBe("Workspaces");
@@ -246,7 +250,9 @@ describe("translation resources", () => {
     expect(en.settings.shortcuts.actions.rebind).toBe("Rebind");
     expect(en.settings.integrations.commandLine.title).toBe("Command line");
     expect(en.settings.integrations.skills.updateAvailable).toBe("Update available");
-    expect(en.settings.permissions.notifications).toBe("Notifications");
+    expect(en.settings.notifications.playSound).toBe("Play sound");
+    expect(en.settings.notifications.permission).toBe("Notification permission");
+    expect(en.settings.notifications.sentTitle).toBe("Test notification sent");
     expect(en.settings.permissions.actions.request).toBe("Request");
   });
 

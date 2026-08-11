@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { platform } from "node:os";
+import { hostname, platform } from "node:os";
 import { afterEach, describe, expect, test } from "vitest";
 import { HubRelationshipHarness } from "./test-utils/relationship-harness.js";
 
@@ -88,6 +88,7 @@ describe("Hub relationship", () => {
         .update(secret ?? "")
         .digest("base64url"),
     );
+    expect(enrollment.hostname).toBe(hostname());
     relationship.completeEnrollment();
     await connecting.result;
     await relationship.socketDialed();
@@ -665,7 +666,7 @@ describe("Hub relationship", () => {
     expect(relationship.relationshipFile()?.relationship.daemonId).toBe(daemonId);
     expect(first).toMatchObject({ payload: { success: true, executionId: "first-execution" } });
     expect(second).toMatchObject({ payload: { success: true, executionId: "second-execution" } });
-    expect(relationship.providerCreations()).toBe(2);
+    expect(await relationship.durableOwnedAgentIds()).toHaveLength(2);
   });
 
   test("daemon shutdown fences a pending create before closing owned agents", async () => {

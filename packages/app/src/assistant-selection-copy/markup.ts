@@ -1,5 +1,6 @@
 export const MARKDOWN_COPY_TAG_ATTRIBUTE = "data-paseo-markdown-tag";
 export const MARKDOWN_COPY_IGNORE_ATTRIBUTE = "data-paseo-markdown-ignore";
+export const MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE = "data-paseo-markdown-list-marker";
 export const MARKDOWN_COPY_UNWRAP_ATTRIBUTE = "data-paseo-markdown-unwrap";
 export const MARKDOWN_COPY_LIST_START_ATTRIBUTE = "data-paseo-markdown-list-start";
 export const MARKDOWN_COPY_LANGUAGE_ATTRIBUTE = "data-paseo-markdown-language";
@@ -28,6 +29,7 @@ export const markdownCopyDataSet = {
   hr: { paseoMarkdownTag: "hr" },
   ignore: { paseoMarkdownIgnore: "true" },
   li: { paseoMarkdownTag: "li" },
+  listMarker: { paseoMarkdownIgnore: "true", paseoMarkdownListMarker: "true" },
   ol: { paseoMarkdownTag: "ol" },
   p: { paseoMarkdownTag: "p" },
   pre: { paseoMarkdownTag: "pre" },
