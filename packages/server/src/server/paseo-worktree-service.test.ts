@@ -458,9 +458,8 @@ test("an explicit project FK remains unchanged when its worktree comes from anot
   });
 });
 
-// POSIX-only: Windows git worktree paths need separate canonicalization coverage.
 test.skipIf(isPlatform("win32"))(
-  "reuses an existing worktree and still upserts the workspace",
+  "creates a suffixed worktree when the preferred slug is occupied",
   async () => {
     const { repoDir, tempDir } = createGitRepo();
     cleanupPaths.push(tempDir);
@@ -492,11 +491,10 @@ test.skipIf(isPlatform("win32"))(
       deps,
     );
 
-    expect(second.created).toBe(false);
-    expect(second.worktree.worktreePath).toBe(first.worktree.worktreePath);
+    expect(second.created).toBe(true);
+    expect(second.worktree.worktreePath).not.toBe(first.worktree.worktreePath);
+    expect(path.basename(second.worktree.worktreePath)).toBe("reuse-me-1");
     expect(events).toContain(`workspace:${second.workspace.workspaceId}`);
-    // Creation never dedupes by directory: the same worktree path yields a
-    // distinct workspace record on the second call.
     expect(second.workspace.workspaceId).not.toBe(first.workspace.workspaceId);
   },
 );
