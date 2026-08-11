@@ -87,6 +87,38 @@ export interface FileSearchPaneProps {
   onOpenMatch: (path: string, line: number) => void;
 }
 
+interface SearchOptionsMenuProps {
+  options: FileSearchOptions;
+  allGroupsCollapsed: boolean;
+  hasFileGroups: boolean;
+  onToggleCase: () => void;
+  onToggleWord: () => void;
+  onToggleRegex: () => void;
+  onToggleAllGroups: () => void;
+}
+
+interface FileSearchStateContentProps {
+  state: FileSearchState;
+  rows: FileSearchRow[];
+  renderRow: (info: ListRenderItemInfo<FileSearchRow>) => ReactElement;
+}
+
+interface SearchStateLabelProps {
+  label: string;
+  error?: boolean;
+}
+
+interface FileSearchFileRowProps {
+  row: Extract<FileSearchRow, { kind: "file" }>;
+  collapsed: boolean;
+  onToggleFile: (path: string) => void;
+}
+
+interface FileSearchMatchRowProps {
+  row: Extract<FileSearchRow, { kind: "match" }>;
+  onOpenMatch: (path: string, line: number) => void;
+}
+
 export function FileSearchPane({
   client,
   workspaceRoot,
@@ -271,15 +303,7 @@ function SearchOptionsMenu({
   onToggleWord,
   onToggleRegex,
   onToggleAllGroups,
-}: {
-  options: FileSearchOptions;
-  allGroupsCollapsed: boolean;
-  hasFileGroups: boolean;
-  onToggleCase: () => void;
-  onToggleWord: () => void;
-  onToggleRegex: () => void;
-  onToggleAllGroups: () => void;
-}) {
+}: SearchOptionsMenuProps) {
   const { t } = useTranslation();
   const groupActionLabel = allGroupsCollapsed
     ? t("workspace.git.diff.expandAll")
@@ -338,22 +362,11 @@ function SearchOptionsMenu({
 }
 
 // Keep this callback stable; the linted React performance rule forbids creating it in JSX.
-function searchOptionsTriggerStyle({
-  hovered,
-  pressed,
-}: PressableStateCallbackType & { hovered?: boolean }) {
+function searchOptionsTriggerStyle({ hovered, pressed }: PressableStateCallbackType) {
   return [styles.optionsTrigger, (Boolean(hovered) || pressed) && styles.optionsTriggerHovered];
 }
 
-function FileSearchStateContent({
-  state,
-  rows,
-  renderRow,
-}: {
-  state: FileSearchState;
-  rows: FileSearchRow[];
-  renderRow: (info: ListRenderItemInfo<FileSearchRow>) => ReactElement;
-}) {
+function FileSearchStateContent({ state, rows, renderRow }: FileSearchStateContentProps) {
   const { t } = useTranslation();
   if (state.status === "idle") {
     return <SearchStateLabel label={t("common.actions.search")} />;
@@ -394,7 +407,7 @@ function FileSearchStateContent({
   );
 }
 
-function SearchStateLabel({ label, error = false }: { label: string; error?: boolean }) {
+function SearchStateLabel({ label, error = false }: SearchStateLabelProps) {
   return (
     <View style={styles.centerState}>
       <Text style={error ? styles.errorText : styles.stateText}>{label}</Text>
@@ -402,15 +415,7 @@ function SearchStateLabel({ label, error = false }: { label: string; error?: boo
   );
 }
 
-function FileSearchFileRow({
-  row,
-  collapsed,
-  onToggleFile,
-}: {
-  row: Extract<FileSearchRow, { kind: "file" }>;
-  collapsed: boolean;
-  onToggleFile: (path: string) => void;
-}) {
+function FileSearchFileRow({ row, collapsed, onToggleFile }: FileSearchFileRowProps) {
   const handlePress = useCallback(() => onToggleFile(row.path), [onToggleFile, row.path]);
   const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
   return (
@@ -432,17 +437,11 @@ function FileSearchFileRow({
   );
 }
 
-function fileRowStyle({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) {
+function fileRowStyle({ hovered, pressed }: PressableStateCallbackType) {
   return [styles.fileRow, (Boolean(hovered) || pressed) && styles.fileRowHovered];
 }
 
-function FileSearchMatchRow({
-  row,
-  onOpenMatch,
-}: {
-  row: Extract<FileSearchRow, { kind: "match" }>;
-  onOpenMatch: (path: string, line: number) => void;
-}) {
+function FileSearchMatchRow({ row, onOpenMatch }: FileSearchMatchRowProps) {
   const handlePress = useCallback(
     () => onOpenMatch(row.path, row.match.line),
     [onOpenMatch, row.match.line, row.path],
@@ -466,7 +465,7 @@ function FileSearchMatchRow({
   );
 }
 
-function matchRowStyle({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) {
+function matchRowStyle({ hovered, pressed }: PressableStateCallbackType) {
   return [styles.matchRow, (Boolean(hovered) || pressed) && styles.matchRowHovered];
 }
 

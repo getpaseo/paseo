@@ -114,8 +114,9 @@ describe("searchWorkspaceFiles", () => {
     });
   });
 
-  test("falls back to git grep when ripgrep is unavailable", async () => {
+  test("falls back to bounded git grep matching when ripgrep is unavailable", async () => {
     const calls: string[] = [];
+    let gitArgs: string[] = [];
     const runner: SearchCommandRunner = {
       async run(command) {
         calls.push(command.command);
@@ -124,7 +125,9 @@ describe("searchWorkspaceFiles", () => {
           error.code = "ENOENT";
           throw error;
         }
-        command.onStdoutLine("src/search.ts\u000012\u00005\u0000const needle = needle;");
+        gitArgs = command.args;
+        command.onStdoutLine("src/search.ts\u000012\u00007\u0000needle");
+        command.onStdoutLine("src/search.ts\u000012\u000016\u0000needle");
         return { exitCode: 0, stderr: "" };
       },
     };
@@ -133,13 +136,26 @@ describe("searchWorkspaceFiles", () => {
     const result = await searchWorkspaceFiles({ cwd, query: "needle", maxResults: 20 }, { runner });
 
     expect(calls).toEqual(["rg", "git"]);
+    expect(gitArgs).toContain("--only-matching");
     expect(result).toEqual({
       files: [
         {
           path: "src/search.ts",
           matches: [
-            { line: 12, column: 7, matchLength: 6, lineContent: "const needle = needle;" },
-            { line: 12, column: 16, matchLength: 6, lineContent: "const needle = needle;" },
+            {
+              line: 12,
+              column: 7,
+              matchLength: 6,
+              lineContent: "needle",
+              lineContentStartColumn: 7,
+            },
+            {
+              line: 12,
+              column: 16,
+              matchLength: 6,
+              lineContent: "needle",
+              lineContentStartColumn: 16,
+            },
           ],
         },
       ],

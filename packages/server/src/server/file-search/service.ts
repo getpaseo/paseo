@@ -71,6 +71,41 @@ interface SearchRunState {
   stopReason: "limit" | "timeout" | "cancelled" | null;
 }
 
+interface PreferredSearchCommandParams {
+  input: SearchInput;
+  cwd: string;
+  searchOptions: SearchOptions;
+  accumulator: SearchAccumulator;
+  state: SearchRunState;
+  runner: SearchCommandRunner;
+}
+
+interface RipgrepMatchMessage {
+  type: "match";
+  data: {
+    path: { text: string };
+    lines: { text: string };
+    line_number: number;
+    submatches: Array<{ start: number; end: number }>;
+  };
+}
+
+interface SearchMatchInput {
+  accumulator: SearchAccumulator;
+  relativePath: string;
+  lineContent: string;
+  line: number;
+  start: number;
+  end: number;
+  column?: number;
+  lineContentStartColumn?: number;
+}
+
+interface BoundedLineContent {
+  content: string;
+  start: number;
+}
+
 const defaultSearchCommandRunner: SearchCommandRunner = {
   run: runSearchCommand,
 };
@@ -127,14 +162,9 @@ export async function searchWorkspaceFiles(
   }
 }
 
-async function runPreferredSearchCommand(params: {
-  input: SearchInput;
-  cwd: string;
-  searchOptions: SearchOptions;
-  accumulator: SearchAccumulator;
-  state: SearchRunState;
-  runner: SearchCommandRunner;
-}): Promise<SearchCommandResult> {
+async function runPreferredSearchCommand(
+  params: PreferredSearchCommandParams,
+): Promise<SearchCommandResult> {
   const rgCommand: SearchCommand = {
     command: "rg",
     args: buildRipgrepArgs(params.input.query, params.searchOptions),
@@ -157,13 +187,7 @@ async function runPreferredSearchCommand(params: {
       cwd: params.cwd,
       signal: params.state.controller.signal,
       onStdoutLine(line) {
-        const outcome = ingestGitGrepLine(
-          line,
-          params.cwd,
-          params.input.query,
-          params.searchOptions,
-          params.accumulator,
-        );
+        const outcome = ingestGitGrepLine(line, params.cwd, params.accumulator);
         if (outcome === "stop") stopSearch(params.state, "limit");
       },
     });
@@ -249,6 +273,7 @@ function buildGitGrepArgs(query: string, options: SearchOptions): string[] {
     "--no-color",
     "--untracked",
     "--no-recurse-submodules",
+    "--only-matching",
   ];
   if (!options.caseSensitive) args.push("-i");
   if (options.wholeWord) args.push("-w");
@@ -310,14 +335,14 @@ function ingestRipgrepLine(
   for (const submatch of parsed.data.submatches) {
     const start = lineBuffer.subarray(0, submatch.start).toString("utf8").length;
     const end = lineBuffer.subarray(0, submatch.end).toString("utf8").length;
-    const outcome = addMatch(
+    const outcome = addMatch({
       accumulator,
       relativePath,
       lineContent,
-      parsed.data.line_number,
+      line: parsed.data.line_number,
       start,
       end,
-    );
+    });
     if (outcome === "stop") return "stop";
   }
   return "continue";
@@ -331,15 +356,7 @@ function parseRipgrepLine(line: string): unknown {
   }
 }
 
-function isRipgrepMatch(value: unknown): value is {
-  type: "match";
-  data: {
-    path: { text: string };
-    lines: { text: string };
-    line_number: number;
-    submatches: Array<{ start: number; end: number }>;
-  };
-} {
+function isRipgrepMatch(value: unknown): value is RipgrepMatchMessage {
   if (typeof value !== "object" || value === null) return false;
   const message = value as Record<string, unknown>;
   if (message.type !== "match" || typeof message.data !== "object" || message.data === null) {
@@ -368,8 +385,6 @@ function isRipgrepMatch(value: unknown): value is {
 function ingestGitGrepLine(
   line: string,
   cwd: string,
-  query: string,
-  options: SearchOptions,
   accumulator: SearchAccumulator,
 ): "continue" | "stop" {
   const fields = line.split("\0");
@@ -378,52 +393,33 @@ function ingestGitGrepLine(
   if (!reportedPath || !lineText || !columnText) return "continue";
   const lineNumber = Number(lineText);
   const reportedColumn = Number(columnText);
-  if (!Number.isSafeInteger(lineNumber) || lineNumber < 1) return "continue";
+  const hasValidLine = Number.isSafeInteger(lineNumber) && lineNumber > 0;
+  const hasValidColumn = Number.isSafeInteger(reportedColumn) && reportedColumn > 0;
+  if (!hasValidLine || !hasValidColumn) return "continue";
+
   const lineContent = contentParts.join("\0").replace(/\r$/, "");
-  const relativePath = normalizeResultPath(cwd, reportedPath);
-  const matcher = buildJavascriptMatcher(query, options);
-  if (!matcher) {
-    const start =
-      Number.isSafeInteger(reportedColumn) && reportedColumn > 0 ? reportedColumn - 1 : 0;
-    return addMatch(accumulator, relativePath, lineContent, lineNumber, start, start);
-  }
-
-  let match = matcher.exec(lineContent);
-  while (match) {
-    const outcome = addMatch(
-      accumulator,
-      relativePath,
-      lineContent,
-      lineNumber,
-      match.index,
-      match.index + match[0].length,
-    );
-    if (outcome === "stop") return "stop";
-    if (match[0].length === 0) matcher.lastIndex += 1;
-    match = matcher.exec(lineContent);
-  }
-  return "continue";
+  return addMatch({
+    accumulator,
+    relativePath: normalizeResultPath(cwd, reportedPath),
+    lineContent,
+    line: lineNumber,
+    start: 0,
+    end: lineContent.length,
+    column: reportedColumn,
+    lineContentStartColumn: reportedColumn,
+  });
 }
 
-function buildJavascriptMatcher(query: string, options: SearchOptions): RegExp | null {
-  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const source = options.useRegex ? query : escaped;
-  const pattern = options.wholeWord ? `\\b${source}\\b` : source;
-  try {
-    return new RegExp(pattern, options.caseSensitive ? "g" : "gi");
-  } catch {
-    return null;
-  }
-}
-
-function addMatch(
-  accumulator: SearchAccumulator,
-  relativePath: string,
-  fullLineContent: string,
-  line: number,
-  start: number,
-  end: number,
-): "continue" | "stop" {
+function addMatch({
+  accumulator,
+  relativePath,
+  lineContent,
+  line,
+  start,
+  end,
+  column,
+  lineContentStartColumn = 1,
+}: SearchMatchInput): "continue" | "stop" {
   if (accumulator.totalMatches >= accumulator.maxResults) {
     accumulator.truncated = true;
     return "stop";
@@ -434,13 +430,14 @@ function addMatch(
     return "continue";
   }
 
-  const bounded = boundLineContent(fullLineContent, start, end);
+  const bounded = boundLineContent(lineContent, start, end);
+  const boundedStartColumn = lineContentStartColumn + bounded.start;
   const match: FileSearchMatch = {
     line,
-    column: start + 1,
+    column: column ?? lineContentStartColumn + start,
     matchLength: Math.max(0, end - start),
     lineContent: bounded.content,
-    ...(bounded.start > 0 ? { lineContentStartColumn: bounded.start + 1 } : {}),
+    ...(boundedStartColumn > 1 ? { lineContentStartColumn: boundedStartColumn } : {}),
   };
   existingMatches.push(match);
   accumulator.files.set(relativePath, existingMatches);
@@ -452,7 +449,7 @@ function boundLineContent(
   lineContent: string,
   matchStart: number,
   matchEnd: number,
-): { content: string; start: number } {
+): BoundedLineContent {
   if (lineContent.length <= MAX_LINE_CONTENT_LENGTH) return { content: lineContent, start: 0 };
   const matchLength = Math.min(Math.max(0, matchEnd - matchStart), MAX_LINE_CONTENT_LENGTH);
   const leftBudget = Math.floor((MAX_LINE_CONTENT_LENGTH - matchLength) / 2);
