@@ -1,5 +1,7 @@
+import { createElement, isValidElement } from "react";
 import { describe, expect, it } from "vitest";
 import { resolveInlineImageSize } from "./inline-image-size";
+import { colorMarkdownLinkChildren, markdownLinkTextStyle } from "./link-children";
 
 describe("resolveInlineImageSize", () => {
   it("respects a one-sided explicit width using natural aspect ratio", () => {
@@ -25,5 +27,25 @@ describe("resolveInlineImageSize", () => {
       width: 16,
       height: 16,
     });
+  });
+});
+
+describe("shared Markdown links", () => {
+  it("applies the accent color to child text spans", () => {
+    const child = createElement("span", { style: { color: "foreground" } }, "Paseo");
+    const renderedChildren = colorMarkdownLinkChildren([child], "accent");
+    const renderedChild = Array.isArray(renderedChildren) ? renderedChildren[0] : renderedChildren;
+    if (!isValidElement<{ style: unknown }>(renderedChild)) {
+      throw new Error("Markdown link color did not preserve its child element");
+    }
+
+    expect(renderedChild.props.style).toEqual([{ color: "foreground" }, { color: "accent" }]);
+  });
+
+  it("underlines link text while hovered", () => {
+    expect(markdownLinkTextStyle({ color: "accent" }, true)).toEqual([
+      { color: "accent" },
+      { textDecorationLine: "underline" },
+    ]);
   });
 });
