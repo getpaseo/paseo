@@ -4,6 +4,7 @@ import {
   resolveWindowChromeObstruction,
   resolveWindowChromeRowPlacement,
   resolveWindowChromeSafeArea,
+  resolveWindowControlsBackground,
 } from "@/utils/desktop-window";
 
 describe("window chrome", () => {
@@ -119,6 +120,39 @@ describe("window chrome", () => {
     expect(
       resolveWindowChromeSafeArea({ obstruction, corners: "top-right", placement: "inline" }),
     ).toEqual({ paddingLeft: 0, paddingRight: 48 });
+  });
+
+  it("paints the native controls to match the surface that reaches the corner", () => {
+    const colors = { sidebarColor: "#141716", contentColor: "#181b1a" };
+    const windows = { isElectron: true, isMac: false, ...colors };
+
+    // The explorer reaches the top-right corner while it is open, so the controls take its surface.
+    expect(resolveWindowControlsBackground({ ...windows, isExplorerOpen: true })).toBe("#141716");
+    // Closed, the content surface is what sits under them.
+    expect(resolveWindowControlsBackground({ ...windows, isExplorerOpen: false })).toBe("#181b1a");
+  });
+
+  it("leaves the window controls alone where the app does not paint them", () => {
+    const colors = { sidebarColor: "#141716", contentColor: "#181b1a" };
+
+    // macOS draws its own traffic lights; opening the explorer must not repaint anything.
+    expect(
+      resolveWindowControlsBackground({
+        isElectron: true,
+        isMac: true,
+        isExplorerOpen: true,
+        ...colors,
+      }),
+    ).toBeNull();
+    // Browser web and native have no native controls to paint.
+    expect(
+      resolveWindowControlsBackground({
+        isElectron: false,
+        isMac: false,
+        isExplorerOpen: true,
+        ...colors,
+      }),
+    ).toBeNull();
   });
 
   it("intersects identical and empty corner claims", () => {

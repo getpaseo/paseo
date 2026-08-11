@@ -291,6 +291,25 @@ export function useOwnsWindowChromeCorner(corner: WindowChromeCorner): boolean {
   return windowChromeCornersInclude(corners, corner);
 }
 
+/**
+ * What colour the native window controls should be painted, or null to leave them alone.
+ *
+ * The controls are drawn by the OS over whatever surface reaches the top-right corner, so they
+ * only look native while they match it: the explorer's sidebar surface while it is open, the
+ * content surface otherwise. macOS draws its own traffic lights and takes no colour from us,
+ * and outside Electron there are no controls to paint.
+ */
+export function resolveWindowControlsBackground(input: {
+  isElectron: boolean;
+  isMac: boolean;
+  isExplorerOpen: boolean;
+  sidebarColor: string;
+  contentColor: string;
+}): string | null {
+  if (!input.isElectron || input.isMac) return null;
+  return input.isExplorerOpen ? input.sidebarColor : input.contentColor;
+}
+
 type WindowChromeSafeAreaProps = ViewProps & {
   placement: WindowChromeSafeAreaPlacement;
   horizontalPadding?: number;

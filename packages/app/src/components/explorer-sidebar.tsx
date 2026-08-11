@@ -38,6 +38,7 @@ import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { WindowChromeHeaderRow } from "@/components/desktop/window-chrome-header-row";
+import { resolveWindowControlsBackground } from "@/utils/desktop-window";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
@@ -327,9 +328,15 @@ function ExplorerSidebarContent({
   const canQueryPullRequest = isGit && Boolean(workspaceRoot);
 
   useEffect(() => {
-    if (!getIsElectronRuntime() || getIsElectronRuntimeMac()) return;
+    const backgroundColor = resolveWindowControlsBackground({
+      isElectron: getIsElectronRuntime(),
+      isMac: getIsElectronRuntimeMac(),
+      isExplorerOpen: isOpen,
+      sidebarColor: theme.colors.surfaceSidebar,
+      contentColor: theme.colors.surface0,
+    });
+    if (backgroundColor === null) return;
 
-    const backgroundColor = isOpen ? theme.colors.surfaceSidebar : theme.colors.surface0;
     void updateDesktopWindowControls({ backgroundColor }).catch((error) => {
       console.warn("[DesktopWindow] Failed to update window controls background", error);
     });

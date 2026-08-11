@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import { resolveHeaderRowContentWidth } from "@/components/desktop/window-chrome-header-row-measure";
 import { useWindowChromeRowPlacement, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { isWeb } from "@/constants/platform";
 
@@ -47,25 +48,27 @@ export function WindowChromeHeaderRow({
     requestAnimationFrame(() => {
       const content = rowRef.current as unknown as HTMLElement | null;
       if (!content) return;
-      // Only content that cannot shrink can collide with the controls. A header's leading title
-      // grows to fill the row and truncates when squeezed, so measuring it would report the row
-      // as full no matter how much room it really has -- and every header would drop. Count the
-      // rigid children instead, each read at max-content so a child that was stretched by the
-      // row's own layout reports the width it actually wants.
+      // Read each child at max-content so a child the row stretched reports the width it
+      // actually wants; resolveHeaderRowContentWidth decides which of them can collide.
       const gap = Number.parseFloat(window.getComputedStyle(content).columnGap) || 0;
-      let rigidWidth = 0;
-      let rigidCount = 0;
-      for (const child of Array.from(content.children)) {
+      const childBoxes = Array.from(content.children).map((child) => {
         const childStyle = window.getComputedStyle(child);
-        if (childStyle.position === "absolute" || childStyle.flexShrink !== "0") continue;
         const element = child as HTMLElement;
         const previousChildWidth = element.style.width;
         element.style.width = "max-content";
-        rigidWidth += element.scrollWidth;
+        const intrinsicWidth = element.scrollWidth;
         element.style.width = previousChildWidth;
-        rigidCount += 1;
-      }
-      const measuredWidth = rigidWidth + Math.max(rigidCount - 1, 0) * gap + horizontalPadding * 2;
+        return {
+          isAbsolute: childStyle.position === "absolute",
+          canShrink: childStyle.flexShrink !== "0",
+          intrinsicWidth,
+        };
+      });
+      const measuredWidth = resolveHeaderRowContentWidth({
+        children: childBoxes,
+        gap,
+        horizontalPadding,
+      });
       setContentWidth((current) => (current === measuredWidth ? current : measuredWidth));
     });
   }, [horizontalPadding]);
