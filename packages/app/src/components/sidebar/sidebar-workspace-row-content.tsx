@@ -9,6 +9,7 @@ import {
   WorkspaceMetaRow,
   type WorkspaceServiceSummary,
 } from "@/components/sidebar/workspace-meta-row";
+import { getProviderIcon } from "@/components/provider-icons";
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
@@ -180,6 +181,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
           <WorkspaceStatusIndicator
             bucket={workspace.statusBucket}
             workspaceKind={workspace.workspaceKind}
+            provider={workspace.activeAgentProvider}
             loading={isLoading}
             reserveIdleSpace={reserveIdleStatusIndicatorSpace}
           />
@@ -210,11 +212,13 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
 function WorkspaceStatusIndicator({
   bucket,
   workspaceKind,
+  provider,
   loading = false,
   reserveIdleSpace = true,
 }: {
   bucket: SidebarWorkspaceEntry["statusBucket"];
   workspaceKind: SidebarWorkspaceEntry["workspaceKind"];
+  provider: SidebarWorkspaceEntry["activeAgentProvider"];
   loading?: boolean;
   reserveIdleSpace?: boolean;
 }) {
@@ -236,6 +240,10 @@ function WorkspaceStatusIndicator({
         <StatusRing />
       </View>
     );
+  }
+
+  if (provider) {
+    return <ProviderStatusIndicator bucket={bucket} provider={provider} />;
   }
 
   if (bucket === "needs_input") {
@@ -275,6 +283,23 @@ function WorkspaceStatusIndicator({
   return (
     <View style={styles.workspaceStatusDot} testID={`workspace-status-indicator-${bucket}`}>
       <KindIcon size={14} uniProps={foregroundMutedColorMapping} />
+      {dotColorStyle ? <StatusDotOverlay dotColorStyle={dotColorStyle} /> : null}
+    </View>
+  );
+}
+
+function ProviderStatusIndicator({
+  bucket,
+  provider,
+}: {
+  bucket: SidebarWorkspaceEntry["statusBucket"];
+  provider: NonNullable<SidebarWorkspaceEntry["activeAgentProvider"]>;
+}) {
+  const ProviderIcon = getProviderIcon(provider);
+  const dotColorStyle = getStatusDotColorStyle(bucket);
+  return (
+    <View style={styles.workspaceStatusDot} testID="workspace-provider-indicator">
+      <ProviderIcon size={14} color={styles.providerIcon.color} />
       {dotColorStyle ? <StatusDotOverlay dotColorStyle={dotColorStyle} /> : null}
     </View>
   );
@@ -529,6 +554,9 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
+  },
+  providerIcon: {
+    color: theme.colors.foregroundMuted,
   },
   statusDotOverlay: {
     position: "absolute",
