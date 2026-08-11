@@ -5,8 +5,6 @@ import { formatAgentModeLabel, formatThinkingOptionLabel } from "@/agent-control
 export interface AgentProfileTag {
   id: string;
   label: string;
-  /** Model ids read as identifiers, not prose. */
-  mono?: boolean;
 }
 
 function findEntry(
@@ -35,7 +33,7 @@ export function buildAgentProfileTags(input: {
   const modelId = input.profile.model?.trim();
   if (modelId) {
     const model = entry?.models?.find((candidate) => candidate.id === modelId);
-    tags.push({ id: "model", label: model?.label ?? modelId, mono: !model });
+    tags.push({ id: "model", label: model?.label ?? modelId });
   }
 
   const modeId = input.profile.modeId?.trim();

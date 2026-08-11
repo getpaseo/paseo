@@ -289,6 +289,7 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
           <Text style={styles.emptyText}>{t("settings.host.agents.unavailable")}</Text>
         </View>
       )}
+      <AgentProfilesSection serverId={serverId} />
     </View>
   );
 }
@@ -1781,7 +1782,6 @@ export function HostTerminalsPage({ serverId }: { serverId: string }) {
         <EnableTerminalAgentHooksCard serverId={serverId} />
       </SettingsSection>
       <TerminalProfilesSection serverId={serverId} />
-      <AgentProfilesSection serverId={serverId} />
     </View>
   );
 }

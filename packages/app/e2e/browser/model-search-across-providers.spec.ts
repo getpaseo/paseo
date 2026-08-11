@@ -2,12 +2,17 @@ import { test } from "../support/fixtures";
 import {
   closeModelPicker,
   expectModelSearchEmptyState,
+  expectModelPickerHeight,
+  expectModelPickerWidth,
   expectModelSearchResult,
   expectPinnedProfilesHidden,
   openModelPicker,
+  readModelPickerHeight,
+  readModelPickerWidth,
   searchAllModels,
   seedAgentProfiles,
   seedModelProvider,
+  expectSearchResultsVirtualized,
 } from "../support/helpers/agent-profiles";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
@@ -34,6 +39,17 @@ const ROOT_VIEW_PROFILE = {
   provider: "mock",
 };
 
+const LARGE_CATALOG_SIZE = 200;
+const LARGE_CATALOG = {
+  id: "mock-bulk",
+  label: "Mock Bulk",
+  models: Array.from({ length: LARGE_CATALOG_SIZE }, (_, index) => ({
+    id: `bulk-${index}`,
+    label: `Bulk model ${index}`,
+    description: `Bulk search result ${index}`,
+  })),
+};
+
 test.describe("Cross-provider model search", () => {
   test("one query over the picker root reaches every provider and names each result's provider", async ({
     page,
@@ -49,6 +65,7 @@ test.describe("Cross-provider model search", () => {
         await expectComposerVisible(page);
         await openModelPicker(page);
       });
+      const restingWidth = await readModelPickerWidth(page);
 
       await test.step("one query returns the same model label from two providers", async () => {
         await searchAllModels(page, "ten second stream");
@@ -64,6 +81,7 @@ test.describe("Cross-provider model search", () => {
           modelLabel: "Ten second stream",
           providerLabel: STUDIO.label,
         });
+        await expectModelPickerWidth(page, restingWidth);
       });
 
       await test.step("searching by provider name reaches that provider's own models", async () => {
@@ -86,6 +104,52 @@ test.describe("Cross-provider model search", () => {
         await searchAllModels(page, "zzz");
         await expectModelSearchEmptyState(page, "zzz");
         await closeModelPicker(page);
+      });
+    } finally {
+      await workspace.cleanup();
+      await profile.restore();
+      await provider.restore();
+    }
+  });
+
+  test("desktop search keeps its frame stable and virtualizes a host-wide catalog", async ({
+    page,
+  }) => {
+    const provider = await seedModelProvider(LARGE_CATALOG);
+    const profile = await seedAgentProfiles([ROOT_VIEW_PROFILE]);
+    const workspace = await seedWorkspace({ repoPrefix: "model-search-large-catalog-" });
+
+    try {
+      await test.step("open the host-wide model picker", async () => {
+        await gotoWorkspace(page, workspace.workspaceId);
+        await clickNewChat(page);
+        await expectComposerVisible(page);
+        await openModelPicker(page);
+      });
+
+      const restingHeight = await readModelPickerHeight(page);
+      const restingWidth = await readModelPickerWidth(page);
+
+      await test.step("a broad query renders only the visible result window", async () => {
+        await searchAllModels(page, "bulk model");
+        await expectSearchResultsVirtualized(page, {
+          provider: LARGE_CATALOG.id,
+          total: LARGE_CATALOG_SIZE,
+        });
+        await expectModelPickerHeight(page, restingHeight);
+        await expectModelPickerWidth(page, restingWidth);
+      });
+
+      await test.step("narrowing to one result does not resize the picker", async () => {
+        await searchAllModels(page, "bulk model 199");
+        await expectModelSearchResult(page, {
+          provider: LARGE_CATALOG.id,
+          modelId: "bulk-199",
+          modelLabel: "Bulk model 199",
+          providerLabel: LARGE_CATALOG.label,
+        });
+        await expectModelPickerHeight(page, restingHeight);
+        await expectModelPickerWidth(page, restingWidth);
       });
     } finally {
       await workspace.cleanup();

@@ -1445,6 +1445,7 @@ export const fr: TranslationResources = {
     providers: "Fournisseurs",
     editProfiles: "Modifier",
     editProfilesLabel: "Modifier les profils d'agent",
+    createProfile: "Créer un profil",
     modelCount: "{{count}} modèle",
     modelCountPlural: "{{count}} modèles",
     retry: "Réessayer",
@@ -2255,6 +2256,7 @@ export const fr: TranslationResources = {
         emptyState:
           "Aucun profil pour le moment. Ajoutez-en un pour démarrer des agents à partir d'un fournisseur et d'un modèle enregistrés.",
         addProfileTitle: "Ajouter un profil d'agent",
+        newProfile: "Nouveau profil",
         editProfile: "Modifier le profil",
         editProfileTitle: "Modifier le profil d'agent",
         nameLabel: "Nom",
@@ -2273,7 +2275,6 @@ export const fr: TranslationResources = {
         featuresLabel: "Caractéristiques",
         featureCount: "{{count}} caractéristiques",
         featureCountOne: "{{count}} caractéristique",
-        providerDefault: "Valeur par défaut du fournisseur",
         notesLabel: "Notes pour les agents",
         notesPlaceholder:
           "À utiliser pour le travail sur l'UI — composants, mise en page et tokens de design.",

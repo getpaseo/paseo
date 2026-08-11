@@ -2,10 +2,11 @@
  * Agent profiles: named bundles of composer settings (provider, model, mode,
  * thinking option, feature values, notes) stored host-wide in daemon config.
  *
- * Three capabilities leave this module — managing the list in settings, reading
- * it, and pinning it to the model picker. Everything else (the form model, the
- * catalog and feature probes, the materialization rules, the row and modal
- * chrome) is internal; import from `@/agent-profiles`, never a path inside it.
+ * Four capabilities leave this module — managing the list in settings, reading
+ * it, pinning it to the model picker, and drawing a profile's glyph. Everything
+ * else (the form model, the catalog and feature probes, the materialization
+ * rules, the icon registry, the row and modal chrome) is internal; import from
+ * `@/agent-profiles`, never a path inside it.
  *
  * `useAgentProfilePicker` deliberately hands the picker a flat row view model
  * and one `applyProfile(id)` callback rather than the profiles themselves: what
@@ -21,4 +22,5 @@ export {
   type AgentProfilePickerRow,
   type DraftAgentProfileControls,
 } from "./internal/use-agent-profile-picker";
+export { AgentProfileGlyph } from "./internal/agent-profile-glyph";
 export { AgentProfilesSection } from "./settings/agent-profiles-section";

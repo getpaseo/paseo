@@ -1427,6 +1427,7 @@ export const ptBR: TranslationResources = {
     providers: "Provedores",
     editProfiles: "Editar",
     editProfilesLabel: "Editar perfis de agente",
+    createProfile: "Criar perfil",
     modelCount: "{{count}} modelo",
     modelCountPlural: "{{count}} modelos",
     retry: "Tentar novamente",
@@ -2235,6 +2236,7 @@ export const ptBR: TranslationResources = {
         emptyState:
           "Nenhum perfil ainda. Adicione um para iniciar agentes a partir de um provedor e modelo salvos.",
         addProfileTitle: "Adicionar perfil de agente",
+        newProfile: "Novo perfil",
         editProfile: "Editar perfil",
         editProfileTitle: "Editar perfil de agente",
         nameLabel: "Nome",
@@ -2253,7 +2255,6 @@ export const ptBR: TranslationResources = {
         featuresLabel: "Recursos",
         featureCount: "{{count}} recursos",
         featureCountOne: "{{count}} recurso",
-        providerDefault: "Padrão do provedor",
         notesLabel: "Notas para os agentes",
         notesPlaceholder: "Use para trabalho de UI — componentes, layout e tokens de design.",
         notesHint:

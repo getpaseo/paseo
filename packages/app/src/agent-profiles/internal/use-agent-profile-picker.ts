@@ -29,8 +29,10 @@ export type AgentProfileApplyTarget =
 /** Everything the model picker renders for one profile. It never sees the profile itself. */
 export interface AgentProfilePickerRow {
   id: string;
-  /** Empty when the profile has no icon; the picker draws its own fallback. */
+  provider: string;
+  /** Icon registry key and identity colour; either may be empty for the default glyph. */
   icon: string;
+  color: string;
   name: string;
   /** "Claude Code · Opus 5 · Plan · Think hard" */
   summary: string;
@@ -55,8 +57,9 @@ export interface UseAgentProfilePickerInput {
 
 /**
  * The agent-profiles section of the model picker: the rows to draw, and what
- * pressing one does. Returns `null` when there is nothing to pin — an old
- * daemon, a host with no profiles, or none this composer could apply.
+ * pressing one does. A supported host returns an empty row list when there is
+ * nothing applicable so the picker can retain its settings shortcut without
+ * pinning an empty section. Unsupported or still-loading hosts return `null`.
  */
 export function useAgentProfilePicker(
   input: UseAgentProfilePickerInput,
@@ -92,7 +95,9 @@ export function useAgentProfilePicker(
     () =>
       applicableProfiles.map((profile) => ({
         id: profile.id,
+        provider: profile.provider,
         icon: profile.icon ?? "",
+        color: profile.color ?? "",
         name: profile.name,
         summary: buildAgentProfileTags({ profile, entries, formatFeatureCount })
           .map((tag) => tag.label)
@@ -168,5 +173,8 @@ export function useAgentProfilePicker(
     [applicableProfiles, client, persistSelection, target, toast],
   );
 
-  return useMemo(() => (rows.length > 0 ? { rows, applyProfile } : null), [applyProfile, rows]);
+  return useMemo(
+    () => (isSupported && profiles !== null ? { rows, applyProfile } : null),
+    [applyProfile, isSupported, profiles, rows],
+  );
 }

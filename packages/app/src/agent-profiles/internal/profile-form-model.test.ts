@@ -99,13 +99,20 @@ describe("openAgentProfileForm", () => {
     expect(model.getState().submitValue).toMatchObject({ name: "UI work", provider: "claude" });
   });
 
-  it("omits empty optional fields from the submitted value", () => {
+  it("omits blank text fields from the submitted value but never a selection", () => {
     const model = openWithCatalog({ mode: "create" });
     model.setName("  Cheap grunt  ");
     model.setProvider("codex", { label: "Codex" });
     model.setNotes("   ");
 
-    expect(model.getState().submitValue).toEqual({ name: "Cheap grunt", provider: "codex" });
+    // Codex declares no thinking options, so that key is genuinely absent —
+    // model and mode are seeded, never left for the host to decide.
+    expect(model.getState().submitValue).toEqual({
+      name: "Cheap grunt",
+      provider: "codex",
+      model: "gpt-5.2-codex",
+      modeId: "read-only",
+    });
   });
 
   it("seeds edit mode from the stored profile before the catalog lands", () => {
@@ -169,7 +176,7 @@ describe("openAgentProfileForm", () => {
   });
 
   describe("provider cascade", () => {
-    it("clears every provider-scoped selection when the provider changes", () => {
+    it("reseeds every provider-scoped selection when the provider changes", () => {
       const model = openWithCatalog({ mode: "create" });
       model.setName("Test writer");
       selectClaude(model);
@@ -183,8 +190,9 @@ describe("openAgentProfileForm", () => {
       model.setProvider("codex", { label: "Codex" });
       const state = model.getState();
 
-      expect(state.modelId).toBe("");
-      expect(state.modelDisplay).toBeNull();
+      // Claude's ids mean nothing under Codex, so each field lands on Codex's own default.
+      expect(state.modelId).toBe("gpt-5.2-codex");
+      expect(state.modelDisplay).toEqual({ label: "GPT-5.2 Codex" });
       expect(state.thinkingOptionId).toBe("");
       expect(state.thinkingDisplay).toBeNull();
       expect(state.featureValues).toEqual({});
@@ -192,14 +200,15 @@ describe("openAgentProfileForm", () => {
       expect(state.name).toBe("Test writer");
     });
 
-    it("seeds the new provider's default mode", () => {
+    it("seeds each provider's default mode", () => {
       const model = openWithCatalog({ mode: "create" });
       selectClaude(model);
 
       expect(model.getState().modeId).toBe("plan");
 
+      // Codex declares no defaultModeId, so the first mode it offers stands in.
       model.setProvider("codex", { label: "Codex" });
-      expect(model.getState().modeId).toBe("");
+      expect(model.getState().modeId).toBe("read-only");
     });
 
     it("re-populates model, mode and thinking options from the new provider", () => {
@@ -207,16 +216,15 @@ describe("openAgentProfileForm", () => {
       selectClaude(model);
 
       expect(optionValues(model.getState().modelOptions)).toEqual([
-        "",
         "claude-opus-5",
         "claude-haiku-4-5",
       ]);
-      expect(optionValues(model.getState().thinkingOptions)).toEqual(["", "think", "think-hard"]);
+      expect(optionValues(model.getState().thinkingOptions)).toEqual(["think", "think-hard"]);
 
       model.setProvider("codex", { label: "Codex" });
 
-      expect(optionValues(model.getState().modelOptions)).toEqual(["", "gpt-5.2-codex"]);
-      expect(optionValues(model.getState().modeOptions)).toEqual(["", "read-only"]);
+      expect(optionValues(model.getState().modelOptions)).toEqual(["gpt-5.2-codex"]);
+      expect(optionValues(model.getState().modeOptions)).toEqual(["read-only"]);
       // GPT-5.2 Codex declares no thinking options, so the field disappears.
       expect(model.getState().thinkingOptions).toEqual([]);
       expect(model.getState().disclosure.showThinkingField).toBe(false);
@@ -234,16 +242,17 @@ describe("openAgentProfileForm", () => {
   });
 
   describe("model cascade", () => {
-    it("drops a thinking level the new model does not offer", () => {
+    it("reseeds a thinking level the new model does not offer", () => {
       const model = openWithCatalog({ mode: "create" });
       selectClaude(model);
       model.setModel("claude-opus-5", { label: "Opus 5" });
       model.setThinking("think-hard", { label: "Think hard" });
 
+      // Haiku offers only "think", so "think-hard" cannot survive the switch.
       model.setModel("claude-haiku-4-5", { label: "Haiku 4.5" });
 
-      expect(model.getState().thinkingOptionId).toBe("");
-      expect(model.getState().thinkingDisplay).toBeNull();
+      expect(model.getState().thinkingOptionId).toBe("think");
+      expect(model.getState().thinkingDisplay).toEqual({ label: "Think" });
     });
 
     it("keeps a thinking level the new model still offers", () => {
@@ -257,12 +266,24 @@ describe("openAgentProfileForm", () => {
       expect(model.getState().thinkingOptionId).toBe("think");
     });
 
-    it("resolves thinking options from the default model while the model is unset", () => {
+    it("seeds the provider's default model and reads thinking options from it", () => {
       const model = openWithCatalog({ mode: "create" });
       selectClaude(model);
 
-      expect(model.getState().modelId).toBe("");
-      expect(optionValues(model.getState().thinkingOptions)).toEqual(["", "think", "think-hard"]);
+      expect(model.getState().modelId).toBe("claude-opus-5");
+      expect(optionValues(model.getState().thinkingOptions)).toEqual(["think", "think-hard"]);
+      expect(model.getState().thinkingOptionId).toBe("think");
+    });
+
+    it("offers no way to unset a selection", () => {
+      const model = openWithCatalog({ mode: "create" });
+      selectClaude(model);
+      const state = model.getState();
+
+      const everyOption = [...state.modelOptions, ...state.modeOptions, ...state.thinkingOptions];
+
+      expect(everyOption.length).toBeGreaterThan(0);
+      expect(optionValues(everyOption)).not.toContain("");
     });
   });
 
@@ -271,16 +292,22 @@ describe("openAgentProfileForm", () => {
       const model = openWithCatalog({ mode: "create" });
       selectClaude(model);
 
-      expect(model.getState().featureRequest).toEqual({ provider: "claude", modeId: "plan" });
-      const firstKey = model.getState().featureRequestKey;
-
-      model.setModel("claude-opus-5", { label: "Opus 5" });
-
-      expect(model.getState().featureRequestKey).not.toBe(firstKey);
       expect(model.getState().featureRequest).toEqual({
         provider: "claude",
         model: "claude-opus-5",
         modeId: "plan",
+        thinkingOptionId: "think",
+      });
+      const firstKey = model.getState().featureRequestKey;
+
+      model.setModel("claude-haiku-4-5", { label: "Haiku 4.5" });
+
+      expect(model.getState().featureRequestKey).not.toBe(firstKey);
+      expect(model.getState().featureRequest).toEqual({
+        provider: "claude",
+        model: "claude-haiku-4-5",
+        modeId: "plan",
+        thinkingOptionId: "think",
       });
     });
 

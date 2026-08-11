@@ -176,6 +176,7 @@ export function CombinedModelSelector({
       onEditProfiles={onEditProfiles ? handleEditProfiles : undefined}
       onRetryProvider={onRetryProvider}
       isRetryingProvider={isRetryingProvider}
+      scrolling={isWeb ? "independent" : "sheet"}
     />
   ) : (
     <View style={styles.sheetLoadingState}>
@@ -246,7 +247,9 @@ export function CombinedModelSelector({
         anchorRef={anchorRef}
         desktopPlacement={desktopPlacement}
         desktopMinWidth={desktopMinWidth}
+        desktopLockWidth
         desktopFixedHeight={browser.desktopFixedHeight}
+        desktopChildrenScrollEnabled={false}
         header={browser.header}
         mobileChildrenScrollEnabled={!browser.isProviderView || !isNative}
         mobileChildrenContentContainerStyle={styles.mobileBrowserContent}

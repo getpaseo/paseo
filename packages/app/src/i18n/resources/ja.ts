@@ -1414,6 +1414,7 @@ export const ja: TranslationResources = {
     providers: "プロバイダー",
     editProfiles: "編集",
     editProfilesLabel: "エージェントプロファイルを編集",
+    createProfile: "プロファイルを作成",
     modelCount: "{{count}}つのモデル",
     modelCountPlural: "{{count}}つのモデル",
     retry: "再試行",
@@ -2220,6 +2221,7 @@ export const ja: TranslationResources = {
         emptyState:
           "プロファイルがまだありません。保存したプロバイダーとモデルでエージェントを起動するために追加してください。",
         addProfileTitle: "エージェントプロファイルを追加",
+        newProfile: "新しいプロファイル",
         editProfile: "プロファイルを編集",
         editProfileTitle: "エージェントプロファイルを編集",
         nameLabel: "名前",
@@ -2238,7 +2240,6 @@ export const ja: TranslationResources = {
         featuresLabel: "機能",
         featureCount: "{{count}}個の機能",
         featureCountOne: "{{count}}個の機能",
-        providerDefault: "プロバイダーのデフォルト",
         notesLabel: "エージェントへのメモ",
         notesPlaceholder: "UI作業に使用 — コンポーネント、レイアウト、デザイントークンなど。",
         notesHint:

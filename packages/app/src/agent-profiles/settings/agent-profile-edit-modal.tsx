@@ -16,7 +16,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { toErrorMessage } from "@/utils/error-messages";
-import { AGENT_PROFILE_ICON_CHOICES } from "../internal/profile-icons";
+import { AgentProfileAppearanceField } from "./agent-profile-appearance-field";
 import type {
   AgentProfileFormModel,
   AgentProfileFormOption,
@@ -40,7 +40,10 @@ export interface AgentProfileEditModalProps {
   onSave: (value: AgentProfileValue) => Promise<void>;
 }
 
-/** Every optional select stores "" for "leave it to the provider". */
+/**
+ * Only reachable before the catalog lands. Every select is seeded to a concrete
+ * id as soon as one exists, and none of them offer an "unset" row.
+ */
 const UNSET_VALUE = "";
 
 function openKey(props: AgentProfileEditModalProps): string {
@@ -141,28 +144,6 @@ function OpenAgentProfileEditModal({
     [mode, t],
   );
 
-  const iconOptions = useMemo<SelectFieldOption<string>[]>(
-    () => [
-      {
-        id: "none",
-        value: UNSET_VALUE,
-        label: t("settings.host.agentProfiles.noIcon"),
-        testID: "agent-profile-icon-option-none",
-      },
-      ...AGENT_PROFILE_ICON_CHOICES.map((choice) => ({
-        id: choice.key,
-        value: choice.emoji,
-        label: choice.emoji,
-        testID: `agent-profile-icon-option-${choice.key}`,
-      })),
-    ],
-    [t],
-  );
-  const iconDisplay = useMemo<SelectFieldDisplay | null>(
-    () => (state.icon ? { label: state.icon } : null),
-    [state.icon],
-  );
-
   const providerOptions = useMemo(
     () => toSelectOptions(state.providerOptions),
     [state.providerOptions],
@@ -174,7 +155,10 @@ function OpenAgentProfileEditModal({
     [state.thinkingOptions],
   );
 
-  const handleIconChange = useCallback((value: string) => model.setIcon(value), [model]);
+  const handleAppearanceChange = useCallback(
+    (value: { icon: string; color: string }) => model.setAppearance(value),
+    [model],
+  );
   const handleProviderChange = useCallback(
     (value: string, display: SelectFieldDisplay) => model.setProvider(value, display),
     [model],
@@ -233,15 +217,12 @@ function OpenAgentProfileEditModal({
       <View style={styles.body}>
         <View style={styles.nameRow}>
           <View style={styles.iconField}>
-            <SelectField
+            <AgentProfileAppearanceField
               label={t("settings.host.agentProfiles.iconLabel")}
-              value={state.icon || UNSET_VALUE}
-              selectedDisplay={iconDisplay}
-              options={iconOptions}
-              onChange={handleIconChange}
-              placeholder={t("settings.host.agentProfiles.noIcon")}
-              emptyText={t("settings.host.agentProfiles.noIcon")}
-              title={t("settings.host.agentProfiles.iconLabel")}
+              icon={state.icon}
+              color={state.color}
+              onChange={handleAppearanceChange}
+              disabled={state.isSubmitting}
               size={controlSize}
               testID="agent-profile-icon-field"
               triggerTestID="agent-profile-icon-trigger"
@@ -291,7 +272,7 @@ function OpenAgentProfileEditModal({
             selectedDisplay={state.modelDisplay}
             options={modelOptions}
             onChange={handleModelChange}
-            placeholder={t("settings.host.agentProfiles.providerDefault")}
+            placeholder={t("settings.host.agentProfiles.modelLabel")}
             emptyText={t("settings.host.agentProfiles.noModels")}
             disabled={state.isSubmitting}
             searchable={modelOptions.length > 6}
@@ -309,7 +290,7 @@ function OpenAgentProfileEditModal({
             selectedDisplay={state.modeDisplay}
             options={modeOptions}
             onChange={handleModeChange}
-            placeholder={t("settings.host.agentProfiles.providerDefault")}
+            placeholder={t("settings.host.agentProfiles.modeLabel")}
             emptyText={t("settings.host.agentProfiles.noModes")}
             disabled={state.isSubmitting}
             searchable={modeOptions.length > 6}
@@ -327,7 +308,7 @@ function OpenAgentProfileEditModal({
             selectedDisplay={state.thinkingDisplay}
             options={thinkingOptions}
             onChange={handleThinkingChange}
-            placeholder={t("settings.host.agentProfiles.providerDefault")}
+            placeholder={t("settings.host.agentProfiles.thinkingLabel")}
             emptyText={t("settings.host.agentProfiles.noThinkingOptions")}
             disabled={state.isSubmitting}
             searchable={thinkingOptions.length > 6}
@@ -511,8 +492,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "flex-start",
     gap: theme.spacing[2],
   },
+  // No width: the trigger is a glyph and a chevron, so it sizes to them.
   iconField: {
-    width: 96,
+    flexShrink: 0,
   },
   nameField: {
     flex: 1,

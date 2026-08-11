@@ -16,6 +16,17 @@ const launchTargetSchema = z.discriminatedUnion("kind", [
 const formPreferencesSchema = z.object({
   provider: z.string().optional(),
   providerPreferences: z.record(z.string(), providerPreferencesSchema).optional(),
+  // COMPAT(agentProfileFavoriteMigration): favourites were removed in v0.3.2.
+  // Keep the legacy payload alive until every capable host has had a chance to
+  // import it; ordinary preference writes must not erase it first.
+  favoriteModels: z
+    .array(
+      z.object({
+        provider: z.string(),
+        modelId: z.string(),
+      }),
+    )
+    .optional(),
   isolation: z.enum(["local", "worktree"]).optional(),
   // What the New workspace composer submits to: the chat agent (default) or a
   // terminal profile. See `@/new-workspace-launch` for resolution/fallback.

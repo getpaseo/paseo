@@ -1410,6 +1410,7 @@ export const ko: TranslationResources = {
     providers: "제공자",
     editProfiles: "편집",
     editProfilesLabel: "에이전트 프로필 편집",
+    createProfile: "프로필 만들기",
     modelCount: "모델 {{count}}개",
     modelCountPlural: "모델 {{count}}개",
     retry: "다시 시도",
@@ -2212,6 +2213,7 @@ export const ko: TranslationResources = {
         emptyState:
           "아직 프로필이 없습니다. 저장된 프로바이더와 모델로 에이전트를 시작하려면 하나 추가하세요.",
         addProfileTitle: "에이전트 프로필 추가",
+        newProfile: "새 프로필",
         editProfile: "프로필 편집",
         editProfileTitle: "에이전트 프로필 편집",
         nameLabel: "이름",
@@ -2230,7 +2232,6 @@ export const ko: TranslationResources = {
         featuresLabel: "기능",
         featureCount: "기능 {{count}}개",
         featureCountOne: "기능 {{count}}개",
-        providerDefault: "프로바이더 기본값",
         notesLabel: "에이전트를 위한 메모",
         notesPlaceholder: "UI 작업에 사용 — 컴포넌트, 레이아웃, 디자인 토큰.",
         notesHint:

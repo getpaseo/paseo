@@ -9,7 +9,6 @@ import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { formatAgentModeLabel, formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { applyFeatureValues, pruneFeatureValues } from "@/hooks/feature-preferences";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
-import { i18n } from "@/i18n/i18next";
 
 /**
  * The persisted profile minus the id; the list owns identity.
@@ -70,6 +69,7 @@ export interface AgentProfileFormState {
   mode: "create" | "edit";
   name: string;
   icon: string;
+  color: string;
   notes: string;
   provider: string;
   modelId: string;
@@ -111,7 +111,7 @@ export interface AgentProfileFormModel {
   /** Resolve a request that produced no usable features (provider error). */
   applyFeaturesUnavailable: (requestKey: string) => void;
   setName: (value: string) => void;
-  setIcon: (value: string) => void;
+  setAppearance: (value: { icon: string; color: string }) => void;
   setNotes: (value: string) => void;
   setProvider: (providerId: string, display: AgentProfileFormDisplay) => void;
   setModel: (modelId: string, display: AgentProfileFormDisplay | null) => void;
@@ -120,17 +120,6 @@ export interface AgentProfileFormModel {
   setFeatureValue: (featureId: string, value: unknown) => void;
   setSubmitting: (value: boolean) => void;
   setSubmitError: (value: string | null) => void;
-}
-
-const UNSET_OPTION_ID = "__unset__";
-
-function unsetOption(kind: "model" | "mode" | "thinking"): AgentProfileFormOption {
-  return {
-    id: UNSET_OPTION_ID,
-    value: "",
-    label: i18n.t("settings.host.agentProfiles.providerDefault"),
-    testID: `agent-profile-${kind}-option-default`,
-  };
 }
 
 function findEntry(
@@ -208,50 +197,88 @@ function buildProviderOptions(entries: readonly ProviderSnapshotEntry[]): AgentP
 }
 
 function buildModelOptions(models: readonly AgentModelDefinition[]): AgentProfileFormOption[] {
-  return [
-    unsetOption("model"),
-    ...models.map((model) =>
-      formOption({
-        id: model.id,
-        label: model.label,
-        // Models are labelled by family, so the id is the only thing that
-        // distinguishes two entries with the same label.
-        description: model.description ?? model.id,
-        testID: `agent-profile-model-option-${model.id}`,
-      }),
-    ),
-  ];
+  return models.map((model) =>
+    formOption({
+      id: model.id,
+      label: model.label,
+      // Models are labelled by family, so the id is the only thing that
+      // distinguishes two entries with the same label.
+      description: model.description ?? model.id,
+      testID: `agent-profile-model-option-${model.id}`,
+    }),
+  );
 }
 
 function buildModeOptions(modes: readonly AgentMode[]): AgentProfileFormOption[] {
-  return [
-    unsetOption("mode"),
-    ...modes.map((mode) =>
-      formOption({
-        id: mode.id,
-        label: formatAgentModeLabel(mode),
-        description: mode.description,
-        testID: `agent-profile-mode-option-${mode.id}`,
-      }),
-    ),
-  ];
+  return modes.map((mode) =>
+    formOption({
+      id: mode.id,
+      label: formatAgentModeLabel(mode),
+      description: mode.description,
+      testID: `agent-profile-mode-option-${mode.id}`,
+    }),
+  );
 }
 
 function buildThinkingOptions(options: readonly AgentSelectOption[]): AgentProfileFormOption[] {
-  if (options.length === 0) {
-    return [];
+  return options.map((option) =>
+    formOption({
+      id: option.id,
+      label: formatThinkingOptionLabel(option),
+      description: option.description,
+      testID: `agent-profile-thinking-option-${option.id}`,
+    }),
+  );
+}
+
+/**
+ * Every selection resolves to a concrete id.
+ *
+ * Each list used to carry a synthetic "Provider default" row. It read as a value
+ * you could choose but stored an absent one, so a profile that looked fully
+ * specified would apply whatever the host preferred at the time — and two hosts
+ * would materialize the same profile differently. The schedule form never
+ * offered that row; this form now matches it and seeds the catalog's own default
+ * instead, so what the form shows is what the profile stores.
+ */
+function defaultModelId(models: readonly AgentModelDefinition[]): string {
+  return models.find((model) => model.isDefault)?.id ?? models[0]?.id ?? "";
+}
+
+function defaultModeId(entry: ProviderSnapshotEntry | null, modes: readonly AgentMode[]): string {
+  return entry?.defaultModeId ?? modes[0]?.id ?? "";
+}
+
+function defaultThinkingOptionId(model: AgentModelDefinition | null): string {
+  const options = model?.thinkingOptions ?? [];
+  return (
+    model?.defaultThinkingOptionId ??
+    options.find((option) => option.isDefault)?.id ??
+    options[0]?.id ??
+    ""
+  );
+}
+
+function seedSelections(
+  next: AgentProfileFormState,
+  input: {
+    entry: ProviderSnapshotEntry | null;
+    models: readonly AgentModelDefinition[];
+    modes: readonly AgentMode[];
+  },
+): AgentProfileFormState {
+  const modelId = next.modelId || defaultModelId(input.models);
+  const modeId = next.modeId || defaultModeId(input.entry, input.modes);
+  const thinkingOptionId =
+    next.thinkingOptionId || defaultThinkingOptionId(resolveEffectiveModel(input.models, modelId));
+  if (
+    modelId === next.modelId &&
+    modeId === next.modeId &&
+    thinkingOptionId === next.thinkingOptionId
+  ) {
+    return next;
   }
-  return [
-    unsetOption("thinking"),
-    ...options.map((option) =>
-      formOption({
-        id: option.id,
-        label: formatThinkingOptionLabel(option),
-        description: option.description,
-        testID: `agent-profile-thinking-option-${option.id}`,
-      }),
-    ),
-  ];
+  return { ...next, modelId, modeId, thinkingOptionId };
 }
 
 /**
@@ -307,6 +334,7 @@ function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | nul
   return {
     name,
     ...(state.icon ? { icon: state.icon } : {}),
+    ...(state.color ? { color: state.color } : {}),
     provider: state.provider,
     ...(state.modelId ? { model: state.modelId } : {}),
     ...(state.modeId ? { modeId: state.modeId } : {}),
@@ -343,6 +371,7 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
     mode: snapshot.mode,
     name: profile.name,
     icon: profile.icon ?? "",
+    color: profile.color ?? "",
     notes: profile.notes ?? "",
     provider: profile.provider,
     modelId: profile.model ?? "",
@@ -383,9 +412,14 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
   let listeners = new Set<() => void>();
   let closed = false;
 
-  function derive(next: AgentProfileFormState): AgentProfileFormState {
-    const models = resolveModels(entries, next.provider);
-    const modes = resolveModes(entries, next.provider);
+  function derive(incoming: AgentProfileFormState): AgentProfileFormState {
+    const models = resolveModels(entries, incoming.provider);
+    const modes = resolveModes(entries, incoming.provider);
+    const next = seedSelections(incoming, {
+      entry: findEntry(entries, incoming.provider),
+      models,
+      modes,
+    });
     const thinking = resolveThinkingOptions(entries, next.provider, next.modelId);
     const featureRequest = buildFeatureRequest(next);
     const featureRequestKey = buildFeatureRequestKey(featureRequest);
@@ -502,7 +536,8 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       publish((current) => current);
     },
     setName: (value) => publish((current) => ({ ...current, name: value })),
-    setIcon: (value) => publish((current) => ({ ...current, icon: value })),
+    setAppearance: (value) =>
+      publish((current) => ({ ...current, icon: value.icon, color: value.color })),
     setNotes: (value) => publish((current) => ({ ...current, notes: value })),
     setProvider: (providerId, display) =>
       publish((current) => {
@@ -511,13 +546,14 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
         }
         // Everything below the provider is provider-scoped: a model id, mode id,
         // thinking id or feature id from the old provider means nothing here.
+        // Clearing them is enough — `derive` seeds the new provider's defaults.
         return {
           ...current,
           provider: providerId,
           providerDisplay: display,
           modelId: "",
           modelDisplay: null,
-          modeId: findEntry(entries, providerId)?.defaultModeId ?? "",
+          modeId: "",
           modeDisplay: null,
           thinkingOptionId: "",
           thinkingDisplay: null,

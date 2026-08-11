@@ -1,20 +1,20 @@
 import { useCallback, useMemo, type ReactElement } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { ArrowDown, ArrowUp, Bot, FileText, Pencil, Trash2 } from "lucide-react-native";
+import { ArrowDown, ArrowUp, FileText, Pencil, Trash2 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { Button } from "@/components/ui/button";
 import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { AgentProfileGlyph } from "../internal/agent-profile-glyph";
 import { buildAgentProfileTags } from "../internal/profile-summary";
 
 const ThemedArrowUp = withUnistyles(ArrowUp);
 const ThemedArrowDown = withUnistyles(ArrowDown);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedTrash2 = withUnistyles(Trash2);
-const ThemedBot = withUnistyles(Bot);
 const ThemedFileText = withUnistyles(FileText);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -64,6 +64,7 @@ export function AgentProfileRow({
     () => buildAgentProfileTags({ profile, entries, formatFeatureCount }),
     [entries, formatFeatureCount, profile],
   );
+  const summary = useMemo(() => tags.map((tag) => tag.label).join(" · "), [tags]);
 
   const rowStyle = useMemo(
     () => [settingsStyles.row, isFirst ? null : settingsStyles.rowBorder, styles.row],
@@ -73,28 +74,16 @@ export function AgentProfileRow({
   return (
     <View style={rowStyle} testID={`agent-profile-row-${profile.id}`}>
       <View style={styles.iconWrapper}>
-        {profile.icon ? (
-          <Text style={styles.iconEmoji}>{profile.icon}</Text>
-        ) : (
-          <ThemedBot size={ICON_SIZE.md} uniProps={mutedColorMapping} />
-        )}
+        <AgentProfileGlyph icon={profile.icon} color={profile.color} size={ICON_SIZE.md} />
       </View>
       <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
-          {profile.name}
-        </Text>
-        <View style={styles.tags} testID={`agent-profile-tags-${profile.id}`}>
-          {tags.map((tag) => (
-            <View key={tag.id} style={styles.tag}>
-              <Text
-                style={tag.mono ? styles.tagTextMono : styles.tagText}
-                numberOfLines={1}
-                testID={`agent-profile-tag-${profile.id}-${tag.id}`}
-              >
-                {tag.label}
-              </Text>
-            </View>
-          ))}
+        <View style={styles.titleLine}>
+          <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+            {profile.name}
+          </Text>
+          <Text style={styles.summary} numberOfLines={1}>
+            {summary}
+          </Text>
         </View>
         {profile.notes ? (
           <View style={styles.notes}>
@@ -153,41 +142,26 @@ const styles = StyleSheet.create((theme) => ({
   row: {
     gap: theme.spacing[2],
     minHeight: 56,
-    alignItems: "flex-start",
+    alignItems: "center",
     paddingVertical: theme.spacing[3],
   },
   iconWrapper: {
     width: theme.iconSize.md,
+    alignSelf: "flex-start",
     alignItems: "center",
     justifyContent: "center",
-    paddingTop: theme.spacing[1],
-  },
-  iconEmoji: {
-    fontSize: theme.fontSize.base,
-  },
-  tags: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: theme.spacing[1],
     marginTop: theme.spacing[1],
   },
-  tag: {
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.sm,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[0.5],
+  titleLine: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: theme.spacing[2],
+    minWidth: 0,
   },
-  tagText: {
+  summary: {
+    flexShrink: 1,
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
-  },
-  tagTextMono: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontFamily: theme.fontFamily.mono,
   },
   notes: {
     flexDirection: "row",

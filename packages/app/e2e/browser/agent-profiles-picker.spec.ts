@@ -4,12 +4,17 @@ import {
   closeModelPicker,
   drillIntoProvider,
   expectComposerDoesNotName,
+  expectAgentProfilesEmptyPrompt,
+  expectProfileEditTooltip,
   expectComposerMode,
   expectComposerModel,
   expectModelRowSelected,
   expectNothingSelectedInPickerRoot,
+  expectProfileEditIsPencilOnly,
   expectProfilePinnedAboveProviders,
+  expectProfileVisibleForProvider,
   openModelPicker,
+  openAgentProfilesFromEmptyPrompt,
   seedAgentProfiles,
 } from "../support/helpers/agent-profiles";
 import { expectWorkspaceAgentConfiguration } from "../support/helpers/command-center-agent-controls";
@@ -29,6 +34,25 @@ const PROFILE = {
 const PROFILE_SUMMARY = "Mock Load Test · One minute stream · Approval test";
 
 test.describe("Agent profiles in the model picker", () => {
+  test("an empty host still exposes agent profile settings from the picker", async ({ page }) => {
+    const seed = await seedAgentProfiles([]);
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "agent-profiles-empty-",
+      title: "Agent profiles empty",
+    });
+
+    try {
+      await openAgentRoute(page, workspace);
+      await expectComposerVisible(page);
+      await openModelPicker(page);
+      await expectAgentProfilesEmptyPrompt(page);
+      await openAgentProfilesFromEmptyPrompt(page);
+    } finally {
+      await workspace.cleanup();
+      await seed.restore();
+    }
+  });
+
   test("applying a pinned profile materializes it into the composer and is then forgotten", async ({
     page,
   }) => {
@@ -56,6 +80,8 @@ test.describe("Agent profiles in the model picker", () => {
           name: PROFILE.name,
           summary: PROFILE_SUMMARY,
         });
+        await expectProfileEditIsPencilOnly(page);
+        await expectProfileEditTooltip(page);
       });
 
       await test.step("applying it writes its model and mode into the composer", async () => {
@@ -85,6 +111,10 @@ test.describe("Agent profiles in the model picker", () => {
 
       await test.step("the model it materialized is the one marked selected", async () => {
         await drillIntoProvider(page, "mock");
+        await expectProfileVisibleForProvider(page, {
+          name: PROFILE.name,
+          summary: PROFILE_SUMMARY,
+        });
         await expectModelRowSelected(page, { provider: "mock", modelId: "one-minute-stream" });
         await closeModelPicker(page);
       });

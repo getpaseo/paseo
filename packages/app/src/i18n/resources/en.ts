@@ -1411,6 +1411,7 @@ export const en = {
     providers: "Providers",
     editProfiles: "Edit",
     editProfilesLabel: "Edit agent profiles",
+    createProfile: "Create profile",
     modelCount: "{{count}} model",
     modelCountPlural: "{{count}} models",
     retry: "Retry",
@@ -2210,6 +2211,7 @@ export const en = {
         unsupported: "This host runs a daemon that does not support agent profiles yet",
         emptyState: "No profiles yet. Add one to start agents from a saved provider and model.",
         addProfileTitle: "Add agent profile",
+        newProfile: "New profile",
         editProfile: "Edit profile",
         editProfileTitle: "Edit agent profile",
         nameLabel: "Name",
@@ -2228,7 +2230,6 @@ export const en = {
         featuresLabel: "Features",
         featureCount: "{{count}} features",
         featureCountOne: "{{count}} feature",
-        providerDefault: "Provider default",
         notesLabel: "Notes for agents",
         notesPlaceholder: "Use for UI work — components, layout and design tokens.",
         notesHint:

@@ -3137,8 +3137,9 @@ export class DaemonClient {
 
   /**
    * Applies a whole agent-config bundle in one request. Use this instead of
-   * chaining the single-field setters when the values belong together — a chain
-   * that fails halfway leaves the agent in a config the caller never asked for.
+   * chaining the single-field setters when the values belong together so client
+   * interruption and other mutations cannot interleave between steps. A
+   * provider rejection can still leave earlier steps applied.
    * Gated on `server_info.features.agentConfigApply`.
    */
   async applyAgentConfig(

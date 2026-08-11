@@ -1,21 +1,51 @@
 import { test } from "../support/fixtures";
 import {
   createAgentProfile,
+  createAgentProfileFromEmptyState,
   editAgentProfile,
   expectAgentProfile,
   expectAgentProfileForm,
   expectAgentProfileOrder,
   expectAgentProfileTagsGone,
+  expectHostAgentProfiles,
   expectNoAgentProfiles,
   moveAgentProfileUp,
   openAgentProfileSettings,
   removeAgentProfile,
   seedAgentProfiles,
+  stageLegacyFavoritesForHostMigration,
 } from "../support/helpers/agent-profiles";
 
 const MOCK_PROVIDER_LABEL = "Mock Load Test";
 
 test.describe("Agent profiles settings", () => {
+  test("legacy model favourites migrate into provider-and-model-only host profiles", async ({
+    page,
+  }) => {
+    const seed = await seedAgentProfiles([]);
+    const migratedProfile = {
+      id: "legacy_favorite:mock:one-minute-stream",
+      name: "One minute stream",
+      provider: "mock",
+      model: "one-minute-stream",
+    };
+
+    try {
+      await stageLegacyFavoritesForHostMigration(page, [
+        { provider: "mock", modelId: "one-minute-stream" },
+      ]);
+
+      await expectHostAgentProfiles([migratedProfile]);
+      await openAgentProfileSettings(page);
+      await expectAgentProfile(page, {
+        name: migratedProfile.name,
+        tags: [MOCK_PROVIDER_LABEL, "One minute stream"],
+      });
+    } finally {
+      await seed.restore();
+    }
+  });
+
   test("host owner creates, edits, reorders and removes agent profiles", async ({ page }) => {
     // The journey owns the list, so it starts from an empty one whatever the
     // worker ran before, and hands it back untouched.
@@ -28,7 +58,7 @@ test.describe("Agent profiles settings", () => {
       });
 
       await test.step("create a profile from the modal", async () => {
-        await createAgentProfile(page, {
+        await createAgentProfileFromEmptyState(page, {
           name: "UI work",
           provider: MOCK_PROVIDER_LABEL,
           model: "Ten second stream",

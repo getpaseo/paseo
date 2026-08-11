@@ -1441,6 +1441,7 @@ export const es: TranslationResources = {
     providers: "Proveedores",
     editProfiles: "Editar",
     editProfilesLabel: "Editar perfiles de agente",
+    createProfile: "Crear perfil",
     modelCount: "{{count}} modelo",
     modelCountPlural: "{{count}} modelos",
     retry: "Rever",
@@ -2250,6 +2251,7 @@ export const es: TranslationResources = {
         emptyState:
           "Aún no hay perfiles. Agregue uno para iniciar agentes con un proveedor y un modelo guardados.",
         addProfileTitle: "Agregar perfil de agente",
+        newProfile: "Nuevo perfil",
         editProfile: "Editar perfil",
         editProfileTitle: "Editar perfil de agente",
         nameLabel: "Nombre",
@@ -2268,7 +2270,6 @@ export const es: TranslationResources = {
         featuresLabel: "Características",
         featureCount: "{{count}} características",
         featureCountOne: "{{count}} característica",
-        providerDefault: "Predeterminado del proveedor",
         notesLabel: "Notas para los agentes",
         notesPlaceholder: "Úselo para trabajo de UI: componentes, diseño y tokens de diseño.",
         notesHint:

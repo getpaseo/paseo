@@ -246,15 +246,17 @@ function toThinkingControlOptions(options: AgentControlOption[] | undefined): Ag
 
 /**
  * The picker's edit shortcut. Agent profiles are host config, so it lands on the
- * host settings section that owns the list — including its empty state, which is
- * why the picker never renders one itself.
+ * host settings section that owns the list.
  */
-function useEditAgentProfilesNavigation(serverId: string | null): (() => void) | undefined {
+function useEditAgentProfilesNavigation(
+  serverId: string | null,
+  isSupported: boolean,
+): (() => void) | undefined {
   const handleEdit = useCallback(() => {
     if (!serverId) return;
-    router.push(buildSettingsHostSectionRoute(serverId, "terminals"));
+    router.push(buildSettingsHostSectionRoute(serverId, "agents"));
   }, [serverId]);
-  return serverId ? handleEdit : undefined;
+  return serverId && isSupported ? handleEdit : undefined;
 }
 
 function buildFallbackModelSelectorProviders(
@@ -1557,7 +1559,7 @@ export const AgentControls = memo(function AgentControls({
     availableProviders: profileProviders,
     target: profileTarget,
   });
-  const handleEditAgentProfiles = useEditAgentProfilesNavigation(serverId);
+  const handleEditAgentProfiles = useEditAgentProfilesNavigation(serverId, agentProfiles !== null);
 
   const handleSelectThinkingOption = useCallback(
     (thinkingOptionId: string) => {
@@ -1760,7 +1762,10 @@ export function DraftAgentControls({
     availableProviders: profileProviders,
     target: profileTarget,
   });
-  const handleEditAgentProfiles = useEditAgentProfilesNavigation(modelSelectorServerId);
+  const handleEditAgentProfiles = useEditAgentProfilesNavigation(
+    modelSelectorServerId,
+    agentProfiles !== null,
+  );
 
   const modeControl = useMemo<AgentModeControlValue | null>(
     () =>

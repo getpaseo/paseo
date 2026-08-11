@@ -1432,6 +1432,7 @@ export const ru: TranslationResources = {
     providers: "Провайдеры",
     editProfiles: "Изменить",
     editProfilesLabel: "Изменить профили агентов",
+    createProfile: "Создать профиль",
     modelCount: "{{count}} модель",
     modelCountPlural: "{{count}} моделей",
     retry: "Повторить попытку",
@@ -2239,6 +2240,7 @@ export const ru: TranslationResources = {
         emptyState:
           "Пока нет профилей. Добавьте один, чтобы запускать агентов с сохранённым провайдером и моделью.",
         addProfileTitle: "Добавить профиль агента",
+        newProfile: "Новый профиль",
         editProfile: "Изменить профиль",
         editProfileTitle: "Изменить профиль агента",
         nameLabel: "Имя",
@@ -2257,7 +2259,6 @@ export const ru: TranslationResources = {
         featuresLabel: "Функции",
         featureCount: "{{count}} функций",
         featureCountOne: "{{count}} функция",
-        providerDefault: "Значение провайдера по умолчанию",
         notesLabel: "Заметки для агентов",
         notesPlaceholder: "Используйте для работы над UI — компоненты, макет и токены дизайна.",
         notesHint:

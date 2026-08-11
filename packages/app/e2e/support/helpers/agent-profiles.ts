@@ -1,9 +1,11 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
+import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import { gotoAppShell, openSettings } from "./app";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { getServerId } from "./server-id";
-import { openSettingsHost, openSettingsHostSection } from "./settings";
+import { expectAppRoute } from "./route-assertions";
+import { openSettingsHost } from "./settings";
 
 // ─── Daemon-side seeding ───────────────────────────────────────────────────
 
@@ -42,6 +44,48 @@ export async function seedAgentProfiles(profiles: AgentProfile[]): Promise<HostS
       await client.close().catch(() => undefined);
     },
   };
+}
+
+export async function stageLegacyFavoritesForHostMigration(
+  page: Page,
+  favorites: Array<{ provider: string; modelId: string }>,
+): Promise<void> {
+  const serverId = getServerId();
+  await gotoAppShell(page);
+  await page.evaluate(
+    ({ favorites: storedFavorites, serverId: hostId }) => {
+      const preferencesKey = "@paseo:create-agent-preferences";
+      const raw = localStorage.getItem(preferencesKey);
+      const preferences = raw ? JSON.parse(raw) : {};
+      localStorage.setItem(
+        preferencesKey,
+        JSON.stringify({ ...preferences, favoriteModels: storedFavorites }),
+      );
+      localStorage.removeItem(`@paseo:legacy-favorites-to-agent-profiles:v1:${hostId}`);
+
+      // Preserve this upgrade-shaped storage across the fixture's next-page
+      // default seed; a reload is the startup boundary under test.
+      const nonce = localStorage.getItem("@paseo:e2e-seed-nonce");
+      if (nonce) {
+        localStorage.setItem("@paseo:e2e-disable-default-seed-once", nonce);
+      }
+    },
+    { favorites, serverId },
+  );
+  await page.reload();
+}
+
+export async function expectHostAgentProfiles(expected: AgentProfile[]): Promise<void> {
+  const client = await connectAgentProfilesClient();
+  try {
+    await expect
+      .poll(async () => (await client.getDaemonConfig()).config.agentProfiles ?? [], {
+        timeout: 30_000,
+      })
+      .toEqual(expected);
+  } finally {
+    await client.close().catch(() => undefined);
+  }
 }
 
 export interface SeededProviderModel {
@@ -89,18 +133,21 @@ export async function seedModelProvider(input: {
 
 // ─── Settings: navigation ──────────────────────────────────────────────────
 
-/** The agent profiles section lives on the host's Terminals & agents page. */
+/** Reach agent profiles through the same visible Settings path a person uses. */
 export async function openAgentProfileSettings(page: Page): Promise<void> {
   const serverId = getServerId();
   await gotoAppShell(page);
   await openSettings(page);
   await openSettingsHost(page, serverId);
-  await openSettingsHostSection(page, serverId, "terminals");
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, "agents"));
   await expect(page.getByTestId("agent-profiles-card")).toBeVisible({ timeout: 30_000 });
 }
 
 export async function expectNoAgentProfiles(page: Page): Promise<void> {
-  await expect(page.getByTestId("agent-profiles-empty")).toBeVisible();
+  const card = page.getByTestId("agent-profiles-card");
+  await expect(card.getByTestId("agent-profiles-empty")).toBeVisible();
+  await expect(card.getByRole("button", { name: "New profile", exact: true })).toBeVisible();
 }
 
 // ─── Settings: the profile list ────────────────────────────────────────────
@@ -115,9 +162,7 @@ export async function expectAgentProfile(
 ): Promise<void> {
   const row = agentProfileRow(page, expected.name);
   await expect(row).toBeVisible({ timeout: 30_000 });
-  for (const tag of expected.tags) {
-    await expect(row.getByText(tag, { exact: true })).toBeVisible();
-  }
+  await expect(row.getByText(expected.tags.join(" · "), { exact: true })).toBeVisible();
   if (expected.notes !== undefined) {
     await expect(row.getByText(expected.notes, { exact: true })).toBeVisible();
   }
@@ -243,6 +288,19 @@ export async function createAgentProfile(page: Page, draft: AgentProfileDraft): 
   await saveAgentProfile(page);
 }
 
+export async function createAgentProfileFromEmptyState(
+  page: Page,
+  draft: AgentProfileDraft,
+): Promise<void> {
+  await page
+    .getByTestId("agent-profiles-card")
+    .getByRole("button", { name: "New profile", exact: true })
+    .click();
+  await expect(editModal(page)).toBeVisible({ timeout: 30_000 });
+  await fillAgentProfileForm(page, draft);
+  await saveAgentProfile(page);
+}
+
 export async function editAgentProfile(
   page: Page,
   name: string,
@@ -329,6 +387,50 @@ export async function expectProfilePinnedAboveProviders(
   }
 }
 
+export async function expectProfileVisibleForProvider(
+  page: Page,
+  input: { name: string; summary: string },
+): Promise<void> {
+  const viewport = pickerViewport(page);
+  await expect(viewport.getByText("Profiles", { exact: true })).toBeVisible({ timeout: 30_000 });
+  const row = profilePickerRow(page, input.name);
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await expect(row.getByText(input.summary, { exact: true })).toBeVisible();
+}
+
+export async function expectProfileEditIsPencilOnly(page: Page): Promise<void> {
+  const viewport = pickerViewport(page);
+  await expect(
+    viewport.getByRole("button", { name: "Edit agent profiles", exact: true }),
+  ).toBeVisible();
+  await expect(viewport.getByText("Edit", { exact: true })).toHaveCount(0);
+}
+
+export async function expectAgentProfilesEmptyPrompt(page: Page): Promise<void> {
+  const viewport = pickerViewport(page);
+  await expect(viewport.getByText("Profiles", { exact: true })).toHaveCount(0);
+  await expect(
+    viewport.getByRole("button", { name: "Edit agent profiles", exact: true }),
+  ).toHaveCount(0);
+  await expect(viewport.getByRole("button", { name: "Create profile", exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+}
+
+export async function expectProfileEditTooltip(page: Page): Promise<void> {
+  const edit = pickerViewport(page).getByRole("button", {
+    name: "Edit agent profiles",
+    exact: true,
+  });
+  await edit.hover();
+  await expect(page.getByText("Edit agent profiles", { exact: true })).toBeVisible();
+}
+
+export async function openAgentProfilesFromEmptyPrompt(page: Page): Promise<void> {
+  await pickerViewport(page).getByRole("button", { name: "Create profile", exact: true }).click();
+  await expect(page.getByTestId("agent-profiles-card")).toBeVisible({ timeout: 30_000 });
+}
+
 async function boxTop(locator: Locator): Promise<number> {
   const box = await locator.boundingBox();
   if (!box) {
@@ -349,6 +451,12 @@ export async function applyProfileFromPicker(page: Page, name: string): Promise<
  */
 export async function expectNothingSelectedInPickerRoot(page: Page): Promise<void> {
   await expect(pickerViewport(page).locator("[aria-selected]")).toHaveCount(0);
+}
+
+export async function expectAgentProfilesEditShortcut(page: Page): Promise<void> {
+  await expect(
+    pickerViewport(page).getByRole("button", { name: "Edit agent profiles", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
 }
 
 export async function drillIntoProvider(page: Page, providerId: string): Promise<void> {
@@ -399,6 +507,39 @@ export async function expectModelSearchEmptyState(page: Page, query: string): Pr
   const empty = page.getByTestId("model-search-empty");
   await expect(empty).toBeVisible({ timeout: 30_000 });
   await expect(empty.getByText(`No models match "${query}"`, { exact: true })).toBeVisible();
+}
+
+export async function readModelPickerHeight(page: Page): Promise<number> {
+  const box = await pickerViewport(page).boundingBox();
+  if (!box) {
+    throw new Error("Expected the model picker to be laid out");
+  }
+  return box.height;
+}
+
+export async function readModelPickerWidth(page: Page): Promise<number> {
+  const box = await pickerViewport(page).boundingBox();
+  if (!box) {
+    throw new Error("Expected the model picker to be laid out");
+  }
+  return box.width;
+}
+
+export async function expectModelPickerHeight(page: Page, expectedHeight: number): Promise<void> {
+  await expect.poll(() => readModelPickerHeight(page)).toBe(expectedHeight);
+}
+
+export async function expectModelPickerWidth(page: Page, expectedWidth: number): Promise<void> {
+  await expect.poll(() => readModelPickerWidth(page)).toBe(expectedWidth);
+}
+
+export async function expectSearchResultsVirtualized(
+  page: Page,
+  input: { provider: string; total: number },
+): Promise<void> {
+  const mountedRows = pickerViewport(page).locator(`[data-testid^="model-row-${input.provider}-"]`);
+  await expect.poll(() => mountedRows.count()).toBeGreaterThan(0);
+  expect(await mountedRows.count()).toBeLessThan(input.total);
 }
 
 // ─── Composer agent controls ───────────────────────────────────────────────

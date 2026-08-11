@@ -184,6 +184,9 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
               <Text style={styles.emptyText} testID="agent-profiles-empty">
                 {t("settings.host.agentProfiles.emptyState")}
               </Text>
+              <Button size="sm" leftIcon={addIcon} onPress={handleAddOpen} disabled={!profiles}>
+                {t("settings.host.agentProfiles.newProfile")}
+              </Button>
             </View>
           )}
         </View>
@@ -206,6 +209,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[6],
     paddingHorizontal: theme.spacing[4],
     alignItems: "center",
+    gap: theme.spacing[3],
   },
   emptyText: {
     color: theme.colors.foregroundMuted,

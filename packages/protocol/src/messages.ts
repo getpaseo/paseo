@@ -147,7 +147,10 @@ export const AgentProfileSchema = z
   .object({
     id: z.string(),
     name: z.string(),
+    /** A key into the client's icon registry, not a glyph. Unknown keys draw the default. */
     icon: z.string().optional(),
+    /** An identity colour name shared with host badges. Unknown values draw unthemed. */
+    color: z.string().optional(),
     provider: z.string(),
     model: z.string().optional(),
     modeId: z.string().optional(),
@@ -1588,8 +1591,9 @@ export type AgentConfigApply = z.infer<typeof AgentConfigApplySchema>;
 
 /**
  * Applies a whole config bundle to one agent. The four single-field RPCs above
- * stay for individual control edits; this exists because applying an agent
- * profile through them can fail halfway and leave the agent matching no profile.
+ * stay for individual control edits. One request prevents client interruption
+ * and other mutations from interleaving between bundle steps; provider-level
+ * rejection can still leave earlier steps applied.
  */
 export const AgentConfigApplyRequestMessageSchema = z.object({
   type: z.literal("agent.config.apply.request"),
