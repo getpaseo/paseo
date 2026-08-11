@@ -299,6 +299,23 @@ test("finish notifications tell the parent the child's last assistant message", 
   );
 });
 
+test("finish notifications truncate oversized child responses", async () => {
+  const included = "x".repeat(4000);
+  const omitted = "TAIL-MARKER".repeat(50);
+  const scenario = createFinishNotificationScenario({
+    childLastAssistantMessage: included + omitted,
+  });
+
+  scenario.startWatchingChild();
+  const parentPrompt = await scenario.finishChildAndReadParentPrompt();
+
+  expect(parentPrompt).toContain(included);
+  expect(parentPrompt).toContain(
+    `[truncated ${omitted.length} chars; use get_agent_activity for the full response]`,
+  );
+  expect(parentPrompt).not.toContain("TAIL-MARKER");
+});
+
 test("closing a watched child notifies the caller", async () => {
   const scenario = createFinishNotificationScenario();
 
