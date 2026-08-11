@@ -4,6 +4,7 @@ import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
 import { runArchiveCommand } from "./archive.js";
 import { runCreateCommand } from "./create.js";
 import { runLsCommand } from "./ls.js";
+import { runRenameCommand } from "./rename.js";
 
 export function createWorkspaceCommand(): Command {
   const workspace = new Command("workspace").description("Manage workspaces");
@@ -31,6 +32,15 @@ export function createWorkspaceCommand(): Command {
   addJsonAndDaemonHostOptions(workspace.command("ls").description("List active workspaces")).action(
     withOutput(runLsCommand),
   );
+
+  addJsonAndDaemonHostOptions(
+    workspace
+      .command("rename")
+      .description("Set a workspace's user-visible title")
+      .argument("<workspace-id>", "Workspace id")
+      .argument("[title]", "New workspace title")
+      .option("--reset", "Clear the title and revert to the branch or directory name"),
+  ).action(withOutput(runRenameCommand));
 
   addJsonAndDaemonHostOptions(
     workspace
