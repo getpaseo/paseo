@@ -321,6 +321,83 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     rmSync(cwd, { recursive: true, force: true });
   });
 
+  test("loads archived history without attaching to or aborting the live OpenCode session", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+
+    const session = await client.resumeSession(
+      {
+        provider: "opencode",
+        sessionId: "session-1",
+        metadata: { cwd },
+      },
+      undefined,
+      undefined,
+      { purpose: "history" },
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    openCode.emitEvent({
+      type: "session.status",
+      properties: { sessionID: "session-1", status: { type: "busy" } },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(events).toEqual([]);
+    expect(openCode.calls.globalEvent).toEqual([]);
+
+    for await (const _event of session.streamHistory()) {
+      // The empty test history is sufficient to prove the read path is usable.
+    }
+    expect(openCode.calls.sessionMessages).toEqual([{ sessionID: "session-1", directory: cwd }]);
+
+    await session.close();
+    expect(openCode.calls.sessionAbort).toEqual([]);
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("promotes a history-only OpenCode session when a new turn is explicitly started", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionPromptAsyncEvents = assistantTurnEvents();
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+
+    const session = await client.resumeSession(
+      {
+        provider: "opencode",
+        sessionId: "session-1",
+        metadata: { cwd },
+      },
+      undefined,
+      undefined,
+      { purpose: "history" },
+    );
+
+    const turn = await collectTurnEvents(streamSession(session, "Resume deliberately"));
+
+    expect(turn.turnCompleted).toBe(true);
+    expect(openCode.calls.globalEvent).toHaveLength(1);
+    expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+
+    await session.close();
+    expect(openCode.calls.sessionAbort).toEqual([{ sessionID: "session-1", directory: cwd }]);
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
   test("single turn completes with streaming deltas", async () => {
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();

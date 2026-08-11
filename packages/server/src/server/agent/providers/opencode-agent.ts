@@ -33,6 +33,7 @@ import {
   type AgentPromptInput,
   type AgentRunOptions,
   type AgentRunResult,
+  type AgentResumeSessionOptions,
   type AgentRuntimeInfo,
   type AgentSession,
   type AgentSessionConfig,
@@ -1378,6 +1379,7 @@ export class OpenCodeAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const cwd = overrides?.cwd ?? metadata.cwd;
@@ -1421,6 +1423,7 @@ export class OpenCodeAgentClient implements AgentClient {
         launchContext?.agentId,
         url,
         registeredAcquisition !== null,
+        options?.purpose === "history",
       );
     } catch (error) {
       await acquisition.release();
@@ -3190,6 +3193,7 @@ class OpenCodeAgentSession implements AgentSession {
     private readonly agentId?: string,
     private readonly serverUrl?: string,
     private readonly externallyDriven = false,
+    private historyOnly = false,
   ) {
     this.config = config;
     this.client = client;
@@ -3203,7 +3207,9 @@ class OpenCodeAgentSession implements AgentSession {
     this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
       config.model,
     );
-    this.startEventStream();
+    if (!this.historyOnly) {
+      this.startEventStream();
+    }
   }
 
   get id(): string | null {
@@ -3415,6 +3421,13 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.turnState.status === "running") {
       throw new Error("A foreground turn is already active");
     }
+    // An archived history view must stay detached from live OpenCode state.
+    // A deliberate new prompt is the boundary that promotes it back to an
+    // interactive session.
+    if (this.historyOnly) {
+      this.historyOnly = false;
+      this.startChildSessionHydration();
+    }
     await this.awaitRunnerQuiescence();
     if (this.turnState.status !== "idle") {
       throw new Error("OpenCode is still stopping the previous turn");
@@ -3619,8 +3632,10 @@ class OpenCodeAgentSession implements AgentSession {
   }
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
-    this.startExternalStatusReconciliation();
-    this.startChildSessionHydration();
+    if (!this.historyOnly) {
+      this.startExternalStatusReconciliation();
+      this.startChildSessionHydration();
+    }
     return () => {
       this.subscribers.delete(callback);
     };
@@ -4425,12 +4440,14 @@ class OpenCodeAgentSession implements AgentSession {
       this.eventStreamReady = null;
       this.eventStreamTask = null;
       this.subscribers.clear();
-      await abortOpenCodeSession({
-        client: this.client,
-        sessionId: this.sessionId,
-        directory: this.config.cwd,
-        logger: this.logger,
-      });
+      if (!this.historyOnly) {
+        await abortOpenCodeSession({
+          client: this.client,
+          sessionId: this.sessionId,
+          directory: this.config.cwd,
+          logger: this.logger,
+        });
+      }
       await this.deleteProviderSessionIfEphemeral();
       this.turnState = { status: "idle" };
     } finally {
