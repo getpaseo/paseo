@@ -1216,6 +1216,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
   private activeAgentLifecycleTurnId: string | null = null;
   private pendingAgentEnd: { turnId: string; messages: PiAgentMessage[] } | null = null;
+  private piRetryAttempt = 0;
   private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
   private outOfBandCompactionStarted = false;
   private outOfBandCompactionCompleted = false;
@@ -1302,6 +1303,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeAgentLifecycleTurnId = null;
     this.pendingAgentEnd = null;
+    this.piRetryAttempt = 0;
     this.activePromptRequestId = null;
     this.clearNoTurnBuffers();
     this.activeNoTurnPromptText = payload.text;
@@ -1335,6 +1337,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeTurnStarted = false;
         this.activeAgentLifecycleTurnId = null;
         this.pendingAgentEnd = null;
+        this.piRetryAttempt = 0;
         this.activeAssistantMessageId = null;
         this.clearNoTurnBuffers();
         if (isPiRequestAbortError(error)) {
@@ -2060,6 +2063,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeAgentLifecycleTurnId = null;
     this.pendingAgentEnd = null;
+    this.piRetryAttempt = 0;
     this.clearNoTurnBuffers();
     this.emit({
       type: "turn_failed",
@@ -2169,9 +2173,25 @@ export class PiRpcAgentSession implements AgentSession {
       this.completeTurn(lifecycleTurnId, event.messages ?? []);
       return;
     }
+    const messages = event.messages ?? [];
+    if (event.willRetry) {
+      this.piRetryAttempt += 1;
+      const errorMessage = latestPiErrorMessage(messages);
+      this.emit({
+        type: "timeline",
+        provider: this.provider,
+        turnId: lifecycleTurnId,
+        item: {
+          type: "error",
+          message: errorMessage
+            ? `Provider retry (attempt ${this.piRetryAttempt}): ${errorMessage}`
+            : `Provider retry (attempt ${this.piRetryAttempt})`,
+        },
+      });
+    }
     this.pendingAgentEnd = {
       turnId: lifecycleTurnId,
-      messages: event.messages ?? [],
+      messages,
     };
   }
 
@@ -2357,6 +2377,7 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     this.pendingAgentEnd = null;
+    this.piRetryAttempt = 0;
     this.activeAgentLifecycleTurnId = null;
     this.activeTurnId = null;
     this.activeClientMessageId = null;

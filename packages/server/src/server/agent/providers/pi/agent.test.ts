@@ -965,6 +965,12 @@ describe("PiRpcAgentSession", () => {
       ],
     });
 
+    expect(events.timelineItems()).toContainEqual({
+      type: "error",
+      message:
+        "Provider retry (attempt 1): OpenAI API error (503): upstream failed (stopReason=error, model=openrouter/model-a)",
+    });
+    expect(events.eventTypes()).not.toContain("turn_failed");
     expect(events.turnCompletedEvents()).toHaveLength(0);
     await expect(session.startTurn("do not overlap")).rejects.toThrow(
       "A Pi turn is already active",
