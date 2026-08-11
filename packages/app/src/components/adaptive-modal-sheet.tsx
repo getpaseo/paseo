@@ -128,9 +128,13 @@ const styles = StyleSheet.create((theme) => ({
   // Horizontal padding matches the model picker's row indent: the picker uses
   // children mode (desktopChildrenScrollContent, no scroll padding), so the
   // row content starts at item.paddingHorizontal = spacing[3].
+  // The search row below owns the gap under the title: the input already
+  // carries its own vertical padding, so a paddingBottom here would stack on
+  // top of two more and push the title far off the field.
   inlineHeaderRow: {
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
+    paddingTop: theme.spacing[2],
+    paddingBottom: 0,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],

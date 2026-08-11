@@ -52,6 +52,7 @@ interface FinishNotificationScenario {
   resolveChildPermissionWhileIdle(requestId?: string): void;
   finishChild(): void;
   finishChildAndReadParentPrompt(): Promise<string>;
+  closeChildAndReadParentPrompt(): Promise<string>;
   parentPrompts(): string[];
   wasParentPrompted(): boolean;
 }
@@ -211,6 +212,25 @@ function createFinishNotificationScenario(
 
       return parentPrompt;
     },
+    async closeChildAndReadParentPrompt() {
+      const parentPrompt = new Promise<string>((resolve) => {
+        resolveParentPrompt = resolve;
+      });
+
+      childAgent.lifecycle = "running";
+      subscriber?.({
+        type: "agent_state",
+        agent: childAgent,
+      });
+
+      childAgent.lifecycle = "closed";
+      subscriber?.({
+        type: "agent_state",
+        agent: childAgent,
+      });
+
+      return parentPrompt;
+    },
     parentPrompts() {
       return parentPrompts;
     },
@@ -276,6 +296,34 @@ test("finish notifications tell the parent the child's last assistant message", 
     formatSystemNotificationPrompt(
       "Agent child-agent (Child Agent) finished.\n\n<agent-response>\nImplemented the cleanup and all checks pass.\n</agent-response>",
     ),
+  );
+});
+
+test("finish notifications truncate oversized child responses", async () => {
+  const included = "x".repeat(4000);
+  const omitted = "TAIL-MARKER".repeat(50);
+  const scenario = createFinishNotificationScenario({
+    childLastAssistantMessage: included + omitted,
+  });
+
+  scenario.startWatchingChild();
+  const parentPrompt = await scenario.finishChildAndReadParentPrompt();
+
+  expect(parentPrompt).toContain(included);
+  expect(parentPrompt).toContain(
+    `[truncated ${omitted.length} chars; use get_agent_activity for the full response]`,
+  );
+  expect(parentPrompt).not.toContain("TAIL-MARKER");
+});
+
+test("closing a watched child notifies the caller", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  const parentPrompt = await scenario.closeChildAndReadParentPrompt();
+
+  expect(parentPrompt).toEqual(
+    formatSystemNotificationPrompt("Agent child-agent (Child Agent) was closed."),
   );
 });
 

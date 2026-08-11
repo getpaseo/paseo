@@ -117,6 +117,40 @@ describe("wire schema compatibility", () => {
     });
   });
 
+  test("task progress fields are optional on the wire", () => {
+    expect(
+      AgentTimelineItemPayloadSchema.parse({
+        type: "todo",
+        items: [{ text: "Legacy task", completed: false }],
+      }),
+    ).toEqual({ type: "todo", items: [{ text: "Legacy task", completed: false }] });
+    expect(
+      AgentTimelineItemPayloadSchema.parse({
+        type: "todo",
+        items: [
+          {
+            id: "task-1",
+            text: "Current task",
+            activeForm: "Working on current task",
+            status: "in_progress",
+            completed: false,
+          },
+        ],
+      }),
+    ).toEqual({
+      type: "todo",
+      items: [
+        {
+          id: "task-1",
+          text: "Current task",
+          activeForm: "Working on current task",
+          status: "in_progress",
+          completed: false,
+        },
+      ],
+    });
+  });
+
   test("sub_agent tool-call payload still parses against the v0.1.65-beta.3 schema", () => {
     const parsed = LegacySubAgentToolCallSchema.parse({
       type: "tool_call",

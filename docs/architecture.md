@@ -121,7 +121,7 @@ Commander.js CLI with Docker-style commands. Common agent operations are also ex
 - `paseo script ls/start/stop`
 - `paseo schedule create/ls/inspect/update/pause/resume/run-once/logs/delete`
 - `paseo heartbeat create/update/delete`
-- `paseo workspace create/ls/archive`
+- `paseo workspace create/ls/rename/archive`
 - `paseo permit allow/deny/ls`
 - `paseo provider ls/models`
 - hidden legacy `paseo worktree create/ls/archive` compatibility alias
