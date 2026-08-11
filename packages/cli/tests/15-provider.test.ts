@@ -436,7 +436,13 @@ try {
   // Test 12: provider diagnostic shows the daemon's provider diagnostic
   {
     console.log("Test 12: provider diagnostic shows the daemon's provider diagnostic");
-    const result = await ctx.paseo(["provider", "diagnostic", "claude"]);
+    const result = await ctx.paseo([
+      "provider",
+      "diagnostic",
+      " Claude ",
+      "--host",
+      `127.0.0.1:${ctx.port}`,
+    ]);
     assert.strictEqual(result.exitCode, 0, "provider diagnostic should exit 0");
     assert(result.stdout.includes("Claude Code"), "diagnostic should identify the provider");
     assert(result.stdout.includes("Daemon PATH:"), "diagnostic should include the daemon PATH");
