@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { darkHighlightColors, resolveSyntaxColors } from "@getpaseo/highlight";
-import { DEFAULT_UI_FONT_STACK } from "@/styles/theme";
+import { DEFAULT_UI_FONT_STACK, REGISTERED_THEMES } from "@/styles/theme";
 import { applyAppearance, type AppearanceInput } from "./apply-appearance";
 
 // Override the global react-native-unistyles mock (vitest.setup.ts) so that
@@ -14,16 +14,7 @@ const { runtime, updateTheme } = vi.hoisted(() => {
 });
 vi.mock("react-native-unistyles", () => ({ UnistylesRuntime: runtime }));
 
-// The registered Unistyles theme keys, in the order applyAppearance patches them.
-const ALL_THEME_KEYS = [
-  "light",
-  "dark",
-  "darkZinc",
-  "darkMidnight",
-  "darkClaude",
-  "darkGhostty",
-  "darkPureBlack",
-] as const;
+const ALL_THEME_KEYS = Object.keys(REGISTERED_THEMES);
 
 // The signature of the updater passed to UnistylesRuntime.updateTheme.
 type ThemeUpdater = (theme: FakeTheme) => FakeTheme;
