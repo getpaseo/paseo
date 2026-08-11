@@ -607,17 +607,36 @@ test("changes diff applies code size changes to gutter and code typography", asy
   await expectVisibleDiffRowsShareTypography(page);
 });
 
-test("unwrapped virtualized rows use one horizontal file surface", async ({ page }) => {
+const LARGE_DIFF_WIDE_LINE_INDEX = 900;
+
+async function createWorkspaceWithLargeUnwrappedDiff(): Promise<DirtyWorkspace> {
   const workspace = await createWorkspaceWithMountedTabDiff();
   const addedLines = Array.from({ length: 1_200 }, (_, index) => {
     if (index === 0) return `\t\t\t\tconst tabbed_${index} = "tabbed";`;
-    if (index === 900) return `const wide_${index} = "${"界".repeat(80)}";`;
+    if (index === LARGE_DIFF_WIDE_LINE_INDEX) {
+      return `const wide_${index} = "${"界".repeat(80)}";`;
+    }
     return `const generated_${index} = ${index};`;
   }).join("\n");
   await writeFile(
     path.join(workspace.repoPath, "src/use-mounted-tab-set.ts"),
     `${AFTER}${addedLines}\n`,
   );
+  return workspace;
+}
+
+async function scrollToWideDiffLine(page: Page): Promise<Locator> {
+  await page.getByTestId("git-diff-scroll").evaluate((element, lineIndex) => {
+    element.scrollTop = lineIndex * 18;
+    element.dispatchEvent(new Event("scroll", { bubbles: false }));
+  }, LARGE_DIFF_WIDE_LINE_INDEX);
+  const wideLine = page.getByText(new RegExp(`const wide_${LARGE_DIFF_WIDE_LINE_INDEX}`));
+  await expect(wideLine).toHaveCount(1);
+  return wideLine;
+}
+
+test("unwrapped virtualized rows use one horizontal file surface", async ({ page }) => {
+  const workspace = await createWorkspaceWithLargeUnwrappedDiff();
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
 
@@ -652,6 +671,24 @@ test("unwrapped virtualized rows use one horizontal file surface", async ({ page
     .toBe(true);
   await expect.poll(() => horizontalSurface.evaluate((element) => element.scrollLeft)).toBe(120);
   await expect(page.getByTestId(/^diff-file-0-group-\d+-scroll$/)).toHaveCount(0);
+
+  const wideLine = await scrollToWideDiffLine(page);
+  await horizontalSurface.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+    element.dispatchEvent(new Event("scroll", { bubbles: false }));
+  });
+  await expect
+    .poll(async () => {
+      const surfaceBounds = await horizontalSurface.boundingBox();
+      const wideTextRight = await wideLine.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return range.getBoundingClientRect().right;
+      });
+      if (!surfaceBounds) return false;
+      return wideTextRight <= surfaceBounds.x + surfaceBounds.width + 1;
+    })
+    .toBe(true);
 });
 
 async function useCodeFont(page: Page, codeFontSize: number): Promise<void> {

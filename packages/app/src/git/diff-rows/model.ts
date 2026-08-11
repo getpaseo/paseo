@@ -148,10 +148,40 @@ interface PendingGroup<Row> {
   height: number;
 }
 
+const FULL_WIDTH_CODE_POINT_RANGES = [
+  [0x1100, 0x115f],
+  [0x2329, 0x232a],
+  [0x2e80, 0x303e],
+  [0x3040, 0x3247],
+  [0x3250, 0x4dbf],
+  [0x4e00, 0xa4c6],
+  [0xa960, 0xa97c],
+  [0xac00, 0xd7a3],
+  [0xf900, 0xfaff],
+  [0xfe10, 0xfe19],
+  [0xfe30, 0xfe6b],
+  [0xff01, 0xff60],
+  [0xffe0, 0xffe6],
+  [0x1b000, 0x1b001],
+  [0x1f200, 0x1f251],
+  [0x1f300, 0x1faff],
+  [0x20000, 0x3fffd],
+] as const;
+
+function isFullWidthCodePoint(codePoint: number): boolean {
+  return FULL_WIDTH_CODE_POINT_RANGES.some(
+    ([start, end]) => codePoint >= start && codePoint <= end,
+  );
+}
+
 function displayColumns(content: string): number {
   let columns = 0;
   for (const character of content) {
-    columns = character === "\t" ? columns + (4 - (columns % 4)) : columns + 1;
+    if (character === "\t") {
+      columns += 8 - (columns % 8);
+      continue;
+    }
+    columns += isFullWidthCodePoint(character.codePointAt(0) ?? 0) ? 2 : 1;
   }
   return columns;
 }

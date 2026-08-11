@@ -82,6 +82,22 @@ describe("buildDiffRowIndex", () => {
     expect(index.stickyHeaderIndices).toEqual([0]);
   });
 
+  it("counts wide glyphs and tabs conservatively for horizontal scroll extent", () => {
+    for (const [path, content] of [
+      ["cjk.ts", "界".repeat(40)],
+      ["emoji.ts", "😀".repeat(40)],
+      ["tabs.ts", "\t".repeat(10)],
+    ]) {
+      const file = createFile(path, 1);
+      file.hunks[0].lines[1].content = content;
+
+      const index = buildIndex([file], [file.path]);
+      const group = index.items.find((item) => item.type === "unified_group");
+
+      expect(group?.contentColumns).toBe(80);
+    }
+  });
+
   it("precomputes exact offsets and preserves total file height", () => {
     const index = buildIndex(
       [createFile("first.ts", 65), createFile("second.ts", 1)],
