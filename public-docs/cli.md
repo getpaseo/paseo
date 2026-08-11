@@ -76,11 +76,13 @@ paseo workspace create \
   --pr-number 2186
 ```
 
-Then list, use, or archive it:
+Then list, use, rename, or archive it:
 
 ```bash
 paseo workspace ls
 paseo run --workspace <workspace-id> "implement authentication"
+paseo workspace rename <workspace-id> "Auth rework"
+paseo workspace rename <workspace-id> --reset   # back to the branch or directory name
 paseo workspace archive <workspace-id>
 ```
 

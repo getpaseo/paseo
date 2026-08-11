@@ -41,7 +41,10 @@ import {
   ChevronDown,
   Check,
   CheckSquare,
+  CircleDot,
   Copy,
+  Plus,
+  RotateCcw,
   TriangleAlertIcon,
   Scissors,
   MicVocal,
@@ -62,7 +65,7 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "reac
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { MarkdownRenderer, type MarkdownStyles } from "@/components/markdown/renderer";
-import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
+import type { TaskActivity, TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
@@ -2240,15 +2243,32 @@ export const CompactionMarker = memo(function CompactionMarker({
 
 interface TodoListCardProps {
   items: TodoEntry[];
+  activity: TaskActivity;
   disableOuterSpacing?: boolean;
 }
 
 interface TodoListItemRowProps {
   text: string;
   completed: boolean;
+  status?: TodoEntry["status"];
 }
 
-function TodoListItemRow({ text, completed }: TodoListItemRowProps) {
+function taskActivityIcon(activity: TaskActivity) {
+  switch (activity.type) {
+    case "added":
+      return Plus;
+    case "started":
+      return CircleDot;
+    case "completed":
+      return Check;
+    case "reopened":
+      return RotateCcw;
+    default:
+      return CheckSquare;
+  }
+}
+
+function TodoListItemRow({ text, completed, status }: TodoListItemRowProps) {
   const badgeStyle = useMemo(
     () => [
       todoListCardStylesheet.radioBadge,
@@ -2264,7 +2284,9 @@ function TodoListItemRow({ text, completed }: TodoListItemRowProps) {
   );
   return (
     <View style={todoListCardStylesheet.itemRow}>
-      <View style={badgeStyle}>
+      <View
+        style={[badgeStyle, status === "in_progress" && todoListCardStylesheet.radioBadgeActive]}
+      >
         {completed ? (
           <ThemedTodoCheckIcon size={12} uniProps={primaryForegroundColorMapping} />
         ) : null}
@@ -2300,6 +2322,12 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
   radioBadgeComplete: {
     opacity: 0.95,
   },
+  radioBadgeActive: {
+    borderWidth: 2,
+    borderColor: theme.colors.primary,
+    backgroundColor: "transparent",
+    opacity: 1,
+  },
   itemText: {
     flex: 1,
     color: theme.colors.foreground,
@@ -2317,12 +2345,23 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
 
 export const TodoListCard = memo(function TodoListCard({
   items,
+  activity,
   disableOuterSpacing,
 }: TodoListCardProps) {
   const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
-
-  const nextTask = useMemo(() => items.find((item) => !item.completed)?.text, [items]);
+  const activityDisplay = useMemo(() => {
+    if (activity.type === "created") {
+      return {
+        label: t("message.todo.activity.created", { count: activity.count }),
+        secondaryLabel: undefined,
+      };
+    }
+    return {
+      label: t(`message.todo.activity.${activity.type}`),
+      secondaryLabel: activity.task,
+    };
+  }, [activity, t]);
 
   const handleToggle = useCallback(() => {
     setIsExpanded((prev) => !prev);
@@ -2336,7 +2375,12 @@ export const TodoListCard = memo(function TodoListCard({
             <Text style={todoListCardStylesheet.emptyText}>{t("message.todo.empty")}</Text>
           ) : (
             items.map((item) => (
-              <TodoListItemRow key={item.text} text={item.text} completed={item.completed} />
+              <TodoListItemRow
+                key={item.id ?? item.text}
+                text={item.text}
+                completed={item.completed}
+                status={item.status}
+              />
             ))
           )}
         </View>
@@ -2346,9 +2390,9 @@ export const TodoListCard = memo(function TodoListCard({
 
   return (
     <ExpandableBadge
-      label={t("message.todo.title")}
-      secondaryLabel={nextTask}
-      icon={CheckSquare}
+      label={activityDisplay.label}
+      secondaryLabel={activityDisplay.secondaryLabel}
+      icon={taskActivityIcon(activity)}
       isExpanded={isExpanded}
       onToggle={handleToggle}
       renderDetails={renderDetails}

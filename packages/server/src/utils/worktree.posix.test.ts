@@ -2,7 +2,6 @@
 /* eslint-disable max-nested-callbacks */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
-  BranchAlreadyCheckedOutError,
   createWorktree as createWorktreePrimitive,
   deriveWorktreeProjectHash,
   deletePaseoWorktree,
@@ -41,6 +40,9 @@ import {
   writeFileSync,
   readFileSync,
   chmodSync,
+  lstatSync,
+  symlinkSync,
+  unlinkSync,
 } from "fs";
 import { delimiter, dirname, join } from "path";
 import { tmpdir } from "os";
@@ -299,22 +301,17 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(currentBranch).toBe("release/1.1.15");
     });
 
-    it("throws a typed error when checking out a branch already checked out in the main repo", async () => {
-      let caughtError: unknown;
-      try {
-        await createLegacyWorktreeForTest({
-          cwd: repoDir,
-          worktreeSlug: "dev-worktree",
-          source: { kind: "checkout-branch", branchName: "main" },
-          runSetup: true,
-          paseoHome,
-        });
-      } catch (error) {
-        caughtError = error;
-      }
+    it("creates a suffixed branch when checking out a branch already checked out in the main repo", async () => {
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "dev-worktree",
+        source: { kind: "checkout-branch", branchName: "main" },
+        runSetup: true,
+        paseoHome,
+      });
 
-      expect(caughtError).toBeInstanceOf(BranchAlreadyCheckedOutError);
-      expect((caughtError as BranchAlreadyCheckedOutError).branchName).toBe("main");
+      expect(result.branchName).toBe("main-1");
+      expect(existsSync(result.worktreePath)).toBe(true);
     });
 
     it("fetches a GitHub PR branch, checks it out, writes metadata, and runs setup", async () => {
@@ -1194,10 +1191,10 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       });
     });
 
-    it("does not overwrite a committed paseo.json with uncommitted edits in the main repo", async () => {
+    it("runs setup from the edited source config when the selected ref already has paseo.json", async () => {
       writeFileSync(
         join(repoDir, "paseo.json"),
-        JSON.stringify({ scripts: { dev: { command: "committed" } } }),
+        JSON.stringify({ worktree: { setup: 'echo "committed" > committed-setup.log' } }),
       );
       execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
       execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add paseo.json"], {
@@ -1206,21 +1203,61 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
 
       writeFileSync(
         join(repoDir, "paseo.json"),
-        JSON.stringify({ scripts: { dev: { command: "uncommitted" } } }),
+        JSON.stringify({ worktree: { setup: 'echo "edited" > edited-setup.log' } }),
       );
 
       const result = await createLegacyWorktreeForTest({
         cwd: repoDir,
-        worktreeSlug: "preserve-committed",
-        source: { kind: "branch-off", baseBranch: "main", branchName: "feature/preserve" },
-        runSetup: false,
+        worktreeSlug: "edited-config",
+        source: { kind: "branch-off", baseBranch: "main", branchName: "feature/edited-config" },
+        runSetup: true,
         paseoHome,
       });
 
       const worktreeConfigPath = join(result.worktreePath, "paseo.json");
       expect(JSON.parse(readFileSync(worktreeConfigPath, "utf8"))).toEqual({
-        scripts: { dev: { command: "committed" } },
+        worktree: { setup: 'echo "edited" > edited-setup.log' },
       });
+      expect(readFileSync(join(result.worktreePath, "edited-setup.log"), "utf8")).toBe("edited\n");
+      expect(existsSync(join(result.worktreePath, "committed-setup.log"))).toBe(false);
+    });
+
+    it("replaces a selected ref's paseo.json symlink without writing through it", async () => {
+      const sourceConfigPath = join(repoDir, "paseo.json");
+      const externalConfigPath = join(tempDir, "external-paseo.json");
+      const committedConfig = JSON.stringify({
+        worktree: { setup: 'echo "committed" > committed-setup.log' },
+      });
+      const editedConfig = JSON.stringify({
+        worktree: { setup: 'echo "edited" > edited-setup.log' },
+      });
+      writeFileSync(externalConfigPath, committedConfig);
+      symlinkSync(externalConfigPath, sourceConfigPath);
+      execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add config link"], {
+        cwd: repoDir,
+      });
+      unlinkSync(sourceConfigPath);
+      writeFileSync(sourceConfigPath, editedConfig);
+
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "replace-config-link",
+        source: {
+          kind: "branch-off",
+          baseBranch: "main",
+          branchName: "feature/replace-config-link",
+        },
+        runSetup: true,
+        paseoHome,
+      });
+
+      const worktreeConfigPath = join(result.worktreePath, "paseo.json");
+      expect(readFileSync(externalConfigPath, "utf8")).toBe(committedConfig);
+      expect(lstatSync(worktreeConfigPath).isFile()).toBe(true);
+      expect(readFileSync(worktreeConfigPath, "utf8")).toBe(editedConfig);
+      expect(readFileSync(join(result.worktreePath, "edited-setup.log"), "utf8")).toBe("edited\n");
+      expect(existsSync(join(result.worktreePath, "committed-setup.log"))).toBe(false);
     });
 
     it("creates a worktree without error when no paseo.json exists in the main repo", async () => {
