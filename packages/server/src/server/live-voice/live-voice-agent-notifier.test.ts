@@ -13,6 +13,7 @@ function createFakeAgents(initialLifecycle: Lifecycle = "running") {
   let lifecycle: Lifecycle = initialLifecycle;
   let lastAssistantMessage: string | null = "Rebased and pushed.";
   let authenticationRequired = false;
+  const pendingPermissions = new Map<string, unknown>();
   const agentManager = {
     subscribe(callback: AgentSubscriber) {
       subscribers.add(callback);
@@ -24,6 +25,7 @@ function createFakeAgents(initialLifecycle: Lifecycle = "running") {
       ({
         id: "agent-1",
         lifecycle,
+        pendingPermissions,
         ...(authenticationRequired
           ? {
               lastFailure: {
@@ -48,14 +50,15 @@ function createFakeAgents(initialLifecycle: Lifecycle = "running") {
       for (const subscriber of Array.from(subscribers)) {
         subscriber({
           type: "agent_state",
-          agent: { id: "agent-1", lifecycle: next },
+          agent: { id: "agent-1", lifecycle: next, pendingPermissions },
         } as never);
       }
     },
     requestPermission() {
+      pendingPermissions.set("permission-1", {});
       for (const subscriber of Array.from(subscribers)) {
         subscriber({
-          type: "agent_event",
+          type: "agent_stream",
           agentId: "agent-1",
           event: {
             type: "permission_requested",
@@ -65,11 +68,19 @@ function createFakeAgents(initialLifecycle: Lifecycle = "running") {
         } as never);
       }
     },
-    /**
-     * The envelope the agent manager really dispatches. The routed watch above
-     * only ever reads `event.event`, so it does not notice the difference; the
-     * ambient watch has to read `agentId` off the envelope and does.
-     */
+    resolvePermission() {
+      pendingPermissions.delete("permission-1");
+      for (const subscriber of Array.from(subscribers)) {
+        subscriber({
+          type: "agent_stream",
+          agentId: "agent-1",
+          event: {
+            type: "permission_resolved",
+            requestId: "permission-1",
+          },
+        } as never);
+      }
+    },
     requestAmbientPermission() {
       for (const subscriber of Array.from(subscribers)) {
         subscriber({
@@ -245,6 +256,8 @@ describe("LiveVoiceAgentNotifier", () => {
     expect(updates[0]?.payload.notification.turnId).toBe("turn-1");
     expect(notifier.getWatchCount()).toBe(1);
 
+    agents.resolvePermission();
+    agents.transition("running");
     agents.transition("idle");
     await vi.waitFor(() => {
       expect(updates).toHaveLength(2);

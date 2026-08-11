@@ -5,7 +5,7 @@ import type {
   AgentPromptInput,
   AgentRunOptions,
 } from "./agent-sdk-types.js";
-import type { AgentManager, ManagedAgent } from "./agent-manager.js";
+import type { AgentManager, AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
@@ -414,58 +414,63 @@ export function watchAgentFinish(params: WatchAgentFinishParams): () => void {
     onFinish(reason, details);
   }
 
+  function handleAgentState(event: Extract<AgentManagerEvent, { type: "agent_state" }>): void {
+    for (const requestId of reportedPermissionIds) {
+      if (!event.agent.pendingPermissions?.has(requestId)) {
+        reportedPermissionIds.delete(requestId);
+      }
+    }
+    if (event.agent.lifecycle === "running") {
+      if ((event.agent.pendingPermissions?.size ?? 0) === 0) {
+        hasSeenRunning = true;
+      }
+      return;
+    }
+    if (event.agent.lifecycle === "error") {
+      fire("errored", { terminal: true });
+      return;
+    }
+    if (event.agent.lifecycle === "idle" && hasSeenRunning) {
+      fire("finished", { terminal: true });
+      return;
+    }
+    if (event.agent.lifecycle === "closed") {
+      fire("was closed", { terminal: true });
+    }
+  }
+
+  function handleAgentStream(event: Extract<AgentManagerEvent, { type: "agent_stream" }>): void {
+    if (event.event.type === "permission_requested") {
+      hasSeenRunning = false;
+      if (reportedPermissionIds.has(event.event.request.id)) return;
+      reportedPermissionIds.add(event.event.request.id);
+      fire("needs permission", {
+        terminal: false,
+        ...(event.event.turnId ? { turnId: event.event.turnId } : {}),
+        permissionRequest: event.event.request,
+      });
+      return;
+    }
+
+    if (event.event.type === "permission_resolved") {
+      reportedPermissionIds.delete(event.event.requestId);
+      const agent = agentManager.getAgent(agentId);
+      if (agent && (agent.pendingPermissions?.size ?? 0) === 0) {
+        hasSeenRunning = agent.lifecycle === "running";
+      }
+    }
+  }
+
   unsubscribe = agentManager.subscribe(
     (event) => {
       if (stopped) return;
 
       if (event.type === "agent_state") {
-        for (const requestId of reportedPermissionIds) {
-          if (!event.agent.pendingPermissions.has(requestId)) {
-            reportedPermissionIds.delete(requestId);
-          }
-        }
-        if (event.agent.lifecycle === "running") {
-          if (event.agent.pendingPermissions.size === 0) {
-            hasSeenRunning = true;
-          }
-          return;
-        }
-        if (event.agent.lifecycle === "error") {
-          fire("errored", { terminal: true });
-          return;
-        }
-        if (event.agent.lifecycle === "idle" && hasSeenRunning) {
-          fire("finished", { terminal: true });
-          return;
-        }
-        if (event.agent.lifecycle === "closed") {
-          fire("was closed", { terminal: true });
-        }
+        handleAgentState(event);
         return;
       }
-
-      if (event.type === "timeline_replacement") {
-        return;
-      }
-
-      if (event.event.type === "permission_requested") {
-        hasSeenRunning = false;
-        if (reportedPermissionIds.has(event.event.request.id)) return;
-        reportedPermissionIds.add(event.event.request.id);
-        fire("needs permission", {
-          terminal: false,
-          ...(event.event.turnId ? { turnId: event.event.turnId } : {}),
-          permissionRequest: event.event.request,
-        });
-        return;
-      }
-
-      if (event.event.type === "permission_resolved") {
-        reportedPermissionIds.delete(event.event.requestId);
-        const agent = agentManager.getAgent(agentId);
-        if (agent?.pendingPermissions.size === 0) {
-          hasSeenRunning = agent.lifecycle === "running";
-        }
+      if (event.type === "agent_stream") {
+        handleAgentStream(event);
       }
     },
     { agentId, replayState: false },
@@ -475,7 +480,7 @@ export function watchAgentFinish(params: WatchAgentFinishParams): () => void {
   if (!snapshot || snapshot.lifecycle === "closed") {
     stop();
   } else if (snapshot.lifecycle === "running") {
-    hasSeenRunning = snapshot.pendingPermissions.size === 0;
+    hasSeenRunning = (snapshot.pendingPermissions?.size ?? 0) === 0;
   } else if (snapshot.lifecycle === "error") {
     fire("errored", { terminal: true });
   }

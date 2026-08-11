@@ -207,6 +207,8 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "dictation-toggle",
     "agent-interrupt",
     "voice-mute-toggle",
+    "live-voice-mute-toggle",
+    "live-voice-mute-hold-invert",
   ],
 };
 
