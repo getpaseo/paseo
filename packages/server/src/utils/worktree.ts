@@ -1336,7 +1336,12 @@ async function resolveWorktreeSourcePlan({
         }
       }
       if (await isBranchCheckedOut(cwd, source.branchName)) {
-        throw new BranchAlreadyCheckedOutError(source.branchName);
+        const branchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
+        return {
+          branchName,
+          metadataBaseRefName: source.branchName,
+          addArguments: ["-b", branchName, "--no-track", source.branchName],
+        };
       }
 
       return {

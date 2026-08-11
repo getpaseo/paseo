@@ -930,7 +930,7 @@ test.skipIf(isPlatform("win32"))(
     expect(worktreeList).toContain(created.worktreePath);
 
     // Recreating without pruning fails with the stale registration pinning the
-    // branch — this is the case restore must heal.
+    // path — this is the case restore must heal.
     await expect(
       createWorktree({
         cwd: repoDir,
@@ -939,7 +939,7 @@ test.skipIf(isPlatform("win32"))(
         runSetup: false,
         paseoHome,
       }),
-    ).rejects.toMatchObject({ name: "BranchAlreadyCheckedOutError" });
+    ).rejects.toThrow("missing but already registered worktree");
 
     // The restore-side prune frees the stale registration; recreate then succeeds.
     execFileSync("git", ["worktree", "prune"], { cwd: repoDir, stdio: "pipe" });
@@ -984,7 +984,7 @@ test.skipIf(isPlatform("win32"))(
 );
 
 test.skipIf(isPlatform("win32"))(
-  "rejects with BranchAlreadyCheckedOutError when the kept branch is checked out elsewhere",
+  "creates a suffixed branch when the requested branch is checked out elsewhere",
   async () => {
     const { repoDir, tempDir } = createGitRepo();
     cleanupPaths.push(tempDir);
@@ -1000,15 +1000,16 @@ test.skipIf(isPlatform("win32"))(
     });
     expect(existsSync(first.worktreePath)).toBe(true);
 
-    await expect(
-      createWorktree({
-        cwd: repoDir,
-        worktreeSlug: "busy-branch-again",
-        source: { kind: "checkout-branch", branchName: "busy-branch" },
-        runSetup: false,
-        paseoHome,
-      }),
-    ).rejects.toMatchObject({ name: "BranchAlreadyCheckedOutError" });
+    const second = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "busy-branch-again",
+      source: { kind: "checkout-branch", branchName: "busy-branch" },
+      runSetup: false,
+      paseoHome,
+    });
+
+    expect(second.branchName).toBe("busy-branch-1");
+    expect(existsSync(second.worktreePath)).toBe(true);
   },
 );
 
