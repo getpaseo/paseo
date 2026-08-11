@@ -1945,6 +1945,78 @@ test("createAgent injects paseo MCP server only into provider launch config", as
   });
 });
 
+test("createAgent injects managed MCP servers at runtime and keeps session overrides", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new McpCapableTestAgentClient();
+  const excludedServerNames: string[][] = [];
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    resolveManagedMcpServers: (excludedNames = []) => {
+      excludedServerNames.push([...excludedNames]);
+      return {
+        hub: {
+          type: "http",
+          url: "https://host.example.test/mcp",
+          headers: { Authorization: "runtime-token" },
+        },
+      };
+    },
+    idFactory: () => "00000000-0000-4000-8000-000000000203",
+  });
+
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      mcpServers: {
+        shared: { type: "stdio", command: "session-command" },
+      },
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  expect(client.createdConfigs[0]?.mcpServers).toEqual({
+    hub: {
+      type: "http",
+      url: "https://host.example.test/mcp",
+      headers: { Authorization: "runtime-token" },
+    },
+    shared: { type: "stdio", command: "session-command" },
+  });
+  expect(excludedServerNames).toEqual([["shared"]]);
+  expect(snapshot.config.mcpServers).toEqual({
+    shared: { type: "stdio", command: "session-command" },
+  });
+  expect((await storage.get(snapshot.id))?.config?.mcpServers).toEqual({
+    shared: { type: "stdio", command: "session-command" },
+  });
+  rmSync(workdir, { recursive: true, force: true });
+});
+
+test("createAgent skips managed MCP servers for an unsupported provider", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    resolveManagedMcpServers: () => ({
+      hub: { type: "http", url: "https://host.example.test/mcp" },
+    }),
+    idFactory: () => "00000000-0000-4000-8000-000000000204",
+  });
+
+  await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  expect(client.createdConfigs[0]?.mcpServers).toBeUndefined();
+  rmSync(workdir, { recursive: true, force: true });
+});
+
 test("createAgent closes and rejects a provider session that cannot honor MCP servers", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

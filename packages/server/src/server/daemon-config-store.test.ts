@@ -554,6 +554,49 @@ describe("DaemonConfigStore", () => {
     expect(persisted.daemon?.appendSystemPrompt).toBe("Prefer terse replies.");
   });
 
+  test("patch persists managed agent template upserts and removals", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      mcp: { injectIntoAgents: true },
+      browserTools: { enabled: false },
+      agentTemplates: {
+        old: {
+          name: "Old",
+          description: "Old template",
+          instructions: "Old instructions",
+        },
+      },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    store.patch({
+      upsertAgentTemplates: {
+        reviewer: {
+          name: "Reviewer",
+          description: "Reviews code",
+          instructions: "Review the requested implementation.",
+        },
+      },
+      removeAgentTemplates: ["old"],
+    });
+
+    expect(store.get().agentTemplates).toEqual({
+      reviewer: {
+        name: "Reviewer",
+        description: "Reviews code",
+        instructions: "Review the requested implementation.",
+      },
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.agentTemplates).toEqual(
+      store.get().agentTemplates,
+    );
+  });
+
   test("patch persists enable terminal agent hooks into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);
@@ -691,6 +734,54 @@ describe("DaemonConfigStore", () => {
       description: "E2E ACP provider fixture",
       command: ["npx", "-y", "--version"],
       env: {},
+    });
+  });
+
+  test("persists managed MCP secrets while returning only redacted config", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      mcp: { injectIntoAgents: false, servers: {} },
+      browserTools: { enabled: false },
+      providers: {},
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+      metadataGeneration: { providers: [] },
+    });
+
+    const publicConfig = store.patch({
+      upsertMcpServers: {
+        hub: {
+          type: "http",
+          url: "https://mcp.example.test/mcp",
+          headers: { Authorization: { source: "value", value: "first-token" } },
+        },
+      },
+    });
+
+    expect(publicConfig.mcp.servers).toEqual({
+      hub: {
+        type: "http",
+        url: "https://mcp.example.test/mcp",
+        headers: { Authorization: { source: "value", configured: true } },
+      },
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.mcp?.servers?.hub).toMatchObject({
+      headers: { Authorization: { source: "value", value: "first-token" } },
+    });
+
+    store.patch({
+      upsertMcpServers: {
+        hub: {
+          type: "http",
+          url: "https://mcp.example.test/mcp",
+          headers: { Authorization: { source: "value", value: "second-token" } },
+        },
+      },
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.mcp?.servers?.hub).toMatchObject({
+      headers: { Authorization: { source: "value", value: "second-token" } },
     });
   });
 });

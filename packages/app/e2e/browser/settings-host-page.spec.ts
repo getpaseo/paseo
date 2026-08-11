@@ -18,6 +18,7 @@ import {
   expectRetiredSidebarSectionsAbsent,
   expectHostPageVisible,
   seedSavedSettingsHosts,
+  exerciseManagedMcpServerLifecycle,
 } from "../support/helpers/settings";
 
 test.describe("Settings host page", () => {
@@ -43,6 +44,16 @@ test.describe("Settings host page", () => {
     await openHostSection(page, serverId, "agents");
     await expectSettingsHeader(page, "Agents");
     await expectHostInjectMcpCard(page);
+  });
+
+  test("agents section manages and tests a host MCP server", async ({ page }) => {
+    const serverId = getServerId();
+
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsHost(page, serverId);
+    await openHostSection(page, serverId, "agents");
+    await exerciseManagedMcpServerLifecycle(page);
   });
 
   test("providers section shows the providers card", async ({ page }) => {

@@ -438,8 +438,11 @@ function resolveBrowserToolsEnabled(persisted: ReturnType<typeof loadPersistedCo
   return persisted.daemon?.browserTools?.enabled ?? false;
 }
 
-function resolveStaticLoadConfigSettings(
-  env: NodeJS.ProcessEnv,
+function resolveAgentTemplates(persisted: ReturnType<typeof loadPersistedConfig>) {
+  return persisted.daemon?.agentTemplates ?? {};
+}
+
+function resolveMcpSettings(
   cli: CliConfigOverrides | undefined,
   persisted: ReturnType<typeof loadPersistedConfig>,
 ) {
@@ -447,7 +450,19 @@ function resolveStaticLoadConfigSettings(
     mcpEnabled: cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true,
     mcpInjectIntoAgents:
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
+    managedMcpServers: persisted.daemon?.mcp?.servers ?? {},
+  };
+}
+
+function resolveStaticLoadConfigSettings(
+  env: NodeJS.ProcessEnv,
+  cli: CliConfigOverrides | undefined,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+) {
+  return {
+    ...resolveMcpSettings(cli, persisted),
     browserToolsEnabled: resolveBrowserToolsEnabled(persisted),
+    agentTemplates: resolveAgentTemplates(persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
     terminalProfiles: persisted.daemon?.terminalProfiles,
@@ -475,7 +490,9 @@ export function loadConfig(
   const {
     mcpEnabled,
     mcpInjectIntoAgents,
+    managedMcpServers,
     browserToolsEnabled,
+    agentTemplates,
     autoArchiveAfterMerge,
     appendSystemPrompt,
     terminalProfiles,
@@ -514,7 +531,9 @@ export function loadConfig(
     trustedProxies,
     mcpEnabled,
     mcpInjectIntoAgents,
+    managedMcpServers,
     browserToolsEnabled,
+    agentTemplates,
     git: resolveGitProcessConfig(env, persisted),
     autoArchiveAfterMerge,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,

@@ -147,6 +147,7 @@ import {
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
+import { redactManagedMcpServers } from "./managed-mcp-config.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
@@ -168,7 +169,12 @@ import type { PushNotificationSender } from "./push/index.js";
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
-import type { FirstAgentContext, TerminalProfile } from "@getpaseo/protocol/messages";
+import type {
+  AgentTemplate,
+  FirstAgentContext,
+  ManagedMcpServerConfig,
+  TerminalProfile,
+} from "@getpaseo/protocol/messages";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
@@ -388,6 +394,8 @@ export interface PaseoDaemonConfig {
   trustedProxies?: true | string[];
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
+  managedMcpServers?: Record<string, ManagedMcpServerConfig>;
+  agentTemplates?: Record<string, AgentTemplate>;
   browserToolsEnabled?: boolean;
   git?: {
     maxProcessesPerSecond: number;
@@ -521,8 +529,12 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
 
   const initialConfig: MutableDaemonConfig = {
     relay: { enabled: config.relayEnabled ?? true },
-    mcp: { injectIntoAgents: config.mcpInjectIntoAgents ?? true },
+    mcp: {
+      injectIntoAgents: config.mcpInjectIntoAgents ?? true,
+      servers: redactManagedMcpServers(config.managedMcpServers),
+    },
     browserTools: { enabled: config.browserToolsEnabled ?? false },
+    agentTemplates: config.agentTemplates ?? {},
     providers,
     metadataGeneration: {
       providers: config.metadataGeneration?.providers ?? [],
@@ -553,7 +565,10 @@ export async function createPaseoDaemon(
     config.paseoHome,
     createInitialMutableDaemonConfig(config),
     logger,
-    { relayEnabledMutable: config.relayEnabledMutable ?? true },
+    {
+      relayEnabledMutable: config.relayEnabledMutable ?? true,
+      managedMcpServers: config.managedMcpServers,
+    },
   );
   const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
   const browserToolsBroker = new BrowserToolsBroker({});
@@ -832,6 +847,8 @@ export async function createPaseoDaemon(
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
     },
     mcpAuthToken: agentMcpAuthToken,
+    resolveManagedMcpServers: (excludedNames) =>
+      daemonConfigStore.resolveEnabledMcpServers(process.env, excludedNames),
     logger,
   });
 
@@ -1235,6 +1252,7 @@ export async function createPaseoDaemon(
     getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
     scheduleService,
     providerSnapshotManager,
+    getAgentTemplates: () => daemonConfigStore.get().agentTemplates ?? {},
     github,
     workspaceGitService,
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,

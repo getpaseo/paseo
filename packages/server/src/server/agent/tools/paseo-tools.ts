@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ensureValidJson } from "../../json-utils.js";
 import type { Logger } from "pino";
+import type { AgentTemplate } from "@getpaseo/protocol/messages";
 
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentManager } from "../agent-manager.js";
@@ -141,6 +142,7 @@ export interface PaseoToolHostDependencies {
   enableVoiceTools?: boolean;
   voiceOnly?: boolean;
   logger: Logger;
+  getAgentTemplates?: () => Record<string, AgentTemplate>;
 }
 
 function parseTimestamp(value: string | null | undefined): number {
@@ -159,6 +161,27 @@ function resolveAgentListActivityTime(agent: AgentListItemPayload): number {
     parseTimestamp(agent.archivedAt),
     parseTimestamp(agent.createdAt),
   );
+}
+
+function resolveAgentTemplateInitialPrompt(params: {
+  templateId: string | undefined;
+  provider: string;
+  initialPrompt: string;
+  getAgentTemplates: PaseoToolHostDependencies["getAgentTemplates"];
+}): string {
+  if (!params.templateId) {
+    return params.initialPrompt;
+  }
+  const template = params.getAgentTemplates?.()[params.templateId];
+  if (!template || template.enabled === false) {
+    throw new Error(`Agent template '${params.templateId}' is not available`);
+  }
+  if (template.provider && template.provider !== params.provider) {
+    throw new Error(
+      `Agent template '${params.templateId}' requires provider '${template.provider}'`,
+    );
+  }
+  return `${template.instructions}\n\n---\n\nTask:\n${params.initialPrompt}`;
 }
 
 interface ProviderSummary {
@@ -969,6 +992,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .describe("Create a new workspace for the agent."),
   ]);
   const commonCreateAgentFields = {
+    templateId: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("Optional host-managed agent template ID. Call list_agent_templates first."),
     title: z
       .string()
       .trim()
@@ -1394,6 +1423,42 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   );
 
   registerTool(
+    "list_agent_templates",
+    {
+      title: "List agent templates",
+      description:
+        "List reusable host-managed agent roles available to every agent. Use a templateId with create_agent to apply its instructions.",
+      inputSchema: {},
+      outputSchema: {
+        templates: z.array(
+          z.object({
+            id: z.string(),
+            name: z.string(),
+            description: z.string(),
+            provider: z.string().optional(),
+          }),
+        ),
+      },
+    },
+    async () => {
+      const templates = Object.entries(options.getAgentTemplates?.() ?? {})
+        .filter(([, template]) => template.enabled !== false)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([id, template]) => {
+          const item: {
+            id: string;
+            name: string;
+            description: string;
+            provider?: string;
+          } = { id, name: template.name, description: template.description };
+          if (template.provider) item.provider = template.provider;
+          return item;
+        });
+      return { content: [], structuredContent: ensureValidJson({ templates }) };
+    },
+  );
+
+  registerTool(
     "create_agent",
     {
       title: "Create agent",
@@ -1426,6 +1491,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
       }
       const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
+      const initialPrompt = resolveAgentTemplateInitialPrompt({
+        templateId: parsedArgs.templateId,
+        provider: parsedArgs.provider,
+        initialPrompt: parsedArgs.initialPrompt,
+        getAgentTemplates: options.getAgentTemplates,
+      });
       const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
       const {
         snapshot,
@@ -1449,7 +1520,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           kind: "mcp",
           provider: parsedArgs.provider,
           title: parsedArgs.title,
-          initialPrompt: parsedArgs.initialPrompt,
+          initialPrompt,
           config: inheritedConfig,
           cwd: resolvedArgs.cwd,
           workspaceId: resolvedArgs.workspaceId,

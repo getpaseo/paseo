@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { ar } from "./resources/ar";
 import { en } from "./resources/en";
 import { es } from "./resources/es";
+import { fa } from "./resources/fa";
 import { fr } from "./resources/fr";
 import { ja } from "./resources/ja";
 import { ko } from "./resources/ko";
@@ -108,6 +109,7 @@ describe("translation resources", () => {
     const englishKeys = flattenKeys(en).sort();
     expect(flattenKeys(ar).sort()).toEqual(englishKeys);
     expect(flattenKeys(es).sort()).toEqual(englishKeys);
+    expect(flattenKeys(fa).sort()).toEqual(englishKeys);
     expect(flattenKeys(fr).sort()).toEqual(englishKeys);
     expect(flattenKeys(ja).sort()).toEqual(englishKeys);
     expect(flattenKeys(ko).sort()).toEqual(englishKeys);
@@ -121,6 +123,7 @@ describe("translation resources", () => {
     const maxFallbackStrings = Math.floor(totalStrings * 0.25);
     expect(countMatchingEnglishStrings(ar)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(es)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(fa)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(fr)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ja)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ko)).toBeLessThan(maxFallbackStrings);
@@ -132,6 +135,7 @@ describe("translation resources", () => {
   it("preserves interpolation placeholders in every language", () => {
     expect(findInterpolationMismatches(ar)).toEqual([]);
     expect(findInterpolationMismatches(es)).toEqual([]);
+    expect(findInterpolationMismatches(fa)).toEqual([]);
     expect(findInterpolationMismatches(fr)).toEqual([]);
     expect(findInterpolationMismatches(ja)).toEqual([]);
     expect(findInterpolationMismatches(ko)).toEqual([]);
@@ -150,6 +154,7 @@ describe("translation resources", () => {
     expect(ar.modelSelector.modelCountPlural).toBe("{{count}} نماذج");
     expect(es.modelSelector.modelCountPlural).toBe("{{count}} modelos");
     expect(fr.modelSelector.modelCountPlural).toBe("{{count}} modèles");
+    expect(fa.modelSelector.modelCountPlural).toBe("{{count}} مدل");
     expect(ja.modelSelector.modelCountPlural).toBe("{{count}}つのモデル");
     expect(ko.modelSelector.modelCountPlural).toBe("모델 {{count}}개");
     expect(ptBR.modelSelector.modelCountPlural).toBe("{{count}} modelos");

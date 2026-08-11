@@ -9,7 +9,12 @@ import {
 } from "./agent/provider-launch-config.js";
 import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
 import { ensurePrivateFile, writePrivateFileAtomicSync } from "./private-files.js";
-import { TerminalProfileSchema } from "@getpaseo/protocol/messages";
+import {
+  AgentTemplateRecordSchema,
+  ManagedMcpServerConfigRecordSchema,
+  MAX_MANAGED_MCP_SERVERS,
+  TerminalProfileSchema,
+} from "@getpaseo/protocol/messages";
 import { PaseoServicePortAllocationSchema } from "@getpaseo/protocol/paseo-config-schema";
 
 export const LogLevelSchema = z.enum(["trace", "debug", "info", "warn", "error", "fatal"]);
@@ -239,6 +244,10 @@ export const PersistedConfigSchema = z
           .object({
             enabled: z.boolean().optional(),
             injectIntoAgents: z.boolean().optional(),
+            servers: ManagedMcpServerConfigRecordSchema.refine(
+              (servers) => Object.keys(servers).length <= MAX_MANAGED_MCP_SERVERS,
+              `A host supports at most ${MAX_MANAGED_MCP_SERVERS} managed MCP servers`,
+            ).optional(),
           })
           .passthrough()
           .optional(),
@@ -248,6 +257,7 @@ export const PersistedConfigSchema = z
           })
           .passthrough()
           .optional(),
+        agentTemplates: AgentTemplateRecordSchema.optional(),
         git: z
           .object({
             maxProcessesPerSecond: z.number().int().positive().optional(),

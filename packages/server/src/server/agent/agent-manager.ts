@@ -43,6 +43,7 @@ import {
   type ImportedTimelineEntry,
   type ImportableProviderSession,
   type ListImportableSessionsOptions,
+  type McpServerConfig,
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
@@ -129,6 +130,7 @@ interface PreparedSessionConfig {
 interface NormalizeConfigOptions {
   resolveDefaultModel?: boolean;
   env?: Record<string, string>;
+  additionalMcpServerNames?: readonly string[];
 }
 
 interface TimeoutOptions {
@@ -274,6 +276,7 @@ export interface AgentManagerOptions {
   paseoToolsEnabled?: boolean;
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   appendSystemPrompt?: string;
+  resolveManagedMcpServers?: (excludedNames?: readonly string[]) => Record<string, McpServerConfig>;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   logger: Logger;
@@ -637,6 +640,9 @@ export class AgentManager {
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
   private appendSystemPrompt: string;
+  private readonly resolveManagedMcpServers: (
+    excludedNames?: readonly string[],
+  ) => Record<string, McpServerConfig>;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
@@ -654,6 +660,7 @@ export class AgentManager {
     this.mcpAuthToken = options?.mcpAuthToken ?? null;
     this.configurePaseoTools(options);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
+    this.resolveManagedMcpServers = options.resolveManagedMcpServers ?? (() => ({}));
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
       reloadSessionCloseMs:
@@ -4396,10 +4403,13 @@ export class AgentManager {
       }
     }
 
-    return this.applyProviderConfiguration(normalized);
+    return this.applyProviderConfiguration(normalized, options.additionalMcpServerNames);
   }
 
-  private applyProviderConfiguration(config: AgentSessionConfig): AgentSessionConfig {
+  private applyProviderConfiguration(
+    config: AgentSessionConfig,
+    additionalMcpServerNames: readonly string[] = [],
+  ): AgentSessionConfig {
     const definition = this.providerDefinitions.get(config.provider);
     if (config.providerOptions !== undefined && !definition?.validateOptions) {
       throw new Error(`Provider '${config.provider}' does not accept providerOptions`);
@@ -4408,7 +4418,7 @@ export class AgentManager {
     const withOptions = definition?.applyOptions
       ? definition.applyOptions(config, validatedOptions)
       : config;
-    this.validateToolPolicyServers(withOptions);
+    this.validateToolPolicyServers(withOptions, additionalMcpServerNames);
     if (withOptions.toolPolicy && !definition?.applyToolPolicy) {
       throw new Error(
         `Provider '${config.provider}' cannot preapprove exact MCP tools for unattended execution`,
@@ -4419,13 +4429,19 @@ export class AgentManager {
       : withOptions;
   }
 
-  private validateToolPolicyServers(config: AgentSessionConfig): void {
+  private validateToolPolicyServers(
+    config: AgentSessionConfig,
+    additionalMcpServerNames: readonly string[] = [],
+  ): void {
     if (!config.toolPolicy) return;
-    const serverNames = new Set(Object.keys(config.mcpServers ?? {}));
+    const serverNames = new Set([
+      ...Object.keys(config.mcpServers ?? {}),
+      ...additionalMcpServerNames,
+    ]);
     for (const grant of config.toolPolicy.preapproved) {
       if (!serverNames.has(grant.server)) {
         throw new Error(
-          `toolPolicy preapproval '${grant.server}.${grant.tool}' requires MCP server '${grant.server}' in the same agent request`,
+          `toolPolicy preapproval '${grant.server}.${grant.tool}' requires MCP server '${grant.server}' in the agent or host configuration`,
         );
       }
     }
@@ -4454,10 +4470,28 @@ export class AgentManager {
     agentId: string,
     env?: Record<string, string>,
   ): Promise<PreparedSessionConfig> {
-    const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), { env });
+    const configWithoutInternalServer = stripInternalPaseoMcpServer(config);
+    const client = this.clients.get(configWithoutInternalServer.provider);
+    const managedMcpServers = client?.capabilities.supportsMcpServers
+      ? this.resolveManagedMcpServers(Object.keys(configWithoutInternalServer.mcpServers ?? {}))
+      : {};
+    const storedConfig = await this.normalizeConfig(configWithoutInternalServer, {
+      env,
+      additionalMcpServerNames: Object.keys(managedMcpServers),
+    });
+    const runtimeConfig =
+      Object.keys(managedMcpServers).length > 0
+        ? {
+            ...storedConfig,
+            mcpServers: {
+              ...managedMcpServers,
+              ...storedConfig.mcpServers,
+            },
+          }
+        : storedConfig;
     const launchConfig = this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
-        config: storedConfig,
+        config: runtimeConfig,
         agentId,
         mcpBaseUrl: this.mcpBaseUrl,
         mcpAuthToken: this.mcpAuthToken,

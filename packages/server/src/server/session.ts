@@ -59,6 +59,7 @@ import {
   type WorkspaceScriptsService,
 } from "./session/workspace-scripts/workspace-scripts-service.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
+import { testManagedMcpServer } from "./managed-mcp-tester.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
@@ -2037,12 +2038,37 @@ export class Session {
           },
         });
         return undefined;
+      case "daemon.mcp.server.test.request":
+        return this.handleMcpServerTestRequest(msg.requestId, msg.name);
       case "read_project_config_request":
         return this.projectConfigSession.handleReadProjectConfigRequest(msg);
       case "write_project_config_request":
         return this.projectConfigSession.handleWriteProjectConfigRequest(msg);
       default:
         return undefined;
+    }
+  }
+
+  private async handleMcpServerTestRequest(requestId: string, name: string): Promise<void> {
+    const startedAt = Date.now();
+    try {
+      const config = this.daemonConfigStore.resolveMcpServer(name);
+      const result = await testManagedMcpServer({ config });
+      this.emit({
+        type: "daemon.mcp.server.test.response",
+        payload: { requestId, name, ...result },
+      });
+    } catch (error) {
+      this.emit({
+        type: "daemon.mcp.server.test.response",
+        payload: {
+          requestId,
+          name,
+          status: "error",
+          latencyMs: Math.max(0, Date.now() - startedAt),
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
     }
   }
 
