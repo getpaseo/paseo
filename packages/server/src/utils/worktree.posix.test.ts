@@ -40,6 +40,9 @@ import {
   writeFileSync,
   readFileSync,
   chmodSync,
+  lstatSync,
+  symlinkSync,
+  unlinkSync,
 } from "fs";
 import { delimiter, dirname, join } from "path";
 import { tmpdir } from "os";
@@ -1215,6 +1218,44 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(JSON.parse(readFileSync(worktreeConfigPath, "utf8"))).toEqual({
         worktree: { setup: 'echo "edited" > edited-setup.log' },
       });
+      expect(readFileSync(join(result.worktreePath, "edited-setup.log"), "utf8")).toBe("edited\n");
+      expect(existsSync(join(result.worktreePath, "committed-setup.log"))).toBe(false);
+    });
+
+    it("replaces a selected ref's paseo.json symlink without writing through it", async () => {
+      const sourceConfigPath = join(repoDir, "paseo.json");
+      const externalConfigPath = join(tempDir, "external-paseo.json");
+      const committedConfig = JSON.stringify({
+        worktree: { setup: 'echo "committed" > committed-setup.log' },
+      });
+      const editedConfig = JSON.stringify({
+        worktree: { setup: 'echo "edited" > edited-setup.log' },
+      });
+      writeFileSync(externalConfigPath, committedConfig);
+      symlinkSync(externalConfigPath, sourceConfigPath);
+      execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add config link"], {
+        cwd: repoDir,
+      });
+      unlinkSync(sourceConfigPath);
+      writeFileSync(sourceConfigPath, editedConfig);
+
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "replace-config-link",
+        source: {
+          kind: "branch-off",
+          baseBranch: "main",
+          branchName: "feature/replace-config-link",
+        },
+        runSetup: true,
+        paseoHome,
+      });
+
+      const worktreeConfigPath = join(result.worktreePath, "paseo.json");
+      expect(readFileSync(externalConfigPath, "utf8")).toBe(committedConfig);
+      expect(lstatSync(worktreeConfigPath).isFile()).toBe(true);
+      expect(readFileSync(worktreeConfigPath, "utf8")).toBe(editedConfig);
       expect(readFileSync(join(result.worktreePath, "edited-setup.log"), "utf8")).toBe("edited\n");
       expect(existsSync(join(result.worktreePath, "committed-setup.log"))).toBe(false);
     });
