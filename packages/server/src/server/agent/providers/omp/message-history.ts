@@ -1,4 +1,8 @@
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
+import {
+  materializeProviderImage,
+  renderProviderImageOutputAsAssistantMarkdown,
+} from "../provider-image-output.js";
 import type { OmpAgentMessage, OmpImageContent, OmpTextContent } from "./rpc-types.js";
 import { shouldDisplayOmpCustomMessage } from "./custom-message.js";
 import {
@@ -7,6 +11,7 @@ import {
   parseToolArgs,
   parseToolResult,
   resolveToolCallName,
+  sanitizeOmpToolResultImages,
   type OmpToolResult,
   type OmpTrackedToolCall,
 } from "./tool-call-detail.js";
@@ -79,13 +84,9 @@ export class OmpHistoryMapper {
         case "assistant":
           events.push(...this.mapAssistantMessage(message));
           break;
-        case "toolResult": {
-          const event = this.mapToolResultMessage(message);
-          if (event) {
-            events.push(event);
-          }
+        case "toolResult":
+          events.push(...this.mapToolResultMessage(message));
           break;
-        }
         case "bashExecution":
           events.push(this.mapBashExecutionMessage(message));
           break;
@@ -187,26 +188,42 @@ export class OmpHistoryMapper {
 
   private mapToolResultMessage(
     message: Extract<OmpAgentMessage, { role: "toolResult" }>,
-  ): AgentStreamEvent | null {
+  ): AgentStreamEvent[] {
     const tracked =
       this.pendingToolCalls.get(message.toolCallId) ?? parseToolArgs(message.toolName, null);
     this.pendingToolCalls.delete(message.toolCallId);
-    const result = parseToolResult({ content: message.content, details: message.details });
+    const sanitized = sanitizeOmpToolResultImages({
+      content: message.content,
+      details: message.details,
+    });
+    const result = parseToolResult(sanitized.result);
     const detail = this.mapToolDetail(message.toolCallId, tracked, result);
     if (!detail) {
-      return null;
+      return [];
     }
-    return {
-      type: "timeline",
-      provider: this.provider,
-      item: toToolResultTimelineItem({
-        callId: this.resolveToolCallId(message.toolCallId, tracked),
-        name: resolveToolCallName(tracked, result),
-        isError: Boolean(message.isError),
-        detail,
-        errorText: extractTextFromToolResult(result) ?? "Tool call failed",
-      }),
-    };
+
+    const events: AgentStreamEvent[] = [
+      {
+        type: "timeline",
+        provider: this.provider,
+        item: toToolResultTimelineItem({
+          callId: this.resolveToolCallId(message.toolCallId, tracked),
+          name: resolveToolCallName(tracked, result),
+          isError: Boolean(message.isError),
+          detail,
+          errorText: extractTextFromToolResult(result) ?? "Tool call failed",
+        }),
+      },
+    ];
+    for (const image of sanitized.images) {
+      const item = renderProviderImageOutputAsAssistantMarkdown(image, {
+        materialize: materializeProviderImage,
+      });
+      if (item) {
+        events.push({ type: "timeline", provider: this.provider, item });
+      }
+    }
+    return events;
   }
 
   private mapBashExecutionMessage(

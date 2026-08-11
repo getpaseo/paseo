@@ -385,6 +385,123 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("renders live tool-result images after the completed tool call", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "screenshot-1",
+      toolName: "browser_screenshot",
+      args: { browserId: "browser-1", fullPage: true },
+    });
+    runtime.emit({
+      type: "tool_execution_end",
+      toolCallId: "screenshot-1",
+      toolName: "browser_screenshot",
+      result: {
+        content: [
+          { type: "text", text: "Captured browser screenshot (1280x800)." },
+          { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+        ],
+      },
+      isError: false,
+    });
+
+    expect(omp.timeline()).toEqual([
+      expect.objectContaining({
+        type: "tool_call",
+        callId: "screenshot-1",
+        status: "running",
+      }),
+      expect.objectContaining({
+        type: "tool_call",
+        callId: "screenshot-1",
+        status: "completed",
+      }),
+      {
+        type: "assistant_message",
+        text: expect.stringMatching(/^!\[Image\]\(file:\/\/.*\.png\)$/),
+      },
+    ]);
+  });
+
+  test("does not retain base64 image data in failed live tool calls", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "screenshot-1",
+      toolName: "browser_screenshot",
+      args: { browserId: "browser-1", fullPage: true },
+    });
+    runtime.emit({
+      type: "tool_execution_end",
+      toolCallId: "screenshot-1",
+      toolName: "browser_screenshot",
+      result: {
+        content: [
+          { type: "text", text: "Screenshot failed after capture." },
+          { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+        ],
+      },
+      isError: true,
+    });
+
+    expect(omp.timeline()).toEqual([
+      expect.objectContaining({
+        type: "tool_call",
+        callId: "screenshot-1",
+        status: "running",
+      }),
+      expect.objectContaining({
+        type: "tool_call",
+        callId: "screenshot-1",
+        status: "failed",
+        error: {
+          content: [
+            { type: "text", text: "Screenshot failed after capture." },
+            { type: "text", text: "[image]" },
+          ],
+        },
+      }),
+      {
+        type: "assistant_message",
+        text: expect.stringMatching(/^!\[Image\]\(file:\/\/.*\.png\)$/),
+      },
+    ]);
+  });
+
+  test("does not retain base64 image data in live tool updates", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "screenshot-1",
+      toolName: "browser_screenshot",
+      args: { browserId: "browser-1", fullPage: true },
+    });
+    runtime.emit({
+      type: "tool_execution_update",
+      toolCallId: "screenshot-1",
+      toolName: "browser_screenshot",
+      partialResult: {
+        content: [
+          { type: "text", text: "Capturing browser screenshot." },
+          { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+        ],
+      },
+    });
+
+    expect(omp.timeline()).toHaveLength(2);
+    expect(JSON.stringify(omp.timeline())).not.toContain("iVBORw0KGgo=");
+  });
+
   test("does not complete a queued model turn from OMP's local-only hint", async () => {
     const omp = new OmpHarness();
     await omp.start();

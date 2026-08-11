@@ -88,6 +88,83 @@ describe("OMP history mapper", () => {
     ]);
   });
 
+  test("renders replayed tool-result images after the tool call", async () => {
+    const events = await collectHistory([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "screenshot-1",
+            name: "browser_screenshot",
+            arguments: { browserId: "browser-1", fullPage: true },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "screenshot-1",
+        toolName: "browser_screenshot",
+        content: [
+          { type: "text", text: "Captured browser screenshot (1280x800)." },
+          { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+        ],
+      },
+    ]);
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        item: expect.objectContaining({
+          type: "tool_call",
+          callId: "screenshot-1",
+          status: "running",
+        }),
+      }),
+      expect.objectContaining({
+        item: expect.objectContaining({
+          type: "tool_call",
+          callId: "screenshot-1",
+          status: "completed",
+        }),
+      }),
+      expect.objectContaining({
+        item: {
+          type: "assistant_message",
+          text: expect.stringMatching(/^!\[Image\]\(file:\/\/.*\.png\)$/),
+        },
+      }),
+    ]);
+  });
+
+  test("ignores malformed replayed image blocks without crashing", async () => {
+    const events = await collectHistory([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "screenshot-1",
+            name: "browser_screenshot",
+            arguments: { browserId: "browser-1", fullPage: true },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "screenshot-1",
+        toolName: "browser_screenshot",
+        content: [
+          { type: "text", text: "Malformed screenshot result." },
+          { type: "image", data: "iVBORw0KGgo=" },
+        ],
+      },
+    ]);
+
+    expect(events).toHaveLength(2);
+    expect(events.every((event) => event.item.type === "tool_call")).toBe(true);
+    expect(JSON.stringify(events)).not.toContain("iVBORw0KGgo=");
+  });
+
   test("absorbs replayed omp system-notice custom messages as synthetic tool calls", async () => {
     const notice = [
       "<system-notice>",

@@ -68,7 +68,10 @@ import { OmpSubagentCardTracker, type OmpSubagentCardScheduler } from "./subagen
 import { shouldDisplayOmpCustomMessage } from "./custom-message.js";
 import { getUserMessageText } from "./message-history.js";
 import { mapOmpSystemNoticeToToolCall } from "./system-notice.js";
-import { materializeProviderImage } from "../provider-image-output.js";
+import {
+  materializeProviderImage,
+  renderProviderImageOutputAsAssistantMarkdown,
+} from "../provider-image-output.js";
 import { OmpCliRuntime } from "./cli-runtime.js";
 import { listOmpImportableSessions, readOmpImportSessionConfig } from "./session-descriptor.js";
 import type { OmpRuntime, OmpRuntimeSession, OmpStartSessionInput } from "./runtime.js";
@@ -85,6 +88,7 @@ import {
   parseToolArgs,
   parseToolResult,
   resolveToolCallName,
+  sanitizeOmpToolResultImages,
   type OmpToolResult,
   type OmpTrackedToolCall,
 } from "./tool-call-detail.js";
@@ -1842,7 +1846,8 @@ export class OmpAgentSession implements AgentSession {
           return;
         }
 
-        const partialResult = parseToolResult(event.partialResult);
+        const sanitized = sanitizeOmpToolResultImages(event.partialResult);
+        const partialResult = parseToolResult(sanitized.result);
         this.emitToolCallEvent(event.toolCallId, toolCall, "running", partialResult, null);
         return;
       }
@@ -1907,10 +1912,19 @@ export class OmpAgentSession implements AgentSession {
       this.pendingCombinedAskUserResponse = null;
     }
 
-    const result = parseToolResult(event.result);
-    const error = event.isError ? event.result : null;
+    const sanitized = sanitizeOmpToolResultImages(event.result);
+    const result = parseToolResult(sanitized.result);
+    const error = event.isError ? sanitized.result : null;
     const status = event.isError ? "failed" : "completed";
     this.emitToolCallEvent(event.toolCallId, toolCall, status, result, error);
+    for (const image of sanitized.images) {
+      const item = renderProviderImageOutputAsAssistantMarkdown(image, {
+        materialize: materializeProviderImage,
+      });
+      if (item) {
+        this.emit({ type: "timeline", provider: this.provider, turnId, item });
+      }
+    }
     if (event.toolName === "task") {
       this.subagentCardTracker.delete(event.toolCallId);
     }
