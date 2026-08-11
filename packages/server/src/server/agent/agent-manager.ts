@@ -1510,6 +1510,7 @@ export class AgentManager {
     const { archivedAt } = await this.markRecordArchived(stored);
     agent.updatedAt = new Date(archivedAt);
     await this.closeAgent(agentId);
+    await this.archiveNativeSessionBestEffort(stored.provider, stored.persistence);
     this.discardRetainedAgentState(agentId);
 
     await this.cascadeArchiveChildren(agentId);
@@ -1548,8 +1549,6 @@ export class AgentManager {
     const archivedRecord = buildArchivedAgentRecord(record, { archivedAt, updatedAt: archivedAt });
 
     await registry.upsert(archivedRecord);
-
-    await this.archiveNativeSessionBestEffort(record.provider, record.persistence);
 
     if (this.agents.has(record.id)) {
       this.notifyAgentState(record.id);
@@ -4570,7 +4569,7 @@ export class AgentManager {
       await client.archiveNativeSession(persistence);
     } catch (error) {
       this.logger.warn(
-        { error, provider, sessionId: persistence.sessionId },
+        { err: error, provider, sessionId: persistence.sessionId },
         "Failed to archive native session (best-effort)",
       );
     }

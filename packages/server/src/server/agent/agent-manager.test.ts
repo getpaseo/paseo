@@ -293,11 +293,22 @@ class HeldReloadCloseClient extends TestAgentClient {
 class NativeArchiveRecordingClient extends TestAgentClient {
   readonly archivedHandles: AgentPersistenceHandle[] = [];
   readonly unarchivedHandles: AgentPersistenceHandle[] = [];
+  readonly archiveEvents: string[] = [];
   readArchivedAtDuringUnarchive: (() => Promise<string | null | undefined>) | null = null;
   archivedAtDuringUnarchive: string | null | undefined;
   unarchiveFailure: Error | null = null;
 
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    const events = this.archiveEvents;
+    return new (class extends TestAgentSession {
+      override async close(): Promise<void> {
+        events.push("runtime_closed");
+      }
+    })(config);
+  }
+
   async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+    this.archiveEvents.push("native_archived");
     this.archivedHandles.push(handle);
   }
 
@@ -6567,6 +6578,33 @@ test("unarchiveSnapshot skips native provider unarchive for active records", asy
 
   expect(unarchived).toBe(false);
   expect(client.unarchivedHandles).toEqual([]);
+});
+
+test("archiveAgent closes the live provider before archiving its native session", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-native-archive-order-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new NativeArchiveRecordingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  const agent = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Native archive ordering target",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  await manager.archiveAgent(agent.id);
+
+  expect(client.archiveEvents).toEqual(["runtime_closed", "native_archived"]);
+  expect(client.archivedHandles).toHaveLength(1);
 });
 
 test("unarchiveSnapshot unarchives native provider storage before clearing archivedAt", async () => {
