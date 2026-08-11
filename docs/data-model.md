@@ -185,6 +185,8 @@ Single file, validated with `PersistedConfigSchema`.
     mcp: { enabled: boolean, injectIntoAgents: boolean },
     git: { maxProcessesPerSecond: number, maxProcessConcurrency: number },
     appendSystemPrompt: string,    // appended to supported provider system/developer prompts
+    terminalProfiles: TerminalProfile[],  // named shell commands; omitted means DEFAULT_TERMINAL_PROFILES
+    agentProfiles: AgentProfile[],        // named agent launch bundles; omitted means none
     cors: { allowedOrigins: string[] },
     relay: { enabled: boolean, endpoint: string, publicEndpoint: string, useTls: boolean, publicUseTls: boolean }, // new homes materialize enabled: false
     auth: { password: string }    // bcrypt hash, optional
@@ -230,6 +232,21 @@ Single file, validated with `PersistedConfigSchema`.
 ```
 
 All fields are optional with sensible defaults.
+
+### Profile lists
+
+`terminalProfiles` and `agentProfiles` are both whole-list fields: a config patch replaces the
+array, never merges entries, so a client sends the complete next list on every add, edit, reorder
+and remove. List order is the display order.
+
+Absent and empty mean different things for terminal profiles — omitting the key falls back to
+`DEFAULT_TERMINAL_PROFILES`, while `[]` means the user removed them all. Agent profiles have no
+defaults, so both mean none.
+
+`PersistedConfigSchema` parses strictly, so a daemon that predates a field drops it on write
+rather than storing something it cannot describe. That is why the client gates the agent profiles
+UI on `server_info.features.agentProfiles` instead of letting a save appear to succeed against an
+older daemon.
 
 ### Git process limits
 

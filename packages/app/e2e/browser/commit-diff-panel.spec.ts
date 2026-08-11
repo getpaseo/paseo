@@ -55,7 +55,7 @@ test("commit history shows dates and shares diff layout preferences", async ({
   await layoutToggle.click();
   await expect(layoutToggle).toHaveAccessibleName("Switch to unified diff");
   await expect(panel.getByTestId("diff-code-row-0")).toHaveCount(0);
-  await expect(panel.getByTestId("diff-file-0-body")).toBeVisible();
+  await expect(panel.getByTestId(/^diff-file-0-group-\d+$/).first()).toBeVisible();
 
   await page.getByTestId(/^workspace-commit-diff-close-/).click();
   await expect(panel).toHaveCount(0);

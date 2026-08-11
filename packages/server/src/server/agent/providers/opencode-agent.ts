@@ -1905,11 +1905,18 @@ function mapOpenCodeTodosToTimelineItems(
       return [
         {
           text,
+          status: normalizeOpenCodeTodoStatus(todo.status),
           completed: todo.status === "completed",
         },
       ];
     }),
   };
+}
+
+function normalizeOpenCodeTodoStatus(status?: string | null) {
+  if (status === "completed") return "completed" as const;
+  if (status === "in_progress" || status === "inProgress") return "in_progress" as const;
+  return "pending" as const;
 }
 
 function createCompactionTimelineItem(

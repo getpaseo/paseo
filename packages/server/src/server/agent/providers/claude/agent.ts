@@ -43,6 +43,7 @@ import {
 } from "./model-manifest.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
+import { ClaudeTaskState } from "./task-state.js";
 import {
   ClaudeTaskProtocolSource,
   type ClaudeHookObservationInput,
@@ -2027,6 +2028,7 @@ class ClaudeAgentSession implements AgentSession {
   private autonomousTurn: AutonomousTurnState | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly timelineAssembler = new TimelineAssembler();
+  private readonly taskState = new ClaudeTaskState();
   private readonly taskProtocolSource = new ClaudeTaskProtocolSource({
     getToolInput: (toolUseId) => this.toolUseCache.get(toolUseId)?.input ?? null,
     readWorkflowResult: readClaudeWorkflowResultFile,
@@ -2796,6 +2798,7 @@ class ClaudeAgentSession implements AgentSession {
     this.userMessageIds = [];
     this.emittedUserMessageIds.clear();
     this.rewindTurnAnchors.length = 0;
+    this.taskState.reset();
     this.loadPersistedHistory(sessionId);
     if (oldSessionId && oldSessionId !== sessionId) {
       this.dispatchEvents([
@@ -2826,6 +2829,7 @@ class ClaudeAgentSession implements AgentSession {
     this.userMessageIds = [];
     this.emittedUserMessageIds.clear();
     this.rewindTurnAnchors.length = 0;
+    this.taskState.reset();
   }
 
   private rememberUserMessageId(messageId: string | null | undefined): void {
@@ -3839,6 +3843,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const events: AgentStreamEvent[] = [];
+    this.appendTaskStateEvent(message, events);
 
     // Subagent identity and lifecycle are announced by Claude Code's task protocol, so they are
     // read rather than inferred from sidechain frames. `task_started` precedes the child's first
@@ -3901,6 +3906,11 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     return events;
+  }
+
+  private appendTaskStateEvent(message: SDKMessage, events: AgentStreamEvent[]): void {
+    const item = this.taskState.observe(message);
+    if (item) events.push({ type: "timeline", provider: "claude", item });
   }
 
   /**
@@ -4561,6 +4571,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private loadPersistedHistory(sessionId: string): void {
     try {
+      this.taskState.reset();
       const historyPath = this.resolveHistoryPath(sessionId);
       if (!historyPath || !fs.existsSync(historyPath)) {
         return;
@@ -4685,7 +4696,8 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const historyTimestamp = normalizeProviderReplayTimestamp(entry.timestamp);
-    const items = this.convertHistoryEntry(entry);
+    const taskSnapshot = this.taskState.observe(entry);
+    const items = [...(taskSnapshot ? [taskSnapshot] : []), ...this.convertHistoryEntry(entry)];
     const isVisibleUserEntry =
       entry.type === "user" &&
       typeof entry.uuid === "string" &&
