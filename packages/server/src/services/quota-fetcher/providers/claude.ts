@@ -332,6 +332,20 @@ function resolveClaudeUsageHome(claudeHome?: string): string {
  */
 const CLAUDE_KEYCHAIN_ACCOUNT_KEY = `keychain:${CLAUDE_KEYCHAIN_SERVICE}`;
 
+/**
+ * The canonical path, so one credentials file reached under two names — a symlinked config
+ * directory, or a dotfile manager linking `.credentials.json` itself — is one account.
+ * Falls back to the lexical path when there is nothing on disk to resolve, which is the
+ * case where there are no credentials to collide over anyway.
+ */
+async function canonicalPath(path: string): Promise<string> {
+  try {
+    return await fs.realpath(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
 export class ClaudeQuotaProvider implements ProviderUsageFetcher {
   readonly providerId: string;
   readonly displayName: string;
@@ -357,14 +371,17 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
   }
 
   /**
-   * Where this card's credentials actually come from. Usually the config directory — two
-   * profiles pointed at one directory read one account — but a directory with no usable
-   * `.credentials.json` falls back to the machine-wide Keychain on macOS, and every
-   * profile that lands there is the same account under different directory names.
+   * Where this card's credentials actually come from. Usually the `.credentials.json` this
+   * config directory led to — two profiles reaching one file read one account, whatever
+   * name each took to get there — but a directory with no usable file falls back to the
+   * machine-wide Keychain on macOS, and every profile that lands there is the same account
+   * under different directory names. With neither, the directory names the account that
+   * would be there once someone signs in.
    */
   async resolveAccountKey(): Promise<string> {
     const credentials = await this.loadCredentials();
-    return credentials?.filePath === null ? CLAUDE_KEYCHAIN_ACCOUNT_KEY : resolve(this.claudeHome);
+    if (credentials?.filePath === null) return CLAUDE_KEYCHAIN_ACCOUNT_KEY;
+    return canonicalPath(credentials?.filePath ?? this.claudeHome);
   }
 
   async fetchUsage(): Promise<ProviderUsage> {

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { promises as fsPromises } from "node:fs";
 import { tmpdir } from "node:os";
@@ -2011,6 +2011,35 @@ describe("provider usage profiles", () => {
         .filter((fetcher) => fetcher.providerId.startsWith("claude"))
         .map((f) => f.providerId),
     ).toEqual(["claude", "claude-fast"]);
+  });
+
+  // A dotfile manager leaves one credentials file reachable under two names: a symlinked
+  // config dir, or a symlink to `.credentials.json` itself. Comparing the paths as written
+  // calls that two accounts and puts two refreshers on one token.
+  it("reports one card when two profiles reach one credentials file through a symlink", async () => {
+    writeClaudeCredentials(profileHome, "at_shared");
+    const linkParent = mkdtempSync(join(tmpdir(), "paseo-claude-link-"));
+    const linkedHome = join(linkParent, "claude");
+    symlinkSync(profileHome, linkedHome, "dir");
+    const claudeFor = (providerId: string, claudeHome: string) =>
+      new ClaudeQuotaProvider({
+        logger: createLogger(),
+        fetch: mockFetch(new Map()),
+        providerId,
+        claudeHome,
+        claudeKeychainReader: async () => null,
+      });
+
+    try {
+      const kept = await dedupeProviderUsageFetchers([
+        claudeFor("claude", profileHome),
+        claudeFor("claude-alt", linkedHome),
+      ]);
+
+      expect(kept.map((fetcher) => fetcher.providerId)).toEqual(["claude"]);
+    } finally {
+      rmSync(linkParent, { recursive: true, force: true });
+    }
   });
 
   // On macOS the credentials live in the login Keychain rather than in the config dir, so
