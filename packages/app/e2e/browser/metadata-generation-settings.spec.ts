@@ -97,13 +97,14 @@ test("replaces only the first configured metadata model", async ({ page }) => {
         { provider: "mock", model: "thirty-minute-stream" },
       ]);
   } finally {
-    await client
-      .patchDaemonConfig({
+    try {
+      await client.patchDaemonConfig({
         metadataGeneration: {
           providers: previousConfig.config.metadataGeneration.providers,
         },
-      })
-      .catch(() => undefined);
-    await client.close().catch(() => undefined);
+      });
+    } finally {
+      await client.close().catch(() => undefined);
+    }
   }
 });
