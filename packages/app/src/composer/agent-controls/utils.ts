@@ -31,6 +31,26 @@ export function normalizeModelId(modelId: string | null | undefined): string | n
   return normalized;
 }
 
+export function resolveRelativeAgentControlId({
+  options,
+  selectedId,
+  delta,
+}: {
+  options: readonly { id: string }[];
+  selectedId: string | null | undefined;
+  delta: 1 | -1;
+}): string | null {
+  if (options.length < 2) return null;
+
+  const selectedIndex = options.findIndex((option) => option.id === selectedId);
+  if (selectedIndex < 0) {
+    return options[delta > 0 ? 0 : options.length - 1]?.id ?? null;
+  }
+
+  const nextIndex = (selectedIndex + delta + options.length) % options.length;
+  return options[nextIndex]?.id ?? null;
+}
+
 export function getFeatureTooltip(feature: Pick<AgentFeature, "label" | "tooltip">): string {
   return feature.tooltip ?? feature.label;
 }
