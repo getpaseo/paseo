@@ -1,13 +1,13 @@
 import { z } from "zod";
 
 export const PluginAttachmentItemSchema = z.object({
-  id: z.string().min(1),
-  identifier: z.string().min(1),
-  title: z.string().min(1),
-  subtitle: z.string().min(1).optional(),
-  url: z.string().url(),
-  text: z.string().min(1),
-  resourceType: z.string().min(1),
+  id: z.string(),
+  identifier: z.string(),
+  title: z.string(),
+  subtitle: z.string().optional(),
+  url: z.url(),
+  text: z.string(),
+  resourceType: z.string(),
 });
 
 export const PluginAttachmentSearchPayloadSchema = z.object({

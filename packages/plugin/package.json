@@ -1,0 +1,41 @@
+{
+  "name": "@paseo/plugin",
+  "version": "0.3.0",
+  "private": true,
+  "files": [
+    "dist",
+    "!dist/**/*.map"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "source": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./host": {
+      "types": "./dist/host.d.ts",
+      "source": "./src/host.ts",
+      "default": "./dist/host.js"
+    }
+  },
+  "scripts": {
+    "clean": "node ../../scripts/clean-package-dist.mjs",
+    "build": "tsc -p tsconfig.json --incremental false",
+    "build:clean": "npm run clean && npm run build",
+    "typecheck": "tsgo --noEmit && tsgo -p tsconfig.examples.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0",
+    "@types/react": "~19.2.0",
+    "react": "19.1.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.6",
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "react": "19.1.0",
+    "zod": "^4.4.3"
+  }
+}

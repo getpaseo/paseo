@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import { PluginAttachmentItemSchema, type PluginAttachmentItem } from "@paseo/plugin";
 import type { UserComposerAttachment } from "@/attachments/types";
-import { PluginAttachmentItemSchema, type PluginAttachmentItem } from "./schema";
 
 export const PluginResourceComposerAttachmentSchema = z.object({
   kind: z.literal("plugin_resource"),

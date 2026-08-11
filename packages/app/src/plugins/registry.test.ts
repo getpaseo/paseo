@@ -28,6 +28,7 @@ describe("PluginRegistry", () => {
     pluginRegistry.installCatalog("host-a", [{ id: "example", clientBundle }]);
 
     const second = pluginRegistry.getSnapshot()[0];
+    expect(second).toBe(first);
     expect(second?.queryClient).toBe(first?.queryClient);
     expect(second?.queryClient.getQueryData(["counter"])).toBe(3);
   });

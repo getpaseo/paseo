@@ -1,4 +1,4 @@
-import { PluginSurfaceScreen } from "@/plugins/surface-screen";
+import { PluginSurfaceScreen } from "@/plugins";
 
 export default function PluginSurfaceRoute() {
   return <PluginSurfaceScreen />;

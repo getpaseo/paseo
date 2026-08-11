@@ -75,7 +75,7 @@ import type { ShortcutKey } from "@/utils/format-shortcut";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
-import { PluginSidebarItems } from "@/plugins/sidebar-items";
+import { PluginSidebarItems } from "@/plugins";
 
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
 

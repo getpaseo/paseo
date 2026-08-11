@@ -1,39 +1,9 @@
-import type { ComponentType } from "react";
 import type { QueryClient } from "@tanstack/react-query";
-import type { PluginRpcContract } from "./sdk";
-
-export interface PluginSurfaceProps {
-  theme: Record<string, unknown>;
-  host: {
-    id: string;
-    label: string;
-  };
-  layout: {
-    compact: boolean;
-    platform: "ios" | "android" | "web";
-  };
-}
-
-export interface PluginSurfaceContribution {
-  id: string;
-  Component: ComponentType<PluginSurfaceProps>;
-}
-
-export interface PluginSidebarContribution {
-  id: string;
-  title: string;
-  icon: string;
-  surface: string;
-}
-
-export interface PluginAttachmentSourceContribution {
-  id: string;
-  title: string;
-  icon: string;
-  pickerTitle: string;
-  searchPlaceholder: string;
-  search: PluginRpcContract;
-}
+import type {
+  PluginAttachmentSourceContribution,
+  PluginSidebarContribution,
+  PluginSurfaceContribution,
+} from "@paseo/plugin";
 
 export interface EvaluatedPlugin {
   id: string;
@@ -47,3 +17,9 @@ export interface InstalledPlugin extends EvaluatedPlugin {
   clientBundle: string;
   queryClient: QueryClient;
 }
+
+export type {
+  PluginAttachmentSourceContribution,
+  PluginSidebarContribution,
+  PluginSurfaceContribution,
+};

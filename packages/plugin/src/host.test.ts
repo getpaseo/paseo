@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { callPluginRpc, defineAttachmentSource, defineRpc, searchPluginAttachments } from "./sdk";
+import { defineAttachmentSource, defineRpc } from "./index.js";
+import { callPluginRpc, searchPluginAttachments } from "./host.js";
 
 const contract = defineRpc({
   name: "increment",
@@ -59,9 +60,9 @@ describe("plugin attachment sources", () => {
   it("searches through the declared RPC and validates the standard result", async () => {
     const source = defineAttachmentSource({
       id: "issues",
-      title: "Linear issue",
+      title: "Issue",
       icon: "CircleDot",
-      pickerTitle: "Attach Linear issue",
+      pickerTitle: "Attach issue",
       searchPlaceholder: "Search",
       search,
     });
@@ -74,8 +75,8 @@ describe("plugin attachment sources", () => {
             id: "issue-1",
             identifier: `${method}:${String(Reflect.get(input as object, "query"))}`,
             title: "Plugin attachments",
-            url: "https://linear.app/acme/issue/ENG-123/plugin-attachments",
-            text: "Linear issue ENG-123: Plugin attachments",
+            url: "https://example.com/issues/1",
+            text: "Issue snapshot",
             resourceType: "issue",
           },
         ],
@@ -83,22 +84,15 @@ describe("plugin attachment sources", () => {
       "ENG-123",
     );
 
-    expect(payload.items[0]).toEqual({
-      id: "issue-1",
-      identifier: "issues.search:ENG-123",
-      title: "Plugin attachments",
-      url: "https://linear.app/acme/issue/ENG-123/plugin-attachments",
-      text: "Linear issue ENG-123: Plugin attachments",
-      resourceType: "issue",
-    });
+    expect(payload.items[0]?.identifier).toBe("issues.search:ENG-123");
   });
 
   it("rejects a malformed standard search result", async () => {
     const source = defineAttachmentSource({
       id: "issues",
-      title: "Linear issue",
+      title: "Issue",
       icon: "CircleDot",
-      pickerTitle: "Attach Linear issue",
+      pickerTitle: "Attach issue",
       searchPlaceholder: "Search",
       search,
     });

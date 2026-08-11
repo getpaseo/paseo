@@ -127,7 +127,7 @@ import {
 } from "@/utils/host-routes";
 import { buildNotificationRoute, resolveNotificationTarget } from "@/utils/notification-routing";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
-import { PluginCatalogSync } from "@/plugins/catalog-sync";
+import { PluginCatalogSync } from "@/plugins";
 import {
   ensureOsNotificationPermission,
   WEB_NOTIFICATION_CLICK_EVENT,
@@ -916,7 +916,6 @@ function RootStack() {
   return (
     <ThemedStack screenOptions={ROOT_STACK_SCREEN_OPTIONS}>
       <Stack.Screen name="index" />
-      <Stack.Screen name="runtime-component" />
       <Stack.Protected guard={storeReady}>
         <Stack.Screen name="welcome" />
         <Stack.Screen name="settings/index" />

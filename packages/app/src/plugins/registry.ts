@@ -27,7 +27,8 @@ class PluginRegistry {
         const existing = previous.find(
           (plugin) => plugin.id === entry.id && plugin.clientBundle === entry.clientBundle,
         );
-        const queryClient = existing?.queryClient ?? new QueryClient();
+        if (existing) return [existing];
+        const queryClient = new QueryClient();
         return [
           {
             ...evaluatePluginClientBundle(entry.id, entry.clientBundle),

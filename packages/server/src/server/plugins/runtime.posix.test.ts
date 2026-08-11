@@ -23,6 +23,54 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
+  it("kills a plugin child that fails initialization", async () => {
+    const directory = await createPlugin(
+      "broken",
+      `export default function contribute(plugin: unknown) { void plugin; }`,
+    );
+    const listeners = new Map<string, Array<(message: never) => void>>();
+    const child = {
+      connected: true,
+      killed: false,
+      send(message: { type: string }, callback?: (error: Error | null) => void) {
+        callback?.(null);
+        if (message.type === "initialize") {
+          queueMicrotask(() => {
+            for (const listener of listeners.get("message") ?? []) {
+              listener({ type: "fatal", error: "broken plugin" } as never);
+            }
+          });
+        }
+        return true;
+      },
+      kill() {
+        this.killed = true;
+        this.connected = false;
+        return true;
+      },
+      disconnect() {
+        this.connected = false;
+      },
+      on(event: string, listener: (message: never) => void) {
+        const registered = listeners.get(event) ?? [];
+        registered.push(listener);
+        listeners.set(event, registered);
+        return this;
+      },
+    };
+    const runtime = new PluginRuntime(pino({ level: "silent" }), {
+      spawnChild: () => child,
+    });
+
+    await runtime.start({
+      enabled: true,
+      sources: { broken: { source: "directory", path: directory } },
+    });
+
+    expect(child.killed).toBe(true);
+    await runtime.stop();
+  });
+
   it("does not inspect configured plugin sources while disabled", async () => {
     const runtime = new PluginRuntime(pino({ level: "silent" }));
 

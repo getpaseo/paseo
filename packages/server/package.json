@@ -79,6 +79,7 @@
     "@isaacs/ttlcache": "^2.1.4",
     "@modelcontextprotocol/sdk": "^1.20.1",
     "@opencode-ai/sdk": "1.14.46",
+    "@paseo/plugin": "*",
     "@xterm/headless": "^6.0.0",
     "ai": "5.0.78",
     "ajv": "^8.20.0",

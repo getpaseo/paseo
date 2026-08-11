@@ -5,18 +5,15 @@ import * as ReactNative from "react-native";
 import * as ReactQuery from "@tanstack/react-query";
 import * as Zod from "zod";
 import {
-  createPluginContext,
   defineAttachmentSource,
   defineRpc,
-  type PluginRegistrationCollector,
+  type PluginAttachmentSourceContribution,
+  type PluginSidebarContribution,
+  type PluginSurfaceProps,
   useRpc,
-} from "./sdk";
-import type {
-  EvaluatedPlugin,
-  PluginAttachmentSourceContribution,
-  PluginSidebarContribution,
-  PluginSurfaceProps,
-} from "./types";
+} from "@paseo/plugin";
+import { createPluginContext, type PluginRegistrationCollector } from "@paseo/plugin/host";
+import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
 import { resolvePluginIcon } from "./icons";
 

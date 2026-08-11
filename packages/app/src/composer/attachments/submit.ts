@@ -10,7 +10,7 @@ import {
   buildLegacyGitHubAttachmentFromSearchItem,
 } from "@/utils/review-attachments";
 import { workspaceFileAttachmentToAgentAttachment } from "@/attachments/workspace-file";
-import { pluginResourceAttachmentToAgentAttachment } from "@/plugins/attachments/model";
+import { pluginResourceAttachmentToAgentAttachment } from "@/plugins/attachments";
 
 export type ComposerAttachmentSubmitFormat = "forge" | "legacy-github";
 

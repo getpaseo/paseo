@@ -3,7 +3,7 @@ import {
   type AttachmentMetadata,
   type UserComposerAttachment,
 } from "@/attachments/types";
-import { PluginResourceComposerAttachmentSchema } from "@/plugins/attachments/model";
+import { PluginResourceComposerAttachmentSchema } from "@/plugins/attachments";
 import { z } from "zod";
 
 export const DRAFT_STORE_VERSION = 5;

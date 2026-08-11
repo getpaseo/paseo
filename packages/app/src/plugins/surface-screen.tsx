@@ -1,5 +1,7 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { QueryClientProvider } from "@tanstack/react-query";
+import type { PluginSurfaceProps } from "@paseo/plugin";
+import { PluginRpcProvider } from "@paseo/plugin/host";
 import { ChevronDown, X } from "lucide-react-native";
 import {
   Component,
@@ -26,8 +28,6 @@ import { resolvePluginIcon } from "./icons";
 import { useInstalledPlugin, usePluginInstallations } from "./registry";
 import { buildPluginSurfaceRoute } from "./routes";
 import { rememberPluginContributionHost } from "./sidebar-groups";
-import { PluginRpcProvider } from "./sdk";
-import type { PluginSurfaceProps } from "./types";
 
 const EMPTY_SHORTCUT_KEYS: ShortcutKey[] = [];
 const EMPTY_THEME_DTO: Record<string, unknown> = {};

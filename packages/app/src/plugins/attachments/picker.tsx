@@ -2,6 +2,8 @@ import { useCallback, useMemo, useState, type ReactElement, type RefObject } fro
 import { View } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { PluginAttachmentItem, PluginAttachmentSourceContribution } from "@paseo/plugin";
+import { searchPluginAttachments } from "@paseo/plugin/host";
 import type { LucideIcon } from "lucide-react-native";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { AttachmentMenuItem } from "@/composer/input/input";
@@ -10,10 +12,8 @@ import { useFetchQuery } from "@/data/query";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { resolvePluginIcon } from "../icons";
 import { useInstalledPlugins } from "../registry";
-import { searchPluginAttachments } from "../sdk";
-import type { InstalledPlugin, PluginAttachmentSourceContribution } from "../types";
+import type { InstalledPlugin } from "../types";
 import { createPluginResourceAttachment, togglePluginResourceAttachment } from "./model";
-import type { PluginAttachmentItem } from "./schema";
 
 const SEARCH_STALE_TIME_MS = 30_000;
 const EMPTY_ATTACHMENT_ITEMS: PluginAttachmentItem[] = [];

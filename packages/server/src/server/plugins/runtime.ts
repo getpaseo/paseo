@@ -44,6 +44,10 @@ interface PluginRuntimeConfig {
   sources: Record<string, PluginSource>;
 }
 
+interface PluginRuntimeDependencies {
+  spawnChild?: () => PluginChild;
+}
+
 function resolveWorkerUrl(): URL {
   return new URL(
     import.meta.url.endsWith(".ts") ? "./plugin-process.ts" : "./plugin-process.js",
@@ -74,6 +78,11 @@ function spawnPluginChild(): PluginChild {
   }) as PluginChild;
 }
 
+function terminatePluginChild(child: PluginChild): void {
+  if (child.connected) child.disconnect();
+  if (!child.killed) child.kill();
+}
+
 function send(child: PluginChild, message: PluginProcessRequest): Promise<void> {
   return new Promise((resolve, reject) => {
     child.send(message, (error) => {
@@ -100,9 +109,11 @@ async function readManifest(directory: string): Promise<{ id: string }> {
 export class PluginRuntime {
   private readonly plugins = new Map<string, LoadedPlugin>();
   private readonly logger: pino.Logger;
+  private readonly spawnChild: () => PluginChild;
 
-  constructor(logger: pino.Logger) {
+  constructor(logger: pino.Logger, dependencies: PluginRuntimeDependencies = {}) {
     this.logger = logger.child({ module: "plugins" });
+    this.spawnChild = dependencies.spawnChild ?? spawnPluginChild;
   }
 
   async start(config: PluginRuntimeConfig): Promise<void> {
@@ -157,24 +168,39 @@ export class PluginRuntime {
     const entryPath = path.join(directory, ENTRY_FILENAME);
     await requireRegularFile(entryPath, "Plugin entry point");
     const bundles = await compilePlugin(entryPath);
-    const child = spawnPluginChild();
+    const child = this.spawnChild();
     const pending = new Map<string, PendingInvocation>();
-    const methods = await new Promise<string[]>((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error(`Plugin ${pluginId} did not initialize`)),
-        REQUEST_TIMEOUT_MS,
-      );
-      child.on("message", (message) => {
-        if (message.type === "ready") {
+    let methods: string[];
+    try {
+      methods = await new Promise<string[]>((resolve, reject) => {
+        let settled = false;
+        const timeout = setTimeout(
+          () => fail(new Error(`Plugin ${pluginId} did not initialize`)),
+          REQUEST_TIMEOUT_MS,
+        );
+        const fail = (error: Error): void => {
+          if (settled) return;
+          settled = true;
           clearTimeout(timeout);
-          resolve(message.methods);
-        } else if (message.type === "fatal") {
-          clearTimeout(timeout);
-          reject(new Error(message.error));
-        }
+          reject(error);
+        };
+        child.on("message", (message) => {
+          if (message.type === "ready") {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            resolve(message.methods);
+          } else if (message.type === "fatal") {
+            fail(new Error(message.error));
+          }
+        });
+        child.on("close", () => fail(new Error(`Plugin ${pluginId} exited during initialization`)));
+        void send(child, { type: "initialize", bundle: bundles.serverBundle }).catch(fail);
       });
-      void send(child, { type: "initialize", bundle: bundles.serverBundle }).catch(reject);
-    });
+    } catch (error) {
+      terminatePluginChild(child);
+      throw error;
+    }
     const loaded: LoadedPlugin = {
       id: pluginId,
       clientBundle: bundles.clientBundle,
@@ -208,9 +234,9 @@ export class PluginRuntime {
   }
 
   private async stopPlugin(loaded: LoadedPlugin): Promise<void> {
-    if (!loaded.child.connected) return;
-    await send(loaded.child, { type: "shutdown" }).catch(() => undefined);
-    loaded.child.disconnect();
-    if (!loaded.child.killed) loaded.child.kill();
+    if (loaded.child.connected) {
+      await send(loaded.child, { type: "shutdown" }).catch(() => undefined);
+    }
+    terminatePluginChild(loaded.child);
   }
 }

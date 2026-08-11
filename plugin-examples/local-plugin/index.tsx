@@ -2,7 +2,7 @@ import React, { useCallback, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useMutation } from "@tanstack/react-query";
 import { z } from "zod";
-import { defineRpc, type PluginContext, useRpc } from "@paseo/plugin";
+import { defineRpc, type PluginContext, type PluginSurfaceProps, useRpc } from "@paseo/plugin";
 
 const incrementRpc = defineRpc({
   name: "increment",
@@ -10,31 +10,32 @@ const incrementRpc = defineRpc({
   output: z.object({ value: z.number(), handledBy: z.string() }),
 });
 
-interface ExampleTheme {
-  colors: {
-    surface0: string;
-    foreground: string;
-    foregroundMuted: string;
-    accent: string;
-    accentForeground: string;
-    statusDanger: string;
-  };
-}
+const ExampleThemeSchema = z.object({
+  colors: z.object({
+    surface0: z.string(),
+    foreground: z.string(),
+    foregroundMuted: z.string(),
+    accent: z.string(),
+    accentForeground: z.string(),
+    statusDanger: z.string(),
+  }),
+});
 
-function ExampleSurface({ theme }: { theme: ExampleTheme }) {
+function ExampleSurface({ theme }: PluginSurfaceProps) {
+  const { colors } = ExampleThemeSchema.parse(theme);
   const callIncrement = useRpc(incrementRpc);
   const { data, error, isPending, mutate } = useMutation({ mutationFn: callIncrement });
   const value = data?.value ?? 0;
   const styles = useMemo(
     () => ({
-      screen: { flex: 1, padding: 24, gap: 16, backgroundColor: theme.colors.surface0 },
-      title: { color: theme.colors.foreground, fontSize: 24 },
-      detail: { color: theme.colors.foregroundMuted },
-      button: { padding: 14, borderRadius: 10, backgroundColor: theme.colors.accent },
-      buttonText: { color: theme.colors.accentForeground, textAlign: "center" },
-      error: { color: theme.colors.statusDanger },
+      screen: { flex: 1, padding: 24, gap: 16, backgroundColor: colors.surface0 },
+      title: { color: colors.foreground, fontSize: 24 },
+      detail: { color: colors.foregroundMuted },
+      button: { padding: 14, borderRadius: 10, backgroundColor: colors.accent },
+      buttonText: { color: colors.accentForeground, textAlign: "center" as const },
+      error: { color: colors.statusDanger },
     }),
-    [theme.colors],
+    [colors],
   );
   const handleIncrement = useCallback(() => {
     mutate({ value });

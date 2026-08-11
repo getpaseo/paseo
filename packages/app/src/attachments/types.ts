@@ -3,7 +3,7 @@ import type {
   ForgeSearchItem,
   UploadedFileAttachment,
 } from "@getpaseo/protocol/messages";
-import type { PluginResourceComposerAttachment } from "@/plugins/attachments/model";
+import type { PluginResourceComposerAttachment } from "@/plugins/attachments";
 
 export type AttachmentStorageType = "web-indexeddb" | "desktop-file" | "native-file";
 

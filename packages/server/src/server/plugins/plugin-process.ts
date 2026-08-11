@@ -1,17 +1,11 @@
 import type { PluginProcessMessage, PluginProcessRequest } from "./plugin-process-protocol.js";
 import { createRequire } from "node:module";
-import type { ZodType } from "zod";
+import { defineAttachmentSource, defineRpc, type PluginRpcContract } from "@paseo/plugin";
 
 type RpcHandler = (input: unknown) => unknown | Promise<unknown>;
 
-interface RpcContract {
-  name: string;
-  input: ZodType;
-  output: ZodType;
-}
-
 interface RegisteredRpc {
-  contract: RpcContract;
+  contract: PluginRpcContract;
   handler: RpcHandler;
 }
 
@@ -37,15 +31,7 @@ function validateMethod(method: string): string {
   return normalized;
 }
 
-function defineRpc(contract: RpcContract): RpcContract {
-  return { ...contract, name: contract.name.trim() };
-}
-
-function defineAttachmentSource<T>(definition: T): T {
-  return definition;
-}
-
-function register(contract: RpcContract, handler: RpcHandler): void {
+function register(contract: PluginRpcContract, handler: RpcHandler): void {
   if (typeof handler !== "function") {
     throw new Error(`Plugin RPC ${contract.name} must provide a handler`);
   }
