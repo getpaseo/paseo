@@ -16,8 +16,20 @@ import {
 import { BottomSheetFlatList } from "@gorhom/bottom-sheet";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { AlertTriangle, Check, ChevronRight, Search, Settings, Star } from "lucide-react-native";
+import {
+  AlertTriangle,
+  Bot,
+  Check,
+  ChevronRight,
+  Pencil,
+  Search,
+  Settings,
+} from "lucide-react-native";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentProfilePicker,
+  AgentProfilePickerRow as AgentProfilePickerRowModel,
+} from "@/agent-profiles";
 import type { SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -28,7 +40,6 @@ import {
   buildProviderQualifiedDescription,
   buildSelectedTriggerLabel,
   filterAndRankModelRows,
-  getAllProviderModelRows,
   getProviderModelRows,
   resolveSelectedModelLabel,
   type ProviderSelectionModelRow,
@@ -49,12 +60,13 @@ const DESKTOP_PROVIDER_VIEW_BASE_HEIGHT = 80;
 const DESKTOP_MODEL_ROW_HEIGHT = 40;
 
 const ThemedAlertTriangle = withUnistyles(AlertTriangle);
+const ThemedBot = withUnistyles(Bot);
 const ThemedCheck = withUnistyles(Check);
 const ThemedChevronRight = withUnistyles(ChevronRight);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const ThemedPencil = withUnistyles(Pencil);
 const ThemedSearch = withUnistyles(Search);
 const ThemedSettings = withUnistyles(Settings);
-const ThemedStar = withUnistyles(Star);
 
 function ProviderSettingsAction({
   accessibilityLabel,
@@ -98,25 +110,13 @@ const headerSettingsMapping = (disabled: boolean) => (theme: Theme) => ({
   color: disabled ? theme.colors.border : theme.colors.foregroundMuted,
 });
 
-const favoriteStarMapping =
-  (isFavorite: boolean, hovered: boolean) =>
-  (theme: Theme): { color: string; fill: string } => {
-    const favoriteColor = theme.colors.palette.amber[500];
-    if (isFavorite) {
-      return { color: favoriteColor, fill: favoriteColor };
-    }
-    return {
-      color: hovered ? theme.colors.foregroundMuted : theme.colors.border,
-      fill: "transparent",
-    };
-  };
-
 interface ModelBrowserInput {
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
   isLoading: boolean;
-  favoriteKeys: Set<string>;
+  /** Pinned above the provider list on the root view. `null` hides the section. */
+  profiles?: AgentProfilePicker | null;
   serverId?: string | null;
 }
 
@@ -124,7 +124,7 @@ export interface ModelBrowserState {
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
-  favoriteKeys: Set<string>;
+  profiles: AgentProfilePicker | null;
   view: ModelBrowserView;
   searchQuery: string;
   header: SheetHeader;
@@ -140,7 +140,9 @@ export interface ModelBrowserState {
 interface ModelBrowserProps {
   state: ModelBrowserState;
   onSelect: (provider: string, modelId: string) => void;
-  onToggleFavorite?: (provider: string, modelId: string) => void;
+  /** Applying a profile resolves the pick and dismisses, exactly like a model row. */
+  onApplyProfile?: (profileId: string) => void;
+  onEditProfiles?: () => void;
   onRetryProvider?: (provider: AgentProvider) => void;
   isRetryingProvider?: boolean;
   scrolling?: "sheet" | "independent";
@@ -152,7 +154,7 @@ interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "sc
   selectedProvider: string;
   selectedModel: string;
   searchQuery: string;
-  favoriteKeys: Set<string>;
+  profiles: AgentProfilePicker | null;
   onDrillDown: (providerId: string, providerLabel: string) => void;
   scrolling: "sheet" | "independent";
 }
@@ -179,27 +181,22 @@ function HeaderSettingsIcon({ disabled }: { disabled: boolean }) {
   return <ThemedSettings size={ICON_SIZE.sm} uniProps={uniProps} />;
 }
 
-function FavoriteStar({ isFavorite, hovered }: { isFavorite: boolean; hovered: boolean }) {
-  const uniProps = useMemo(() => favoriteStarMapping(isFavorite, hovered), [hovered, isFavorite]);
-  return <ThemedStar size={ICON_SIZE.md} uniProps={uniProps} />;
-}
-
-function favoriteButtonStyle({
-  hovered,
-  pressed,
-}: PressableStateCallbackType & { hovered?: boolean }) {
-  return [
-    styles.favoriteButton,
-    Boolean(hovered) && styles.favoriteButtonHovered,
-    pressed && styles.favoriteButtonPressed,
-  ];
-}
-
 function iconButtonStyle({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) {
   return [
     styles.rowIconButton,
     Boolean(hovered) && styles.rowIconButtonHovered,
     pressed && styles.rowIconButtonPressed,
+  ];
+}
+
+function sectionActionStyle({
+  hovered,
+  pressed,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [
+    styles.sectionAction,
+    Boolean(hovered) && styles.sectionActionHovered,
+    pressed && styles.sectionActionPressed,
   ];
 }
 
@@ -229,13 +226,14 @@ export function useModelBrowser({
   selectedProvider,
   selectedModel,
   isLoading,
-  favoriteKeys,
+  profiles = null,
   serverId = null,
 }: ModelBrowserInput): ModelBrowserState {
   const { t } = useTranslation();
   const [view, setView] = useState<ModelBrowserView>({ kind: "all" });
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResetKey, bumpSearchResetKey] = useReducer((key: number) => key + 1, 0);
+  const hasProfiles = profiles !== null;
 
   const initialView = useMemo(
     () =>
@@ -243,9 +241,9 @@ export function useModelBrowser({
         providers,
         selectedProvider,
         selectedModel,
-        favoriteKeys,
+        hasProfiles,
       }),
-    [favoriteKeys, providers, selectedModel, selectedProvider],
+    [hasProfiles, providers, selectedModel, selectedProvider],
   );
 
   const prepareToOpen = useCallback(() => {
@@ -274,7 +272,9 @@ export function useModelBrowser({
     setSearchQuery(value);
   }, []);
 
-  const singleProviderView = providers.length === 1;
+  // A pinned profiles section makes the root worth returning to, so the back
+  // affordance stays even when the drill-down was the only provider.
+  const singleProviderView = providers.length === 1 && !hasProfiles;
   const header = useMemo<SheetHeader>(() => {
     if (view.kind === "all") {
       return {
@@ -348,7 +348,7 @@ export function useModelBrowser({
     providers,
     selectedProvider,
     selectedModel,
-    favoriteKeys,
+    profiles,
     view,
     searchQuery,
     header,
@@ -364,22 +364,6 @@ export function useModelBrowser({
 
 function normalizeSearchQuery(value: string): string {
   return value.trim().toLowerCase();
-}
-
-function sortFavoritesFirst(
-  rows: ProviderSelectionModelRow[],
-  favoriteKeys: Set<string>,
-): ProviderSelectionModelRow[] {
-  const favorites: ProviderSelectionModelRow[] = [];
-  const rest: ProviderSelectionModelRow[] = [];
-  for (const row of rows) {
-    if (favoriteKeys.has(row.favoriteKey)) {
-      favorites.push(row);
-    } else {
-      rest.push(row);
-    }
-  }
-  return [...favorites, ...rest];
 }
 
 interface ModelBrowserPressableProps {
@@ -482,6 +466,12 @@ function ModelBrowserRow({
   selectionIndicator = false,
   tone = "default",
   spacing = "model",
+  /**
+   * A model's description is a short qualifier that reads as a suffix to its
+   * name, so it sits inline. A profile's is four values joined by dots and would
+   * ellipsize away in a popover, so it gets its own line.
+   */
+  layout = "inline",
   onPress,
   testID,
 }: {
@@ -493,6 +483,7 @@ function ModelBrowserRow({
   selectionIndicator?: boolean;
   tone?: ModelBrowserRowTone;
   spacing?: "model" | "provider";
+  layout?: "inline" | "stacked";
   onPress: () => void;
   testID?: string;
 }) {
@@ -507,8 +498,11 @@ function ModelBrowserRow({
     [spacing, tone],
   );
   const contentStyle = useMemo(
-    () => [styles.browserRowText, description && styles.browserRowTextInline],
-    [description],
+    () => [
+      styles.browserRowText,
+      description && layout === "inline" && styles.browserRowTextInline,
+    ],
+    [description, layout],
   );
   const hasTrailing = selected || trailingSlot;
 
@@ -546,45 +540,17 @@ function ModelBrowserRow({
 function ModelRow({
   row,
   isSelected,
-  isFavorite,
-  elevated = false,
   showProviderLabel = false,
   onPress,
-  onToggleFavorite,
 }: {
   row: ProviderSelectionModelRow;
   isSelected: boolean;
-  isFavorite: boolean;
-  elevated?: boolean;
   showProviderLabel?: boolean;
   onPress: () => void;
-  onToggleFavorite?: (provider: string, modelId: string) => void;
 }) {
-  const { t } = useTranslation();
-  const handleToggleFavorite = useCallback(
-    () => onToggleFavorite?.(row.provider, row.modelId),
-    [onToggleFavorite, row.modelId, row.provider],
-  );
   const leadingSlot = useMemo(
     () => <ModelProviderGlyph provider={row.provider} size={ICON_SIZE.sm} />,
     [row.provider],
-  );
-  const trailingSlot = useMemo(
-    () =>
-      onToggleFavorite ? (
-        <ModelBrowserPressable
-          onPress={handleToggleFavorite}
-          hitSlop={8}
-          style={favoriteButtonStyle}
-          accessibilityLabel={
-            isFavorite ? t("modelSelector.unfavoriteModel") : t("modelSelector.favoriteModel")
-          }
-          testID={`favorite-model-${row.provider}-${row.modelId}`}
-        >
-          {({ hovered }) => <FavoriteStar isFavorite={isFavorite} hovered={Boolean(hovered)} />}
-        </ModelBrowserPressable>
-      ) : null,
-    [handleToggleFavorite, isFavorite, onToggleFavorite, row.modelId, row.provider, t],
   );
 
   const description = showProviderLabel ? buildProviderQualifiedDescription(row) : row.description;
@@ -595,10 +561,8 @@ function ModelRow({
       description={description}
       selected={isSelected}
       selectionIndicator
-      tone={elevated ? "elevated" : "default"}
       onPress={onPress}
       leadingSlot={leadingSlot}
-      trailingSlot={trailingSlot}
       testID={`model-row-${row.provider}-${row.modelId}`}
     />
   );
@@ -607,19 +571,13 @@ function ModelRow({
 function SelectableModelRow({
   row,
   isSelected,
-  isFavorite,
-  elevated,
   showProviderLabel,
   onSelect,
-  onToggleFavorite,
 }: {
   row: ProviderSelectionModelRow;
   isSelected: boolean;
-  isFavorite: boolean;
-  elevated?: boolean;
   showProviderLabel?: boolean;
   onSelect: (provider: string, modelId: string) => void;
-  onToggleFavorite?: (provider: string, modelId: string) => void;
 }) {
   const handlePress = useCallback(() => {
     onSelect(row.provider, row.modelId);
@@ -628,47 +586,79 @@ function SelectableModelRow({
     <ModelRow
       row={row}
       isSelected={isSelected}
-      isFavorite={isFavorite}
-      elevated={elevated}
       showProviderLabel={showProviderLabel}
       onPress={handlePress}
-      onToggleFavorite={onToggleFavorite}
     />
   );
 }
 
-function FavoritesSection({
-  favoriteRows,
-  selectedProvider,
-  selectedModel,
-  favoriteKeys,
-  onSelect,
-  onToggleFavorite,
+function AgentProfileGlyph({ icon }: { icon: string }) {
+  if (!icon) {
+    return <ThemedBot size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />;
+  }
+  return <Text style={styles.profileIconEmoji}>{icon}</Text>;
+}
+
+function AgentProfilePickerRowView({
+  row,
+  onApply,
 }: {
-  favoriteRows: ProviderSelectionModelRow[];
-  selectedProvider: string;
-  selectedModel: string;
-  favoriteKeys: Set<string>;
-  onSelect: (provider: string, modelId: string) => void;
-  onToggleFavorite?: (provider: string, modelId: string) => void;
+  row: AgentProfilePickerRowModel;
+  onApply: (profileId: string) => void;
+}) {
+  const handlePress = useCallback(() => onApply(row.id), [onApply, row.id]);
+  const leadingSlot = useMemo(() => <AgentProfileGlyph icon={row.icon} />, [row.icon]);
+  return (
+    <ModelBrowserRow
+      label={row.name}
+      description={row.summary}
+      tone="elevated"
+      layout="stacked"
+      onPress={handlePress}
+      leadingSlot={leadingSlot}
+      testID={`model-profile-row-${row.id}`}
+    />
+  );
+}
+
+/**
+ * Pinned above the provider list. Rows are actions, not selections: applying a
+ * profile writes its values into the composer and nothing stays bound to it, so
+ * there is no checkmark and no active row to show.
+ */
+function AgentProfilesPickerSection({
+  profiles,
+  onApplyProfile,
+  onEditProfiles,
+}: {
+  profiles: AgentProfilePicker;
+  onApplyProfile?: (profileId: string) => void;
+  onEditProfiles?: () => void;
 }) {
   const { t } = useTranslation();
-  if (favoriteRows.length === 0) return null;
+  const handleApply = useCallback(
+    (profileId: string) => onApplyProfile?.(profileId),
+    [onApplyProfile],
+  );
   return (
-    <View style={styles.favoritesContainer}>
+    <View style={styles.profilesContainer}>
       <View style={styles.sectionHeading}>
-        <Text style={styles.sectionHeadingText}>{t("modelSelector.favorites")}</Text>
+        <Text style={styles.sectionHeadingText}>{t("modelSelector.profiles")}</Text>
+        {onEditProfiles ? (
+          <ModelBrowserPressable
+            onPress={onEditProfiles}
+            hitSlop={8}
+            style={sectionActionStyle}
+            accessibilityLabel={t("modelSelector.editProfilesLabel")}
+            testID="model-profiles-edit"
+          >
+            <ThemedPencil size={ICON_SIZE.xs} uniProps={foregroundMutedMapping} />
+            <Text style={styles.sectionActionText}>{t("modelSelector.editProfiles")}</Text>
+          </ModelBrowserPressable>
+        ) : null}
       </View>
-      {favoriteRows.map((row) => (
-        <SelectableModelRow
-          key={row.favoriteKey}
-          row={row}
-          isSelected={row.provider === selectedProvider && row.modelId === selectedModel}
-          isFavorite={favoriteKeys.has(row.favoriteKey)}
-          elevated
-          onSelect={onSelect}
-          onToggleFavorite={onToggleFavorite}
-        />
+      {profiles.rows.map((row) => (
+        <AgentProfilePickerRowView key={row.id} row={row} onApply={handleApply} />
       ))}
     </View>
   );
@@ -836,51 +826,39 @@ function ModelRowList({
   rows,
   selectedProvider,
   selectedModel,
-  favoriteKeys,
   onSelect,
-  onToggleFavorite,
-  normalizedQuery,
   showProviderLabel = false,
   scrolling,
 }: {
   rows: ProviderSelectionModelRow[];
   selectedProvider: string;
   selectedModel: string;
-  favoriteKeys: Set<string>;
   onSelect: (provider: string, modelId: string) => void;
-  onToggleFavorite?: (provider: string, modelId: string) => void;
-  normalizedQuery: string;
   showProviderLabel?: boolean;
   scrolling: "sheet" | "independent";
 }) {
   const isCompact = useIsCompactFormFactor();
-  const displayRows = useMemo(
-    () => (normalizedQuery ? rows : sortFavoritesFirst(rows, favoriteKeys)),
-    [favoriteKeys, normalizedQuery, rows],
-  );
   const renderItem = useCallback(
     ({ item }: { item: ProviderSelectionModelRow }) => (
       <SelectableModelRow
         row={item}
         isSelected={item.provider === selectedProvider && item.modelId === selectedModel}
-        isFavorite={favoriteKeys.has(item.favoriteKey)}
         showProviderLabel={showProviderLabel}
         onSelect={onSelect}
-        onToggleFavorite={onToggleFavorite}
       />
     ),
-    [favoriteKeys, onSelect, onToggleFavorite, selectedModel, selectedProvider, showProviderLabel],
+    [onSelect, selectedModel, selectedProvider, showProviderLabel],
   );
   const keyExtractor = useCallback((row: ProviderSelectionModelRow) => row.favoriteKey, []);
 
   if (scrolling === "independent") {
-    return <IndependentModelList rows={displayRows} renderItem={renderItem} />;
+    return <IndependentModelList rows={rows} renderItem={renderItem} />;
   }
 
   if (isCompact && isNative) {
     return (
       <BottomSheetFlatList
-        data={displayRows}
+        data={rows}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         style={styles.virtualizedModelList}
@@ -893,7 +871,7 @@ function ModelRowList({
 
   return (
     <View>
-      {displayRows.map((row) => (
+      {rows.map((row) => (
         <View key={row.favoriteKey}>{renderItem({ item: row })}</View>
       ))}
     </View>
@@ -934,9 +912,10 @@ function ModelBrowserContent({
   selectedProvider,
   selectedModel,
   searchQuery,
-  favoriteKeys,
+  profiles,
   onSelect,
-  onToggleFavorite,
+  onApplyProfile,
+  onEditProfiles,
   onDrillDown,
   onRetryProvider,
   isRetryingProvider = false,
@@ -958,15 +937,11 @@ function ModelBrowserContent({
         : [],
     [normalizedQuery, selectedViewProvider],
   );
-  const favoriteRows = useMemo(
-    () => getAllProviderModelRows(providers).filter((row) => favoriteKeys.has(row.favoriteKey)),
-    [favoriteKeys, providers],
-  );
   const allView = useMemo(
     () => resolveModelBrowserAllView({ providers, normalizedQuery }),
     [normalizedQuery, providers],
   );
-  const hasResults = favoriteRows.length > 0 || providers.length > 0;
+  const hasResults = profiles !== null || providers.length > 0;
   const emptyState = (
     <View style={styles.emptyState}>
       <ThemedSearch size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
@@ -1003,10 +978,7 @@ function ModelBrowserContent({
         rows={visibleRows}
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
-        favoriteKeys={favoriteKeys}
         onSelect={onSelect}
-        onToggleFavorite={onToggleFavorite}
-        normalizedQuery={normalizedQuery}
         scrolling={scrolling}
       />
     );
@@ -1029,10 +1001,7 @@ function ModelBrowserContent({
         rows={allView.rows}
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
-        favoriteKeys={favoriteKeys}
         onSelect={onSelect}
-        onToggleFavorite={onToggleFavorite}
-        normalizedQuery={normalizedQuery}
         showProviderLabel
         scrolling={scrolling}
       />
@@ -1041,16 +1010,22 @@ function ModelBrowserContent({
 
   const allProvidersContent = (
     <View>
-      <FavoritesSection
-        favoriteRows={favoriteRows}
-        selectedProvider={selectedProvider}
-        selectedModel={selectedModel}
-        favoriteKeys={favoriteKeys}
-        onSelect={onSelect}
-        onToggleFavorite={onToggleFavorite}
-      />
+      {profiles ? (
+        <AgentProfilesPickerSection
+          profiles={profiles}
+          onApplyProfile={onApplyProfile}
+          onEditProfiles={onEditProfiles}
+        />
+      ) : null}
       {providers.length > 0 ? (
-        <GroupedProviderRows providers={providers} onDrillDown={onDrillDown} />
+        <View>
+          {profiles ? (
+            <View style={styles.sectionHeading}>
+              <Text style={styles.sectionHeadingText}>{t("modelSelector.providers")}</Text>
+            </View>
+          ) : null}
+          <GroupedProviderRows providers={providers} onDrillDown={onDrillDown} />
+        </View>
       ) : null}
       {!hasResults ? emptyState : null}
     </View>
@@ -1066,7 +1041,8 @@ function ModelBrowserContent({
 export function ModelBrowser({
   state,
   onSelect,
-  onToggleFavorite,
+  onApplyProfile,
+  onEditProfiles,
   onRetryProvider,
   isRetryingProvider = false,
   scrolling = "sheet",
@@ -1078,9 +1054,10 @@ export function ModelBrowser({
       selectedProvider={state.selectedProvider}
       selectedModel={state.selectedModel}
       searchQuery={state.searchQuery}
-      favoriteKeys={state.favoriteKeys}
+      profiles={state.profiles}
       onSelect={onSelect}
-      onToggleFavorite={onToggleFavorite}
+      onApplyProfile={onApplyProfile}
+      onEditProfiles={onEditProfiles}
       onDrillDown={state.drillDown}
       onRetryProvider={onRetryProvider}
       isRetryingProvider={isRetryingProvider}
@@ -1090,10 +1067,31 @@ export function ModelBrowser({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  favoritesContainer: {
+  profilesContainer: {
     backgroundColor: theme.colors.surface1,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
+  },
+  profileIconEmoji: {
+    fontSize: theme.fontSize.sm,
+  },
+  sectionAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[1],
+    paddingVertical: theme.spacing[0.5],
+    borderRadius: theme.borderRadius.sm,
+  },
+  sectionActionHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  sectionActionPressed: {
+    backgroundColor: theme.colors.surface1,
+  },
+  sectionActionText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
   separator: {
     height: 1,
@@ -1108,6 +1106,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[1],
   },
   sectionHeadingText: {
+    flex: 1,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
@@ -1222,19 +1221,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   virtualizedProviderListContent: {
     paddingTop: 0,
-  },
-  favoriteButton: {
-    width: 24,
-    height: 24,
-    borderRadius: theme.borderRadius.full,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  favoriteButtonHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
-  favoriteButtonPressed: {
-    backgroundColor: theme.colors.surface1,
   },
   providerIconMuted: {
     color: theme.colors.foregroundMuted,

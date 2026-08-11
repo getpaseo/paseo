@@ -32,17 +32,26 @@ export function resolveModelBrowserAllView({
   return { kind: "searchResults", rows };
 }
 
+/**
+ * Where the picker lands when it opens. Agent profiles live on the root view, so
+ * a host that has any profile always opens there — including the single-provider
+ * case, which would otherwise skip the root entirely and hide them.
+ */
 export function resolveInitialModelBrowserView({
   providers,
   selectedProvider,
   selectedModel,
-  favoriteKeys,
+  hasProfiles,
 }: {
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
-  favoriteKeys: Set<string>;
+  hasProfiles: boolean;
 }): ModelBrowserView {
+  if (hasProfiles) {
+    return { kind: "all" };
+  }
+
   const singleProvider = providers.length === 1 ? providers[0] : undefined;
   if (singleProvider) {
     return {
@@ -52,12 +61,7 @@ export function resolveInitialModelBrowserView({
     };
   }
 
-  const selectedFavoriteKey = `${selectedProvider}:${selectedModel}`;
-  const shouldOpenSelectedProvider =
-    selectedProvider.length > 0 &&
-    selectedModel.length > 0 &&
-    !favoriteKeys.has(selectedFavoriteKey);
-  if (shouldOpenSelectedProvider) {
+  if (selectedProvider.length > 0 && selectedModel.length > 0) {
     const provider = providers.find((entry) => entry.id === selectedProvider);
     if (provider) {
       return { kind: "provider", providerId: provider.id, providerLabel: provider.label };

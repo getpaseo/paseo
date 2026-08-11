@@ -43,29 +43,51 @@ describe("model browser initial view", () => {
         providers: [pi],
         selectedProvider: "",
         selectedModel: "",
-        favoriteKeys: new Set(),
+        hasProfiles: false,
       }),
     ).toEqual({ kind: "provider", providerId: "pi", providerLabel: "Pi" });
   });
 
-  it("opens the selected provider when its model is not a favorite", () => {
+  it("opens the selected provider when there is one", () => {
     expect(
       resolveInitialModelBrowserView({
         providers: [codex, pi],
         selectedProvider: "pi",
         selectedModel: "pi-pro",
-        favoriteKeys: new Set(),
+        hasProfiles: false,
       }),
     ).toEqual({ kind: "provider", providerId: "pi", providerLabel: "Pi" });
   });
 
-  it("opens the provider overview when the selected model is a favorite", () => {
+  it("opens the root so pinned profiles are reachable", () => {
     expect(
       resolveInitialModelBrowserView({
         providers: [codex, pi],
         selectedProvider: "pi",
         selectedModel: "pi-pro",
-        favoriteKeys: new Set(["pi:pi-pro"]),
+        hasProfiles: true,
+      }),
+    ).toEqual({ kind: "all" });
+  });
+
+  it("keeps the root even when a single provider would otherwise be skipped", () => {
+    expect(
+      resolveInitialModelBrowserView({
+        providers: [pi],
+        selectedProvider: "pi",
+        selectedModel: "pi-pro",
+        hasProfiles: true,
+      }),
+    ).toEqual({ kind: "all" });
+  });
+
+  it("falls back to the root when the selected provider is gone", () => {
+    expect(
+      resolveInitialModelBrowserView({
+        providers: [codex, pi],
+        selectedProvider: "gemini",
+        selectedModel: "gemini-3",
+        hasProfiles: false,
       }),
     ).toEqual({ kind: "all" });
   });
