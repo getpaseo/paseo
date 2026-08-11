@@ -47,15 +47,26 @@ export function WindowChromeHeaderRow({
     requestAnimationFrame(() => {
       const content = contentRef.current as unknown as HTMLElement | null;
       if (!content) return;
-      // The row lays its children out with space-between, which stretches them to fill whatever
-      // width it has. Reading them where they sit would measure the row back to itself and the
-      // row would always look full. Collapse to max-content for the read so each child reports
-      // the width it actually wants, then restore before the browser paints.
-      const previousWidth = content.style.width;
-      content.style.width = "max-content";
-      const intrinsicWidth = content.scrollWidth + horizontalPadding * 2;
-      content.style.width = previousWidth;
-      setContentWidth((current) => (current === intrinsicWidth ? current : intrinsicWidth));
+      // Only content that cannot shrink can collide with the controls. A header's leading title
+      // grows to fill the row and truncates when squeezed, so measuring it would report the row
+      // as full no matter how much room it really has -- and every header would drop. Count the
+      // rigid children instead, each read at max-content because the row lays them out with
+      // space-between and would otherwise measure itself back.
+      const gap = Number.parseFloat(window.getComputedStyle(content).columnGap) || 0;
+      let rigidWidth = 0;
+      let rigidCount = 0;
+      for (const child of Array.from(content.children)) {
+        const childStyle = window.getComputedStyle(child);
+        if (childStyle.position === "absolute" || childStyle.flexShrink !== "0") continue;
+        const element = child as HTMLElement;
+        const previousChildWidth = element.style.width;
+        element.style.width = "max-content";
+        rigidWidth += element.scrollWidth;
+        element.style.width = previousChildWidth;
+        rigidCount += 1;
+      }
+      const measuredWidth = rigidWidth + Math.max(rigidCount - 1, 0) * gap + horizontalPadding * 2;
+      setContentWidth((current) => (current === measuredWidth ? current : measuredWidth));
     });
   }, [horizontalPadding]);
 
