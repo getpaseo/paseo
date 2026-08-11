@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import pino from "pino";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { OmpCliRuntime } from "./cli-runtime.js";
 import type { OmpRuntimeLaunch } from "./runtime.js";
@@ -43,10 +43,7 @@ function createRuntime(child: OmpChild, launches: OmpRuntimeLaunch[] = []): OmpC
   });
 }
 
-function replyToCommands(
-  child: OmpChild,
-  handler: (command: Record<string, unknown>) => unknown,
-): void {
+function onOmpCommand(child: OmpChild, handler: (command: Record<string, unknown>) => void): void {
   let buffer = "";
   child.stdin.on("data", (chunk) => {
     buffer += chunk.toString();
@@ -55,19 +52,53 @@ function replyToCommands(
       if (newlineIndex === -1) break;
       const line = buffer.slice(0, newlineIndex);
       buffer = buffer.slice(newlineIndex + 1);
-      const command = JSON.parse(line) as Record<string, unknown>;
-      const result = handler(command);
-      child.stdout.write(
-        `${JSON.stringify({
-          id: command.id,
-          type: "response",
-          command: command.type,
-          success: true,
-          data: result,
-        })}\n`,
-      );
+      handler(JSON.parse(line) as Record<string, unknown>);
     }
   });
+}
+
+function replyToCommands(
+  child: OmpChild,
+  handler: (command: Record<string, unknown>) => unknown,
+): void {
+  onOmpCommand(child, (command) => {
+    const result = handler(command);
+    child.stdout.write(
+      `${JSON.stringify({
+        id: command.id,
+        type: "response",
+        command: command.type,
+        success: true,
+        data: result,
+      })}\n`,
+    );
+  });
+}
+
+function capturePendingCommand(child: OmpChild, type: string): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    onOmpCommand(child, (command) => {
+      if (command.type === type) {
+        resolve(command);
+      }
+    });
+  });
+}
+
+function writeOmpResponse(
+  child: OmpChild,
+  command: Record<string, unknown>,
+  data: unknown = {},
+): void {
+  child.stdout.write(
+    `${JSON.stringify({
+      id: command.id,
+      type: "response",
+      command: command.type,
+      success: true,
+      data,
+    })}\n`,
+  );
 }
 
 function withoutRequestId(command: Record<string, unknown>): Record<string, unknown> {
@@ -234,6 +265,51 @@ describe("OMP CLI runtime", () => {
     expect(commands.map(withoutRequestId)).toEqual([
       { type: "set_subagent_subscription", level: "events" },
     ]);
+  });
+
+  test("compact waits beyond the default control-plane timeout for a late response", async () => {
+    vi.useFakeTimers();
+    const child = createOmpChild();
+    const pendingCompact = capturePendingCommand(child, "compact");
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    try {
+      const compactPromise = session.compact("focus on tests");
+      const compactCommand = await pendingCompact;
+      await vi.advanceTimersByTimeAsync(35_000);
+
+      expect(compactCommand).toMatchObject({
+        type: "compact",
+        customInstructions: "focus on tests",
+        id: expect.any(String),
+      });
+
+      writeOmpResponse(child, compactCommand, {
+        summary: "done",
+        firstKeptEntryId: "entry-1",
+        tokensBefore: 120_000,
+        estimatedTokensAfter: 20_000,
+      });
+
+      await expect(compactPromise).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+    }
+  });
+
+  test("compact without a wall-clock timeout rejects when the session closes", async () => {
+    const child = createOmpChild();
+    const pendingCompact = capturePendingCommand(child, "compact");
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const compactPromise = session.compact();
+    await pendingCompact;
+
+    const rejection = expect(compactPromise).rejects.toThrow("OMP RPC session is closed");
+    await session.close();
+
+    await rejection;
   });
 
   test("accepts the empty prompt acknowledgement emitted by OMP 17", async () => {
