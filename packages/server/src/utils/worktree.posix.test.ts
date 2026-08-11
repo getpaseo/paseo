@@ -1188,10 +1188,10 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       });
     });
 
-    it("does not overwrite a committed paseo.json with uncommitted edits in the main repo", async () => {
+    it("runs setup from the edited source config when the selected ref already has paseo.json", async () => {
       writeFileSync(
         join(repoDir, "paseo.json"),
-        JSON.stringify({ scripts: { dev: { command: "committed" } } }),
+        JSON.stringify({ worktree: { setup: 'echo "committed" > committed-setup.log' } }),
       );
       execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
       execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add paseo.json"], {
@@ -1200,21 +1200,23 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
 
       writeFileSync(
         join(repoDir, "paseo.json"),
-        JSON.stringify({ scripts: { dev: { command: "uncommitted" } } }),
+        JSON.stringify({ worktree: { setup: 'echo "edited" > edited-setup.log' } }),
       );
 
       const result = await createLegacyWorktreeForTest({
         cwd: repoDir,
-        worktreeSlug: "preserve-committed",
-        source: { kind: "branch-off", baseBranch: "main", branchName: "feature/preserve" },
-        runSetup: false,
+        worktreeSlug: "edited-config",
+        source: { kind: "branch-off", baseBranch: "main", branchName: "feature/edited-config" },
+        runSetup: true,
         paseoHome,
       });
 
       const worktreeConfigPath = join(result.worktreePath, "paseo.json");
       expect(JSON.parse(readFileSync(worktreeConfigPath, "utf8"))).toEqual({
-        scripts: { dev: { command: "committed" } },
+        worktree: { setup: 'echo "edited" > edited-setup.log' },
       });
+      expect(readFileSync(join(result.worktreePath, "edited-setup.log"), "utf8")).toBe("edited\n");
+      expect(existsSync(join(result.worktreePath, "committed-setup.log"))).toBe(false);
     });
 
     it("creates a worktree without error when no paseo.json exists in the main repo", async () => {
