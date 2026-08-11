@@ -8,6 +8,7 @@ import {
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 import {
   isGlobalProviderSnapshotKey,
+  resolveSnapshotCwd,
   type ProviderSnapshotManager,
 } from "../../agent/provider-snapshot-manager.js";
 import {
@@ -391,8 +392,9 @@ export class ProviderCatalogSession {
     msg: Extract<SessionInboundMessage, { type: "get_providers_snapshot_request" }>,
   ): Promise<void> {
     // COMPAT(providersSnapshot): keep legacy provider-list RPCs alongside snapshot flow.
+    const snapshotCwd = msg.cwd?.trim() ? resolveSnapshotCwd(expandTilde(msg.cwd)) : undefined;
     const entries = this.providerSnapshotManager
-      .getSnapshot(msg.cwd ? expandTilde(msg.cwd) : undefined)
+      .getSnapshot(snapshotCwd)
       .filter((entry) => this.host.isProviderVisibleToClient(entry.provider));
     const clientEntries = this.downgradeEntryModesForClient(entries);
 
@@ -402,6 +404,7 @@ export class ProviderCatalogSession {
       this.host.emit({
         type: "get_providers_snapshot_response",
         payload: {
+          ...(snapshotCwd ? { cwd: snapshotCwd } : {}),
           entries: [],
           ...(!notModified ? { compactSnapshot: encoded.compactSnapshot } : {}),
           snapshotHash: encoded.snapshotHash,
@@ -416,6 +419,7 @@ export class ProviderCatalogSession {
     this.host.emit({
       type: "get_providers_snapshot_response",
       payload: {
+        ...(snapshotCwd ? { cwd: snapshotCwd } : {}),
         entries: clientEntries,
         generatedAt: new Date().toISOString(),
         requestId: msg.requestId,

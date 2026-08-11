@@ -26,20 +26,20 @@ What that gives you today:
 
 Your daemons keep running agents where they always did. Hub decides when to ask them to.
 
-## How it fits together
+## What you write
 
-An organization holds your connections to GitHub, Slack, and Discord, and your registered daemons. Projects sit inside it, and each project has its own configuration.
+One project resource file names environments and complete agent configurations. Each discovered workflow file keeps one trigger beside its ordered steps:
 
 ```text
-organization
-├── connections
-├── daemons
-└── projects
+.paseo/
+├── hub.yml
+└── workflows/
+    ├── slack-help.yml
+    └── partials/
+        └── answer.md
 ```
 
-A project is one set of environments and triggers. Split your work into projects the way you already split it in your head: one per product, per team, or per repository. Connections and daemons are shared across all of them, so a new project does not mean connecting GitHub again.
-
-[How Hub works](/docs/hub/concepts) covers this properly.
+Push the bundle, mention the bot, and an agent starts on your machine. [Quickstart](/docs/hub/quickstart) builds the first bundle; [Workflows](/docs/hub/workflows) covers routing and provider-specific replies.
 
 ## Reading order
 
@@ -47,22 +47,14 @@ A project is one set of environments and triggers. Split your work into projects
 2. [Daemons](/docs/hub/daemons)
 3. [Triggers](/docs/hub/triggers)
 4. [Workflows](/docs/hub/workflows)
-5. [Configuration](/docs/hub/configuration)
-6. [Security](/docs/hub/security)
+5. [GitHub access](/docs/hub/github)
+6. [Configuration](/docs/hub/configuration)
+7. [Security](/docs/hub/security)
 
 [Quickstart](/docs/hub/quickstart) goes end to end if you would rather start by doing.
 
 If a workflow accepts requests from GitHub, Slack, Discord, or the API, read [Hub security](/docs/hub/security) before giving an agent access to a working directory or output capability.
 
-## Running it
+## Where it runs
 
-Two ways: [hosted](/docs/hub/hosted) or [self-hosted](/docs/hub/self-hosting). Everything above is the same either way.
-
-Once Hub is running, approve durable CLI access and inspect the organization:
-
-```sh
-paseo hub login https://hub.example.com
-paseo hub projects
-```
-
-The login is scoped to that exact Hub origin. Use it to connect a daemon or deploy configuration without copying an API key into each command.
+Everything on this page and the pages it links to works the same way on [hosted Hub](/docs/hub/hosted) and on a Hub you run yourself under [self-hosting](/docs/hub/self-hosting).

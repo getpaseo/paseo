@@ -54,9 +54,12 @@ export const ru: TranslationResources = {
       close: "Закрыть меню",
     },
     commandCenter: {
-      placeholder: "Поиск команд, рабочих пространств и агентов...",
+      placeholder: "Поиск команд, файлов, рабочих пространств и агентов...",
+      filePlaceholder: "Поиск файлов...",
+      searchingFiles: "Поиск файлов...",
       noMatches: "Нет совпадений",
       actions: "Действия",
+      files: "Файлы",
       workspaces: "Рабочие пространства",
       agents: "Агенты",
       newAgent: "Новый агент",
@@ -274,6 +277,14 @@ export const ru: TranslationResources = {
     },
   },
   message: {
+    diagram: {
+      diagram: "Диаграмма",
+      zoomIn: "Приблизить",
+      zoomOut: "Отдалить",
+      resetZoom: "Сбросить вид",
+      viewSource: "Показать код",
+      viewDiagram: "Показать диаграмму",
+    },
     actions: {
       copyCode: "Скопировать код",
       copyTurn: "Копировать ход",
@@ -396,9 +407,32 @@ export const ru: TranslationResources = {
     fileActions: {
       openFile: "Открыть файл",
       copyPath: "Копировать путь",
+      copyRelativePath: "Копировать относительный путь",
+      revealIn: "Показать в {{target}}",
       download: "Скачать",
       addToChat: "Добавить в чат",
       moreActions: "Дополнительные действия",
+      newFile: "Новый файл",
+      newFolder: "Новая папка",
+      collapseFolder: "Свернуть папку",
+      rename: "Переименовать",
+      duplicate: "Дублировать",
+      revert: "Отменить изменения",
+      delete: "Удалить",
+      confirmDelete: {
+        fileTitle: "Удалить файл?",
+        folderTitle: "Удалить папку?",
+        message: "«{{name}}» будет удалён безвозвратно.",
+        confirm: "Удалить",
+        cancel: "Отмена",
+      },
+      confirmRevert: {
+        title: "Отменить изменения?",
+        message: "Изменения в «{{name}}» будут безвозвратно отменены.",
+        confirm: "Отменить",
+        cancel: "Отмена",
+        failed: "Не удалось отменить изменения",
+      },
     },
     fileExplorer: {
       sort: {
@@ -428,6 +462,15 @@ export const ru: TranslationResources = {
       },
       errors: {
         failedToListDirectory: "Не удалось указать каталог",
+        createFailed: "Не удалось создать элемент",
+        renameFailed: "Не удалось переименовать элемент",
+        duplicateFailed: "Не удалось дублировать элемент",
+        revealFailed: "Не удалось показать элемент",
+        deleteFailed: "Не удалось удалить элемент",
+      },
+      draft: {
+        filePlaceholder: "Имя файла",
+        folderPlaceholder: "Имя папки",
       },
     },
     setup: {
@@ -1953,10 +1996,10 @@ export const ru: TranslationResources = {
         resetAll: "Сбросить все",
       },
       sections: {
-        navigation: "Навигация",
+        general: "Общие",
+        workspaces: "Проекты и рабочие пространства",
         tabsPanes: "Вкладки и панели",
-        projects: "Проекты",
-        panels: "Панели",
+        layout: "Макет",
         agentInput: "Вход Agent",
       },
       help: {
@@ -1984,6 +2027,7 @@ export const ru: TranslationResources = {
         moveTabDown: "Переместить вкладку вниз",
         closePane: "Закрыть панель",
         newTerminal: "Новый терминал",
+        searchFiles: "Поиск файлов",
         toggleCommandCenter: "Переключить командный центр",
         showKeyboardShortcuts: "Показать сочетания клавиш",
         toggleLeftSidebar: "Переключить левую боковую панель",

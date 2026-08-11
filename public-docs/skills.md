@@ -42,17 +42,6 @@ The receiving agent gets a self-contained briefing with the task, context, relev
 /paseo-handoff hand this to claude opus for review
 ```
 
-## `/paseo-loop`, Iterative Loops
-
-Runs an agent loop until an exit condition is met. Use it when you say "loop", "babysit", "keep trying until", "check every X", "watch", or want iterative autonomous execution.
-
-A loop is a worker/verifier cycle: launch a worker, check verification, repeat until done or limits hit. It can use a shell check, a verifier prompt, or both. Set a sensible `--max-iterations` or `--max-time`.
-
-```
-/paseo-loop keep trying until the changed test file passes, max 5 iterations
-/paseo-loop babysit PR 123 until checks are green, check every 2m, max-time 1h
-```
-
 ## `/paseo-committee`, Committee Planning
 
 Forms a committee of two high-reasoning agents to step back, do root cause analysis, and produce a plan. Use it when stuck, looping, tunnel-visioning, or facing a hard planning problem.

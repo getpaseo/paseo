@@ -54,9 +54,12 @@ export const ptBR: TranslationResources = {
       close: "Fechar menu",
     },
     commandCenter: {
-      placeholder: "Buscar comandos, espaços de trabalho e agentes...",
+      placeholder: "Buscar comandos, arquivos, espaços de trabalho e agentes...",
+      filePlaceholder: "Pesquisar arquivos...",
+      searchingFiles: "Pesquisando arquivos...",
       noMatches: "Nenhuma correspondência",
       actions: "Ações",
+      files: "Arquivos",
       workspaces: "Espaços de trabalho",
       agents: "Agentes",
       newAgent: "Novo agente",
@@ -275,6 +278,14 @@ export const ptBR: TranslationResources = {
     },
   },
   message: {
+    diagram: {
+      diagram: "Diagrama",
+      zoomIn: "Aproximar",
+      zoomOut: "Afastar",
+      resetZoom: "Redefinir visualização",
+      viewSource: "Ver fonte",
+      viewDiagram: "Ver diagrama",
+    },
     actions: {
       copyCode: "Copiar código",
       copyTurn: "Copiar turno",
@@ -397,9 +408,32 @@ export const ptBR: TranslationResources = {
     fileActions: {
       openFile: "Abrir arquivo",
       copyPath: "Copiar caminho",
+      copyRelativePath: "Copiar caminho relativo",
+      revealIn: "Mostrar no {{target}}",
       download: "Baixar",
       addToChat: "Adicionar ao chat",
       moreActions: "Mais ações",
+      newFile: "Novo arquivo",
+      newFolder: "Nova pasta",
+      collapseFolder: "Recolher pasta",
+      rename: "Renomear",
+      duplicate: "Duplicar",
+      revert: "Descartar alterações",
+      delete: "Excluir",
+      confirmDelete: {
+        fileTitle: "Excluir arquivo?",
+        folderTitle: "Excluir pasta?",
+        message: '"{{name}}" será excluído permanentemente.',
+        confirm: "Excluir",
+        cancel: "Cancelar",
+      },
+      confirmRevert: {
+        title: "Descartar alterações?",
+        message: 'As alterações em "{{name}}" serão descartadas permanentemente.',
+        confirm: "Descartar",
+        cancel: "Cancelar",
+        failed: "Falha ao descartar alterações",
+      },
     },
     fileExplorer: {
       sort: {
@@ -429,6 +463,15 @@ export const ptBR: TranslationResources = {
       },
       errors: {
         failedToListDirectory: "Falha ao listar diretório",
+        createFailed: "Falha ao criar entrada",
+        renameFailed: "Falha ao renomear entrada",
+        duplicateFailed: "Falha ao duplicar entrada",
+        revealFailed: "Falha ao mostrar entrada",
+        deleteFailed: "Falha ao excluir entrada",
+      },
+      draft: {
+        filePlaceholder: "Nome do arquivo",
+        folderPlaceholder: "Nome da pasta",
       },
     },
     setup: {
@@ -1946,10 +1989,10 @@ export const ptBR: TranslationResources = {
         resetAll: "Redefinir tudo",
       },
       sections: {
-        navigation: "Navegação",
+        general: "Geral",
+        workspaces: "Projetos e workspaces",
         tabsPanes: "Abas e painéis",
-        projects: "Projetos",
-        panels: "Painéis",
+        layout: "Layout",
         agentInput: "Entrada do agente",
       },
       help: {
@@ -1977,6 +2020,7 @@ export const ptBR: TranslationResources = {
         moveTabDown: "Mover aba para baixo",
         closePane: "Fechar painel",
         newTerminal: "Novo terminal",
+        searchFiles: "Pesquisar arquivos",
         toggleCommandCenter: "Alternar central de comandos",
         showKeyboardShortcuts: "Mostrar atalhos de teclado",
         toggleLeftSidebar: "Alternar barra lateral esquerda",

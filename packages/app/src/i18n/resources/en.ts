@@ -52,9 +52,12 @@ export const en = {
       close: "Close menu",
     },
     commandCenter: {
-      placeholder: "Search commands, workspaces, and agents...",
+      placeholder: "Search commands, files, workspaces, and agents...",
+      filePlaceholder: "Search files...",
+      searchingFiles: "Searching files...",
       noMatches: "No matches",
       actions: "Actions",
+      files: "Files",
       workspaces: "Workspaces",
       agents: "Agents",
       newAgent: "New agent",
@@ -271,6 +274,14 @@ export const en = {
     },
   },
   message: {
+    diagram: {
+      diagram: "Diagram",
+      zoomIn: "Zoom in",
+      zoomOut: "Zoom out",
+      resetZoom: "Reset view",
+      viewSource: "View source",
+      viewDiagram: "View diagram",
+    },
     actions: {
       copyCode: "Copy code",
       copyTurn: "Copy turn",
@@ -392,9 +403,32 @@ export const en = {
     fileActions: {
       openFile: "Open file",
       copyPath: "Copy path",
+      copyRelativePath: "Copy relative path",
+      revealIn: "Reveal in {{target}}",
       download: "Download",
       addToChat: "Add to chat",
       moreActions: "More actions",
+      newFile: "New file",
+      newFolder: "New folder",
+      collapseFolder: "Collapse folder",
+      rename: "Rename",
+      duplicate: "Duplicate",
+      revert: "Discard changes",
+      delete: "Delete",
+      confirmDelete: {
+        fileTitle: "Delete file?",
+        folderTitle: "Delete folder?",
+        message: '"{{name}}" will be permanently deleted.',
+        confirm: "Delete",
+        cancel: "Cancel",
+      },
+      confirmRevert: {
+        title: "Discard changes?",
+        message: 'Changes to "{{name}}" will be permanently discarded.',
+        confirm: "Discard",
+        cancel: "Cancel",
+        failed: "Failed to discard changes",
+      },
     },
     fileExplorer: {
       sort: {
@@ -424,6 +458,15 @@ export const en = {
       },
       errors: {
         failedToListDirectory: "Failed to list directory",
+        createFailed: "Failed to create entry",
+        renameFailed: "Failed to rename entry",
+        duplicateFailed: "Failed to duplicate entry",
+        revealFailed: "Failed to reveal entry",
+        deleteFailed: "Failed to delete entry",
+      },
+      draft: {
+        filePlaceholder: "File name",
+        folderPlaceholder: "Folder name",
       },
     },
     setup: {
@@ -1925,10 +1968,10 @@ export const en = {
         resetAll: "Reset all",
       },
       sections: {
-        navigation: "Navigation",
+        general: "General",
+        workspaces: "Projects & Workspaces",
         tabsPanes: "Tabs & Panes",
-        projects: "Projects",
-        panels: "Panels",
+        layout: "Layout",
         agentInput: "Agent Input",
       },
       help: {
@@ -1956,6 +1999,7 @@ export const en = {
         moveTabDown: "Move tab down",
         closePane: "Close pane",
         newTerminal: "New terminal",
+        searchFiles: "Search files",
         toggleCommandCenter: "Toggle command center",
         showKeyboardShortcuts: "Show keyboard shortcuts",
         toggleLeftSidebar: "Toggle left sidebar",

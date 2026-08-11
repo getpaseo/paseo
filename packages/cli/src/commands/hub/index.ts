@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { withOutput } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
-import { HubHttpClient } from "./client.js";
+import { HubHttpClient } from "./hub-client/index.js";
 import { addHubConnectCommand } from "./connect.js";
 import { PrivateHubCredentialStore, type HubCredentialStore } from "./credentials.js";
 import {
