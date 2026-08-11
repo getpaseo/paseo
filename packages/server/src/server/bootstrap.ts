@@ -404,6 +404,7 @@ export interface PaseoDaemonConfig {
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
   agentProfiles?: AgentProfile[];
+  pluginsEnabled?: boolean;
   plugins?: Record<string, PluginSource>;
   staticDir: string;
   mcpDebug: boolean;
@@ -539,6 +540,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
     appendSystemPrompt: config.appendSystemPrompt ?? "",
+    pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
   };
 
@@ -1440,7 +1442,11 @@ export async function createPaseoDaemon(
   const start = async () => {
     let mainStarted = false;
     try {
-      await pluginRuntime.start(daemonConfigStore.get().plugins ?? {});
+      const pluginConfig = daemonConfigStore.get();
+      await pluginRuntime.start({
+        enabled: pluginConfig.pluginsEnabled ?? false,
+        sources: pluginConfig.plugins ?? {},
+      });
       if (serviceProxyListenTarget) {
         const boundServiceProxyTarget = await serviceProxy.startStandalone({
           listenTarget: serviceProxyListenTarget,

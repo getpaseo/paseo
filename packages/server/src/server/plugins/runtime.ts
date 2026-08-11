@@ -39,6 +39,11 @@ interface LoadedPlugin {
   pending: Map<string, PendingInvocation>;
 }
 
+interface PluginRuntimeConfig {
+  enabled: boolean;
+  sources: Record<string, PluginSource>;
+}
+
 function resolveWorkerUrl(): URL {
   return new URL(
     import.meta.url.endsWith(".ts") ? "./plugin-process.ts" : "./plugin-process.js",
@@ -100,8 +105,10 @@ export class PluginRuntime {
     this.logger = logger.child({ module: "plugins" });
   }
 
-  async start(config: Record<string, PluginSource>): Promise<void> {
-    for (const [pluginId, source] of Object.entries(config)) {
+  async start(config: PluginRuntimeConfig): Promise<void> {
+    if (!config.enabled) return;
+
+    for (const [pluginId, source] of Object.entries(config.sources)) {
       try {
         await this.loadDirectoryPlugin(pluginId, source.path);
       } catch (error) {

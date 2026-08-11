@@ -335,6 +335,7 @@ function mergeMutableConfigIntoPersistedConfig(params: {
 
   return {
     ...persisted,
+    pluginsEnabled: mutable.pluginsEnabled,
     plugins: mutable.plugins,
     daemon: {
       ...persisted.daemon,

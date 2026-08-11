@@ -23,14 +23,31 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
+  it("does not inspect configured plugin sources while disabled", async () => {
+    const runtime = new PluginRuntime(pino({ level: "silent" }));
+
+    await runtime.start({
+      enabled: false,
+      sources: {
+        missing: { source: "directory", path: "/plugin-source-does-not-exist" },
+      },
+    });
+
+    expect(runtime.catalog()).toEqual([]);
+    await runtime.stop();
+  });
+
   it("loads the official Linear attachment extension", async () => {
     const directory = path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
-      "../../../../../extensions/linear",
+      "../../../../../plugin-examples/linear",
     );
     const runtime = new PluginRuntime(pino({ level: "silent" }));
 
-    await runtime.start({ linear: { source: "directory", path: directory } });
+    await runtime.start({
+      enabled: true,
+      sources: { linear: { source: "directory", path: directory } },
+    });
 
     expect(runtime.catalog().map((plugin) => plugin.id)).toEqual(["linear"]);
     expect(runtime.catalog()[0]?.clientBundle).toContain("Attach Linear issue");
@@ -79,7 +96,10 @@ export default function contribute(plugin: any) {
     );
     const runtime = new PluginRuntime(pino({ level: "silent" }));
 
-    await runtime.start({ hello: { source: "directory", path: directory } });
+    await runtime.start({
+      enabled: true,
+      sources: { hello: { source: "directory", path: directory } },
+    });
 
     const catalog = runtime.catalog();
     expect(catalog).toHaveLength(1);
@@ -112,7 +132,10 @@ export default function contribute(plugin: any) {
     );
     const runtime = new PluginRuntime(pino({ level: "silent" }));
 
-    await runtime.start({ "invalid-output": { source: "directory", path: directory } });
+    await runtime.start({
+      enabled: true,
+      sources: { "invalid-output": { source: "directory", path: directory } },
+    });
 
     await expect(runtime.invoke("invalid-output", "broken", {})).rejects.toThrow();
     await runtime.stop();
@@ -122,7 +145,10 @@ export default function contribute(plugin: any) {
     const directory = await createPlugin("actual", `export default function contribute() {}`);
     const runtime = new PluginRuntime(pino({ level: "silent" }));
 
-    await runtime.start({ configured: { source: "directory", path: directory } });
+    await runtime.start({
+      enabled: true,
+      sources: { configured: { source: "directory", path: directory } },
+    });
 
     expect(runtime.catalog()).toEqual([]);
     await runtime.stop();

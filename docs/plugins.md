@@ -6,10 +6,11 @@ contribution in the app runtime. Plugin code is trusted code; this first slice d
 
 ## Configure a directory source
 
-Add the plugin to the root `plugins` object in `$PASEO_HOME/config.json`:
+Enable local plugins and add the plugin to the root `plugins` object in `$PASEO_HOME/config.json`:
 
 ```json
 {
+  "pluginsEnabled": true,
   "plugins": {
     "my-plugin": {
       "source": "directory",
@@ -18,6 +19,8 @@ Add the plugin to the root `plugins` object in `$PASEO_HOME/config.json`:
   }
 }
 ```
+
+The plugin system is disabled unless `pluginsEnabled` is `true`.
 
 The directory contains an identity-only manifest and one entry point:
 
@@ -131,5 +134,5 @@ on several hosts are not coalesced. The selected snapshot submits as a text atta
 external-resource presentation, so it remains readable if the plugin is removed or an older peer
 drops the optional presentation fields.
 
-See `examples/local-plugin` for a native surface and `extensions/linear` for a complete official
-attachment-source extension.
+See `plugin-examples/local-plugin` for a native surface and `plugin-examples/linear` for a complete
+attachment-source example.

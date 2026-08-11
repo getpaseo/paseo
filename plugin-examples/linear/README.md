@@ -1,6 +1,6 @@
-# Linear
+# Linear plugin example
 
-The official Linear extension adds `Attach Linear issue` to the composer. Search by issue identifier
+This example adds `Attach Linear issue` to the composer. Search by issue identifier
 or title, then send a stable issue snapshot to the agent.
 
 Set a personal API key in the daemon environment:
@@ -13,10 +13,11 @@ Register the extension in `$PASEO_HOME/config.json`:
 
 ```json
 {
+  "pluginsEnabled": true,
   "plugins": {
     "linear": {
       "source": "directory",
-      "path": "/absolute/path/to/paseo/extensions/linear"
+      "path": "/absolute/path/to/paseo/plugin-examples/linear"
     }
   }
 }
