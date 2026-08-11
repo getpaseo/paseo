@@ -1,7 +1,7 @@
 import os from "node:os";
 import http from "node:http";
 import path from "node:path";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -41,6 +41,16 @@ interface BlockedDaemonShutdown {
 type WebSocketProbeResult =
   | { status: "connected" }
   | { status: "rejected"; statusCode: number | null };
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw error;
+  }
+}
 
 describe("paseo daemon bootstrap", () => {
   afterEach(() => {
@@ -398,7 +408,24 @@ describe("paseo daemon bootstrap", () => {
     const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-main-rollback-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");
     const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const pluginDirectory = path.join(paseoHomeRoot, "plugin");
+    const pluginPidPath = path.join(pluginDirectory, "plugin.pid");
     await mkdir(paseoHome, { recursive: true });
+    if (!isPlatform("win32")) {
+      await mkdir(pluginDirectory);
+      await writeFile(
+        path.join(pluginDirectory, "paseo-plugin.json"),
+        JSON.stringify({ id: "startup-rollback" }),
+      );
+      await writeFile(
+        path.join(pluginDirectory, "index.tsx"),
+        `import { writeFileSync } from "node:fs";
+export default function contribute(plugin: unknown) {
+  void plugin;
+  writeFileSync(${JSON.stringify(pluginPidPath)}, String(process.pid));
+}`,
+      );
+    }
     const config: PaseoDaemonConfig = {
       listen: `127.0.0.1:${mainPort}`,
       paseoHome,
@@ -414,12 +441,22 @@ describe("paseo daemon bootstrap", () => {
       openai: undefined,
       speech: undefined,
       serviceProxy: { standaloneListen: `127.0.0.1:${standalonePort}` },
+      pluginsEnabled: !isPlatform("win32"),
+      plugins: isPlatform("win32")
+        ? {}
+        : { "startup-rollback": { source: "directory", path: pluginDirectory } },
     };
     const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
 
     try {
       await expect(daemon.start()).rejects.toThrow();
       await expect(fetch(`http://127.0.0.1:${standalonePort}/api/health`)).rejects.toThrow();
+      if (!isPlatform("win32")) {
+        const pluginPid = Number(await readFile(pluginPidPath, "utf8"));
+        await vi.waitFor(() => {
+          expect(processExists(pluginPid)).toBe(false);
+        });
+      }
     } finally {
       await daemon.stop().catch(() => undefined);
       await new Promise<void>((resolve) => occupiedMain.close(() => resolve()));
