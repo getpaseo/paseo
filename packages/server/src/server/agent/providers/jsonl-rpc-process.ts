@@ -15,6 +15,11 @@ export const JSONL_RPC_NO_TIMEOUT = null;
 const STDERR_BUFFER_LIMIT = 8192;
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
+const RPC_V2_MAX_FRAME_BYTES = 1024 * 1024;
+const RPC_V2_MAX_REASSEMBLED_BYTES = 64 * 1024 * 1024;
+const RPC_V2_CHUNK_PAYLOAD_BYTES = 256 * 1024;
+const RPC_V2_MAX_ENCODED_CHUNK_LENGTH = Math.ceil(RPC_V2_CHUNK_PAYLOAD_BYTES / 3) * 4;
+const RPC_V2_MAX_CHUNK_COUNT = Math.ceil(RPC_V2_MAX_REASSEMBLED_BYTES / RPC_V2_CHUNK_PAYLOAD_BYTES);
 
 export interface JsonlRpcLaunch {
   command: string;
@@ -73,6 +78,16 @@ export interface JsonlRpcProcessOptions {
   logger: Logger;
   diagnosticName?: string;
   spawn?: (launch: JsonlRpcLaunch) => ChildProcessWithoutNullStreams;
+}
+
+export function supportsJsonlRpcProtocolV2(message: Record<string, unknown>): boolean {
+  return (
+    message.type === "ready" &&
+    Array.isArray(message.supportedProtocolVersions) &&
+    message.supportedProtocolVersions.includes(2) &&
+    message.maxFrameBytes === RPC_V2_MAX_FRAME_BYTES &&
+    message.maxReassembledFrameBytes === RPC_V2_MAX_REASSEMBLED_BYTES
+  );
 }
 
 function assertChildWithPipes(
@@ -296,16 +311,19 @@ export class JsonlRpcProcess {
       chunkId.length === 0 ||
       chunkId.length > 128 ||
       typeof data !== "string" ||
+      data.length === 0 ||
       typeof index !== "number" ||
       !Number.isSafeInteger(index) ||
       index < 0 ||
       typeof count !== "number" ||
       !Number.isSafeInteger(count) ||
       count < 2 ||
+      count > RPC_V2_MAX_CHUNK_COUNT ||
       index >= count ||
       typeof byteLength !== "number" ||
       !Number.isSafeInteger(byteLength) ||
-      byteLength <= 0
+      byteLength < RPC_V2_MAX_FRAME_BYTES ||
+      byteLength > RPC_V2_MAX_REASSEMBLED_BYTES
     ) {
       this.options.logger.warn(
         { chunk },
@@ -320,8 +338,11 @@ export class JsonlRpcProcess {
   /** Decode a chunk payload, or reset the sequence and return undefined on bad base64. */
   private decodeChunkPayload(data: string): Buffer | undefined {
     try {
+      if (data.length > RPC_V2_MAX_ENCODED_CHUNK_LENGTH) {
+        throw new Error("encoded payload exceeds the transport limit");
+      }
       const bytes = Buffer.from(data, "base64");
-      if (bytes.toString("base64") !== data) {
+      if (bytes.byteLength > RPC_V2_CHUNK_PAYLOAD_BYTES || bytes.toString("base64") !== data) {
         throw new Error("invalid base64 payload");
       }
       return bytes;

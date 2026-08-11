@@ -14,7 +14,11 @@ type OmpChild = ChildProcessWithoutNullStreams & {
   killedSignals: Array<NodeJS.Signals | number | undefined>;
 };
 
-function createOmpChild(options?: { supportedProtocolVersions?: number[] }): OmpChild {
+function createOmpChild(options?: {
+  supportedProtocolVersions?: number[];
+  emitReady?: boolean;
+  maxFrameBytes?: number;
+}): OmpChild {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),
     stdout: new PassThrough(),
@@ -31,15 +35,17 @@ function createOmpChild(options?: { supportedProtocolVersions?: number[] }): Omp
   // Real OMP writes a `ready` frame immediately after launch; the runtime waits
   // for it before negotiating the RPC protocol. Advertise v1-only by default so
   // the session stays on protocol v1 and command streams are unaffected.
-  child.stdout.write(
-    `${JSON.stringify({
-      type: "ready",
-      protocolVersion: 1,
-      supportedProtocolVersions: options?.supportedProtocolVersions ?? [1],
-      maxFrameBytes: 1024 * 1024,
-      maxReassembledFrameBytes: 64 * 1024 * 1024,
-    })}\n`,
-  );
+  if (options?.emitReady !== false) {
+    child.stdout.write(
+      `${JSON.stringify({
+        type: "ready",
+        protocolVersion: 1,
+        supportedProtocolVersions: options?.supportedProtocolVersions ?? [1],
+        maxFrameBytes: options?.maxFrameBytes ?? 1024 * 1024,
+        maxReassembledFrameBytes: 64 * 1024 * 1024,
+      })}\n`,
+    );
+  }
   return child;
 }
 
@@ -282,12 +288,52 @@ describe("OMP CLI runtime", () => {
     });
   });
 
+  test("stays on protocol v1 when OMP advertises incompatible framing limits", async () => {
+    const child = createOmpChild({
+      supportedProtocolVersions: [1, 2],
+      maxFrameBytes: 512 * 1024,
+    });
+    const commands: Record<string, unknown>[] = [];
+    replyToCommands(child, (command) => {
+      commands.push(command);
+      return { models: [] };
+    });
+
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    await session.getAvailableModels();
+
+    expect(commands.map(withoutRequestId)).toEqual([{ type: "get_available_models" }]);
+    await session.close();
+  });
+
+  test("rejects startup when OMP exits before advertising readiness", async () => {
+    const child = createOmpChild({ emitReady: false });
+    const startup = createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    child.stderr.write("startup exploded");
+    child.emit("exit", 7, null);
+
+    await expect(startup).rejects.toThrow("startup exploded");
+  });
+
+  test("rejects startup when OMP exits during protocol negotiation", async () => {
+    const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
+    child.stdin.on("data", () => {
+      child.stderr.write("negotiation exploded");
+      child.emit("exit", 8, null);
+    });
+
+    await expect(createRuntime(child).startSession({ cwd: "/workspace/project" })).rejects.toThrow(
+      "negotiation exploded",
+    );
+  });
+
   test("reassembles chunked protocol v2 responses for large payloads", async () => {
     const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
     const models = Array.from({ length: 2_000 }, (_, index) => ({
       provider: "p",
       id: `model-${index}`,
-      name: `model-${index}`,
+      name: `model-${index}-${"x".repeat(512)}`,
     }));
     let buffer = "";
     child.stdin.on("data", (chunk) => {
@@ -321,7 +367,8 @@ describe("OMP CLI runtime", () => {
             data: { models },
           });
           const bytes = Buffer.from(logical, "utf8");
-          const chunkPayload = 64 * 1024;
+          expect(bytes.byteLength).toBeGreaterThan(1024 * 1024);
+          const chunkPayload = 256 * 1024;
           const count = Math.ceil(bytes.length / chunkPayload);
           for (let index = 0; index < count; index++) {
             child.stdout.write(
