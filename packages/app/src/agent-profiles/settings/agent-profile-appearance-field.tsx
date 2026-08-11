@@ -276,7 +276,7 @@ function noop() {}
  * so the palette has to be spelled out as static styles.
  */
 function identitySwatch(color: Exclude<AgentProfileColor, "none">) {
-  return IDENTITY_SWATCH_STYLES[color];
+  return styles[IDENTITY_SWATCH_STYLE_KEYS[color]];
 }
 
 const styles = StyleSheet.create((theme) => {
@@ -370,15 +370,15 @@ const styles = StyleSheet.create((theme) => {
   };
 });
 
-const IDENTITY_SWATCH_STYLES = {
-  violet: styles.swatchViolet,
-  sky: styles.swatchSky,
-  emerald: styles.swatchEmerald,
-  orange: styles.swatchOrange,
-  pink: styles.swatchPink,
-  indigo: styles.swatchIndigo,
-  teal: styles.swatchTeal,
-  red: styles.swatchRed,
-  amber: styles.swatchAmber,
-  blue: styles.swatchBlue,
+const IDENTITY_SWATCH_STYLE_KEYS = {
+  violet: "swatchViolet",
+  sky: "swatchSky",
+  emerald: "swatchEmerald",
+  orange: "swatchOrange",
+  pink: "swatchPink",
+  indigo: "swatchIndigo",
+  teal: "swatchTeal",
+  red: "swatchRed",
+  amber: "swatchAmber",
+  blue: "swatchBlue",
 } as const;
