@@ -175,7 +175,7 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     id: "notifications",
     labelKey: "settings.sections.notifications",
     icon: Bell,
-    desktopOnly: true,
+    isAvailable: (isDesktopApp) => isDesktopApp,
   },
   {
     id: "permissions",

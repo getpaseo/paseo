@@ -2197,6 +2197,7 @@ export const ptBR: TranslationResources = {
       },
       dialogTitle: "Atalhos",
       searchPlaceholder: "Pesquisar atalhos",
+      unavailableOnMobile: "Atalhos de teclado estão disponíveis apenas no desktop",
       capturePrompt: "Pressione o atalho...",
       unassigned: "Não definido",
       actions: {

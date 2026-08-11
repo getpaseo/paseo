@@ -2262,8 +2262,8 @@ export const en = {
         hint: "Key used as the shortcut modifier",
         auto: "Auto",
         cmd: "Cmd / Super",
-         ctrl: "Ctrl",
-       },
+        ctrl: "Ctrl",
+      },
       actions: {
         menu: "Actions for {{name}}",
         done: "Done",
