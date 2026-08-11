@@ -38,6 +38,11 @@ export const DESKTOP_WINDOW_CONTROLS_WIDTH = 140;
 // pushes its first colour update. Reserve the taller value — it covers both.
 export const DESKTOP_WINDOW_CONTROLS_HEIGHT = 29;
 
+// A row can stay beside the Windows/Linux controls only when its measured content leaves this
+// much room after the controls. Different enter/leave margins stop splitter drags flickering.
+export const DESKTOP_WINDOW_CONTROLS_INLINE_SPARE_WIDTH_LOW = 8;
+export const DESKTOP_WINDOW_CONTROLS_INLINE_SPARE_WIDTH_HIGH = 24;
+
 export {
   getIsElectron as getIsElectronRuntime,
   getIsElectronMac as getIsElectronRuntimeMac,

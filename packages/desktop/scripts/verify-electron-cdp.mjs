@@ -373,12 +373,15 @@ async function inspectFullscreenWindowChrome(page, platform) {
             fullscreen.backButtonRect.top < 45 &&
             fullscreen.backButtonRect.top < before.backButtonRect.top,
           )
-        : Boolean(
+        : // A windowed row only reserves the 29px strip when its content cannot fit beside the
+          // controls, so do not require it to start below them here — a wide settings detail
+          // header is legitimately inline. Fullscreen has no controls at all, so assert the
+          // row clears the strip there and never sits lower than it did windowed.
+          Boolean(
             before.detailHeaderLeftRect &&
             fullscreen.detailHeaderLeftRect &&
-            before.detailHeaderLeftRect.top >= 29 &&
             fullscreen.detailHeaderLeftRect.top < 29 &&
-            fullscreen.detailHeaderLeftRect.top < before.detailHeaderLeftRect.top,
+            fullscreen.detailHeaderLeftRect.top <= before.detailHeaderLeftRect.top,
           );
 
     return {

@@ -25,27 +25,84 @@ describe("window chrome", () => {
     ).toEqual({ topLeft: null, topRight: { width: 140, height: 29 } });
   });
 
-  it("keeps rows inline under top-left controls and below top-right ones", () => {
+  it("keeps rows inline whenever no top-right control blocks them", () => {
     const mac = resolveWindowChromeObstruction({
       isElectron: true,
       isMac: true,
       isFullscreen: false,
     });
+    const measured = {
+      availableWidth: 400,
+      contentWidth: 380,
+      previousPlacement: "below" as const,
+    };
+
+    // Traffic lights lead the row, so macOS pads past them and never drops.
+    expect(resolveWindowChromeRowPlacement({ obstruction: mac, ...measured })).toBe("inline");
+    // Browser, native, and fullscreen have no controls, so they keep the inline row.
+    expect(
+      resolveWindowChromeRowPlacement({
+        obstruction: { topLeft: null, topRight: null },
+        ...measured,
+      }),
+    ).toBe("inline");
+    expect(
+      resolveWindowChromeRowPlacement({
+        obstruction: resolveWindowChromeObstruction({
+          isElectron: true,
+          isMac: false,
+          isFullscreen: true,
+        }),
+        ...measured,
+      }),
+    ).toBe("inline");
+  });
+
+  it("drops a top-right row below only when its content no longer fits beside the controls", () => {
     const windows = resolveWindowChromeObstruction({
       isElectron: true,
       isMac: false,
       isFullscreen: false,
     });
+    const place = (availableWidth: number | null, contentWidth: number | null) =>
+      resolveWindowChromeRowPlacement({
+        obstruction: windows,
+        availableWidth,
+        contentWidth,
+        previousPlacement: "inline",
+      });
 
-    expect(resolveWindowChromeRowPlacement(mac)).toBe("inline");
-    expect(resolveWindowChromeRowPlacement(windows)).toBe("below");
-    // Browser, native, and fullscreen have no controls, so they keep the inline row.
-    expect(resolveWindowChromeRowPlacement({ topLeft: null, topRight: null })).toBe("inline");
-    expect(
-      resolveWindowChromeRowPlacement(
-        resolveWindowChromeObstruction({ isElectron: true, isMac: false, isFullscreen: true }),
-      ),
-    ).toBe("inline");
+    // 140px of controls plus 200px of content leaves 60px spare — ample.
+    expect(place(400, 200)).toBe("inline");
+    // The same content in a 280px panel overflows by 60px.
+    expect(place(280, 200)).toBe("below");
+    // Stay inline until a measurement proves otherwise, so a wide row never drops on load.
+    expect(place(null, 200)).toBe("inline");
+    expect(place(400, null)).toBe("inline");
+  });
+
+  it("uses a wider margin to restore an inline row than to drop it", () => {
+    const windows = resolveWindowChromeObstruction({
+      isElectron: true,
+      isMac: false,
+      isFullscreen: false,
+    });
+    const place = (contentWidth: number, previousPlacement: "inline" | "below") =>
+      resolveWindowChromeRowPlacement({
+        obstruction: windows,
+        availableWidth: 400,
+        contentWidth,
+        previousPlacement,
+      });
+
+    // 16px spare sits between the two margins: an inline row keeps its place...
+    expect(place(244, "inline")).toBe("inline");
+    // ...but a dropped row needs more than that before it climbs back up.
+    expect(place(244, "below")).toBe("below");
+    // Past the upper margin it restores.
+    expect(place(220, "below")).toBe("inline");
+    // Below the lower margin it drops.
+    expect(place(256, "inline")).toBe("below");
   });
 
   it("insets and reserves only claimed corners", () => {

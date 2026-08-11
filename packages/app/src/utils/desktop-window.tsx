@@ -3,6 +3,8 @@ import { View, type ViewProps } from "react-native";
 import {
   DESKTOP_TRAFFIC_LIGHT_HEIGHT,
   DESKTOP_TRAFFIC_LIGHT_WIDTH,
+  DESKTOP_WINDOW_CONTROLS_INLINE_SPARE_WIDTH_HIGH,
+  DESKTOP_WINDOW_CONTROLS_INLINE_SPARE_WIDTH_LOW,
   DESKTOP_WINDOW_CONTROLS_HEIGHT,
   DESKTOP_WINDOW_CONTROLS_WIDTH,
   getIsElectronRuntime,
@@ -13,6 +15,12 @@ import { isNative } from "@/constants/platform";
 
 export type WindowChromeCorners = "none" | "top-left" | "top-right" | "both";
 export type WindowChromeSafeAreaPlacement = "inline" | "below";
+
+export interface WindowChromeRowMeasurement {
+  availableWidth: number | null;
+  contentWidth: number | null;
+  previousPlacement: WindowChromeSafeAreaPlacement;
+}
 
 interface WindowChromeCornerObstruction {
   width: number;
@@ -51,9 +59,11 @@ export function useHasWindowChromeObstruction(corner: WindowChromeCorner): boole
   return corner === "top-left" ? obstruction.topLeft !== null : obstruction.topRight !== null;
 }
 
-export function useWindowChromeRowPlacement(): WindowChromeSafeAreaPlacement {
+export function useWindowChromeRowPlacement(
+  measurement: WindowChromeRowMeasurement,
+): WindowChromeSafeAreaPlacement {
   const obstruction = useContext(WindowChromeContext);
-  return resolveWindowChromeRowPlacement(obstruction);
+  return resolveWindowChromeRowPlacement({ obstruction, ...measurement });
 }
 
 export function intersectWindowChromeCorners(
@@ -92,19 +102,39 @@ export function resolveWindowChromeObstruction(input: {
  * Where a header row sits relative to the native window controls.
  *
  * macOS keeps the row inline: the traffic lights sit in the top-left, ahead of the row's
- * leading content, and padding past them costs nothing. Windows/Linux reserve instead: the
- * controls sit in the top-right, on top of the row's trailing actions, where padding would
- * squash the actions into the middle — so the owning surface reserves the controls' height
- * in a strip and starts its row below them.
+ * leading content, and padding past them costs nothing.
+ *
+ * Windows/Linux controls sit in the top-right, on top of the row's trailing actions. Pad past
+ * them while the row can spare the width — a wide row has empty middle to give away, and a
+ * reserved strip would waste 29px of height for nothing. Once the content no longer fits in
+ * what is left, padding would clip the trailing actions instead of moving them, so the row
+ * reserves the controls' height in a strip and starts below them.
+ *
+ * The two spare-width margins differ on purpose: a row already inline holds its place down to
+ * the smaller one, and a dropped row needs the larger one before it climbs back. Without that
+ * gap, dragging a splitter across a single threshold flips the row every frame.
  *
  * Read from the obstruction rather than the platform, so it stays correct while the Electron
  * bridge is still resolving. Only top-right controls move the row: browser, native, and
  * fullscreen have no obstruction at all and keep the inline row they always had.
+ *
+ * A row starts inline and only drops once a measurement proves it does not fit. Defaulting an
+ * unmeasured row to the strip would push every header down on load — including the wide ones
+ * that never needed it — and then yank them up a frame later when the measurement arrives.
  */
 export function resolveWindowChromeRowPlacement(
-  obstruction: WindowChromeObstruction,
+  input: { obstruction: WindowChromeObstruction } & WindowChromeRowMeasurement,
 ): WindowChromeSafeAreaPlacement {
-  return obstruction.topRight !== null ? "below" : "inline";
+  const { obstruction, availableWidth, contentWidth, previousPlacement } = input;
+  const topRight = obstruction.topRight;
+  if (topRight === null) return "inline";
+  if (availableWidth === null || contentWidth === null) return "inline";
+
+  const spareWidth = availableWidth - contentWidth - topRight.width;
+  if (previousPlacement === "inline") {
+    return spareWidth < DESKTOP_WINDOW_CONTROLS_INLINE_SPARE_WIDTH_LOW ? "below" : "inline";
+  }
+  return spareWidth > DESKTOP_WINDOW_CONTROLS_INLINE_SPARE_WIDTH_HIGH ? "inline" : "below";
 }
 
 export function resolveWindowChromeSafeArea(input: {
