@@ -39,7 +39,10 @@ export function createWorkspaceCommand(): Command {
       .description("Set a workspace's user-visible title")
       .argument("<workspace-id>", "Workspace id")
       .argument("[title]", "New workspace title")
-      .option("--reset", "Clear the title and revert to the branch or directory name"),
+      .option("--reset", "Clear the title and revert to the branch or directory name")
+      // Commander 12 accepts excess positionals by default, which would rename to
+      // the first word of an unquoted multi-word title and silently drop the rest.
+      .allowExcessArguments(false),
   ).action(withOutput(runRenameCommand));
 
   addJsonAndDaemonHostOptions(
