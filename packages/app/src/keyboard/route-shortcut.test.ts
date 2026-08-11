@@ -282,6 +282,11 @@ describe("routeKeyboardShortcut — message-input.action", () => {
     ["voice-toggle", "message-input.voice-toggle"],
     ["voice-mute-toggle", "message-input.voice-mute-toggle"],
     ["mode-cycle", "message-input.mode-cycle"],
+    ["model-cycle", "message-input.model-cycle"],
+    ["thinking-decrease", "message-input.thinking-decrease"],
+    ["thinking-increase", "message-input.thinking-increase"],
+    ["favorite-model-previous", "message-input.favorite-model-previous"],
+    ["favorite-model-next", "message-input.favorite-model-next"],
   ] as const)("kind=%s → dispatch %s", (kind, id) => {
     expect(
       routeKeyboardShortcut({ action: "message-input.action", payload: { kind } }, makeCtx()),

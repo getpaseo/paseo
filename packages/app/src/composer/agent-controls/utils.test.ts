@@ -4,8 +4,45 @@ import {
   getFeatureTooltip,
   getAgentControlHintKey,
   normalizeModelId,
+  resolveRelativeAgentControlId,
   resolveAgentModelSelection,
 } from "./utils";
+
+describe("resolveRelativeAgentControlId", () => {
+  const models = [{ id: "a" }, { id: "b" }, { id: "c" }];
+
+  it("cycles to the next option", () => {
+    expect(resolveRelativeAgentControlId({ options: models, selectedId: "b", delta: 1 })).toBe("c");
+  });
+
+  it("cycles to the previous option", () => {
+    expect(resolveRelativeAgentControlId({ options: models, selectedId: "b", delta: -1 })).toBe(
+      "a",
+    );
+  });
+
+  it("wraps in both directions", () => {
+    expect(resolveRelativeAgentControlId({ options: models, selectedId: "c", delta: 1 })).toBe("a");
+    expect(resolveRelativeAgentControlId({ options: models, selectedId: "a", delta: -1 })).toBe(
+      "c",
+    );
+  });
+
+  it("starts at the nearest end when the selection is stale", () => {
+    expect(
+      resolveRelativeAgentControlId({ options: models, selectedId: "missing", delta: 1 }),
+    ).toBe("a");
+    expect(
+      resolveRelativeAgentControlId({ options: models, selectedId: "missing", delta: -1 }),
+    ).toBe("c");
+  });
+
+  it("returns null when there is no second model", () => {
+    expect(
+      resolveRelativeAgentControlId({ options: [{ id: "a" }], selectedId: "a", delta: 1 }),
+    ).toBeNull();
+  });
+});
 
 describe("getAgentControlHintKey", () => {
   it("returns translation keys for each editable agent control hint", () => {
