@@ -389,10 +389,10 @@ describe("relay-transport control lifecycle", () => {
       onerror: null,
     };
     dataSocket.onSend = (data) => {
-      clientTransport.onmessage?.(
-        data instanceof Uint8Array ? data.slice().buffer : data,
-        data instanceof ArrayBuffer || data instanceof Uint8Array,
-      );
+      clientTransport.onmessage?.({
+        data: data instanceof Uint8Array ? data.slice().buffer : data,
+        isBinary: data instanceof ArrayBuffer || data instanceof Uint8Array,
+      });
     };
     let resolveClientOpen: (() => void) | undefined;
     const clientOpen = new Promise<void>((resolve) => {
@@ -413,5 +413,4 @@ describe("relay-transport control lifecycle", () => {
     await expect(encryptedSocket.send(new Uint8Array([1, 2, 3]))).resolves.toBeUndefined();
     expect(hasLogMessage(logger, "warn", "relay_socket_send_failed")).toBe(false);
   });
-
 });
