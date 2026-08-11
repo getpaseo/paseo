@@ -97,7 +97,7 @@ describe("agent task state", () => {
     useSessionStore
       .getState()
       .setAgentStreamState("test-server", "agent-1", { taskSnapshot: tasks });
-    useSessionStore.getState().setMessages("test-server", []);
+    useSessionStore.getState().setIsPlayingAudio("test-server", true);
     useSessionStore
       .getState()
       .setAgentStreamState("test-server", "agent-1", { taskSnapshot: [...tasks] });
