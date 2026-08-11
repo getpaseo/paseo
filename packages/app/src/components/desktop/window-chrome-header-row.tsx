@@ -37,7 +37,7 @@ export function WindowChromeHeaderRow({
   stripStyle,
   testID,
 }: WindowChromeHeaderRowProps) {
-  const contentRef = useRef<View>(null);
+  const rowRef = useRef<View>(null);
   const [availableWidth, setAvailableWidth] = useState<number | null>(null);
   const [contentWidth, setContentWidth] = useState<number | null>(null);
   const [previousPlacement, setPreviousPlacement] = useState<"inline" | "below">("inline");
@@ -45,13 +45,13 @@ export function WindowChromeHeaderRow({
   const measureContentWidth = useCallback(() => {
     if (!isWeb) return;
     requestAnimationFrame(() => {
-      const content = contentRef.current as unknown as HTMLElement | null;
+      const content = rowRef.current as unknown as HTMLElement | null;
       if (!content) return;
       // Only content that cannot shrink can collide with the controls. A header's leading title
       // grows to fill the row and truncates when squeezed, so measuring it would report the row
       // as full no matter how much room it really has -- and every header would drop. Count the
-      // rigid children instead, each read at max-content because the row lays them out with
-      // space-between and would otherwise measure itself back.
+      // rigid children instead, each read at max-content so a child that was stretched by the
+      // row's own layout reports the width it actually wants.
       const gap = Number.parseFloat(window.getComputedStyle(content).columnGap) || 0;
       let rigidWidth = 0;
       let rigidCount = 0;
@@ -96,29 +96,17 @@ export function WindowChromeHeaderRow({
     },
     [measureContentWidth, onLayout],
   );
-  const handleContentLayout = useCallback(() => measureContentWidth(), [measureContentWidth]);
-
-  const content = (
-    <View
-      ref={contentRef}
-      collapsable={false}
-      onLayout={handleContentLayout}
-      style={styles.content}
-    >
-      {children}
-    </View>
-  );
-
   if (placement === "inline") {
     return (
       <WindowChromeSafeArea
+        viewRef={rowRef}
         placement="inline"
         horizontalPadding={horizontalPadding}
         onLayout={handleRowLayout}
         style={style}
         testID={testID}
       >
-        {content}
+        {children}
       </WindowChromeSafeArea>
     );
   }
@@ -129,22 +117,13 @@ export function WindowChromeHeaderRow({
         <TitlebarDragRegion />
       </WindowChromeSafeArea>
       <View
+        ref={rowRef}
         onLayout={handleRowLayout}
         style={[style, { paddingHorizontal: horizontalPadding }]}
         testID={testID}
       >
-        {content}
+        {children}
       </View>
     </>
   );
 }
-
-const styles = {
-  content: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    justifyContent: "space-between" as const,
-  },
-};

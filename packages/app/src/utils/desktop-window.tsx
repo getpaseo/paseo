@@ -1,4 +1,12 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+  type Ref,
+} from "react";
 import { View, type ViewProps } from "react-native";
 import {
   DESKTOP_TRAFFIC_LIGHT_HEIGHT,
@@ -286,12 +294,15 @@ export function useOwnsWindowChromeCorner(corner: WindowChromeCorner): boolean {
 type WindowChromeSafeAreaProps = ViewProps & {
   placement: WindowChromeSafeAreaPlacement;
   horizontalPadding?: number;
+  /** Forwarded to the underlying View so a caller can measure the row it renders. */
+  viewRef?: Ref<View>;
 };
 
 export function WindowChromeSafeArea({
   placement,
   horizontalPadding = 0,
   style,
+  viewRef,
   ...props
 }: WindowChromeSafeAreaProps) {
   const obstruction = useContext(WindowChromeContext);
@@ -307,5 +318,5 @@ export function WindowChromeSafeArea({
     };
   }, [corners, horizontalPadding, obstruction, placement]);
   const combinedStyle = useMemo(() => [style, safeAreaStyle], [safeAreaStyle, style]);
-  return <View {...props} style={combinedStyle} />;
+  return <View {...props} ref={viewRef} style={combinedStyle} />;
 }
