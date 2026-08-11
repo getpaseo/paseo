@@ -333,6 +333,15 @@ export const ar: TranslationResources = {
     todo: {
       title: "المهام",
       empty: "لا توجد مهام حتى الآن.",
+      tasksProgress: "{{completed}}/{{total}} مهام",
+      tasksProgressCurrent: "{{completed}}/{{total}} مهام · {{task}}",
+      activity: {
+        created: "تم إنشاء {{count}} مهام",
+        added: "أُضيفت",
+        started: "بدأت",
+        completed: "اكتملت",
+        reopened: "أُعيد فتحها",
+      },
     },
     compaction: {
       loading: "الضغط...",

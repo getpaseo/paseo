@@ -337,6 +337,15 @@ export const fr: TranslationResources = {
     todo: {
       title: "Tâches",
       empty: "Aucune tâche pour l'instant.",
+      tasksProgress: "{{completed}}/{{total}} tâches",
+      tasksProgressCurrent: "{{completed}}/{{total}} tâches · {{task}}",
+      activity: {
+        created: "{{count}} tâches créées",
+        added: "Ajoutée",
+        started: "Commencée",
+        completed: "Terminée",
+        reopened: "Rouverte",
+      },
     },
     compaction: {
       loading: "Compactage...",

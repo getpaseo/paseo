@@ -939,6 +939,26 @@ export function planStepsToMarkdown(steps: Array<{ step: string; status: string 
   return normalizePlanMarkdown(lines.join("\n"));
 }
 
+export function mapCodexPlanUpdateToTodo(
+  steps: Array<{ step?: string | null; status?: string | null }>,
+): Extract<AgentTimelineItem, { type: "todo" }> {
+  return {
+    type: "todo",
+    items: steps.flatMap((entry, index) => {
+      const text = entry.step?.trim();
+      if (!text) return [];
+      const status = normalizeCodexTaskStatus(entry.status);
+      return [{ id: String(index), text, status, completed: status === "completed" }];
+    }),
+  };
+}
+
+function normalizeCodexTaskStatus(status: string | null | undefined) {
+  if (status === "completed") return "completed" as const;
+  if (status === "inProgress" || status === "in_progress") return "in_progress" as const;
+  return "pending" as const;
+}
+
 export function mapCodexPlanToToolCall(params: {
   callId: string;
   text: string;
@@ -5597,6 +5617,14 @@ export class CodexAppServerAgentSession implements AgentSession {
   private handlePlanUpdatedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "plan_updated" }>,
   ): void {
+    if (!this.planModeEnabled) {
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: mapCodexPlanUpdateToTodo(parsed.plan),
+      });
+      return;
+    }
     const timelineItem = mapCodexPlanToToolCall({
       callId: `plan:${this.currentTurnId ?? this.currentThreadId ?? "current"}`,
       text: planStepsToMarkdown(
@@ -5608,13 +5636,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
     if (timelineItem) {
       this.rememberPlanResult(timelineItem);
-      // In plan mode, the same plan is rendered through the synthetic approval
-      // permission. Keep the remembered text for that card, but do not also
-      // emit a static timeline plan panel.
-      if (this.planModeEnabled) {
-        return;
-      }
-      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      // Older Codex app-server builds reported Plan-mode proposals through
+      // turn/plan/updated. Retain that compatibility path only while Plan mode is active.
+      return;
     }
   }
 

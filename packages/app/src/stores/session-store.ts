@@ -9,6 +9,7 @@ import {
   handoffCreatedAgentUserMessageToStream,
   removeSubmittedUserMessage,
   type StreamItem,
+  type TodoEntry,
   type UserMessageItem,
 } from "@/types/stream";
 import {
@@ -394,6 +395,14 @@ export function selectAgentTurnPresentation(
   );
 }
 
+function latestTasksFromStream(items: readonly StreamItem[]): TodoEntry[] {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item?.kind === "todo_list") return item.items;
+  }
+  return [];
+}
+
 export type WorkspaceRestoreStatus = "restoring" | "failed" | "needs-host-upgrade";
 
 // Per-session state
@@ -426,6 +435,7 @@ export interface SessionState {
   // Stream state (head/tail model)
   agentStreamTail: Map<string, StreamItem[]>;
   agentStreamHead: Map<string, StreamItem[]>;
+  agentTasks: Map<string, TodoEntry[]>;
   agentTurnLiveness: Map<string, TurnLiveness>;
   messageSubmissions: Map<string, MessageSubmissionRecord[]>;
   agentTimelineCursor: Map<string, AgentTimelineCursorState>;
@@ -525,6 +535,7 @@ interface SessionStoreActions {
       acknowledgedClientMessageIds?: readonly string[];
     },
   ) => void;
+  setAgentTasks: (serverId: string, agentId: string, tasks: TodoEntry[]) => void;
   applyAgentTurnLiveness: (
     serverId: string,
     agentId: string,
@@ -692,6 +703,7 @@ function createInitialSessionState(
     currentAssistantMessage: "",
     agentStreamTail: new Map(),
     agentStreamHead: new Map(),
+    agentTasks: new Map(),
     agentTurnLiveness: new Map(),
     messageSubmissions: new Map(),
     agentTimelineCursor: new Map(),
@@ -812,8 +824,11 @@ export const useSessionStore = create<SessionStore>()(
           const session = createInitialSessionState(serverId, null);
           const timeline = replica.timeline;
           const agentStreamTail = new Map<string, StreamItem[]>();
+          const agentTasks = new Map<string, TodoEntry[]>();
           if (timeline) {
             agentStreamTail.set(timeline.agentId, timeline.items);
+            const tasks = latestTasksFromStream(timeline.items);
+            if (tasks.length > 0) agentTasks.set(timeline.agentId, tasks);
           }
           const agentLastActivity = new Map(prev.agentLastActivity);
           for (const agent of replica.agents.values()) {
@@ -830,6 +845,7 @@ export const useSessionStore = create<SessionStore>()(
                 workspaces: replica.workspaces,
                 projects: replica.projects,
                 agentStreamTail,
+                agentTasks,
               },
             },
             agentLastActivity,
@@ -1174,6 +1190,25 @@ export const useSessionStore = create<SessionStore>()(
                 agentStreamHead: nextHead,
                 messageSubmissions,
               },
+            },
+          };
+        });
+      },
+
+      setAgentTasks: (serverId, agentId, tasks) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          const current = session.agentTasks.get(agentId) ?? [];
+          if (equal(current, tasks)) return prev;
+          const agentTasks = new Map(session.agentTasks);
+          if (tasks.length > 0) agentTasks.set(agentId, tasks);
+          else agentTasks.delete(agentId);
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentTasks },
             },
           };
         });
@@ -1601,6 +1636,10 @@ export const useSessionStore = create<SessionStore>()(
             nextAuthoritative.set(agentId, true);
             nextSyncGeneration.set(agentId, session.historySyncGeneration);
           }
+          const tasks = latestTasksFromStream([...state.items, ...state.head]);
+          const agentTasks = new Map(session.agentTasks);
+          if (tasks.length > 0) agentTasks.set(agentId, tasks);
+          else agentTasks.delete(agentId);
 
           return {
             ...prev,
@@ -1610,6 +1649,7 @@ export const useSessionStore = create<SessionStore>()(
                 ...session,
                 agentStreamTail: nextTail,
                 agentStreamHead: nextHead,
+                agentTasks,
                 agentTimelineCursor: nextCursor,
                 agentTimelineHasOlder: nextHasOlder,
                 agentTimelineHasNewer: nextHasNewer,

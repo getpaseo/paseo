@@ -333,6 +333,15 @@ export const zhCN: TranslationResources = {
     todo: {
       title: "任务",
       empty: "还没有任务。",
+      tasksProgress: "{{completed}}/{{total}} 项任务",
+      tasksProgressCurrent: "{{completed}}/{{total}} 项任务 · {{task}}",
+      activity: {
+        created: "已创建 {{count}} 项任务",
+        added: "已添加",
+        started: "已开始",
+        completed: "已完成",
+        reopened: "已重新打开",
+      },
     },
     compaction: {
       loading: "正在压缩...",

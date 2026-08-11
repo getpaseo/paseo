@@ -336,6 +336,15 @@ export const ptBR: TranslationResources = {
     todo: {
       title: "Tarefas",
       empty: "Nenhuma tarefa ainda.",
+      tasksProgress: "{{completed}}/{{total}} tarefas",
+      tasksProgressCurrent: "{{completed}}/{{total}} tarefas · {{task}}",
+      activity: {
+        created: "{{count}} tarefas criadas",
+        added: "Adicionada",
+        started: "Iniciada",
+        completed: "Concluída",
+        reopened: "Reaberta",
+      },
     },
     compaction: {
       loading: "Compactando...",

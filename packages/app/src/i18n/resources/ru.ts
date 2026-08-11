@@ -335,6 +335,15 @@ export const ru: TranslationResources = {
     todo: {
       title: "Задачи",
       empty: "Заданий пока нет.",
+      tasksProgress: "{{completed}}/{{total}} задач",
+      tasksProgressCurrent: "{{completed}}/{{total}} задач · {{task}}",
+      activity: {
+        created: "Создано задач: {{count}}",
+        added: "Добавлена",
+        started: "Начата",
+        completed: "Завершена",
+        reopened: "Возобновлена",
+      },
     },
     compaction: {
       loading: "Уплотнение...",

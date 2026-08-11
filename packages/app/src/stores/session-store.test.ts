@@ -80,6 +80,60 @@ function permutations<T>(values: readonly T[]): T[][] {
   );
 }
 
+function taskTexts(tasks: ReadonlyArray<{ text: string }>): string[] {
+  return tasks.map((task) => task.text);
+}
+
+describe("agent task state", () => {
+  it("notifies the task subscriber only when its task snapshot changes", () => {
+    initializeTestSession();
+    const snapshots: string[][] = [];
+    const unsubscribe = useSessionStore.subscribe(
+      (state) => state.sessions["test-server"]?.agentTasks.get("agent-1") ?? [],
+      (tasks) => snapshots.push(taskTexts(tasks)),
+    );
+
+    const tasks = [{ id: "1", text: "Inspect", status: "pending" as const, completed: false }];
+    useSessionStore.getState().setAgentTasks("test-server", "agent-1", tasks);
+    useSessionStore.getState().setMessages("test-server", []);
+    useSessionStore.getState().setAgentTasks("test-server", "agent-1", [...tasks]);
+    useSessionStore
+      .getState()
+      .setAgentTasks("test-server", "agent-1", [
+        { ...tasks[0], status: "completed", completed: true },
+      ]);
+    unsubscribe();
+
+    expect(snapshots).toEqual([["Inspect"], ["Inspect"]]);
+  });
+
+  it("restores the latest task snapshot from an authoritative timeline", () => {
+    initializeTestSession();
+    const todo: StreamItem = {
+      kind: "todo_list",
+      id: "todo-1",
+      provider: "codex",
+      timestamp: new Date("2026-08-11T10:00:00.000Z"),
+      activity: { type: "started", task: "Verify" },
+      items: [{ text: "Verify", status: "in_progress", completed: false }],
+    };
+
+    useSessionStore.getState().applyAgentTimelineResponseState("test-server", "agent-1", {
+      items: [todo],
+      head: [],
+      range: null,
+      older: "none",
+      newer: false,
+      synchronized: true,
+      acknowledgedClientMessageIds: [],
+    });
+
+    expect(useSessionStore.getState().sessions["test-server"]?.agentTasks.get("agent-1")).toEqual(
+      todo.items,
+    );
+  });
+});
+
 describe("agent timeline state", () => {
   it("commits canonical items, range, and older availability as one synced state", () => {
     initializeTestSession();

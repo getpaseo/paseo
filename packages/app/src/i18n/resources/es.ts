@@ -336,6 +336,15 @@ export const es: TranslationResources = {
     todo: {
       title: "Tareas",
       empty: "Aún no hay tareas.",
+      tasksProgress: "{{completed}}/{{total}} tareas",
+      tasksProgressCurrent: "{{completed}}/{{total}} tareas · {{task}}",
+      activity: {
+        created: "Se crearon {{count}} tareas",
+        added: "Añadida",
+        started: "Iniciada",
+        completed: "Completada",
+        reopened: "Reabierta",
+      },
     },
     compaction: {
       loading: "Compactando...",

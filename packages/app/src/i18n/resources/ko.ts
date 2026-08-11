@@ -334,6 +334,15 @@ export const ko: TranslationResources = {
     todo: {
       title: "작업",
       empty: "아직 작업이 없습니다.",
+      tasksProgress: "작업 {{completed}}/{{total}}개",
+      tasksProgressCurrent: "작업 {{completed}}/{{total}}개 · {{task}}",
+      activity: {
+        created: "작업 {{count}}개 생성",
+        added: "추가됨",
+        started: "시작됨",
+        completed: "완료됨",
+        reopened: "다시 열림",
+      },
     },
     compaction: {
       loading: "압축하는 중...",

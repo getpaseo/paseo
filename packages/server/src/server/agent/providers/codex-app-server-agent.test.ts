@@ -22,10 +22,30 @@ import {
   codexAppServerTurnInputFromPrompt,
   listCodexSkills,
   mapCodexPatchNotificationToToolCall,
+  mapCodexPlanUpdateToTodo,
   mapCodexPlanToToolCall,
   normalizeCodexOutputSchema,
   toAgentUsage,
 } from "./codex-app-server-agent.js";
+
+describe("mapCodexPlanUpdateToTodo", () => {
+  test("preserves checklist progress without creating a plan card", () => {
+    expect(
+      mapCodexPlanUpdateToTodo([
+        { step: "Inspect", status: "completed" },
+        { step: "Implement", status: "inProgress" },
+        { step: "Verify", status: "pending" },
+      ]),
+    ).toEqual({
+      type: "todo",
+      items: [
+        { id: "0", text: "Inspect", status: "completed", completed: true },
+        { id: "1", text: "Implement", status: "in_progress", completed: false },
+        { id: "2", text: "Verify", status: "pending", completed: false },
+      ],
+    });
+  });
+});
 import { CodexAppServerClient } from "./codex/app-server-transport.js";
 import {
   createFakeCodexAppServer,

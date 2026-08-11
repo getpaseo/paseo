@@ -360,6 +360,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const applyAgentTimelineResponseState = useSessionStore(
     (state) => state.applyAgentTimelineResponseState,
   );
+  const setAgentTasks = useSessionStore((state) => state.setAgentTasks);
   const setAgents = useSessionStore((state) => state.setAgents);
   const setWorkspaces = useSessionStore((state) => state.setWorkspaces);
   const flushAgentLastActivity = useSessionStore((state) => state.flushAgentLastActivity);
@@ -739,6 +740,19 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       const { agentId, event, timestamp, seq, epoch } = message.payload;
       const parsedTimestamp = new Date(timestamp);
       const streamEvent = event;
+      if (event.type === "timeline" && event.item.type === "todo") {
+        setAgentTasks(
+          serverId,
+          agentId,
+          event.item.items.map((task) => ({
+            text: task.text,
+            completed: task.completed,
+            ...(task.id ? { id: task.id } : {}),
+            ...(task.status ? { status: task.status } : {}),
+            ...(task.activeForm ? { activeForm: task.activeForm } : {}),
+          })),
+        );
+      }
       if (
         event.type === "turn_started" ||
         event.type === "turn_completed" ||
@@ -1097,6 +1111,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     setAgentStreamTail,
     setAgentStreamHead,
     setAgentStreamState,
+    setAgentTasks,
     applyAgentTurnLiveness,
     clearAgentStreamHead,
     setAgentTimelineCursor,

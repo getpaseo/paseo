@@ -336,6 +336,15 @@ export const ja: TranslationResources = {
     todo: {
       title: "タスク",
       empty: "タスクがまだありません。",
+      tasksProgress: "{{completed}}/{{total}}タスク",
+      tasksProgressCurrent: "{{completed}}/{{total}}タスク · {{task}}",
+      activity: {
+        created: "{{count}}件のタスクを作成",
+        added: "追加",
+        started: "開始",
+        completed: "完了",
+        reopened: "再開",
+      },
     },
     compaction: {
       loading: "コンテキストを圧縮中...",
