@@ -39,6 +39,7 @@ export const ACP_PROVIDER_ICON_NAMES = [
   "poolside",
   "qoder",
   "qwen-code",
+  "reasonix",
   "sigit",
   "stakpak",
   "traecli",

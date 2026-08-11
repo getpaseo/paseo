@@ -47,6 +47,7 @@ describe("ACP provider catalog", () => {
     expect(findProvider("junie").command).toEqual(["junie", "--acp", "true"]);
     expect(findProvider("kiro").command).toEqual(["kiro-cli", "acp"]);
     expect(findProvider("poolside").command).toEqual(["pool", "acp"]);
+    expect(findProvider("reasonix").command).toEqual(["reasonix", "acp"]);
     expect(findProvider("traecli").command).toEqual(["traecli", "acp", "serve"]);
   });
 
