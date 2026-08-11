@@ -57,6 +57,7 @@ import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerHeightMirror } from "./height-mirror";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import {
   resolveSendTooltipLabel,
@@ -434,6 +435,7 @@ function usePasteAttachmentsEffect(args: PasteAttachmentsEffectArgs): void {
     onAddImages,
     onPasteTextFile,
   } = args;
+  const stableOnChangeText = useStableEvent(onChangeText);
 
   useEffect(() => {
     if (!isWeb || (!onAddImages && !onPasteTextFile)) return;
@@ -491,7 +493,7 @@ function usePasteAttachmentsEffect(args: PasteAttachmentsEffectArgs): void {
           selectionStart,
           selectionEnd,
         });
-        onChangeText(restoredText);
+        stableOnChangeText(restoredText);
       };
 
       void onPasteTextFile(file)
@@ -519,8 +521,8 @@ function usePasteAttachmentsEffect(args: PasteAttachmentsEffectArgs): void {
     isDictating,
     isRealtimeVoiceForCurrentAgent,
     onAddImages,
-    onChangeText,
     onPasteTextFile,
+    stableOnChangeText,
   ]);
 }
 
