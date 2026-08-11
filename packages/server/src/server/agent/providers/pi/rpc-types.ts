@@ -186,8 +186,15 @@ export type PiAgentSessionEvent =
       isError?: boolean;
     }
   | { type: "compaction_start"; reason?: "manual" | "threshold" | "overflow" | string }
-  | { type: "compaction_end"; reason?: string; errorMessage?: string; aborted?: boolean }
-  | { type: "agent_end"; messages?: PiAgentMessage[] };
+  | {
+      type: "compaction_end";
+      reason?: string;
+      errorMessage?: string;
+      aborted?: boolean;
+      willRetry?: boolean;
+    }
+  | { type: "agent_end"; messages?: PiAgentMessage[]; willRetry?: boolean }
+  | { type: "agent_settled" };
 
 export type PiRuntimeEvent =
   | PiAgentSessionEvent
