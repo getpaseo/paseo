@@ -27,7 +27,7 @@ const DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS = 5 * 60 * 1000;
 function resolveFetchersFrom(
   options: ProviderUsageServiceOptions,
   logger: () => Logger,
-): () => ProviderUsageFetcher[] {
+): () => ProviderUsageFetcher[] | Promise<ProviderUsageFetcher[]> {
   const { fetchers } = options;
   if (typeof fetchers === "function") {
     return fetchers;
@@ -45,7 +45,7 @@ function resolveFetchersFrom(
 
 export class ProviderUsageService {
   private readonly logger: Logger;
-  private readonly resolveFetchers: () => ProviderUsageFetcher[];
+  private readonly resolveFetchers: () => ProviderUsageFetcher[] | Promise<ProviderUsageFetcher[]>;
   private readonly cacheTtlMs: number;
   private readonly now: () => number;
   private cached: { fetchedAtMs: number; result: ProviderUsageListResult } | null = null;
@@ -84,7 +84,7 @@ export class ProviderUsageService {
   }
 
   private async fetchFreshUsage(nowMs: number): Promise<ProviderUsageListResult> {
-    const fetchers = this.resolveFetchers();
+    const fetchers = await this.resolveFetchers();
     const settled = await Promise.allSettled(fetchers.map((fetcher) => fetcher.fetchUsage()));
     const providers = settled.map((result, index) => {
       const fetcher = fetchers[index];

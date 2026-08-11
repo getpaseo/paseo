@@ -7,12 +7,15 @@ export interface ProviderUsageFetcher {
   readonly providerId: string;
   readonly displayName: string;
   /**
-   * The account this fetcher reports on. Two fetchers sharing a key describe one
+   * The account this fetcher reports on. Two fetchers resolving the same key describe one
    * account, and only the first is kept: the second would draw the same bars again and
    * refresh the same OAuth token, whose rotation would invalidate the first. Providers
    * that cannot identify an account leave this out and are never deduplicated.
+   *
+   * Resolving it means looking at credentials, so this is async — and it runs before any
+   * usage is fetched, because a duplicate that reached `fetchUsage` has already raced.
    */
-  readonly accountKey?: string;
+  resolveAccountKey?(): Promise<string | undefined>;
   fetchUsage(): Promise<ProviderUsage>;
 }
 
@@ -39,11 +42,14 @@ export interface ProviderUsageFetcherManifestEntry {
   create(options: ProviderUsageFetcherFactoryOptions): ProviderUsageFetcher;
   /**
    * A fetcher for one profile of this provider. A profile that turns out to report on an
-   * account another card already covers is dropped by its accountKey, so this only has to
+   * account another card already covers is dropped by its account key, so this only has to
    * describe the profile. Providers that cannot tell profiles apart leave this out.
+   *
+   * Returns null for a profile whose account this provider cannot locate, which earns no
+   * card at all — better than a card reading someone else's numbers.
    */
   createForProfile?(
     options: ProviderUsageFetcherFactoryOptions,
     profile: ProviderUsageProfile,
-  ): ProviderUsageFetcher;
+  ): ProviderUsageFetcher | null;
 }

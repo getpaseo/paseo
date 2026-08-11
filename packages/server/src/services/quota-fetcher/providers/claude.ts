@@ -326,16 +326,22 @@ function resolveClaudeUsageHome(claudeHome?: string): string {
   return claudeHome || process.env["CLAUDE_HOME"] || resolveClaudeConfigDir();
 }
 
+/**
+ * The account key for credentials that came out of the login Keychain, which is one
+ * store for the whole machine no matter which config directory sent us looking.
+ */
+const CLAUDE_KEYCHAIN_ACCOUNT_KEY = `keychain:${CLAUDE_KEYCHAIN_SERVICE}`;
+
 export class ClaudeQuotaProvider implements ProviderUsageFetcher {
   readonly providerId: string;
   readonly displayName: string;
-  readonly accountKey: string;
 
   private readonly logger: Logger;
   private readonly claudeHome: string;
   private readonly readKeychainCredentials: () => Promise<unknown | null>;
   private readonly platform: typeof process.platform;
   private readonly fetchApi: ProviderApiFetch;
+  private credentials: Promise<ClaudeCredentialRecord | null> | null = null;
 
   constructor(options: ClaudeQuotaProviderOptions) {
     this.providerId = options.providerId ?? "claude";
@@ -345,15 +351,25 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
       providerId: this.providerId,
     });
     this.claudeHome = resolveClaudeUsageHome(options.claudeHome);
-    // Two profiles pointed at one directory read one account's credentials.
-    this.accountKey = resolve(this.claudeHome);
     this.readKeychainCredentials = options.claudeKeychainReader ?? readClaudeKeychainCredentials;
     this.platform = options.platform ?? process.platform;
     this.fetchApi = options.fetch ?? fetch;
   }
 
+  /**
+   * Where this card's credentials actually come from. Usually the config directory — two
+   * profiles pointed at one directory read one account — but a directory with no usable
+   * `.credentials.json` falls back to the machine-wide Keychain on macOS, and every
+   * profile that lands there is the same account under different directory names.
+   */
+  async resolveAccountKey(): Promise<string> {
+    const credentials = await this.loadCredentials();
+    return credentials?.filePath === null ? CLAUDE_KEYCHAIN_ACCOUNT_KEY : resolve(this.claudeHome);
+  }
+
   async fetchUsage(): Promise<ProviderUsage> {
-    const credentials = await this.readCredentials();
+    const credentials = await this.loadCredentials();
+    this.credentials = null;
     if (!credentials) {
       return unavailableUsage(this);
     }
@@ -445,6 +461,17 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
       parsed.push(limit);
     }
     return parsed;
+  }
+
+  /**
+   * Shares one credential read between `resolveAccountKey` and the `fetchUsage` that
+   * follows it, which keeps the Keychain lookup — a `security` subprocess — off the
+   * second caller. `fetchUsage` drops it again, because refreshing rotates the token on
+   * disk and the next refresh has to see the new one.
+   */
+  private loadCredentials(): Promise<ClaudeCredentialRecord | null> {
+    this.credentials ??= this.readCredentials();
+    return this.credentials;
   }
 
   private async readCredentials(): Promise<ClaudeCredentialRecord | null> {

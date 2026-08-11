@@ -14,7 +14,7 @@ import { GrokQuotaProvider } from "./providers/grok.js";
 import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
-import { createProviderUsageFetchers } from "./manifest.js";
+import { createProviderUsageFetchers, dedupeProviderUsageFetchers } from "./manifest.js";
 import { providerUsageProfilesFrom } from "./profiles.js";
 import { ProviderUsageService } from "./service.js";
 
@@ -257,7 +257,9 @@ describe("ProviderUsageService", () => {
     const first = service.listUsage();
     const second = service.listUsage();
 
-    expect(calls).toBe(1);
+    // Resolving the fetchers is async — account keys come from credentials — so the first
+    // request reaches the fetcher a tick later. Both requests still share that one call.
+    await vi.waitFor(() => expect(calls).toBe(1));
     resolveUsage?.({
       providerId: "claude",
       displayName: "Claude",
@@ -1928,7 +1930,7 @@ describe("provider usage profiles", () => {
 
   it("gives a Claude profile its own card, fed by the profile's config dir", async () => {
     writeClaudeCredentials(profileHome, "at_profile");
-    const fetchers = createProviderUsageFetchers({
+    const fetchers = await createProviderUsageFetchers({
       logger: createLogger(),
       fetch: mockFetch(
         new Map([
@@ -1987,7 +1989,7 @@ describe("provider usage profiles", () => {
   // Two cards on one credentials file would not just draw the same bars twice: both
   // would refresh the same OAuth token, and the rotated token from one write would
   // invalidate the other.
-  it("reports one card when two profiles share a config dir", () => {
+  it("reports one card when two profiles share a config dir", async () => {
     const profile = (providerId: string, label: string) => ({
       providerId,
       baseProviderId: "claude",
@@ -1995,7 +1997,7 @@ describe("provider usage profiles", () => {
       env: { CLAUDE_CONFIG_DIR: profileHome },
     });
 
-    const fetchers = createProviderUsageFetchers({
+    const fetchers = await createProviderUsageFetchers({
       logger: createLogger(),
       fetch: mockFetch(new Map()),
       profiles: providerUsageProfilesFrom([
@@ -2011,11 +2013,144 @@ describe("provider usage profiles", () => {
     ).toEqual(["claude", "claude-fast"]);
   });
 
-  it("skips a profile that shares the base provider's config dir", () => {
+  // On macOS the credentials live in the login Keychain rather than in the config dir, so
+  // two profiles pointed at their own empty directories still read one shared account.
+  // Telling them apart by directory would draw that account twice.
+  it("reports one card when two macOS profiles fall back to the same keychain", async () => {
+    const otherHome = mkdtempSync(join(tmpdir(), "paseo-claude-profile-"));
+    const claudeFor = (providerId: string, claudeHome: string) =>
+      new ClaudeQuotaProvider({
+        logger: createLogger(),
+        fetch: mockFetch(new Map()),
+        providerId,
+        claudeHome,
+        platform: "darwin",
+        claudeKeychainReader: async () => ({
+          claudeAiOauth: { accessToken: "at_keychain", refreshToken: "rt_keychain" },
+        }),
+      });
+
+    try {
+      const kept = await dedupeProviderUsageFetchers([
+        claudeFor("claude", profileHome),
+        claudeFor("claude-alt", otherHome),
+      ]);
+
+      expect(kept.map((fetcher) => fetcher.providerId)).toEqual(["claude"]);
+    } finally {
+      rmSync(otherHome, { recursive: true, force: true });
+    }
+  });
+
+  // A profile that keeps its own credentials file is its own account, even on macOS where
+  // the other profile falls back to the Keychain.
+  it("keeps a macOS profile whose config dir holds its own credentials", async () => {
+    const otherHome = mkdtempSync(join(tmpdir(), "paseo-claude-profile-"));
+    writeClaudeCredentials(otherHome, "at_profile");
+    const claudeFor = (providerId: string, claudeHome: string) =>
+      new ClaudeQuotaProvider({
+        logger: createLogger(),
+        fetch: mockFetch(new Map()),
+        providerId,
+        claudeHome,
+        platform: "darwin",
+        claudeKeychainReader: async () => ({
+          claudeAiOauth: { accessToken: "at_keychain", refreshToken: "rt_keychain" },
+        }),
+      });
+
+    try {
+      const kept = await dedupeProviderUsageFetchers([
+        claudeFor("claude", profileHome),
+        claudeFor("claude-alt", otherHome),
+      ]);
+
+      expect(kept.map((fetcher) => fetcher.providerId)).toEqual(["claude", "claude-alt"]);
+    } finally {
+      rmSync(otherHome, { recursive: true, force: true });
+    }
+  });
+
+  // Resolving an account key reads credentials — a file, or a Keychain subprocess — so it
+  // can fail on its own. A fetcher that cannot say which account it covers is simply never
+  // deduplicated; it must not take the other cards down with it.
+  it("keeps every card when one fetcher fails to resolve its account", async () => {
+    const kept = await dedupeProviderUsageFetchers([
+      {
+        providerId: "claude",
+        displayName: "Claude",
+        resolveAccountKey: async () => {
+          throw new Error("Keychain locked");
+        },
+        fetchUsage: async () => ({
+          providerId: "claude",
+          displayName: "Claude",
+          status: "available" as const,
+          planLabel: null,
+          windows: [],
+        }),
+      },
+      usageFetcher({
+        providerId: "codex",
+        displayName: "Codex",
+        status: "available",
+        planLabel: "Pro 20x",
+        windows: [],
+      }),
+    ]);
+
+    expect(kept.map((fetcher) => fetcher.providerId)).toEqual(["claude", "codex"]);
+  });
+
+  // Resolving the account key reads the credentials, and reusing that read for the fetch
+  // that follows saves a Keychain subprocess. It must not outlive the refresh: the token
+  // rotates on disk, and a second refresh replaying the old one reports nothing.
+  it("re-reads credentials on a later refresh of the same fetcher", async () => {
+    const tokens: string[] = [];
+    writeClaudeCredentials(profileHome, "at_first");
+    const provider = new ClaudeQuotaProvider({
+      logger: createLogger(),
+      claudeHome: profileHome,
+      claudeKeychainReader: async () => null,
+      fetch: (async (_url: RequestInfo | URL, init?: RequestInit) => {
+        const headers = new Headers(init?.headers);
+        tokens.push(headers.get("Authorization") ?? "");
+        return jsonResponse({ seven_day: { utilization: 3, resets_at: null } });
+      }) as unknown as typeof fetch,
+    });
+
+    await provider.fetchUsage();
+    writeClaudeCredentials(profileHome, "at_second");
+    await provider.fetchUsage();
+
+    expect(tokens).toEqual(["Bearer at_first", "Bearer at_second"]);
+  });
+
+  // A relative CLAUDE_CONFIG_DIR resolves against the daemon's working directory here and
+  // against the project's in the agent, so no directory this card could read is the one
+  // the agent signs in to. Report nothing rather than another account's numbers.
+  it("skips a Claude profile whose config dir is relative", async () => {
+    const fetchers = await createProviderUsageFetchers({
+      logger: createLogger(),
+      fetch: mockFetch(new Map()),
+      profiles: providerUsageProfilesFrom([
+        {
+          providerId: "claude-alt",
+          baseProviderId: "claude",
+          label: "Claude (alt)",
+          env: { CLAUDE_CONFIG_DIR: ".claude-alt" },
+        },
+      ]),
+    });
+
+    expect(fetchers.map((fetcher) => fetcher.providerId)).not.toContain("claude-alt");
+  });
+
+  it("skips a profile that shares the base provider's config dir", async () => {
     vi.stubEnv("CLAUDE_HOME", undefined);
     vi.stubEnv("CLAUDE_CONFIG_DIR", profileHome);
 
-    const fetchers = createProviderUsageFetchers({
+    const fetchers = await createProviderUsageFetchers({
       logger: createLogger(),
       fetch: mockFetch(new Map()),
       profiles: providerUsageProfilesFrom([
