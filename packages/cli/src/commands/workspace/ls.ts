@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandError, ListResult } from "../../output/index.js";
-import { collectWorkspaces, toWorkspaceRow, workspaceSchema, type WorkspaceRow } from "./shared.js";
+import { toWorkspaceRow, workspaceSchema, type WorkspaceRow } from "./shared.js";
 
 export async function runLsCommand(
   options: { host?: string },
@@ -16,8 +16,16 @@ export async function runLsCommand(
     } satisfies CommandError;
   });
   try {
-    const workspaces = await collectWorkspaces(client);
-    return { type: "list", data: workspaces.map(toWorkspaceRow), schema: workspaceSchema };
+    const workspaces: WorkspaceRow[] = [];
+    let cursor: string | undefined;
+    do {
+      const payload = await client.fetchWorkspaces({
+        page: { limit: 200, ...(cursor ? { cursor } : {}) },
+      });
+      workspaces.push(...payload.entries.map(toWorkspaceRow));
+      cursor = payload.pageInfo.nextCursor ?? undefined;
+    } while (cursor);
+    return { type: "list", data: workspaces, schema: workspaceSchema };
   } finally {
     await client.close().catch(() => undefined);
   }

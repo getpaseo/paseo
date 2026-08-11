@@ -1,28 +1,17 @@
 import type { Command } from "commander";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandError, OutputSchema, SingleResult } from "../../output/index.js";
-import { collectWorkspaces, type WorkspaceListClient } from "./shared.js";
 
-export interface WorkspaceRenameResult {
+interface WorkspaceRenameResult {
   workspaceId: string;
-  /**
-   * Display name after the rename: the title, or the derived name after
-   * --reset. Null when the derived name could not be read back.
-   */
-  name: string | null;
   /** Raw title override; null once it has been reset to the derived name. */
   title: string | null;
-}
-
-export interface WorkspaceRenameClient extends WorkspaceListClient {
-  setWorkspaceTitle(workspaceId: string, title: string | null): Promise<{ title: string | null }>;
 }
 
 const workspaceRenameSchema: OutputSchema<WorkspaceRenameResult> = {
   idField: "workspaceId",
   columns: [
     { header: "WORKSPACE ID", field: "workspaceId", width: 20 },
-    { header: "NAME", field: "name", width: 30 },
     { header: "TITLE", field: "title", width: 30 },
   ],
 };
@@ -76,49 +65,16 @@ export async function runRenameCommand(
     } satisfies CommandError;
   });
   try {
-    const applied = await applyWorkspaceTitle(client, workspaceId, title);
+    const applied = await client.setWorkspaceTitle(workspaceId, title);
     return {
       type: "single",
-      data: await resolveRenameResult(client, workspaceId, applied),
+      data: { workspaceId, title: applied.title },
       schema: workspaceRenameSchema,
     };
-  } finally {
-    await client.close().catch(() => undefined);
-  }
-}
-
-async function applyWorkspaceTitle(
-  client: WorkspaceRenameClient,
-  workspaceId: string,
-  title: string | null,
-): Promise<string | null> {
-  try {
-    const { title: applied } = await client.setWorkspaceTitle(workspaceId, title);
-    return applied;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw { code: "WORKSPACE_RENAME_FAILED", message } satisfies CommandError;
+  } finally {
+    await client.close().catch(() => undefined);
   }
-}
-
-/**
- * A set title is itself the resolved display name, so only a reset has to read
- * the descriptor back to report what the name reverted to. That read runs after
- * the rename has already been applied, so it degrades to a null name instead of
- * failing a command that succeeded.
- */
-export async function resolveRenameResult(
-  client: WorkspaceListClient,
-  workspaceId: string,
-  title: string | null,
-): Promise<WorkspaceRenameResult> {
-  if (title !== null) {
-    return { workspaceId, name: title, title };
-  }
-  const workspaces = await collectWorkspaces(client).catch(() => []);
-  return {
-    workspaceId,
-    name: workspaces.find((entry) => entry.id === workspaceId)?.name ?? null,
-    title,
-  };
 }

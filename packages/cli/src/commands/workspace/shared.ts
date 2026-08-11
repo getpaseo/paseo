@@ -1,9 +1,4 @@
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
-import type {
-  FetchWorkspacesEntry,
-  FetchWorkspacesOptions,
-  FetchWorkspacesPageInfo,
-} from "@getpaseo/client/internal/daemon-client";
 import type { OutputSchema } from "../../output/index.js";
 
 export interface WorkspaceRow {
@@ -24,31 +19,6 @@ export const workspaceSchema: OutputSchema<WorkspaceRow> = {
     { header: "CWD", field: "cwd", width: 42 },
   ],
 };
-
-const WORKSPACE_PAGE_LIMIT = 200;
-
-export interface WorkspaceListClient {
-  fetchWorkspaces(options?: FetchWorkspacesOptions): Promise<{
-    entries: FetchWorkspacesEntry[];
-    pageInfo: FetchWorkspacesPageInfo;
-  }>;
-}
-
-/** Page through every active workspace the daemon knows about. */
-export async function collectWorkspaces(
-  client: WorkspaceListClient,
-): Promise<FetchWorkspacesEntry[]> {
-  const workspaces: FetchWorkspacesEntry[] = [];
-  let cursor: string | undefined;
-  do {
-    const payload = await client.fetchWorkspaces({
-      page: { limit: WORKSPACE_PAGE_LIMIT, ...(cursor ? { cursor } : {}) },
-    });
-    workspaces.push(...payload.entries);
-    cursor = payload.pageInfo.nextCursor ?? undefined;
-  } while (cursor);
-  return workspaces;
-}
 
 export function toWorkspaceRow(workspace: WorkspaceDescriptorPayload): WorkspaceRow {
   return {
