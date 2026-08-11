@@ -374,6 +374,8 @@ interface ModelBrowserPressableProps {
   onPress: () => void;
   hitSlop?: number;
   accessibilityLabel?: string;
+  /** Only rows that can express selection pass this; the rest stay unannotated. */
+  accessibilitySelected?: boolean;
   testID?: string;
 }
 
@@ -383,6 +385,7 @@ function ModelBrowserPressable({
   onPress,
   hitSlop,
   accessibilityLabel,
+  accessibilitySelected,
   testID,
 }: ModelBrowserPressableProps) {
   const independentScrollGesture = useContext(IndependentScrollGestureContext);
@@ -419,6 +422,10 @@ function ModelBrowserPressable({
     },
     [onPress],
   );
+  const accessibilityState = useMemo(
+    () => (accessibilitySelected === undefined ? undefined : { selected: accessibilitySelected }),
+    [accessibilitySelected],
+  );
 
   if (!independentScrollGesture) {
     return (
@@ -428,6 +435,8 @@ function ModelBrowserPressable({
         style={style}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
+        accessibilityState={accessibilityState}
+        aria-selected={accessibilitySelected}
         testID={testID}
       >
         {children}
@@ -444,6 +453,8 @@ function ModelBrowserPressable({
         accessible
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
+        accessibilityState={accessibilityState}
+        aria-selected={accessibilitySelected}
         accessibilityActions={[{ name: "activate" }]}
         onAccessibilityAction={handleAccessibilityAction}
         style={resolvedStyle}
@@ -507,7 +518,14 @@ function ModelBrowserRow({
   const hasTrailing = selected || trailingSlot;
 
   return (
-    <ModelBrowserPressable onPress={onPress} style={pressableStyle} testID={testID}>
+    <ModelBrowserPressable
+      onPress={onPress}
+      style={pressableStyle}
+      // A profile row is an action, not a selection, so it carries no selection
+      // state at all — only rows that draw the checkmark claim one.
+      accessibilitySelected={selectionIndicator ? selected : undefined}
+      testID={testID}
+    >
       <View style={styles.browserRowContent}>
         <View style={styles.browserRowLeading}>{leadingSlot}</View>
         <View style={contentStyle}>
