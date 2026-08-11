@@ -94,14 +94,16 @@ describe("agent task state", () => {
     );
 
     const tasks = [{ id: "1", text: "Inspect", status: "pending" as const, completed: false }];
-    useSessionStore.getState().setAgentTasks("test-server", "agent-1", tasks);
-    useSessionStore.getState().setMessages("test-server", []);
-    useSessionStore.getState().setAgentTasks("test-server", "agent-1", [...tasks]);
     useSessionStore
       .getState()
-      .setAgentTasks("test-server", "agent-1", [
-        { ...tasks[0], status: "completed", completed: true },
-      ]);
+      .setAgentStreamState("test-server", "agent-1", { taskSnapshot: tasks });
+    useSessionStore.getState().setMessages("test-server", []);
+    useSessionStore
+      .getState()
+      .setAgentStreamState("test-server", "agent-1", { taskSnapshot: [...tasks] });
+    useSessionStore.getState().setAgentStreamState("test-server", "agent-1", {
+      taskSnapshot: [{ ...tasks[0], status: "completed", completed: true }],
+    });
     unsubscribe();
 
     expect(snapshots).toEqual([["Inspect"], ["Inspect"]]);

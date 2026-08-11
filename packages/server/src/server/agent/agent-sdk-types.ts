@@ -1,12 +1,13 @@
 import type {
   AgentProviderNotice,
+  AgentTaskItem,
   ProviderOptions,
   ToolPolicy,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
-export type { AgentProviderNotice };
+export type { AgentProviderNotice, AgentTaskItem };
 
 export type AgentProvider = string;
 
@@ -376,14 +377,6 @@ export interface CompactionTimelineItem {
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
   preTokens?: number;
-}
-
-export interface AgentTaskItem {
-  text: string;
-  completed: boolean;
-  id?: string;
-  status?: "pending" | "in_progress" | "completed";
-  activeForm?: string;
 }
 
 export type AgentTimelineItem =

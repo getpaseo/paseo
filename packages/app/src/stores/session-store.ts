@@ -403,6 +403,18 @@ function latestTasksFromStream(items: readonly StreamItem[]): TodoEntry[] {
   return [];
 }
 
+function updateAgentTasks(
+  current: Map<string, TodoEntry[]>,
+  agentId: string,
+  taskSnapshot: TodoEntry[] | undefined,
+): Map<string, TodoEntry[]> {
+  if (taskSnapshot === undefined || equal(current.get(agentId) ?? [], taskSnapshot)) return current;
+  const next = new Map(current);
+  if (taskSnapshot.length > 0) next.set(agentId, taskSnapshot);
+  else next.delete(agentId);
+  return next;
+}
+
 export type WorkspaceRestoreStatus = "restoring" | "failed" | "needs-host-upgrade";
 
 // Per-session state
@@ -533,9 +545,9 @@ interface SessionStoreActions {
       tail?: StreamItem[];
       head?: StreamItem[];
       acknowledgedClientMessageIds?: readonly string[];
+      taskSnapshot?: TodoEntry[];
     },
   ) => void;
-  setAgentTasks: (serverId: string, agentId: string, tasks: TodoEntry[]) => void;
   applyAgentTurnLiveness: (
     serverId: string,
     agentId: string,
@@ -1165,8 +1177,10 @@ export const useSessionStore = create<SessionStore>()(
             state.acknowledgedClientMessageIds ?? [],
           );
           const changedSubmissions = observedSubmissions !== currentSubmissions;
+          const agentTasks = updateAgentTasks(session.agentTasks, agentId, state.taskSnapshot);
+          const changedTasks = agentTasks !== session.agentTasks;
 
-          if (!changedTail && !changedHead && !changedSubmissions) {
+          if (!changedTail && !changedHead && !changedSubmissions && !changedTasks) {
             return prev;
           }
 
@@ -1188,27 +1202,9 @@ export const useSessionStore = create<SessionStore>()(
                 ...session,
                 agentStreamTail: nextTail,
                 agentStreamHead: nextHead,
+                agentTasks,
                 messageSubmissions,
               },
-            },
-          };
-        });
-      },
-
-      setAgentTasks: (serverId, agentId, tasks) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) return prev;
-          const current = session.agentTasks.get(agentId) ?? [];
-          if (equal(current, tasks)) return prev;
-          const agentTasks = new Map(session.agentTasks);
-          if (tasks.length > 0) agentTasks.set(agentId, tasks);
-          else agentTasks.delete(agentId);
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: { ...session, agentTasks },
             },
           };
         });
