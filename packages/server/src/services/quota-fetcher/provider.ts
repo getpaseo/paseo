@@ -3,6 +3,12 @@ import type { ProviderUsage } from "../../server/messages.js";
 
 export type ProviderApiFetch = typeof fetch;
 
+export interface ClaudeUsageLaunchConfig {
+  command?: readonly string[];
+  teamClaudeConfigPath?: string;
+  xdgConfigHome?: string;
+}
+
 export interface ProviderUsageFetcher {
   readonly providerId: string;
   readonly displayName: string;
@@ -12,6 +18,7 @@ export interface ProviderUsageFetcher {
 export interface ProviderUsageFetcherFactoryOptions {
   logger: Logger;
   fetch?: ProviderApiFetch;
+  claudeLaunch?: ClaudeUsageLaunchConfig;
 }
 
 export interface ProviderUsageFetcherManifestEntry {

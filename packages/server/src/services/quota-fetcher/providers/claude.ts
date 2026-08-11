@@ -10,11 +10,16 @@ import type {
   ProviderUsageDetail,
   ProviderUsageWindow,
 } from "../../../server/messages.js";
-import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
+import type {
+  ClaudeUsageLaunchConfig,
+  ProviderApiFetch,
+  ProviderUsageFetcher,
+} from "../provider.js";
 import {
   ApiNumberSchema,
   fetchProviderApi,
   toneFromUsedPct,
+  toIsoStringOrNull,
   unavailableUsage,
   windowFromUsedPct,
 } from "../usage.js";
@@ -24,6 +29,8 @@ const CLAUDE_KEYCHAIN_TIMEOUT_MS = 2_000;
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
 const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
+const TEAMCLAUDE_STATUS_TIMEOUT_MS = 2_000;
+const TEAMCLAUDE_SOURCE_LABEL = "TeamClaude active account";
 
 const ClaudeCredentialsSchema = z.object({
   claudeAiOauth: z
@@ -76,6 +83,37 @@ const ClaudeTokenRefreshSchema = z.object({
   refresh_token: z.string().optional(),
 });
 
+const TeamClaudeServerStateSchema = z.object({
+  port: z.number().int().min(1).max(65_535),
+});
+
+const TeamClaudeQuotaWindowSchema = z.object({
+  utilization: ApiNumberSchema.refine((value) => value >= 0),
+  reset: ApiNumberSchema.nullish(),
+});
+
+const TeamClaudeAccountSchema = z.object({
+  name: z.string().min(1),
+  provider: z.literal("anthropic"),
+  quota: z.object({
+    unified5h: ApiNumberSchema.refine((value) => value >= 0).nullish(),
+    unified7d: ApiNumberSchema.refine((value) => value >= 0).nullish(),
+    unified5hReset: ApiNumberSchema.nullish(),
+    unified7dReset: ApiNumberSchema.nullish(),
+    modelWeekly: z
+      .object({
+        "7d_oi": TeamClaudeQuotaWindowSchema.optional(),
+      })
+      .passthrough()
+      .nullish(),
+  }),
+});
+
+const TeamClaudeStatusSchema = z.object({
+  currentAccount: z.string().min(1),
+  accounts: z.array(z.unknown()),
+});
+
 type ClaudeCredentials = z.infer<typeof ClaudeCredentialsSchema>;
 type ClaudeUsageResponse = z.infer<typeof ClaudeUsageResponseSchema>;
 type ClaudeTokenRefresh = z.infer<typeof ClaudeTokenRefreshSchema>;
@@ -94,6 +132,7 @@ interface ClaudeQuotaProviderOptions {
   claudeKeychainReader?: () => Promise<unknown | null>;
   platform?: typeof process.platform;
   fetch?: ProviderApiFetch;
+  claudeLaunch?: ClaudeUsageLaunchConfig;
 }
 
 function buildClaudePlan(
@@ -297,6 +336,28 @@ function scopedWindows(limits: ScopedLimit[]): ProviderUsageWindow[] {
   });
 }
 
+function isTeamClaudeRunCommand(command: readonly string[] | undefined): boolean {
+  const executable = command?.[0]?.split(/[\\/]/).at(-1);
+  return executable === "teamcodex" && command?.[1] === "run";
+}
+
+function teamClaudeWindow(input: {
+  id: string;
+  label: string;
+  utilization: number | null | undefined;
+  reset: number | null | undefined;
+}): ProviderUsageWindow | null {
+  if (input.utilization == null) return null;
+  const usedPct = input.utilization * 100;
+  return windowFromUsedPct({
+    id: input.id,
+    label: input.label,
+    utilizationPct: usedPct,
+    resetsAt: input.reset == null ? null : toIsoStringOrNull(input.reset),
+    tone: toneFromUsedPct(usedPct),
+  });
+}
+
 async function readClaudeKeychainCredentials(): Promise<unknown | null> {
   try {
     const { stdout } = await execFileAsync(
@@ -321,6 +382,7 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
   private readonly readKeychainCredentials: () => Promise<unknown | null>;
   private readonly platform: typeof process.platform;
   private readonly fetchApi: ProviderApiFetch;
+  private readonly claudeLaunch: ClaudeUsageLaunchConfig | undefined;
 
   constructor(options: ClaudeQuotaProviderOptions) {
     this.logger = options.logger.child({ module: "claude-quota-provider" });
@@ -329,9 +391,14 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
     this.readKeychainCredentials = options.claudeKeychainReader ?? readClaudeKeychainCredentials;
     this.platform = options.platform ?? process.platform;
     this.fetchApi = options.fetch ?? fetch;
+    this.claudeLaunch = options.claudeLaunch;
   }
 
   async fetchUsage(): Promise<ProviderUsage> {
+    if (isTeamClaudeRunCommand(this.claudeLaunch?.command)) {
+      return this.fetchTeamClaudeUsage();
+    }
+
     const credentials = await this.readCredentials();
     if (!credentials) {
       return unavailableUsage(this);
@@ -396,6 +463,79 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
       details,
       error: null,
     };
+  }
+
+  private async fetchTeamClaudeUsage(): Promise<ProviderUsage> {
+    try {
+      const state = TeamClaudeServerStateSchema.parse(
+        JSON.parse(await fs.readFile(this.teamClaudeStatePath(), "utf8")),
+      );
+      const response = await fetchProviderApi(
+        this.fetchApi,
+        `http://127.0.0.1:${state.port}/teamclaude/status`,
+        {
+          method: "GET",
+          signal: AbortSignal.timeout(TEAMCLAUDE_STATUS_TIMEOUT_MS),
+        },
+      );
+      if (!response.ok) return unavailableUsage(this);
+
+      const status = TeamClaudeStatusSchema.parse(await response.json());
+      const activeAccount = status.accounts
+        .map((account) => TeamClaudeAccountSchema.safeParse(account))
+        .find((account) => account.success && account.data.name === status.currentAccount);
+      if (!activeAccount?.success) return unavailableUsage(this);
+
+      const quota = activeAccount.data.quota;
+      const windows = [
+        teamClaudeWindow({
+          id: "five_hour",
+          label: "Session",
+          utilization: quota.unified5h,
+          reset: quota.unified5hReset,
+        }),
+        teamClaudeWindow({
+          id: "weekly",
+          label: "Weekly",
+          utilization: quota.unified7d,
+          reset: quota.unified7dReset,
+        }),
+        teamClaudeWindow({
+          id: "weekly_model_fable",
+          label: "Weekly \u00b7 Fable",
+          utilization: quota.modelWeekly?.["7d_oi"]?.utilization,
+          reset: quota.modelWeekly?.["7d_oi"]?.reset,
+        }),
+      ].filter((window): window is ProviderUsageWindow => window !== null);
+
+      return {
+        providerId: this.providerId,
+        displayName: this.displayName,
+        status: "available",
+        planLabel: activeAccount.data.name,
+        sourceLabel: TEAMCLAUDE_SOURCE_LABEL,
+        windows,
+        balances: [],
+        details: [],
+        error: null,
+      };
+    } catch (error) {
+      this.logger.debug({ err: error }, "TeamClaude usage is unavailable");
+      return unavailableUsage(this);
+    }
+  }
+
+  private teamClaudeStatePath(): string {
+    const configPath = this.claudeLaunch?.teamClaudeConfigPath ?? process.env["TEAMCLAUDE_CONFIG"];
+    const resolvedConfigPath =
+      configPath ??
+      join(
+        this.claudeLaunch?.xdgConfigHome ??
+          process.env["XDG_CONFIG_HOME"] ??
+          join(homedir(), ".config"),
+        "teamclaude.json",
+      );
+    return `${resolvedConfigPath.replace(/\.json$/, "")}.server.json`;
   }
 
   /**

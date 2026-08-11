@@ -78,6 +78,8 @@ import {
   type WebSocketRuntimeDiagnosticSnapshot,
 } from "./websocket/runtime-metrics.js";
 import { ProviderUsageService } from "../services/quota-fetcher/service.js";
+import { createProviderUsageFetchers } from "../services/quota-fetcher/manifest.js";
+import type { ClaudeUsageLaunchConfig } from "../services/quota-fetcher/provider.js";
 import { getProcessMemoryDiagnostics, getProcessUptimeSeconds } from "./process-diagnostics.js";
 import {
   CLIENT_SHUTDOWN_RPC_REASON,
@@ -621,6 +623,7 @@ export class VoiceAssistantWebSocketServer {
     browserToolsBroker?: BrowserToolsBroker | null,
     hubRelationships?: HubRelationshipManagement | null,
     workspaceSetupRuntime: WorkspaceSetupRuntime = new WorkspaceSetupRuntime(),
+    claudeUsageLaunch?: ClaudeUsageLaunchConfig,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -700,6 +703,10 @@ export class VoiceAssistantWebSocketServer {
 
     this.providerUsageService = new ProviderUsageService({
       logger: this.logger,
+      fetchers: createProviderUsageFetchers({
+        logger: this.logger,
+        claudeLaunch: claudeUsageLaunch,
+      }),
     });
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);

@@ -31,7 +31,8 @@ test.describe("provider usage tooltip", () => {
             providerId: "mock",
             displayName: "Mock provider",
             status: "available",
-            planLabel: "Test plan",
+            planLabel: "active@example.com",
+            sourceLabel: "TeamClaude active account",
             windows: [
               {
                 id: "session",
@@ -39,6 +40,20 @@ test.describe("provider usage tooltip", () => {
                 usedPct: 42,
                 remainingPct: 58,
                 resetsAt: "2026-06-19T05:00:00.000Z",
+              },
+              {
+                id: "weekly",
+                label: "Weekly",
+                usedPct: 41,
+                remainingPct: 59,
+                resetsAt: "2026-06-26T00:00:00.000Z",
+              },
+              {
+                id: "weekly_model_fable",
+                label: "Weekly \u00b7 Fable",
+                usedPct: 60,
+                remainingPct: 40,
+                resetsAt: "2026-06-26T00:00:00.000Z",
               },
             ],
           },
@@ -55,8 +70,11 @@ test.describe("provider usage tooltip", () => {
       await expect(page.getByText("Mock provider", { exact: true })).toBeVisible({
         timeout: 10_000,
       });
-      await expect(page.getByText("Test plan")).toBeVisible();
+      await expect(page.getByText("active@example.com")).toBeVisible();
       await expect(page.getByText("Session", { exact: true })).toBeVisible();
+      await expect(page.getByText("Weekly", { exact: true })).toBeVisible();
+      await expect(page.getByText("Weekly \u00b7 Fable", { exact: true })).toBeVisible();
+      await expect(page.getByText(/TeamClaude active account/)).toBeVisible();
       await expect(page.getByText("42%")).toBeVisible();
     } finally {
       await session.cleanup();

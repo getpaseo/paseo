@@ -19,6 +19,7 @@ export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry
       new ClaudeQuotaProvider({
         logger: options.logger,
         fetch: options.fetch,
+        claudeLaunch: options.claudeLaunch,
       }),
   },
   {

@@ -539,6 +539,14 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
   return initialConfig;
 }
 
+function createClaudeUsageLaunchConfig(settings: AgentProviderRuntimeSettingsMap["claude"]) {
+  return {
+    command: settings?.command?.mode === "replace" ? settings.command.argv : undefined,
+    teamClaudeConfigPath: settings?.env?.["TEAMCLAUDE_CONFIG"],
+    xdgConfigHome: settings?.env?.["XDG_CONFIG_HOME"],
+  };
+}
+
 export async function createPaseoDaemon(
   config: PaseoDaemonConfig,
   rootLogger: Logger,
@@ -1552,6 +1560,7 @@ export async function createPaseoDaemon(
               browserToolsBroker,
               hubRelationships,
               workspaceSetupRuntime,
+              createClaudeUsageLaunchConfig(config.agentProviderSettings?.claude),
             );
             relayRuntime = createRelayRuntime({
               config: {

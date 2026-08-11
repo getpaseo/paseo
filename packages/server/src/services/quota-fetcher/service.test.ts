@@ -31,6 +31,10 @@ function writeClaudeCredentials(
   );
 }
 
+function writeTeamClaudeServerState(dir: string, port = 3456): void {
+  writeFileSync(join(dir, "teamclaude.server.json"), JSON.stringify({ port }));
+}
+
 function writeCodexAuth(dir: string, accessToken: string, refreshToken = "rt_codex"): void {
   writeFileSync(
     join(dir, "auth.json"),
@@ -550,6 +554,184 @@ describe("real provider usage fetchers", () => {
       "https://api.anthropic.com/api/oauth/usage",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer at_expired" }),
+      }),
+    );
+  });
+
+  it("returns the TeamClaude active account usage without using Claude credentials", async () => {
+    writeClaudeCredentials(claudeHome, "at_direct_claude");
+    writeTeamClaudeServerState(homeDir);
+    const keychain = vi.fn(async () => ({
+      claudeAiOauth: { accessToken: "at_keychain_claude" },
+    }));
+    fetchApi = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      expect(url.toString()).toBe("http://127.0.0.1:3456/teamclaude/status");
+      expect(init).toEqual({
+        method: "GET",
+        signal: expect.any(AbortSignal),
+      });
+      expect(new Headers(init?.headers).has("authorization")).toBe(false);
+      expect(new Headers(init?.headers).has("x-api-key")).toBe(false);
+      return jsonResponse({
+        currentAccount: "active@example.com",
+        switchThreshold: 0.98,
+        accounts: [
+          {
+            name: "other@example.com",
+            provider: "anthropic",
+            quota: { unified5h: 0.1, unified7d: 0.2, modelWeekly: {} },
+          },
+          {
+            name: "active@example.com",
+            provider: "anthropic",
+            quota: {
+              unified5h: 0.98,
+              unified7d: 0.41,
+              unified5hReset: 1_786_467_000_000,
+              unified7dReset: 1_787_014_800_000,
+              modelWeekly: {
+                "7d_oi": { utilization: 0.6, reset: 1_787_014_800_000 },
+              },
+            },
+          },
+        ],
+      });
+    }) as never;
+
+    const usage = await new ClaudeQuotaProvider({
+      logger: createLogger(),
+      claudeHome,
+      claudeKeychainReader: keychain,
+      platform: "darwin",
+      fetch: fetchApi,
+      claudeLaunch: {
+        command: ["/opt/homebrew/bin/teamcodex", "run", "--"],
+        xdgConfigHome: homeDir,
+      },
+    }).fetchUsage();
+
+    expect(usage).toEqual({
+      providerId: "claude",
+      displayName: "Claude",
+      status: "available",
+      planLabel: "active@example.com",
+      sourceLabel: "TeamClaude active account",
+      windows: [
+        {
+          id: "five_hour",
+          label: "Session",
+          usedPct: 98,
+          remainingPct: 2,
+          resetsAt: "2026-08-11T16:50:00.000Z",
+          tone: "danger",
+        },
+        {
+          id: "weekly",
+          label: "Weekly",
+          usedPct: 41,
+          remainingPct: 59,
+          resetsAt: "2026-08-18T01:00:00.000Z",
+          tone: "ok",
+        },
+        {
+          id: "weekly_model_fable",
+          label: "Weekly \u00b7 Fable",
+          usedPct: 60,
+          remainingPct: 40,
+          resetsAt: "2026-08-18T01:00:00.000Z",
+          tone: "ok",
+        },
+      ],
+      balances: [],
+      details: [],
+      error: null,
+    });
+    expect(fetchApi).toHaveBeenCalledTimes(1);
+    expect(keychain).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to direct Claude usage when configured TeamClaude is unavailable", async () => {
+    writeClaudeCredentials(claudeHome, "at_direct_claude");
+    const keychain = vi.fn(async () => ({
+      claudeAiOauth: { accessToken: "at_keychain_claude" },
+    }));
+    fetchApi = vi.fn() as never;
+
+    const usage = await new ClaudeQuotaProvider({
+      logger: createLogger(),
+      claudeHome,
+      claudeKeychainReader: keychain,
+      platform: "darwin",
+      fetch: fetchApi,
+      claudeLaunch: {
+        command: ["teamcodex", "run", "--"],
+        xdgConfigHome: homeDir,
+      },
+    }).fetchUsage();
+
+    expect(usage.status).toBe("unavailable");
+    expect(fetchApi).not.toHaveBeenCalled();
+    expect(keychain).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed TeamClaude status without falling back to direct Claude usage", async () => {
+    writeClaudeCredentials(claudeHome, "at_direct_claude");
+    writeTeamClaudeServerState(homeDir);
+    fetchApi = vi.fn(async () =>
+      jsonResponse({
+        currentAccount: "active@example.com",
+        accounts: [
+          {
+            name: "active@example.com",
+            provider: "anthropic",
+            quota: { unified5h: "almost full" },
+          },
+        ],
+      }),
+    ) as never;
+
+    const usage = await new ClaudeQuotaProvider({
+      logger: createLogger(),
+      claudeHome,
+      fetch: fetchApi,
+      claudeLaunch: {
+        command: ["teamcodex", "run", "--"],
+        xdgConfigHome: homeDir,
+      },
+    }).fetchUsage();
+
+    expect(usage.status).toBe("unavailable");
+    expect(fetchApi).toHaveBeenCalledTimes(1);
+    expect(fetchApi).not.toHaveBeenCalledWith(
+      "https://api.anthropic.com/api/oauth/usage",
+      expect.anything(),
+    );
+  });
+
+  it("preserves direct Claude usage when the configured command is not teamcodex run", async () => {
+    writeClaudeCredentials(claudeHome, "at_direct_claude");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
+      ]),
+    );
+
+    const usage = await new ClaudeQuotaProvider({
+      logger: createLogger(),
+      claudeHome,
+      fetch: fetchApi,
+      claudeLaunch: {
+        command: ["teamcodex", "status"],
+        xdgConfigHome: homeDir,
+      },
+    }).fetchUsage();
+
+    expect(usage.status).toBe("available");
+    expect(usage.sourceLabel).toBeUndefined();
+    expect(fetchApi).toHaveBeenCalledWith(
+      "https://api.anthropic.com/api/oauth/usage",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer at_direct_claude" }),
       }),
     );
   });
