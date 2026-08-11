@@ -2,6 +2,7 @@ export type KeyboardActionScope = "global" | "message-input" | "sidebar" | "work
 
 export type KeyboardActionId =
   | "agent.interrupt"
+  | "agent.prompt.next"
   | "agent.prompt.previous"
   | "message-input.focus"
   | "message-input.send"
@@ -38,6 +39,7 @@ export type KeyboardActionId =
 
 export type KeyboardActionDefinition =
   | { id: "agent.interrupt"; scope: KeyboardActionScope }
+  | { id: "agent.prompt.next"; scope: KeyboardActionScope }
   | { id: "agent.prompt.previous"; scope: KeyboardActionScope }
   | { id: "message-input.focus"; scope: KeyboardActionScope }
   | { id: "message-input.send"; scope: KeyboardActionScope }

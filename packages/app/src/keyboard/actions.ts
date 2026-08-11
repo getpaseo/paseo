@@ -18,6 +18,7 @@ export type MessageInputKeyboardActionKind =
 
 export type KeyboardActionId =
   | "agent.interrupt"
+  | "agent.prompt.next"
   | "agent.prompt.previous"
   | "agent.new"
   | "workspace.tab.new"

@@ -1960,6 +1960,7 @@ export const ptBR: TranslationResources = {
         jumpToTab: "Ir para aba",
         previousWorkspace: "Workspace anterior",
         previousPrompt: "Prompt anterior",
+        nextPrompt: "Próximo prompt",
         nextWorkspace: "Próximo workspace",
         previousTab: "Aba anterior",
         nextTab: "Próxima aba",

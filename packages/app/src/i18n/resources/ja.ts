@@ -1945,6 +1945,7 @@ export const ja: TranslationResources = {
         jumpToTab: "タブにジャンプ",
         previousWorkspace: "前のワークスペース",
         previousPrompt: "前のプロンプト",
+        nextPrompt: "次のプロンプト",
         nextWorkspace: "次のワークスペース",
         previousTab: "前のタブ",
         nextTab: "次のタブ",

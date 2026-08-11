@@ -222,8 +222,8 @@ describe("keyboard-shortcuts", () => {
       payload: { delta: 1 },
     },
     {
-      name: "matches Cmd+Alt+Up to jump to the previous prompt on mac desktop",
-      event: { key: "ArrowUp", code: "ArrowUp", metaKey: true, altKey: true },
+      name: "matches Ctrl+Alt+Up to jump to the previous prompt on mac desktop",
+      event: { key: "ArrowUp", code: "ArrowUp", ctrlKey: true, altKey: true },
       context: { isMac: true, isDesktop: true },
       action: "agent.prompt.previous",
     },
@@ -232,6 +232,18 @@ describe("keyboard-shortcuts", () => {
       event: { key: "ArrowUp", code: "ArrowUp", ctrlKey: true, altKey: true },
       context: { isMac: false, isDesktop: true },
       action: "agent.prompt.previous",
+    },
+    {
+      name: "matches Ctrl+Alt+Down to jump to the next prompt on mac desktop",
+      event: { key: "ArrowDown", code: "ArrowDown", ctrlKey: true, altKey: true },
+      context: { isMac: true, isDesktop: true },
+      action: "agent.prompt.next",
+    },
+    {
+      name: "matches Ctrl+Alt+Down to jump to the next prompt on non-mac desktop",
+      event: { key: "ArrowDown", code: "ArrowDown", ctrlKey: true, altKey: true },
+      context: { isMac: false, isDesktop: true },
+      action: "agent.prompt.next",
     },
     {
       name: "matches Mod+T to open new tab",

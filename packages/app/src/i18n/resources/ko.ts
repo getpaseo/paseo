@@ -1940,6 +1940,7 @@ export const ko: TranslationResources = {
         jumpToTab: "탭으로 이동",
         previousWorkspace: "이전 워크스페이스",
         previousPrompt: "이전 프롬프트",
+        nextPrompt: "다음 프롬프트",
         nextWorkspace: "다음 워크스페이스",
         previousTab: "이전 탭",
         nextTab: "다음 탭",

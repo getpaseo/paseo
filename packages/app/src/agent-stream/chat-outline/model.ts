@@ -58,6 +58,14 @@ export function resolvePreviousPromptSeq(
   return activeIndex > 0 ? (prompts[activeIndex - 1]?.seq ?? null) : null;
 }
 
+export function resolveNextPromptSeq(
+  prompts: readonly ChatOutlinePrompt[],
+  activeSeq: number | null,
+): number | null {
+  const activeIndex = prompts.findIndex((prompt) => prompt.seq === activeSeq);
+  return activeIndex >= 0 ? (prompts[activeIndex + 1]?.seq ?? null) : null;
+}
+
 export interface ActivePromptSource {
   subscribe: (listener: () => void) => () => void;
   getActiveSeq: () => number | null;

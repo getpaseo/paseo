@@ -786,12 +786,17 @@ function ChatAgentContent({
     reason: "initial-entry" | "resume";
   } | null>(null);
   const handlePromptKeyboardAction = useCallback((action: KeyboardActionDefinition): boolean => {
-    if (action.id !== "agent.prompt.previous") return false;
-    return streamViewRef.current?.jumpToPreviousPrompt() ?? false;
+    if (action.id === "agent.prompt.previous") {
+      return streamViewRef.current?.jumpToPreviousPrompt() ?? false;
+    }
+    if (action.id === "agent.prompt.next") {
+      return streamViewRef.current?.jumpToNextPrompt() ?? false;
+    }
+    return false;
   }, []);
   useKeyboardActionHandler({
     handlerId: `agent-prompt-actions:${serverId}:${agentId ?? "pending"}`,
-    actions: ["agent.prompt.previous"],
+    actions: ["agent.prompt.previous", "agent.prompt.next"],
     enabled: isPaneFocused && Boolean(agentId),
     priority: 100,
     isActive: () => isPaneFocused,

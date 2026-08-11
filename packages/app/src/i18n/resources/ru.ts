@@ -1967,6 +1967,7 @@ export const ru: TranslationResources = {
         jumpToTab: "Перейти на вкладку",
         previousWorkspace: "Предыдущая рабочая область",
         previousPrompt: "Предыдущий запрос",
+        nextPrompt: "Следующий запрос",
         nextWorkspace: "Следующая рабочая область",
         previousTab: "Предыдущая вкладка",
         nextTab: "Следующая вкладка",

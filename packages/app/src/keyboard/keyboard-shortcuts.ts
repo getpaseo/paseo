@@ -153,6 +153,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-next": "settings.shortcuts.help.nextWorkspace",
   "workspace-tab-prev": "settings.shortcuts.help.previousTab",
   "workspace-tab-next": "settings.shortcuts.help.nextTab",
+  "agent-prompt-next": "settings.shortcuts.help.nextPrompt",
   "agent-prompt-previous": "settings.shortcuts.help.previousPrompt",
   "workspace-pane-split-right": "settings.shortcuts.help.splitPaneRight",
   "workspace-pane-split-down": "settings.shortcuts.help.splitPaneDown",
@@ -560,7 +561,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "agent-prompt-previous-cmd-alt-up-mac",
     action: "agent.prompt.previous",
-    combo: "Cmd+Alt+ArrowUp",
+    combo: "Ctrl+Alt+ArrowUp",
     when: { mac: true, desktop: true, commandCenter: false, terminal: false },
     help: {
       id: "agent-prompt-previous",
@@ -577,6 +578,28 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "agent-prompt-previous",
       section: "navigation",
       label: "Previous prompt",
+    },
+  },
+  {
+    id: "agent-prompt-next-ctrl-alt-down-mac",
+    action: "agent.prompt.next",
+    combo: "Ctrl+Alt+ArrowDown",
+    when: { mac: true, desktop: true, commandCenter: false, terminal: false },
+    help: {
+      id: "agent-prompt-next",
+      section: "navigation",
+      label: "Next prompt",
+    },
+  },
+  {
+    id: "agent-prompt-next-ctrl-alt-down-non-mac",
+    action: "agent.prompt.next",
+    combo: "Ctrl+Alt+ArrowDown",
+    when: { mac: false, desktop: true, commandCenter: false, terminal: false },
+    help: {
+      id: "agent-prompt-next",
+      section: "navigation",
+      label: "Next prompt",
     },
   },
 
