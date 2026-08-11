@@ -11,7 +11,7 @@ import {
 } from "../bootstrap.js";
 import type { AgentClient, AgentProvider } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "./fake-agent-client.js";
-import type { PushNotificationSender } from "../push/notifications.js";
+import type { PushNotificationSender } from "../push/index.js";
 
 interface TestPaseoDaemonOptions {
   daemonVersion?: string;

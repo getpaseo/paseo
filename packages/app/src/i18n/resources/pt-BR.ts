@@ -275,6 +275,14 @@ export const ptBR: TranslationResources = {
     },
   },
   message: {
+    diagram: {
+      diagram: "Diagrama",
+      zoomIn: "Aproximar",
+      zoomOut: "Afastar",
+      resetZoom: "Redefinir visualização",
+      viewSource: "Ver fonte",
+      viewDiagram: "Ver diagrama",
+    },
     actions: {
       copyCode: "Copiar código",
       copyTurn: "Copiar turno",

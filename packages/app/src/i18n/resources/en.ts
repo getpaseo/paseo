@@ -271,6 +271,14 @@ export const en = {
     },
   },
   message: {
+    diagram: {
+      diagram: "Diagram",
+      zoomIn: "Zoom in",
+      zoomOut: "Zoom out",
+      resetZoom: "Reset view",
+      viewSource: "View source",
+      viewDiagram: "View diagram",
+    },
     actions: {
       copyCode: "Copy code",
       copyTurn: "Copy turn",

@@ -206,6 +206,78 @@ describe("createWebStreamStrategy", () => {
     expect(renderLiveHeadRow).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps a row mounted when it moves from the live head into mounted history", () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: false });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    const item = userMessage(1);
+    const mounted = vi.fn();
+    const unmounted = vi.fn();
+    function StatefulRow() {
+      React.useEffect(() => {
+        mounted();
+        return unmounted;
+      }, []);
+      return <div>{item.id}</div>;
+    }
+    const renderers: StreamSegmentRenderers = {
+      ...createRenderers(vi.fn()),
+      renderHistoryMountedRow: () => <StatefulRow />,
+      renderLiveHeadRow: () => <StatefulRow />,
+    };
+    const renderInput: Omit<StreamRenderInput, "segments" | "boundary"> = {
+      agentId: "agent",
+      renderers,
+      listEmptyComponent: null,
+      viewportRef,
+      routeBottomAnchorRequest: null,
+      isAuthoritativeHistoryReady: true,
+      onNearBottomChange: vi.fn(),
+      onNearHistoryStart: vi.fn().mockReturnValue(true),
+      isLoadingOlderHistory: false,
+      hasOlderHistory: false,
+      olderHistoryProgressKey: null,
+      scrollEnabled: true,
+      listStyle: null,
+      baseListContentContainerStyle: null,
+      forwardListContentContainerStyle: null,
+    };
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          ...renderInput,
+          segments: { historyVirtualized: [], historyMounted: [], liveHead: [item] },
+          boundary: {
+            hasVirtualizedHistory: false,
+            hasMountedHistory: false,
+            hasLiveHead: true,
+          },
+        }),
+      );
+    });
+    expect(mounted).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          ...renderInput,
+          segments: { historyVirtualized: [], historyMounted: [item], liveHead: [] },
+          boundary: {
+            hasVirtualizedHistory: false,
+            hasMountedHistory: true,
+            hasLiveHead: false,
+          },
+        }),
+      );
+    });
+
+    expect(mounted).toHaveBeenCalledTimes(1);
+    expect(unmounted).not.toHaveBeenCalled();
+  });
+
   it("reports the live-head row as the reading position", () => {
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: false });
     const viewportRef = React.createRef<StreamViewportHandle>();

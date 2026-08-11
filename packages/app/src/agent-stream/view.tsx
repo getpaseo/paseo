@@ -653,6 +653,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               serverId={resolvedServerId}
               client={client}
               spacing={layoutItem.assistantSpacing}
+              phase={layoutItem.phase}
             />
           </AssistantFileLinkResolverProvider>
         );

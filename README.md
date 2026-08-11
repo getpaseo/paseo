@@ -152,7 +152,6 @@ npx skills add getpaseo/paseo
 Then use them in any agent conversation:
 
 - `/paseo-handoff` — hand off work between agents. I use this to plan with Claude and then handoff to Codex to implement.
-- `/paseo-loop` — loop an agent against clear acceptance criteria (aka Ralph loops), optionally with a verifier.
 - `/paseo-advisor` — spin up a single agent as an advisor for a second opinion, without delegating the work itself.
 - `/paseo-committee` — form a committee of two contrasting agents to step back, do root cause analysis, and produce a plan.
 
