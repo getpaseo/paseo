@@ -155,6 +155,20 @@ export class AgentConfigSession {
    * that offers it; features last so they settle on top of the rest. An omitted
    * field is left alone. The first notice produced is the one the client sees —
    * later steps still run, so a notice never truncates the bundle.
+   *
+   * This is not a transaction. A step that rejects aborts the rest, and steps
+   * that already applied stay applied — provider setters validate against the
+   * agent's live model, so a bundle that omits `modelId` can have its mode land
+   * and its feature rejected. Nothing is hidden by that: every AgentManager
+   * setter emits agent state before returning, so what applied is already
+   * streamed to the client alongside the rejected response and the error frame.
+   *
+   * Rolling back would re-invoke the setters that just failed, most often
+   * against a session that is already gone. Pre-flight validation would restate
+   * each provider's model-dependent checks somewhere they would drift from the
+   * setters that own them. What sending the bundle in one request does remove is
+   * the multi-round-trip failure class: interruption between hops, and
+   * interleaving with another client's mutation.
    */
   private async applyBundle(
     agentId: string,

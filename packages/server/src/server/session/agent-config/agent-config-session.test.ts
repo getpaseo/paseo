@@ -400,7 +400,7 @@ describe("AgentConfigSession", () => {
     ]);
   });
 
-  test("apply: a mid-bundle failure rejects the whole request", async () => {
+  test("apply: a mid-bundle failure rejects and leaves the earlier steps applied", async () => {
     const { subsystem, emitted, operations } = makeSubsystem();
     operations.failWith = new Error("apply boom");
 
