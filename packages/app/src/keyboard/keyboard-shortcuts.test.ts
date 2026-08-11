@@ -320,9 +320,16 @@ describe("keyboard-shortcuts", () => {
       payload: { kind: "dictation-toggle" },
     },
     {
-      name: "routes Shift+Tab to cycle agent mode from the message input",
-      event: { key: "Tab", code: "Tab", shiftKey: true },
-      context: { focusScope: "message-input" },
+      name: "routes Cmd+Shift+M to cycle agent mode on Mac",
+      event: { key: "m", code: "KeyM", metaKey: true, shiftKey: true },
+      context: { isMac: true, focusScope: "message-input" },
+      action: "message-input.action",
+      payload: { kind: "mode-cycle" },
+    },
+    {
+      name: "routes Ctrl+Shift+M to cycle agent mode on non-Mac",
+      event: { key: "m", code: "KeyM", ctrlKey: true, shiftKey: true },
+      context: { isMac: false, focusScope: "message-input" },
       action: "message-input.action",
       payload: { kind: "mode-cycle" },
     },
@@ -476,13 +483,8 @@ describe("keyboard-shortcuts", () => {
     },
     {
       name: "does not cycle agent mode outside the message input",
-      event: { key: "Tab", code: "Tab", shiftKey: true },
-      context: { focusScope: "other" },
-    },
-    {
-      name: "does not repeat agent mode cycling while Shift+Tab is held",
-      event: { key: "Tab", code: "Tab", shiftKey: true, repeat: true },
-      context: { focusScope: "message-input" },
+      event: { key: "m", code: "KeyM", metaKey: true, shiftKey: true },
+      context: { isMac: true, focusScope: "other" },
     },
     {
       name: "does not bind Cmd+Enter as a rebindable message queue shortcut",
@@ -635,7 +637,7 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-tab-close-current": ["alt", "shift", "W"],
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
-        "cycle-agent-mode": ["shift", "Tab"],
+        "cycle-agent-mode": ["mod", "shift", "M"],
       },
     },
     {

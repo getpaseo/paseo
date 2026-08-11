@@ -976,11 +976,24 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
   {
-    id: "message-input-mode-cycle-shift-tab",
+    id: "message-input-mode-cycle-cmd-shift-m-mac",
     action: "message-input.action",
-    combo: "Shift+Tab",
+    combo: "Cmd+Shift+M",
     repeat: false,
-    when: { commandCenter: false, focusScope: "message-input" },
+    when: { mac: true, commandCenter: false, focusScope: "message-input" },
+    payload: { type: "message-input", kind: "mode-cycle" },
+    help: {
+      id: "cycle-agent-mode",
+      section: "agent-input",
+      label: "Cycle agent mode",
+    },
+  },
+  {
+    id: "message-input-mode-cycle-ctrl-shift-m-non-mac",
+    action: "message-input.action",
+    combo: "Ctrl+Shift+M",
+    repeat: false,
+    when: { mac: false, commandCenter: false, focusScope: "message-input" },
     payload: { type: "message-input", kind: "mode-cycle" },
     help: {
       id: "cycle-agent-mode",
