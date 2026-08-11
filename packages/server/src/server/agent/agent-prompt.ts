@@ -253,10 +253,12 @@ export interface SetupFinishNotificationParams {
   logger: Logger;
 }
 
+type FinishNotificationReason = "finished" | "errored" | "needs permission" | "was closed";
+
 interface FinishNotificationBodyInput {
   childAgentId: string;
   title: string;
-  reason: "finished" | "errored" | "needs permission";
+  reason: FinishNotificationReason;
   lastAssistantMessage: string | null;
   permissionRequest?: AgentPermissionRequest;
 }
@@ -312,7 +314,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   }
 
   async function notify(
-    reason: "finished" | "errored" | "needs permission",
+    reason: FinishNotificationReason,
     permissionRequest?: AgentPermissionRequest,
   ): Promise<void> {
     const callerRecord = await agentStorage.get(callerAgentId);
@@ -344,10 +346,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     });
   }
 
-  function notifySafely(
-    reason: "finished" | "errored" | "needs permission",
-    options: NotifySafelyOptions = {},
-  ): void {
+  function notifySafely(reason: FinishNotificationReason, options: NotifySafelyOptions = {}): void {
     if (stopped) return;
     if (options.terminal ?? true) stop();
     notificationQueue = notificationQueue
@@ -387,7 +386,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
           return;
         }
         if (event.agent.lifecycle === "closed") {
-          stop();
+          notifySafely("was closed");
           return;
         }
         return;

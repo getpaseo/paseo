@@ -52,6 +52,7 @@ interface FinishNotificationScenario {
   resolveChildPermissionWhileIdle(requestId?: string): void;
   finishChild(): void;
   finishChildAndReadParentPrompt(): Promise<string>;
+  closeChildAndReadParentPrompt(): Promise<string>;
   parentPrompts(): string[];
   wasParentPrompted(): boolean;
 }
@@ -211,6 +212,25 @@ function createFinishNotificationScenario(
 
       return parentPrompt;
     },
+    async closeChildAndReadParentPrompt() {
+      const parentPrompt = new Promise<string>((resolve) => {
+        resolveParentPrompt = resolve;
+      });
+
+      childAgent.lifecycle = "running";
+      subscriber?.({
+        type: "agent_state",
+        agent: childAgent,
+      });
+
+      childAgent.lifecycle = "closed";
+      subscriber?.({
+        type: "agent_state",
+        agent: childAgent,
+      });
+
+      return parentPrompt;
+    },
     parentPrompts() {
       return parentPrompts;
     },
@@ -276,6 +296,17 @@ test("finish notifications tell the parent the child's last assistant message", 
     formatSystemNotificationPrompt(
       "Agent child-agent (Child Agent) finished.\n\n<agent-response>\nImplemented the cleanup and all checks pass.\n</agent-response>",
     ),
+  );
+});
+
+test("closing a watched child notifies the caller", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  const parentPrompt = await scenario.closeChildAndReadParentPrompt();
+
+  expect(parentPrompt).toEqual(
+    formatSystemNotificationPrompt("Agent child-agent (Child Agent) was closed."),
   );
 });
 
