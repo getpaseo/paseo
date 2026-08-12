@@ -2,7 +2,6 @@ import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { constants, existsSync, unlinkSync } from "fs";
 import { open } from "fs/promises";
-import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -166,6 +165,7 @@ import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { createRelayRuntime, type RelayRuntime } from "./relay-runtime.js";
 import type { PushNotificationSender } from "./push/index.js";
 import { getOrCreateServerId } from "./server-id.js";
+import { getOrCreateAgentMcpAuthToken } from "./agent-mcp-auth-token.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
 import type { AgentProfile, FirstAgentContext, TerminalProfile } from "@getpaseo/protocol/messages";
@@ -582,13 +582,14 @@ export async function createPaseoDaemon(
   });
 
   // Capability token authenticating the daemon's own agents to the loopback
-  // Agent MCP endpoint (/mcp/agents). Random per daemon run, injected only into
-  // local agent configs and the daemon's own MCP client — never sent to remote
-  // clients — so it cannot be replayed off-box. This lets the injected MCP
-  // authenticate even when the daemon password is set via the app (hash only,
-  // no plaintext available). Mirrors the /api/files/download capability-token
-  // pattern.
-  const agentMcpAuthToken = randomUUID();
+  // Agent MCP endpoint (/mcp/agents). Persisted under $PASEO_HOME so a daemon
+  // restart can re-inject the same bearer into resumed provider sessions.
+  // Injected only into local agent configs and the daemon's own MCP client —
+  // never sent to remote clients — so it cannot be replayed off-box. This lets
+  // the injected MCP authenticate even when the daemon password is set via the
+  // app (hash only, no plaintext available). Mirrors the /api/files/download
+  // capability-token pattern.
+  const agentMcpAuthToken = getOrCreateAgentMcpAuthToken(config.paseoHome, { logger });
 
   const listenTarget = parseListenString(config.listen);
 

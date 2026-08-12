@@ -14,7 +14,7 @@ Paseo can inject these tools into every new agent it launches. Open **Settings â
 
 Depending on the provider, Paseo delivers the catalog through its native tool interface or MCP. The capabilities are the same either way.
 
-The MCP server itself is controlled by `daemon.mcp.enabled`. Existing agents may need a reload.
+The MCP server itself is controlled by `daemon.mcp.enabled`. Codex sessions rebind injected Paseo tools on resume after a daemon restart; other providers may still need a reload.
 
 ## Mental model
 

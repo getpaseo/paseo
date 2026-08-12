@@ -4157,6 +4157,110 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("rebinds injected MCP servers when resuming an unloaded Codex thread", async () => {
+    const session = createSession({
+      mcpServers: {
+        paseo: {
+          type: "http",
+          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+          headers: { Authorization: "Bearer cap-token" },
+        },
+      },
+    });
+    session.currentThreadId = "persisted-thread-id";
+    const requests: Array<{ method: string; params: unknown }> = [];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/loaded/list") return { data: [] };
+        if (method === "thread/resume") return {};
+        if (method === "mcpServerStatus/list") return { data: [] };
+        throw new Error(`Unexpected request: ${method}`);
+      }),
+    };
+
+    await asInternals(session).ensureThreadLoaded();
+
+    expect(requests).toEqual([
+      { method: "thread/loaded/list", params: {} },
+      {
+        method: "thread/resume",
+        params: {
+          threadId: "persisted-thread-id",
+          config: {
+            mcp_servers: {
+              paseo: {
+                url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+                http_headers: { Authorization: "Bearer cap-token" },
+              },
+            },
+          },
+        },
+      },
+      {
+        method: "mcpServerStatus/list",
+        params: { threadId: "persisted-thread-id", detail: "toolsAndAuthOnly" },
+      },
+    ]);
+  });
+
+  test("rebinds injected MCP servers on an already-loaded Codex thread", async () => {
+    const session = createSession({
+      mcpServers: {
+        paseo: {
+          type: "http",
+          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+          headers: { Authorization: "Bearer cap-token" },
+        },
+      },
+    });
+    session.currentThreadId = "persisted-thread-id";
+    const requests: Array<{ method: string; params: unknown }> = [];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/loaded/list") return { data: ["persisted-thread-id"] };
+        if (method === "mcpServerStatus/list") return { data: [] };
+        throw new Error(`Unexpected request: ${method}`);
+      }),
+    };
+
+    await asInternals(session).ensureThreadLoaded();
+
+    expect(requests).toEqual([
+      { method: "thread/loaded/list", params: {} },
+      {
+        method: "mcpServerStatus/list",
+        params: { threadId: "persisted-thread-id", detail: "toolsAndAuthOnly" },
+      },
+    ]);
+  });
+
+  test("keeps a resumed Codex thread when MCP status listing is unavailable", async () => {
+    const session = createSession({
+      mcpServers: {
+        paseo: {
+          type: "http",
+          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+        },
+      },
+    });
+    session.currentThreadId = "persisted-thread-id";
+    session.client = {
+      request: vi.fn(async (method: string) => {
+        if (method === "thread/loaded/list") return { data: [] };
+        if (method === "thread/resume") return {};
+        if (method === "mcpServerStatus/list") {
+          throw new Error("method not found");
+        }
+        throw new Error(`Unexpected request: ${method}`);
+      }),
+    };
+
+    await expect(asInternals(session).ensureThreadLoaded()).resolves.toBeUndefined();
+    expect(session.currentThreadId).toBe("persisted-thread-id");
+  });
+
   test("appends blank-line spacing to /goal status messages", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
     const session = createSession({}, { goalsEnabled: true });

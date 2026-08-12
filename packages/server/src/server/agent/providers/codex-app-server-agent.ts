@@ -3750,23 +3750,23 @@ export class CodexAppServerAgentSession implements AgentSession {
     try {
       const loaded = toObjectRecord(await this.client.request("thread/loaded/list", {}));
       const ids = Array.isArray(loaded?.data) ? loaded.data : [];
-      if (ids.includes(this.currentThreadId)) {
-        return;
+      if (!ids.includes(this.currentThreadId)) {
+        const params: Record<string, unknown> = { threadId: this.currentThreadId };
+        const developerInstructions = composeSystemPromptParts(
+          this.config.systemPrompt,
+          this.config.daemonAppendSystemPrompt,
+        );
+        if (developerInstructions) {
+          params.developerInstructions = developerInstructions;
+        }
+        const codexConfig = this.buildCodexInnerConfig();
+        if (codexConfig) {
+          params.config = codexConfig;
+        }
+        const response = await this.client.request("thread/resume", params);
+        this.rememberResolvedSandboxPolicy(response);
       }
-      const params: Record<string, unknown> = { threadId: this.currentThreadId };
-      const developerInstructions = composeSystemPromptParts(
-        this.config.systemPrompt,
-        this.config.daemonAppendSystemPrompt,
-      );
-      if (developerInstructions) {
-        params.developerInstructions = developerInstructions;
-      }
-      const codexConfig = this.buildCodexInnerConfig();
-      if (codexConfig) {
-        params.config = codexConfig;
-      }
-      const response = await this.client.request("thread/resume", params);
-      this.rememberResolvedSandboxPolicy(response);
+      await this.ensureInjectedMcpServersReady();
     } catch (error) {
       const threadId = this.currentThreadId;
       const message = error instanceof Error ? error.message : String(error);
@@ -3782,6 +3782,34 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       this.logger.warn({ error, threadId }, "Failed to resume persisted Codex thread");
       throw new Error(`Failed to resume Codex thread ${threadId}: ${message}`, { cause: error });
+    }
+  }
+
+  private hasInjectedMcpServers(): boolean {
+    return Object.keys(this.config.mcpServers ?? {}).length > 0;
+  }
+
+  /**
+   * Codex keeps injected HTTP MCP on the thread overlay. After a Paseo daemon
+   * restart those connections are dead, and `thread/resume` does not reliably
+   * re-list tools. `mcpServerStatus/list` forces the thread's runtime MCP
+   * config to initialize without reloading disk config (which would drop the
+   * app-injected `paseo` server on Codex 0.147).
+   */
+  private async ensureInjectedMcpServersReady(): Promise<void> {
+    if (!this.client || !this.currentThreadId || !this.hasInjectedMcpServers()) {
+      return;
+    }
+    try {
+      await this.client.request("mcpServerStatus/list", {
+        threadId: this.currentThreadId,
+        detail: "toolsAndAuthOnly",
+      });
+    } catch (error) {
+      this.logger.debug(
+        { err: error, threadId: this.currentThreadId },
+        "Codex mcpServerStatus/list is unavailable; injected MCP may stay disconnected until the next turn",
+      );
     }
   }
 
