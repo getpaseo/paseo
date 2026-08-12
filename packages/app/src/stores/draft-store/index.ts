@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { AttachmentMetadata, WorkspaceFileComposerAttachment } from "@/attachments/types";
 import { appendWorkspaceFileAttachment } from "@/attachments/workspace-file";
@@ -16,6 +16,7 @@ import {
   applyClearDraftRecord,
   collectReferencedAttachmentIdsFromState,
   DRAFT_STORE_VERSION,
+  DraftStoreStateSchema,
   isAttachmentMetadata,
   isCanonicalDraftInput,
   isLegacyDraftImage,
@@ -27,8 +28,9 @@ import {
   type DraftRecord,
   type DraftStoreState,
 } from "./state";
-import { migrateDraftInput, migratePersistedState, type MigrateLegacyImages } from "./migration";
+import { migrateDraftInput, type MigrateLegacyImages } from "./migration";
 import { createDraftPersistStorage } from "./persistence";
+import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 
 export type { DraftInput, DraftLifecycleState } from "./state";
 
@@ -58,7 +60,7 @@ type DraftStore = DraftStoreState & DraftStoreRuntimeState & DraftStoreActions;
 
 let gcScheduled = false;
 const draftPersistStorage = createDraftPersistStorage(
-  createJSONStorage<DraftStoreState>(() => AsyncStorage),
+  createValidatedPersistStorage(AsyncStorage, DraftStoreStateSchema),
 );
 
 export function flushDraftPersistStorage(): Promise<void> {
@@ -414,12 +416,6 @@ export const useDraftStore = create<DraftStore>()(
       version: DRAFT_STORE_VERSION,
       storage: draftPersistStorage,
       partialize: ({ drafts, createModalDraft }) => ({ drafts, createModalDraft }),
-      migrate: (persistedState) => {
-        return migratePersistedState(persistedState, {
-          migrateLegacyImages,
-          nowMs: Date.now(),
-        });
-      },
       onRehydrateStorage: () => {
         return () => {
           void migrateAllLegacyDrafts();

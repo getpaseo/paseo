@@ -242,7 +242,7 @@ describe("draft-store migration", () => {
     });
   });
 
-  it("rejects workspace review attachments from migrated draft attachments", async () => {
+  it("rejects the complete persisted state containing a workspace review attachment", async () => {
     const migrated = await migratePersistedState(
       {
         drafts: {
@@ -261,6 +261,6 @@ describe("draft-store migration", () => {
       { migrateLegacyImages: passThroughMigrateLegacyImages, nowMs: 1700000000002 },
     );
 
-    expect(migrated.drafts["agent:server:agent"]?.input.attachments).toEqual([]);
+    expect(migrated.drafts).toEqual({});
   });
 });

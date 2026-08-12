@@ -1,5 +1,6 @@
 import { IDENTITY_COLOR_NAMES, type IdentityColorName } from "@/styles/identity-colors";
 import type { HostProfile } from "@/types/host-connection";
+import { z } from "zod";
 
 export type HostColor = "none" | IdentityColorName;
 
@@ -19,27 +20,30 @@ export interface HostAppearance {
   badgeDisplay: HostBadgeDisplay | null;
 }
 
+export const HostAppearanceSchema: z.ZodType<HostAppearance> = z.strictObject({
+  color: z.enum([
+    "none",
+    "violet",
+    "sky",
+    "emerald",
+    "orange",
+    "pink",
+    "indigo",
+    "teal",
+    "red",
+    "amber",
+    "blue",
+  ]),
+  badgeDisplay: z.enum(["name", "icon", "hidden"]).nullable(),
+});
+
 export function defaultHostAppearance(): HostAppearance {
   return { color: "none", badgeDisplay: null };
 }
 
-function isHostColor(value: unknown): value is HostColor {
-  return HOST_COLORS.some((color) => color === value);
-}
-
-function isHostBadgeDisplay(value: unknown): value is HostBadgeDisplay {
-  return HOST_BADGE_DISPLAYS.some((display) => display === value);
-}
-
 export function normalizeStoredHostAppearance(value: unknown): HostAppearance {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return defaultHostAppearance();
-  }
-  const record = value as Record<string, unknown>;
-  return {
-    color: isHostColor(record.color) ? record.color : "none",
-    badgeDisplay: isHostBadgeDisplay(record.badgeDisplay) ? record.badgeDisplay : null,
-  };
+  const result = HostAppearanceSchema.safeParse(value);
+  return result.success ? result.data : defaultHostAppearance();
 }
 
 export function resolveHostBadgeDisplay(input: {

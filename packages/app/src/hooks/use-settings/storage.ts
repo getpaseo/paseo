@@ -14,6 +14,8 @@ import {
   type SidebarRowItems,
 } from "@/components/sidebar/display-preferences/row-items";
 import { THEME_OPTIONS, type ThemePreference } from "@/styles/theme";
+import { z } from "zod";
+import { readValidatedJson } from "@/storage/validated-storage";
 
 export const APP_SETTINGS_KEY = "@paseo:app-settings";
 export const APP_SETTINGS_QUERY_KEY = ["app-settings"];
@@ -74,14 +76,45 @@ export interface Settings extends AppSettings {
   releaseChannel: ReleaseChannel;
 }
 
-/**
- * `sidebarRowItems` is widened back to `unknown` because it is still read for a value the
- * current shape no longer has — see `isChecksHiddenByLegacyRowItem`.
- */
-type StoredAppSettings = Partial<Omit<AppSettings, "sidebarRowItems">> & {
-  compactToolCalls?: unknown;
-  sidebarRowItems?: unknown;
-};
+const SidebarRowItemsSchema = z.strictObject({
+  host: z.boolean().optional(),
+  changeRequest: z.boolean().optional(),
+  services: z.boolean().optional(),
+  checks: z.boolean().optional(),
+  scripts: z.boolean().optional(),
+});
+
+const StoredAppSettingsSchema = z.strictObject({
+  theme: z.enum(["auto", "dark", "light"]).optional(),
+  language: z
+    .enum(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])
+    .optional(),
+  sendBehavior: z.enum(["interrupt", "queue"]).optional(),
+  serviceUrlBehavior: z.enum(["ask", "in-app", "external"]).optional(),
+  terminalScrollbackLines: z.union([z.number(), z.string()]).optional(),
+  useLegacyTerminalRenderer: z.boolean().optional(),
+  uiFontFamily: z.string().optional(),
+  monoFontFamily: z.string().optional(),
+  uiFontSize: z.union([z.number(), z.string()]).optional(),
+  codeFontSize: z.union([z.number(), z.string()]).optional(),
+  syntaxTheme: z.string().refine(isSyntaxThemeId).optional(),
+  workspaceTitleSource: z.enum(["title", "branch"]).optional(),
+  sidebarWorkspaceTrailing: z.enum(["diff", "timestamp", "none"]).optional(),
+  sidebarRowItems: SidebarRowItemsSchema.optional(),
+  sidebarChecksDisplay: z.enum(["iconAndText", "icon", "none"]).optional(),
+  autoExpandReasoning: z.boolean().optional(),
+  toolCallDetailLevel: z.enum(["overview", "detailed"]).optional(),
+  compactToolCalls: z.boolean().optional(),
+  chatOutlineEnabled: z.boolean().optional(),
+  vimKeybindings: z.boolean().optional(),
+  // COMPAT(rendererDesktopSettings): these fields used to share this renderer-owned key.
+  manageBuiltInDaemon: z.boolean().optional(),
+  releaseChannel: z.enum(["stable", "beta"]).optional(),
+});
+
+const LegacyRendererSettingsSchema = StoredAppSettingsSchema;
+
+type StoredAppSettings = z.infer<typeof StoredAppSettingsSchema>;
 
 export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   theme: "auto",
@@ -114,6 +147,7 @@ export const DEFAULT_APP_SETTINGS: Settings = {
 export interface KeyValueStorage {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<void>;
+  removeItem(key: string): Promise<void>;
 }
 
 export interface DesktopSettingsBridge {
@@ -146,17 +180,20 @@ export async function saveAppSettings(input: {
 
 export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<AppSettings> {
   try {
-    const stored = await deps.storage.getItem(APP_SETTINGS_KEY);
+    const stored = await readValidatedJson(deps.storage, APP_SETTINGS_KEY, StoredAppSettingsSchema);
     if (stored) {
-      return normalizeAppSettings(JSON.parse(stored));
+      return normalizeAppSettings(stored);
     }
 
-    const legacyStored = await deps.storage.getItem(LEGACY_SETTINGS_KEY);
+    const legacyStored = await readValidatedJson(
+      deps.storage,
+      LEGACY_SETTINGS_KEY,
+      LegacyRendererSettingsSchema,
+    );
     if (legacyStored) {
-      const legacyParsed = JSON.parse(legacyStored) as Record<string, unknown>;
       const next = {
         ...DEFAULT_CLIENT_SETTINGS,
-        ...pickAppSettingsFromLegacy(legacyParsed),
+        ...pickAppSettingsFromLegacy(legacyStored),
       } satisfies AppSettings;
       await deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
       return next;
@@ -197,11 +234,11 @@ export async function loadSettingsFromStorage(deps: SettingsDeps): Promise<Setti
 }
 
 export function normalizeAppSettings(value: unknown): AppSettings {
-  const stored =
-    typeof value === "object" && value !== null && !Array.isArray(value)
-      ? (value as StoredAppSettings)
-      : {};
-  return { ...DEFAULT_CLIENT_SETTINGS, ...pickAppSettings(stored) };
+  const result = StoredAppSettingsSchema.safeParse(value);
+  return {
+    ...DEFAULT_CLIENT_SETTINGS,
+    ...pickAppSettings(result.success ? result.data : {}),
+  };
 }
 
 function parseToolCallDetailLevel(stored: StoredAppSettings): ToolCallDetailLevel | null {
@@ -334,7 +371,9 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   return result;
 }
 
-function pickAppSettingsFromLegacy(legacy: Record<string, unknown>): Partial<AppSettings> {
+function pickAppSettingsFromLegacy(
+  legacy: z.infer<typeof LegacyRendererSettingsSchema>,
+): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
   if (legacy.theme === "dark" || legacy.theme === "light" || legacy.theme === "auto") {
     result.theme = legacy.theme;
@@ -420,15 +459,11 @@ async function loadLegacyDesktopSettingsFromStorage(storage: KeyValueStorage): P
 
 async function loadRendererSettingsPayload(
   storage: KeyValueStorage,
-): Promise<Record<string, unknown> | null> {
-  const current = await storage.getItem(APP_SETTINGS_KEY);
+): Promise<z.infer<typeof LegacyRendererSettingsSchema> | null> {
+  const current = await readValidatedJson(storage, APP_SETTINGS_KEY, LegacyRendererSettingsSchema);
   if (current) {
-    return JSON.parse(current) as Record<string, unknown>;
+    return current;
   }
 
-  const legacy = await storage.getItem(LEGACY_SETTINGS_KEY);
-  if (!legacy) {
-    return null;
-  }
-  return JSON.parse(legacy) as Record<string, unknown>;
+  return readValidatedJson(storage, LEGACY_SETTINGS_KEY, LegacyRendererSettingsSchema);
 }

@@ -122,7 +122,7 @@ describe("buildReviewDraftKey", () => {
 });
 
 describe("normalizePersistedState", () => {
-  it("filters invalid draft comments and ignores activeModesByScope from old persisted JSON", () => {
+  it("rejects the complete payload when any draft comment or field is invalid", () => {
     const normalized = normalizePersistedState({
       drafts: {
         "review:key": [
@@ -146,17 +146,7 @@ describe("normalizePersistedState", () => {
     });
 
     expect(normalized.diffModeOverrides).toEqual({});
-    expect(normalized.drafts["review:key"]).toEqual([
-      {
-        id: "comment-1",
-        filePath: "src/example.ts",
-        side: "new",
-        lineNumber: 41,
-        body: "Keep me.",
-        createdAt: "2026-04-21T00:00:00.000Z",
-        updatedAt: "2026-04-21T00:00:00.000Z",
-      },
-    ]);
+    expect(normalized.drafts).toEqual({});
   });
 
   it("returns empty state for null, non-object, or malformed inputs", () => {

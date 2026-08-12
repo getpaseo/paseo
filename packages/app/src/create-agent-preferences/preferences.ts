@@ -1,19 +1,38 @@
 import { z } from "zod";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 
-const providerPreferencesSchema = z.object({
+const featureValuesSchema = z.record(z.string(), z.union([z.boolean(), z.string(), z.null()]));
+
+export interface ProviderPreferences {
+  model?: string;
+  mode?: string;
+  thinkingByModel?: Record<string, string>;
+  featureValues?: Record<string, unknown>;
+}
+
+export type LaunchTarget = { kind: "chat" } | { kind: "terminal"; profileId: string };
+
+export interface FormPreferences {
+  provider?: string;
+  providerPreferences?: Record<string, ProviderPreferences>;
+  favoriteModels?: Array<{ provider: string; modelId: string }>;
+  isolation?: "local" | "worktree";
+  launchTarget?: LaunchTarget;
+}
+
+const providerPreferencesSchema: z.ZodType<ProviderPreferences> = z.strictObject({
   model: z.string().optional(),
   mode: z.string().optional(),
   thinkingByModel: z.record(z.string(), z.string()).optional(),
-  featureValues: z.record(z.string(), z.unknown()).optional(),
+  featureValues: featureValuesSchema.optional(),
 });
 
-const launchTargetSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("chat") }),
-  z.object({ kind: z.literal("terminal"), profileId: z.string() }),
+const launchTargetSchema: z.ZodType<LaunchTarget> = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("chat") }),
+  z.strictObject({ kind: z.literal("terminal"), profileId: z.string() }),
 ]);
 
-const formPreferencesSchema = z.object({
+export const FormPreferencesSchema: z.ZodType<FormPreferences> = z.strictObject({
   provider: z.string().optional(),
   providerPreferences: z.record(z.string(), providerPreferencesSchema).optional(),
   // COMPAT(agentProfileFavoriteMigration): favourites were removed in v0.3.2.
@@ -21,7 +40,7 @@ const formPreferencesSchema = z.object({
   // import it; ordinary preference writes must not erase it first.
   favoriteModels: z
     .array(
-      z.object({
+      z.strictObject({
         provider: z.string(),
         modelId: z.string(),
       }),
@@ -33,14 +52,10 @@ const formPreferencesSchema = z.object({
   launchTarget: launchTargetSchema.optional(),
 });
 
-export type ProviderPreferences = z.infer<typeof providerPreferencesSchema>;
-export type FormPreferences = z.infer<typeof formPreferencesSchema>;
-export type LaunchTarget = z.infer<typeof launchTargetSchema>;
-
 export const DEFAULT_FORM_PREFERENCES: FormPreferences = {};
 
 export function parseFormPreferences(value: unknown): FormPreferences {
-  const result = formPreferencesSchema.safeParse(value);
+  const result = FormPreferencesSchema.safeParse(value);
   return result.success ? result.data : DEFAULT_FORM_PREFERENCES;
 }
 
@@ -115,6 +130,7 @@ export function mergeCreateAgentSelectionPreferences(args: {
   const modelId = args.modelId?.trim() ?? "";
   const modeId = args.modeId?.trim() ?? "";
   const thinkingOptionId = args.thinkingOptionId?.trim() ?? "";
+  const featureValues = featureValuesSchema.safeParse(args.featureValues);
 
   return mergeProviderPreferences({
     preferences: args.preferences,
@@ -123,7 +139,7 @@ export function mergeCreateAgentSelectionPreferences(args: {
       model: modelId || undefined,
       mode: modeId || undefined,
       ...(modelId && thinkingOptionId ? { thinkingByModel: { [modelId]: thinkingOptionId } } : {}),
-      ...(args.featureValues ? { featureValues: args.featureValues } : {}),
+      ...(featureValues.success ? { featureValues: featureValues.data } : {}),
     },
   });
 }

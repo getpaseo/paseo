@@ -382,14 +382,14 @@ describe("appearance settings", () => {
     expect((await loadAppSettingsFromStorage(deps)).toolCallDetailLevel).toBe("overview");
   });
 
-  it("maps an unrecognized tool call detail level to overview", async () => {
+  it("clears settings with an unrecognized tool call detail level", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
         [APP_SETTINGS_KEY]: JSON.stringify({ toolCallDetailLevel: "unknown" }),
       }),
     });
 
-    expect((await loadAppSettingsFromStorage(deps)).toolCallDetailLevel).toBe("overview");
+    expect((await loadAppSettingsFromStorage(deps)).toolCallDetailLevel).toBe("detailed");
   });
 
   it("migrates a switched-off checks row item to the hidden checks display", async () => {

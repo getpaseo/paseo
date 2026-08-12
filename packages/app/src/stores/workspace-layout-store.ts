@@ -1,7 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
+import { z } from "zod";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
   defaultWorkspaceLayoutIds,
@@ -42,6 +43,7 @@ import {
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-actions";
 import { normalizeWorkspaceTabTarget } from "@/workspace-tabs/identity";
+import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 
 export {
   collectAllPanes,
@@ -122,6 +124,37 @@ interface WorkspaceFocusRestorationState {
 }
 
 const MAX_TREE_DEPTH = 4;
+
+const SplitNodeStorageSchema: z.ZodType<SplitNode> = z.lazy(() =>
+  z.discriminatedUnion("kind", [
+    z.strictObject({
+      kind: z.literal("pane"),
+      pane: z.strictObject({
+        id: z.string(),
+        tabIds: z.array(z.string()),
+        focusedTabId: z.string().nullable(),
+      }),
+    }),
+    z.strictObject({
+      kind: z.literal("group"),
+      group: z.strictObject({
+        id: z.string(),
+        direction: z.enum(["horizontal", "vertical"]),
+        children: z.array(SplitNodeStorageSchema),
+        sizes: z.array(z.number()),
+      }),
+    }),
+  ]),
+);
+const WorkspaceLayoutStorageSchema: z.ZodType<WorkspaceLayout> = z.strictObject({
+  root: SplitNodeStorageSchema,
+  focusedPaneId: z.string().nullable(),
+  parentTabIdByTabId: z.record(z.string(), z.string()).optional(),
+});
+const WorkspaceLayoutPersistedStateSchema = z.strictObject({
+  layoutByWorkspace: z.record(z.string(), WorkspaceLayoutStorageSchema),
+  splitSizesByWorkspace: z.record(z.string(), z.record(z.string(), z.array(z.number()))),
+});
 
 function trimNonEmpty(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
@@ -942,7 +975,7 @@ export function createWorkspaceLayoutStore(
       {
         name: "workspace-layout-state",
         version: 1,
-        storage: createJSONStorage(() => AsyncStorage),
+        storage: createValidatedPersistStorage(AsyncStorage, WorkspaceLayoutPersistedStateSchema),
         partialize: (state) => {
           const layoutByWorkspace: Record<string, WorkspaceLayout> = {};
           for (const key in state.layoutByWorkspace) {
