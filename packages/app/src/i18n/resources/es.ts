@@ -641,16 +641,17 @@ export const es: TranslationResources = {
         closeTabsRightTitle: "¿Cerrar pestañas a la derecha?",
         closeOtherTabsTitle: "¿Cerrar otras pestañas?",
         bulk: {
-          all: "Esto archivará los agentes{{agents}}, cerrará los terminales{{terminals}}y cerrará las pestañas{{tabs}}. Cualquier proceso en ejecución en una terminal cerrada se detendrá inmediatamente.",
+          all: "Esto cerrará {{agents}} pestaña(s) de agente, cerrará {{terminals}} terminal(es) y cerrará {{tabs}} pestaña(s). Cualquier proceso en ejecución en una terminal cerrada se detendrá inmediatamente.",
           agentsAndTerminals:
-            "Esto archivará los agentes{{agents}}y cerrará los terminales{{terminals}}. Cualquier proceso en ejecución en una terminal cerrada se detendrá inmediatamente.",
+            "Esto cerrará {{agents}} pestaña(s) de agente y cerrará {{terminals}} terminal(es). Cualquier proceso en ejecución en una terminal cerrada se detendrá inmediatamente.",
           terminalsAndTabs:
-            "Esto cerrará los terminales{{terminals}}y cerrará las pestañas{{tabs}}. Cualquier proceso en ejecución en una terminal cerrada se detendrá inmediatamente.",
-          agentsAndTabs: "Esto archivará los agentes{{agents}}y cerrará las pestañas{{tabs}}.",
+            "Esto cerrará los terminales {{terminals}} y cerrará las pestañas {{tabs}}. Cualquier proceso en ejecución en una terminal cerrada se detendrá inmediatamente.",
+          agentsAndTabs:
+            "Esto cerrará {{agents}} pestaña(s) de agente y cerrará {{tabs}} pestaña(s).",
           terminals:
-            "Esto cerrará los terminales{{terminals}}. Cualquier proceso en ejecución en una terminal cerrada se detendrá inmediatamente.",
-          tabs: "Esto cerrará las pestañas{{tabs}}.",
-          agents: "Esto archivará los agentes{{agents}}.",
+            "Esto cerrará los terminales {{terminals}}. Cualquier proceso en ejecución en una terminal cerrada se detendrá inmediatamente.",
+          tabs: "Esto cerrará las pestañas {{tabs}}.",
+          agents: "Esto cerrará {{agents}} pestaña(s) de agente.",
         },
       },
     },

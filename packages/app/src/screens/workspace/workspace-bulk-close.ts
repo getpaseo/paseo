@@ -20,17 +20,17 @@ export interface BulkCloseConfirmationLabels {
 
 export const DEFAULT_BULK_CLOSE_CONFIRMATION_LABELS: BulkCloseConfirmationLabels = {
   all: ({ agents, terminals, tabs }) =>
-    `This will archive ${agents} agent(s), close ${terminals} terminal(s), and close ${tabs} tab(s). Any running process in a closed terminal will be stopped immediately.`,
+    `This will close ${agents} agent tab(s), close ${terminals} terminal(s), and close ${tabs} tab(s). Any running process in a closed terminal will be stopped immediately.`,
   agentsAndTerminals: ({ agents, terminals }) =>
-    `This will archive ${agents} agent(s) and close ${terminals} terminal(s). Any running process in a closed terminal will be stopped immediately.`,
+    `This will close ${agents} agent tab(s) and close ${terminals} terminal(s). Any running process in a closed terminal will be stopped immediately.`,
   terminalsAndTabs: ({ terminals, tabs }) =>
     `This will close ${terminals} terminal(s) and close ${tabs} tab(s). Any running process in a closed terminal will be stopped immediately.`,
   agentsAndTabs: ({ agents, tabs }) =>
-    `This will archive ${agents} agent(s) and close ${tabs} tab(s).`,
+    `This will close ${agents} agent tab(s) and close ${tabs} tab(s).`,
   terminals: ({ terminals }) =>
     `This will close ${terminals} terminal(s). Any running process in a closed terminal will be stopped immediately.`,
   tabs: ({ tabs }) => `This will close ${tabs} tab(s).`,
-  agents: ({ agents }) => `This will archive ${agents} agent(s).`,
+  agents: ({ agents }) => `This will close ${agents} agent tab(s).`,
 };
 
 interface CloseWorkspaceTabWithCleanupInput {
@@ -110,18 +110,19 @@ export function buildBulkCloseConfirmationMessage(
 
 export async function closeBulkWorkspaceTabs(input: CloseBulkWorkspaceTabsInput): Promise<void> {
   const { client, groups, closeTab, closeWorkspaceTabWithCleanup, logLabel, warn } = input;
-  const hasDestructiveTabs = groups.agentTabs.length > 0 || groups.terminalTabs.length > 0;
+  // Agent tab close is layout-only; only terminals need daemon-side process kill.
+  const hasTerminalCloses = groups.terminalTabs.length > 0;
 
-  if (hasDestructiveTabs && client) {
+  if (hasTerminalCloses && client) {
     void client
       .closeItems({
-        agentIds: groups.agentTabs.map((tab) => tab.agentId),
+        agentIds: [],
         terminalIds: groups.terminalTabs.map((tab) => tab.terminalId),
       })
       .catch((error) => {
         warn?.(`[WorkspaceScreen] Failed to bulk close tabs ${logLabel}`, { error });
       });
-  } else if (hasDestructiveTabs) {
+  } else if (hasTerminalCloses) {
     warn?.(`[WorkspaceScreen] Failed to bulk close tabs ${logLabel}`, {
       error: new Error(i18n.t("common.errors.daemonClientUnavailable")),
     });

@@ -632,16 +632,16 @@ export const zhCN: TranslationResources = {
         closeTabsRightTitle: "关闭右侧标签？",
         closeOtherTabsTitle: "关闭其他标签？",
         bulk: {
-          all: "这会归档 {{agents}} 个 Agent，关闭 {{terminals}} 个 Terminal，并关闭 {{tabs}} 个标签。已关闭 Terminal 中任何正在运行的进程都会立即停止。",
+          all: "这会关闭 {{agents}} 个 Agent 标签、{{terminals}} 个 Terminal，并关闭 {{tabs}} 个标签。已关闭 Terminal 中任何正在运行的进程都会立即停止。",
           agentsAndTerminals:
-            "这会归档 {{agents}} 个 Agent，并关闭 {{terminals}} 个 Terminal。已关闭 Terminal 中任何正在运行的进程都会立即停止。",
+            "这会关闭 {{agents}} 个 Agent 标签，并关闭 {{terminals}} 个 Terminal。已关闭 Terminal 中任何正在运行的进程都会立即停止。",
           terminalsAndTabs:
             "这会关闭 {{terminals}} 个 Terminal，并关闭 {{tabs}} 个标签。已关闭 Terminal 中任何正在运行的进程都会立即停止。",
-          agentsAndTabs: "这会归档 {{agents}} 个 Agent，并关闭 {{tabs}} 个标签。",
+          agentsAndTabs: "这会关闭 {{agents}} 个 Agent 标签，并关闭 {{tabs}} 个标签。",
           terminals:
             "这会关闭 {{terminals}} 个 Terminal。已关闭 Terminal 中任何正在运行的进程都会立即停止。",
           tabs: "这会关闭 {{tabs}} 个标签。",
-          agents: "这会归档 {{agents}} 个 Agent。",
+          agents: "这会关闭 {{agents}} 个 Agent 标签。",
         },
       },
     },

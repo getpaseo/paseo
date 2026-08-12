@@ -639,16 +639,16 @@ export const ptBR: TranslationResources = {
         closeTabsRightTitle: "Fechar abas à direita?",
         closeOtherTabsTitle: "Fechar outras abas?",
         bulk: {
-          all: "Isso vai arquivar {{agents}} agente(s), fechar {{terminals}} terminal(ais) e fechar {{tabs}} aba(s). Qualquer processo em execução em um terminal fechado será interrompido imediatamente.",
+          all: "Isso vai fechar {{agents}} aba(s) de agente, fechar {{terminals}} terminal(ais) e fechar {{tabs}} aba(s). Qualquer processo em execução em um terminal fechado será interrompido imediatamente.",
           agentsAndTerminals:
-            "Isso vai arquivar {{agents}} agente(s) e fechar {{terminals}} terminal(ais). Qualquer processo em execução em um terminal fechado será interrompido imediatamente.",
+            "Isso vai fechar {{agents}} aba(s) de agente e fechar {{terminals}} terminal(ais). Qualquer processo em execução em um terminal fechado será interrompido imediatamente.",
           terminalsAndTabs:
             "Isso vai fechar {{terminals}} terminal(ais) e fechar {{tabs}} aba(s). Qualquer processo em execução em um terminal fechado será interrompido imediatamente.",
-          agentsAndTabs: "Isso vai arquivar {{agents}} agente(s) e fechar {{tabs}} aba(s).",
+          agentsAndTabs: "Isso vai fechar {{agents}} aba(s) de agente e fechar {{tabs}} aba(s).",
           terminals:
             "Isso vai fechar {{terminals}} terminal(ais). Qualquer processo em execução em um terminal fechado será interrompido imediatamente.",
           tabs: "Isso vai fechar {{tabs}} aba(s).",
-          agents: "Isso vai arquivar {{agents}} agente(s).",
+          agents: "Isso vai fechar {{agents}} aba(s) de agente.",
         },
       },
     },

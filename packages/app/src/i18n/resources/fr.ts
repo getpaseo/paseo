@@ -641,16 +641,16 @@ export const fr: TranslationResources = {
         closeTabsRightTitle: "Fermer les onglets à droite?",
         closeOtherTabsTitle: "Fermer les autres onglets?",
         bulk: {
-          all: "Cela archivera les agents{{agents}}, fermera les terminaux{{terminals}}et fermera les onglets{{tabs}}. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
+          all: "Cela fermera {{agents}} onglet(s) d’agent, fermera {{terminals}} terminal(aux) et fermera {{tabs}} onglet(s). Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
           agentsAndTerminals:
-            "Cela archivera les agents{{agents}}et fermera les terminaux{{terminals}}. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
+            "Cela fermera {{agents}} onglet(s) d’agent et fermera {{terminals}} terminal(aux). Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
           terminalsAndTabs:
-            "Cela fermera le(s) terminal(s){{terminals}}et fermera le(s) onglet(s){{tabs}}. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
-          agentsAndTabs: "Cela archivera les agents{{agents}}et fermera les onglets{{tabs}}.",
+            "Cela fermera le(s) terminal(s) {{terminals}} et fermera le(s) onglet(s) {{tabs}}. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
+          agentsAndTabs: "Cela fermera {{agents}} onglet(s) d’agent et fermera {{tabs}} onglet(s).",
           terminals:
-            "Cela fermera le(s) terminal(s){{terminals}}. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
-          tabs: "Cela fermera les onglets{{tabs}}.",
-          agents: "Cela archivera les agents{{agents}}.",
+            "Cela fermera le(s) terminal(s) {{terminals}}. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
+          tabs: "Cela fermera les onglets {{tabs}}.",
+          agents: "Cela fermera {{agents}} onglet(s) d’agent.",
         },
       },
     },

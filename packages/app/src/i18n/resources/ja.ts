@@ -638,16 +638,16 @@ export const ja: TranslationResources = {
         closeTabsRightTitle: "右のタブを閉じますか？",
         closeOtherTabsTitle: "他のタブを閉じますか？",
         bulk: {
-          all: "{{agents}}件のエージェントをアーカイブし、{{terminals}}件のターミナルを閉じ、{{tabs}}件のタブを閉じます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
+          all: "{{agents}}件のエージェントタブを閉じ、{{terminals}}件のターミナルを閉じ、{{tabs}}件のタブを閉じます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
           agentsAndTerminals:
-            "{{agents}}件のエージェントをアーカイブし、{{terminals}}件のターミナルを閉じます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
+            "{{agents}}件のエージェントタブを閉じ、{{terminals}}件のターミナルを閉じます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
           terminalsAndTabs:
             "{{terminals}}件のターミナルを閉じ、{{tabs}}件のタブを閉じます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
-          agentsAndTabs: "{{agents}}件のエージェントをアーカイブし、{{tabs}}件のタブを閉じます。",
+          agentsAndTabs: "{{agents}}件のエージェントタブを閉じ、{{tabs}}件のタブを閉じます。",
           terminals:
             "{{terminals}}件のターミナルを閉じます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
           tabs: "{{tabs}}件のタブを閉じます。",
-          agents: "{{agents}}件のエージェントをアーカイブします。",
+          agents: "{{agents}}件のエージェントタブを閉じます。",
         },
       },
     },

@@ -38,7 +38,8 @@ export function createMarkdownStyles(theme: Theme) {
 
     paragraph: {
       marginTop: 0,
-      marginBottom: theme.spacing[3],
+      // Compact conversation density: keep prose readable without large empty bands.
+      marginBottom: theme.spacing[2],
       flexWrap: "wrap" as const,
       flexDirection: "row" as const,
       alignItems: "flex-start" as const,
@@ -57,8 +58,8 @@ export function createMarkdownStyles(theme: Theme) {
       fontSize: theme.fontSize["3xl"],
       fontWeight: theme.fontWeight.bold,
       color: theme.colors.foreground,
-      marginTop: theme.spacing[6],
-      marginBottom: theme.spacing[3],
+      marginTop: theme.spacing[4],
+      marginBottom: theme.spacing[2],
       lineHeight: 32,
       borderBottomWidth: 1,
       borderBottomColor: theme.colors.border,
@@ -70,8 +71,8 @@ export function createMarkdownStyles(theme: Theme) {
       fontSize: theme.fontSize["2xl"],
       fontWeight: theme.fontWeight.bold,
       color: theme.colors.foreground,
-      marginTop: theme.spacing[6],
-      marginBottom: theme.spacing[3],
+      marginTop: theme.spacing[4],
+      marginBottom: theme.spacing[2],
       lineHeight: 28,
       borderBottomWidth: 1,
       borderBottomColor: theme.colors.border,
@@ -83,7 +84,7 @@ export function createMarkdownStyles(theme: Theme) {
       fontSize: theme.fontSize.xl,
       fontWeight: theme.fontWeight.semibold,
       color: theme.colors.foreground,
-      marginTop: theme.spacing[4],
+      marginTop: theme.spacing[3],
       marginBottom: theme.spacing[2],
       lineHeight: 26,
     },
@@ -93,7 +94,7 @@ export function createMarkdownStyles(theme: Theme) {
       fontSize: theme.fontSize.lg,
       fontWeight: theme.fontWeight.semibold,
       color: theme.colors.foreground,
-      marginTop: theme.spacing[4],
+      marginTop: theme.spacing[3],
       marginBottom: theme.spacing[2],
       lineHeight: 24,
     },
@@ -318,7 +319,8 @@ export function createMarkdownStyles(theme: Theme) {
     hr: {
       backgroundColor: theme.colors.border,
       height: 1,
-      marginVertical: theme.spacing[6],
+      // Biggest source of empty bands between tables/sections in long replies.
+      marginVertical: theme.spacing[3],
     },
 
     // =========================================================================
@@ -384,7 +386,7 @@ export function createCompactMarkdownStyles(theme: Theme) {
 
     paragraph: {
       ...baseStyles.paragraph,
-      marginBottom: theme.spacing[2],
+      marginBottom: theme.spacing[1],
     },
 
     code_inline: {
