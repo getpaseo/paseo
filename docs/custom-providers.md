@@ -684,8 +684,29 @@ Every entry under `agents.providers` accepts these fields:
 | `models`           | `ProviderProfileModel[]`  | No                | Static model list (overrides runtime discovery)                    |
 | `additionalModels` | `ProviderProfileModel[]`  | No                | Static model additions (merged with runtime discovery or `models`) |
 | `disallowedTools`  | `string[]`                | No                | Tool names to disable for this provider (e.g. `["WebSearch"]`)     |
+| `paseoTools`       | `{ enabled: boolean }`    | No                | Whether this provider's agents get Paseo's own tools               |
 | `enabled`          | `boolean`                 | No                | Set to `false` to hide the provider (default: `true`)              |
 | `order`            | `number`                  | No                | Sort order in the provider list                                    |
+
+### Paseo tools
+
+`daemon.mcp.injectIntoAgents` turns Paseo's orchestration tools (`create_agent`, `send_agent_prompt`, and the rest of the catalog in [the MCP reference](../public-docs/mcp.md)) on for the host. `paseoTools` narrows that per provider:
+
+```json
+{
+  "claude": { "paseoTools": { "enabled": true } },
+  "claude-worker": { "extends": "claude", "label": "Worker", "paseoTools": { "enabled": false } },
+  "codex": { "paseoTools": { "enabled": false } }
+}
+```
+
+The orchestrator profile keeps the tools; the worker profile it spawns and Codex get neither the native catalog nor the injected `paseo` MCP server. A provider can opt out from under the global switch but cannot opt in past it, and a provider that says nothing keeps whatever the global switch gives it.
+
+A derived profile inherits its base provider's `paseoTools` until it declares its own, which replaces the base. This is unlike `disallowedTools`, which merges.
+
+This decides what Paseo offers an agent, nothing more. An agent with shell access on the host can still reach whatever its user can, so do not reach for `paseoTools` to sandbox one.
+
+The policy is re-read at every launch, so changing it takes effect on the next create, resume or reload. Running agents keep what they started with.
 
 ### Model definition
 

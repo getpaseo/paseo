@@ -73,6 +73,7 @@ import { isSystemInjectedEnvelope } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
+import type { PaseoToolsPolicy } from "./provider-launch-config.js";
 import {
   ProviderSubagentStore,
   type ProviderSubagentDescriptor,
@@ -129,6 +130,7 @@ export type AgentRunCancellationResult =
 interface PreparedSessionConfig {
   storedConfig: AgentSessionConfig;
   launchConfig: AgentSessionConfig;
+  paseoToolsEnabled: boolean;
 }
 
 interface NormalizeConfigOptions {
@@ -240,6 +242,7 @@ interface AgentManagerRescueTimeouts {
 
 interface ProviderEnabledFlag {
   enabled: boolean;
+  paseoTools?: PaseoToolsPolicy;
   derivedFromProviderId?: string | null;
   validateOptions?: (options: ProviderOptions | undefined) => ProviderOptions | undefined;
   applyOptions?: (
@@ -810,6 +813,21 @@ export class AgentManager {
     return this.mcpAuthToken;
   }
 
+  /**
+   * Whether this provider's agents get Paseo's tools, read fresh at every launch
+   * so a config change takes effect on the next create, resume or reload rather
+   * than being frozen into a persisted launch config.
+   *
+   * `daemon.mcp.injectIntoAgents` is the master switch; a provider can opt out
+   * under it but cannot opt in past it.
+   */
+  resolvePaseoToolsEnabled(provider: AgentProvider): boolean {
+    if (!this.paseoToolsEnabled) {
+      return false;
+    }
+    return this.providerDefinitions.get(provider)?.paseoTools?.enabled ?? true;
+  }
+
   setAppendSystemPrompt(prompt: string | null | undefined): void {
     this.appendSystemPrompt = prompt ?? "";
   }
@@ -1153,7 +1171,7 @@ export class AgentManager {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     await this.deleteAgentState(resolvedAgentId);
-    const { storedConfig, launchConfig } = await this.prepareSessionConfig(
+    const { storedConfig, launchConfig, paseoToolsEnabled } = await this.prepareSessionConfig(
       config,
       resolvedAgentId,
       options?.env,
@@ -1166,6 +1184,7 @@ export class AgentManager {
       resolvedAgentId,
       client,
       storedConfig.cwd,
+      paseoToolsEnabled,
       options?.env,
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
@@ -1235,7 +1254,7 @@ export class AgentManager {
       ...overrides,
       provider: handle.provider,
     } as AgentSessionConfig;
-    const { storedConfig, launchConfig } = await this.prepareSessionConfig(
+    const { storedConfig, launchConfig, paseoToolsEnabled } = await this.prepareSessionConfig(
       mergedConfig,
       resolvedAgentId,
     );
@@ -1247,7 +1266,12 @@ export class AgentManager {
         `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
       );
     }
-    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, storedConfig.cwd);
+    const launchContext = await this.buildLaunchContext(
+      resolvedAgentId,
+      client,
+      storedConfig.cwd,
+      paseoToolsEnabled,
+    );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const session = await client.resumeSession(
       handle,
@@ -1288,14 +1312,19 @@ export class AgentManager {
       throw new Error(`Provider '${input.provider}' does not support importing sessions`);
     }
 
-    const { storedConfig, launchConfig } = await this.prepareSessionConfig(
+    const { storedConfig, launchConfig, paseoToolsEnabled } = await this.prepareSessionConfig(
       {
         provider: input.provider,
         cwd: input.cwd,
       },
       resolvedAgentId,
     );
-    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, storedConfig.cwd);
+    const launchContext = await this.buildLaunchContext(
+      resolvedAgentId,
+      client,
+      storedConfig.cwd,
+      paseoToolsEnabled,
+    );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const imported = await client.importSession(
       {
@@ -1375,8 +1404,16 @@ export class AgentManager {
       ...overrides,
       provider,
     } as AgentSessionConfig;
-    const { storedConfig, launchConfig } = await this.prepareSessionConfig(refreshConfig, agentId);
-    const launchContext = await this.buildLaunchContext(agentId, client, storedConfig.cwd);
+    const { storedConfig, launchConfig, paseoToolsEnabled } = await this.prepareSessionConfig(
+      refreshConfig,
+      agentId,
+    );
+    const launchContext = await this.buildLaunchContext(
+      agentId,
+      client,
+      storedConfig.cwd,
+      paseoToolsEnabled,
+    );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
     const session = handle
@@ -4801,15 +4838,20 @@ export class AgentManager {
     env?: Record<string, string>,
   ): Promise<PreparedSessionConfig> {
     const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), { env });
+    const paseoToolsEnabled = this.resolvePaseoToolsEnabled(storedConfig.provider);
     const launchConfig = this.applyDaemonAppendSystemPrompt(
-      withRuntimePaseoMcpServer({
-        config: storedConfig,
-        agentId,
-        mcpBaseUrl: this.mcpBaseUrl,
-        mcpAuthToken: this.mcpAuthToken,
-      }),
+      // A provider that opted out gets no internal `paseo` MCP entry at all, so
+      // there is nothing for it to discover or reconnect to.
+      paseoToolsEnabled
+        ? withRuntimePaseoMcpServer({
+            config: storedConfig,
+            agentId,
+            mcpBaseUrl: this.mcpBaseUrl,
+            mcpAuthToken: this.mcpAuthToken,
+          })
+        : storedConfig,
     );
-    return { storedConfig, launchConfig };
+    return { storedConfig, launchConfig, paseoToolsEnabled };
   }
 
   private applyDaemonAppendSystemPrompt(config: AgentSessionConfig): AgentSessionConfig {
@@ -4829,6 +4871,7 @@ export class AgentManager {
     agentId: string,
     client: AgentClient,
     cwd: string,
+    paseoToolsEnabled: boolean,
     env?: Record<string, string>,
   ): Promise<AgentLaunchContext> {
     const context: AgentLaunchContext = {
@@ -4840,7 +4883,7 @@ export class AgentManager {
       },
     };
     if (
-      this.paseoToolsEnabled &&
+      paseoToolsEnabled &&
       client.capabilities.supportsNativePaseoTools &&
       this.paseoToolCatalogFactory
     ) {

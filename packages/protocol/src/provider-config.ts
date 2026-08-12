@@ -22,10 +22,24 @@ export const ProviderCommandSchema = z.discriminatedUnion("mode", [
   ProviderCommandReplaceSchema,
 ]);
 
+/**
+ * Whether this provider's agents get Paseo's own tools. See
+ * `docs/custom-providers.md` for what that covers and what it does not.
+ *
+ * This never crosses the wire — it lives in persisted daemon config. The
+ * compatibility case is an older daemon reading a config.json a newer one
+ * wrote, which is why this is an object rather than a bare boolean and is not
+ * `.strict()`.
+ */
+export const PaseoToolsPolicySchema = z.object({
+  enabled: z.boolean(),
+});
+
 export const ProviderRuntimeSettingsSchema = z.object({
   command: ProviderCommandSchema.optional(),
   env: z.record(z.string(), z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
+  paseoTools: PaseoToolsPolicySchema.optional(),
 });
 
 const ProviderProfileThinkingOptionSchema = z.object({
@@ -53,6 +67,7 @@ export const ProviderOverrideSchema = z.object({
   models: z.array(ProviderProfileModelSchema).optional(),
   additionalModels: z.array(ProviderProfileModelSchema).optional(),
   disallowedTools: z.array(z.string()).optional(),
+  paseoTools: PaseoToolsPolicySchema.optional(),
   enabled: z.boolean().optional(),
   order: z.number().optional(),
 });
@@ -126,6 +141,7 @@ export const AgentProviderRuntimeSettingsMapSchema = z
   });
 
 export type ProviderCommand = z.infer<typeof ProviderCommandSchema>;
+export type PaseoToolsPolicy = z.infer<typeof PaseoToolsPolicySchema>;
 export type ProviderRuntimeSettings = z.infer<typeof ProviderRuntimeSettingsSchema>;
 export type ProviderProfileModel = z.infer<typeof ProviderProfileModelSchema>;
 export type ProviderOverride = z.infer<typeof ProviderOverrideSchema>;

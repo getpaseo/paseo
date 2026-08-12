@@ -6,12 +6,14 @@ import {
 import { createExternalProcessEnv, type ProcessEnvRecord } from "../paseo-env.js";
 export {
   AgentProviderRuntimeSettingsMapSchema,
+  PaseoToolsPolicySchema,
   ProviderCommandSchema,
   ProviderOverrideSchema,
   ProviderOverridesSchema,
   ProviderProfileModelSchema,
   ProviderRuntimeSettingsSchema,
   type AgentProviderRuntimeSettingsMap,
+  type PaseoToolsPolicy,
   type ProviderCommand,
   type ProviderOverride,
   type ProviderOverrides,

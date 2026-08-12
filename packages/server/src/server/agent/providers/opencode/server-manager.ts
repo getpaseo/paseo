@@ -71,6 +71,20 @@ export interface OpenCodeServerManagerOptions {
   createEventSource?: OpenCodeEventConsumerFactory;
 }
 
+/**
+ * Identity of the shared OpenCode server process. Only settings that change the
+ * process belong here — `paseoTools` is daemon-side provider policy the server
+ * never sees, so two profiles differing only in it must not look like a
+ * conflicting reinitialization.
+ */
+function serverIdentityKey(runtimeSettings: ProviderRuntimeSettings | undefined): string {
+  if (!runtimeSettings) {
+    return "{}";
+  }
+  const { paseoTools: _paseoTools, ...processSettings } = runtimeSettings;
+  return JSON.stringify(processSettings);
+}
+
 export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private static instance: OpenCodeServerManager | null = null;
   private static exitHandlerRegistered = false;
@@ -94,7 +108,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     this.logger = options.logger;
     this.baseEnv = options.baseEnv;
     this.runtimeSettings = options.runtimeSettings;
-    this.runtimeSettingsKey = JSON.stringify(this.runtimeSettings ?? {});
+    this.runtimeSettingsKey = serverIdentityKey(this.runtimeSettings);
     this.managedProcesses = options.managedProcesses;
     this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
     this.portAllocator = options.portAllocator ?? findAvailablePort;
@@ -112,7 +126,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     runtimeSettings?: ProviderRuntimeSettings,
     options: Omit<OpenCodeServerManagerOptions, "logger" | "runtimeSettings"> = {},
   ): OpenCodeServerManager {
-    const nextSettingsKey = JSON.stringify(runtimeSettings ?? {});
+    const nextSettingsKey = serverIdentityKey(runtimeSettings);
     if (!OpenCodeServerManager.instance) {
       OpenCodeServerManager.instance = new OpenCodeServerManager({
         logger,

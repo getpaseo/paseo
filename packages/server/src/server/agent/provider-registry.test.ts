@@ -1831,3 +1831,48 @@ describe("fetchCatalog", () => {
     expect(catalog.modes.map((mode) => mode.id)).toEqual(["ask"]);
   });
 });
+
+describe("paseoTools provider policy", () => {
+  test("a provider that declares nothing has no policy", () => {
+    expect(buildProviderRegistry(logger).claude.paseoTools).toBeUndefined();
+  });
+
+  test("a builtin provider carries its declared policy", () => {
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: { paseoTools: { enabled: true } },
+        codex: { paseoTools: { enabled: false } },
+      },
+    });
+
+    expect(registry.claude.paseoTools).toEqual({ enabled: true });
+    expect(registry.codex.paseoTools).toEqual({ enabled: false });
+  });
+
+  test("a derived profile inherits its base policy when it declares none", () => {
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: { paseoTools: { enabled: true } },
+        "claude-worker": { extends: "claude", label: "Claude Worker" },
+      },
+    });
+
+    expect(registry["claude-worker"].paseoTools).toEqual({ enabled: true });
+  });
+
+  test("a derived profile overrides its base policy", () => {
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: { paseoTools: { enabled: true } },
+        "claude-worker": {
+          extends: "claude",
+          label: "Claude Worker",
+          paseoTools: { enabled: false },
+        },
+      },
+    });
+
+    expect(registry.claude.paseoTools).toEqual({ enabled: true });
+    expect(registry["claude-worker"].paseoTools).toEqual({ enabled: false });
+  });
+});

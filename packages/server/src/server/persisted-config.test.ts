@@ -780,3 +780,44 @@ describe.skipIf(process.platform === "win32")("persisted config file permissions
     }
   });
 });
+
+describe("PersistedConfigSchema paseoTools policy", () => {
+  test("accepts a provider that opts in or out", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          claude: { paseoTools: { enabled: true } },
+          codex: { paseoTools: { enabled: false } },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.claude?.paseoTools).toEqual({ enabled: true });
+    expect(parsed.agents?.providers?.codex?.paseoTools).toEqual({ enabled: false });
+  });
+
+  test("rejects a policy without enabled", () => {
+    expect(
+      PersistedConfigSchema.safeParse({
+        agents: { providers: { claude: { paseoTools: {} } } },
+      }).success,
+    ).toBe(false);
+  });
+
+  test("a derived profile may declare its own policy", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          claude: { paseoTools: { enabled: true } },
+          "claude-worker": {
+            extends: "claude",
+            label: "Claude Worker",
+            paseoTools: { enabled: false },
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.["claude-worker"]?.paseoTools).toEqual({ enabled: false });
+  });
+});

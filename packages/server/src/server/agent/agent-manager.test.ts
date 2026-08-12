@@ -1,4 +1,4 @@
-import { expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10799,4 +10799,244 @@ test("onWorkspaceStateMayHaveChanged is not called for running shell tool calls"
   await manager.runAgent(snapshot.id, { text: "merge it" });
 
   expect(onWorkspaceStateMayHaveChanged).not.toHaveBeenCalled();
+});
+
+describe("paseoTools provider policy", () => {
+  class LaunchCaptureClient extends TestAgentClient {
+    readonly launchConfigs: AgentSessionConfig[] = [];
+    readonly launchContexts: AgentLaunchContext[] = [];
+
+    override async createSession(
+      config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.launchConfigs.push(config);
+      if (launchContext) this.launchContexts.push(launchContext);
+      return new McpCapableTestAgentSession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.launchConfigs.push(config);
+      if (launchContext) this.launchContexts.push(launchContext);
+      return new McpCapableTestAgentSession(config);
+    }
+
+    override async importSession(
+      input: ImportProviderSessionInput,
+      context: ImportProviderSessionContext,
+    ) {
+      this.launchConfigs.push(context.config);
+      if (context.launchContext) this.launchContexts.push(context.launchContext);
+      return {
+        session: new McpCapableTestAgentSession(context.storedConfig),
+        config: context.storedConfig,
+        persistence: {
+          provider: "codex" as const,
+          sessionId: input.providerHandleId,
+          nativeHandle: input.providerHandleId,
+          metadata: { provider: "codex", cwd: context.storedConfig.cwd },
+        },
+        timeline: [],
+      };
+    }
+  }
+
+  /** Native Paseo tools are a provider capability, so it belongs on the class. */
+  class NativeToolsLaunchCaptureClient extends LaunchCaptureClient {
+    override readonly capabilities = {
+      ...TEST_CAPABILITIES,
+      supportsMcpServers: true,
+      supportsNativePaseoTools: true,
+    };
+  }
+
+  function createManager(options: {
+    client: LaunchCaptureClient;
+    storage: AgentStorage;
+    paseoTools?: { enabled: boolean };
+    globallyEnabled?: boolean;
+  }) {
+    return new AgentManager({
+      clients: { codex: options.client },
+      providerDefinitions: {
+        codex: { enabled: true, ...(options.paseoTools ? { paseoTools: options.paseoTools } : {}) },
+      },
+      registry: options.storage,
+      logger,
+      mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+      paseoToolsEnabled: options.globallyEnabled ?? true,
+      paseoToolCatalogFactory: () => ({
+        tools: new Map(),
+        getTool: () => undefined,
+        executeTool: async () => ({ content: [] }),
+      }),
+      idFactory: () => "00000000-0000-4000-8000-0000000001aa",
+    });
+  }
+
+  function withWorkdir<T>(run: (workdir: string, storage: AgentStorage) => Promise<T>) {
+    return async () => {
+      const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+      try {
+        return await run(workdir, new AgentStorage(join(workdir, "agents"), logger));
+      } finally {
+        rmSync(workdir, { recursive: true, force: true });
+      }
+    };
+  }
+
+  test(
+    "createAgent injects the paseo MCP server when the provider opts in",
+    withWorkdir(async (workdir, storage) => {
+      const client = new LaunchCaptureClient();
+      const manager = createManager({ client, storage, paseoTools: { enabled: true } });
+
+      await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+
+      expect(client.launchConfigs.at(-1)?.mcpServers?.paseo).toBeDefined();
+    }),
+  );
+
+  test(
+    "createAgent omits the paseo MCP server when the provider opts out",
+    withWorkdir(async (workdir, storage) => {
+      const client = new LaunchCaptureClient();
+      const manager = createManager({ client, storage, paseoTools: { enabled: false } });
+
+      await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+
+      expect(client.launchConfigs.at(-1)?.mcpServers?.paseo).toBeUndefined();
+    }),
+  );
+
+  test(
+    "a provider that declares nothing keeps the current behavior",
+    withWorkdir(async (workdir, storage) => {
+      const client = new LaunchCaptureClient();
+      const manager = createManager({ client, storage });
+
+      await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+
+      expect(client.launchConfigs.at(-1)?.mcpServers?.paseo).toBeDefined();
+    }),
+  );
+
+  test(
+    "the global switch beats a provider that opts in",
+    withWorkdir(async (workdir, storage) => {
+      const client = new LaunchCaptureClient();
+      const manager = createManager({
+        client,
+        storage,
+        paseoTools: { enabled: true },
+        globallyEnabled: false,
+      });
+
+      await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+
+      expect(client.launchConfigs.at(-1)?.mcpServers?.paseo).toBeUndefined();
+    }),
+  );
+
+  test(
+    "opting out also withholds the native tool catalog",
+    withWorkdir(async (workdir, storage) => {
+      const client = new NativeToolsLaunchCaptureClient();
+      const manager = createManager({ client, storage, paseoTools: { enabled: false } });
+
+      await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+
+      expect(client.launchContexts.at(-1)?.paseoTools).toBeUndefined();
+    }),
+  );
+
+  test(
+    "opting in still provides the native tool catalog",
+    withWorkdir(async (workdir, storage) => {
+      const client = new NativeToolsLaunchCaptureClient();
+      const manager = createManager({ client, storage, paseoTools: { enabled: true } });
+
+      await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+
+      expect(client.launchContexts.at(-1)?.paseoTools).toBeDefined();
+    }),
+  );
+
+  test(
+    "resume applies the policy that is configured now, not the one the agent started with",
+    withWorkdir(async (workdir, storage) => {
+      const client = new LaunchCaptureClient();
+      const manager = createManager({ client, storage, paseoTools: { enabled: true } });
+
+      const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      expect(client.launchConfigs.at(-1)?.mcpServers?.paseo).toBeDefined();
+
+      manager.updateProviderRegistry({
+        providerDefinitions: { codex: { enabled: true, paseoTools: { enabled: false } } },
+        clients: { codex: client },
+      });
+      await manager.reloadAgentSession(snapshot.id);
+
+      expect(client.launchConfigs.at(-1)?.mcpServers?.paseo).toBeUndefined();
+    }),
+  );
+
+  test(
+    "importProviderSession withholds both the MCP entry and the native catalog",
+    withWorkdir(async (workdir, storage) => {
+      const client = new NativeToolsLaunchCaptureClient();
+      const manager = createManager({ client, storage, paseoTools: { enabled: false } });
+
+      await manager.importProviderSession({
+        provider: "codex",
+        providerHandleId: "session-import-1",
+        cwd: workdir,
+        workspaceId: "wks_import",
+      });
+
+      expect(client.launchConfigs.at(-1)?.mcpServers?.paseo).toBeUndefined();
+      expect(client.launchContexts.at(-1)?.paseoTools).toBeUndefined();
+    }),
+  );
+
+  test(
+    "resumeAgentFromPersistence drops a stored paseo entry for an opted-out provider",
+    withWorkdir(async (workdir, storage) => {
+      const client = new LaunchCaptureClient();
+      const manager = createManager({ client, storage, paseoTools: { enabled: false } });
+
+      await manager.resumeAgentFromPersistence(
+        { provider: "codex", sessionId: "session-123", metadata: { cwd: workdir } },
+        {
+          cwd: workdir,
+          mcpServers: {
+            paseo: {
+              type: "http",
+              url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=stale-agent",
+            },
+          },
+        },
+      );
+
+      expect(client.launchConfigs.at(-1)?.mcpServers?.paseo).toBeUndefined();
+    }),
+  );
 });

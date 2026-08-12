@@ -169,7 +169,12 @@ export interface AgentManagerProviderState {
       AgentProvider,
       Pick<
         ProviderDefinition,
-        "enabled" | "derivedFromProviderId" | "validateOptions" | "applyOptions" | "applyToolPolicy"
+        | "enabled"
+        | "paseoTools"
+        | "derivedFromProviderId"
+        | "validateOptions"
+        | "applyOptions"
+        | "applyToolPolicy"
       >
     >
   >;
@@ -306,6 +311,7 @@ export class ProviderSnapshotManager {
     for (const [provider, definition] of Object.entries(this.providerRegistry)) {
       providerDefinitions[provider] = {
         enabled: definition.enabled,
+        paseoTools: definition.paseoTools,
         derivedFromProviderId: definition.derivedFromProviderId,
         validateOptions: definition.validateOptions,
         applyOptions: definition.applyOptions,

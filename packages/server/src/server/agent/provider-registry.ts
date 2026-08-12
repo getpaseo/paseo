@@ -30,6 +30,7 @@ import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { ManagedProcessRegistry } from "../managed-processes/managed-processes.js";
 import type {
   AgentProviderRuntimeSettingsMap,
+  PaseoToolsPolicy,
   ProviderOverride,
   ProviderProfileModel,
   ProviderRuntimeSettings,
@@ -70,6 +71,11 @@ export { AGENT_PROVIDER_DEFINITIONS, getAgentProviderDefinition };
 
 export interface ProviderDefinition extends AgentProviderDefinition {
   enabled: boolean;
+  /**
+   * Whether this provider's agents get Paseo's own tools. `undefined` means the
+   * operator said nothing, so `daemon.mcp.injectIntoAgents` decides.
+   */
+  paseoTools: PaseoToolsPolicy | undefined;
   /**
    * The id of another *registered* provider this one extends (e.g. a Z.AI
    * profile that extends "claude"). null for built-in providers and for
@@ -252,7 +258,7 @@ function getProviderClientFactory(provider: string): ProviderClientFactory {
 }
 
 function toRuntimeSettings(override?: ProviderOverride): ProviderRuntimeSettings | undefined {
-  if (!override?.command && !override?.env && !override?.disallowedTools) {
+  if (!override?.command && !override?.env && !override?.disallowedTools && !override?.paseoTools) {
     return undefined;
   }
 
@@ -265,7 +271,28 @@ function toRuntimeSettings(override?: ProviderOverride): ProviderRuntimeSettings
       : undefined,
     env: override.env,
     disallowedTools: override.disallowedTools,
+    paseoTools: override.paseoTools,
   };
+}
+
+function mergeRuntimeEnv(
+  base: ProviderRuntimeSettings | undefined,
+  override: ProviderRuntimeSettings | undefined,
+): Record<string, string> | undefined {
+  if (!base?.env && !override?.env) {
+    return undefined;
+  }
+  return { ...base?.env, ...override?.env };
+}
+
+function mergeDisallowedTools(
+  base: ProviderRuntimeSettings | undefined,
+  override: ProviderRuntimeSettings | undefined,
+): string[] | undefined {
+  if (!base?.disallowedTools && !override?.disallowedTools) {
+    return undefined;
+  }
+  return [...(base?.disallowedTools ?? []), ...(override?.disallowedTools ?? [])];
 }
 
 function mergeRuntimeSettings(
@@ -278,17 +305,12 @@ function mergeRuntimeSettings(
 
   return {
     command: override?.command ?? base?.command,
-    env:
-      base?.env || override?.env
-        ? {
-            ...base?.env,
-            ...override?.env,
-          }
-        : undefined,
-    disallowedTools:
-      base?.disallowedTools || override?.disallowedTools
-        ? [...(base?.disallowedTools ?? []), ...(override?.disallowedTools ?? [])]
-        : undefined,
+    env: mergeRuntimeEnv(base, override),
+    disallowedTools: mergeDisallowedTools(base, override),
+    // Replaced rather than merged, unlike disallowedTools: a profile that
+    // declares paseoTools states its whole answer, so opting out is not
+    // undone by the base opting in.
+    paseoTools: override?.paseoTools ?? base?.paseoTools,
   };
 }
 
@@ -606,6 +628,7 @@ function createRegistryEntry(
   return {
     ...resolved.definition,
     enabled: resolved.enabled,
+    paseoTools: resolved.runtimeSettings?.paseoTools,
     derivedFromProviderId: resolved.derivedFromProviderId,
     optionsSchema: resolved.contract.optionsSchema,
     supportsExactMcpPreapproval: resolved.contract.supportsExactMcpPreapproval,

@@ -16,6 +16,8 @@ Depending on the provider, Paseo delivers the catalog through its native tool in
 
 The MCP server itself is controlled by `daemon.mcp.enabled`. Existing agents may need a reload.
 
+Individual providers can opt out with `agents.providers.<id>.paseoTools`, so an orchestrator profile keeps these tools while the workers it spawns do not. See [Custom provider configuration](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md#paseo-tools).
+
 ## Mental model
 
 Workspaces decide where work happens; agent parentage decides who owns the work.
