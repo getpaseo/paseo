@@ -67,10 +67,9 @@ interface TestSqliteDb {
   close(): void;
 }
 
-// Reproduce Cursor's VS Code state.vscdb: an ItemTable whose values are stored as
-// BLOBs. Keys map to the real Cursor layout (`cursorAuth/accessToken` plain JWT,
-// legacy `cursorAuthStatus` JSON blob).
-function writeCursorStateDb(homeDir: string, rows: Record<string, string>): void {
+// Cursor builds have stored ItemTable values as both TEXT and BLOB. Keys map to the
+// real layouts: a plain modern token or the legacy JSON object.
+function writeCursorStateDb(homeDir: string, rows: Record<string, string | Uint8Array>): void {
   const dir = join(homeDir, ".config", "Cursor", "User", "globalStorage");
   mkdirSync(dir, { recursive: true });
   const { DatabaseSync } = testRequire("node:sqlite") as {
@@ -80,7 +79,7 @@ function writeCursorStateDb(homeDir: string, rows: Record<string, string>): void
   db.exec("CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)");
   const insert = db.prepare("INSERT INTO ItemTable (key, value) VALUES (?, ?)");
   for (const [key, value] of Object.entries(rows)) {
-    insert.run(key, Buffer.from(value, "utf8"));
+    insert.run(key, value);
   }
   db.close();
 }
@@ -763,7 +762,7 @@ describe("real provider usage fetchers", () => {
 
   it("falls back to the legacy cursorAuthStatus JSON blob when the modern key is absent", async () => {
     writeCursorStateDb(homeDir, {
-      cursorAuthStatus: JSON.stringify({ accessToken: "cursor_legacy_jwt" }),
+      cursorAuthStatus: Buffer.from(JSON.stringify({ accessToken: "cursor_legacy_jwt" }), "utf8"),
     });
     let authorization: string | null = null;
     fetchApi = (async (url: RequestInfo | URL, init?: RequestInit) => {
