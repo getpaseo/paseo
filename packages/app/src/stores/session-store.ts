@@ -391,6 +391,7 @@ export interface SessionState {
   // Hydration status
   hasHydratedAgents: boolean;
   hasHydratedWorkspaces: boolean;
+  hasWorkspaceDirectorySnapshot: boolean;
 
   // Audio state
   isPlayingAudio: boolean;
@@ -653,6 +654,7 @@ function createInitialSessionState(
     serverInfo: null,
     hasHydratedAgents: false,
     hasHydratedWorkspaces: false,
+    hasWorkspaceDirectorySnapshot: false,
     isPlayingAudio: false,
     focusedAgentId: null,
     focusedTerminalId: null,
@@ -799,6 +801,7 @@ export const useSessionStore = create<SessionStore>()(
                 workspaceAgentActivity: buildWorkspaceAgentActivityIndex(replica.agents),
                 workspaces: replica.workspaces,
                 projects: replica.projects,
+                hasWorkspaceDirectorySnapshot: true,
                 agentStreamTail,
                 agentTasks,
               },

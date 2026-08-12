@@ -677,6 +677,10 @@ export type ProjectListPayload = Extract<
   SessionOutboundMessage,
   { type: "project.list.response" }
 >["payload"];
+type ProjectListRequest = Extract<SessionInboundMessage, { type: "project.list.request" }>;
+export type ProjectListOptions = Omit<ProjectListRequest, "type" | "requestId"> & {
+  requestId?: string;
+};
 export interface CreateScheduleOptions {
   prompt: string;
   name?: string | null;
@@ -2004,6 +2008,7 @@ export class DaemonClient {
       ...(options?.sort ? { sort: options.sort } : {}),
       ...(options?.page ? { page: options.page } : {}),
       ...(options?.subscribe ? { subscribe: options.subscribe } : {}),
+      ...(options?.sync ? { sync: options.sync } : {}),
     });
     return this.sendRequest({
       requestId: resolvedRequestId,
@@ -2085,6 +2090,7 @@ export class DaemonClient {
       ...(options?.sort ? { sort: options.sort } : {}),
       ...(options?.page ? { page: options.page } : {}),
       ...(options?.subscribe ? { subscribe: options.subscribe } : {}),
+      ...(options?.sync ? { sync: options.sync } : {}),
     });
     return this.sendRequest({
       requestId: resolvedRequestId,
@@ -2102,11 +2108,13 @@ export class DaemonClient {
     });
   }
 
-  async listProjects(requestId?: string): Promise<ProjectListPayload> {
+  async listProjects(options?: string | ProjectListOptions): Promise<ProjectListPayload> {
+    const requestId = typeof options === "string" ? options : options?.requestId;
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "project.list.request",
       requestId: resolvedRequestId,
+      ...(typeof options === "object" && options.sync ? { sync: options.sync } : {}),
     });
     return this.sendRequest({
       requestId: resolvedRequestId,

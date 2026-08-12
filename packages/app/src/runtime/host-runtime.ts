@@ -60,6 +60,7 @@ import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/su
 import { encodeImages } from "@/utils/encode-images";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
 import { ReplicaCache } from "@/runtime/replica-cache";
+import { replicaCacheStorage } from "@/runtime/replica-cache/storage";
 import { nativePerformanceTrace } from "@/performance/native-trace";
 import { revokePushNotifications } from "@/push-notifications";
 import { createAppWebSocketFactory } from "./websocket-factory";
@@ -1374,7 +1375,7 @@ export class HostRuntimeStore {
   }) {
     this.deps = input?.deps ?? createDefaultDeps();
     this.storage = input?.storage ?? AsyncStorage;
-    this.replicaCache = new ReplicaCache(this.storage);
+    this.replicaCache = new ReplicaCache(input?.storage ?? replicaCacheStorage);
     this.revokePushNotifications = input?.revokePushNotifications ?? revokePushNotifications;
   }
 
@@ -1617,6 +1618,9 @@ export class HostRuntimeStore {
       markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
       markAgentReady: () => controller.markAgentDirectorySyncReady(),
       markAgentError: (error) => controller.markAgentDirectorySyncError(error),
+      readCursors: () => this.replicaCache.getDirectoryCursors(newServerId),
+      writeCursor: (entity, cursor) =>
+        this.replicaCache.setDirectoryCursor(newServerId, entity, cursor),
     });
     this.directorySyncByServer.set(newServerId, directory);
     controller.adoptReconciledServerId(newServerId);
@@ -2011,6 +2015,9 @@ export class HostRuntimeStore {
           markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
           markAgentReady: () => controller.markAgentDirectorySyncReady(),
           markAgentError: (error) => controller.markAgentDirectorySyncError(error),
+          readCursors: () => this.replicaCache.getDirectoryCursors(host.serverId),
+          writeCursor: (entity, cursor) =>
+            this.replicaCache.setDirectoryCursor(host.serverId, entity, cursor),
         }),
       );
       const initialSnapshot = controller.getSnapshot();

@@ -212,9 +212,10 @@ describe("ReplicaCache", () => {
     expect(session.client).toBeNull();
     expect(session.hasHydratedAgents).toBe(false);
     expect(session.hasHydratedWorkspaces).toBe(false);
+    expect(session.hasWorkspaceDirectorySnapshot).toBe(true);
     expect(Array.from(session.agents.keys())).toEqual(["agent-1"]);
     expect(Array.from(session.workspaces.keys())).toEqual(["workspace-1"]);
-    expect(Array.from(session.projects.keys())).toEqual(["project-1"]);
+    expect(Array.from(session.projects.keys())).toEqual(["project-1", "empty-project"]);
     expect(session.agents.get("agent-1")?.updatedAt).toBeInstanceOf(Date);
     expect(session.workspaces.get("workspace-1")?.statusEnteredAt).toBeInstanceOf(Date);
     expect(session.workspaces.get("workspace-1")?.worktreeSlug).toBe("owned-worktree");
@@ -230,7 +231,7 @@ describe("ReplicaCache", () => {
     });
   });
 
-  it("persists only the focused agent view with a short timeline tail", async () => {
+  it("persists the complete directory with only the focused timeline tail", async () => {
     const storage = new MemoryStorage();
     const cache = new ReplicaCache(storage);
     cache.setHosts([SERVER_ID]);
@@ -266,9 +267,13 @@ describe("ReplicaCache", () => {
 
     const session = useSessionStore.getState().sessions[SERVER_ID];
     const timelines = session?.agentStreamTail;
-    expect(Array.from(session?.agents.keys() ?? [])).toEqual(["agent-2"]);
-    expect(Array.from(session?.workspaces.keys() ?? [])).toEqual(["workspace-2"]);
-    expect(Array.from(session?.projects.keys() ?? [])).toEqual(["project-2"]);
+    expect(Array.from(session?.agents.keys() ?? [])).toEqual(["agent-1", "agent-2"]);
+    expect(Array.from(session?.workspaces.keys() ?? [])).toEqual(["workspace-1", "workspace-2"]);
+    expect(Array.from(session?.projects.keys() ?? [])).toEqual([
+      "project-1",
+      "project-2",
+      "empty-project",
+    ]);
     expect(Array.from(timelines?.keys() ?? [])).toEqual(["agent-2"]);
     expect(timelines?.get("agent-2")).toEqual(secondTimeline.slice(-50));
 
@@ -308,6 +313,59 @@ describe("ReplicaCache", () => {
     expect(useSessionStore.getState().sessions[SERVER_ID]?.agentStreamTail.get("agent-1")).toEqual([
       reconciled,
     ]);
+  });
+
+  it("persists monotonic directory cursors with the complete host replica", async () => {
+    const storage = new MemoryStorage();
+    const cache = new ReplicaCache(storage);
+    cache.setHosts([SERVER_ID]);
+    seedSession();
+    await cache.flush();
+
+    cache.setDirectoryCursor(SERVER_ID, "agents", {
+      generation: "daemon-generation",
+      afterSeq: 7,
+    });
+    cache.setDirectoryCursor(SERVER_ID, "agents", {
+      generation: "daemon-generation",
+      afterSeq: 6,
+    });
+    useSessionStore.getState().setAgents(SERVER_ID, (agents) => {
+      const current = agents.get("agent-1");
+      if (!current) throw new Error("Expected seeded agent");
+      return new Map(agents).set("agent-1", { ...current, title: "Updated agent" });
+    });
+    await cache.flush();
+
+    const reader = new ReplicaCache(storage);
+    reader.setHosts([SERVER_ID]);
+    await reader.restore();
+    expect(reader.getDirectoryCursors(SERVER_ID).agents).toEqual({
+      generation: "daemon-generation",
+      afterSeq: 7,
+    });
+  });
+
+  it("restores every registered host directory before any host reconnects", async () => {
+    const storage = new MemoryStorage();
+    const writer = new ReplicaCache(storage);
+    writer.setHosts(LRU_SERVER_IDS);
+    for (const serverId of LRU_SERVER_IDS) seedTimeline(serverId, `cached-${serverId}`);
+    await writer.flush();
+    for (const serverId of LRU_SERVER_IDS) useSessionStore.getState().clearSession(serverId);
+
+    const reader = new ReplicaCache(storage);
+    reader.setHosts(LRU_SERVER_IDS);
+    await reader.restore();
+
+    for (const serverId of LRU_SERVER_IDS) {
+      const session = useSessionStore.getState().sessions[serverId];
+      expect(Array.from(session?.agents.keys() ?? [])).toEqual([`agent-${serverId}`]);
+      expect(Array.from(session?.workspaces.keys() ?? [])).toEqual([`workspace-${serverId}`]);
+      expect(session?.hasHydratedAgents).toBe(false);
+      expect(session?.hasHydratedWorkspaces).toBe(false);
+      expect(session?.hasWorkspaceDirectorySnapshot).toBe(true);
+    }
   });
 
   it("evicts the least recently written host when the cache exceeds its byte budget", async () => {

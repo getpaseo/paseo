@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
-import { useSessionStore } from "@/stores/session-store";
+import { normalizeProjectDescriptor, useSessionStore } from "@/stores/session-store";
 import { DirectoryRefreshSupersededError, DirectorySync } from "./index";
 
 type WorkspaceFetchResult = Awaited<ReturnType<DaemonClient["fetchWorkspaces"]>>;
@@ -11,6 +11,8 @@ class FakeDirectoryClient {
   fetchAgentsCalls = 0;
   fetchWorkspacesCalls = 0;
   listProjectsCalls = 0;
+  lastProjectOptions: unknown;
+  projectResult: ProjectListResult | null = null;
   private pendingWorkspaceFetch: Promise<WorkspaceFetchResult> | null = null;
   private readonly handlers = new Map<
     SessionOutboundMessage["type"],
@@ -66,8 +68,10 @@ class FakeDirectoryClient {
     };
   }
 
-  async listProjects(): Promise<ProjectListResult> {
+  async listProjects(options?: unknown): Promise<ProjectListResult> {
     this.listProjectsCalls += 1;
+    this.lastProjectOptions = options;
+    if (this.projectResult) return this.projectResult;
     return {
       requestId: "projects",
       projects: [
@@ -155,6 +159,80 @@ describe("DirectorySync session readiness", () => {
     expect(useSessionStore.getState().sessions[serverId]?.projects.get("project-1")).toMatchObject({
       projectId: "project-1",
       projectKey: "remote:github.com/acme/app",
+    });
+    directory.dispose();
+  });
+
+  it("merges project changes from the existing list RPC and advances its cursor", async () => {
+    const serverId = "project-list-sequence";
+    serverIds.add(serverId);
+    const client = new FakeDirectoryClient();
+    const writes: Array<{ entity: string; cursor: { generation: string; afterSeq: number } }> = [];
+    const directory = new DirectorySync(serverId, {
+      onAgentStoppedRunning: () => undefined,
+      markAgentLoading: () => undefined,
+      markAgentReady: () => undefined,
+      markAgentError: () => undefined,
+      readCursors: () => ({ projects: { generation: "generation", afterSeq: 4 } }),
+      writeCursor: (entity, cursor) => writes.push({ entity, cursor }),
+    });
+    directory.connectionChanged({
+      client: client as unknown as DaemonClient,
+      status: "online",
+      source: { clientGeneration: 1, connectionEpoch: 1 },
+    });
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+    store.setProjects(serverId, [
+      normalizeProjectDescriptor({
+        projectId: "project-1",
+        projectDisplayName: "Old name",
+        projectRootPath: "/repo/one",
+        projectKind: "git",
+      }),
+      normalizeProjectDescriptor({
+        projectId: "project-2",
+        projectDisplayName: "Removed",
+        projectRootPath: "/repo/two",
+        projectKind: "git",
+      }),
+    ]);
+    store.updateSessionServerInfo(serverId, {
+      serverId,
+      hostname: null,
+      version: "test",
+      features: { workspaceMultiplicity: true, projectList: true, directorySync: true },
+    });
+    client.projectResult = {
+      requestId: "projects",
+      projects: [
+        {
+          projectId: "project-1",
+          projectDisplayName: "New name",
+          projectRootPath: "/repo/one",
+          projectKind: "git",
+          syncSeq: 5,
+        },
+      ],
+      sync: {
+        generation: "generation",
+        headSeq: 6,
+        mode: "changes",
+        removals: [{ id: "project-2", seq: 6 }],
+      },
+    };
+
+    await directory.refreshWorkspaces();
+
+    expect(client.lastProjectOptions).toEqual({
+      sync: { generation: "generation", afterSeq: 4 },
+    });
+    const projects = useSessionStore.getState().sessions[serverId]?.projects;
+    expect(Array.from(projects?.keys() ?? [])).toEqual(["project-1"]);
+    expect(projects?.get("project-1")?.projectDisplayName).toBe("New name");
+    expect(writes).toContainEqual({
+      entity: "projects",
+      cursor: { generation: "generation", afterSeq: 6 },
     });
     directory.dispose();
   });

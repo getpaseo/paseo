@@ -736,6 +736,55 @@ function createSessionForWorkspaceTests(
   return session;
 }
 
+test("project.list.request catches up by sequence on the existing RPC", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  let project = createPersistedProjectRecord({
+    projectId: "project-sequenced",
+    rootPath: "/repo/sequenced",
+    kind: "git",
+    displayName: "Before",
+    createdAt: "2026-08-12T08:00:00.000Z",
+    updatedAt: "2026-08-12T08:00:00.000Z",
+  });
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    projectRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      list: async () => [project],
+      get: async () => project,
+      getOrCreateActiveByRoot: async () => project,
+      upsert: async () => {},
+      archive: async () => {},
+      remove: async () => {},
+    },
+  });
+
+  await session.handleMessage({
+    type: "project.list.request",
+    requestId: "initial",
+    sync: {},
+  });
+  const initial = findByType(emitted, "project.list.response")?.payload;
+  expect(initial?.sync).toMatchObject({ mode: "snapshot", headSeq: 1 });
+
+  project = { ...project, displayName: "After", updatedAt: "2026-08-12T08:01:00.000Z" };
+  await session.handleMessage({
+    type: "project.list.request",
+    requestId: "catch-up",
+    sync: {
+      generation: initial?.sync?.generation,
+      afterSeq: initial?.sync?.headSeq,
+    },
+  });
+  const responses = filterByType(emitted, "project.list.response");
+  expect(responses.at(-1)?.payload).toMatchObject({
+    requestId: "catch-up",
+    projects: [{ projectId: "project-sequenced", projectDisplayName: "After", syncSeq: 2 }],
+    sync: { mode: "changes", headSeq: 2, removals: [] },
+  });
+});
+
 test("agent updates preserve queued live transitions across stored metadata reads", async () => {
   const running = makeManagedAgent({
     id: "agent-coherent",

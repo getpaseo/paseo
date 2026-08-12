@@ -16,6 +16,7 @@ type AgentUpdatesFilter = NonNullable<
 
 interface AgentUpdatesSubscriptionState {
   subscriptionId: string;
+  syncEnabled?: boolean;
   filter?: AgentUpdatesFilter;
   isBootstrapping: boolean;
   pendingUpdatesByAgentId: Map<string, AgentUpdatePayload>;
@@ -37,7 +38,11 @@ interface AgentUpdatesSubscriptionState {
  * stay consistent.
  */
 export interface AgentUpdatesService {
-  beginSubscription(input: { subscriptionId: string; filter?: AgentUpdatesFilter }): void;
+  beginSubscription(input: {
+    subscriptionId: string;
+    filter?: AgentUpdatesFilter;
+    syncEnabled?: boolean;
+  }): void;
   flushBootstrapped(
     subscriptionId: string,
     options?: { snapshotUpdatedAtByAgentId?: Map<string, number> },
@@ -57,6 +62,11 @@ export interface AgentUpdatesServiceDeps {
   isProviderVisibleToClient(provider: string): boolean;
   buildProjectPlacementForWorkspaceId(workspaceId: string): Promise<ProjectPlacementPayload | null>;
   emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void>;
+  versionAgent?(
+    agent: AgentSnapshotPayload | null,
+    project: ProjectPlacementPayload | null,
+    agentId: string,
+  ): { generation: string; seq: number } | null;
   logger: pino.Logger;
 }
 
@@ -151,6 +161,16 @@ function agentUpdateTargetId(update: AgentUpdatePayload): string {
 export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentUpdatesService {
   let subscription: AgentUpdatesSubscriptionState | null = null;
   const liveAgentUpdateTails = new Map<string, Promise<void>>();
+  const versionAgent = (
+    sub: AgentUpdatesSubscriptionState,
+    agent: AgentSnapshotPayload | null,
+    project: ProjectPlacementPayload | null,
+    agentId: string,
+  ) => (sub.syncEnabled ? (deps.versionAgent?.(agent, project, agentId) ?? null) : null);
+  const wireVersion = (
+    sub: AgentUpdatesSubscriptionState,
+    version: { generation: string; seq: number } | null,
+  ) => (sub.syncEnabled ? (version ?? {}) : {});
 
   function bufferOrEmit(sub: AgentUpdatesSubscriptionState, payload: AgentUpdatePayload): void {
     if (payload.kind === "upsert" && !deps.isProviderVisibleToClient(payload.agent.provider)) {
@@ -167,9 +187,14 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     });
   }
 
-  function beginSubscription(input: { subscriptionId: string; filter?: AgentUpdatesFilter }): void {
+  function beginSubscription(input: {
+    subscriptionId: string;
+    filter?: AgentUpdatesFilter;
+    syncEnabled?: boolean;
+  }): void {
     subscription = {
       subscriptionId: input.subscriptionId,
+      syncEnabled: input.syncEnabled,
       filter: input.filter,
       isBootstrapping: true,
       pendingUpdatesByAgentId: new Map(),
@@ -230,9 +255,11 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
       ? await deps.buildProjectPlacementForWorkspaceId(payload.workspaceId)
       : null;
     if (!project) {
+      const version = versionAgent(sub, null, null, payload.id);
       bufferOrEmit(sub, {
         kind: "remove",
         agentId: payload.id,
+        ...wireVersion(sub, version),
       });
       return payload;
     }
@@ -242,6 +269,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
       project,
       filter: sub.filter,
     });
+    const version = versionAgent(sub, payload, project, payload.id);
     bufferOrEmit(
       sub,
       matches
@@ -249,10 +277,12 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
             kind: "upsert",
             agent: payload,
             project,
+            ...wireVersion(sub, version),
           }
         : {
             kind: "remove",
             agentId: payload.id,
+            ...wireVersion(sub, version),
           },
     );
     return payload;
@@ -267,9 +297,11 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
           ? await deps.buildProjectPlacementForWorkspaceId(payload.workspaceId)
           : null;
         if (!project) {
+          const version = versionAgent(sub, null, null, payload.id);
           bufferOrEmit(sub, {
             kind: "remove",
             agentId: payload.id,
+            ...wireVersion(sub, version),
           });
         } else {
           const matches = matchesAgentUpdatesFilter({
@@ -278,16 +310,19 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
             filter: sub.filter,
           });
 
+          const version = versionAgent(sub, payload, project, payload.id);
           if (matches) {
             bufferOrEmit(sub, {
               kind: "upsert",
               agent: payload,
               project,
+              ...wireVersion(sub, version),
             });
           } else {
             bufferOrEmit(sub, {
               kind: "remove",
               agentId: payload.id,
+              ...wireVersion(sub, version),
             });
           }
         }
@@ -326,7 +361,12 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
   function removeAgent(agentId: string): Promise<void> {
     return enqueueAgentUpdate(agentId, () => {
       if (subscription) {
-        bufferOrEmit(subscription, { kind: "remove", agentId });
+        const version = versionAgent(subscription, null, null, agentId);
+        bufferOrEmit(subscription, {
+          kind: "remove",
+          agentId,
+          ...wireVersion(subscription, version),
+        });
       }
     });
   }

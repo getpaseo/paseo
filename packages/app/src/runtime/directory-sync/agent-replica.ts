@@ -14,6 +14,7 @@ import {
 } from "@/utils/agent-directory-sync";
 import { reconcileAgentDirectory } from "@/utils/agent-directory-reconciliation";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
+import { projectAgentDirectoryEntry } from "./agent-projection";
 
 export interface AgentLifecycleToken {
   readonly agentId: string;
@@ -95,6 +96,25 @@ export class AgentDirectoryReplica {
     });
     for (const agentId of reconciled.stoppedRunningAgentIds) this.onStoppedRunning(agentId);
     return agents;
+  }
+
+  commitChanges(
+    entries: FetchAgentsEntry[],
+    removals: readonly { id: string }[],
+    deltas: readonly AgentDirectoryDelta[],
+  ): Map<string, Agent> {
+    const previous = useSessionStore.getState().sessions[this.serverId]?.agents ?? new Map();
+    const merged = new Map<string, FetchAgentsEntry>();
+    for (const agent of previous.values()) {
+      const entry = projectAgentDirectoryEntry(agent);
+      if (entry) merged.set(agent.id, entry);
+    }
+    for (const entry of entries) merged.set(entry.agent.id, entry);
+    const removalsAsDeltas: AgentDirectoryDelta[] = removals.map(({ id }) => ({
+      kind: "remove",
+      agentId: id,
+    }));
+    return this.commitSnapshot(Array.from(merged.values()), [...removalsAsDeltas, ...deltas]);
   }
 
   archive(agentId: string, archivedAt: string): void {
