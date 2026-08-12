@@ -498,8 +498,27 @@ describe("OMP agent client and session", () => {
       },
     });
 
-    expect(omp.timeline()).toHaveLength(2);
-    expect(JSON.stringify(omp.timeline())).not.toContain("iVBORw0KGgo=");
+    expect(omp.timeline()).toEqual([
+      expect.objectContaining({
+        type: "tool_call",
+        callId: "screenshot-1",
+        status: "running",
+        detail: expect.objectContaining({ output: null }),
+      }),
+      expect.objectContaining({
+        type: "tool_call",
+        callId: "screenshot-1",
+        status: "running",
+        detail: expect.objectContaining({
+          output: {
+            content: [
+              { type: "text", text: "Capturing browser screenshot." },
+              { type: "text", text: "[image]" },
+            ],
+          },
+        }),
+      }),
+    ]);
   });
 
   test("does not complete a queued model turn from OMP's local-only hint", async () => {

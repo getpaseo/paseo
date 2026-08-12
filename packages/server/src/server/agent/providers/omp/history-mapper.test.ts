@@ -160,9 +160,30 @@ describe("OMP history mapper", () => {
       },
     ]);
 
-    expect(events).toHaveLength(2);
-    expect(events.every((event) => event.item.type === "tool_call")).toBe(true);
-    expect(JSON.stringify(events)).not.toContain("iVBORw0KGgo=");
+    expect(events).toEqual([
+      expect.objectContaining({
+        item: expect.objectContaining({
+          type: "tool_call",
+          callId: "screenshot-1",
+          status: "running",
+        }),
+      }),
+      expect.objectContaining({
+        item: expect.objectContaining({
+          type: "tool_call",
+          callId: "screenshot-1",
+          status: "completed",
+          detail: expect.objectContaining({
+            output: {
+              content: [
+                { type: "text", text: "Malformed screenshot result." },
+                { type: "text", text: "[image]" },
+              ],
+            },
+          }),
+        }),
+      }),
+    ]);
   });
 
   test("absorbs replayed omp system-notice custom messages as synthetic tool calls", async () => {
