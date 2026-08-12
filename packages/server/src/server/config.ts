@@ -506,7 +506,7 @@ export function loadConfig(
   const serviceProxy = resolveServiceProxyConfig(env, persisted);
   const webUi = resolveWebUiConfig(paseoHome, env, options?.cli, persisted);
 
-  const { openai, speech } = resolveSpeechConfig({
+  const { minimax, openai, speech } = resolveSpeechConfig({
     paseoHome,
     env,
     persisted,
@@ -549,6 +549,7 @@ export function loadConfig(
     webUi,
     appBaseUrl,
     auth: resolveAuthConfig(env, persisted),
+    minimax,
     openai,
     speech,
     voiceLlmProvider: voiceLlm.provider,

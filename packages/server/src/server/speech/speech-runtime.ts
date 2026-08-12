@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Logger } from "pino";
 
-import type { PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
+import type { PaseoMiniMaxConfig, PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
 import type { LocalSpeechModelId } from "./providers/local/config.js";
 import {
   ensureLocalSpeechModels,
@@ -10,6 +10,7 @@ import {
   listLocalSpeechModels,
 } from "./providers/local/models.js";
 import { initializeLocalSpeechServices } from "./providers/local/runtime.js";
+import { getMiniMaxSpeechAvailability, initializeMiniMaxTts } from "./providers/minimax/runtime.js";
 import {
   getOpenAiSpeechAvailability,
   initializeOpenAiSpeechServices,
@@ -314,9 +315,11 @@ function describeRequestedProviders(providers: RequestedSpeechProviders): {
 function resolveVoiceTtsLabel(
   ttsService: TextToSpeechProvider | null,
   localVoiceTtsProvider: TextToSpeechProvider | null,
-): "unavailable" | "local" | "openai" {
+  miniMaxVoiceTtsProvider: TextToSpeechProvider | null,
+): "unavailable" | "local" | "minimax" | "openai" {
   if (!ttsService) return "unavailable";
   if (ttsService === localVoiceTtsProvider) return "local";
+  if (ttsService === miniMaxVoiceTtsProvider) return "minimax";
   return "openai";
 }
 
@@ -326,6 +329,7 @@ function resolveEffectiveProviderIds(params: {
   ttsService: TextToSpeechProvider | null;
   dictationSttService: SpeechToTextProvider | null;
   localVoiceTtsProvider: TextToSpeechProvider | null;
+  miniMaxVoiceTtsProvider: TextToSpeechProvider | null;
 }): {
   dictationStt: string;
   voiceTurnDetection: string;
@@ -336,7 +340,11 @@ function resolveEffectiveProviderIds(params: {
     dictationStt: params.dictationSttService?.id ?? "unavailable",
     voiceTurnDetection: params.turnDetectionService?.id ?? "unavailable",
     voiceStt: params.sttService?.id ?? "unavailable",
-    voiceTts: resolveVoiceTtsLabel(params.ttsService, params.localVoiceTtsProvider),
+    voiceTts: resolveVoiceTtsLabel(
+      params.ttsService,
+      params.localVoiceTtsProvider,
+      params.miniMaxVoiceTtsProvider,
+    ),
   };
 }
 
@@ -356,11 +364,13 @@ export interface SpeechService {
 
 export function createSpeechService(params: {
   logger: Logger;
+  minimaxConfig?: PaseoMiniMaxConfig;
   openaiConfig?: PaseoOpenAIConfig;
   speechConfig?: PaseoSpeechConfig;
 }): SpeechService {
   const logger = params.logger.child({ module: "speech-runtime" });
   const speechConfig = params.speechConfig ?? null;
+  const minimaxConfig = params.minimaxConfig;
   const openaiConfig = params.openaiConfig;
   const providers = resolveRequestedSpeechProviders(speechConfig);
   const requestedProviders = describeRequestedProviders(providers);
@@ -375,6 +385,7 @@ export function createSpeechService(params: {
     {
       requestedProviders,
       availability: {
+        minimax: getMiniMaxSpeechAvailability(minimaxConfig),
         openai: getOpenAiSpeechAvailability(openaiConfig),
       },
     },
@@ -391,6 +402,7 @@ export function createSpeechService(params: {
   } | null = null;
   let localCleanup = () => {};
   let localVoiceTtsProvider: TextToSpeechProvider | null = null;
+  let miniMaxVoiceTtsProvider: TextToSpeechProvider | null = null;
 
   let missingLocalModelIds: LocalSpeechModelId[] = [];
   let backgroundDownloadInProgress = false;
@@ -514,14 +526,21 @@ export function createSpeechService(params: {
       },
       logger,
     });
+    const nextMiniMaxTts = initializeMiniMaxTts({
+      providers,
+      config: minimaxConfig,
+      existing: nextOpenAiSpeech.ttsService,
+      logger,
+    });
 
     const previousLocalCleanup = localCleanup;
     turnDetectionService = nextOpenAiSpeech.turnDetectionService;
     sttService = nextOpenAiSpeech.sttService;
-    ttsService = nextOpenAiSpeech.ttsService;
+    ttsService = nextMiniMaxTts.service;
     dictationSttService = nextOpenAiSpeech.dictationSttService;
     localModelConfig = nextLocalSpeech.localModelConfig;
     localVoiceTtsProvider = nextLocalSpeech.localVoiceTtsProvider;
+    miniMaxVoiceTtsProvider = nextMiniMaxTts.provider;
     localCleanup = nextLocalSpeech.cleanup;
     previousLocalCleanup();
 
@@ -533,6 +552,7 @@ export function createSpeechService(params: {
       ttsService,
       dictationSttService,
       localVoiceTtsProvider,
+      miniMaxVoiceTtsProvider,
     });
     const unavailableFeatures = [
       providers.dictationStt.enabled !== false && !dictationSttService ? "dictation.stt" : null,

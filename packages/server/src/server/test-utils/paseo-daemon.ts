@@ -6,6 +6,7 @@ import pino from "pino";
 import {
   createPaseoDaemon,
   type PaseoDaemonConfig,
+  type PaseoMiniMaxConfig,
   type PaseoOpenAIConfig,
   type PaseoSpeechConfig,
 } from "../bootstrap.js";
@@ -35,6 +36,7 @@ interface TestPaseoDaemonOptions {
   paseoHomeRoot?: string;
   staticDir?: string;
   cleanup?: boolean;
+  minimax?: PaseoMiniMaxConfig;
   openai?: PaseoOpenAIConfig;
   speech?: PaseoSpeechConfig;
   voiceLlmProvider?: PaseoDaemonConfig["voiceLlmProvider"];
@@ -189,6 +191,7 @@ async function prepareTestDaemonConfig(
     serviceProxy: options.serviceProxy,
     webUi: options.webUi,
     trustedProxies: options.trustedProxies,
+    minimax: options.minimax,
     openai: options.openai,
     speech: options.speech,
     voiceLlmProvider: options.voiceLlmProvider ?? null,
