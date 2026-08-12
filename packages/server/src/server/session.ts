@@ -641,6 +641,7 @@ export class Session {
   private unsubscribeProjectMutations: (() => void) | null = null;
   private unsubscribeWorkspaceMutations: (() => void) | null = null;
   private registryMutationQueue: Promise<void> = Promise.resolve();
+  private projectUpdateQueue: Promise<void> = Promise.resolve();
   private isCleanedUp = false;
   private viewedTimelineAgentIds = new Set<string>();
   private readonly viewedTimelineAgentIdsBySource = new Map<object, Set<string>>();
@@ -1161,7 +1162,15 @@ export class Session {
     );
   }
 
-  async emitProjectUpdate(update: ProjectUpdate): Promise<void> {
+  emitProjectUpdate(update: ProjectUpdate): Promise<void> {
+    const queued = this.projectUpdateQueue
+      .catch(() => undefined)
+      .then(() => this.publishProjectUpdate(update));
+    this.projectUpdateQueue = queued;
+    return queued;
+  }
+
+  private async publishProjectUpdate(update: ProjectUpdate): Promise<void> {
     const projectedPayload =
       update.kind === "upsert"
         ? { kind: "upsert" as const, project: await this.buildProjectDescriptor(update.project) }
