@@ -62,11 +62,13 @@ export interface AgentUpdatesServiceDeps {
   isProviderVisibleToClient(provider: string): boolean;
   buildProjectPlacementForWorkspaceId(workspaceId: string): Promise<ProjectPlacementPayload | null>;
   emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void>;
-  versionAgent?(
+  sequenceAgentUpdate<T extends AgentUpdatePayload>(
+    payload: T,
     agent: AgentSnapshotPayload | null,
     project: ProjectPlacementPayload | null,
     agentId: string,
-  ): { generation: string; seq: number } | null;
+    includeSequence: boolean,
+  ): T;
   logger: pino.Logger;
 }
 
@@ -161,16 +163,13 @@ function agentUpdateTargetId(update: AgentUpdatePayload): string {
 export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentUpdatesService {
   let subscription: AgentUpdatesSubscriptionState | null = null;
   const liveAgentUpdateTails = new Map<string, Promise<void>>();
-  const versionAgent = (
+  const sequence = <T extends AgentUpdatePayload>(
     sub: AgentUpdatesSubscriptionState,
+    payload: T,
     agent: AgentSnapshotPayload | null,
     project: ProjectPlacementPayload | null,
     agentId: string,
-  ) => (sub.syncEnabled ? (deps.versionAgent?.(agent, project, agentId) ?? null) : null);
-  const wireVersion = (
-    sub: AgentUpdatesSubscriptionState,
-    version: { generation: string; seq: number } | null,
-  ) => (sub.syncEnabled ? (version ?? {}) : {});
+  ) => deps.sequenceAgentUpdate(payload, agent, project, agentId, sub.syncEnabled === true);
 
   function bufferOrEmit(sub: AgentUpdatesSubscriptionState, payload: AgentUpdatePayload): void {
     if (payload.kind === "upsert" && !deps.isProviderVisibleToClient(payload.agent.provider)) {
@@ -255,12 +254,10 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
       ? await deps.buildProjectPlacementForWorkspaceId(payload.workspaceId)
       : null;
     if (!project) {
-      const version = versionAgent(sub, null, null, payload.id);
-      bufferOrEmit(sub, {
-        kind: "remove",
-        agentId: payload.id,
-        ...wireVersion(sub, version),
-      });
+      bufferOrEmit(
+        sub,
+        sequence(sub, { kind: "remove", agentId: payload.id }, null, null, payload.id),
+      );
       return payload;
     }
 
@@ -269,21 +266,24 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
       project,
       filter: sub.filter,
     });
-    const version = versionAgent(sub, payload, project, payload.id);
     bufferOrEmit(
       sub,
-      matches
-        ? {
-            kind: "upsert",
-            agent: payload,
-            project,
-            ...wireVersion(sub, version),
-          }
-        : {
-            kind: "remove",
-            agentId: payload.id,
-            ...wireVersion(sub, version),
-          },
+      sequence(
+        sub,
+        matches
+          ? {
+              kind: "upsert",
+              agent: payload,
+              project,
+            }
+          : {
+              kind: "remove",
+              agentId: payload.id,
+            },
+        payload,
+        project,
+        payload.id,
+      ),
     );
     return payload;
   }
@@ -297,12 +297,10 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
           ? await deps.buildProjectPlacementForWorkspaceId(payload.workspaceId)
           : null;
         if (!project) {
-          const version = versionAgent(sub, null, null, payload.id);
-          bufferOrEmit(sub, {
-            kind: "remove",
-            agentId: payload.id,
-            ...wireVersion(sub, version),
-          });
+          bufferOrEmit(
+            sub,
+            sequence(sub, { kind: "remove", agentId: payload.id }, null, null, payload.id),
+          );
         } else {
           const matches = matchesAgentUpdatesFilter({
             agent: payload,
@@ -310,20 +308,35 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
             filter: sub.filter,
           });
 
-          const version = versionAgent(sub, payload, project, payload.id);
           if (matches) {
-            bufferOrEmit(sub, {
-              kind: "upsert",
-              agent: payload,
-              project,
-              ...wireVersion(sub, version),
-            });
+            bufferOrEmit(
+              sub,
+              sequence(
+                sub,
+                {
+                  kind: "upsert",
+                  agent: payload,
+                  project,
+                },
+                payload,
+                project,
+                payload.id,
+              ),
+            );
           } else {
-            bufferOrEmit(sub, {
-              kind: "remove",
-              agentId: payload.id,
-              ...wireVersion(sub, version),
-            });
+            bufferOrEmit(
+              sub,
+              sequence(
+                sub,
+                {
+                  kind: "remove",
+                  agentId: payload.id,
+                },
+                payload,
+                project,
+                payload.id,
+              ),
+            );
           }
         }
       }
@@ -361,12 +374,10 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
   function removeAgent(agentId: string): Promise<void> {
     return enqueueAgentUpdate(agentId, () => {
       if (subscription) {
-        const version = versionAgent(subscription, null, null, agentId);
-        bufferOrEmit(subscription, {
-          kind: "remove",
-          agentId,
-          ...wireVersion(subscription, version),
-        });
+        bufferOrEmit(
+          subscription,
+          sequence(subscription, { kind: "remove", agentId }, null, null, agentId),
+        );
       }
     });
   }

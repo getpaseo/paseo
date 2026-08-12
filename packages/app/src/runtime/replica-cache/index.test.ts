@@ -322,13 +322,8 @@ describe("ReplicaCache", () => {
     seedSession();
     await cache.flush();
 
-    cache.setDirectoryCursor(SERVER_ID, "agents", {
-      generation: "daemon-generation",
-      afterSeq: 7,
-    });
-    cache.setDirectoryCursor(SERVER_ID, "agents", {
-      generation: "daemon-generation",
-      afterSeq: 6,
+    cache.writeDirectoryCheckpoint(SERVER_ID, {
+      agents: { generation: "daemon-generation", afterSeq: 7 },
     });
     useSessionStore.getState().setAgents(SERVER_ID, (agents) => {
       const current = agents.get("agent-1");
@@ -340,9 +335,8 @@ describe("ReplicaCache", () => {
     const reader = new ReplicaCache(storage);
     reader.setHosts([SERVER_ID]);
     await reader.restore();
-    expect(reader.getDirectoryCursors(SERVER_ID).agents).toEqual({
-      generation: "daemon-generation",
-      afterSeq: 7,
+    expect(reader.readDirectoryCheckpoint(SERVER_ID)).toEqual({
+      agents: { generation: "daemon-generation", afterSeq: 7 },
     });
   });
 

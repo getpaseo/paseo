@@ -15,7 +15,6 @@ import {
 } from "@/stores/session-store";
 import { isUnreconciledLocalUserMessage, type StreamItem } from "@/types/stream";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
-import type { DirectoryCursor, DirectoryCursors } from "@/runtime/directory-sync";
 
 const STORAGE_KEY = "@paseo:replica-cache";
 const CACHE_VERSION = 5;
@@ -178,6 +177,7 @@ const StoredWorkspaceSchema = z.strictObject({
   projectDisplayName: z.string(),
   projectCustomName: z.string().nullable(),
   projectCustomIconRevision: z.string().nullable(),
+  projectIconRevision: z.string().optional(),
   projectRootPath: z.string(),
   workspaceDirectory: z.string(),
   worktreeSlug: z.string().optional(),
@@ -218,15 +218,7 @@ const StoredHostSchema = z.strictObject({
   projects: z.array(StoredProjectSchema),
   emptyProjects: z.array(StoredProjectSchema),
   timeline: StoredTimelineSchema.nullable(),
-  directorySync: z
-    .object({
-      projects: z.object({ generation: z.string(), afterSeq: z.number().nonnegative() }).optional(),
-      workspaces: z
-        .object({ generation: z.string(), afterSeq: z.number().nonnegative() })
-        .optional(),
-      agents: z.object({ generation: z.string(), afterSeq: z.number().nonnegative() }).optional(),
-    })
-    .optional(),
+  directorySync: z.unknown().optional(),
 });
 
 const StoredCacheSchema = z.strictObject({
@@ -490,6 +482,7 @@ function serializeProject(project: ProjectDescriptor): StoredProject {
     projectDisplayName: project.projectDisplayName,
     projectCustomName: project.projectCustomName,
     projectCustomIconRevision: project.projectCustomIconRevision,
+    projectIconRevision: project.projectIconRevision,
     projectRootPath: project.projectRootPath,
     projectKind: project.projectKind,
   };
@@ -519,11 +512,7 @@ function selectReplicaInput(session: SessionState, agentId: string | null): Repl
   };
 }
 
-function serializeHost(
-  serverId: string,
-  input: ReplicaInput,
-  directorySync?: DirectoryCursors,
-): StoredHost {
+function serializeHost(serverId: string, input: ReplicaInput, directorySync?: unknown): StoredHost {
   const items = input.timelineItems
     ?.filter((item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item))
     .map(serializeTimelineItem)
@@ -701,15 +690,11 @@ export class ReplicaCache {
     this.schedulePersist();
   }
 
-  getDirectoryCursors(serverId: string): DirectoryCursors {
-    return { ...this.storedHosts.get(serverId)?.directorySync };
+  readDirectoryCheckpoint(serverId: string): unknown {
+    return this.storedHosts.get(serverId)?.directorySync;
   }
 
-  setDirectoryCursor(
-    serverId: string,
-    entity: keyof DirectoryCursors,
-    cursor: DirectoryCursor,
-  ): void {
+  writeDirectoryCheckpoint(serverId: string, checkpoint: unknown): void {
     let stored = this.storedHosts.get(serverId);
     if (!stored) {
       const session = useSessionStore.getState().sessions[serverId];
@@ -718,13 +703,8 @@ export class ReplicaCache {
       this.capturedInputs.set(serverId, input);
       stored = serializeHost(serverId, input);
     }
-    const current = stored.directorySync?.[entity];
-    if (current?.generation === cursor.generation && current.afterSeq >= cursor.afterSeq) {
-      return;
-    }
-    const cursors = { ...stored.directorySync, [entity]: cursor };
     this.storedHosts.delete(serverId);
-    this.storedHosts.set(serverId, { ...stored, directorySync: cursors });
+    this.storedHosts.set(serverId, { ...stored, directorySync: checkpoint });
     this.schedulePersist();
   }
 

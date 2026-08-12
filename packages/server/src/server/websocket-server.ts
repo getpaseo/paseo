@@ -902,7 +902,11 @@ export class VoiceAssistantWebSocketServer {
   }
 
   public publishProjectUpdate(update: ProjectUpdate): void {
-    for (const session of this.listTrustedSessions()) session.emitProjectUpdate(update);
+    for (const session of this.listTrustedSessions()) {
+      void session
+        .emitProjectUpdate(update)
+        .catch((error) => this.logger.warn({ err: error }, "Failed to publish project update"));
+    }
   }
 
   public publishSpeechReadiness(readiness: SpeechReadinessSnapshot | null): void {

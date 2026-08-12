@@ -710,6 +710,7 @@ describe("project command-center RPCs", () => {
               projectDisplayName: "new-project",
               projectCustomName: null,
               projectCustomIconRevision: null,
+              projectIconRevision: "automatic:none:v1",
               projectRootPath: directoryPath,
               projectKind: "non_git",
             },
@@ -4967,7 +4968,7 @@ test("keeps selective delivery scoped per socket when a retained session also ha
   ]);
 });
 
-test("sends project updates only to capable sockets in a retained session", () => {
+test("sends project updates only to capable sockets in a retained session", async () => {
   const messages: SessionOutboundMessage[] = [];
   const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
   const session = createSessionForTest({ messages, targetedMessages });
@@ -4976,7 +4977,7 @@ test("sends project updates only to capable sockets in a retained session", () =
   session.updateClientCapabilities(null, legacySocket);
   session.updateClientCapabilities({ [CLIENT_CAPS.projectUpdates]: true }, capableSocket);
 
-  session.emitProjectUpdate({
+  await session.emitProjectUpdate({
     kind: "upsert",
     project: createPersistedProjectRecord({
       projectId: "project-capable-socket",
@@ -5039,6 +5040,7 @@ test("project.list returns every active project descriptor", async () => {
             projectDisplayName: "acme/app",
             projectCustomName: null,
             projectCustomIconRevision: null,
+            projectIconRevision: "automatic:none:v1",
             projectRootPath: "/tmp/project-active",
             projectKind: "git",
           },

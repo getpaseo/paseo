@@ -145,7 +145,7 @@ import {
 import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
 import {
-  readProjectIcon,
+  ProjectIconReader,
   removeProjectCustomIcon,
   setProjectCustomIcon,
 } from "../utils/project-custom-icon.js";
@@ -586,14 +586,6 @@ function resolveDirectorySync(service: DirectorySyncService | undefined): Direct
   return service ?? new DirectorySyncService();
 }
 
-function withDirectoryVersion<T extends object>(
-  payload: T,
-  enabled: boolean | undefined,
-  version: { generation: string; seq: number } | null,
-): T & Partial<{ generation: string; seq: number }> {
-  return enabled && version ? { ...payload, ...version } : payload;
-}
-
 function describeRegistryTransition(record: ArchivedRecordSnapshot | null): RegistryTransition {
   if (!record) {
     return "created";
@@ -627,6 +619,7 @@ export class Session {
     | null;
   private readonly sessionLogger: pino.Logger;
   private readonly paseoHome: string;
+  private readonly projectIcons: ProjectIconReader;
   private readonly worktreesRoot: string | undefined;
 
   private agentManager: AgentManager;
@@ -762,6 +755,7 @@ export class Session {
     this.onWorkspaceRecovered = onWorkspaceRecovered ?? null;
     this.pushNotifications = pushNotifications;
     this.paseoHome = paseoHome;
+    this.projectIcons = new ProjectIconReader(paseoHome);
     this.worktreesRoot = worktreesRoot;
     this.sessionLogger = logger.child({
       module: "session",
@@ -941,8 +935,13 @@ export class Session {
         this.buildProjectPlacementForWorkspaceId(workspaceId),
       emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
         this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
-      versionAgent: (agent, project, agentId) =>
-        this.directorySync.versionAgent(agent && project ? { agent, project } : null, agentId),
+      sequenceAgentUpdate: (payload, agent, project, agentId, includeSequence) =>
+        this.directorySync.sequenceAgentUpdate(
+          payload,
+          agent && project ? { agent, project } : null,
+          agentId,
+          includeSequence,
+        ),
       logger: this.sessionLogger,
     });
     this.createAgentLifecycleDispatch = new CreateAgentLifecycleDispatch({
@@ -1162,16 +1161,14 @@ export class Session {
     );
   }
 
-  emitProjectUpdate(update: ProjectUpdate): void {
+  async emitProjectUpdate(update: ProjectUpdate): Promise<void> {
     const projectedPayload =
       update.kind === "upsert"
-        ? { kind: "upsert" as const, project: this.buildProjectDescriptor(update.project) }
+        ? { kind: "upsert" as const, project: await this.buildProjectDescriptor(update.project) }
         : update;
-    const version = this.directorySync.versionProject(projectedPayload);
     const message: SessionOutboundMessage = {
       type: "project.update",
-      payload:
-        version && this.projectSyncEnabled ? { ...projectedPayload, ...version } : projectedPayload,
+      payload: this.directorySync.sequenceProjectUpdate(projectedPayload, this.projectSyncEnabled),
     };
     if (this.clientCapabilitiesBySource.size === 0 || !this.onMessageToSource) {
       if (this.supports(CLIENT_CAPS.projectUpdates)) this.emit(message);
@@ -2716,7 +2713,7 @@ export class Session {
 
       // Emit a project.update so clients that track the project as an empty
       // project (no workspaces yet) receive the resolved name immediately.
-      this.emitProjectUpdate({ kind: "upsert", project: updated });
+      await this.emitProjectUpdate({ kind: "upsert", project: updated });
 
       // Re-emit descriptors for every workspace under this project so the new
       // resolved name lands in the UI immediately.
@@ -2770,7 +2767,7 @@ export class Session {
         type: "project.icon.set.response",
         payload: { requestId, projectId, accepted: true, error: null },
       });
-      this.emitProjectUpdate({ kind: "upsert", project: updated });
+      await this.emitProjectUpdate({ kind: "upsert", project: updated });
 
       const affectedWorkspaceIds = (await this.workspaceRegistry.list())
         .filter((workspace) => workspace.projectId === projectId)
@@ -2796,7 +2793,7 @@ export class Session {
       const project = await this.projectRegistry.get(projectId);
       if (!project) throw new Error("Project not found");
 
-      const icon = await readProjectIcon({ paseoHome: this.paseoHome, project });
+      const icon = await this.projectIcons.read(project);
       this.emit({
         type: "project.icon.get.response",
         payload: { projectId, icon, error: null, requestId },
@@ -4708,15 +4705,17 @@ export class Session {
     }
   }
 
-  private buildProjectDescriptor(
+  private async buildProjectDescriptor(
     project: PersistedProjectRecord,
-  ): WorkspaceProjectDescriptorPayload {
+  ): Promise<WorkspaceProjectDescriptorPayload> {
+    const icon = await this.projectIcons.snapshot(project);
     return {
       projectId: project.projectId,
       ...(project.projectKey ? { projectKey: project.projectKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
       projectCustomIconRevision: project.customIconRevision ?? null,
+      projectIconRevision: icon.revision,
       projectRootPath: project.rootPath,
       projectKind: project.kind,
     };
@@ -4914,10 +4913,6 @@ export class Session {
         continue;
       }
       this.workspaceGitObserver.recordDescriptorState(workspaceId, nextWorkspace);
-      const version = subscription.syncEnabled
-        ? this.directorySync.versionWorkspace(workspace ?? null, workspaceId)
-        : null;
-
       if (!nextWorkspace) {
         if (this.shouldSkipWorkspaceRemoval(lastEmitted, options?.removedProjectId)) {
           continue;
@@ -4932,15 +4927,21 @@ export class Session {
         );
         this.bufferOrEmitWorkspaceUpdate(
           subscription,
-          withDirectoryVersion(removePayload, subscription.syncEnabled, version),
+          this.directorySync.sequenceWorkspaceUpdate(
+            removePayload,
+            workspace ?? null,
+            workspaceId,
+            subscription.syncEnabled === true,
+          ),
         );
         continue;
       }
 
-      const nextPayload: WorkspaceUpdatePayload = withDirectoryVersion(
+      const nextPayload: WorkspaceUpdatePayload = this.directorySync.sequenceWorkspaceUpdate(
         { kind: "upsert", workspace: nextWorkspace },
-        subscription.syncEnabled,
-        version,
+        workspace ?? null,
+        workspaceId,
+        subscription.syncEnabled === true,
       );
 
       if (
@@ -5049,12 +5050,8 @@ export class Session {
         });
       }
 
-      const sync = request.sync ? await this.readAgentDirectorySync(request) : null;
-      const payload = sync
-        ? {
-            entries: sync.read.values.map(({ seq, value }) => ({ ...value, syncSeq: seq })),
-            pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
-          }
+      const payload = request.sync
+        ? await this.readAgentDirectorySync(request)
         : await this.listFetchAgentsEntries(request);
       const snapshotUpdatedAtByAgentId = new Map<string, number>();
       for (const entry of payload.entries) {
@@ -5070,7 +5067,6 @@ export class Session {
           requestId: request.requestId,
           ...(subscriptionId ? { subscriptionId } : {}),
           ...payload,
-          ...(sync ? { sync: this.buildDirectorySyncMetadata(sync.read) } : {}),
         },
       });
 
@@ -5196,13 +5192,8 @@ export class Session {
         };
       }
 
-      const sync = request.sync ? await this.readWorkspaceDirectorySync(request) : null;
-      const payload = sync
-        ? {
-            entries: sync.values.map(({ seq, value }) => ({ ...value, syncSeq: seq })),
-            emptyProjects: [],
-            pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
-          }
+      const payload = request.sync
+        ? await this.readWorkspaceDirectorySync(request)
         : await this.listFetchWorkspacesEntries(request);
       this.workspaceGitObserver.syncObservers(payload.entries);
       this.sessionLogger.debug(
@@ -5228,7 +5219,6 @@ export class Session {
           requestId: request.requestId,
           ...(subscriptionId ? { subscriptionId } : {}),
           ...payload,
-          ...(sync ? { sync: this.buildDirectorySyncMetadata(sync) } : {}),
         },
       });
 
@@ -5258,29 +5248,20 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "project.list.request" }>,
   ): Promise<void> {
     try {
-      const projects = (await this.projectRegistry.list())
-        .filter((project) => !project.archivedAt)
-        .map((project) => this.buildProjectDescriptor(project));
-      const sync = request.sync ? this.directorySync.readProjects(projects, request.sync) : null;
-      if (sync) this.projectSyncEnabled = true;
+      const projects = await Promise.all(
+        (await this.projectRegistry.list())
+          .filter((project) => !project.archivedAt)
+          .map((project) => this.buildProjectDescriptor(project)),
+      );
+      const synchronized = request.sync
+        ? this.directorySync.synchronizeProjects(projects, request.sync)
+        : null;
+      if (synchronized) this.projectSyncEnabled = true;
       this.emit({
         type: "project.list.response",
         payload: {
           requestId: request.requestId,
-          projects: sync
-            ? sync.values.map(({ seq, value }) => ({ ...value, syncSeq: seq }))
-            : projects,
-          ...(sync
-            ? {
-                sync: {
-                  generation: this.directorySync.generation,
-                  headSeq: sync.headSeq,
-                  mode: sync.mode,
-                  ...(sync.reason ? { reason: sync.reason } : {}),
-                  removals: sync.removals,
-                },
-              }
-            : {}),
+          ...(synchronized ?? { projects }),
         },
       });
     } catch (error) {
@@ -5310,9 +5291,7 @@ export class Session {
       ...request,
       page: { limit: Number.MAX_SAFE_INTEGER },
     });
-    return {
-      read: this.directorySync.readAgents(snapshot.entries, request.sync ?? {}),
-    };
+    return this.directorySync.synchronizeAgents(snapshot.entries, request.sync ?? {});
   }
 
   private async readWorkspaceDirectorySync(
@@ -5324,25 +5303,10 @@ export class Session {
         "Sequenced workspace directory reads do not support filters.",
       );
     }
-    return this.directorySync.readWorkspaces(
+    return this.directorySync.synchronizeWorkspaces(
       await this.workspaceDirectory.listDescriptors(),
       request.sync ?? {},
     );
-  }
-
-  private buildDirectorySyncMetadata(read: {
-    mode: "changes" | "snapshot";
-    reason?: "no_cursor" | "generation_changed" | "cursor_expired";
-    headSeq: number;
-    removals: Array<{ id: string; seq: number }>;
-  }) {
-    return {
-      generation: this.directorySync.generation,
-      headSeq: read.headSeq,
-      mode: read.mode,
-      ...(read.reason ? { reason: read.reason } : {}),
-      removals: read.removals,
-    };
   }
 
   // Build the bootstrap snapshot used by `flushBootstrappedWorkspaceUpdates`
@@ -5697,7 +5661,7 @@ export class Session {
         type: "project.add.response",
         payload: {
           requestId: request.requestId,
-          project: this.buildProjectDescriptor(project),
+          project: await this.buildProjectDescriptor(project),
           error: null,
         },
       });
@@ -5731,7 +5695,7 @@ export class Session {
         payload: {
           requestId: request.requestId,
           directoryPath: result.directoryPath,
-          project: this.buildProjectDescriptor(result.project),
+          project: await this.buildProjectDescriptor(result.project),
           error: null,
           errorCode: null,
         },
@@ -5896,7 +5860,7 @@ export class Session {
           requestId: request.requestId,
           repo: repo.displayName,
           checkoutPath,
-          project: this.buildProjectDescriptor(project),
+          project: await this.buildProjectDescriptor(project),
           error: null,
         },
       });

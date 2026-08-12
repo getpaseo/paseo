@@ -62,12 +62,12 @@ interface AgentPageInfo {
   afterCursor?: string | null;
 }
 
-export interface DirectoryCursor {
+interface DirectoryCursor {
   generation: string;
   afterSeq: number;
 }
 
-export interface DirectoryCursors {
+interface DirectoryCursors {
   projects?: DirectoryCursor;
   workspaces?: DirectoryCursor;
   agents?: DirectoryCursor;
@@ -77,6 +77,11 @@ export interface DirectoryConnection {
   client: DaemonClient | null;
   status: "online" | "offline";
   source: DirectorySourceToken;
+}
+
+export interface DirectoryCheckpointStorage {
+  readDirectoryCheckpoint(serverId: string): unknown;
+  writeDirectoryCheckpoint(serverId: string, checkpoint: unknown): void;
 }
 
 export interface RefreshAgentDirectoryInput {
@@ -116,9 +121,8 @@ export class DirectorySync {
       markAgentLoading: () => void;
       markAgentReady: () => void;
       markAgentError: (error: string) => void;
-      readCursors?: () => DirectoryCursors;
-      writeCursor?: (entity: keyof DirectoryCursors, cursor: DirectoryCursor) => void;
     },
+    private readonly checkpoints?: DirectoryCheckpointStorage,
   ) {
     this.agents = new AgentDirectoryReplica(serverId, callbacks.onAgentStoppedRunning);
     this.workspaces = new WorkspaceDirectoryReplica(serverId);
@@ -327,7 +331,7 @@ export class DirectorySync {
         sort: [{ key: "activity_at", direction: "desc" }],
         ...(subscribe ? { subscribe: {} } : {}),
         page: cursor ? { limit: PAGE_LIMIT, cursor } : { limit: PAGE_LIMIT },
-        ...(supportsDirectorySync ? { sync: this.callbacks.readCursors?.().workspaces ?? {} } : {}),
+        ...(supportsDirectorySync ? { sync: this.readCursors().workspaces ?? {} } : {}),
       });
       this.assertWorkspaceTransactionCurrent(client, source, transaction);
       if (payload.sync?.mode === "snapshot") transaction.snapshot.workspaces.clear();
@@ -383,7 +387,7 @@ export class DirectorySync {
         ...(subscribe ? { subscribe } : {}),
         page: cursor ? { limit, cursor } : { limit },
         ...(!input.filter && cursor === null && this.supportsDirectorySync()
-          ? { sync: this.callbacks.readCursors?.().agents ?? {} }
+          ? { sync: this.readCursors().agents ?? {} }
           : {}),
       });
       this.assertAgentTransactionCurrent(client, source, transaction);
@@ -444,7 +448,7 @@ export class DirectorySync {
     snapshot: AgentSnapshot,
     deltas: readonly AgentDirectoryDelta[],
   ): void {
-    if (snapshot.syncCursor) this.callbacks.writeCursor?.("agents", snapshot.syncCursor);
+    if (snapshot.syncCursor) this.writeCursor("agents", snapshot.syncCursor);
     for (const delta of deltas) this.noteLiveCursor("agents", delta);
   }
 
@@ -455,7 +459,7 @@ export class DirectorySync {
     supportsDirectorySync: boolean,
   ): Promise<void> {
     const payload = await client.listProjects(
-      supportsDirectorySync ? { sync: this.callbacks.readCursors?.().projects ?? {} } : undefined,
+      supportsDirectorySync ? { sync: this.readCursors().projects ?? {} } : undefined,
     );
     this.assertWorkspaceTransactionCurrent(client, source, transaction);
     if (payload.sync?.mode === "snapshot") transaction.snapshot.projects.clear();
@@ -488,7 +492,7 @@ export class DirectorySync {
     }
     this.workspaces.commitSnapshot(completion.snapshot, completion.deltas);
     for (const [entity, cursor] of Object.entries(completion.snapshot.syncCursors ?? {})) {
-      if (cursor) this.callbacks.writeCursor?.(entity as "projects" | "workspaces", cursor);
+      if (cursor) this.writeCursor(entity as "projects" | "workspaces", cursor);
     }
     for (const delta of completion.deltas) {
       const entity = "projectId" in delta || "project" in delta ? "projects" : "workspaces";
@@ -511,10 +515,33 @@ export class DirectorySync {
     payload: { generation?: string; seq?: number },
   ): void {
     if (!payload.generation || payload.seq === undefined) return;
-    this.callbacks.writeCursor?.(entity, {
+    this.writeCursor(entity, {
       generation: payload.generation,
       afterSeq: payload.seq,
     });
+  }
+
+  private readCursors(): DirectoryCursors {
+    const value = this.checkpoints?.readDirectoryCheckpoint(this.serverId);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const cursors: DirectoryCursors = {};
+    for (const entity of ["projects", "workspaces", "agents"] as const) {
+      const cursor = (value as Record<string, unknown>)[entity];
+      if (!cursor || typeof cursor !== "object" || Array.isArray(cursor)) continue;
+      const { generation, afterSeq } = cursor as Record<string, unknown>;
+      if (typeof generation === "string" && typeof afterSeq === "number" && afterSeq >= 0) {
+        cursors[entity] = { generation, afterSeq };
+      }
+    }
+    return cursors;
+  }
+
+  private writeCursor(entity: keyof DirectoryCursors, cursor: DirectoryCursor): void {
+    if (!this.checkpoints) return;
+    const current = this.readCursors();
+    const previous = current[entity];
+    if (previous?.generation === cursor.generation && previous.afterSeq >= cursor.afterSeq) return;
+    this.checkpoints.writeDirectoryCheckpoint(this.serverId, { ...current, [entity]: cursor });
   }
 
   private isCurrent(client: DaemonClient, source: DirectorySourceToken): boolean {

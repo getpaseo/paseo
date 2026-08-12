@@ -7803,15 +7803,17 @@ const ICON_PNG_1X1 = Buffer.from([
 
 test("project.icon.set.request publishes a custom icon that project.icon.get serves back", async () => {
   const emitted: SessionOutboundMessage[] = [];
+  const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "session-project-icon-test-")));
   const session = asTestSession(
-    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+    createSessionForWorkspaceTests({
+      paseoHome: path.join(tempDir, "paseo-home"),
+      onMessage: (message) => emitted.push(message),
+    }),
   );
   session.updateClientCapabilities({ [CLIENT_CAPS.projectUpdates]: true });
 
-  const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "session-project-icon-test-")));
   const projectRoot = path.join(tempDir, "project-without-icons");
   mkdirSync(projectRoot, { recursive: true });
-  session.paseoHome = path.join(tempDir, "paseo-home");
 
   const project = createPersistedProjectRecord({
     projectId: "prj_icon",

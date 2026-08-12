@@ -8,26 +8,38 @@ import type {
 } from "@getpaseo/protocol/messages";
 import { type CollectionRead, VersionedCollection } from "./internal/versioned-collection.js";
 
-export interface AgentDirectoryEntry {
+interface AgentDirectoryEntry {
   agent: AgentSnapshotPayload;
   project: ProjectPlacementPayload;
 }
 
-export interface DirectorySyncCursor {
+interface DirectorySyncCursor {
   generation?: string;
   afterSeq?: number;
 }
 
-export interface DirectoryVersion {
+interface DirectoryVersion {
   generation: string;
   seq: number;
 }
 
 type ProjectUpdate = Extract<SessionOutboundMessage, { type: "project.update" }>;
+type ProjectListResponse = Extract<
+  SessionOutboundMessage,
+  { type: "project.list.response" }
+>["payload"];
+type FetchWorkspacesResponse = Extract<
+  SessionOutboundMessage,
+  { type: "fetch_workspaces_response" }
+>["payload"];
+type FetchAgentsResponse = Extract<
+  SessionOutboundMessage,
+  { type: "fetch_agents_response" }
+>["payload"];
 
 /** Daemon-global latest-state sequence owner for the active app directory. */
 export class DirectorySyncService {
-  readonly generation: string;
+  private readonly generation: string;
   private readonly projects = new VersionedCollection<WorkspaceProjectDescriptorPayload>({
     getId: (project) => project.projectId,
   });
@@ -42,56 +54,102 @@ export class DirectorySyncService {
     this.generation = generation;
   }
 
-  readProjects(
+  synchronizeProjects(
     snapshot: Iterable<WorkspaceProjectDescriptorPayload>,
     cursor: DirectorySyncCursor,
-  ): CollectionRead<WorkspaceProjectDescriptorPayload> {
+  ): Pick<ProjectListResponse, "projects" | "sync"> {
     this.projects.replaceAll(snapshot);
-    return this.read(this.projects, cursor);
+    const read = this.read(this.projects, cursor);
+    return {
+      projects: read.values.map(({ seq, value }) => ({ ...value, syncSeq: seq })),
+      sync: this.metadata(read),
+    };
   }
 
-  readWorkspaces(
+  synchronizeWorkspaces(
     snapshot: Iterable<WorkspaceDescriptorPayload>,
     cursor: DirectorySyncCursor,
-  ): CollectionRead<WorkspaceDescriptorPayload> {
+  ): Pick<FetchWorkspacesResponse, "entries" | "emptyProjects" | "pageInfo" | "sync"> {
     this.workspaces.replaceAll(snapshot);
-    return this.read(this.workspaces, cursor);
+    const read = this.read(this.workspaces, cursor);
+    return {
+      entries: read.values.map(({ seq, value }) => ({ ...value, syncSeq: seq })),
+      emptyProjects: [],
+      pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+      sync: this.metadata(read),
+    };
   }
 
-  readAgents(
+  synchronizeAgents(
     snapshot: Iterable<AgentDirectoryEntry>,
     cursor: DirectorySyncCursor,
-  ): CollectionRead<AgentDirectoryEntry> {
+  ): Pick<FetchAgentsResponse, "entries" | "pageInfo" | "sync"> {
     this.agents.replaceAll(snapshot);
-    return this.read(this.agents, cursor);
+    const read = this.read(this.agents, cursor);
+    return {
+      entries: read.values.map(({ seq, value }) => ({ ...value, syncSeq: seq })),
+      pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+      sync: this.metadata(read),
+    };
   }
 
-  versionProject(update: ProjectUpdate["payload"]): DirectoryVersion | null {
+  sequenceProjectUpdate(
+    update: ProjectUpdate["payload"],
+    includeSequence: boolean,
+  ): ProjectUpdate["payload"] {
     if (update.kind === "upsert") {
       this.projects.replace(update.project);
     } else {
       this.projects.remove(update.projectId);
     }
     const id = update.kind === "upsert" ? update.project.projectId : update.projectId;
-    return this.version(this.projects, id);
+    return this.withVersion(update, includeSequence, this.version(this.projects, id));
   }
 
-  versionWorkspace(value: WorkspaceDescriptorPayload | null, id: string): DirectoryVersion | null {
+  sequenceWorkspaceUpdate<T extends object>(
+    payload: T,
+    value: WorkspaceDescriptorPayload | null,
+    id: string,
+    includeSequence: boolean,
+  ): T & Partial<DirectoryVersion> {
     if (value) {
       this.workspaces.replace(value);
     } else {
       this.workspaces.remove(id);
     }
-    return this.version(this.workspaces, id);
+    return this.withVersion(payload, includeSequence, this.version(this.workspaces, id));
   }
 
-  versionAgent(value: AgentDirectoryEntry | null, id: string): DirectoryVersion | null {
+  sequenceAgentUpdate<T extends object>(
+    payload: T,
+    value: AgentDirectoryEntry | null,
+    id: string,
+    includeSequence: boolean,
+  ): T & Partial<DirectoryVersion> {
     if (value) {
       this.agents.replace(value);
     } else {
       this.agents.remove(id);
     }
-    return this.version(this.agents, id);
+    return this.withVersion(payload, includeSequence, this.version(this.agents, id));
+  }
+
+  private metadata(read: CollectionRead<unknown>) {
+    return {
+      generation: this.generation,
+      headSeq: read.headSeq,
+      mode: read.mode,
+      ...(read.reason ? { reason: read.reason } : {}),
+      removals: read.removals,
+    };
+  }
+
+  private withVersion<T extends object>(
+    payload: T,
+    includeSequence: boolean,
+    version: DirectoryVersion | null,
+  ): T & Partial<DirectoryVersion> {
+    return version && includeSequence ? { ...payload, ...version } : payload;
   }
 
   private read<T>(

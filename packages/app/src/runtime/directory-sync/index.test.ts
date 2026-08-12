@@ -121,13 +121,19 @@ describe("DirectorySync session readiness", () => {
     const serverId = "agent-list-sequence-page";
     serverIds.add(serverId);
     const client = new FakeDirectoryClient();
-    const directory = new DirectorySync(serverId, {
-      onAgentStoppedRunning: () => undefined,
-      markAgentLoading: () => undefined,
-      markAgentReady: () => undefined,
-      markAgentError: () => undefined,
-      readCursors: () => ({ agents: { generation: "generation", afterSeq: 12 } }),
-    });
+    const directory = new DirectorySync(
+      serverId,
+      {
+        onAgentStoppedRunning: () => undefined,
+        markAgentLoading: () => undefined,
+        markAgentReady: () => undefined,
+        markAgentError: () => undefined,
+      },
+      {
+        readDirectoryCheckpoint: () => ({ agents: { generation: "generation", afterSeq: 12 } }),
+        writeDirectoryCheckpoint: () => undefined,
+      },
+    );
     directory.connectionChanged({
       client: client as unknown as DaemonClient,
       status: "online",
@@ -209,15 +215,20 @@ describe("DirectorySync session readiness", () => {
     const serverId = "project-list-sequence";
     serverIds.add(serverId);
     const client = new FakeDirectoryClient();
-    const writes: Array<{ entity: string; cursor: { generation: string; afterSeq: number } }> = [];
-    const directory = new DirectorySync(serverId, {
-      onAgentStoppedRunning: () => undefined,
-      markAgentLoading: () => undefined,
-      markAgentReady: () => undefined,
-      markAgentError: () => undefined,
-      readCursors: () => ({ projects: { generation: "generation", afterSeq: 4 } }),
-      writeCursor: (entity, cursor) => writes.push({ entity, cursor }),
-    });
+    const writes: unknown[] = [];
+    const directory = new DirectorySync(
+      serverId,
+      {
+        onAgentStoppedRunning: () => undefined,
+        markAgentLoading: () => undefined,
+        markAgentReady: () => undefined,
+        markAgentError: () => undefined,
+      },
+      {
+        readDirectoryCheckpoint: () => ({ projects: { generation: "generation", afterSeq: 4 } }),
+        writeDirectoryCheckpoint: (_serverId, checkpoint) => writes.push(checkpoint),
+      },
+    );
     directory.connectionChanged({
       client: client as unknown as DaemonClient,
       status: "online",
@@ -272,10 +283,7 @@ describe("DirectorySync session readiness", () => {
     const projects = useSessionStore.getState().sessions[serverId]?.projects;
     expect(Array.from(projects?.keys() ?? [])).toEqual(["project-1"]);
     expect(projects?.get("project-1")?.projectDisplayName).toBe("New name");
-    expect(writes).toContainEqual({
-      entity: "projects",
-      cursor: { generation: "generation", afterSeq: 6 },
-    });
+    expect(writes).toContainEqual({ projects: { generation: "generation", afterSeq: 6 } });
     directory.dispose();
   });
 

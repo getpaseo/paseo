@@ -3620,6 +3620,10 @@ export const WorkspaceProjectDescriptorPayloadSchema = z.object({
   projectCustomName: z.string().nullable().optional(),
   // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
   projectCustomIconRevision: z.string().nullable().optional(),
+  // Fingerprints the effective icon, including automatic discovery and the
+  // absence of an icon. Clients may persist icon results against this value.
+  // COMPAT(projectIconCache): added in v0.2.7, remove optional after 2027-02-12.
+  projectIconRevision: z.string().optional(),
   projectRootPath: z.string(),
   projectKind: z.enum(["git", "non_git", "directory"]),
   // COMPAT(directorySync): sequence of this latest directory projection.
