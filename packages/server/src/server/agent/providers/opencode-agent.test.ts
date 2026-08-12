@@ -824,7 +824,57 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
   }, 180_000);
 });
 
-describe("OpenCode adapter context-window normalization", () => {
+describe("OpenCode adapter normalization", () => {
+  test("includes the implicit model default before explicit OpenCode variants", () => {
+    const definition = __openCodeInternals.buildOpenCodeModelDefinition(
+      { id: "catalog-provider", name: "Catalog Provider" },
+      "single-variant-model",
+      {
+        name: "Single Variant Model",
+        variants: { max: { reasoningEffort: "max" } },
+      },
+    );
+
+    expect(definition.thinkingOptions).toEqual([
+      { id: "default", label: "Default", isDefault: true },
+      { id: "max", label: "max" },
+    ]);
+    expect(definition.defaultThinkingOptionId).toBe("default");
+  });
+
+  test("omits OpenCode's implicit default variant from new and updated sessions", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionCreateResponse = { data: { id: "ses_default_variant" } };
+    openCode.sessionPromptAsyncEvents = [
+      { type: "session.idle", properties: { sessionID: "ses_default_variant" } },
+    ];
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/workspace/repo",
+      model: "catalog-provider/single-variant-model",
+      thinkingOptionId: "default",
+    });
+
+    await collectTurnEvents(streamSession(session, "Use the model default"));
+    await session.setThinkingOption?.("max");
+    await collectTurnEvents(streamSession(session, "Use max"));
+    await session.setThinkingOption?.("default");
+    await collectTurnEvents(streamSession(session, "Return to the model default"));
+
+    expect(openCode.calls.sessionPromptAsync).toEqual([
+      expect.not.objectContaining({ variant: expect.anything() }),
+      expect.objectContaining({ variant: "max" }),
+      expect.not.objectContaining({ variant: expect.anything() }),
+    ]);
+    await session.close();
+  });
+
   test("builds OpenCode file parts for image prompt blocks", () => {
     expect(
       __openCodeInternals.buildOpenCodePromptParts([
