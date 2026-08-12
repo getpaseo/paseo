@@ -80,9 +80,11 @@ To keep executions off your working tree, add a worktree:
 ```yaml
 worktree:
   mode: branch-off
-  newBranch: hub/investigation
+  newBranch: trigger-${{ paseo.execution.id }}
   base: origin/main
 ```
+
+`${{ paseo.execution.id }}` gives each execution its own branch, so repeated triggers against this environment do not contend for one name. It is optional: a literal such as `hub/investigation` still works and reuses that branch. `newBranch` accepts no other expression — see the [configuration reference](/docs/hub/configuration/hub-yml#environments).
 
 See [Git worktrees](/docs/worktrees) for setup hooks and scripts.
 
