@@ -201,7 +201,7 @@ type ScheduleAgentManager = Pick<
   | "getAgent"
   | "getRegisteredProviderIds"
   | "hasInFlightRun"
-  | "hydrateTimelineFromProvider"
+  | "ensureTimelineCoverage"
   | "resumeAgentFromPersistence"
   | "runAgent"
   | "waitForAgentEvent"
@@ -838,6 +838,7 @@ export class ScheduleService {
       const agent = await ensureAgentLoaded(schedule.target.agentId, {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
+        historyIntent: "metadata",
         logger: this.logger,
       });
       if (this.agentManager.hasInFlightRun(agent.id)) {

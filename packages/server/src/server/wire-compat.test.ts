@@ -12,7 +12,7 @@ import {
 } from "@getpaseo/protocol/messages";
 import { Session, type SessionOptions } from "./session.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
-import type { AgentTimelineRow } from "./agent/agent-manager.js";
+import type { AgentHistoryCoverageIntent, AgentTimelineRow } from "./agent/agent-manager.js";
 import { InMemoryAgentTimelineStore } from "./agent/agent-timeline-store.js";
 import type { AgentTimelineFetchOptions } from "./agent/agent-timeline-store-types.js";
 import { handleCreatePaseoWorktreeRequest } from "./worktree-session.js";
@@ -52,8 +52,11 @@ interface SessionInternals {
 
 class InMemoryAgentManager {
   private readonly timeline = new InMemoryAgentTimelineStore();
+  private hasOlder: boolean;
+  readonly coverageRequests: Array<{ agentId: string; intent: AgentHistoryCoverageIntent }> = [];
 
-  constructor(rows: AgentTimelineRow[]) {
+  constructor(rows: AgentTimelineRow[], options?: { hasOlder?: boolean }) {
+    this.hasOlder = options?.hasOlder ?? false;
     this.timeline.initialize("agent-1", {
       epoch: "epoch-1",
       rows,
@@ -106,7 +109,18 @@ class InMemoryAgentManager {
   }
 
   fetchTimeline(_agentId: string, options?: AgentTimelineFetchOptions) {
-    return this.timeline.fetch("agent-1", options);
+    const timeline = this.timeline.fetch("agent-1", options);
+    return this.hasOlder ? { ...timeline, hasOlder: true } : timeline;
+  }
+
+  async ensureTimelineCoverage(
+    agentId: string,
+    options: { intent: AgentHistoryCoverageIntent },
+  ): Promise<void> {
+    this.coverageRequests.push({ agentId, intent: options.intent });
+    if (options.intent === "older") {
+      this.hasOlder = false;
+    }
   }
 
   listAgents() {
@@ -179,6 +193,7 @@ class InMemoryWorktreeWorkflow {
 }
 
 function createSessionForWireCompatTest(options?: {
+  agentManager?: InMemoryAgentManager;
   clientCapabilities?: Record<string, unknown> | null;
   messages?: SessionOutboundMessage[];
   rows?: AgentTimelineRow[];
@@ -211,9 +226,8 @@ function createSessionForWireCompatTest(options?: {
     downloadTokenStore: {} as SessionOptions["downloadTokenStore"],
     pushNotifications: {} as SessionOptions["pushNotifications"],
     paseoHome: "/tmp/paseo-home",
-    agentManager: new InMemoryAgentManager(
-      options?.rows ?? rows,
-    ) as unknown as SessionOptions["agentManager"],
+    agentManager: (options?.agentManager ??
+      new InMemoryAgentManager(options?.rows ?? rows)) as unknown as SessionOptions["agentManager"],
     agentStorage: new EmptyAgentStorage() as unknown as SessionOptions["agentStorage"],
     projectRegistry: new EmptyProjectRegistry() as unknown as SessionOptions["projectRegistry"],
     workspaceRegistry:
@@ -367,6 +381,65 @@ describe("wire compatibility", () => {
 
     const currentParsed = FetchAgentTimelineResponseMessageSchema.parse(response);
     expect(currentParsed.payload.entries[0]?.collapsed).toContain("reasoning_merge");
+  });
+
+  test("requests tail and complete coverage through the timeline handler", async () => {
+    const manager = new InMemoryAgentManager([]);
+    const session = createSessionForWireCompatTest({ agentManager: manager });
+    const internals = session as unknown as SessionInternals;
+
+    await internals.handleFetchAgentTimelineRequest({
+      type: "fetch_agent_timeline_request",
+      requestId: "req-tail",
+      agentId: "agent-1",
+      projection: "projected",
+      limit: 10,
+    });
+    await internals.handleFetchAgentTimelineRequest({
+      type: "fetch_agent_timeline_request",
+      requestId: "req-complete",
+      agentId: "agent-1",
+      projection: "projected",
+      limit: 0,
+    });
+
+    expect(manager.coverageRequests).toEqual([
+      { agentId: "agent-1", intent: "metadata" },
+      { agentId: "agent-1", intent: "tail" },
+      { agentId: "agent-1", intent: "metadata" },
+      { agentId: "agent-1", intent: "complete" },
+    ]);
+  });
+
+  test("requests an older page when before reaches the loaded history start", async () => {
+    const manager = new InMemoryAgentManager(
+      [
+        {
+          seq: 1,
+          timestamp: "2026-05-02T00:00:00.000Z",
+          item: { type: "assistant_message", text: "oldest loaded" },
+        },
+      ],
+      { hasOlder: true },
+    );
+    const session = createSessionForWireCompatTest({ agentManager: manager });
+    const internals = session as unknown as SessionInternals;
+
+    await internals.handleFetchAgentTimelineRequest({
+      type: "fetch_agent_timeline_request",
+      requestId: "req-before",
+      agentId: "agent-1",
+      projection: "projected",
+      direction: "before",
+      cursor: { epoch: "epoch-1", seq: 1 },
+      limit: 10,
+    });
+
+    expect(manager.coverageRequests).toEqual([
+      { agentId: "agent-1", intent: "metadata" },
+      { agentId: "agent-1", intent: "tail" },
+      { agentId: "agent-1", intent: "older" },
+    ]);
   });
 
   test("legacy worktree request shape normalizes to the same internal input as the new shape", async () => {

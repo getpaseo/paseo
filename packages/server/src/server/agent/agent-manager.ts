@@ -24,6 +24,7 @@ import {
   type AgentCreateSessionOptions,
   type AgentResumeSessionOptions,
   type AgentFeature,
+  type AgentHistoryPageEntry,
   type AgentLaunchContext,
   type AgentSlashCommand,
   type AgentMode,
@@ -51,6 +52,7 @@ import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
   InMemoryAgentTimelineStore,
+  PAGED_TIMELINE_INITIAL_SEQUENCE,
   type SeedAgentTimelineOptions,
 } from "./agent-timeline-store.js";
 import type {
@@ -62,6 +64,7 @@ import type {
 import {
   AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
   AgentStreamCoalescer,
+  type AgentStreamCoalescerFlush,
 } from "./agent-stream-coalescer.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { AgentRunState, type ForegroundTurnWaiter } from "./agent-run-state.js";
@@ -78,6 +81,9 @@ import {
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+// Codex returns every item in each selected turn. Keep the native turn batch small so a
+// sparse history does not turn a bounded client tail into a rollout-sized response.
+const PAGED_HISTORY_TURN_PAGE_LIMIT = 10;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
   supportsSessionPersistence: true,
@@ -202,6 +208,26 @@ export interface SubscribeOptions {
 interface HydrateTimelineOptions {
   force?: boolean;
   broadcast?: boolean | (() => boolean);
+}
+
+export type AgentHistoryCoverageIntent = "metadata" | "tail" | "older" | "complete";
+
+export interface EnsureTimelineCoverageOptions extends HydrateTimelineOptions {
+  intent: AgentHistoryCoverageIntent;
+}
+
+interface PagedHistoryCoverage {
+  hasTail: boolean;
+  hasOlder: boolean;
+  isComplete: boolean;
+  isPageLoadActive: boolean;
+  inFlight: Promise<void> | null;
+  nativeItemIds: Set<string>;
+  queuedLiveTimelineEvents: Extract<AgentStreamEvent, { type: "timeline" }>[];
+}
+
+interface PreparedPagedHistoryEntry extends AgentHistoryPageEntry {
+  providerMessageId?: string;
 }
 
 export type ImportablePersistedAgentQueryOptions = ListImportableSessionsOptions & {
@@ -636,6 +662,18 @@ function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatc
   return patch;
 }
 
+export class AgentHistoryLoadError extends Error {
+  constructor(
+    readonly agentId: string,
+    readonly provider: AgentProvider,
+    readonly cause: unknown,
+  ) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    super(`Failed to load provider history for agent ${agentId}: ${reason}`);
+    this.name = "AgentHistoryLoadError";
+  }
+}
+
 export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
@@ -655,6 +693,9 @@ export class AgentManager {
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
+  private readonly historyLoadFailures = new Map<string, AgentHistoryLoadError>();
+  private readonly pagedHistoryCoverage = new Map<string, PagedHistoryCoverage>();
+  private readonly providerSubagentHistoryLoads = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -688,10 +729,7 @@ export class AgentManager {
     this.agentStreamCoalescer = new AgentStreamCoalescer({
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
       timers: { setTimeout, clearTimeout },
-      onFlush: ({ agentId, item, provider, turnId }) => {
-        const event = this.recordAndDispatchTimelineItem(agentId, item, provider, turnId);
-        this.notifyForegroundTurnWaiters(agentId, event);
-      },
+      onFlush: (payload) => this.handleCoalescedTimelineFlush(payload),
     });
     this.updateProviderRegistry({
       providerDefinitions: options.providerDefinitions ?? {},
@@ -1058,7 +1096,12 @@ export class AgentManager {
 
   fetchTimeline(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     this.requireAgent(id);
-    return this.timelineStore.fetch(id, options);
+    const result = this.timelineStore.fetch(id, options);
+    const coverage = this.pagedHistoryCoverage.get(id);
+    if (!coverage?.hasOlder || result.reset) {
+      return result;
+    }
+    return { ...result, hasOlder: true };
   }
 
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
@@ -1092,6 +1135,31 @@ export class AgentManager {
   ): AgentTimelineFetchResult {
     this.requirePublicAgent(parentAgentId);
     return this.providerSubagents.fetchTimeline(parentAgentId, subagentId, options);
+  }
+
+  async ensureProviderSubagentTimelineCoverage(
+    parentAgentId: string,
+    subagentId: string,
+  ): Promise<void> {
+    const agent = this.requireSessionAgent(parentAgentId);
+    if (!agent.session.loadProviderSubagentHistory) {
+      return;
+    }
+    const key = `${parentAgentId}\0${subagentId}`;
+    const inFlight = this.providerSubagentHistoryLoads.get(key);
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+    const load = agent.session.loadProviderSubagentHistory({ id: subagentId });
+    this.providerSubagentHistoryLoads.set(key, load);
+    try {
+      await load;
+    } finally {
+      if (this.providerSubagentHistoryLoads.get(key) === load) {
+        this.providerSubagentHistoryLoads.delete(key);
+      }
+    }
   }
 
   createAgent(
@@ -1267,6 +1335,7 @@ export class AgentManager {
       );
       const timelineRows = buildImportedTimelineRows(imported.timeline);
       const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
+      const supportsPagedHistory = imported.session.loadHistoryPage !== undefined;
 
       handedToRegistration = true;
       const agent = await this.registerSession(imported.session, importedConfig, resolvedAgentId, {
@@ -1275,10 +1344,13 @@ export class AgentManager {
         timelineRows,
         timelineNextSeq: timelineRows.length + 1,
         persistence: imported.persistence,
-        historyPrimed: true,
+        historyPrimed: !supportsPagedHistory,
         initialTitle,
         publishWhenReady: true,
       });
+      if (supportsPagedHistory) {
+        await this.ensureTimelineCoverage(agent.id, { intent: "tail" });
+      }
       for (const event of imported.providerSubagentEvents ?? []) {
         const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
         this.dispatch({ type: "provider_subagent", event: update });
@@ -1339,6 +1411,7 @@ export class AgentManager {
       ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
       : await client.createSession(providerLaunchConfig, launchContext);
     await this.requireExternalMcpSupport(session, storedConfig);
+    const shouldResetPagedHistory = rehydrateFromDisk || session.loadHistoryPage !== undefined;
 
     let handedToRegistration = false;
     try {
@@ -1352,31 +1425,35 @@ export class AgentManager {
         await this.closeReloadedSession(existing.session, agentId);
       }
 
-      if (rehydrateFromDisk) {
-        // Wipe both durable and in-memory timeline so registerSession mints a
-        // new epoch and hydrateTimelineFromProvider re-streams the freshly read
-        // provider history into an empty timeline.
+      if (shouldResetPagedHistory) {
+        // A new pageable runtime cannot reuse the prior process-local cursor.
+        // Wipe timeline state so registerSession mints a new epoch and the new
+        // session establishes a fresh bounded tail.
         await this.deleteCommittedTimeline(agentId);
         this.timelineStore.delete(agentId);
-        for (const event of this.providerSubagents.deleteParent(agentId)) {
-          this.dispatch({ type: "provider_subagent", event });
-        }
+        this.historyLoadFailures.delete(agentId);
+        this.pagedHistoryCoverage.delete(agentId);
+        this.clearProviderSubagents(agentId, true);
       }
 
       // Preserve existing labels and timeline during reload.
       handedToRegistration = true;
-      return this.registerSession(session, storedConfig, agentId, {
+      const registered = await this.registerSession(session, storedConfig, agentId, {
         labels: existing.labels,
         workspaceId: existing.workspaceId,
         owner: existing.owner,
         createdAt: existing.createdAt,
         updatedAt: existing.updatedAt,
         lastUserMessageAt: existing.lastUserMessageAt,
-        historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
+        historyPrimed: shouldResetPagedHistory ? false : preservedHistoryPrimed,
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
         attention: preservedAttention,
       });
+      if (session.loadHistoryPage) {
+        await this.ensureTimelineCoverage(registered.id, { intent: "tail" });
+      }
+      return registered;
     } finally {
       if (!handedToRegistration) {
         await this.closeUnregisteredSession(session);
@@ -1486,6 +1563,11 @@ export class AgentManager {
       persistError = error;
     }
     this.emitClosedAgent(closedAgent, { persist: false });
+    if (agent.session.loadHistoryPage) {
+      // Native pagination cursors belong to the closed provider process. Do not
+      // retain its partial range or coverage state for a newly resumed session.
+      this.discardRetainedAgentState(agentId);
+    }
     this.logger.trace(
       {
         agentId,
@@ -2597,8 +2679,327 @@ export class AgentManager {
     agentId: string,
     options?: HydrateTimelineOptions,
   ): Promise<void> {
+    await this.ensureTimelineCoverage(agentId, { ...options, intent: "complete" });
+  }
+
+  async ensureTimelineCoverage(
+    agentId: string,
+    options: EnsureTimelineCoverageOptions,
+  ): Promise<void> {
     const agent = this.requireSessionAgent(agentId);
-    await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
+    if (options.intent === "metadata") {
+      return;
+    }
+    if (!agent.session.loadHistoryPage) {
+      await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
+      return;
+    }
+    if (agent.historyPrimed && !options.force) {
+      return;
+    }
+    if (options.force) {
+      this.pagedHistoryCoverage.delete(agent.id);
+      this.historyLoadFailures.delete(agent.id);
+      agent.historyPrimed = false;
+    }
+
+    const coverage = this.getPagedHistoryCoverage(agent.id);
+    if (this.hasTimelineCoverage(coverage, options.intent)) {
+      return;
+    }
+    const rememberedFailure = this.historyLoadFailures.get(agent.id);
+    if (rememberedFailure && !options.force) {
+      throw rememberedFailure;
+    }
+
+    for (;;) {
+      if (this.hasTimelineCoverage(coverage, options.intent)) {
+        return;
+      }
+
+      if (coverage.inFlight) {
+        await coverage.inFlight;
+        continue;
+      }
+
+      const load = this.loadPagedHistoryPage(agent, coverage, options);
+      coverage.inFlight = load;
+      try {
+        await load;
+      } finally {
+        coverage.inFlight = null;
+      }
+
+      if (options.intent !== "complete") {
+        return;
+      }
+    }
+  }
+
+  private hasTimelineCoverage(
+    coverage: PagedHistoryCoverage,
+    intent: AgentHistoryCoverageIntent,
+  ): boolean {
+    if (intent === "tail") {
+      return coverage.hasTail;
+    }
+    if (intent === "older") {
+      return !coverage.hasTail || !coverage.hasOlder;
+    }
+    return coverage.isComplete;
+  }
+
+  private clearProviderSubagents(parentAgentId: string, broadcast: boolean): void {
+    const prefix = `${parentAgentId}\0`;
+    for (const key of this.providerSubagentHistoryLoads.keys()) {
+      if (key.startsWith(prefix)) {
+        this.providerSubagentHistoryLoads.delete(key);
+      }
+    }
+    for (const event of this.providerSubagents.deleteParent(parentAgentId)) {
+      if (broadcast) {
+        this.dispatch({ type: "provider_subagent", event });
+      }
+    }
+  }
+
+  private getPagedHistoryCoverage(agentId: string): PagedHistoryCoverage {
+    const existing = this.pagedHistoryCoverage.get(agentId);
+    if (existing) {
+      return existing;
+    }
+    const coverage: PagedHistoryCoverage = {
+      hasTail: false,
+      hasOlder: false,
+      isComplete: false,
+      isPageLoadActive: false,
+      inFlight: null,
+      nativeItemIds: new Set<string>(),
+      queuedLiveTimelineEvents: [],
+    };
+    this.pagedHistoryCoverage.set(agentId, coverage);
+    return coverage;
+  }
+
+  private async loadPagedHistoryPage(
+    agent: ActiveManagedAgent,
+    coverage: PagedHistoryCoverage,
+    options: HydrateTimelineOptions,
+  ): Promise<void> {
+    if (!agent.session.loadHistoryPage) {
+      await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
+      return;
+    }
+
+    coverage.isPageLoadActive = true;
+    try {
+      const page = await agent.session.loadHistoryPage({ limit: PAGED_HISTORY_TURN_PAGE_LIMIT });
+      if (page.kind === "unsupported") {
+        if (coverage.hasTail) {
+          throw new Error("Codex history paging became unavailable after partial history loaded");
+        }
+        await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
+        coverage.hasTail = true;
+        coverage.hasOlder = false;
+        coverage.isComplete = true;
+        return;
+      }
+
+      const pageEntries = this.preparePagedHistoryEntries(page.entries, coverage);
+      const entries =
+        coverage.hasTail || options.force
+          ? pageEntries
+          : this.mergeInitialPagedHistoryEntries(agent.id, pageEntries, coverage);
+      if (!coverage.hasTail) {
+        this.timelineStore.delete(agent.id);
+        this.timelineStore.initialize(agent.id, {
+          nextSeq: PAGED_TIMELINE_INITIAL_SEQUENCE,
+          timestamp: new Date().toISOString(),
+        });
+        for (const entry of entries) {
+          this.timelineStore.append(agent.id, entry.item, {
+            ...(entry.timestamp ? { timestamp: entry.timestamp } : {}),
+            ...(entry.providerMessageId ? { providerMessageId: entry.providerMessageId } : {}),
+          });
+        }
+      } else if (entries.length > 0) {
+        this.timelineStore.prepend(agent.id, entries);
+      }
+      for (const entry of entries) {
+        if (entry.nativeItemId) {
+          coverage.nativeItemIds.add(entry.nativeItemId);
+        }
+      }
+
+      coverage.hasTail = true;
+      coverage.hasOlder = page.hasOlder;
+      coverage.isComplete = !page.hasOlder;
+      agent.historyPrimed = coverage.isComplete;
+    } catch (error) {
+      const failure = new AgentHistoryLoadError(agent.id, agent.provider, error);
+      this.historyLoadFailures.set(agent.id, failure);
+      this.logger.error({ err: error, agentId: agent.id }, "Provider history page load failed");
+      throw failure;
+    } finally {
+      coverage.isPageLoadActive = false;
+      this.flushQueuedPagedLiveTimelineEvents(agent, coverage);
+    }
+  }
+
+  private preparePagedHistoryEntries(
+    entries: readonly AgentHistoryPageEntry[],
+    coverage: PagedHistoryCoverage,
+  ): PreparedPagedHistoryEntry[] {
+    const prepared: PreparedPagedHistoryEntry[] = [];
+    for (const entry of entries) {
+      if (entry.nativeItemId && coverage.nativeItemIds.has(entry.nativeItemId)) {
+        continue;
+      }
+      const item = limitAgentTimelineItemContent(entry.item);
+      prepared.push({
+        item,
+        ...(entry.timestamp ? { timestamp: entry.timestamp } : {}),
+        ...(entry.nativeItemId ? { nativeItemId: entry.nativeItemId } : {}),
+      });
+    }
+    return prepared;
+  }
+
+  private mergeInitialPagedHistoryEntries(
+    agentId: string,
+    entries: readonly PreparedPagedHistoryEntry[],
+    coverage: PagedHistoryCoverage,
+  ): PreparedPagedHistoryEntry[] {
+    const submittedRowsByClientMessageId = new Map<string, AgentTimelineRow>();
+    const submittedRowsByProviderMessageId = new Map<string, AgentTimelineRow>();
+    const submittedRows: AgentTimelineRow[] = [];
+    for (const row of this.timelineStore.getRows(agentId)) {
+      if (row.item.type !== "user_message" || !row.item.clientMessageId) {
+        continue;
+      }
+      submittedRows.push(row);
+      submittedRowsByClientMessageId.set(row.item.clientMessageId, row);
+      if (row.providerMessageId) {
+        submittedRowsByProviderMessageId.set(row.providerMessageId, row);
+      }
+    }
+
+    const queuedClientMessageIdsByNativeItemId = new Map<string, string>();
+    for (const event of coverage.queuedLiveTimelineEvents) {
+      if (event.item.type !== "user_message" || !event.item.clientMessageId) {
+        continue;
+      }
+      const nativeItemId = event.nativeItemId ?? event.item.messageId;
+      if (nativeItemId) {
+        queuedClientMessageIdsByNativeItemId.set(nativeItemId, event.item.clientMessageId);
+      }
+    }
+
+    const representedClientMessageIds = new Set<string>();
+    const mergedEntries = entries.map((entry) => {
+      if (entry.item.type !== "user_message") {
+        return entry;
+      }
+      const nativeItemId = entry.nativeItemId ?? entry.item.messageId;
+      const clientMessageId =
+        entry.item.clientMessageId ??
+        (nativeItemId ? queuedClientMessageIdsByNativeItemId.get(nativeItemId) : undefined);
+      const submittedRow =
+        (clientMessageId ? submittedRowsByClientMessageId.get(clientMessageId) : undefined) ??
+        (nativeItemId ? submittedRowsByProviderMessageId.get(nativeItemId) : undefined);
+      if (!submittedRow || submittedRow.item.type !== "user_message") {
+        return entry;
+      }
+      const submittedClientMessageId = submittedRow.item.clientMessageId;
+      if (!submittedClientMessageId) {
+        return entry;
+      }
+      representedClientMessageIds.add(submittedClientMessageId);
+      const providerMessageId = nativeItemId ?? submittedRow.providerMessageId;
+      return {
+        item: submittedRow.item,
+        ...(entry.timestamp
+          ? { timestamp: entry.timestamp }
+          : { timestamp: submittedRow.timestamp }),
+        ...(nativeItemId ? { nativeItemId } : {}),
+        ...(providerMessageId ? { providerMessageId } : {}),
+      };
+    });
+
+    for (const row of submittedRows) {
+      if (row.item.type !== "user_message" || !row.item.clientMessageId) {
+        continue;
+      }
+      if (representedClientMessageIds.has(row.item.clientMessageId)) {
+        continue;
+      }
+      mergedEntries.push({
+        item: row.item,
+        timestamp: row.timestamp,
+        ...(row.providerMessageId ? { nativeItemId: row.providerMessageId } : {}),
+        ...(row.providerMessageId ? { providerMessageId: row.providerMessageId } : {}),
+      });
+    }
+    return mergedEntries;
+  }
+
+  private flushQueuedPagedLiveTimelineEvents(
+    agent: ActiveManagedAgent,
+    coverage: PagedHistoryCoverage,
+  ): void {
+    const queued = coverage.queuedLiveTimelineEvents.splice(0);
+    for (const event of queued) {
+      if (event.nativeItemId && coverage.nativeItemIds.has(event.nativeItemId)) {
+        continue;
+      }
+      if (
+        event.item.type === "user_message" &&
+        event.item.clientMessageId &&
+        this.reconcileSubmittedPromptEcho(agent, event.item, event.nativeItemId)
+      ) {
+        if (event.nativeItemId) {
+          coverage.nativeItemIds.add(event.nativeItemId);
+        }
+        continue;
+      }
+      const dispatched = this.recordAndDispatchTimelineItem(
+        agent.id,
+        event.item,
+        event.provider,
+        event.turnId,
+      );
+      this.notifyForegroundTurnWaiters(agent.id, dispatched);
+      if (event.nativeItemId) {
+        coverage.nativeItemIds.add(event.nativeItemId);
+      }
+      if (event.item.type === "user_message") {
+        agent.lastUserMessageAt = new Date();
+        this.emitState(agent);
+      }
+    }
+  }
+
+  private handleCoalescedTimelineFlush(payload: AgentStreamCoalescerFlush): void {
+    const { agentId, item, provider, turnId, nativeItemId } = payload;
+    const coverage = this.pagedHistoryCoverage.get(agentId);
+    if (coverage?.isPageLoadActive) {
+      coverage.queuedLiveTimelineEvents.push({
+        type: "timeline",
+        item,
+        provider,
+        ...(turnId !== undefined ? { turnId } : {}),
+        ...(nativeItemId ? { nativeItemId } : {}),
+      });
+      return;
+    }
+    if (nativeItemId && coverage?.nativeItemIds.has(nativeItemId)) {
+      return;
+    }
+    const event = this.recordAndDispatchTimelineItem(agentId, item, provider, turnId);
+    if (nativeItemId) {
+      coverage?.nativeItemIds.add(nativeItemId);
+    }
+    this.notifyForegroundTurnWaiters(agentId, event);
   }
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
@@ -2628,7 +3029,12 @@ export class AgentManager {
       );
       await invokeRewindCapability(agent.session, { messageId: providerMessageId, mode });
       if (mode !== "files") {
-        await this.hydrateTimelineFromProvider(agentId, { force: true, broadcast: true });
+        this.clearProviderSubagents(agent.id, true);
+        await this.ensureTimelineCoverage(agentId, {
+          intent: "tail",
+          force: true,
+          broadcast: true,
+        });
       }
       await this.refreshRuntimeInfo(agent);
       await this.persistSnapshot(agent);
@@ -3166,9 +3572,9 @@ export class AgentManager {
 
   private discardRetainedAgentState(agentId: string): void {
     this.timelineStore.delete(agentId);
-    for (const event of this.providerSubagents.deleteParent(agentId)) {
-      this.dispatch({ type: "provider_subagent", event });
-    }
+    this.historyLoadFailures.delete(agentId);
+    this.pagedHistoryCoverage.delete(agentId);
+    this.clearProviderSubagents(agentId, true);
   }
 
   private emitClosedAgent(agent: ManagedAgentClosed, options?: { persist?: boolean }): void {
@@ -3404,6 +3810,10 @@ export class AgentManager {
     if (agent.historyPrimed && !options?.force) {
       return;
     }
+    const rememberedFailure = this.historyLoadFailures.get(agent.id);
+    if (rememberedFailure && !options?.force) {
+      throw rememberedFailure;
+    }
 
     const broadcast = options?.broadcast ?? false;
 
@@ -3438,14 +3848,11 @@ export class AgentManager {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     await this.deleteCommittedTimeline(agent.id);
     this.timelineStore.delete(agent.id);
+    this.historyLoadFailures.delete(agent.id);
+    this.pagedHistoryCoverage.delete(agent.id);
+    this.clearProviderSubagents(agent.id, broadcast);
     this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
     agent.historyPrimed = true;
-
-    for (const event of this.providerSubagents.deleteParent(agent.id)) {
-      if (broadcast) {
-        this.dispatch({ type: "provider_subagent", event });
-      }
-    }
     for (const event of providerSubagentEvents) {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
       if (broadcast) {
@@ -3480,7 +3887,6 @@ export class AgentManager {
       row: AgentTimelineRow;
     }> = [];
     const providerSubagentEvents: AgentManagerEvent[] = [];
-    agent.historyPrimed = true;
     try {
       for await (const event of agent.session.streamHistory()) {
         if (event.type === "provider_subagent") {
@@ -3514,9 +3920,14 @@ export class AgentManager {
           });
         }
       }
-    } catch {
-      // ignore history failures
+    } catch (error) {
+      const failure = new AgentHistoryLoadError(agent.id, agent.provider, error);
+      this.historyLoadFailures.set(agent.id, failure);
+      this.logger.error({ err: error, agentId: agent.id }, "Provider history load failed");
+      throw failure;
     }
+    agent.historyPrimed = true;
+    this.historyLoadFailures.delete(agent.id);
 
     if (typeof broadcast !== "function" || !broadcast()) {
       return;
@@ -3795,6 +4206,31 @@ export class AgentManager {
     void this.refreshRuntimeInfo(agent);
   }
 
+  private handlePagedLiveTimelineEvent(params: {
+    agentId: string;
+    event: Extract<AgentStreamEvent, { type: "timeline" }>;
+    fromHistory: boolean;
+    flags: StreamEventFlags;
+  }): boolean {
+    const { agentId, event, fromHistory, flags } = params;
+    if (fromHistory) {
+      return false;
+    }
+    const coverage = this.pagedHistoryCoverage.get(agentId);
+    if (coverage?.isPageLoadActive) {
+      coverage.queuedLiveTimelineEvents.push(event);
+      flags.shouldDispatchEvent = false;
+      flags.shouldNotifyWaiters = false;
+      return true;
+    }
+    if (event.nativeItemId && coverage?.nativeItemIds.has(event.nativeItemId)) {
+      flags.shouldDispatchEvent = false;
+      flags.shouldNotifyWaiters = false;
+      return true;
+    }
+    return false;
+  }
+
   private async onStreamTimelineEvent(params: {
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "timeline" }>;
@@ -3802,6 +4238,17 @@ export class AgentManager {
     flags: StreamEventFlags;
   }): Promise<void> {
     const { agent, event, options, flags } = params;
+    if (
+      this.handlePagedLiveTimelineEvent({
+        agentId: agent.id,
+        event,
+        fromHistory: options?.fromHistory === true,
+        flags,
+      })
+    ) {
+      return;
+    }
+    const coverage = this.pagedHistoryCoverage.get(agent.id);
 
     if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
       flags.shouldDispatchEvent = false;
@@ -3812,7 +4259,7 @@ export class AgentManager {
     if (
       event.item.type === "user_message" &&
       event.item.clientMessageId &&
-      this.reconcileSubmittedPromptEcho(agent, event.item)
+      this.reconcileSubmittedPromptEcho(agent, event.item, event.nativeItemId)
     ) {
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
@@ -3831,6 +4278,9 @@ export class AgentManager {
     }
 
     this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);
+    if (event.nativeItemId) {
+      coverage?.nativeItemIds.add(event.nativeItemId);
+    }
     if (event.item.type === "user_message") {
       agent.lastUserMessageAt = new Date();
       this.emitState(agent);
@@ -4096,16 +4546,18 @@ export class AgentManager {
   private reconcileSubmittedPromptEcho(
     agent: ActiveManagedAgent,
     item: Extract<AgentTimelineItem, { type: "user_message" }>,
+    nativeItemId?: string,
   ): AgentTimelineRow | null {
     const { clientMessageId, messageId } = item;
     if (!clientMessageId) return null;
     const existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
     if (!existing || existing.item.type !== "user_message") return null;
-    if (messageId) {
+    const providerMessageId = messageId ?? nativeItemId;
+    if (providerMessageId) {
       const enriched = this.timelineStore.enrichSubmittedUserMessage(
         agent.id,
         clientMessageId,
-        messageId,
+        providerMessageId,
       );
       if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
     }

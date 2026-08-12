@@ -95,6 +95,7 @@ function createFinishNotificationScenario(
   Reflect.set(agentManager, "getLastAssistantMessage", async () => {
     return options?.childLastAssistantMessage ?? null;
   });
+  Reflect.set(agentManager, "ensureTimelineCoverage", async () => {});
   Reflect.set(agentManager, "tryRunOutOfBand", () => false);
   Reflect.set(agentManager, "hasInFlightRun", () => Boolean(options?.parentPromptError));
   Reflect.set(agentManager, "streamAgent", (_agentId: string, prompt: string) => {
@@ -257,6 +258,8 @@ test("sendPromptToAgent forwards the client message id as run options", async ()
     "getAgent",
     vi.fn(() => agent),
   );
+  const ensureTimelineCoverage = vi.fn();
+  Reflect.set(agentManager, "ensureTimelineCoverage", ensureTimelineCoverage);
   Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
   Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(false));
   Reflect.set(agentManager, "streamAgent", streamAgentSpy);
@@ -278,6 +281,10 @@ test("sendPromptToAgent forwards the client message id as run options", async ()
     logger: createTestLogger(),
   });
 
+  expect(ensureTimelineCoverage).toHaveBeenCalledWith("agent-1", {
+    intent: "metadata",
+    broadcast: false,
+  });
   expect(streamAgentSpy).toHaveBeenCalledWith("agent-1", "hello", {
     outputSchema: { type: "object" },
     clientMessageId: "msg-client-1",

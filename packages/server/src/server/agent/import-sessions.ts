@@ -220,6 +220,7 @@ async function importProviderSessionNow(
       const snapshot = await ensureAgentLoaded(archivedRecord.id, {
         agentManager: input.agentManager,
         agentStorage: input.agentStorage,
+        historyIntent: "tail",
         logger: input.logger,
       });
       return {

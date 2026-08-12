@@ -5,6 +5,8 @@ import {
   type AgentClient,
   type AgentCreateSessionOptions,
   type AgentFeature,
+  type AgentHistoryPage,
+  type AgentHistoryPageEntry,
   type AgentLaunchContext,
   type AgentResumeSessionOptions,
   type AgentMode,
@@ -420,16 +422,29 @@ interface CodexConfiguredDefaults {
 interface PersistedTimelineEntry {
   item: AgentTimelineItem;
   timestamp?: string;
+  nativeItemId?: string;
 }
 
 interface PersistedSubAgentRoute {
   childThreadId: string;
   toolCall: ToolCallTimelineItem;
+  rawItem: Record<string, unknown>;
 }
 
 interface CodexThreadHistoryProjection {
   timeline: PersistedTimelineEntry[];
   subAgentRoutes: PersistedSubAgentRoute[];
+}
+
+function toCodexHistoryPageEntry(entry: PersistedTimelineEntry): AgentHistoryPageEntry {
+  const pageEntry: AgentHistoryPageEntry = { item: entry.item };
+  if (entry.timestamp) {
+    pageEntry.timestamp = entry.timestamp;
+  }
+  if (entry.nativeItemId) {
+    pageEntry.nativeItemId = entry.nativeItemId;
+  }
+  return pageEntry;
 }
 
 function mergeCodexConfiguredDefaults(
@@ -1872,22 +1887,27 @@ function threadItemToTimelineEntries(
   return [timelineItem, ...mcpToolResultImagesToTimeline(item)];
 }
 
+const CodexThreadTurnSchema = z
+  .object({
+    items: z.array(z.unknown()),
+  })
+  .passthrough();
+
 const CodexThreadReadResponseSchema = z
   .object({
     thread: z
       .object({
-        turns: z
-          .array(
-            z
-              .object({
-                items: z.array(z.unknown()).default([]),
-              })
-              .passthrough(),
-          )
-          .default([]),
+        turns: z.array(CodexThreadTurnSchema).default([]),
       })
       .passthrough()
       .default({ turns: [] }),
+  })
+  .passthrough();
+
+const CodexThreadTurnsListResponseSchema = z
+  .object({
+    data: z.array(CodexThreadTurnSchema),
+    nextCursor: z.string().nullable().optional(),
   })
   .passthrough();
 
@@ -1908,17 +1928,26 @@ async function loadCodexThreadHistoryTimeline(params: {
   requestThread: CodexThreadReadRequest;
 }): Promise<CodexThreadHistoryProjection> {
   const response = await requestCodexThreadHistory(params.requestThread, params.threadId);
+  return projectCodexThreadTurns(response.thread.turns, params.cwd);
+}
+
+function projectCodexThreadTurns(
+  turns: readonly z.infer<typeof CodexThreadTurnSchema>[],
+  cwd: string | null,
+): CodexThreadHistoryProjection {
   const timeline: PersistedTimelineEntry[] = [];
   const subAgentTimelineIndexByThreadId = new Map<string, number>();
-  for (const turn of response.thread.turns) {
+  const subAgentRawItemByThreadId = new Map<string, Record<string, unknown>>();
+  for (const turn of turns) {
     for (const item of turn.items) {
+      const rawItem = toObjectRecord(item) ?? {};
       const historicalSubAgentActivity = readCodexSubAgentActivity(item);
       if (historicalSubAgentActivity) {
         const existingIndex = subAgentTimelineIndexByThreadId.get(
           historicalSubAgentActivity.agentThreadId,
         );
         if (existingIndex !== undefined) {
-          const activityTimelineItem = threadItemToTimeline(item, { cwd: params.cwd });
+          const activityTimelineItem = threadItemToTimeline(item, { cwd });
           updateHistoricalSubAgentActivity(
             timeline,
             existingIndex,
@@ -1931,7 +1960,9 @@ async function loadCodexThreadHistoryTimeline(params: {
           continue;
         }
       }
-      for (const timelineItem of threadItemToTimelineEntries(item, { cwd: params.cwd })) {
+      const timelineItems = threadItemToTimelineEntries(item, { cwd });
+      const rawItemId = nonEmptyString(rawItem?.id);
+      for (const [index, timelineItem] of timelineItems.entries()) {
         const timestamp =
           readCodexHistoryTimestamp(item) ?? readCodexTurnHistoryTimestamp(turn, timelineItem);
         const settledTimelineItem =
@@ -1941,9 +1972,11 @@ async function loadCodexThreadHistoryTimeline(params: {
         timeline.push({
           item: settledTimelineItem,
           timestamp: timestamp ?? undefined,
+          ...(rawItemId ? { nativeItemId: index === 0 ? rawItemId : `${rawItemId}:${index}` } : {}),
         });
         for (const childThreadId of readCodexHistoricalSubAgentThreadIds(item)) {
           subAgentTimelineIndexByThreadId.set(childThreadId, timeline.length - 1);
+          subAgentRawItemByThreadId.set(childThreadId, rawItem);
         }
       }
     }
@@ -1951,8 +1984,9 @@ async function loadCodexThreadHistoryTimeline(params: {
   const subAgentRoutes = Array.from(subAgentTimelineIndexByThreadId.entries()).flatMap(
     ([childThreadId, timelineIndex]): PersistedSubAgentRoute[] => {
       const item = timeline[timelineIndex]?.item;
-      return item?.type === "tool_call" && item.detail.type === "sub_agent"
-        ? [{ childThreadId, toolCall: item }]
+      const rawItem = subAgentRawItemByThreadId.get(childThreadId);
+      return item?.type === "tool_call" && item.detail.type === "sub_agent" && rawItem
+        ? [{ childThreadId, toolCall: item, rawItem }]
         : [];
     },
   );
@@ -1964,6 +1998,13 @@ function readCodexThread(client: CodexAppServerClientLike, threadId: string): Pr
     threadId,
     includeTurns: true,
   });
+}
+
+function isUnsupportedCodexHistoryPageError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(?:method|endpoint).*(?:not found|unsupported)|unsupported.*(?:method|endpoint)/i.test(
+    message,
+  );
 }
 
 export async function forkCodexThread(
@@ -3206,6 +3247,15 @@ export class CodexAppServerAgentSession implements AgentSession {
   private planModeEnabled = false;
   private historyPending = false;
   private persistedHistory: PersistedTimelineEntry[] = [];
+  private isPersistedHistoryLoaded = false;
+  private hasHistoryPageStarted = false;
+  private isHistoryPageRequestActive = false;
+  private historyPageCursor: string | null = null;
+  private isHistoryPageExhausted = false;
+  private readonly historyPageCursors = new Set<string>();
+  private readonly loadedHistoryPageNativeItemIds = new Set<string>();
+  private readonly loadedProviderSubagentHistories = new Set<string>();
+  private providerSubagentHistoryGeneration = 0;
   private loadingPersistedHistory = false;
   private persistedProviderSubagentEvents: AgentStreamEvent[] = [];
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
@@ -3368,7 +3418,6 @@ export class CodexAppServerAgentSession implements AgentSession {
         await this.ensureThreadLoaded({
           allowArchivedHistory: this.initialResumePurpose === "history",
         });
-        await this.loadPersistedHistory();
       }
 
       if (this.closed) {
@@ -3702,6 +3751,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
     }
     this.persistedHistory = timeline;
+    this.isPersistedHistoryLoaded = true;
     this.historyPending = timeline.length > 0;
   }
 
@@ -3719,7 +3769,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       visitedThreadIds.add(next.route.childThreadId);
       this.registerSubAgentToolCall({
         timelineItem: next.route.toolCall,
-        rawItem: { agentThreadId: next.route.childThreadId },
+        rawItem: next.route.rawItem,
         parentCallId: next.parentCallId,
       });
       try {
@@ -3743,6 +3793,19 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  private registerPersistedSubAgentDescriptors(
+    routes: readonly PersistedSubAgentRoute[],
+    parentCallId: string | null = null,
+  ): void {
+    for (const route of routes) {
+      this.registerSubAgentToolCall({
+        timelineItem: route.toolCall,
+        rawItem: route.rawItem,
+        parentCallId,
+      });
+    }
+  }
+
   private async ensureThreadLoaded(
     options: { allowArchivedHistory?: boolean } = {},
   ): Promise<void> {
@@ -3753,7 +3816,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (ids.includes(this.currentThreadId)) {
         return;
       }
-      const params: Record<string, unknown> = { threadId: this.currentThreadId };
+      const params: Record<string, unknown> = {
+        threadId: this.currentThreadId,
+        excludeTurns: true,
+      };
       const developerInstructions = composeSystemPromptParts(
         this.config.systemPrompt,
         this.config.daemonAppendSystemPrompt,
@@ -4110,6 +4176,30 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.userMessageTurnIds.length = 0;
   }
 
+  private prependCodexUserMessageTurns(messageIds: readonly string[]): void {
+    const seen = new Set<string>();
+    const newIds: string[] = [];
+    for (const messageId of messageIds) {
+      if (
+        messageId.length === 0 ||
+        this.userMessageTurnIndexes.has(messageId) ||
+        seen.has(messageId)
+      ) {
+        continue;
+      }
+      seen.add(messageId);
+      newIds.push(messageId);
+    }
+    if (newIds.length === 0) {
+      return;
+    }
+    this.userMessageTurnIds.unshift(...newIds);
+    this.userMessageTurnIndexes.clear();
+    this.userMessageTurnIds.forEach((messageId, index) => {
+      this.userMessageTurnIndexes.set(messageId, index);
+    });
+  }
+
   private truncateCodexUserMessageTurns(numTurns: number): void {
     if (numTurns <= 0) {
       return;
@@ -4136,6 +4226,9 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    if (!this.isPersistedHistoryLoaded && !this.hasHistoryPageStarted && this.currentThreadId) {
+      await this.loadPersistedHistory();
+    }
     if (
       (!this.historyPending || this.persistedHistory.length === 0) &&
       this.persistedProviderSubagentEvents.length === 0
@@ -4157,6 +4250,104 @@ export class CodexAppServerAgentSession implements AgentSession {
         item: entry.item,
         timestamp: entry.timestamp,
       };
+    }
+  }
+
+  async loadHistoryPage(input: { limit: number }): Promise<AgentHistoryPage> {
+    await this.connect();
+    if (!this.client || !this.currentThreadId || this.isHistoryPageExhausted) {
+      return { kind: "page", entries: [], hasOlder: false };
+    }
+
+    const pageLimit = Math.max(1, Math.floor(input.limit));
+    this.isHistoryPageRequestActive = true;
+    try {
+      const response = await this.client.request("thread/turns/list", {
+        threadId: this.currentThreadId,
+        limit: pageLimit,
+        sortDirection: "desc",
+        itemsView: "full",
+        ...(this.historyPageCursor ? { cursor: this.historyPageCursor } : {}),
+      });
+      const parsed = CodexThreadTurnsListResponseSchema.safeParse(response);
+      if (!parsed.success) {
+        if (!this.hasHistoryPageStarted) {
+          return { kind: "unsupported" };
+        }
+        throw new Error("Codex thread/turns/list returned an invalid full-items page");
+      }
+
+      const nextCursor = parsed.data.nextCursor ?? null;
+      if (nextCursor && this.historyPageCursors.has(nextCursor)) {
+        throw new Error("Codex thread/turns/list repeated a history continuation cursor");
+      }
+      const projection = projectCodexThreadTurns(parsed.data.data.toReversed(), this.config.cwd);
+      const isLoadingOlderPage = this.hasHistoryPageStarted;
+      this.hasHistoryPageStarted = true;
+      this.historyPageCursor = nextCursor;
+      this.isHistoryPageExhausted = this.historyPageCursor === null;
+      if (nextCursor) {
+        this.historyPageCursors.add(nextCursor);
+      }
+      this.registerPersistedSubAgentDescriptors(projection.subAgentRoutes);
+      const entries = projection.timeline.filter((entry) => {
+        if (!entry.nativeItemId) {
+          return true;
+        }
+        if (this.loadedHistoryPageNativeItemIds.has(entry.nativeItemId)) {
+          return false;
+        }
+        this.loadedHistoryPageNativeItemIds.add(entry.nativeItemId);
+        return true;
+      });
+      const userMessageIds = entries.flatMap((entry) =>
+        entry.item.type === "user_message" && entry.item.messageId ? [entry.item.messageId] : [],
+      );
+      if (isLoadingOlderPage) {
+        this.prependCodexUserMessageTurns(userMessageIds);
+      } else {
+        for (const messageId of userMessageIds) {
+          this.rememberCodexUserMessageTurn(messageId);
+        }
+      }
+      return {
+        kind: "page",
+        entries: entries.map(toCodexHistoryPageEntry),
+        hasOlder: !this.isHistoryPageExhausted,
+      };
+    } catch (error) {
+      if (!this.hasHistoryPageStarted && isUnsupportedCodexHistoryPageError(error)) {
+        return { kind: "unsupported" };
+      }
+      throw error;
+    } finally {
+      this.isHistoryPageRequestActive = false;
+    }
+  }
+
+  async loadProviderSubagentHistory(input: { id: string }): Promise<void> {
+    await this.connect();
+    if (!this.client || this.loadedProviderSubagentHistories.has(input.id)) {
+      return;
+    }
+    const callId = this.subAgentCallIdByChildThreadId.get(input.id);
+    if (!callId) {
+      throw new Error(`Unknown Codex provider subagent '${input.id}'`);
+    }
+    const historyGeneration = this.providerSubagentHistoryGeneration;
+    const client = this.client;
+    const history = await loadCodexThreadHistoryTimeline({
+      threadId: input.id,
+      cwd: this.config.cwd ?? null,
+      requestThread: (threadId) => readCodexThread(client, threadId),
+    });
+    if (historyGeneration !== this.providerSubagentHistoryGeneration) {
+      return;
+    }
+    this.loadedProviderSubagentHistories.add(input.id);
+    this.registerPersistedSubAgentDescriptors(history.subAgentRoutes, callId);
+    for (const entry of history.timeline) {
+      this.emitProviderSubagentTimeline(input.id, entry.item, entry.timestamp);
     }
   }
 
@@ -4469,8 +4660,21 @@ export class CodexAppServerAgentSession implements AgentSession {
         this.currentThreadId = threadId;
         this.cachedRuntimeInfo = null;
         this.persistedHistory = [];
-        this.historyPending = false;
-        await this.loadPersistedHistory();
+        this.isPersistedHistoryLoaded = false;
+        this.historyPending = true;
+        this.hasHistoryPageStarted = false;
+        this.historyPageCursor = null;
+        this.isHistoryPageExhausted = false;
+        this.historyPageCursors.clear();
+        this.loadedHistoryPageNativeItemIds.clear();
+        this.resetCodexUserMessageTurns();
+        this.providerSubagentHistoryGeneration += 1;
+        this.loadedProviderSubagentHistories.clear();
+        this.persistedProviderSubagentEvents = [];
+        this.subAgentCallsByCallId.clear();
+        this.subAgentCallIdByChildThreadId.clear();
+        this.pendingSubAgentNotificationsByThreadId.clear();
+        this.emittedProviderSubagentUserMessageKeys.clear();
       },
     });
   }
@@ -4832,6 +5036,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       return [toCodexTextInput(prompt)];
     }
     return await codexAppServerTurnInputFromPrompt(prompt, this.logger);
+  }
+
+  private nativeItemIdentity(itemId: string | null | undefined): { nativeItemId?: string } {
+    return this.isHistoryPageRequestActive && itemId ? { nativeItemId: itemId } : {};
   }
 
   private emitEvent(event: AgentStreamEvent): void {
@@ -6035,7 +6243,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       this.warnOnIncompleteEditToolCall(timelineItem, "item_completed", parsed.item);
     }
-    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+    this.emitEvent({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      item: timelineItem,
+      ...this.nativeItemIdentity(itemId),
+    });
     if (timelineItem.type === "assistant_message") {
       this.pendingAssistantMessageBoundary = true;
     }
@@ -6185,7 +6398,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.warnOnIncompleteEditToolCall(timelineItem, "item_started", parsed.item);
-    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+    this.emitEvent({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      item: timelineItem,
+      ...this.nativeItemIdentity(itemId),
+    });
     if (itemId) {
       this.emittedItemStartedIds.add(itemId);
       this.pendingCommandOutputDeltas.delete(itemId);
@@ -6232,7 +6450,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       ? { ...timelineItem, clientMessageId: this.activeClientMessageId }
       : timelineItem;
     this.activeClientMessageId = null;
-    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item });
+    this.emitEvent({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      item,
+      ...this.nativeItemIdentity(itemId),
+    });
   }
 
   private warnUnknownNotificationMethod(method: string, params: unknown): void {

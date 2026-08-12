@@ -4,6 +4,7 @@ import type { CommandOptions } from "../../output/index.js";
 import {
   fetchProjectedTimelineItems,
   LIVE_HISTORY_FETCH_TIMEOUT_MS,
+  type TimelineFetchClient,
 } from "../../utils/timeline.js";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
@@ -33,11 +34,21 @@ export type AgentLogsResult = void;
 export const NO_ACTIVITY_MESSAGE = "No activity to display.";
 
 export async function fetchAgentTimelineItems(
-  client: DaemonClient,
+  client: TimelineFetchClient,
   agentId: string,
-  options?: { timeoutMs?: number },
+  options?: {
+    timeoutMs?: number;
+    tailCount?: number;
+    matches?: (item: AgentTimelineItem) => boolean;
+  },
 ): Promise<AgentTimelineItem[]> {
-  return fetchProjectedTimelineItems({ client, agentId, timeoutMs: options?.timeoutMs });
+  return fetchProjectedTimelineItems({
+    client,
+    agentId,
+    timeoutMs: options?.timeoutMs,
+    tailCount: options?.tailCount,
+    matches: options?.matches,
+  });
 }
 
 export function formatAgentActivityTranscript(
@@ -53,13 +64,33 @@ export function formatAgentActivityTranscript(
   );
 }
 
-function parseTailCount(raw: string | undefined): number | undefined {
+export function parseTailCount(raw: string | undefined): number | null | undefined {
   if (raw === undefined) return undefined;
-  const parsed = Number.parseInt(raw, 10);
-  if (Number.isNaN(parsed) || parsed < 0) {
-    return undefined;
+  if (!/^\d+$/.test(raw)) return null;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+export type AgentLogsPlan =
+  | {
+      isValid: true;
+      tailCount: number | undefined;
+      shouldConnect: boolean;
+      shouldFetchInitialHistory: boolean;
+    }
+  | { isValid: false };
+
+export function planAgentLogsRequest(options: AgentLogsOptions): AgentLogsPlan {
+  const tailCount = parseTailCount(options.tail);
+  if (tailCount === null) {
+    return { isValid: false };
   }
-  return parsed;
+  return {
+    isValid: true,
+    tailCount,
+    shouldConnect: options.follow === true || tailCount !== 0,
+    shouldFetchInitialHistory: tailCount !== 0,
+  };
 }
 
 /**
@@ -92,14 +123,23 @@ export async function runLogsCommand(
   options: AgentLogsOptions,
   _command: Command,
 ): Promise<AgentLogsResult> {
-  const host = getDaemonHost({ host: options.host });
-
   if (!id) {
     console.error("Error: Agent ID required");
     console.error("Usage: paseo agent logs <id>");
     process.exit(1);
   }
 
+  const plan = planAgentLogsRequest(options);
+  if (!plan.isValid) {
+    console.error(`Error: Invalid --tail value: ${options.tail}`);
+    console.error("Usage: --tail <n> (where n is >= 0)");
+    process.exit(1);
+  }
+  if (!plan.shouldConnect) {
+    return;
+  }
+
+  const host = getDaemonHost({ host: options.host });
   let client: DaemonClient;
   try {
     client = await connectToDaemon({ host: options.host });
@@ -120,42 +160,24 @@ export async function runLogsCommand(
     }
     const resolvedId = fetchResult.agent.id;
 
-    // For follow mode, we stream events continuously
     if (options.follow) {
-      if (options.tail !== undefined && parseTailCount(options.tail) === undefined) {
-        console.error(`Error: Invalid --tail value: ${options.tail}`);
-        console.error("Usage: --tail <n> (where n is >= 0)");
-        await client.close().catch(() => {});
-        process.exit(1);
-      }
-      await runFollowMode(client, resolvedId, options);
+      await runFollowMode(
+        client,
+        resolvedId,
+        options,
+        plan.tailCount,
+        plan.shouldFetchInitialHistory,
+      );
       return;
     }
 
-    // Fetch timeline directly via cursor RPC.
-    let timelineItems = await fetchAgentTimelineItems(client, resolvedId);
-
-    // Apply filter
-    if (options.filter) {
-      timelineItems = timelineItems.filter((item) => matchesFilter(item, options.filter));
-    }
-
-    const tailCount = parseTailCount(options.tail);
-    if (options.tail !== undefined && tailCount === undefined) {
-      console.error(`Error: Invalid --tail value: ${options.tail}`);
-      console.error("Usage: --tail <n> (where n is >= 0)");
-      await client.close().catch(() => {});
-      process.exit(1);
-    }
-
+    const timelineItems = await fetchAgentTimelineItems(client, resolvedId, {
+      tailCount: plan.tailCount,
+      ...(options.filter ? { matches: (item) => matchesFilter(item, options.filter) } : {}),
+    });
     await client.close();
 
-    // Use curateAgentActivity to format the transcript
-    if (tailCount === 0) {
-      return;
-    }
-
-    const transcript = formatAgentActivityTranscript(timelineItems, tailCount);
+    const transcript = formatAgentActivityTranscript(timelineItems, plan.tailCount);
     console.log(transcript);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -172,23 +194,23 @@ async function runFollowMode(
   client: DaemonClient,
   agentId: string,
   options: AgentLogsOptions,
+  requestedTailCount: number | undefined,
+  shouldFetchInitialHistory: boolean,
 ): Promise<void> {
   const DEFAULT_FOLLOW_TAIL = 10;
-  const tailCount = parseTailCount(options.tail) ?? DEFAULT_FOLLOW_TAIL;
+  const tailCount = requestedTailCount ?? DEFAULT_FOLLOW_TAIL;
 
-  // First, get existing timeline.
   let existingItems: AgentTimelineItem[] = [];
-  try {
-    existingItems = await fetchAgentTimelineItems(client, agentId, {
-      timeoutMs: LIVE_HISTORY_FETCH_TIMEOUT_MS,
-    });
-  } catch (error) {
-    console.warn("Warning: failed to fetch existing timeline", error);
-  }
-
-  // Apply filter to existing items
-  if (options.filter) {
-    existingItems = existingItems.filter((item) => matchesFilter(item, options.filter));
+  if (shouldFetchInitialHistory) {
+    try {
+      existingItems = await fetchAgentTimelineItems(client, agentId, {
+        timeoutMs: LIVE_HISTORY_FETCH_TIMEOUT_MS,
+        tailCount,
+        ...(options.filter ? { matches: (item) => matchesFilter(item, options.filter) } : {}),
+      });
+    } catch (error) {
+      console.warn("Warning: failed to fetch existing timeline", error);
+    }
   }
 
   // Print existing transcript (tail-like behavior)

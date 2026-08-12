@@ -318,6 +318,7 @@ function beginAgentDeleteIfSupported(agentStorage: AgentStorage, agentId: string
 }
 
 const FETCH_AGENTS_SORT_KEYS = ["status_priority", "created_at", "updated_at", "title"] as const;
+const MAX_NATIVE_HISTORY_PAGES_PER_TIMELINE_REQUEST = 4;
 
 export function resolveWaitForFinishError(options: {
   status: "permission" | "error" | "idle";
@@ -853,6 +854,7 @@ export class Session {
           await ensureUnarchivedAgentLoaded(agentId, {
             agentManager,
             agentStorage,
+            historyIntent: "metadata",
             logger: this.sessionLogger,
           });
         },
@@ -992,6 +994,7 @@ export class Session {
           ensureAgentLoaded(agentId, {
             agentManager: this.agentManager,
             agentStorage: this.agentStorage,
+            historyIntent: "metadata",
             logger: this.sessionLogger,
           }),
         reloadAgentSession: (agentId, overrides) =>
@@ -3348,7 +3351,7 @@ export class Session {
         throw error;
       }
       await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);
-      await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
+      await this.agentManager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
       await this.agentUpdates.forwardLiveAgent(snapshot);
       const timelineSize = this.agentManager.getTimeline(snapshot.id).length;
       if (requestId) {
@@ -3494,10 +3497,14 @@ export class Session {
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
           broadcastTimeline: true,
+          historyIntent: "tail",
           logger: this.sessionLogger,
         });
       }
-      await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
+      await this.agentManager.ensureTimelineCoverage(agentId, {
+        intent: "tail",
+        broadcast: true,
+      });
       await this.agentUpdates.forwardLiveAgent(snapshot);
       const timelineSize = this.agentManager.getTimeline(agentId).length;
       if (requestId) {
@@ -3680,6 +3687,7 @@ export class Session {
           ensureAgentLoaded(id, {
             agentManager: this.agentManager,
             agentStorage: this.agentStorage,
+            historyIntent: "metadata",
             logger: this.sessionLogger,
           }),
         ),
@@ -3781,6 +3789,7 @@ export class Session {
           ? await ensureAgentLoaded(agentId, {
               agentManager: this.agentManager,
               agentStorage: this.agentStorage,
+              historyIntent: "metadata",
               logger: this.sessionLogger,
             })
           : null;
@@ -6304,7 +6313,9 @@ export class Session {
       startSeq: page.startSeq,
       endSeq: page.endSeq,
       hasOlder:
-        page.hasOlder || (page.startSeq !== null && page.startSeq > selectedTimeline.window.minSeq),
+        page.hasOlder ||
+        selectedTimeline.hasOlder ||
+        (page.startSeq !== null && page.startSeq > selectedTimeline.window.minSeq),
       hasNewer: page.hasNewer,
     };
   }
@@ -6323,6 +6334,98 @@ export class Session {
     }
 
     return this.selectProjectedTimelineProjection(input);
+  }
+
+  private async ensureTimelineFetchCoverage(input: {
+    agentId: string;
+    direction: AgentTimelineFetchDirection;
+    cursor: AgentTimelineCursor | undefined;
+    pageLimit: number;
+  }): Promise<void> {
+    await this.agentManager.ensureTimelineCoverage(input.agentId, {
+      intent: input.pageLimit === 0 ? "complete" : "tail",
+    });
+    if (input.direction !== "before" || !input.cursor) {
+      return;
+    }
+    const current = this.agentManager.fetchTimeline(input.agentId, {
+      direction: input.direction,
+      cursor: input.cursor,
+      limit: input.pageLimit,
+    });
+    const reachesLoadedStart =
+      !current.reset &&
+      !current.staleCursor &&
+      !current.gap &&
+      input.cursor.seq === current.window.minSeq;
+    if (reachesLoadedStart && current.hasOlder) {
+      await this.agentManager.ensureTimelineCoverage(input.agentId, { intent: "older" });
+    }
+  }
+
+  private async selectTimelineProjectionWithCoverage(input: {
+    agentId: string;
+    projection: TimelineProjectionMode;
+    direction: AgentTimelineFetchDirection;
+    cursor: AgentTimelineCursor | undefined;
+    pageLimit: number;
+  }): Promise<{
+    controlTimeline: AgentTimelineFetchResult;
+    selectedTimeline: AgentTimelineProjectionSelection;
+  }> {
+    let controlTimeline = this.agentManager.fetchTimeline(input.agentId, {
+      direction: input.direction,
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+      limit: input.pageLimit,
+    });
+    let selectedTimeline = this.selectTimelineProjection({
+      agentId: input.agentId,
+      projection: input.projection,
+      controlTimeline,
+      direction: input.direction,
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+      pageLimit: input.pageLimit,
+    });
+
+    for (
+      let pageCount = 0;
+      pageCount < MAX_NATIVE_HISTORY_PAGES_PER_TIMELINE_REQUEST;
+      pageCount += 1
+    ) {
+      const hasEnoughEntries =
+        input.pageLimit === 0 || selectedTimeline.entries.length >= input.pageLimit;
+      const canLoadOlder = selectedTimeline.hasOlder || controlTimeline.hasOlder;
+      if (
+        hasEnoughEntries ||
+        !canLoadOlder ||
+        controlTimeline.reset ||
+        controlTimeline.staleCursor ||
+        controlTimeline.gap ||
+        input.direction === "after"
+      ) {
+        break;
+      }
+      const previousStart = controlTimeline.window.minSeq;
+      await this.agentManager.ensureTimelineCoverage(input.agentId, { intent: "older" });
+      controlTimeline = this.agentManager.fetchTimeline(input.agentId, {
+        direction: input.direction,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+        limit: input.pageLimit,
+      });
+      selectedTimeline = this.selectTimelineProjection({
+        agentId: input.agentId,
+        projection: input.projection,
+        controlTimeline,
+        direction: input.direction,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+        pageLimit: input.pageLimit,
+      });
+      if (controlTimeline.window.minSeq === previousStart) {
+        break;
+      }
+    }
+
+    return { controlTimeline, selectedTimeline };
   }
 
   private async handleFetchAgentTimelineRequest(
@@ -6344,23 +6447,26 @@ export class Session {
       const snapshot = await ensureAgentLoaded(msg.agentId, {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
+        historyIntent: "metadata",
         logger: this.sessionLogger,
       });
-      const agentPayload = await this.buildAgentPayload(snapshot);
-
-      const fetchedControlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
+      await this.ensureTimelineFetchCoverage({
+        agentId: msg.agentId,
         direction,
         cursor,
-        limit: pageLimit,
-      });
-      const selectedTimeline = this.selectTimelineProjection({
-        agentId: msg.agentId,
-        projection,
-        controlTimeline: fetchedControlTimeline,
-        direction,
-        ...(cursor ? { cursor } : {}),
         pageLimit,
       });
+      const agentPayload = await this.buildAgentPayload(
+        this.agentManager.getAgent(msg.agentId) ?? snapshot,
+      );
+      const { controlTimeline: fetchedControlTimeline, selectedTimeline } =
+        await this.selectTimelineProjectionWithCoverage({
+          agentId: msg.agentId,
+          projection,
+          direction,
+          cursor,
+          pageLimit,
+        });
       const startCursor =
         selectedTimeline.startSeq !== null
           ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.startSeq }
@@ -6450,6 +6556,7 @@ export class Session {
       await ensureAgentLoaded(msg.agentId, {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
+        historyIntent: "complete",
         logger: this.sessionLogger,
       });
       const rows = await this.agentManager.getTimelineRows(msg.agentId);
@@ -6498,8 +6605,10 @@ export class Session {
       await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
+        historyIntent: "tail",
         logger: this.sessionLogger,
       });
+      await this.agentManager.flush();
       this.emit({
         type: "agent.provider_subagents.list.response",
         payload: {
@@ -6530,12 +6639,19 @@ export class Session {
       await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
+        historyIntent: "tail",
         logger: this.sessionLogger,
       });
+      await this.agentManager.flush();
       const descriptor = this.agentManager.getProviderSubagent(msg.parentAgentId, msg.subagentId);
       if (!descriptor) {
         throw new Error("Provider subagent not found");
       }
+      await this.agentManager.ensureProviderSubagentTimelineCoverage(
+        msg.parentAgentId,
+        msg.subagentId,
+      );
+      await this.agentManager.flush();
       const timeline = this.agentManager.fetchProviderSubagentTimeline(
         msg.parentAgentId,
         msg.subagentId,
@@ -6598,6 +6714,7 @@ export class Session {
       const snapshot = await ensureAgentLoaded(msg.agentId, {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
+        historyIntent: "complete",
         logger: this.sessionLogger,
       });
       const agentPayload = await this.buildAgentPayload(snapshot);

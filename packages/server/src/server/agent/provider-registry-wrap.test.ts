@@ -26,6 +26,8 @@ const OPTIONAL_AGENT_SESSION_METHOD_NAMES = [
   "revertFiles",
   "revertBoth",
   "tryHandleOutOfBand",
+  "loadHistoryPage",
+  "loadProviderSubagentHistory",
 ] as const satisfies readonly OptionalAgentSessionMethodName[];
 
 type MissingOptionalAgentSessionMethod = Exclude<
@@ -78,7 +80,12 @@ class FakeSession implements AgentSession {
 
   async *streamHistory() {
     this.recordedCalls.push("streamHistory");
-    yield* emptyHistory();
+    yield {
+      type: "timeline",
+      provider: "claude",
+      item: { type: "assistant_message", text: "history" },
+      nativeItemId: "native-item-1",
+    };
   }
 
   async getRuntimeInfo() {
@@ -139,6 +146,15 @@ class FakeSession implements AgentSession {
     this.recordedCalls.push("setFeature");
   }
 
+  async loadHistoryPage() {
+    this.recordedCalls.push("loadHistoryPage");
+    return { kind: "page" as const, entries: [], hasOlder: false };
+  }
+
+  async loadProviderSubagentHistory() {
+    this.recordedCalls.push("loadProviderSubagentHistory");
+  }
+
   async revertConversation() {
     this.recordedCalls.push("revertConversation");
   }
@@ -161,13 +177,25 @@ class FakeSession implements AgentSession {
   }
 }
 
-async function* emptyHistory(): AsyncGenerator<AgentStreamEvent> {
-  for (const event of [] as AgentStreamEvent[]) {
-    yield event;
-  }
-}
-
 describe("wrapSessionProvider", () => {
+  test("preserves private native timeline identities through a provider profile", async () => {
+    const session = new FakeSession();
+    const wrapped = wrapSessionProvider("custom-claude", session);
+    const history: AgentStreamEvent[] = [];
+    for await (const event of wrapped.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "custom-claude",
+        item: { type: "assistant_message", text: "history" },
+        nativeItemId: "native-item-1",
+      },
+    ]);
+  });
+
   test("forwards every optional AgentSession method", async () => {
     const session = new FakeSession();
     const wrapped = wrapSessionProvider("custom-claude", session);
@@ -176,6 +204,8 @@ describe("wrapSessionProvider", () => {
     await wrapped.setModel?.("sonnet");
     await wrapped.setThinkingOption?.("high");
     await wrapped.setFeature?.("feature-1", true);
+    await wrapped.loadHistoryPage?.({ limit: 10 });
+    await wrapped.loadProviderSubagentHistory?.({ id: "child-1" });
     await wrapped.revertConversation?.({ messageId: "message-1" });
     await wrapped.revertFiles?.({ messageId: "message-1" });
     await wrapped.revertBoth?.({ messageId: "message-1" });
@@ -187,6 +217,8 @@ describe("wrapSessionProvider", () => {
       "setModel",
       "setThinkingOption",
       "setFeature",
+      "loadHistoryPage",
+      "loadProviderSubagentHistory",
       "revertConversation",
       "revertFiles",
       "revertBoth",

@@ -33,6 +33,14 @@ export async function importSessionFromPersistence(input: {
   const persistence =
     input.persistence ?? buildImportPersistenceHandle(input.provider, input.request, storedConfig);
   const session = await input.resumeSession(persistence, config, input.context.launchContext);
+  if (session.loadHistoryPage) {
+    return {
+      session,
+      config: storedConfig,
+      persistence,
+      timeline: [],
+    };
+  }
   const history = await collectImportedHistory(session.streamHistory());
 
   return {

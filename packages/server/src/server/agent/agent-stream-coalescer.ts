@@ -20,6 +20,8 @@ export interface AgentStreamCoalescerFlush {
   item: CoalescableTimelineItem;
   provider: AgentProvider;
   turnId?: string;
+  /** Provider-private identity retained for pageable-history reconciliation. */
+  nativeItemId?: string;
 }
 
 export interface AgentStreamCoalescerOptions {
@@ -34,6 +36,7 @@ interface PendingTextEntry {
   text: string;
   provider: AgentProvider;
   turnId?: string;
+  nativeItemId?: string;
 }
 
 interface PendingToolCallEntry {
@@ -41,6 +44,7 @@ interface PendingToolCallEntry {
   item: Extract<AgentTimelineItem, { type: "tool_call" }>;
   provider: AgentProvider;
   turnId?: string;
+  nativeItemId?: string;
 }
 
 type PendingAgentStreamEntry = PendingTextEntry | PendingToolCallEntry;
@@ -74,6 +78,9 @@ function isTerminalToolCall(item: CoalescableTimelineItem): boolean {
 }
 
 function isSameTextStream(previous: PendingTextEntry, next: PendingTextEntry): boolean {
+  if (previous.nativeItemId !== next.nativeItemId) {
+    return false;
+  }
   if (previous.item.type !== next.item.type) {
     return false;
   }
@@ -163,6 +170,7 @@ export class AgentStreamCoalescer {
         text: event.item.text,
         provider: event.provider,
         ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+        ...(event.nativeItemId ? { nativeItemId: event.nativeItemId } : {}),
       });
       return;
     }
@@ -173,6 +181,7 @@ export class AgentStreamCoalescer {
       item: event.item,
       provider: event.provider,
       ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+      ...(event.nativeItemId ? { nativeItemId: event.nativeItemId } : {}),
     };
 
     if (existingIndex !== undefined) {
@@ -235,6 +244,7 @@ export class AgentStreamCoalescer {
               : entry.item,
           provider: entry.provider,
           ...(entry.turnId !== undefined ? { turnId: entry.turnId } : {}),
+          ...(entry.nativeItemId ? { nativeItemId: entry.nativeItemId } : {}),
         });
       }
     } finally {

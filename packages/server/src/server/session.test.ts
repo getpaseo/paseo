@@ -371,6 +371,9 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
       listProviderSubagentActivity: vi.fn(() => []),
+      ensureProviderSubagentTimelineCoverage: vi.fn(),
+      ensureTimelineCoverage: vi.fn(),
+      flush: vi.fn(),
       subscribe: vi.fn(() => () => {}),
       ...options.agentManager,
     }),

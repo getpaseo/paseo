@@ -7,6 +7,11 @@ export interface AgentTimelineRow {
   readonly providerMessageId?: string;
 }
 
+export interface AgentTimelinePrependEntry {
+  timestamp?: string;
+  item: AgentTimelineItem;
+}
+
 export interface AgentTimelineCursor {
   epoch: string;
   seq: number;

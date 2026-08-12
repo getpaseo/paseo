@@ -3,6 +3,7 @@ import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import type {
   AgentTimelineFetchOptions,
   AgentTimelineFetchResult,
+  AgentTimelinePrependEntry,
   AgentTimelineRow,
 } from "./agent-timeline-store-types.js";
 
@@ -21,9 +22,18 @@ interface AgentTimelineState {
 }
 
 const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
+const MIN_TIMELINE_SEQUENCE = 1;
+const MAX_TIMELINE_SEQUENCE = Number.MAX_SAFE_INTEGER - 1;
+export const PAGED_TIMELINE_INITIAL_SEQUENCE = Math.floor(Number.MAX_SAFE_INTEGER / 2);
 
 function cloneRow(row: AgentTimelineRow): AgentTimelineRow {
   return { ...row };
+}
+
+function assertTimelineSequence(seq: number): void {
+  if (!Number.isSafeInteger(seq) || seq < MIN_TIMELINE_SEQUENCE || seq > MAX_TIMELINE_SEQUENCE) {
+    throw new Error("Timeline sequence allocation exhausted");
+  }
 }
 
 interface FetchContext {
@@ -148,6 +158,7 @@ export class InMemoryAgentTimelineStore {
       ? options.rows.map(cloneRow)
       : this.buildRowsFromItems(options?.items ?? [], options?.nextSeq ?? 1, timestamp);
     const nextSeq = options?.nextSeq ?? (rows.length ? rows[rows.length - 1].seq + 1 : 1);
+    assertTimelineSequence(nextSeq);
     this.states.set(agentId, {
       epoch: options?.epoch ?? randomUUID(),
       rows,
@@ -234,7 +245,12 @@ export class InMemoryAgentTimelineStore {
       return fetchReset(ctx, { staleCursor: true, gap: false });
     }
 
-    if (direction === "after" && cursor && state.rows.length > 0 && cursor.seq < minSeq - 1) {
+    if (
+      cursor &&
+      state.rows.length > 0 &&
+      ((direction === "after" && cursor.seq < minSeq - 1) ||
+        (direction === "before" && cursor.seq < minSeq))
+    ) {
       return fetchReset(ctx, { staleCursor: false, gap: true });
     }
 
@@ -267,6 +283,7 @@ export class InMemoryAgentTimelineStore {
     options?: { timestamp?: string; providerMessageId?: string },
   ): AgentTimelineRow {
     const state = this.requireState(agentId);
+    assertTimelineSequence(state.nextSeq);
     const row: AgentTimelineRow = {
       seq: state.nextSeq,
       timestamp: options?.timestamp ?? new Date().toISOString(),
@@ -276,6 +293,23 @@ export class InMemoryAgentTimelineStore {
     state.nextSeq += 1;
     state.rows.push(row);
     return cloneRow(row);
+  }
+
+  prepend(agentId: string, entries: readonly AgentTimelinePrependEntry[]): AgentTimelineRow[] {
+    if (entries.length === 0) {
+      return [];
+    }
+    const state = this.requireState(agentId);
+    const firstSequence = state.rows[0]?.seq ?? state.nextSeq;
+    const startSequence = firstSequence - entries.length;
+    assertTimelineSequence(startSequence);
+    const rows = entries.map((entry, index) => ({
+      seq: startSequence + index,
+      timestamp: entry.timestamp ?? new Date().toISOString(),
+      item: entry.item,
+    }));
+    state.rows.unshift(...rows);
+    return rows.map(cloneRow);
   }
 
   getLastItem(agentId: string): AgentTimelineItem | null {

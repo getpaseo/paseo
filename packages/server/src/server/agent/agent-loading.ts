@@ -1,7 +1,7 @@
 import type { Logger } from "pino";
 
 import type { AgentProvider } from "./agent-sdk-types.js";
-import type { AgentManager, ManagedAgent } from "./agent-manager.js";
+import type { AgentHistoryCoverageIntent, AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import {
   buildConfigOverrides,
@@ -23,7 +23,7 @@ export type AgentLoaderManager = Pick<
   | "createAgent"
   | "getAgent"
   | "getRegisteredProviderIds"
-  | "hydrateTimelineFromProvider"
+  | "ensureTimelineCoverage"
   | "resumeAgentFromPersistence"
 > &
   Partial<Pick<AgentManager, "waitForAgentClose">>;
@@ -33,6 +33,7 @@ export interface EnsureAgentLoadedDeps {
   agentStorage: AgentStorage;
   validProviders?: Iterable<AgentProvider>;
   broadcastTimeline?: boolean;
+  historyIntent?: AgentHistoryCoverageIntent;
   logger: Logger;
 }
 
@@ -68,11 +69,20 @@ export async function ensureAgentLoaded(
   const inflight = pendingAgentInitializations.get(agentId);
   if (inflight) {
     inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return inflight.promise;
+    const snapshot = await inflight.promise;
+    await deps.agentManager.ensureTimelineCoverage(agentId, {
+      intent: deps.historyIntent ?? "complete",
+      broadcast: () => inflight.options.broadcastTimeline,
+    });
+    return deps.agentManager.getAgent(agentId) ?? snapshot;
   }
 
   const existing = deps.agentManager.getAgent(agentId);
   if (existing) {
+    await deps.agentManager.ensureTimelineCoverage(agentId, {
+      intent: deps.historyIntent ?? "complete",
+      broadcast: deps.broadcastTimeline ?? false,
+    });
     return existing;
   }
 
@@ -84,7 +94,12 @@ export async function ensureAgentLoaded(
   const laterInflight = pendingAgentInitializations.get(agentId);
   if (laterInflight) {
     laterInflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return laterInflight.promise;
+    const snapshot = await laterInflight.promise;
+    await deps.agentManager.ensureTimelineCoverage(agentId, {
+      intent: deps.historyIntent ?? "complete",
+      broadcast: () => laterInflight.options.broadcastTimeline,
+    });
+    return deps.agentManager.getAgent(agentId) ?? snapshot;
   }
 
   const pendingOptions = {
@@ -128,9 +143,6 @@ export async function ensureAgentLoaded(
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }
 
-    await deps.agentManager.hydrateTimelineFromProvider(agentId, {
-      broadcast: () => pendingOptions.broadcastTimeline,
-    });
     return deps.agentManager.getAgent(agentId) ?? snapshot;
   })();
 
@@ -138,7 +150,12 @@ export async function ensureAgentLoaded(
   pendingAgentInitializations.set(agentId, pending);
 
   try {
-    return await initPromise;
+    const snapshot = await initPromise;
+    await deps.agentManager.ensureTimelineCoverage(agentId, {
+      intent: deps.historyIntent ?? "complete",
+      broadcast: () => pendingOptions.broadcastTimeline,
+    });
+    return deps.agentManager.getAgent(agentId) ?? snapshot;
   } finally {
     const current = pendingAgentInitializations.get(agentId);
     if (current === pending) {
