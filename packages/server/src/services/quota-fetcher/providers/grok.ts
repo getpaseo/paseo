@@ -26,6 +26,8 @@ const GrokUsageResponseSchema = z.object({
           val: ApiNumberSchema.optional(),
         })
         .nullish(),
+      billingPeriodStart: z.string().optional(),
+      billingPeriodEnd: z.string().optional(),
     })
     .nullish(),
   usage: z
@@ -108,6 +110,7 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
     const monthlyLimit = resp.config?.monthlyLimit?.val ?? null;
     // Live CLI billing uses config.used.val; older mocks used usage.creditUsage.
     const creditUsage = resp.config?.used?.val ?? resp.usage?.creditUsage ?? null;
+    const resetsAt = resp.config?.billingPeriodEnd?.trim() || null;
     const balances: ProviderUsageBalance[] = [];
     if (monthlyLimit !== null || creditUsage !== null) {
       const remaining =
@@ -121,6 +124,7 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
         remaining,
         limit: monthlyLimit,
         unit: "credits",
+        resetsAt,
         tone: toneFromUsedPct(usedPctOf(creditUsage, monthlyLimit)),
       });
     }
@@ -132,7 +136,7 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
       planLabel: null,
       windows: [],
       balances,
-      details: [],
+      details: resetsAt ? [{ id: "billing_period_end", label: "Resets", value: resetsAt }] : [],
       error: null,
     };
   }

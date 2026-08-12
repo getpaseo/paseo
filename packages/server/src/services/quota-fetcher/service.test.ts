@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { promises as fsPromises } from "node:fs";
@@ -6,10 +7,14 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderUsage } from "../../server/messages.js";
 import type { ProviderUsageFetcher } from "./provider.js";
+import {
+  CursorQuotaProvider,
+  extractCursorAccessToken,
+  extractCursorPlanLabel,
+} from "./providers/cursor.js";
 import { ClaudeQuotaProvider } from "./providers/claude.js";
 import { CodexQuotaProvider } from "./providers/codex.js";
 import { CopilotQuotaProvider } from "./providers/copilot.js";
-import { CursorQuotaProvider } from "./providers/cursor.js";
 import { GrokQuotaProvider } from "./providers/grok.js";
 import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
@@ -61,6 +66,25 @@ function writeKimiCredentials(dir: string, accessToken: string, overrides: objec
 function writeGrokAuth(home: string, auth: Record<string, unknown>): void {
   mkdirSync(join(home, ".grok"), { recursive: true });
   writeFileSync(join(home, ".grok", "auth.json"), JSON.stringify(auth));
+}
+
+function sqlLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/** Write a minimal Cursor state.vscdb under the Linux/XDG path used by the fetcher. */
+function writeCursorStateDb(home: string, entries: Record<string, string>): void {
+  const dir = join(home, ".config", "Cursor", "User", "globalStorage");
+  mkdirSync(dir, { recursive: true });
+  const dbPath = join(dir, "state.vscdb");
+  const statements = [
+    "CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT);",
+    ...Object.entries(entries).map(
+      ([key, value]) =>
+        `INSERT INTO ItemTable(key, value) VALUES (${sqlLiteral(key)}, ${sqlLiteral(value)});`,
+    ),
+  ].join("\n");
+  execFileSync("sqlite3", [dbPath], { input: statements, timeout: 5_000 });
 }
 
 function writeMiniMaxConfig(dir: string, payload: Record<string, unknown>): void {
@@ -392,7 +416,13 @@ describe("real provider usage fetchers", () => {
         }),
         new CodexQuotaProvider({ logger, codexHome, fetch: fetchThroughTestDouble }),
         new CopilotQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
-        new CursorQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
+        new CursorQuotaProvider({
+          logger,
+          fetch: fetchThroughTestDouble,
+          // Match Grok/Kimi: inject temp HOME so state.vscdb tests work on Windows
+          // (os.homedir() uses USERPROFILE there and ignores process.env.HOME).
+          homeDir,
+        }),
         new ZaiQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
         new GrokQuotaProvider({
           logger,
@@ -690,16 +720,179 @@ describe("real provider usage fetchers", () => {
 
     expect(cursor).toMatchObject({
       status: "available",
+      // Included spend is the primary meter (bonus does not inflate used).
       balances: [
         expect.objectContaining({
           id: "plan_usage",
-          used: 15,
-          remaining: 25,
+          used: 10,
+          remaining: 30,
           limit: 40,
           resetsAt: null,
         }),
       ],
+      details: expect.arrayContaining([
+        { id: "included_spend", label: "Included spend", value: "$10.00" },
+        { id: "bonus_spend", label: "Bonus spend", value: "$5.00" },
+      ]),
     });
+  });
+
+  it("fetches Cursor usage from modern cursorAuth/accessToken in state.vscdb", async () => {
+    writeCursorStateDb(homeDir, {
+      "cursorAuth/accessToken": "cursor_sqlite_token",
+      "cursorAuth/stripeMembershipType": "pro",
+    });
+
+    let authorization: string | null = null;
+    fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      // Live dashboard responses omit planUsage.remaining — schema must accept that
+      // and the fetcher must derive remaining from includedSpend/limit.
+      return jsonResponse({
+        planUsage: {
+          totalSpend: 2379,
+          includedSpend: 2000,
+          bonusSpend: 379,
+          limit: 2000,
+          autoPercentUsed: 0.65,
+          apiPercentUsed: 48.53,
+          totalPercentUsed: 6.9,
+        },
+        billingCycleStart: 1_783_103_281_000,
+        billingCycleEnd: 1_785_781_681_000,
+        displayMessage: "You've hit your usage limit",
+      });
+    }) as typeof fetch;
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(authorization).toBe("Bearer cursor_sqlite_token");
+    expect(cursor).toMatchObject({
+      status: "available",
+      planLabel: "Pro",
+      balances: [
+        expect.objectContaining({
+          id: "plan_usage",
+          used: 20,
+          remaining: 0,
+          limit: 20,
+          unit: "usd",
+          resetsAt: "2026-08-03T18:28:01.000Z",
+        }),
+      ],
+      windows: [
+        expect.objectContaining({ id: "included", usedPct: 6.9 }),
+        expect.objectContaining({ id: "api", usedPct: 48.53 }),
+        expect.objectContaining({ id: "auto", usedPct: 0.65 }),
+      ],
+      details: expect.arrayContaining([
+        { id: "included_spend", label: "Included spend", value: "$20.00" },
+        { id: "bonus_spend", label: "Bonus spend", value: "$3.79" },
+        {
+          id: "display_message",
+          label: "Status",
+          value: "You've hit your usage limit",
+        },
+      ]),
+    });
+  });
+
+  it("still accepts legacy Cursor cursorAuthStatus JSON token", async () => {
+    writeCursorStateDb(homeDir, {
+      cursorAuthStatus: JSON.stringify({ accessToken: "legacy_cursor_token" }),
+    });
+
+    let authorization: string | null = null;
+    fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return jsonResponse({
+        planUsage: {
+          totalSpend: 100,
+          includedSpend: 100,
+          remaining: 900,
+          limit: 1000,
+        },
+        billingCycleEnd: "2026-08-01T00:00:00.000Z",
+      });
+    }) as typeof fetch;
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(authorization).toBe("Bearer legacy_cursor_token");
+    expect(cursor).toMatchObject({
+      status: "available",
+      balances: [
+        expect.objectContaining({
+          id: "plan_usage",
+          used: 1,
+          remaining: 9,
+          limit: 10,
+        }),
+      ],
+    });
+  });
+
+  it("prefers modern Cursor accessToken when both auth shapes are present", () => {
+    expect(
+      extractCursorAccessToken([
+        { key: "cursorAuthStatus", value: JSON.stringify({ accessToken: "legacy" }) },
+        { key: "cursorAuth/accessToken", value: "modern" },
+      ]),
+    ).toBe("modern");
+    expect(
+      extractCursorPlanLabel([{ key: "cursorAuth/stripeMembershipType", value: "ultra" }]),
+    ).toBe("Ultra");
+  });
+
+  it("parses live Cursor planUsage when remaining is omitted and derives remaining", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          () =>
+            jsonResponse({
+              // Exact live shape observed 2026-07-29: no remaining field.
+              planUsage: {
+                totalSpend: 500,
+                includedSpend: 400,
+                bonusSpend: 100,
+                limit: 1000,
+                autoPercentUsed: 1.2,
+                apiPercentUsed: 10,
+                totalPercentUsed: 4,
+              },
+              billingCycleStart: 1_783_103_281_000,
+              billingCycleEnd: 1_785_781_681_000,
+            }),
+        ],
+      ]),
+    );
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(cursor).toEqual(
+      expect.objectContaining({
+        status: "available",
+        error: null,
+        balances: [
+          expect.objectContaining({
+            id: "plan_usage",
+            used: 4,
+            // (limit - includedSpend) / 100 = (1000 - 400) / 100
+            remaining: 6,
+            limit: 10,
+            unit: "usd",
+            resetsAt: "2026-08-03T18:28:01.000Z",
+          }),
+        ],
+        windows: [
+          expect.objectContaining({ id: "included", usedPct: 4 }),
+          expect.objectContaining({ id: "api", usedPct: 10 }),
+          expect.objectContaining({ id: "auto", usedPct: 1.2 }),
+        ],
+      }),
+    );
   });
 
   it("fetches Z.ai usage from ZAI_API_KEY", async () => {
@@ -791,7 +984,15 @@ describe("real provider usage fetchers", () => {
           remaining: 112114,
           limit: 150000,
           unit: "credits",
+          resetsAt: "2026-08-01T00:00:00+00:00",
         }),
+      ],
+      details: [
+        {
+          id: "billing_period_end",
+          label: "Resets",
+          value: "2026-08-01T00:00:00+00:00",
+        },
       ],
     });
   });
