@@ -1,5 +1,6 @@
 import { router, type Href } from "expo-router";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import { i18n } from "@/i18n/i18next";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useSessionStore } from "@/stores/session-store";
 import { getOrCreateClientId } from "@/utils/client-id";
@@ -20,7 +21,7 @@ export async function navigateToAgent(input: NavigateToAgentInput): Promise<stri
     }
     const client = useSessionStore.getState().sessions[input.serverId]?.client;
     if (!client) {
-      throw new Error("Daemon client unavailable");
+      throw new Error(i18n.t("common.errors.daemonClientUnavailable"));
     }
     const result = await client.fetchAgent({ agentId });
     if (!result) {
@@ -39,7 +40,7 @@ export async function navigateToAgent(input: NavigateToAgentInput): Promise<stri
       markOpen: async (agentId, label) => {
         const client = useSessionStore.getState().sessions[input.serverId]?.client;
         if (!client) {
-          throw new Error("Daemon client unavailable");
+          throw new Error(i18n.t("common.errors.daemonClientUnavailable"));
         }
         await client.updateAgent(agentId, { labels: { [label]: "true" } });
       },
