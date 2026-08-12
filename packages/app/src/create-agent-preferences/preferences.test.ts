@@ -142,9 +142,25 @@ describe("create agent preferences", () => {
       parseFormPreferences({
         workingDir: "/old/workspace",
         provider: "codex",
+        providerPreferences: {
+          codex: {
+            model: "gpt-5.4-mini",
+            mode: "full-access",
+            thinkingOptionId: "high",
+          },
+        },
         serverId: "old-host",
       }),
-    ).toEqual({ provider: "codex" });
+    ).toEqual({
+      provider: "codex",
+      providerPreferences: {
+        codex: {
+          model: "gpt-5.4-mini",
+          mode: "full-access",
+          thinkingByModel: { "gpt-5.4-mini": "high" },
+        },
+      },
+    });
   });
 
   it("rejects unknown persisted fields outside the explicit legacy shape", () => {

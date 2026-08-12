@@ -20,12 +20,6 @@ export interface FormPreferences {
   launchTarget?: LaunchTarget;
 }
 
-interface LegacyLocationFormPreferences {
-  workingDir?: string;
-  provider?: string;
-  serverId?: string;
-}
-
 const providerPreferencesSchema: z.ZodType<ProviderPreferences> = z.strictObject({
   model: z.string().optional(),
   mode: z.string().optional(),
@@ -38,7 +32,7 @@ const launchTargetSchema: z.ZodType<LaunchTarget> = z.discriminatedUnion("kind",
   z.strictObject({ kind: z.literal("terminal"), profileId: z.string() }),
 ]);
 
-export const FormPreferencesSchema: z.ZodType<FormPreferences> = z.strictObject({
+export const FormPreferencesSchema = z.strictObject({
   provider: z.string().optional(),
   providerPreferences: z.record(z.string(), providerPreferencesSchema).optional(),
   // COMPAT(agentProfileFavoriteMigration): favourites were removed in v0.3.2.
@@ -56,20 +50,44 @@ export const FormPreferencesSchema: z.ZodType<FormPreferences> = z.strictObject(
   // What the New workspace composer submits to: the chat agent (default) or a
   // terminal profile. See `@/new-workspace-launch` for resolution/fallback.
   launchTarget: launchTargetSchema.optional(),
+}) satisfies z.ZodType<FormPreferences>;
+
+const LegacyProviderPreferencesSchema = z.strictObject({
+  model: z.string().optional(),
+  mode: z.string().optional(),
+  thinkingOptionId: z.string().optional(),
 });
 
-const LegacyLocationFormPreferencesSchema: z.ZodType<LegacyLocationFormPreferences> =
-  z.strictObject({
+const LegacyFormPreferencesSchema = z
+  .strictObject({
     workingDir: z.string().optional(),
     provider: z.string().optional(),
     serverId: z.string().optional(),
+    providerPreferences: z.record(z.string(), LegacyProviderPreferencesSchema).optional(),
+  })
+  .transform(({ provider, providerPreferences }): FormPreferences => {
+    const migratedProviderPreferences: Record<string, ProviderPreferences> = {};
+    for (const [providerId, legacy] of Object.entries(providerPreferences ?? {})) {
+      const model = legacy.model;
+      migratedProviderPreferences[providerId] = {
+        ...(model !== undefined ? { model } : {}),
+        ...(legacy.mode !== undefined ? { mode: legacy.mode } : {}),
+        ...(model !== undefined && legacy.thinkingOptionId !== undefined
+          ? { thinkingByModel: { [model]: legacy.thinkingOptionId } }
+          : {}),
+      };
+    }
+    return {
+      ...(provider !== undefined ? { provider } : {}),
+      ...(providerPreferences !== undefined
+        ? { providerPreferences: migratedProviderPreferences }
+        : {}),
+    };
   });
 
 export const StoredFormPreferencesSchema: z.ZodType<FormPreferences> = z.union([
   FormPreferencesSchema,
-  LegacyLocationFormPreferencesSchema.transform(({ provider }) =>
-    provider === undefined ? {} : { provider },
-  ),
+  LegacyFormPreferencesSchema,
 ]);
 
 export const DEFAULT_FORM_PREFERENCES: FormPreferences = {};
