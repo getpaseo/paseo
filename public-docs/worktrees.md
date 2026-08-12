@@ -35,6 +35,17 @@ With a custom root, Paseo keeps the same hashed layout under that directory:
 }
 ```
 
+A root starting with `{repoRoot}` keeps the same layout inside each project instead:
+
+```
+~/dev/my-app/.worktrees/
+└── 1vnnm9k3/
+    ├── tidy-fox/
+    └── bold-owl/
+```
+
+The hash stays either way. Paseo owns `<root>/<hash>/<slug>` and reads that shape as proof a directory is its own. See [Configuration](/docs/configuration#worktrees) for the rules on repo-relative roots.
+
 1. Create a workspace with worktree isolation, Paseo creates the worktree and runs your setup hooks
 2. Launch one or more agents in that workspace
 3. Review the diff against the base branch

@@ -37,7 +37,13 @@ import { writeFileAtomic } from "../server/atomic-file.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
-import { expandTilde, getRealpathAwareRelativePath, isPathInsideRoot } from "./path.js";
+import {
+  expandTilde,
+  getRealpathAwareRelativePath,
+  isPathInsideRoot,
+  isRepoRelativeWorktreesRoot,
+  repoRelativeWorktreesRootSegments,
+} from "./path.js";
 import { terminateWithTreeKill } from "./tree-kill.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
@@ -165,6 +171,7 @@ export interface PaseoWorktreeOwnershipOptions extends WorktreeRootOptions {
 export interface WorktreeRootOptions {
   paseoHome?: string;
   worktreesRoot?: string;
+  repoRoot?: string;
 }
 
 export interface WorktreeCheckoutRef {
@@ -837,20 +844,38 @@ function deriveShortAlphanumericHash(value: string): string {
   return hashValue.toString(36).padStart(13, "0").slice(0, WORKTREE_PROJECT_HASH_LENGTH);
 }
 
-export async function deriveWorktreeProjectHash(cwd: string): Promise<string> {
+/**
+ * Repo root the project hash is derived from: the main checkout for every worktree of a
+ * repo, so all of them hash to the same project.
+ */
+async function resolveWorktreeProjectRoot(cwd: string): Promise<string> {
   try {
-    const commonDir = await getGitCommonDir(cwd);
-    const normalizedCommonDir = normalizePathForOwnership(commonDir);
-    const repoRoot =
-      basename(normalizedCommonDir) === ".git" ? dirname(normalizedCommonDir) : normalizedCommonDir;
-    return deriveShortAlphanumericHash(repoRoot);
+    return resolveRepoRootFromGitCommonDir(await getGitCommonDir(cwd));
   } catch {
-    return deriveShortAlphanumericHash(normalizePathForOwnership(cwd));
+    return normalizePathForOwnership(cwd);
   }
 }
 
-export function resolvePaseoWorktreesBaseRoot(options?: WorktreeRootOptions): string {
+export async function deriveWorktreeProjectHash(cwd: string): Promise<string> {
+  return deriveShortAlphanumericHash(await resolveWorktreeProjectRoot(cwd));
+}
+
+/**
+ * Base root every project's worktrees live under. Undefined when the configured root is
+ * repo-relative and no repo root was resolved, which callers read as "this path is not one
+ * of ours" rather than guessing a directory to write to or delete.
+ */
+export function resolvePaseoWorktreesBaseRoot(options?: WorktreeRootOptions): string | undefined {
   if (options?.worktreesRoot) {
+    if (isRepoRelativeWorktreesRoot(options.worktreesRoot)) {
+      if (!options.repoRoot) {
+        return undefined;
+      }
+      return resolve(
+        join(options.repoRoot, ...repoRelativeWorktreesRootSegments(options.worktreesRoot)),
+      );
+    }
+
     const expandedRoot = expandTilde(options.worktreesRoot);
     if (isAbsolute(expandedRoot)) {
       return resolve(expandedRoot);
@@ -868,9 +893,12 @@ export async function getPaseoWorktreesRoot(
   paseoHome?: string,
   worktreesRoot?: string,
 ): Promise<string> {
-  const baseRoot = resolvePaseoWorktreesBaseRoot({ paseoHome, worktreesRoot });
-  const projectHash = await deriveWorktreeProjectHash(cwd);
-  return join(baseRoot, projectHash);
+  const repoRoot = await resolveWorktreeProjectRoot(cwd);
+  const baseRoot = resolvePaseoWorktreesBaseRoot({ paseoHome, worktreesRoot, repoRoot });
+  if (baseRoot === undefined) {
+    throw new Error(`Could not resolve worktrees.root "${worktreesRoot}" for ${cwd}`);
+  }
+  return join(baseRoot, deriveShortAlphanumericHash(repoRoot));
 }
 
 export async function computeWorktreePath(
@@ -928,6 +956,28 @@ function resolveRepoRootFromGitCommonDir(commonDir: string): string {
     : normalizedCommonDir;
 }
 
+/**
+ * Best-effort repo root for a workspace cwd. A workspace can point at a subdirectory that
+ * no longer exists, and git cannot run from a missing directory, so climb to the nearest
+ * ancestor that does. A repo-relative worktrees root needs this to resolve at all.
+ */
+async function resolveRepoRootFromNearestAncestor(cwd: string): Promise<string | undefined> {
+  let candidate = resolve(cwd);
+  while (!existsSync(candidate)) {
+    const parent = dirname(candidate);
+    if (parent === candidate) {
+      return undefined;
+    }
+    candidate = parent;
+  }
+
+  try {
+    return resolveRepoRootFromGitCommonDir(await getGitCommonDir(candidate));
+  } catch {
+    return undefined;
+  }
+}
+
 export async function isPaseoOwnedWorktreeCwd(
   cwd: string,
   options?: PaseoWorktreeOwnershipOptions,
@@ -941,15 +991,21 @@ export async function isPaseoOwnedWorktreeCwd(
   if (options?.knownGitCommonDir) {
     repoRoot = resolveRepoRootFromGitCommonDir(options.knownGitCommonDir);
   } else if (options?.knownGitCommonDir === undefined) {
-    try {
-      const gitCommonDir = await getGitCommonDir(cwd);
-      repoRoot = resolveRepoRootFromGitCommonDir(gitCommonDir);
-    } catch {
-      // ignore
-    }
+    repoRoot = await resolveRepoRootFromNearestAncestor(cwd);
   }
 
-  const worktreesBaseRoot = resolvePaseoWorktreesBaseRoot(options);
+  const worktreesBaseRoot = resolvePaseoWorktreesBaseRoot({
+    ...options,
+    repoRoot: repoRoot ?? options?.repoRoot,
+  });
+  if (worktreesBaseRoot === undefined) {
+    return {
+      allowed: false,
+      ...(repoRoot !== undefined ? { repoRoot } : {}),
+      worktreePath: resolvedCwd,
+    };
+  }
+
   const relativePath = getRealpathAwareRelativePath(worktreesBaseRoot, resolvedCwd);
 
   // Ownership is defined by the path living under <worktrees-root>/<hash>/<slug>[/...].

@@ -11,6 +11,7 @@ import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-co
 import { ensurePrivateFile, writePrivateFileAtomicSync } from "./private-files.js";
 import { AgentProfileSchema, TerminalProfileSchema } from "@getpaseo/protocol/messages";
 import { PaseoServicePortAllocationSchema } from "@getpaseo/protocol/paseo-config-schema";
+import { repoRelativeWorktreesRootError, REPO_ROOT_PLACEHOLDER } from "../utils/path.js";
 
 export const LogLevelSchema = z.enum(["trace", "debug", "info", "warn", "error", "fatal"]);
 export const LogFormatSchema = z.enum(["pretty", "json"]);
@@ -77,7 +78,19 @@ const ProvidersSchema = z
 
 const WorktreesConfigSchema = z
   .object({
-    root: z.string().min(1).optional(),
+    root: z
+      .string()
+      .min(1)
+      .superRefine((value, context) => {
+        if (!value.includes(REPO_ROOT_PLACEHOLDER)) {
+          return;
+        }
+        const error = repoRelativeWorktreesRootError(value.trim());
+        if (error) {
+          context.addIssue({ code: "custom", message: error });
+        }
+      })
+      .optional(),
     servicePorts: PaseoServicePortAllocationSchema.optional(),
   })
   .strict();

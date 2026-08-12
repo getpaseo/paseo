@@ -163,6 +163,68 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(existsSync(result.worktreePath)).toBe(false);
     });
 
+    it("creates and owns worktrees under a repo-relative root", async () => {
+      const worktreesRoot = "{repoRoot}/.worktrees";
+      const projectHash = await deriveWorktreeProjectHash(repoDir);
+      const result = await createLegacyWorktreeForTest({
+        branchName: "repo-relative",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "repo-relative",
+        paseoHome,
+        worktreesRoot,
+      });
+
+      expect(result.worktreePath).toBe(join(repoDir, ".worktrees", projectHash, "repo-relative"));
+      await expect(
+        isPaseoOwnedWorktreeCwd(result.worktreePath, { paseoHome, worktreesRoot }),
+      ).resolves.toMatchObject({
+        allowed: true,
+        worktreeRoot: join(repoDir, ".worktrees", projectHash),
+      });
+      await expect(
+        isPaseoOwnedWorktreeCwd(join(result.worktreePath, "packages", "app"), {
+          paseoHome,
+          worktreesRoot,
+        }),
+      ).resolves.toMatchObject({ allowed: true });
+
+      const worktrees = await listPaseoWorktrees({ cwd: repoDir, paseoHome, worktreesRoot });
+      expect(worktrees.map((entry) => entry.path)).toContain(result.worktreePath);
+
+      await deletePaseoWorktree({
+        cwd: repoDir,
+        worktreePath: result.worktreePath,
+        paseoHome,
+        worktreesBaseRoot: worktreesRoot,
+      });
+      expect(existsSync(result.worktreePath)).toBe(false);
+    });
+
+    it("owns a repo-relative worktree whose git admin file is gone", async () => {
+      const worktreesRoot = "{repoRoot}/.worktrees";
+      const projectHash = await deriveWorktreeProjectHash(repoDir);
+      const result = await createLegacyWorktreeForTest({
+        branchName: "orphaned",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "orphaned",
+        paseoHome,
+        worktreesRoot,
+      });
+
+      // Archive has to keep working after a half-finished cleanup. The worktree lives
+      // inside the repo, so git still reaches the repo's own admin dir from here.
+      rmSync(join(result.worktreePath, ".git"), { force: true });
+
+      await expect(
+        isPaseoOwnedWorktreeCwd(result.worktreePath, { paseoHome, worktreesRoot }),
+      ).resolves.toMatchObject({
+        allowed: true,
+        worktreeRoot: join(repoDir, ".worktrees", projectHash),
+      });
+    });
+
     it.skip("detects paseo-owned worktrees across realpath differences (macOS /var vs /private/var)", async () => {
       // Intentionally create repo using the non-realpath tmpdir() variant (often /var/... on macOS).
       const varTempDir = mkdtempSync(join(tmpdir(), "worktree-realpath-test-"));

@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolvePaseoNodeEnv } from "./paseo-env.js";
 import { z } from "zod";
-import { expandTilde } from "../utils/path.js";
+import { expandTilde, isRepoRelativeWorktreesRoot } from "../utils/path.js";
 
 import type { PaseoDaemonConfig } from "./bootstrap.js";
 import {
@@ -422,6 +422,12 @@ function resolveWorktreesRoot(
   const configuredRoot = persisted.worktrees?.root?.trim();
   if (!configuredRoot) {
     return undefined;
+  }
+
+  // A repo-relative root has no single answer at startup: it resolves against whichever
+  // repo a worktree is being cut from, so the template travels as-is.
+  if (isRepoRelativeWorktreesRoot(configuredRoot)) {
+    return configuredRoot;
   }
 
   const expandedRoot = expandTilde(configuredRoot);

@@ -69,6 +69,18 @@ New worktrees are created under `$PASEO_HOME/worktrees` by default. To place new
 
 Relative paths are resolved against `PASEO_HOME`. Existing worktrees remain where they are; changing this setting only changes where Paseo creates and discovers Paseo-managed worktrees going forward.
 
+To keep each project's worktrees inside that project, start the path with `{repoRoot}`:
+
+```json
+{
+  "worktrees": {
+    "root": "{repoRoot}/.worktrees"
+  }
+}
+```
+
+`{repoRoot}` expands to the source checkout each worktree is cut from, so one setting covers every project and the value carries no user or machine specifics. It only works as the first segment, has to be followed by a separator, and cannot climb out of the repo with `..`; anything else is rejected when the config loads. Ignore the directory in the repos that use it, or the worktrees show up as untracked files in the checkout they live in.
+
 ## Voice
 
 Voice is configured through `features.dictation` and `features.voiceMode`, with provider credentials under `providers`.
