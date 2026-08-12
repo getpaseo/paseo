@@ -9,6 +9,7 @@ type ProjectListResult = Awaited<ReturnType<DaemonClient["listProjects"]>>;
 
 class FakeDirectoryClient {
   fetchAgentsCalls = 0;
+  lastAgentOptions: unknown;
   fetchWorkspacesCalls = 0;
   listProjectsCalls = 0;
   lastProjectOptions: unknown;
@@ -44,8 +45,9 @@ class FakeDirectoryClient {
     return complete;
   }
 
-  async fetchAgents(): Promise<Awaited<ReturnType<DaemonClient["fetchAgents"]>>> {
+  async fetchAgents(options?: unknown): Promise<Awaited<ReturnType<DaemonClient["fetchAgents"]>>> {
     this.fetchAgentsCalls += 1;
+    this.lastAgentOptions = options;
     return {
       requestId: "agents",
       entries: [],
@@ -115,6 +117,46 @@ afterEach(() => {
 });
 
 describe("DirectorySync session readiness", () => {
+  it("uses the saved agent sequence while bounding the bootstrap page", async () => {
+    const serverId = "agent-list-sequence-page";
+    serverIds.add(serverId);
+    const client = new FakeDirectoryClient();
+    const directory = new DirectorySync(serverId, {
+      onAgentStoppedRunning: () => undefined,
+      markAgentLoading: () => undefined,
+      markAgentReady: () => undefined,
+      markAgentError: () => undefined,
+      readCursors: () => ({ agents: { generation: "generation", afterSeq: 12 } }),
+    });
+    directory.connectionChanged({
+      client: client as unknown as DaemonClient,
+      status: "online",
+      source: { clientGeneration: 1, connectionEpoch: 1 },
+    });
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+    store.updateSessionServerInfo(serverId, {
+      serverId,
+      hostname: null,
+      version: "test",
+      features: { directorySync: true, workspaceMultiplicity: true },
+    });
+
+    await directory.refreshAgents({
+      subscribe: { subscriptionId: `app:${serverId}` },
+      page: { limit: 200 },
+    });
+
+    expect(client.lastAgentOptions).toEqual({
+      scope: "active",
+      sort: [{ key: "updated_at", direction: "desc" }],
+      subscribe: { subscriptionId: `app:${serverId}` },
+      page: { limit: 200 },
+      sync: { generation: "generation", afterSeq: 12 },
+    });
+    directory.dispose();
+  });
+
   it("waits for workspace capability metadata before choosing the workspace protocol", async () => {
     const serverId = "workspace-metadata";
     const { client, directory } = createDirectory(serverId);

@@ -51,3 +51,22 @@ export function useHostFeatureMap(
     [flags, serverIds],
   );
 }
+
+export function useHostFeatureAvailabilityMap(
+  serverIds: readonly string[],
+  feature: HostFeatureName,
+): ReadonlyMap<string, boolean | null> {
+  const flags = useSessionStore(
+    useShallow((state) =>
+      serverIds.map((serverId) => {
+        const serverInfo = state.sessions[serverId]?.serverInfo;
+        return serverInfo ? hostSupportsFeature(serverInfo, feature) : null;
+      }),
+    ),
+  );
+
+  return useMemo(
+    () => new Map(serverIds.map((serverId, index) => [serverId, flags[index]] as const)),
+    [flags, serverIds],
+  );
+}

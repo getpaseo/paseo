@@ -2,7 +2,7 @@ import { useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import type { ProjectIcon } from "@getpaseo/protocol/messages";
-import { useHostFeatureMap } from "@/runtime/host-features";
+import { useHostFeatureAvailabilityMap } from "@/runtime/host-features";
 import {
   getHostRuntimeStore,
   isHostRuntimeConnected,
@@ -24,8 +24,9 @@ interface ProjectIconTarget {
  */
 export function resolveProjectIconLookup(
   target: Pick<ProjectIconTarget, "projectId" | "iconWorkingDir">,
-  supportsCustomIcons: boolean,
-): { kind: "project"; projectId: string } | { kind: "legacy"; cwd: string } {
+  supportsCustomIcons: boolean | null,
+): { kind: "project"; projectId: string } | { kind: "legacy"; cwd: string } | null {
+  if (supportsCustomIcons === null) return null;
   return supportsCustomIcons
     ? { kind: "project", projectId: target.projectId }
     : { kind: "legacy", cwd: target.iconWorkingDir };
@@ -88,7 +89,7 @@ export function useProjectIcons(input: {
     () => [...new Set(input.projects.map((project) => project.serverId))],
     [input.projects],
   );
-  const supportsCustomIcons = useHostFeatureMap(serverIds, "projectCustomIcon");
+  const supportsCustomIcons = useHostFeatureAvailabilityMap(serverIds, "projectCustomIcon");
   const requests = useMemo(() => {
     const unique = new Map<string, ProjectIconTarget>();
     for (const project of input.projects) {
@@ -103,14 +104,20 @@ export function useProjectIcons(input: {
       const revision = request.customIconRevision ?? "automatic";
       const lookup = resolveProjectIconLookup(
         request,
-        supportsCustomIcons.get(request.serverId) === true,
+        supportsCustomIcons.get(request.serverId) ?? null,
       );
+      let queryKey: readonly unknown[];
+      if (!lookup) {
+        queryKey = ["projectIcon", request.serverId, "pending", request.projectId];
+      } else if (lookup.kind === "project") {
+        queryKey = iconQueryKey(request.serverId, lookup.projectId, revision);
+      } else {
+        queryKey = legacyIconQueryKey(request.serverId, lookup.cwd);
+      }
       return {
-        queryKey:
-          lookup.kind === "project"
-            ? iconQueryKey(request.serverId, lookup.projectId, revision)
-            : legacyIconQueryKey(request.serverId, lookup.cwd),
+        queryKey,
         queryFn: async () => {
+          if (!lookup) return null;
           const client = getHostRuntimeStore().getClient(request.serverId);
           if (!client) return null;
           const result =
@@ -121,6 +128,7 @@ export function useProjectIcons(input: {
         },
         select: iconDataUri,
         enabled: Boolean(
+          lookup &&
           getHostRuntimeStore().getClient(request.serverId) &&
           isHostRuntimeConnected(getHostRuntimeStore().getSnapshot(request.serverId)),
         ),

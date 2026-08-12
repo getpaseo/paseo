@@ -382,7 +382,7 @@ export class DirectorySync {
         sort: AGENT_SORT,
         ...(subscribe ? { subscribe } : {}),
         page: cursor ? { limit, cursor } : { limit },
-        ...(!input.filter && !input.page && this.supportsDirectorySync()
+        ...(!input.filter && cursor === null && this.supportsDirectorySync()
           ? { sync: this.callbacks.readCursors?.().agents ?? {} }
           : {}),
       });
