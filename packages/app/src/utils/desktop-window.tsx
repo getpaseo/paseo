@@ -19,7 +19,7 @@ import {
   getIsElectronRuntimeMac,
 } from "@/constants/layout";
 import { getDesktopWindow } from "@/desktop/electron/window";
-import { isNative } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 
 export type WindowChromeCorners = "none" | "top-left" | "top-right" | "both";
 export type WindowChromeSafeAreaPlacement = "inline" | "below";
@@ -88,10 +88,32 @@ export function intersectWindowChromeCorners(
   );
 }
 
+/**
+ * The titlebar strip Chromium leaves to the app, and the window it sits in.
+ *
+ * Whatever the window manager kept for its own controls is the difference between the two —
+ * on either side, because a Linux desktop may put them left, right, or both.
+ */
+export interface WindowControlsOverlayGeometry {
+  titlebarLeft: number;
+  titlebarWidth: number;
+  titlebarHeight: number;
+  windowWidth: number;
+}
+
+/**
+ * Where the native controls physically sit, measured when the platform will tell us.
+ *
+ * The fallback constants describe Windows: three buttons on the right. They are only a
+ * starting point — a Linux desktop environment chooses its own side and button count, and
+ * even Windows varies the cluster width with text scaling. Prefer the measured rectangle and
+ * treat the constants as what to use until it arrives.
+ */
 export function resolveWindowChromeObstruction(input: {
   isElectron: boolean;
   isMac: boolean;
   isFullscreen: boolean;
+  overlay?: WindowControlsOverlayGeometry | null;
 }): WindowChromeObstruction {
   if (!input.isElectron || input.isFullscreen) return EMPTY_OBSTRUCTION;
   if (input.isMac) {
@@ -100,9 +122,36 @@ export function resolveWindowChromeObstruction(input: {
       topRight: null,
     };
   }
+
+  const measured = resolveMeasuredWindowChromeObstruction(input.overlay);
+  if (measured) return measured;
+
   return {
     topLeft: null,
     topRight: { width: DESKTOP_WINDOW_CONTROLS_WIDTH, height: DESKTOP_WINDOW_CONTROLS_HEIGHT },
+  };
+}
+
+function resolveMeasuredWindowChromeObstruction(
+  overlay: WindowControlsOverlayGeometry | null | undefined,
+): WindowChromeObstruction | null {
+  if (!overlay) return null;
+  const { titlebarLeft, titlebarWidth, titlebarHeight, windowWidth } = overlay;
+  // A zero-width strip means the overlay is not laid out yet, and a strip wider than its window
+  // means we are reading it mid-resize. Neither is a measurement worth trusting.
+  if (!(titlebarWidth > 0) || !(windowWidth > 0)) return null;
+  if (titlebarLeft < 0 || titlebarLeft + titlebarWidth > windowWidth) return null;
+
+  const height = titlebarHeight > 0 ? titlebarHeight : DESKTOP_WINDOW_CONTROLS_HEIGHT;
+  const leftWidth = titlebarLeft;
+  const rightWidth = windowWidth - (titlebarLeft + titlebarWidth);
+  // The overlay covers the whole width when the controls are drawn outside it entirely; there is
+  // nothing to clear, so let the caller fall back rather than report an unobstructed titlebar.
+  if (leftWidth <= 0 && rightWidth <= 0) return null;
+
+  return {
+    topLeft: leftWidth > 0 ? { width: leftWidth, height } : null,
+    topRight: rightWidth > 0 ? { width: rightWidth, height } : null,
   };
 }
 
@@ -160,9 +209,73 @@ export function resolveWindowChromeSafeArea(input: {
   return { paddingLeft: topLeft?.width ?? 0, paddingRight: topRight?.width ?? 0 };
 }
 
+interface WindowControlsOverlayApi {
+  visible: boolean;
+  getTitlebarAreaRect: () => { x: number; width: number; height: number };
+  addEventListener: (type: "geometrychange", listener: () => void) => void;
+  removeEventListener: (type: "geometrychange", listener: () => void) => void;
+}
+
+function getWindowControlsOverlayApi(): WindowControlsOverlayApi | null {
+  if (!isWeb) return null;
+  const api = (navigator as Navigator & { windowControlsOverlay?: WindowControlsOverlayApi })
+    .windowControlsOverlay;
+  return api && typeof api.getTitlebarAreaRect === "function" ? api : null;
+}
+
+/**
+ * Follows the real titlebar rectangle so the app clears whatever controls the platform drew.
+ *
+ * Chromium fires geometrychange when the window is maximized, restored, or the controls change
+ * shape, which is also how a Linux desktop environment's own placement reaches us. Returns null
+ * where the API is missing, leaving the caller on its Windows-shaped fallback.
+ */
+function useWindowControlsOverlayGeometry(): WindowControlsOverlayGeometry | null {
+  const [geometry, setGeometry] = useState<WindowControlsOverlayGeometry | null>(null);
+
+  useEffect(() => {
+    const api = getWindowControlsOverlayApi();
+    if (!api) return;
+
+    function read() {
+      const rect = api?.getTitlebarAreaRect();
+      if (!rect) return;
+      setGeometry((current) => {
+        const next: WindowControlsOverlayGeometry = {
+          titlebarLeft: rect.x,
+          titlebarWidth: rect.width,
+          titlebarHeight: rect.height,
+          windowWidth: window.innerWidth,
+        };
+        if (
+          current &&
+          current.titlebarLeft === next.titlebarLeft &&
+          current.titlebarWidth === next.titlebarWidth &&
+          current.titlebarHeight === next.titlebarHeight &&
+          current.windowWidth === next.windowWidth
+        ) {
+          return current;
+        }
+        return next;
+      });
+    }
+
+    read();
+    api.addEventListener("geometrychange", read);
+    window.addEventListener("resize", read);
+    return () => {
+      api.removeEventListener("geometrychange", read);
+      window.removeEventListener("resize", read);
+    };
+  }, []);
+
+  return geometry;
+}
+
 export function WindowChromeProvider({ children }: { children: ReactNode }) {
   const [isElectronReady, setIsElectronReady] = useState(getIsElectronRuntime);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const overlay = useWindowControlsOverlayGeometry();
 
   useEffect(() => {
     let active = true;
@@ -238,8 +351,9 @@ export function WindowChromeProvider({ children }: { children: ReactNode }) {
         isElectron: isElectronReady,
         isMac: getIsElectronRuntimeMac(),
         isFullscreen,
+        overlay,
       }),
-    [isElectronReady, isFullscreen],
+    [isElectronReady, isFullscreen, overlay],
   );
   return (
     <WindowChromeContext.Provider value={obstruction}>
