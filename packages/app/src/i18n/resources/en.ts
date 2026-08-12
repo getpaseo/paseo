@@ -613,6 +613,8 @@ export const en = {
         reloadingAgent: "Reloading agent...",
         reloadedAgent: "Reloaded agent",
         failedToReloadAgent: "Failed to reload agent",
+        failedToOpenAgent: "Failed to open agent",
+        failedToCloseAgent: "Failed to close agent",
       },
       confirmations: {
         close: "Close",

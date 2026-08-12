@@ -38,7 +38,7 @@ export function useDetachSubagent(input: UseDetachSubagentInput): (subagentId: s
             await client.detachAgent(agentId);
           },
           openDetachedAgent: ({ serverId: targetServerId, agentId }) => {
-            navigateToAgent({ serverId: targetServerId, agentId });
+            void navigateToAgent({ serverId: targetServerId, agentId });
           },
           reportError: (error) => {
             toast.error(toErrorMessage(error));

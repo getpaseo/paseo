@@ -16,7 +16,7 @@ export function AgentNavigationListener() {
     if (!serverId || !agentId) {
       return;
     }
-    navigateToAgent({ serverId, agentId });
+    void navigateToAgent({ serverId, agentId });
   });
 
   useEffect(() => {

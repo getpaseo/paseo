@@ -618,6 +618,8 @@ export const ptBR: TranslationResources = {
         reloadingAgent: "Recarregando agente...",
         reloadedAgent: "Agente recarregado",
         failedToReloadAgent: "Falha ao recarregar agente",
+        failedToOpenAgent: "Falha ao abrir agente",
+        failedToCloseAgent: "Falha ao fechar agente",
       },
       confirmations: {
         unsavedTitle: "Alterações não salvas",

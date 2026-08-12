@@ -9,6 +9,7 @@ export interface NavigateToAgentInput {
   // (cold deep-links). Otherwise the workspace is read from the store.
   workspaceId?: string | null;
   pin?: boolean;
+  onError?: () => void;
 }
 
 export interface AgentNavTarget {

@@ -68,6 +68,7 @@ import {
   type CommandCenterWorkspaceResult,
 } from "./results";
 import { useWorkspaceFileSearch } from "./workspace-file-search";
+import { useToast } from "@/contexts/toast-context";
 
 const ThemedBottomSheetTextInput = withUnistyles(BottomSheetTextInput, (theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
@@ -112,6 +113,7 @@ function limitDefaultCategoryResults<Result>(results: Result[], query: string): 
 
 function useBuiltInSections(open: boolean, query: string): CommandCenterResultSection[] {
   const { t } = useTranslation();
+  const toast = useToast();
   const { agents } = useAggregatedAgents();
   const { projects } = useProjects({ enabled: open });
   const showHost = useHosts().length > 1;
@@ -180,7 +182,11 @@ function useBuiltInSections(open: boolean, query: string): CommandCenterResultSe
             searchText: `${title} ${subtitle} ${agent.cwd}`.toLowerCase(),
             run: () => {
               clearCommandCenterFocusRestoreElement();
-              navigateToAgent({ serverId: agent.serverId, agentId: agent.id });
+              void navigateToAgent({
+                serverId: agent.serverId,
+                agentId: agent.id,
+                onError: () => toast.error(t("workspace.tabs.toasts.failedToOpenAgent")),
+              });
             },
           };
         })
@@ -197,7 +203,7 @@ function useBuiltInSections(open: boolean, query: string): CommandCenterResultSe
       },
       { id: "agents", rank: 3, title: t("shell.commandCenter.agents"), results: agentResults },
     ];
-  }, [agents, open, projects, query, showHost, t]);
+  }, [agents, open, projects, query, showHost, t, toast]);
 }
 
 interface CommandCenterState {

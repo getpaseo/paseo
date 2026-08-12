@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useNavigation } from "@react-navigation/native";
 import { StyleSheet, View } from "react-native";
 import { useGlobalSearchParams, useLocalSearchParams, useRootNavigationState } from "expo-router";
+import { useTranslation } from "react-i18next";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import { RetainedPanel } from "@/components/retained-panel";
 import {
@@ -33,6 +34,8 @@ import {
 } from "@/utils/host-route-browser";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { isWeb } from "@/constants/platform";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
+import { useToast } from "@/contexts/toast-context";
 
 function getParamValue(value: string | string[] | undefined): string {
   if (typeof value === "string") {
@@ -91,6 +94,8 @@ export default function HostWorkspaceIndexRoute() {
 }
 
 function HostWorkspaceRouteContent() {
+  const { t } = useTranslation();
+  const toast = useToast();
   const navigation = useNavigation();
   const rootNavigationState = useRootNavigationState();
   const hasHydratedWorkspaceLayoutStore = useWorkspaceLayoutStoreHydrated();
@@ -150,12 +155,19 @@ function HostWorkspaceRouteContent() {
     }
     consumedIntentRef.current = consumptionKey;
 
-    if (openIntent) {
+    if (openIntent?.kind === "agent") {
+      void navigateToAgent({
+        serverId,
+        workspaceId,
+        agentId: openIntent.agentId,
+        pin: true,
+        onError: () => toast.error(t("workspace.tabs.toasts.failedToOpenAgent")),
+      });
+    } else if (openIntent) {
       prepareWorkspaceTab({
         serverId,
         workspaceId,
         target: getOpenIntentTarget(openIntent),
-        pin: openIntent.kind === "agent",
       });
     }
 
@@ -177,6 +189,8 @@ function HostWorkspaceRouteContent() {
     openValue,
     rootNavigationState?.key,
     serverId,
+    t,
+    toast,
     workspaceId,
   ]);
 

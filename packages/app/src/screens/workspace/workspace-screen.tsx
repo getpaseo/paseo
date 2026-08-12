@@ -2684,7 +2684,8 @@ function WorkspaceScreenContent({
               useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
             closePolicy = resolveCloseAgentTabPolicy(latestAgent);
           } catch (error) {
-            toast.error(error instanceof Error ? error.message : String(error));
+            console.error("[WorkspaceScreen] Failed to close subagent tab", { error, agentId });
+            toast.error(t("workspace.tabs.toasts.failedToCloseAgent"));
             return;
           }
         }

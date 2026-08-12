@@ -1,6 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
 import type { TFunction } from "i18next";
 import { SquarePen } from "lucide-react-native";
 import React, {
@@ -61,7 +60,6 @@ import {
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { RenderProfile } from "@/utils/render-profiler";
-import { getOrCreateClientId } from "@/utils/client-id";
 import { buildDraftPanelDescriptor } from "@/panels/draft-panel-descriptor";
 import {
   type HostRuntimeConnectionStatus,
@@ -1516,19 +1514,11 @@ function ActiveAgentComposer({
   );
   const handleOpenSubagent = useCallback(
     (subagentId: string) => {
-      const client = useSessionStore.getState().sessions[serverId]?.client;
-      if (!client) {
-        toast.error(t("workspaceSetup.errors.hostDisconnected"));
-        return;
-      }
-      void getOrCreateClientId()
-        .then((clientId) =>
-          client.updateAgent(subagentId, {
-            labels: { [getOpenAgentTabLabel(clientId)]: "true" },
-          }),
-        )
-        .then(() => navigateToAgent({ serverId, agentId: subagentId }))
-        .catch((error) => toast.error(error instanceof Error ? error.message : String(error)));
+      void navigateToAgent({
+        serverId,
+        agentId: subagentId,
+        onError: () => toast.error(t("workspace.tabs.toasts.failedToOpenAgent")),
+      });
     },
     [serverId, t, toast],
   );

@@ -619,6 +619,8 @@ export const es: TranslationResources = {
         reloadingAgent: "Agente de recarga...",
         reloadedAgent: "Agente recargado",
         failedToReloadAgent: "No se pudo recargar el agente",
+        failedToOpenAgent: "No se pudo abrir el agente",
+        failedToCloseAgent: "No se pudo cerrar el agente",
       },
       confirmations: {
         unsavedTitle: "Cambios sin guardar",
