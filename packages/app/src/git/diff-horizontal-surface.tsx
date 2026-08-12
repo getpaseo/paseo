@@ -9,6 +9,10 @@ import { DiffScroll } from "@/components/diff-scroll";
 
 const FILL: ViewStyle = { flex: 1 };
 const CLIP: ViewStyle = { flex: 1, overflow: "hidden" };
+// The pinned viewport lives inside a horizontal scroll content container, so a
+// growing flex child would stretch to the full scroll width. Split layout sizes
+// its two columns with flex:1 against this box, so it has to stay viewport-sized.
+const PINNED: ViewStyle = { flexGrow: 0, flexShrink: 0, flexBasis: "auto" };
 
 const DiffHorizontalOffsetContext = createContext<SharedValue<number> | null>(null);
 
@@ -31,6 +35,10 @@ export function DiffHorizontalSurface({
     () => [{ flexGrow: 1 }, { minWidth: Math.max(viewportWidth, contentWidth) }],
     [contentWidth, viewportWidth],
   );
+  const pinnedSizeStyle = useMemo<StyleProp<ViewStyle>>(
+    () => (viewportWidth > 0 ? [PINNED, { width: viewportWidth }] : FILL),
+    [viewportWidth],
+  );
   return (
     <DiffHorizontalOffsetContext.Provider value={offset}>
       <DiffScroll
@@ -40,9 +48,7 @@ export function DiffHorizontalSurface({
         contentContainerStyle={contentContainerStyle}
         testID="diff-horizontal-scroll"
       >
-        <Animated.View style={[FILL, { width: viewportWidth }, pinnedViewportStyle]}>
-          {children}
-        </Animated.View>
+        <Animated.View style={[pinnedSizeStyle, pinnedViewportStyle]}>{children}</Animated.View>
       </DiffScroll>
     </DiffHorizontalOffsetContext.Provider>
   );
