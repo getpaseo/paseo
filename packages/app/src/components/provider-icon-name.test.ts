@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Sparkles } from "lucide-react-native";
 import {
   BUILTIN_PROVIDER_ICON_NAMES,
   KNOWN_PROVIDER_ICON_NAMES,
@@ -6,6 +7,7 @@ import {
 } from "@getpaseo/protocol/provider-icon-names";
 import { ACP_PROVIDER_CATALOG } from "@/data/acp-provider-catalog";
 import { resolveProviderIconName } from "./provider-icon-name";
+import { getProviderIcon } from "./provider-icons";
 
 describe("resolveProviderIconName", () => {
   it("returns the built-in identifier for known provider ids", () => {
@@ -13,6 +15,11 @@ describe("resolveProviderIconName", () => {
     expect(resolveProviderIconName("claude")).toEqual({ kind: "builtin", id: "claude" });
     expect(resolveProviderIconName("omp")).toEqual({ kind: "builtin", id: "omp" });
     expect(resolveProviderIconName("minimax")).toEqual({ kind: "builtin", id: "minimax" });
+    expect(resolveProviderIconName("senpi")).toEqual({ kind: "builtin", id: "senpi" });
+  });
+
+  it("returns the Senpi icon component", () => {
+    expect(getProviderIcon("senpi")).toBe(Sparkles);
   });
 
   it("returns the catalog identifier for ACP catalog provider ids that ship an icon", () => {

@@ -57,6 +57,13 @@ export const agentConfigs = {
     provider: "pi",
     thinkingOptionId: "medium",
   },
+  senpi: {
+    provider: "senpi",
+    modes: {
+      full: "full-access",
+      ask: "auto",
+    },
+  },
   omp: {
     provider: "omp",
     thinkingOptionId: "medium",
@@ -101,4 +108,4 @@ export function getAskModeConfig(provider: AgentProvider) {
 /**
  * Helper to run a test for each provider.
  */
-export const allProviders: AgentProvider[] = ["claude", "codex", "opencode", "pi", "omp"];
+export const allProviders: AgentProvider[] = ["claude", "codex", "opencode", "pi", "senpi", "omp"];

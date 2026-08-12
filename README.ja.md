@@ -29,7 +29,7 @@
   </a>
 </p>
 
-<p align="center">Claude Code、Codex、Copilot、OpenCode、Pi のエージェントを、ひとつのインターフェースで。</p>
+<p align="center">Claude Code、Codex、Copilot、OpenCode、Pi、Senpi のエージェントを、ひとつのインターフェースで。</p>
 
 <p align="center">
   <img src="https://paseo.sh/hero-mockup.png" alt="Paseo アプリのスクリーンショット" width="100%">
@@ -48,7 +48,7 @@
 自分のマシンでエージェントを並列実行。スマートフォンからでもデスクからでも、開発を進めてリリースできます。
 
 - **セルフホスト:** エージェントはあなたのマシン上で動作し、完全な開発環境を使用します。自分のツール・設定・スキルをそのまま活用できます。
-- **マルチプロバイダー:** Claude Code、Codex、Copilot、OpenCode、Pi を同一のインターフェースで利用。タスクに合ったモデルを選べます。
+- **マルチプロバイダー:** Claude Code、Codex、Copilot、OpenCode、Pi、Senpi を同一のインターフェースで利用。タスクに合ったモデルを選べます。
 - **音声コントロール:** 音声モードでタスクを口述したり問題を話し合ったりできます。ハンズフリーが必要なときに便利です。
 - **クロスデバイス:** iOS、Android、デスクトップ、Web、CLI に対応。机で作業を始め、スマートフォンで確認し、ターミナルから自動化できます。
 - **プライバシー優先:** Paseo にはテレメトリー・トラッキング・強制ログインは一切ありません。
@@ -66,6 +66,7 @@ Paseo はコーディングエージェントを管理するローカルサー�
 - [GitHub Copilot](https://github.com/features/copilot/cli/)
 - [OpenCode](https://github.com/anomalyco/opencode)
 - [Pi](https://pi.dev)
+- [Senpi](https://github.com/code-yeongyu/senpi) (`senpi`)
 
 ### デスクトップアプリ（推奨）
 
