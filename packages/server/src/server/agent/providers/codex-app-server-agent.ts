@@ -423,6 +423,7 @@ interface PersistedTimelineEntry {
   item: AgentTimelineItem;
   timestamp?: string;
   nativeItemId?: string;
+  nativeItemAliases?: string[];
 }
 
 interface PersistedSubAgentRoute {
@@ -443,6 +444,9 @@ function toCodexHistoryPageEntry(entry: PersistedTimelineEntry): AgentHistoryPag
   }
   if (entry.nativeItemId) {
     pageEntry.nativeItemId = entry.nativeItemId;
+  }
+  if (entry.nativeItemAliases?.length) {
+    pageEntry.nativeItemAliases = entry.nativeItemAliases;
   }
   return pageEntry;
 }
@@ -1669,6 +1673,16 @@ function readCodexTurnHistoryTimestamp(
   return completedAt ?? startedAt;
 }
 
+function codexContextCompactionTurnIdentity(turn: unknown): string | undefined {
+  const record = toObjectRecord(turn);
+  const turnId = record ? (nonEmptyString(record.id) ?? nonEmptyString(record.turnId)) : null;
+  return turnId ? `codex-context-compaction-turn:${turnId}` : undefined;
+}
+
+function codexContextCompactionNotificationIdentity(turnId: string | null): string | undefined {
+  return turnId ? `codex-context-compaction-turn:${turnId}` : undefined;
+}
+
 interface CodexSubAgentActivity {
   id: string | null;
   agentThreadId: string;
@@ -1962,6 +1976,7 @@ function projectCodexThreadTurns(
       }
       const timelineItems = threadItemToTimelineEntries(item, { cwd });
       const rawItemId = nonEmptyString(rawItem?.id);
+      const compactionTurnIdentity = codexContextCompactionTurnIdentity(turn);
       for (const [index, timelineItem] of timelineItems.entries()) {
         const timestamp =
           readCodexHistoryTimestamp(item) ?? readCodexTurnHistoryTimestamp(turn, timelineItem);
@@ -1973,6 +1988,9 @@ function projectCodexThreadTurns(
           item: settledTimelineItem,
           timestamp: timestamp ?? undefined,
           ...(rawItemId ? { nativeItemId: index === 0 ? rawItemId : `${rawItemId}:${index}` } : {}),
+          ...(timelineItem.type === "compaction" && compactionTurnIdentity
+            ? { nativeItemAliases: [compactionTurnIdentity] }
+            : {}),
         });
         for (const childThreadId of readCodexHistoricalSubAgentThreadIds(item)) {
           subAgentTimelineIndexByThreadId.set(childThreadId, timeline.length - 1);
@@ -3250,6 +3268,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private isPersistedHistoryLoaded = false;
   private hasHistoryPageStarted = false;
   private isHistoryPageRequestActive = false;
+  private isHistoryReconciliationActive = false;
   private historyPageCursor: string | null = null;
   private isHistoryPageExhausted = false;
   private readonly historyPageCursors = new Set<string>();
@@ -3297,6 +3316,9 @@ export class CodexAppServerAgentSession implements AgentSession {
   // `thread/compacted` and a completed `contextCompaction` item.
   private unpairedCompactionNotificationCompletions = 0;
   private unpairedCompactionItemCompletions = 0;
+  // A legacy `thread/compacted` notification can arrive before its raw item. Keep
+  // anonymous notifications aside until the item supplies the history identity.
+  private readonly pendingAnonymousCompactionNotifications: Array<{ turnId?: string }> = [];
   private connected = false;
   private connectionPromise: Promise<void> | null = null;
   private closed = false;
@@ -4225,6 +4247,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     };
   }
 
+  setHistoryReconciliationActive(active: boolean): void {
+    this.isHistoryReconciliationActive = active;
+  }
+
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
     if (!this.isPersistedHistoryLoaded && !this.hasHistoryPageStarted && this.currentThreadId) {
       await this.loadPersistedHistory();
@@ -4579,6 +4605,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     pendingRequest: AgentPermissionRequest;
   }): void {
     const { requestId, response, pendingRequest } = params;
+    const nativeItemId =
+      typeof pendingRequest.metadata?.itemId === "string" ? pendingRequest.metadata.itemId : null;
     let fallbackName: string;
     if (pendingRequest.name === "CodexBash") {
       fallbackName = "shell";
@@ -4606,6 +4634,7 @@ export class CodexAppServerAgentSession implements AgentSession {
           denied: true,
         },
       },
+      ...this.nativeItemIdentity(nativeItemId),
     });
   }
 
@@ -5039,7 +5068,9 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private nativeItemIdentity(itemId: string | null | undefined): { nativeItemId?: string } {
-    return this.isHistoryPageRequestActive && itemId ? { nativeItemId: itemId } : {};
+    return (this.isHistoryPageRequestActive || this.isHistoryReconciliationActive) && itemId
+      ? { nativeItemId: itemId }
+      : {};
   }
 
   private emitEvent(event: AgentStreamEvent): void {
@@ -5407,6 +5438,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       return false;
     }
     const consumedPendingCompaction = this.consumePendingRootCompaction(item.id);
+    const compactionItemId = item.id ?? consumedPendingCompaction?.itemId;
     const hasDifferentPendingCompaction =
       this.pendingRootCompactionItemIds.size > 0 || this.pendingAnonymousRootCompactions > 0;
     const isLateCompletionForOlderItem =
@@ -5420,10 +5452,34 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.unpairedCompactionNotificationCompletions -= 1;
       return true;
     }
+    if (consumedPendingCompaction?.itemId) {
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: this.createContextCompactionTimelineItem("completed", compactionItemId),
+        ...this.nativeItemIdentity(compactionItemId),
+      });
+      this.unpairedCompactionItemCompletions += 1;
+      return true;
+    }
+    const pendingAnonymousNotification = this.pendingAnonymousCompactionNotifications.shift();
+    if (pendingAnonymousNotification) {
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: this.createContextCompactionTimelineItem("completed", compactionItemId),
+        ...this.nativeItemIdentity(compactionItemId),
+        ...(pendingAnonymousNotification.turnId
+          ? { turnId: pendingAnonymousNotification.turnId }
+          : {}),
+      });
+      return true;
+    }
     this.emitEvent({
       type: "timeline",
       provider: CODEX_PROVIDER,
-      item: this.createContextCompactionTimelineItem("completed", item.id),
+      item: this.createContextCompactionTimelineItem("completed", compactionItemId),
+      ...this.nativeItemIdentity(compactionItemId),
     });
     this.unpairedCompactionItemCompletions += 1;
     return true;
@@ -5462,7 +5518,12 @@ export class CodexAppServerAgentSession implements AgentSession {
     childThreadId?: string | null,
   ): void {
     if (!subAgentCallId) {
-      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: timelineItem,
+        ...this.nativeItemIdentity(timelineItem.callId),
+      });
       return;
     }
     this.upsertSubAgentChildItem(subAgentCallId, timelineItem.callId, timelineItem);
@@ -5713,6 +5774,7 @@ export class CodexAppServerAgentSession implements AgentSession {
               ? `${ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN}${parsed.delta}`
               : parsed.delta,
         },
+        ...this.nativeItemIdentity(parsed.itemId),
       });
       if (isFirstDeltaForItem) {
         this.pendingAssistantMessageBoundary = false;
@@ -5742,6 +5804,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         type: "timeline",
         provider: CODEX_PROVIDER,
         item: { type: "reasoning", text: parsed.delta },
+        ...this.nativeItemIdentity(parsed.itemId),
       });
       return;
     }
@@ -5812,6 +5875,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.completePendingRootCompactions();
+    this.completePendingAnonymousCompactionNotifications();
     if (parsed.status === "failed") {
       this.emitEvent({
         type: "turn_failed",
@@ -5856,6 +5920,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingAnonymousRootCompactions = 0;
     this.unpairedCompactionNotificationCompletions = 0;
     this.unpairedCompactionItemCompletions = 0;
+    this.pendingAnonymousCompactionNotifications.length = 0;
   }
 
   private handlePlanUpdatedNotification(
@@ -5955,6 +6020,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         type: "timeline",
         provider: CODEX_PROVIDER,
         item: this.createContextCompactionTimelineItem("completed", itemId),
+        ...this.nativeItemIdentity(itemId),
       });
     }
     for (let index = 0; index < this.pendingAnonymousRootCompactions; index += 1) {
@@ -5966,6 +6032,22 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     this.pendingRootCompactionItemIds.clear();
     this.pendingAnonymousRootCompactions = 0;
+  }
+
+  private completePendingAnonymousCompactionNotifications(): void {
+    // Old app-server versions can send only `thread/compacted`. Emit those
+    // notifications at the terminal boundary if no raw item supplied an ID.
+    for (const notification of this.pendingAnonymousCompactionNotifications.splice(0)) {
+      this.unpairedCompactionNotificationCompletions += 1;
+      const nativeItemId = codexContextCompactionNotificationIdentity(notification.turnId ?? null);
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: this.createContextCompactionTimelineItem("completed"),
+        ...(nativeItemId ? { nativeItemId } : {}),
+        ...(notification.turnId ? { turnId: notification.turnId } : {}),
+      });
+    }
   }
 
   private createContextCompactionTimelineItem(
@@ -6018,11 +6100,18 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     const pendingItemId = this.consumePendingRootCompaction()?.itemId;
+    if (!pendingItemId) {
+      this.pendingAnonymousCompactionNotifications.push(
+        parsed.turnId ? { turnId: parsed.turnId } : {},
+      );
+      return;
+    }
     this.unpairedCompactionNotificationCompletions += 1;
     this.emitEvent({
       type: "timeline",
       provider: CODEX_PROVIDER,
       item: this.createContextCompactionTimelineItem("completed", pendingItemId),
+      ...this.nativeItemIdentity(pendingItemId),
       ...(parsed.turnId ? { turnId: parsed.turnId } : {}),
     });
   }
@@ -6252,8 +6341,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (timelineItem.type === "assistant_message") {
       this.pendingAssistantMessageBoundary = true;
     }
-    for (const imageItem of imageItems) {
-      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: imageItem });
+    for (const [index, imageItem] of imageItems.entries()) {
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: imageItem,
+        ...this.nativeItemIdentity(itemId ? `${itemId}:${index + 1}` : undefined),
+      });
       this.pendingAssistantMessageBoundary = true;
     }
     if (itemId) {
@@ -6275,13 +6369,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (timelineItem.type === "assistant_message" && this.pendingAgentMessages.has(itemId)) {
       const streamedText = this.pendingAgentMessages.get(itemId) ?? "";
       this.pendingAgentMessages.delete(itemId);
-      this.emitMissingFinalTextSuffix(timelineItem, streamedText);
+      this.emitMissingFinalTextSuffix(timelineItem, streamedText, itemId);
       return true;
     }
     if (timelineItem.type === "reasoning" && this.pendingReasoning.has(itemId)) {
       const streamedText = this.pendingReasoning.get(itemId)?.join("") ?? "";
       this.pendingReasoning.delete(itemId);
-      this.emitMissingFinalTextSuffix(timelineItem, streamedText);
+      this.emitMissingFinalTextSuffix(timelineItem, streamedText, itemId);
       return true;
     }
     return false;
@@ -6290,9 +6384,17 @@ export class CodexAppServerAgentSession implements AgentSession {
   private emitMissingFinalTextSuffix(
     timelineItem: Extract<AgentTimelineItem, { type: "assistant_message" | "reasoning" }>,
     streamedText: string,
+    itemId: string,
   ): void {
     const item = this.buildMissingFinalTextSuffix(timelineItem, streamedText);
-    if (item) this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item });
+    if (item) {
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item,
+        ...this.nativeItemIdentity(itemId),
+      });
+    }
   }
 
   private buildMissingFinalTextSuffix(
@@ -6357,6 +6459,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         type: "timeline",
         provider: CODEX_PROVIDER,
         item: this.createContextCompactionTimelineItem("loading", parsed.item.id),
+        ...this.nativeItemIdentity(parsed.item.id),
       });
       return;
     }

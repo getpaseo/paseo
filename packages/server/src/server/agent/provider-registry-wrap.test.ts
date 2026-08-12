@@ -27,6 +27,7 @@ const OPTIONAL_AGENT_SESSION_METHOD_NAMES = [
   "revertBoth",
   "tryHandleOutOfBand",
   "loadHistoryPage",
+  "setHistoryReconciliationActive",
   "loadProviderSubagentHistory",
 ] as const satisfies readonly OptionalAgentSessionMethodName[];
 
@@ -151,6 +152,10 @@ class FakeSession implements AgentSession {
     return { kind: "page" as const, entries: [], hasOlder: false };
   }
 
+  setHistoryReconciliationActive(_active: boolean) {
+    this.recordedCalls.push("setHistoryReconciliationActive");
+  }
+
   async loadProviderSubagentHistory() {
     this.recordedCalls.push("loadProviderSubagentHistory");
   }
@@ -205,6 +210,7 @@ describe("wrapSessionProvider", () => {
     await wrapped.setThinkingOption?.("high");
     await wrapped.setFeature?.("feature-1", true);
     await wrapped.loadHistoryPage?.({ limit: 10 });
+    wrapped.setHistoryReconciliationActive?.(true);
     await wrapped.loadProviderSubagentHistory?.({ id: "child-1" });
     await wrapped.revertConversation?.({ messageId: "message-1" });
     await wrapped.revertFiles?.({ messageId: "message-1" });
@@ -218,6 +224,7 @@ describe("wrapSessionProvider", () => {
       "setThinkingOption",
       "setFeature",
       "loadHistoryPage",
+      "setHistoryReconciliationActive",
       "loadProviderSubagentHistory",
       "revertConversation",
       "revertFiles",

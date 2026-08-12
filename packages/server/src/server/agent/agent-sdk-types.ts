@@ -393,6 +393,8 @@ export interface AgentHistoryPageEntry {
   timestamp?: string;
   /** Provider-private identity used only to reconcile a page with live events. */
   nativeItemId?: string;
+  /** Additional provider-private identities for alternate live event representations. */
+  nativeItemAliases?: string[];
 }
 
 export type AgentHistoryPage =
@@ -649,6 +651,8 @@ export interface AgentSession {
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
   streamHistory(): AsyncGenerator<AgentStreamEvent>;
   loadHistoryPage?(input: { limit: number }): Promise<AgentHistoryPage>;
+  /** Provider-private: retain native item identities until the initial history page is installed. */
+  setHistoryReconciliationActive?(active: boolean): void;
   loadProviderSubagentHistory?(input: { id: string }): Promise<void>;
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;
   getAvailableModes(): Promise<AgentMode[]>;

@@ -445,6 +445,7 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
       }
     },
     loadHistoryPage: inner.loadHistoryPage?.bind(inner),
+    setHistoryReconciliationActive: inner.setHistoryReconciliationActive?.bind(inner),
     loadProviderSubagentHistory: inner.loadProviderSubagentHistory?.bind(inner),
     getRuntimeInfo: async () => mapRuntimeInfo(provider, await inner.getRuntimeInfo()),
     getAvailableModes: () => inner.getAvailableModes(),

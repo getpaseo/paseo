@@ -68,6 +68,7 @@ interface CollaborationModeRecord {
 }
 
 interface CodexSessionTestAccess {
+  handleCommandApprovalRequest(params: unknown): Promise<unknown>;
   ensureThreadLoaded(): Promise<void>;
   handleToolApprovalRequest(params: unknown): Promise<unknown>;
   handleNotification(method: string, params: unknown): void;
@@ -1202,6 +1203,174 @@ describe("Codex app-server provider", () => {
           nativeItemId: "newer-message",
         },
       ],
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("aliases a legacy compaction notification to its pageable history turn", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () => ({}),
+      "thread/turns/list": () => ({
+        data: [
+          {
+            id: "legacy-compact-turn",
+            items: [{ type: "contextCompaction", id: "legacy-compact-item" }],
+          },
+        ],
+        nextCursor: null,
+      }),
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({ sessionId: "persisted-thread" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    if (!session.loadHistoryPage) {
+      throw new Error("Codex session did not expose history paging");
+    }
+    asInternals(session).handleNotification("thread/compacted", {
+      threadId: "persisted-thread",
+      turnId: "legacy-compact-turn",
+    });
+    const page = await session.loadHistoryPage({ limit: 1 });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "persisted-thread",
+      turn: { status: "completed" },
+    });
+
+    expect(page).toEqual({
+      kind: "page",
+      hasOlder: false,
+      entries: [
+        {
+          item: { type: "compaction", status: "completed" },
+          nativeItemId: "legacy-compact-item",
+          nativeItemAliases: ["codex-context-compaction-turn:legacy-compact-turn"],
+        },
+      ],
+    });
+    expect(events).toContainEqual({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      turnId: "legacy-compact-turn",
+      nativeItemId: "codex-context-compaction-turn:legacy-compact-turn",
+      item: { type: "compaction", status: "completed" },
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("tags live delta and legacy tool rows while a history page is loading", async () => {
+    let markPageRequested: () => void;
+    const pageRequested = new Promise<void>((resolve) => {
+      markPageRequested = resolve;
+    });
+    let resolvePage: (value: unknown) => void;
+    const pageResponse = new Promise<unknown>((resolve) => {
+      resolvePage = resolve;
+    });
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () => ({}),
+      "thread/turns/list": () => {
+        markPageRequested();
+        return pageResponse;
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({ sessionId: "persisted-thread" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    if (!session.loadHistoryPage) {
+      throw new Error("Codex session did not expose history paging");
+    }
+    const page = session.loadHistoryPage({ limit: 1 });
+    await pageRequested;
+
+    appServer.says({ threadId: "persisted-thread", itemId: "live-message", text: "live" });
+    appServer.runsLegacyCommand({
+      threadId: "persisted-thread",
+      callId: "live-command",
+      command: "printf live",
+      output: "live",
+    });
+
+    await vi.waitFor(() => {
+      expect(events).toContainEqual({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        nativeItemId: "live-message",
+        item: { type: "assistant_message", messageId: "live-message", text: "live" },
+      });
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          provider: CODEX_PROVIDER,
+          nativeItemId: "live-command",
+          item: expect.objectContaining({ type: "tool_call", callId: "live-command" }),
+        }),
+      );
+    });
+
+    resolvePage({ data: [], nextCursor: null });
+    await page;
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("tags live items before the first pageable tail is installed", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () => ({}),
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({ sessionId: "persisted-thread" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    if (!session.setHistoryReconciliationActive) {
+      throw new Error("Codex session did not expose history reconciliation");
+    }
+    session.setHistoryReconciliationActive(true);
+    appServer.says({
+      threadId: "persisted-thread",
+      itemId: "before-tail-message",
+      text: "before tail",
+    });
+
+    await vi.waitFor(() => {
+      expect(events).toContainEqual({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        nativeItemId: "before-tail-message",
+        item: {
+          type: "assistant_message",
+          messageId: "before-tail-message",
+          text: "before tail",
+        },
+      });
+    });
+
+    session.setHistoryReconciliationActive(false);
+    appServer.says({
+      threadId: "persisted-thread",
+      itemId: "after-tail-message",
+      text: "after tail",
+    });
+
+    await vi.waitFor(() => {
+      expect(events).toContainEqual({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: {
+          type: "assistant_message",
+          messageId: "after-tail-message",
+          text: "\n\n---\n\nafter tail",
+        },
+      });
     });
     appServer.assertNoErrors();
     await session.close();
@@ -4558,6 +4727,71 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("tags root compaction markers while first-page reconciliation is active", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    session.setHistoryReconciliationActive?.(true);
+    asInternals(session).handleNotification("item/started", {
+      threadId: "test-thread",
+      item: { type: "contextCompaction", id: "compact-reconcile" },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: { type: "contextCompaction", id: "compact-reconcile" },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "compact-reconcile",
+        item: { type: "compaction", status: "loading" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "compact-reconcile",
+        item: { type: "compaction", status: "completed" },
+      },
+    ]);
+  });
+
+  test("tags a denied permission tool row while first-page reconciliation is active", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    session.setHistoryReconciliationActive?.(true);
+    const pendingPermission = asInternals(session).handleCommandApprovalRequest({
+      itemId: "native-denied-command",
+      threadId: "test-thread",
+      turnId: "test-turn",
+      command: "echo denied",
+    });
+    await session.respondToPermission("permission-native-denied-command", {
+      behavior: "deny",
+      message: "No",
+    });
+    await pendingPermission;
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        provider: "codex",
+        nativeItemId: "native-denied-command",
+        item: expect.objectContaining({
+          type: "tool_call",
+          callId: "permission-native-denied-command",
+          status: "failed",
+        }),
+      }),
+    );
+  });
+
   test("completes a pending Codex compaction when its turn ends", async () => {
     const { appServer, session, events, terminalEvent } = await startCompactionTurnTest();
 
@@ -4656,11 +4890,13 @@ describe("Codex app-server provider", () => {
     session.activeForegroundTurnId = null;
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
+    session.setHistoryReconciliationActive?.(true);
 
     asInternals(session).handleNotification("thread/compacted", {
       threadId: "test-thread",
       turnId: "legacy-compact-turn",
     });
+    expect(events).toEqual([]);
     asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
@@ -4674,6 +4910,7 @@ describe("Codex app-server provider", () => {
         type: "timeline",
         provider: "codex",
         turnId: "legacy-compact-turn",
+        nativeItemId: "legacy-compact-item",
         item: {
           type: "compaction",
           status: "completed",
@@ -4696,12 +4933,17 @@ describe("Codex app-server provider", () => {
       threadId: "test-thread",
       turnId: "legacy-compact-turn-2",
     });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { status: "completed" },
+    });
 
-    expect(events).toEqual([
+    expect(events.filter((event) => event.type === "timeline")).toEqual([
       {
         type: "timeline",
         provider: "codex",
         turnId: "legacy-compact-turn-1",
+        nativeItemId: "codex-context-compaction-turn:legacy-compact-turn-1",
         item: {
           type: "compaction",
           status: "completed",
@@ -4711,10 +4953,63 @@ describe("Codex app-server provider", () => {
         type: "timeline",
         provider: "codex",
         turnId: "legacy-compact-turn-2",
+        nativeItemId: "codex-context-compaction-turn:legacy-compact-turn-2",
         item: {
           type: "compaction",
           status: "completed",
         },
+      },
+    ]);
+  });
+
+  test("does not mispair an anonymous compaction notification with a known item", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    session.setHistoryReconciliationActive?.(true);
+
+    asInternals(session).handleNotification("thread/compacted", {
+      threadId: "test-thread",
+      turnId: "anonymous-before-known-item",
+    });
+    asInternals(session).handleNotification("item/started", {
+      threadId: "test-thread",
+      item: { type: "contextCompaction", id: "known-compaction" },
+    });
+    asInternals(session).handleNotification("thread/compacted", {
+      threadId: "test-thread",
+      turnId: "known-compaction-turn",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: { type: "contextCompaction", id: "known-compaction" },
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { status: "completed" },
+    });
+
+    expect(events.filter((event) => event.type === "timeline")).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "known-compaction",
+        item: { type: "compaction", status: "loading" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "known-compaction",
+        item: { type: "compaction", status: "completed" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "codex-context-compaction-turn:anonymous-before-known-item",
+        item: { type: "compaction", status: "completed" },
       },
     ]);
   });
@@ -5383,6 +5678,7 @@ describe("Codex app-server provider", () => {
 
     try {
       const { turnId } = await session.startTurn("capture a browser screenshot");
+      session.setHistoryReconciliationActive(true);
       appServer.child.stdout.write(
         `${JSON.stringify({
           method: "item/completed",
@@ -5422,6 +5718,7 @@ describe("Codex app-server provider", () => {
           type: "timeline",
           provider: "codex",
           turnId,
+          nativeItemId: "mcp-browser-screenshot",
           item: {
             type: "tool_call",
             callId: "mcp-browser-screenshot",
@@ -5454,6 +5751,7 @@ describe("Codex app-server provider", () => {
           type: "timeline",
           provider: "codex",
           turnId,
+          nativeItemId: "mcp-browser-screenshot:1",
           item: expect.objectContaining({ type: "assistant_message" }),
         },
       ]);
@@ -5706,6 +6004,64 @@ describe("Codex app-server provider", () => {
         provider: "codex",
         turnId: "test-turn",
         item: { type: "reasoning", text: "ing" },
+      },
+    ]);
+  });
+
+  test("tags reasoning deltas while first-page reconciliation is active", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    session.setHistoryReconciliationActive?.(true);
+    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+      itemId: "reasoning-item-reconcile",
+      delta: "Think",
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "reasoning-item-reconcile",
+        item: { type: "reasoning", text: "Think" },
+      },
+    ]);
+  });
+
+  test("tags a completed reasoning suffix while first-page reconciliation is active", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    session.setHistoryReconciliationActive?.(true);
+    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+      itemId: "reasoning-item-suffix",
+      delta: "Think",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      item: {
+        id: "reasoning-item-suffix",
+        type: "reasoning",
+        summary: ["Thinking!"],
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "reasoning-item-suffix",
+        item: { type: "reasoning", text: "Think" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "reasoning-item-suffix",
+        item: { type: "reasoning", text: "ing!" },
       },
     ]);
   });
