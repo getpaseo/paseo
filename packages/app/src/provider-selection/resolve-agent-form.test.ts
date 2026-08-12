@@ -310,7 +310,6 @@ describe("mergeSelectedComposerPreferences", () => {
             },
             claude: { model: "claude-sonnet-4-6" },
           },
-          favoriteModels: [{ provider: "codex", modelId: "gpt-5.4-mini" }],
         },
         provider: "codex",
         updates: { model: "gpt-5.4" },
@@ -326,7 +325,6 @@ describe("mergeSelectedComposerPreferences", () => {
         },
         claude: { model: "claude-sonnet-4-6" },
       },
-      favoriteModels: [{ provider: "codex", modelId: "gpt-5.4-mini" }],
     });
   });
 

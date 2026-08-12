@@ -72,9 +72,17 @@ environments:
     cwd: /workspace/project
     worktree:
       mode: branch-off
-      newBranch: paseo/review
+      newBranch: trigger-${{ paseo.execution.id }}
       base: origin/main
 ```
+
+`newBranch` is a branch-name string. Embed `${{ paseo.execution.id }}`, which renders the execution's UUID, so every execution branches off `base` on its own branch and keeps it when Hub retries or recovers that execution.
+
+One execution is one step run, so two steps selecting the same environment get separate branches.
+
+`${{ paseo.execution.id }}` is the only expression `newBranch` accepts. `paseo.prompt`, `paseo.context`, `paseo.inputs.*`, `values.*`, `steps.<id>.outputs.*`, and provider event fields are unavailable here, and each one fails bundle activation at the authored field, such as `.paseo/hub.yml.environments.review.worktree.newBranch`.
+
+`${{ paseo.execution.id }}` fails activation the same way anywhere else in a bundle. `branch` and `prNumber` take literal values.
 
 An environment is a complete named object. A step selects its name; objects are not inherited, merged, or partially overridden.
 

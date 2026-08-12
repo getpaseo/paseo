@@ -36,9 +36,11 @@ type HostSection =
   | "connections"
   | "pair-device"
   | "agents"
+  | "metadata"
   | "workspaces"
   | "providers"
   | "usage"
+  | "terminals"
   | "host";
 
 export async function openSettingsSection(page: Page, section: SettingsSection): Promise<void> {

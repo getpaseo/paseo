@@ -183,6 +183,31 @@ describe("checkout-git-actions-store", () => {
     ).toBe("idle");
   });
 
+  it("discards selected paths through the shared checkout action workflow", async () => {
+    const checkoutDiscardChanges = vi.fn(async () => ({ success: true, error: null }));
+    const client = { checkoutDiscardChanges };
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+
+    await useCheckoutGitActionsStore
+      .getState()
+      .discardChanges({ serverId, cwd, paths: ["renamed.ts", "original.ts"] });
+
+    expect(checkoutDiscardChanges).toHaveBeenCalledWith(cwd, {
+      paths: ["renamed.ts", "original.ts"],
+    });
+    expect(
+      useCheckoutGitActionsStore
+        .getState()
+        .getStatus({ serverId, cwd, actionId: "discard-changes" }),
+    ).toBe("success");
+  });
+
   for (const rpc of [
     {
       label: "forge",
