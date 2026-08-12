@@ -13,18 +13,8 @@ import { Gesture } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import {
-  formatPrTabLabel,
-  PullRequestPane,
-  PullRequestPaneError,
-  PullRequestPaneSkeleton,
-  PullRequestTabIcon,
-  usePrPaneData,
-} from "@/git/pull-request-panel";
-import { useCheckoutGitActionsStore } from "@/git/actions-store";
-import type { UsePrPaneDataResult } from "@/git/pull-request-panel/use-data";
+import { formatPrTabLabel, PullRequestTabIcon } from "@/git/pull-request-panel";
 import { usePanelStore, selectIsFileExplorerOpen, type ExplorerTab } from "@/stores/panel-store";
-import { useToast } from "@/contexts/toast-context";
 import { useCloseFileExplorerGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import { HEADER_INNER_HEIGHT } from "@/constants/layout";
@@ -35,17 +25,14 @@ import { useHasOwnedWindowChromeObstruction, WindowChromeSafeArea } from "@/util
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
-import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { resolveDesktopExplorerWidth } from "@/components/desktop-sidebar-layout";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
 } from "@/components/sidebar-resize-handle-layout";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
-import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
-import { resolveFocusedChatTarget } from "@/composer/focused-chat-target";
-import { createWorkspaceFileAttachment } from "@/attachments/workspace-file";
-import { useDraftStore } from "@/stores/draft-store";
+import { usePullRequestPanelAvailability } from "@/panels/pull-request-availability";
+import { PullRequestContent } from "@/panels/pull-request";
+import { useAddFileToChat } from "@/panels/use-add-file-to-chat";
 
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
 
@@ -318,31 +305,19 @@ function ExplorerSidebarContent({
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const toast = useToast();
   const hasRightWindowControls = useHasOwnedWindowChromeObstruction("top-right");
-  const canQueryPullRequest = isGit && Boolean(workspaceRoot);
-  const prPane = usePrPaneData({
+  const { prPane, showPullRequest: showPrTab } = usePullRequestPanelAvailability({
     serverId,
     cwd: workspaceRoot,
-    enabled: canQueryPullRequest && isOpen,
-    timelineEnabled: activeTab === "pr" && canQueryPullRequest && isOpen,
+    isGit,
+    requested: activeTab === "pr",
+    enabled: isOpen,
+    timelineEnabled: activeTab === "pr",
   });
-  const hasPullRequest = prPane.prNumber !== null;
-  const showPrTab = hasPullRequest || (activeTab === "pr" && prPane.isLoading);
   const requestedTab: ExplorerTab =
     !isGit && (activeTab === "changes" || activeTab === "pr") ? "files" : activeTab;
   const resolvedTab: ExplorerTab = requestedTab === "pr" && !showPrTab ? "changes" : requestedTab;
   const prTabLabel = formatPrTabLabel(prPane.prNumber);
-  const refreshGitActions = useCheckoutGitActionsStore((s) => s.refresh);
-  const handlePrRetry = useCallback(() => {
-    refreshGitActions({ serverId, cwd: workspaceRoot }).catch((error) => {
-      toast.error(error instanceof Error ? error.message : t("workspace.git.diff.failedRefresh"));
-    });
-  }, [refreshGitActions, serverId, t, toast, workspaceRoot]);
-  const workspaceAttachmentScopeKey = useMemo(
-    () => buildWorkspaceAttachmentScopeKey({ serverId, workspaceId, cwd: workspaceRoot }),
-    [serverId, workspaceId, workspaceRoot],
-  );
 
   return (
     <View style={styles.sidebarContent} pointerEvents="auto">
@@ -436,51 +411,14 @@ function ExplorerSidebarContent({
         {resolvedTab === "pr" && (
           <PrTabContent
             serverId={serverId}
+            workspaceId={workspaceId}
             cwd={workspaceRoot}
             prPane={prPane}
-            workspaceAttachmentScopeKey={workspaceAttachmentScopeKey}
-            onRetry={handlePrRetry}
           />
         )}
       </View>
     </View>
   );
-}
-
-/**
- * Shared add-to-chat state for the changes/files panes: both expose an "add file
- * to chat" action that attaches the file to the focused chat's composer.
- * Available only when a workspace with a focused chat is available.
- */
-function useAddFileToChat({
-  serverId,
-  workspaceId,
-}: Pick<SidebarContentProps, "serverId" | "workspaceId">) {
-  const workspaceKey = workspaceId
-    ? buildWorkspaceTabPersistenceKey({ serverId, workspaceId })
-    : null;
-  const layout = useWorkspaceLayoutStore((state) =>
-    workspaceKey ? state.layoutByWorkspace[workspaceKey] : undefined,
-  );
-  const focusTab = useWorkspaceLayoutStore((state) => state.focusTab);
-  const focusedChat = useMemo(
-    () => resolveFocusedChatTarget({ serverId, layout }),
-    [serverId, layout],
-  );
-  const addFile = useCallback(
-    (filePath: string) => {
-      if (!focusedChat || !workspaceKey) {
-        return;
-      }
-      void useDraftStore.getState().attachWorkspaceFile({
-        draftKey: focusedChat.draftKey,
-        attachment: createWorkspaceFileAttachment({ path: filePath }),
-      });
-      focusTab(workspaceKey, focusedChat.tabId);
-    },
-    [focusTab, focusedChat, workspaceKey],
-  );
-  return { addFile, canAddToChat: focusedChat !== null };
 }
 
 function ChangedFilesPane({
@@ -524,37 +462,7 @@ function FilesPane({
   );
 }
 
-interface PrTabContentProps {
-  serverId: string;
-  cwd: string;
-  prPane: UsePrPaneDataResult;
-  workspaceAttachmentScopeKey: string;
-  onRetry: () => void;
-}
-
-function PrTabContent({
-  serverId,
-  cwd,
-  prPane,
-  workspaceAttachmentScopeKey,
-  onRetry,
-}: PrTabContentProps) {
-  if (prPane.data) {
-    return (
-      <PullRequestPane
-        serverId={serverId}
-        cwd={cwd}
-        data={prPane.data}
-        activityLoading={prPane.activityLoading}
-        workspaceAttachmentScopeKey={workspaceAttachmentScopeKey}
-      />
-    );
-  }
-  if (prPane.error) {
-    return <PullRequestPaneError onRetry={onRetry} />;
-  }
-  return <PullRequestPaneSkeleton />;
-}
+const PrTabContent = PullRequestContent;
 
 // Static styles for Animated.Views — must NOT use Unistyles dynamic theme to
 // avoid the "Unable to find node on an unmounted component" crash when Unistyles

@@ -1,19 +1,21 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { View, type PointerEvent as RNPointerEvent } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { computeResizeHandleSizes } from "@/components/resize-handle-sizes";
+import { startResizeHandleDrag, type ResizeHandleDrag } from "@/components/resize-handle-drag";
 
 export interface ResizeHandleProps {
   direction: "horizontal" | "vertical";
   groupId: string;
   index: number;
   sizes: number[];
+  onPreviewResizeSplit: (groupId: string, sizes: number[]) => void;
   onResizeSplit: (groupId: string, sizes: number[]) => void;
 }
 
 interface PointerState {
   containerSize: number;
   pointerStart: number;
+  drag: ResizeHandleDrag;
 }
 
 function resetWindowHorizontalScroll() {
@@ -29,6 +31,7 @@ export function ResizeHandle({
   groupId,
   index,
   sizes,
+  onPreviewResizeSplit,
   onResizeSplit,
 }: ResizeHandleProps) {
   const { theme } = useUnistyles();
@@ -68,6 +71,12 @@ export function ResizeHandle({
         containerSize,
         pointerStart:
           direction === "horizontal" ? event.nativeEvent.clientX : event.nativeEvent.clientY,
+        drag: startResizeHandleDrag({
+          sizes,
+          index,
+          preview: (nextSizes) => onPreviewResizeSplit(groupId, nextSizes),
+          commit: (nextSizes) => onResizeSplit(groupId, nextSizes),
+        }),
       });
 
       if (pointerStatesRef.current.size === 1) {
@@ -113,14 +122,7 @@ export function ResizeHandle({
         const deltaRatio =
           (pointerCurrent - pointerState.pointerStart) / pointerState.containerSize;
 
-        onResizeSplit(
-          groupId,
-          computeResizeHandleSizes({
-            sizes,
-            index,
-            deltaRatio,
-          }),
-        );
+        pointerState.drag.move(deltaRatio);
       }
 
       function handlePointerUp(upEvent: PointerEvent) {
@@ -128,6 +130,7 @@ export function ResizeHandle({
           return;
         }
 
+        pointerStatesRef.current.get(pointerId)?.drag.finish();
         cleanup();
       }
 
@@ -135,7 +138,7 @@ export function ResizeHandle({
       window.addEventListener("pointerup", handlePointerUp);
       window.addEventListener("pointercancel", handlePointerUp);
     },
-    [direction, groupId, index, onResizeSplit, sizes],
+    [direction, groupId, index, onPreviewResizeSplit, onResizeSplit, sizes],
   );
 
   const handlePointerEnter = useCallback(() => {

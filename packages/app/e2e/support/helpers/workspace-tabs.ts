@@ -21,9 +21,19 @@ export async function waitForWorkspaceTabsVisible(page: Page): Promise<void> {
   await expect(visibleTestId(page, "workspace-tabs-row").first()).toBeVisible({
     timeout: 30_000,
   });
-  await expect(visibleTestId(page, "workspace-new-agent-tab-inline").first()).toBeVisible({
+  await expect(visibleTestId(page, "workspace-new-tab-menu-trigger").first()).toBeVisible({
     timeout: 30_000,
   });
+}
+
+/** Open the `+` menu in the tab row and pick "New agent". */
+export async function createAgentTabFromMenu(page: Page): Promise<void> {
+  const trigger = visibleTestId(page, "workspace-new-tab-menu-trigger").first();
+  await expect(trigger).toBeVisible({ timeout: 10_000 });
+  await trigger.click();
+  const item = visibleTestId(page, "workspace-new-tab-menu-agent").first();
+  await expect(item).toBeVisible({ timeout: 10_000 });
+  await item.click();
 }
 
 export async function getVisibleWorkspaceAgentTabIds(page: Page): Promise<string[]> {

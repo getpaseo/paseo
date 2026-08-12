@@ -1,6 +1,13 @@
 import { useMemo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import { Globe, SquarePen, SquareTerminal } from "lucide-react-native";
+import {
+  FileDiff,
+  FolderTree,
+  GitPullRequest,
+  Globe,
+  SquarePen,
+  SquareTerminal,
+} from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
 import {
   getTerminalProfileIcon,
@@ -27,6 +34,8 @@ export interface ResolvedPin {
 interface UsePinnedLaunchersInput {
   serverId: string;
   onLaunch: (target: PinnedTabTarget) => void;
+  isGit?: boolean;
+  hasPullRequest?: boolean;
 }
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -34,6 +43,9 @@ const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMut
 const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedGlobe = withUnistyles(Globe);
+const ThemedFileDiff = withUnistyles(FileDiff);
+const ThemedFolderTree = withUnistyles(FolderTree);
+const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 
 function ProviderPinIcon({
   iconKey,
@@ -57,7 +69,12 @@ export function ProfileIcon({ iconKey }: { iconKey: string | undefined }): React
   return <ThemedProviderPinIcon iconKey={iconKey} size={14} uniProps={mutedColorMapping} />;
 }
 
-export function usePinnedLaunchers({ serverId, onLaunch }: UsePinnedLaunchersInput): ResolvedPin[] {
+export function usePinnedLaunchers({
+  serverId,
+  onLaunch,
+  isGit,
+  hasPullRequest,
+}: UsePinnedLaunchersInput): ResolvedPin[] {
   const { t } = useTranslation();
   const pinned = usePinnedTargetsStore((state) => state.pinned);
   const { config } = useDaemonConfig(serverId);
@@ -69,7 +86,9 @@ export function usePinnedLaunchers({ serverId, onLaunch }: UsePinnedLaunchersInp
   return useMemo(() => {
     const resolved: ResolvedPin[] = [];
     for (const target of pinned) {
-      if (!isPinnedTargetAvailable(target, { isElectron: getIsElectron() })) {
+      if (
+        !isPinnedTargetAvailable(target, { isElectron: getIsElectron(), isGit, hasPullRequest })
+      ) {
         continue;
       }
       if (target.kind === "draft") {
@@ -99,6 +118,33 @@ export function usePinnedLaunchers({ serverId, onLaunch }: UsePinnedLaunchersInp
         });
         continue;
       }
+      if (target.kind === "working_diff") {
+        resolved.push({
+          key: pinnedTargetKey(target),
+          label: t("workspace.tabs.actions.changes"),
+          icon: <ThemedFileDiff size={14} uniProps={mutedColorMapping} />,
+          onPress: () => onLaunch(target),
+        });
+        continue;
+      }
+      if (target.kind === "files") {
+        resolved.push({
+          key: pinnedTargetKey(target),
+          label: t("workspace.tabs.actions.files"),
+          icon: <ThemedFolderTree size={14} uniProps={mutedColorMapping} />,
+          onPress: () => onLaunch(target),
+        });
+        continue;
+      }
+      if (target.kind === "pull_request") {
+        resolved.push({
+          key: pinnedTargetKey(target),
+          label: t("workspace.tabs.actions.pullRequest"),
+          icon: <ThemedGitPullRequest size={14} uniProps={mutedColorMapping} />,
+          onPress: () => onLaunch(target),
+        });
+        continue;
+      }
       const profile = profiles.find((entry) => entry.id === target.profileId);
       if (!profile) {
         continue;
@@ -111,5 +157,5 @@ export function usePinnedLaunchers({ serverId, onLaunch }: UsePinnedLaunchersInp
       });
     }
     return resolved;
-  }, [onLaunch, pinned, profiles, t]);
+  }, [hasPullRequest, isGit, onLaunch, pinned, profiles, t]);
 }

@@ -589,6 +589,7 @@ export const ko: TranslationResources = {
         renameAgent: "에이전트 이름 변경",
       },
       actions: {
+        newTab: "새 탭",
         newAgent: "새 에이전트",
         newTerminal: "새 터미널",
         preparingTerminal: "터미널 탭 준비 중",
@@ -597,6 +598,9 @@ export const ko: TranslationResources = {
         exitFocusMode: "집중 모드 종료",
         splitRight: "창을 오른쪽으로 분할",
         splitDown: "창을 아래로 분할",
+        changes: "변경 사항",
+        files: "파일",
+        pullRequest: "풀 리퀘스트",
         terminalProfilesMenu: "터미널 프로필",
         editTerminalProfiles: "프로필 편집…",
         pinTarget: "고정",
@@ -1667,6 +1671,17 @@ export const ko: TranslationResources = {
         reloadTitle: "디스크에서 다시 로드하시겠습니까?",
         reloadMessage: "로컬 변경사항이 손실됩니다.",
       },
+    },
+    files: {
+      label: "파일",
+      subtitle: "워크스페이스 파일",
+      tooltip: "워크스페이스 파일 탐색",
+    },
+    pullRequest: {
+      label: "풀 리퀘스트",
+      subtitle: "풀 리퀘스트 세부 정보",
+      emptyTitle: "No pull request yet",
+      emptyDescription: "Create a pull request for this checkout to see its details here.",
     },
     diff: {
       changesLabel: "변경 사항",

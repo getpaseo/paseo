@@ -5,9 +5,7 @@ import { isNative, isWeb } from "@/constants/platform";
 import { MarkdownTextSpan } from "@/components/markdown-text";
 import { MarkdownLinkText } from "@/components/markdown/link-text";
 import { AssistantLinkPressProvider, type AssistantLinkPress } from "./link-press-context";
-import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useStableEvent } from "@/hooks/use-stable-event";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { markdownCopyDataSet } from "@/assistant-selection-copy/markup";
 import { useAssistantFileLinkResolverContext } from "./provider";
@@ -32,21 +30,13 @@ export function AssistantMarkdownLink({
   monoSurface,
   children,
 }: AssistantMarkdownLinkProps) {
-  const { target, onHoverIn, onPress, onAuxPress } = useFileLink(source);
+  const { target, onHoverIn, onPress } = useFileLink(source);
   const { configRef } = useAssistantFileLinkResolverContext();
   const workspaceRoot = configRef.current.workspaceRoot;
   const tooltipPath = useMemo(
     () => (target ? formatInlinePathTargetForTooltip(target, workspaceRoot) : null),
     [target, workspaceRoot],
   );
-  const handleAnchorClickCapture = useStableEvent((event: MouseEvent<HTMLAnchorElement>) => {
-    event.preventDefault();
-    if (!isModifiedOpenEvent(event)) {
-      return;
-    }
-    event.stopPropagation();
-    onAuxPress();
-  });
   const linkPress = useMemo<AssistantLinkPress>(
     () => ({ onPress, accessibilityRole: "link" }),
     [onPress],
@@ -93,7 +83,7 @@ export function AssistantMarkdownLink({
       {...(unwrapForMarkdownCopy ? { "data-paseo-markdown-unwrap": "true" } : {})}
       href={source.href}
       title={source.title}
-      onClickCapture={handleAnchorClickCapture}
+      onClickCapture={preventAnchorNavigation}
       onAuxClickCapture={preventAnchorNavigation}
       style={LINK_ANCHOR_STYLE}
     >
@@ -209,8 +199,6 @@ const FILE_LINK_TOOLTIP_TRIGGER_STYLE: ViewStyle = {
   display: "inline-flex" as ViewStyle["display"],
 };
 
-const FILE_LINK_TOOLTIP_MOD_KEYS = ["mod"];
-
 function FileLinkHoverTooltip({
   filePath,
   children,
@@ -228,17 +216,9 @@ function FileLinkHoverTooltip({
       </TooltipTrigger>
       {filePath ? (
         <TooltipContent side="top" align="start" maxWidth={520}>
-          <View style={styles.tooltipBody}>
-            <Text selectable={false} style={styles.tooltipPath}>
-              {filePath}
-            </Text>
-            <View style={styles.tooltipHintRow}>
-              <Shortcut keys={FILE_LINK_TOOLTIP_MOD_KEYS} />
-              <Text selectable={false} style={styles.tooltipHintText}>
-                click for side pane
-              </Text>
-            </View>
-          </View>
+          <Text selectable={false} style={styles.tooltipPath}>
+            {filePath}
+          </Text>
         </TooltipContent>
       ) : null}
     </Tooltip>
@@ -255,26 +235,9 @@ function preventAnchorNavigation(event: MouseEvent<HTMLAnchorElement>): void {
   event.preventDefault();
 }
 
-function isModifiedOpenEvent(event: MouseEvent<HTMLElement>): boolean {
-  return event.metaKey || event.ctrlKey;
-}
-
 const styles = StyleSheet.create((theme) => ({
-  tooltipBody: {
-    gap: theme.spacing[1],
-  },
   tooltipPath: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-  },
-  tooltipHintRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-  },
-  tooltipHintText: {
-    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
   },

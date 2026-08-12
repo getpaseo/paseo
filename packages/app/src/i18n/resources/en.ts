@@ -585,6 +585,7 @@ export const en = {
         renameAgent: "Rename agent",
       },
       actions: {
+        newTab: "New tab",
         newAgent: "New agent",
         newTerminal: "New terminal",
         preparingTerminal: "Preparing terminal tab",
@@ -593,6 +594,9 @@ export const en = {
         exitFocusMode: "Exit focus mode",
         splitRight: "Split pane right",
         splitDown: "Split pane down",
+        changes: "Changes",
+        files: "Files",
+        pullRequest: "Pull request",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
         pinTarget: "Pin",
@@ -1667,6 +1671,17 @@ export const en = {
         reloadTitle: "Reload from disk?",
         reloadMessage: "Your local changes will be lost.",
       },
+    },
+    files: {
+      label: "Files",
+      subtitle: "Workspace files",
+      tooltip: "Browse workspace files",
+    },
+    pullRequest: {
+      label: "Pull request",
+      subtitle: "Pull request details",
+      emptyTitle: "No pull request yet",
+      emptyDescription: "Create a pull request for this checkout to see its details here.",
     },
     diff: {
       changesLabel: "Changes",

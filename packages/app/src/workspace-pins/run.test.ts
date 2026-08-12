@@ -8,7 +8,7 @@ const PROFILES: readonly TerminalProfile[] = [
 ];
 
 interface RecordedLaunch {
-  action: "draft" | "terminal" | "browser" | "profile";
+  action: "draft" | "terminal" | "browser" | "changes" | "files" | "pull_request" | "profile";
   profile?: TerminalProfileInput;
 }
 
@@ -18,6 +18,9 @@ function recordingHandlers() {
     createDraft: () => launches.push({ action: "draft" }),
     createTerminal: () => launches.push({ action: "terminal" }),
     createBrowser: () => launches.push({ action: "browser" }),
+    openChanges: () => launches.push({ action: "changes" }),
+    openFiles: () => launches.push({ action: "files" }),
+    openPullRequest: () => launches.push({ action: "pull_request" }),
     createTerminalWithProfile: (profile) => launches.push({ action: "profile", profile }),
   };
   return { launches, handlers };

@@ -2,6 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "../../../src/utils/host-routes";
 import { createTempGitRepo } from "./workspace";
 import { getServerId } from "./server-id";
+import { createAgentTabFromMenu } from "./workspace-tabs";
 
 // ─── Navigation ────────────────────────────────────────────────────────────
 
@@ -69,10 +70,10 @@ export async function pressNewTabShortcut(page: Page): Promise<void> {
 
 // ─── Tab bar assertions ───────────────────────────────────────────────────
 
-/** Assert the inline new-agent plus button is visible in the tab bar. */
+/** Assert the inline plus button is visible in the tab bar. */
 export async function assertNewChatTileVisible(page: Page): Promise<void> {
   await expect(
-    page.getByTestId("workspace-new-agent-tab-inline").filter({ visible: true }).first(),
+    page.getByTestId("workspace-new-tab-menu-trigger").filter({ visible: true }).first(),
   ).toBeVisible();
 }
 
@@ -85,14 +86,9 @@ export async function assertNewTabMenuTriggerVisible(page: Page): Promise<void> 
 
 // ─── Tab creation actions ─────────────────────────────────────────────────
 
-/** Click the inline plus button to create a draft/chat tab. */
+/** Open the new-tab menu and click "New agent" to create a draft/chat tab. */
 export async function clickNewChat(page: Page): Promise<void> {
-  const button = page
-    .getByTestId("workspace-new-agent-tab-inline")
-    .filter({ visible: true })
-    .first();
-  await expect(button).toBeVisible({ timeout: 10_000 });
-  await button.click();
+  await createAgentTabFromMenu(page);
 }
 
 /** Open the new-tab menu and click "New terminal". */
@@ -129,9 +125,9 @@ export async function waitForTabWithTitle(
   ).toBeVisible({ timeout });
 }
 
-/** Assert the inline new-agent plus button is visible in the tab bar. */
+/** Assert the inline plus button is visible in the tab bar. */
 export async function assertSingleNewTabButton(page: Page): Promise<void> {
-  const buttons = page.getByTestId("workspace-new-agent-tab-inline").filter({ visible: true });
+  const buttons = page.getByTestId("workspace-new-tab-menu-trigger").filter({ visible: true });
   const count = await buttons.count();
   expect(count).toBeGreaterThanOrEqual(1);
 }

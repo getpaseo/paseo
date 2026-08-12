@@ -5,17 +5,20 @@ import { FileDiff, GitCommitHorizontal } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import { TreeRail } from "@/components/tree-rail";
 import { useIsCompactFormFactor, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import {
   DiffFilesToolbar,
+  DiffViewModeToggle,
   DiffLayoutToggle,
   DiffModeMenu,
   DiffOptionsMenu,
   resolveDiffLayout,
   SharedDiffView,
+  ChangedFilesTree,
 } from "@/git/diff-pane";
 import { DiffTooLargeState } from "@/git/diff-too-large-state";
 import { useCommitDiffFiles } from "@/git/use-diff-files";
@@ -56,6 +59,9 @@ function useDiffPanelPreferences() {
   const toggleHideWhitespace = useCallback(() => {
     void updatePreferences({ hideWhitespace: !preferences.hideWhitespace });
   }, [preferences.hideWhitespace, updatePreferences]);
+  const toggleViewMode = useCallback(() => {
+    void updatePreferences({ viewMode: preferences.viewMode === "flat" ? "tree" : "flat" });
+  }, [preferences.viewMode, updatePreferences]);
 
   return {
     preferences,
@@ -65,6 +71,7 @@ function useDiffPanelPreferences() {
     toggleLayout,
     toggleWrapLines,
     toggleHideWhitespace,
+    toggleViewMode,
   };
 }
 
@@ -150,7 +157,7 @@ function WorkingDiffBody({
 function WorkingDiffPanel() {
   const { t } = useTranslation();
   const toast = useToast();
-  const { serverId, workspaceId, tabId, target } = usePaneContext();
+  const { serverId, workspaceId, tabId, target, retargetCurrentTab } = usePaneContext();
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isActive = useRetainedPanelActive();
@@ -212,8 +219,19 @@ function WorkingDiffPanel() {
     }),
     [expandedPaths, target.focusPath, target.focusRequestId, workingDiff.reviewActions],
   );
+  const handleSelectDiffFile = useCallback(
+    (path: string) =>
+      retargetCurrentTab({
+        kind: "working_diff",
+        focusPath: path,
+        focusRequestId: Date.now(),
+      }),
+    [retargetCurrentTab],
+  );
 
   const baseRefLabel = workingDiff.baseRef?.replace(/^refs\/(heads|remotes)\//, "") ?? "";
+  const showTreeRail =
+    panelPreferences.preferences.viewMode === "tree" && !panelPreferences.isCompact && Boolean(cwd);
   return (
     <View style={styles.container} testID="working-diff-panel">
       <View style={styles.toolbar}>
@@ -234,12 +252,21 @@ function WorkingDiffPanel() {
             />
           ) : null}
           {workingDiff.files.length > 0 ? (
-            <DiffFilesToolbar
-              allFileDiffsExpanded={allFilesExpanded}
-              isMobile={panelPreferences.isCompact}
-              testID="working-diff-toggle-expand-all"
-              onToggleExpandAll={toggleExpandAll}
-            />
+            <>
+              {!panelPreferences.isCompact ? (
+                <DiffViewModeToggle
+                  viewMode={panelPreferences.preferences.viewMode}
+                  isMobile={false}
+                  onToggle={panelPreferences.toggleViewMode}
+                />
+              ) : null}
+              <DiffFilesToolbar
+                allFileDiffsExpanded={allFilesExpanded}
+                isMobile={panelPreferences.isCompact}
+                testID="working-diff-toggle-expand-all"
+                onToggleExpandAll={toggleExpandAll}
+              />
+            </>
           ) : null}
           <DiffOptionsMenu
             hideWhitespace={panelPreferences.preferences.hideWhitespace}
@@ -255,14 +282,34 @@ function WorkingDiffPanel() {
         </View>
       </View>
       <View style={styles.body}>
-        <WorkingDiffBody
-          cwd={cwd}
-          isConnected={isConnected}
-          workingDiff={workingDiff}
-          hideWhitespace={panelPreferences.preferences.hideWhitespace}
-          displayPreferences={panelPreferences.displayPreferences}
-          mode={mode}
-        />
+        {showTreeRail ? (
+          <TreeRail testID="working-diff-tree-rail">
+            <WorkingDiffBody
+              cwd={cwd}
+              isConnected={isConnected}
+              workingDiff={workingDiff}
+              hideWhitespace={panelPreferences.preferences.hideWhitespace}
+              displayPreferences={panelPreferences.displayPreferences}
+              mode={mode}
+            />
+            <ChangedFilesTree
+              workspaceId={workspaceId}
+              cwd={cwd ?? ""}
+              files={workingDiff.files}
+              displayPreferences={panelPreferences.displayPreferences}
+              onSelectFile={handleSelectDiffFile}
+            />
+          </TreeRail>
+        ) : (
+          <WorkingDiffBody
+            cwd={cwd}
+            isConnected={isConnected}
+            workingDiff={workingDiff}
+            hideWhitespace={panelPreferences.preferences.hideWhitespace}
+            displayPreferences={panelPreferences.displayPreferences}
+            mode={mode}
+          />
+        )}
       </View>
     </View>
   );

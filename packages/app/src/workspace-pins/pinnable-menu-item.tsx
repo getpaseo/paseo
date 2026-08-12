@@ -4,9 +4,11 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Pin, PinOff } from "lucide-react-native";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { Shortcut } from "@/components/ui/shortcut";
 import { isNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import type { Theme } from "@/styles/theme";
+import type { ShortcutKey } from "@/utils/format-shortcut";
 import { pinnedTargetKey, type PinnedTabTarget } from "@/workspace-pins/target";
 import { usePinnedTargetsStore } from "@/workspace-pins/store";
 
@@ -22,6 +24,8 @@ interface PinnableMenuItemProps {
   disabled?: boolean;
   onSelect?: () => void;
   testID?: string;
+  /** Chord for the keyboard action that runs this target directly, shown beside the pin toggle. */
+  shortcut?: ShortcutKey[][] | null;
 }
 
 export function PinnableMenuItem({
@@ -31,6 +35,7 @@ export function PinnableMenuItem({
   disabled,
   onSelect,
   testID,
+  shortcut,
 }: PinnableMenuItemProps): ReactElement {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
@@ -58,28 +63,31 @@ export function PinnableMenuItem({
 
   const trailing = useMemo(
     () => (
-      <View style={slotStyle} pointerEvents={showToggle ? "auto" : "none"}>
-        <Pressable
-          onPress={handleTogglePin}
-          hitSlop={8}
-          style={styles.pinToggleButton}
-          accessibilityRole="button"
-          accessibilityLabel={
-            isPinned
-              ? t("workspace.tabs.actions.unpinTarget")
-              : t("workspace.tabs.actions.pinTarget")
-          }
-          testID={`workspace-pin-toggle-${pinnedTargetKey(target)}`}
-        >
-          {isPinned ? (
-            <ThemedPinOff size={14} uniProps={mutedColorMapping} />
-          ) : (
-            <ThemedPin size={14} uniProps={mutedColorMapping} />
-          )}
-        </Pressable>
+      <View style={styles.trailingRow}>
+        {shortcut ? <Shortcut chord={shortcut} /> : null}
+        <View style={slotStyle} pointerEvents={showToggle ? "auto" : "none"}>
+          <Pressable
+            onPress={handleTogglePin}
+            hitSlop={8}
+            style={styles.pinToggleButton}
+            accessibilityRole="button"
+            accessibilityLabel={
+              isPinned
+                ? t("workspace.tabs.actions.unpinTarget")
+                : t("workspace.tabs.actions.pinTarget")
+            }
+            testID={`workspace-pin-toggle-${pinnedTargetKey(target)}`}
+          >
+            {isPinned ? (
+              <ThemedPinOff size={14} uniProps={mutedColorMapping} />
+            ) : (
+              <ThemedPin size={14} uniProps={mutedColorMapping} />
+            )}
+          </Pressable>
+        </View>
       </View>
     ),
-    [handleTogglePin, isPinned, showToggle, slotStyle, t, target],
+    [handleTogglePin, isPinned, shortcut, showToggle, slotStyle, t, target],
   );
 
   return (
@@ -97,7 +105,12 @@ export function PinnableMenuItem({
   );
 }
 
-const styles = StyleSheet.create(() => ({
+const styles = StyleSheet.create((theme) => ({
+  trailingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
   pinToggleSlot: {
     width: 22,
     height: 22,
