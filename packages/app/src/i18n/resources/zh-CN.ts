@@ -198,6 +198,10 @@ export const zhCN: TranslationResources = {
     empty: "开始和这个 Agent 对话...",
     scrollToBottom: "滚动到底部",
     historyLoadFailed: "无法加载智能体历史记录",
+    working: {
+      tokens: "{{tokens}} 个令牌",
+      noOutput: "{{duration}}无输出",
+    },
     permission: {
       plan: "Plan",
       required: "需要权限",

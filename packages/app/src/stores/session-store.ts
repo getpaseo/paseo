@@ -88,6 +88,12 @@ export interface Agent {
   persistence: AgentPersistenceHandle | null;
   runtimeInfo?: AgentRuntimeInfo;
   lastUsage?: AgentUsage;
+  /** Output tokens the running turn has produced so far. Absent unless a turn is running. */
+  activeTurnOutputTokens?: number;
+  /** Daemon-measured idle duration at the moment this snapshot was built. */
+  activeTurnIdleMs?: number;
+  /** Client-clock instant `activeTurnIdleMs` arrived, so elapsed time can be added locally. */
+  activeTurnIdleReceivedAt?: Date;
   lastError?: string | null;
   title: string | null;
   cwd: string;

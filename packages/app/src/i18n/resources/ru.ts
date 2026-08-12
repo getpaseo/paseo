@@ -198,6 +198,10 @@ export const ru: TranslationResources = {
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
     historyLoadFailed: "Не удалось загрузить историю агента",
+    working: {
+      tokens: "{{tokens}} токенов",
+      noOutput: "нет вывода {{duration}}",
+    },
     permission: {
       plan: "План",
       required: "Требуется разрешение",

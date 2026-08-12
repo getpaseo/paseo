@@ -31,6 +31,8 @@ function createSnapshot(
     pendingPermissions: input.pendingPermissions ?? [],
     persistence: input.persistence ?? null,
     title: input.title ?? null,
+    activeTurnOutputTokens: input.activeTurnOutputTokens,
+    activeTurnIdleMs: input.activeTurnIdleMs,
     labels: (input.labels ?? {}) as AgentSnapshotPayload["labels"],
   };
 }
@@ -91,5 +93,30 @@ describe("normalizeAgentSnapshot", () => {
     expect(missing.parentAgentId).toBeNull();
     expect(empty.parentAgentId).toBeNull();
     expect(nonString.parentAgentId).toBeNull();
+  });
+
+  it("passes live turn progress through and stamps when the idle duration arrived", () => {
+    const receivedAt = new Date("2026-04-20T00:01:30.000Z");
+
+    const agent = normalizeAgentSnapshot(
+      createSnapshot({
+        activeTurnOutputTokens: 1_234,
+        activeTurnIdleMs: 5_000,
+      }),
+      "server-1",
+      receivedAt,
+    );
+    expect(agent.activeTurnOutputTokens).toBe(1_234);
+    expect(agent.activeTurnIdleMs).toBe(5_000);
+    // The receipt instant is the client's clock; the duration is the daemon's. Pairing them
+    // here is what lets the stall resolver add elapsed time without comparing the two clocks.
+    expect(agent.activeTurnIdleReceivedAt).toBe(receivedAt);
+  });
+
+  it("leaves the receipt instant unset when the daemon reports no idle duration", () => {
+    const agent = normalizeAgentSnapshot(createSnapshot(), "server-1", new Date());
+    expect(agent.activeTurnOutputTokens).toBeUndefined();
+    expect(agent.activeTurnIdleMs).toBeUndefined();
+    expect(agent.activeTurnIdleReceivedAt).toBeUndefined();
   });
 });

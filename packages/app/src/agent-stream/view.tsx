@@ -856,6 +856,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       () =>
         isTurnActive || bottomTurnFooterHost ? (
           <TurnFooter
+            serverId={resolvedServerId}
+            agentId={agentId}
             isRunning={isTurnActive}
             inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
             host={bottomTurnFooterHost}
@@ -866,6 +868,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         ) : null,
       [
+        agentId,
+        resolvedServerId,
         handleForkAssistantTurn,
         handleForkInFlightTurn,
         readOnly,

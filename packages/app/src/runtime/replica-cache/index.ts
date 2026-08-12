@@ -146,6 +146,10 @@ function deserializeTimeline(stored: StoredHost["timeline"]): SessionReplica["ti
 }
 
 function serializeAgent(agent: Agent): StoredAgent {
+  // NOTE: `activeTurnOutputTokens` and `activeTurnIdleMs` are deliberately
+  // omitted. They describe a turn that was in flight when the cache was written; restoring
+  // them on a cold start would resurrect a long-dead turn's token count and idle duration as
+  // if they were current. Their absence is the correct restored state, not an oversight.
   const snapshot: AgentSnapshotPayload = {
     id: agent.id,
     provider: agent.provider,

@@ -174,7 +174,16 @@ function startMetro(port: number, buffer: ReturnType<typeof createLineBuffer>): 
     env: {
       ...process.env,
       BROWSER: "none",
-      ...(process.env.E2E_DESKTOP_RUNTIME === "1" ? { PASEO_WEB_PLATFORM: "electron" } : {}),
+      ...(process.env.E2E_DESKTOP_RUNTIME === "1"
+        ? {
+            PASEO_WEB_PLATFORM: "electron",
+            // Metro inlines EXPO_PUBLIC_* at bundle time, so this never reaches a production
+            // build — it exists because the shipped 2-minute stall threshold is otherwise
+            // unreachable in a spec. Scoped to the desktop-runtime bundle so the default
+            // Chrome run keeps the real threshold and cannot pick up spurious stall labels.
+            EXPO_PUBLIC_PASEO_STALL_THRESHOLD_MS: "2000",
+          }
+        : {}),
     },
     stdio: ["ignore", "pipe", "pipe"],
     detached: false,

@@ -125,6 +125,21 @@ const MODELS: AgentModelDefinition[] = [
       intervalMs: 5,
     },
   },
+  {
+    provider: MOCK_LOAD_TEST_PROVIDER_ID,
+    id: "stalled-stream",
+    label: "Stalled stream",
+    description:
+      "Emits the turn's first chunk, then goes silent without ending the turn. Drives the working indicator's stalled state, which is otherwise unreachable from a provider that streams continuously.",
+    metadata: {
+      // One cycle drained at full speed — including the usage event that closes it, so the
+      // token count is populated — then `stallAfterCycles` stops the refill and the turn sits
+      // there producing nothing until `durationMs` finally ends it.
+      durationMs: 30 * 60 * 1000,
+      intervalMs: 25,
+      stallAfterCycles: 1,
+    },
+  },
 ];
 
 interface ActiveTurn {
@@ -135,6 +150,8 @@ interface ActiveTurn {
   cycle: number;
   durationMs: number;
   intervalMs: number;
+  /** Cycles to emit before going silent for the rest of the turn; undefined streams forever. */
+  stallAfterCycles: number | undefined;
   timer: ReturnType<typeof setTimeout> | null;
   resolve: (result: AgentRunResult) => void;
   completed: Promise<AgentRunResult>;
@@ -251,6 +268,7 @@ function resolveModelProfile(modelId: string | null | undefined): {
   modelId: string;
   durationMs: number;
   intervalMs: number;
+  stallAfterCycles: number | undefined;
 } {
   const model = MODELS.find((entry) => entry.id === modelId) ?? MODELS[0];
   const metadata = model.metadata ?? {};
@@ -260,6 +278,8 @@ function resolveModelProfile(modelId: string | null | undefined): {
       typeof metadata.durationMs === "number" ? metadata.durationMs : MOCK_LOAD_TEST_DURATION_MS,
     intervalMs:
       typeof metadata.intervalMs === "number" ? metadata.intervalMs : MOCK_LOAD_TEST_INTERVAL_MS,
+    stallAfterCycles:
+      typeof metadata.stallAfterCycles === "number" ? metadata.stallAfterCycles : undefined,
   };
 }
 
@@ -719,6 +739,7 @@ export class MockLoadTestAgentSession implements AgentSession {
       cycle: 0,
       durationMs: profile.durationMs,
       intervalMs: profile.intervalMs,
+      stallAfterCycles: profile.stallAfterCycles,
       timer: null,
       resolve,
       completed,
@@ -1333,6 +1354,13 @@ export class MockLoadTestAgentSession implements AgentSession {
     }
 
     if (turn.queue.length === 0) {
+      if (turn.stallAfterCycles !== undefined && turn.cycle >= turn.stallAfterCycles) {
+        // Go quiet without ending the turn. One timer for the whole remaining silence rather
+        // than a wakeup every `intervalMs`, since there is nothing left to emit until the turn
+        // times out at `durationMs`.
+        this.schedule(turn, turn.durationMs - elapsedMs);
+        return;
+      }
       turn.cycle += 1;
       turn.queue = buildCycleQueue(turn.turnId, turn.cycle);
     }
@@ -1388,6 +1416,9 @@ export class MockLoadTestAgentSession implements AgentSession {
             contextWindowUsedTokens: turn.emittedTokens * 2,
             contextWindowMaxTokens: 128_000,
           },
+          // Sibling of `usage`, cleared by the manager at every turn boundary. Reported here
+          // so the working indicator's live token slot is reachable from an e2e run.
+          activeTurnOutputTokens: turn.emittedTokens,
         });
         return;
       }

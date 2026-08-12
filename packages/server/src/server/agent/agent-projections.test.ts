@@ -471,6 +471,95 @@ describe("toAgentPayload", () => {
 
     expect(payload.features).toEqual(features);
   });
+
+  it("emits live turn progress while the agent is running", () => {
+    const agent = createManagedAgent({
+      lifecycle: "running",
+      activeTurnOutputTokens: 1234,
+      updatedAt: new Date("2025-01-01T00:00:00.000Z"),
+    });
+
+    const payload = toAgentPayload(agent, {
+      nowMs: new Date("2025-01-01T00:02:30.000Z").getTime(),
+    });
+
+    expect(payload.activeTurnOutputTokens).toBe(1234);
+    // The turn a count belongs to rides `activeTurn`, which the turn open/terminal sites own.
+    expect(payload.activeTurn?.turnId).toBe("test-turn-id");
+    expect(payload.activeTurnIdleMs).toBe(150_000);
+  });
+
+  it("omits the token count when the running agent has no progress yet", () => {
+    const agent = createManagedAgent({ lifecycle: "running" });
+
+    const payload = toAgentPayload(agent, { nowMs: agent.updatedAt.getTime() });
+
+    expect(payload.activeTurnOutputTokens).toBeUndefined();
+    // The idle duration still ships — it does not depend on the provider reporting usage.
+    expect(payload.activeTurnIdleMs).toBe(0);
+  });
+
+  it("withholds all live turn progress once the agent is no longer running", () => {
+    // The manager clears these at every turn boundary; this guard is the backstop for a
+    // missed clear, so a stale count can never render as the current turn's total.
+    for (const lifecycle of ["idle", "error", "closed"] as const) {
+      const agent = createManagedAgent({
+        lifecycle,
+        activeTurnOutputTokens: 1234,
+      });
+
+      const payload = toAgentPayload(agent);
+
+      expect(payload.activeTurnOutputTokens).toBeUndefined();
+      expect(payload.activeTurnIdleMs).toBeUndefined();
+    }
+  });
+
+  it("never reports a negative idle duration when updatedAt is ahead of the clock", () => {
+    const agent = createManagedAgent({
+      lifecycle: "running",
+      updatedAt: new Date("2025-01-01T00:00:10.000Z"),
+    });
+
+    const payload = toAgentPayload(agent, {
+      nowMs: new Date("2025-01-01T00:00:00.000Z").getTime(),
+    });
+
+    expect(payload.activeTurnIdleMs).toBe(0);
+  });
+
+  it("measures idleness from stream activity, not from every metadata write", () => {
+    // `touchUpdatedAt` fires for renames, mode changes, label writes and metadata-generated
+    // titles. None of those are the agent producing output, so if idleness were measured from
+    // `updatedAt` a background title generation would silently reset a genuine stall.
+    const agent = createManagedAgent({
+      lifecycle: "running",
+      lastStreamActivityAt: new Date("2025-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2025-01-01T00:04:00.000Z"),
+    });
+
+    const payload = toAgentPayload(agent, {
+      nowMs: new Date("2025-01-01T00:05:00.000Z").getTime(),
+    });
+
+    expect(payload.activeTurnIdleMs).toBe(300_000);
+  });
+
+  it("falls back to updatedAt before the first live stream event", () => {
+    // An agent restored from disk has no stream activity yet, and `updatedAt` is the closest
+    // thing to an activity instant that survives a restart.
+    const agent = createManagedAgent({
+      lifecycle: "running",
+      updatedAt: new Date("2025-01-01T00:00:00.000Z"),
+    });
+
+    const payload = toAgentPayload(agent, {
+      nowMs: new Date("2025-01-01T00:00:30.000Z").getTime(),
+    });
+
+    expect(agent.lastStreamActivityAt).toBeUndefined();
+    expect(payload.activeTurnIdleMs).toBe(30_000);
+  });
 });
 
 describe("toRecentProviderSessionDescriptorPayload", () => {

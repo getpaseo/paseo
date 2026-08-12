@@ -31,7 +31,16 @@ export function derivePendingPermissionKey(
   return `${agentId}:${fallbackId}`;
 }
 
-export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId: string) {
+export function normalizeAgentSnapshot(
+  snapshot: AgentSnapshotPayload,
+  serverId: string,
+  /**
+   * Client-clock instant this snapshot arrived. Paired with `activeTurnIdleMs`, which the
+   * daemon measured on its own clock: the client adds only its own elapsed-since-receipt, so
+   * the two clocks are never compared and skew between them cannot affect the result.
+   */
+  receivedAt: Date = new Date(),
+) {
   const createdAt = new Date(snapshot.createdAt);
   const updatedAt = new Date(snapshot.updatedAt);
   const lastUserMessageAt = snapshot.lastUserMessageAt
@@ -64,6 +73,9 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     persistence: snapshot.persistence ?? null,
     runtimeInfo: snapshot.runtimeInfo,
     lastUsage: snapshot.lastUsage,
+    activeTurnOutputTokens: snapshot.activeTurnOutputTokens,
+    activeTurnIdleMs: snapshot.activeTurnIdleMs,
+    activeTurnIdleReceivedAt: snapshot.activeTurnIdleMs === undefined ? undefined : receivedAt,
     lastError: snapshot.lastError ?? null,
     title: snapshot.title ?? null,
     cwd: snapshot.cwd,

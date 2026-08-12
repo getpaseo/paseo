@@ -356,6 +356,22 @@ interface ManagedAgentBase {
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
   lastUsage?: AgentUsage;
+  /**
+   * Output the currently running turn has produced. Cleared at every turn boundary (see
+   * `clearActiveTurnProgress`) so it can never be read as a completed turn's total — that is
+   * what `lastUsage` is for. Which turn it belongs to is `activeTurnId` above, which the turn
+   * open/terminal sites already maintain.
+   */
+  activeTurnOutputTokens?: number;
+  /**
+   * When the agent last produced live stream output, or last crossed a turn boundary. Distinct
+   * from `updatedAt`, which `touchUpdatedAt` also bumps for renames, mode changes, label writes
+   * and metadata-generated titles — none of which are the agent doing work. Silence is the whole
+   * signal here, so anything that resets the clock without the agent having produced output would
+   * hide a genuine stall. Undefined until the first live event; consumers fall back to
+   * `updatedAt`.
+   */
+  lastStreamActivityAt?: Date;
   lastError?: string;
   attention: AttentionState;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
@@ -781,6 +797,26 @@ export class AgentManager {
         maxItemsPerAgent,
       },
     };
+  }
+
+  /**
+   * Drop the running turn's live progress. Called at every turn boundary — both starts and
+   * all four terminal paths — and deliberately driven by event type rather than by whether
+   * usage was present, because providers emit terminal events with no usage at all (Claude's
+   * `completeAutonomousTurn` is one), so a usage-driven clear would leak the previous turn's
+   * count into the next one.
+   */
+  private clearActiveTurnProgress(agent: ManagedAgent): void {
+    agent.activeTurnOutputTokens = undefined;
+    // A boundary is itself an activity instant: a turn that just started has been silent for
+    // zero milliseconds, not for however long the gap before it was.
+    agent.lastStreamActivityAt = new Date();
+    // Progress mutations must strictly advance `updatedAt` — see `touchUpdatedAt`. The client
+    // orders directory updates by it and takes the incoming record on a tie, so two snapshots
+    // that disagree about progress at the same timestamp let whichever arrives last win. Most
+    // clears already ride a stream event that bumped it, but `finalizeForegroundTurn` clears
+    // without one when it holds the agent busy for a replacement turn.
+    this.touchUpdatedAt(agent);
   }
 
   private touchUpdatedAt(agent: ManagedAgent): Date {
@@ -2091,6 +2127,7 @@ export class AgentManager {
       agent.activeForegroundTurnId = turnId;
       this.openActiveTurn(agent, turnId, turnStartedAt);
       agent.lifecycle = "running";
+      this.clearActiveTurnProgress(agent);
       this.touchUpdatedAt(agent);
       // AgentManager owns the accepted-turn boundary. Publish liveness before the canonical
       // prompt so clients can retire optimistic activity without painting an idle frame.
@@ -2172,6 +2209,7 @@ export class AgentManager {
     }
     mutableAgent.activeForegroundTurnId = null;
     this.applyActiveTurnTerminal(mutableAgent, turnId);
+    this.clearActiveTurnProgress(mutableAgent);
     const terminalError = mutableAgent.lastError;
     const shouldHoldBusyForReplacement = mutableAgent.pendingReplacement && !terminalError;
     let nextLifecycle: "running" | "error" | "idle";
@@ -3491,6 +3529,10 @@ export class AgentManager {
     // Only update timestamp for live events, not history replay
     if (!options?.fromHistory) {
       this.touchUpdatedAt(agent);
+      // The single place the daemon observes the agent actually producing output, and therefore
+      // the only write site for the stall clock. Every other `touchUpdatedAt` call is a metadata
+      // write, not work.
+      agent.lastStreamActivityAt = new Date();
       if (this.agentStreamCoalescer.handle(agent.id, event)) {
         this.traceCoalescerBuffered(agent, event, eventTurnId);
         return false;
@@ -3617,6 +3659,12 @@ export class AgentManager {
         return undefined;
       case "usage_updated":
         agent.lastUsage = event.usage;
+        // Assign unconditionally, including undefined: a provider that stops reporting
+        // mid-turn should make the count disappear rather than freeze on a stale value.
+        agent.activeTurnOutputTokens = event.activeTurnOutputTokens;
+        // Redundant for a live event, which `handleStreamEvent` already stamped, but history
+        // replay skips that and would otherwise emit a changed count on an unchanged timestamp.
+        this.touchUpdatedAt(agent);
         this.emitState(agent);
         return undefined;
       case "mode_changed":
@@ -3777,6 +3825,7 @@ export class AgentManager {
     // If no usage on turn_completed, keep lastUsage as-is so context window
     // data accumulated during streaming isn't lost when the provider omits
     // it from the completion event.
+    this.clearActiveTurnProgress(agent);
     agent.lastError = undefined;
     if (
       !isForegroundEvent &&
@@ -3818,6 +3867,7 @@ export class AgentManager {
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
       agent.lifecycle = "error";
     }
+    this.clearActiveTurnProgress(agent);
     agent.lastError = event.error;
     await this.appendSystemErrorTimelineMessage(
       agent,
@@ -3860,6 +3910,7 @@ export class AgentManager {
     if (!isForegroundEvent && !agent.activeForegroundTurnId && !agent.pendingReplacement) {
       agent.lifecycle = "idle";
     }
+    this.clearActiveTurnProgress(agent);
     agent.lastError = undefined;
     this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Interrupted");
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
@@ -3885,6 +3936,7 @@ export class AgentManager {
       },
       "agent.manager.turn.started",
     );
+    this.clearActiveTurnProgress(agent);
     if (isForegroundEvent) {
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;

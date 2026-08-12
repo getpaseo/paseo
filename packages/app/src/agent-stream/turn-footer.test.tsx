@@ -10,6 +10,35 @@ vi.mock("react-native", () => ({
   View: ({ children, testID }: { children?: React.ReactNode; testID?: string }) => (
     <div data-testid={testID}>{children}</div>
   ),
+  Text: ({ children, testID }: { children?: React.ReactNode; testID?: string }) => (
+    <span data-testid={testID}>{children}</span>
+  ),
+}));
+
+// `WorkingActivity` — the token/stall slot beside the timestamp — reads the session store, the
+// host runtime and the activity map. This test is about control order, so all three are stubbed
+// to their quiet state: no agent record and no observed activity, which resolves to no slot at
+// all. That keeps the assertion below about layout rather than about the stall resolver, which
+// has its own table-driven test in `working-indicator-state.test.ts`.
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({ t: (key: string) => key }),
+}));
+
+vi.mock("@/stores/session-store", () => ({
+  useSessionStore: () => undefined,
+}));
+
+vi.mock("@/runtime/host-runtime", () => ({
+  useHostRuntimeIsConnected: () => true,
+  useHostRuntimeIsDirectoryLoading: () => false,
+}));
+
+vi.mock("@/runtime/host-features", () => ({
+  useHostFeature: () => true,
+}));
+
+vi.mock("@/runtime/activity/stream-activity", () => ({
+  readAgentStreamActivityAt: () => undefined,
 }));
 
 vi.mock("react-native-unistyles", () => ({
@@ -81,6 +110,8 @@ describe("TurnFooter", () => {
     act(() => {
       root?.render(
         <TurnFooter
+          serverId="host-1"
+          agentId="agent-1"
           isRunning
           inFlightTurnStartedAt={new Date("2026-08-01T10:00:00.000Z")}
           host={null}

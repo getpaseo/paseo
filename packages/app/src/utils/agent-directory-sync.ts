@@ -9,6 +9,7 @@ import { acceptAgentDirectoryUpdate } from "@/utils/agent-directory-update-polic
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
 import { getInitDeferred, getInitKey, rejectInitDeferred } from "@/utils/agent-initialization";
+import { forgetAgentStreamActivity } from "@/runtime/activity/stream-activity";
 
 type AgentDirectoryFetchEntry = FetchAgentsEntry;
 export type AgentDirectoryDelta = Extract<
@@ -101,6 +102,11 @@ export function replaceAgentPendingPermissions(serverId: string, agent: Agent): 
 export function removeAgentDirectoryReplica(serverId: string, agentId: string): void {
   const store = useSessionStore.getState();
   clearArchiveAgentPending({ queryClient, serverId, agentId });
+  // The stream-activity tracker is a module-scope map with no owner, so a removed agent's entry
+  // would otherwise live for the process lifetime. It is dropped here rather than at the call
+  // sites because this function is the one chokepoint every removal path goes through — the
+  // explicit `remove` delta, the `agent_deleted` subscription, and the snapshot-reconcile prune.
+  forgetAgentStreamActivity(serverId, agentId);
   const removeKey = <T>(current: Map<string, T>): Map<string, T> => {
     if (!current.has(agentId)) return current;
     const next = new Map(current);

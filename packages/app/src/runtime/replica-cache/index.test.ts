@@ -331,6 +331,41 @@ describe("ReplicaCache", () => {
     expect(Object.keys(useSessionStore.getState().sessions).sort()).toEqual(["host-a", "host-c"]);
   });
 
+  it("drops live turn progress on a cache round-trip", async () => {
+    // These three describe a turn that was in flight when the cache was written. Restoring them
+    // on a cold start would render a long-dead turn's token count and idle duration as current,
+    // which is silent and user-visible — so their absence is the assertion, not an oversight.
+    const storage = new MemoryStorage();
+    const cache = new ReplicaCache(storage);
+    cache.setHosts([SERVER_ID]);
+    seedSession();
+
+    const store = useSessionStore.getState();
+    store.setAgents(SERVER_ID, (agents) => {
+      const cached = agents.get("agent-1");
+      if (!cached) throw new Error("expected the seeded agent");
+      return new Map(agents).set("agent-1", {
+        ...cached,
+        status: "running",
+        activeTurnOutputTokens: 1_234,
+        activeTurnIdleMs: 90_000,
+        activeTurnIdleReceivedAt: new Date("2026-07-18T08:01:00.000Z"),
+      });
+    });
+    await cache.flush();
+
+    store.clearSession(SERVER_ID);
+    const reader = new ReplicaCache(storage);
+    reader.setHosts([SERVER_ID]);
+    await reader.restore();
+
+    const restored = useSessionStore.getState().sessions[SERVER_ID]?.agents.get("agent-1");
+    expect(restored).toBeDefined();
+    expect(restored?.activeTurnOutputTokens).toBeUndefined();
+    expect(restored?.activeTurnIdleMs).toBeUndefined();
+    expect(restored?.activeTurnIdleReceivedAt).toBeUndefined();
+  });
+
   it("rejects version 1 cache data and overwrites it on flush", async () => {
     const storage = new MemoryStorage();
     storage.values.set(

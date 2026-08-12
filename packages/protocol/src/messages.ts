@@ -789,6 +789,21 @@ export const AgentSnapshotPayloadSchema = z.object({
   persistence: AgentPersistenceHandleSchema.nullable(),
   runtimeInfo: AgentRuntimeInfoSchema.optional(),
   lastUsage: AgentUsageSchema.optional(),
+  /**
+   * Output tokens produced so far by the currently running turn. Absent when no turn is
+   * running, or when the provider does not report usage mid-turn. Which turn produced it is
+   * `activeTurn.turnId`, which lets a client discard a count that arrived out of order and
+   * belongs to a turn other than the one it is displaying.
+   */
+  activeTurnOutputTokens: z.number().optional(),
+  /**
+   * Milliseconds since the agent last produced stream activity, measured entirely on the
+   * daemon's clock at payload-build time. Deliberately a duration and never a timestamp:
+   * the daemon and the client are different machines with no clock-offset mechanism between
+   * them, so a timestamp the client compared against its own `Date.now()` would let clock
+   * skew fabricate or indefinitely suppress the derived idle state.
+   */
+  activeTurnIdleMs: z.number().optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()).default({}),
@@ -3086,6 +3101,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentDetach: z.boolean().optional(),
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
         agentThinkingUpdate: z.boolean().optional(),
+        // COMPAT(agentTurnIdle): added in v0.3.0, remove gate after 2027-01-31 once daemon floor >= v0.3.0.
+        agentTurnIdle: z.boolean().optional(),
         // COMPAT(daemonDiagnostics): added in v0.1.100, remove gate after 2026-12-25 once daemon floor >= v0.1.100.
         daemonDiagnostics: z.boolean().optional(),
         // COMPAT(daemonSelfUpdate): added in v0.1.93, remove gate after 2026-12-13.

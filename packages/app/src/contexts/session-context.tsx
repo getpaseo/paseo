@@ -38,6 +38,7 @@ import type { AgentSessionConfig } from "@getpaseo/protocol/agent-types";
 import type { GitSetupOptions } from "@getpaseo/protocol/messages";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { getHostRuntimeStore, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { recordAgentStreamActivity } from "@/runtime/activity/stream-activity";
 import { useVoiceAudioEngineOptional, useVoiceRuntimeOptional } from "@/contexts/voice-context";
 import type { AudioPlaybackSource } from "@/voice/audio-engine-types";
 import {
@@ -735,6 +736,12 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       // NOTE: We don't update lastActivityAt on every stream event to prevent
       // cascading rerenders. The agent_update handler updates agent.lastActivityAt
       // on status changes, which is sufficient for sorting and display purposes.
+      //
+      // The stall indicator still needs a per-message activity signal, so it gets one that
+      // costs no React work at all: a plain module-scope Map write, read during render by the
+      // one leaf that cares. Writing it into the store here instead would resurrect exactly
+      // the cascade the note above describes.
+      recordAgentStreamActivity(serverId, agentId);
     });
 
     const unsubAgentAttention = client.onAgentAttentionRequired((notification) => {

@@ -196,6 +196,12 @@ export const en = {
     empty: "Start chatting with this agent...",
     scrollToBottom: "Scroll to bottom",
     historyLoadFailed: "Couldn't load agent history",
+    working: {
+      // `{{tokens}}`, not `{{count}}`: `count` triggers i18next pluralization and the value is
+      // an already-formatted string such as "1.2k".
+      tokens: "{{tokens}} tokens",
+      noOutput: "no output for {{duration}}",
+    },
     permission: {
       plan: "Plan",
       required: "Permission Required",

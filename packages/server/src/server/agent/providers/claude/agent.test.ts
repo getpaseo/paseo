@@ -1564,6 +1564,18 @@ describe("ClaudeAgentSession context window usage", () => {
     };
   }
 
+  function createContentBlockDeltaEvent(text: string): Record<string, unknown> {
+    return {
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text },
+      },
+      session_id: "session-1",
+    };
+  }
+
   function createMessageDeltaEvent(outputTokens: number): Record<string, unknown> {
     return {
       type: "stream_event",
@@ -2345,6 +2357,110 @@ describe("ClaudeAgentSession context window usage", () => {
           },
         }),
       );
+    } finally {
+      await session.close();
+    }
+  });
+
+  function readActiveTurnOutputTokens(events: AgentStreamEvent[]): Array<number | undefined> {
+    return events
+      .filter((event): event is Extract<AgentStreamEvent, { type: "usage_updated" }> => {
+        return event.type === "usage_updated";
+      })
+      .map((event) => event.activeTurnOutputTokens);
+  }
+
+  test("accumulates active turn output tokens across API requests within one turn", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        createMessageDeltaEvent(25),
+        createMessageStartEvent({
+          input_tokens: 40,
+          cache_creation_input_tokens: 5,
+          cache_read_input_tokens: 10,
+        }),
+        createMessageDeltaEvent(7),
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      // The second request's message_start banks the first request's 25 before zeroing the
+      // per-request counter, so the turn total ends at 25 + 7 rather than the newest 7.
+      expect(readActiveTurnOutputTokens(events)).toEqual([0, 25, 25, 32]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("resets active turn output tokens at the start of the next turn", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        createMessageDeltaEvent(25),
+        createSuccessResult(),
+      ],
+      [createMessageStartEvent(), createMessageDeltaEvent(40), createSuccessResult()],
+    ]);
+
+    try {
+      const firstTurn = await collectStreamEvents(session);
+      const secondTurn = await collectStreamEvents(session);
+
+      expect(readActiveTurnOutputTokens(firstTurn)).toEqual([0, 25]);
+      // 40, not 65: the second turn starts from zero rather than carrying the first turn's total.
+      expect(readActiveTurnOutputTokens(secondTurn)).toEqual([0, 40]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("keeps active turn output tokens across a compaction boundary", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        createMessageDeltaEvent(25),
+        createCompactBoundary(),
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session, "/compact");
+
+      // Compaction resets the per-request counters, but it does not un-produce the turn's
+      // output. Dropping to 0 here would read as a restart to anyone watching the counter.
+      expect(readActiveTurnOutputTokens(events)).toEqual([0, 25, 25]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("a single-request turn reports only at its one message_delta boundary", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        // Text streaming produces no usage: message_delta only arrives once every content
+        // block has closed. This is why the counter cannot tick during generation, and why a
+        // plain single-request answer shows nothing until it is already finished.
+        createContentBlockDeltaEvent("Hello"),
+        createContentBlockDeltaEvent(" world"),
+        createMessageDeltaEvent(25),
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      expect(readActiveTurnOutputTokens(events)).toEqual([0, 25]);
     } finally {
       await session.close();
     }
