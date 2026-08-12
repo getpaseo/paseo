@@ -654,6 +654,7 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
+  private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -1517,6 +1518,10 @@ export class AgentManager {
   }
 
   async archiveAgent(agentId: string): Promise<{ archivedAt: string }> {
+    return this.runLifecycleMutation(agentId, () => this.archiveAgentUnlocked(agentId));
+  }
+
+  private async archiveAgentUnlocked(agentId: string): Promise<{ archivedAt: string }> {
     const agent = this.requireAgent(agentId);
     if (!this.registry) {
       throw new Error("Agent storage is not configured");
@@ -1565,15 +1570,23 @@ export class AgentManager {
       if (!child || child.archivedAt || child.labels?.[PARENT_AGENT_ID_LABEL] !== parentAgentId) {
         continue;
       }
-      if (shouldDetachFromArchivedParent(parent, child)) {
-        await this.detachAgent(child.id);
-        continue;
-      }
-      if (this.agents.has(child.id)) {
-        await this.archiveAgent(child.id);
-      } else {
-        await this.archiveSnapshot(child.id, new Date().toISOString());
-      }
+      await this.runLifecycleMutation(child.id, async () => {
+        const currentChild = await registry.get(child.id);
+        if (
+          !currentChild ||
+          currentChild.archivedAt ||
+          currentChild.labels?.[PARENT_AGENT_ID_LABEL] !== parentAgentId
+        ) {
+          return;
+        }
+        if (shouldDetachFromArchivedParent(parent, currentChild)) {
+          await this.detachAgentUnlocked(currentChild.id);
+        } else if (this.agents.has(currentChild.id)) {
+          await this.archiveAgentUnlocked(currentChild.id);
+        } else {
+          await this.archiveSnapshot(currentChild.id, new Date().toISOString());
+        }
+      });
     }
   }
 
@@ -1746,8 +1759,10 @@ export class AgentManager {
   }
 
   async setLabels(agentId: string, labels: Record<string, string>): Promise<void> {
-    const agent = this.requireAgent(agentId);
-    await this.writeLabels(agent.id, labels);
+    await this.runLifecycleMutation(agentId, async () => {
+      const agent = this.requireAgent(agentId);
+      await this.writeLabels(agent.id, labels);
+    });
   }
 
   private async writeLabels(agentId: string, patch: AgentLabelPatch): Promise<WriteLabelsResult> {
@@ -1786,6 +1801,14 @@ export class AgentManager {
   }
 
   async detachAgent(agentId: string): Promise<{
+    record: StoredAgentRecord;
+    live: boolean;
+    previousParentAgentId: string | null;
+  }> {
+    return this.runLifecycleMutation(agentId, () => this.detachAgentUnlocked(agentId));
+  }
+
+  private async detachAgentUnlocked(agentId: string): Promise<{
     record: StoredAgentRecord;
     live: boolean;
     previousParentAgentId: string | null;
@@ -1926,6 +1949,18 @@ export class AgentManager {
       labels?: Record<string, string>;
     },
   ): Promise<void> {
+    await this.runLifecycleMutation(agentId, () =>
+      this.updateAgentMetadataUnlocked(agentId, updates),
+    );
+  }
+
+  private async updateAgentMetadataUnlocked(
+    agentId: string,
+    updates: {
+      title?: string;
+      labels?: Record<string, string>;
+    },
+  ): Promise<void> {
     const liveAgent = this.getAgent(agentId);
     if (liveAgent) {
       if (updates.title) {
@@ -1938,6 +1973,24 @@ export class AgentManager {
     }
 
     await this.writeStoredMetadata(agentId, updates);
+  }
+
+  private async runLifecycleMutation<T>(agentId: string, mutation: () => Promise<T>): Promise<T> {
+    // Parent cascade classifies a child inside the same lane used by open-tab
+    // label writes, so a received ownership update cannot be overtaken.
+    const previous = this.lifecycleMutationTails.get(agentId) ?? Promise.resolve();
+    const result = previous.catch(() => undefined).then(mutation);
+    const tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.lifecycleMutationTails.set(agentId, tail);
+    void tail.finally(() => {
+      if (this.lifecycleMutationTails.get(agentId) === tail) {
+        this.lifecycleMutationTails.delete(agentId);
+      }
+    });
+    return result;
   }
 
   async runAgent(

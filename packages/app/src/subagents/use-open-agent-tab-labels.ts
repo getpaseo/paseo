@@ -1,10 +1,14 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSessionStore } from "@/stores/session-store";
 import { getOrCreateClientId } from "@/utils/client-id";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
 import { getAgentTabsNeedingOpenLabel } from "./open-tab-labels";
+
+function increment(value: number): number {
+  return value + 1;
+}
 
 export function useOpenAgentTabLabels(input: {
   client: DaemonClient | null;
@@ -17,6 +21,17 @@ export function useOpenAgentTabLabels(input: {
     (state) => state.sessions[input.serverId]?.agentDetails ?? null,
   );
   const pendingAgentIdsRef = useRef(new Set<string>());
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [retryVersion, setRetryVersion] = useState(0);
+
+  useEffect(
+    () => () => {
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const client = input.client;
@@ -55,6 +70,10 @@ export function useOpenAgentTabLabels(input: {
               error,
               agentId,
             });
+            retryTimerRef.current ??= setTimeout(() => {
+              retryTimerRef.current = null;
+              setRetryVersion(increment);
+            }, 2_000);
           } finally {
             pendingAgentIdsRef.current.delete(agentId);
           }
@@ -63,5 +82,5 @@ export function useOpenAgentTabLabels(input: {
         console.warn("[OpenAgentTabLabels] Failed to resolve client ID", { error });
       }
     })();
-  }, [agentDetails, agents, input.client, input.enabled, input.tabs]);
+  }, [agentDetails, agents, input.client, input.enabled, input.tabs, retryVersion]);
 }
