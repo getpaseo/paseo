@@ -10,6 +10,7 @@ import {
   fillComposerDraft,
   submitMessage,
 } from "../support/helpers/composer";
+import { readReplicaCache, writeReplicaCache } from "../support/helpers/replica-cache-storage";
 
 // UI plumbing contract against the dev mock provider. Real-provider behavior is tested in `daemon-e2e/*-rewind.real.e2e.test.ts`.
 
@@ -27,39 +28,28 @@ async function expectUserMessageVisible(page: Page, text: string): Promise<void>
 
 async function rewriteCachedMessageAsLegacyRow(page: Page, prompt: string): Promise<void> {
   await expect
-    .poll(() =>
-      page.evaluate((messageText) => {
-        const raw = localStorage.getItem("@paseo:replica-cache");
-        if (!raw) return false;
-        const cache = JSON.parse(raw) as {
-          hosts?: Array<{ timeline?: { items?: Array<Record<string, unknown>> } | null }>;
-        };
-        for (const host of cache.hosts ?? []) {
-          for (const item of host.timeline?.items ?? []) {
-            if (item.kind === "user_message" && item.text === messageText && item.messageId) {
-              return true;
-            }
+    .poll(async () => {
+      const cache = await readReplicaCache(page);
+      if (!cache) return false;
+      for (const host of cache.hosts ?? []) {
+        for (const item of host.timeline?.items ?? []) {
+          if (item.kind === "user_message" && item.text === prompt && item.messageId) {
+            return true;
           }
         }
-        return false;
-      }, prompt),
-    )
+      }
+      return false;
+    })
     .toBe(true);
 
-  await page.evaluate((messageText) => {
-    const key = "@paseo:replica-cache";
-    const raw = localStorage.getItem(key);
-    if (!raw) throw new Error("Replica cache was not persisted");
-    const cache = JSON.parse(raw) as {
-      hosts?: Array<{ timeline?: { items?: Array<Record<string, unknown>> } | null }>;
-    };
-    const cachedMessage = cache.hosts
-      ?.flatMap((host) => host.timeline?.items ?? [])
-      .find((item) => item.kind === "user_message" && item.text === messageText);
-    if (!cachedMessage) throw new Error("Cached user message was not found");
-    delete cachedMessage.messageId;
-    localStorage.setItem(key, JSON.stringify(cache));
-  }, prompt);
+  const cache = await readReplicaCache(page);
+  if (!cache) throw new Error("Replica cache was not persisted");
+  const cachedMessage = cache.hosts
+    ?.flatMap((host) => host.timeline?.items ?? [])
+    .find((item) => item.kind === "user_message" && item.text === prompt);
+  if (!cachedMessage) throw new Error("Cached user message was not found");
+  delete cachedMessage.messageId;
+  await writeReplicaCache(page, cache);
 }
 
 async function waitForCurrentSubmissionExcludedFromCache(
@@ -67,46 +57,34 @@ async function waitForCurrentSubmissionExcludedFromCache(
   prompt: string,
 ): Promise<void> {
   await expect
-    .poll(() =>
-      page.evaluate((messageText) => {
-        const raw = localStorage.getItem("@paseo:replica-cache");
-        if (!raw) return false;
-        const cache = JSON.parse(raw) as {
-          hosts?: Array<{ timeline?: { items?: Array<Record<string, unknown>> } | null }>;
-        };
-        return !cache.hosts
-          ?.flatMap((host) => host.timeline?.items ?? [])
-          .some(
-            (item) =>
-              item.kind === "user_message" &&
-              item.text === messageText &&
-              typeof item.clientMessageId === "string" &&
-              item.messageId === undefined,
-          );
-      }, prompt),
-    )
+    .poll(async () => {
+      const cache = await readReplicaCache(page);
+      if (!cache) return false;
+      return !cache.hosts
+        ?.flatMap((host) => host.timeline?.items ?? [])
+        .some(
+          (item) =>
+            item.kind === "user_message" &&
+            item.text === prompt &&
+            typeof item.clientMessageId === "string" &&
+            item.messageId === undefined,
+        );
+    })
     .toBe(true);
 }
 
 async function waitForCachedMessageWithoutProviderId(page: Page, prompt: string): Promise<void> {
   await expect
-    .poll(() =>
-      page.evaluate((messageText) => {
-        const raw = localStorage.getItem("@paseo:replica-cache");
-        if (!raw) return false;
-        const cache = JSON.parse(raw) as {
-          hosts?: Array<{ timeline?: { items?: Array<Record<string, unknown>> } | null }>;
-        };
-        return cache.hosts
-          ?.flatMap((host) => host.timeline?.items ?? [])
-          .some(
-            (item) =>
-              item.kind === "user_message" &&
-              item.text === messageText &&
-              item.messageId === undefined,
-          );
-      }, prompt),
-    )
+    .poll(async () => {
+      const cache = await readReplicaCache(page);
+      if (!cache) return false;
+      return cache.hosts
+        ?.flatMap((host) => host.timeline?.items ?? [])
+        .some(
+          (item) =>
+            item.kind === "user_message" && item.text === prompt && item.messageId === undefined,
+        );
+    })
     .toBe(true);
 }
 
