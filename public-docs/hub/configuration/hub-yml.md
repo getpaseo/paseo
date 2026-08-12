@@ -76,12 +76,7 @@ environments:
       base: origin/main
 ```
 
-`newBranch` is a literal branch name that may embed `${{ paseo.execution.id }}`, which renders the execution's UUID.
-
-| `newBranch`                         | Branches created                                         |
-| ----------------------------------- | -------------------------------------------------------- |
-| `paseo/review`                      | One, reused by every execution.                          |
-| `trigger-${{ paseo.execution.id }}` | One per execution, kept when Hub retries or recovers it. |
+`newBranch` is a branch-name string. Embed `${{ paseo.execution.id }}`, which renders the execution's UUID, so every execution branches off `base` on its own branch and keeps it when Hub retries or recovers that execution.
 
 One execution is one step run, so two steps selecting the same environment get separate branches.
 

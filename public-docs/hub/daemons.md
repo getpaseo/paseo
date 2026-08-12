@@ -84,7 +84,7 @@ worktree:
   base: origin/main
 ```
 
-`${{ paseo.execution.id }}` is optional and gives every execution its own branch off `origin/main`. A literal such as `newBranch: hub/investigation` reuses one branch instead.
+`${{ paseo.execution.id }}` renders the execution's UUID, so every execution gets its own branch off `origin/main`.
 
 [Environment fields](/docs/hub/configuration/hub-yml#environments) lists what `newBranch` accepts. See [Git worktrees](/docs/worktrees) for setup hooks and scripts.
 
