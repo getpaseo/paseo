@@ -1,4 +1,7 @@
 import { expect, test } from "../support/fixtures";
+import { gotoAppShell } from "../support/helpers/app";
+import { seedWorkspace } from "../support/helpers/seed-client";
+import { getServerId } from "../support/helpers/server-id";
 import { openSettingsSection } from "../support/helpers/settings";
 
 test("shows Pure black in the appearance picker", async ({ page }, testInfo) => {
@@ -13,6 +16,33 @@ test("shows Pure black in the appearance picker", async ({ page }, testInfo) => 
     path: testInfo.outputPath("appearance-theme-picker.png"),
     fullPage: true,
   });
+});
+
+test("keeps the selected workspace visible in Pure black", async ({ page }, testInfo) => {
+  const workspace = await seedWorkspace({
+    repoPrefix: "pure-black-selected-workspace-",
+    title: "Selected workspace",
+  });
+
+  try {
+    await page.addInitScript(() => {
+      localStorage.setItem("@paseo:app-settings", JSON.stringify({ theme: "pureBlack" }));
+    });
+    await gotoAppShell(page);
+
+    const row = page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspace.workspaceId}`);
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await row.click();
+
+    await expect(row).toHaveAttribute("aria-selected", "true");
+    await expect(row).toHaveCSS("background-color", "rgb(22, 22, 22)");
+    await page.screenshot({
+      path: testInfo.outputPath("pure-black-selected-workspace.png"),
+      fullPage: true,
+    });
+  } finally {
+    await workspace.cleanup();
+  }
 });
 
 test("applies the interface font size to settings text", async ({ page }) => {

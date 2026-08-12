@@ -12,11 +12,11 @@ Transfer the current task — context, decisions, failed attempts, constraints �
 
 ## Prerequisites
 
-Read the **paseo** skill. Before choosing a provider, read `~/.paseo/orchestration-preferences.json` unless the user explicitly named a provider in this request. Do not create the receiving agent until you have read it.
+Read the **paseo** skill. Call `list_profiles` before choosing the receiving agent. Do not create it until you have read the configured profiles and their `notes`.
 
 ## Parsing arguments
 
-1. **Provider** — explicit user request first; otherwise resolve from `impl` preference (or `ui` if the task is styling-only).
+1. **Agent profile** — explicit profile name first; otherwise choose the profile whose `notes` best match the work. Materialize it into `create_agent` as described by the **paseo** skill. If no profile fits, use Paseo's provider discovery fallback.
 2. **Isolation** — "in a worktree" / "worktree" → create a workspace with `isolation: "worktree"`, using a short branch name derived from the task.
 3. **Task description** — anything else the user said.
 

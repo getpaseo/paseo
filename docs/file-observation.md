@@ -1,0 +1,19 @@
+# File observation
+
+Use `packages/server/src/server/file-observer` for recursive filesystem observation. Create one observer service at the owning service boundary, subscribe roots through it, and close it during owner shutdown. Keep platform watchers, directory discovery, exclusion reconciliation, event batching, failure cleanup, diagnostics, and teardown inside the module. A consumer supplies a root and excluded subtrees; it must not branch on the platform or manage child watchers.
+
+Do not replace the Linux implementation with `fs.watch({ recursive: true })`. Node 22 implements Linux recursion in JavaScript by walking the tree and watching every file and directory. Paseo's directory-only Linux watcher already exhausted resources before ignored-tree pruning and a watcher cap were added in [#794](https://github.com/getpaseo/paseo/pull/794).
+
+Closing an observation must remain safe after its root is renamed or removed. Workspace archive removes owned worktrees while releasing observation references, so teardown cannot assume the watched path still exists.
+
+`unsubscribe()` is an awaited barrier. Once it resolves, no scan, reconciliation, queued event, native handle, or callback may remain. `updateIgnore()` is the equivalent barrier for excluded paths: events queued below a newly excluded root cannot be delivered after it resolves. Treat path disappearance while scanning, attaching, or receiving a watcher error as rename/archive churn. Surface permission and resource errors so WorkspaceGit can enter bounded polling.
+
+Linux topology repair is trailing-debounced and scoped to the renamed path. A file rename needs one classification stat; a new or moved directory scans only its subtree. Full-tree scans are reserved for startup and ignore-set replacement. The initial Linux scan conservatively emits existing files discovered before their directory watcher was installed; WorkspaceGit batches these into one refresh. Benchmark this startup cost with pre-populated trees.
+
+Windows and macOS use one native recursive watcher plus an ignored-pruned, directory-indexed inventory. Native events deliver immediately. Named events trigger serialized shallow scans of their parent directories; known directory events also reconcile that subtree. This recovers concrete create and delete paths omitted by coalescing without walking the whole root for each edit. Startup and exclusion changes use an awaited full inventory barrier. Activity arms a full safety audit 30 seconds after it settles, with a 30-second minimum interval and a five-minute starvation bound; pathless native events also trigger an immediate shallow root scan. Observation fails into polling rather than retaining more than 250,000 file and directory entries per root.
+
+Read aggregate health from the owning observer service. Runtime metrics include active observations, native handles, tracked native files, pending events and immediate reconciliation work, scoped and full reconciliation activity and latency, and failure counts. Delayed safety audits do not count as pending work. Closing the service releases every subscription and clears its diagnostics. Do not add path lists, watcher handles, or platform-specific controls to this interface.
+
+Git owns Git-ignore evaluation. The observer accepts absolute excluded roots and applies updates without replacing the observation or exposing its watcher topology. This keeps tracked files inside otherwise ignored directories observable and keeps Git policy out of the filesystem module.
+
+The real-filesystem contracts and daemon auto-archive lifecycle run in the normal server test suite. Use the scripts only for manual performance and soak work: `npm run measure:file-observer --workspace=@getpaseo/server` measures burst and sustained-create behavior, and `npm run repro:file-observer-teardown --workspace=@getpaseo/server` runs the teardown soak.

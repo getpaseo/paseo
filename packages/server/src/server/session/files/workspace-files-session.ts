@@ -7,6 +7,10 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import type {
   FileDownloadTokenRequest,
+  FileEntryCreateRequest,
+  FileEntryDeleteRequest,
+  FileEntryDuplicateRequest,
+  FileEntryRenameRequest,
   FileExplorerRequest,
   FileUploadRequest,
   FileSubscribeRequest,
@@ -18,9 +22,13 @@ import type {
 import { FileUploadStore } from "../../file-upload/index.js";
 import type { DownloadTokenStore } from "../../file-download/token-store.js";
 import {
+  createExplorerEntry,
+  deleteExplorerEntry,
+  duplicateExplorerEntry,
   getDownloadableFileInfo,
   listDirectoryEntries,
   readExplorerFile,
+  renameExplorerEntry,
   streamExplorerFile,
   writeExplorerFile,
 } from "../../file-explorer/service.js";
@@ -128,6 +136,80 @@ export class WorkspaceFilesSession {
     this.host.emit({
       type: "fs.file.write.response",
       payload: { result, requestId: request.requestId },
+    });
+  }
+
+  async handleFileEntryCreateRequest(request: FileEntryCreateRequest): Promise<void> {
+    const result = await createExplorerEntry({
+      root: request.cwd,
+      parentPath: request.parentPath,
+      name: request.name,
+      kind: request.kind,
+    });
+    this.host.emit({
+      type: "fs.entry.create.response",
+      payload: {
+        cwd: request.cwd,
+        parentPath: request.parentPath,
+        path: result.status === "ok" ? result.path : null,
+        success: result.status === "ok",
+        error: result.status === "ok" ? null : result.error,
+        requestId: request.requestId,
+      },
+    });
+  }
+
+  async handleFileEntryRenameRequest(request: FileEntryRenameRequest): Promise<void> {
+    const result = await renameExplorerEntry({
+      root: request.cwd,
+      relativePath: request.path,
+      name: request.name,
+    });
+    this.host.emit({
+      type: "fs.entry.rename.response",
+      payload: {
+        cwd: request.cwd,
+        path: request.path,
+        renamedPath: result.status === "ok" ? result.path : null,
+        success: result.status === "ok",
+        error: result.status === "ok" ? null : result.error,
+        requestId: request.requestId,
+      },
+    });
+  }
+
+  async handleFileEntryDuplicateRequest(request: FileEntryDuplicateRequest): Promise<void> {
+    const result = await duplicateExplorerEntry({
+      root: request.cwd,
+      relativePath: request.path,
+    });
+    this.host.emit({
+      type: "fs.entry.duplicate.response",
+      payload: {
+        cwd: request.cwd,
+        path: request.path,
+        duplicatedPath: result.status === "ok" ? result.path : null,
+        success: result.status === "ok",
+        error: result.status === "ok" ? null : result.error,
+        requestId: request.requestId,
+      },
+    });
+  }
+
+  async handleFileEntryDeleteRequest(request: FileEntryDeleteRequest): Promise<void> {
+    const result = await deleteExplorerEntry({
+      root: request.cwd,
+      relativePath: request.path,
+    });
+    this.host.emit({
+      type: "fs.entry.delete.response",
+      payload: {
+        cwd: request.cwd,
+        path: request.path,
+        success: result.status === "ok",
+        error: result.status === "ok" ? null : result.error,
+        requestId: request.requestId,
+      },
     });
   }
 

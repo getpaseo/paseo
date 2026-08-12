@@ -24,6 +24,15 @@ Open **Settings → your host → Providers**, tap the provider, then tap **Diag
 - **Daemon PATH** — the `PATH` Paseo is searching. Compare it to `echo $PATH` in a fresh terminal.
 - **Version** — whether the binary actually runs.
 
+From a terminal or agent, request the same diagnostic from the affected daemon:
+
+```bash
+paseo provider diagnostic <provider>
+paseo provider diagnostic <provider> --host <host:port> --json
+```
+
+Use `--host` when the affected daemon is not the CLI's default local daemon.
+
 `not found` together with a **Daemon PATH** that's missing your binary's directory is the common case: that directory is on your terminal's `PATH` but not on Paseo's.
 
 ### Fix it

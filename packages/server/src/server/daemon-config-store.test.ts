@@ -85,6 +85,76 @@ describe("DaemonConfigStore", () => {
     expect(loadPersistedConfig(paseoHome).daemon?.relay?.enabled).toBe(true);
   });
 
+  test("patch round-trips agent profiles through the strictly-parsed persisted config", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    store.patch({
+      agentProfiles: [
+        {
+          id: "profile_ui",
+          name: "UI work",
+          icon: "🎨",
+          provider: "claude",
+          model: "claude-opus-5",
+          modeId: "plan",
+          thinkingOptionId: "think-hard",
+          featureValues: { webSearch: true },
+          notes: "Use for components, layout and design tokens.",
+        },
+      ],
+    });
+
+    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles).toEqual([
+      {
+        id: "profile_ui",
+        name: "UI work",
+        icon: "🎨",
+        provider: "claude",
+        model: "claude-opus-5",
+        modeId: "plan",
+        thinkingOptionId: "think-hard",
+        featureValues: { webSearch: true },
+        notes: "Use for components, layout and design tokens.",
+      },
+    ]);
+    expect(store.get().agentProfiles).toHaveLength(1);
+  });
+
+  test("patch replaces the whole agent profile list rather than merging entries", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+      agentProfiles: [
+        { id: "a", name: "Keep", provider: "claude" },
+        { id: "b", name: "Drop", provider: "codex" },
+      ],
+    });
+
+    store.patch({ agentProfiles: [{ id: "a", name: "Keep", provider: "claude" }] });
+
+    expect(store.get().agentProfiles).toEqual([{ id: "a", name: "Keep", provider: "claude" }]);
+    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles).toHaveLength(1);
+  });
+
   test("rolls back config when a field transition fails", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);
