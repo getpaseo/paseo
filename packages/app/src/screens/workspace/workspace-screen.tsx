@@ -1669,6 +1669,7 @@ function toggleWorkspaceExplorerPane(input: ToggleWorkspaceExplorerPaneInput): v
 
   const store = useWorkspaceLayoutStore.getState();
   const layout = store.layoutByWorkspace[input.persistenceKey] ?? createDefaultLayout();
+  const parentTabId = findPaneById(layout.root, layout.focusedPaneId)?.focusedTabId ?? null;
   const explorerPaneId = store.explorerPaneIdByWorkspace[input.persistenceKey] ?? null;
   const explorerPane = findPaneById(layout.root, explorerPaneId);
   if (explorerPane) {
@@ -1684,7 +1685,9 @@ function toggleWorkspaceExplorerPane(input: ToggleWorkspaceExplorerPaneInput): v
   if (!ensuredPane) {
     return;
   }
-  const tabId = store.openTabFocused(input.persistenceKey, { kind: "working_diff" });
+  const tabId = parentTabId
+    ? store.openChildTabFocused(input.persistenceKey, { kind: "working_diff" }, parentTabId)
+    : store.openTabFocused(input.persistenceKey, { kind: "working_diff" });
   if (tabId) {
     store.moveTabToPane(input.persistenceKey, tabId, ensuredPane.paneId);
   }

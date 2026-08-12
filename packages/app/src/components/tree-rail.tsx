@@ -79,8 +79,13 @@ export function TreeRail({ children, testID }: TreeRailProps) {
 
   return (
     <View style={styles.container} testID={testID} onLayout={handleLayout}>
-      <View style={styles.content}>{content}</View>
-      <Animated.View style={[styles.rail, railWidthStyle]}>
+      <View style={styles.content} testID={testID ? `${testID}-content` : undefined}>
+        {content}
+      </View>
+      <Animated.View
+        style={[styles.rail, railWidthStyle]}
+        testID={testID ? `${testID}-tree` : undefined}
+      >
         <SidebarResizeHandle
           edge="left"
           gesture={resizeGesture}

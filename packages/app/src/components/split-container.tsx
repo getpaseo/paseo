@@ -964,6 +964,7 @@ function SplitNodeView({
           !isSplitNodeHidden(child) &&
           !isSplitNodeHidden(node.group.children[index + 1]) ? (
             <ResizeHandle
+              testID="workspace-split-resize-handle"
               direction={node.group.direction}
               groupId={node.group.id}
               index={index}

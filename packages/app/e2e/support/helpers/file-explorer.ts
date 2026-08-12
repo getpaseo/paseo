@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import { openFilesPanel } from "./workspace-tabs";
 
 function fileExplorerTree(page: Page) {
   return page.getByTestId("file-explorer-tree-scroll");
@@ -9,25 +10,7 @@ function fileExplorerEntry(page: Page, name: string) {
 }
 
 export async function openFileExplorer(page: Page): Promise<void> {
-  const openToggle = page.getByRole("button", { name: "Open explorer" }).first();
-  if (await openToggle.isVisible().catch(() => false)) {
-    await openToggle.click();
-  }
-  await expect(page.getByRole("button", { name: "Close explorer" }).first()).toBeVisible({
-    timeout: 10_000,
-  });
-
-  const explorerPane = page
-    .getByTestId("split-group-child")
-    .filter({ has: page.getByTestId("workspace-tab-working_diff") })
-    .filter({ visible: true })
-    .first();
-  const filesTab = explorerPane.getByTestId("workspace-tab-files");
-  if ((await filesTab.count()) === 0) {
-    await explorerPane.getByTestId("workspace-new-tab-menu-trigger").click();
-    await page.getByTestId("workspace-new-tab-menu-files").filter({ visible: true }).click();
-  }
-  await filesTab.click();
+  await openFilesPanel(page);
   await expect(fileExplorerTree(page)).toBeVisible({ timeout: 30_000 });
 }
 

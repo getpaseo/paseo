@@ -434,6 +434,7 @@ function ChangedFilesPane({
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
   return (
     <GitDiffPane
+      host="explorer"
       serverId={serverId}
       workspaceId={workspaceId}
       cwd={workspaceRoot}

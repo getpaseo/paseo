@@ -1,10 +1,14 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { test, expect, type Page } from "../support/fixtures";
+import { test, expect } from "../support/fixtures";
 import { gotoWorkspace, clickNewTerminal } from "../support/helpers/launcher";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import { expectExplorerEntryVisible, openFileExplorer } from "../support/helpers/file-explorer";
-import { expectNoTerminalTabs, clickFirstTerminalTab } from "../support/helpers/workspace-tabs";
+import {
+  expectNoTerminalTabs,
+  clickFirstTerminalTab,
+  openChangesPanel,
+} from "../support/helpers/workspace-tabs";
 
 // Model B: two workspaces can back the SAME directory. What follows from that
 // split is the contract these specs pin:
@@ -12,18 +16,6 @@ import { expectNoTerminalTabs, clickFirstTerminalTab } from "../support/helpers/
 //     across same-directory workspaces.
 //   - Tabs (agents, terminals) are owned by the workspace, so they are
 //     INDEPENDENT across same-directory workspaces.
-
-async function openChangesPanel(page: Page): Promise<void> {
-  const explorerPane = page
-    .getByTestId("split-group-child")
-    .filter({ has: page.getByTestId("workspace-tab-working_diff") })
-    .filter({ visible: true })
-    .first();
-  await explorerPane.getByTestId("workspace-tab-working_diff").click();
-  await expect(page.getByTestId("working-diff-panel").filter({ visible: true })).toBeVisible({
-    timeout: 30_000,
-  });
-}
 
 async function createSecondWorkspaceOnSameDir(
   seeded: SeededWorkspace,

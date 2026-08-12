@@ -17,6 +17,58 @@ function visibleTestId(page: Page, testId: string) {
   return page.getByTestId(testId).filter({ visible: true });
 }
 
+function explorerPaneTabRow(page: Page) {
+  return visibleTestId(page, "workspace-tabs-row")
+    .filter({ has: page.getByTestId("workspace-tab-working_diff") })
+    .first();
+}
+
+export async function ensureExplorerPane(page: Page) {
+  const toggle = page.getByTestId("workspace-explorer-toggle").first();
+  await expect(toggle).toBeVisible({ timeout: 30_000 });
+  const tabRow = explorerPaneTabRow(page);
+  if ((await tabRow.count()) === 0) {
+    await toggle.click();
+  }
+  await expect(tabRow).toBeVisible({ timeout: 30_000 });
+  return tabRow;
+}
+
+export async function openChangesPanel(page: Page): Promise<void> {
+  const tabRow = await ensureExplorerPane(page);
+  await tabRow.getByTestId("workspace-tab-working_diff").click();
+  await expect(visibleTestId(page, "working-diff-panel").first()).toBeVisible({
+    timeout: 30_000,
+  });
+}
+
+export async function openFilesPanel(page: Page): Promise<void> {
+  const tabRow = await ensureExplorerPane(page);
+  const filesTab = tabRow.getByTestId("workspace-tab-files");
+  if ((await filesTab.count()) === 0) {
+    await tabRow.getByTestId("workspace-new-tab-menu-trigger").click();
+    await visibleTestId(page, "workspace-new-tab-menu-files").first().click();
+  }
+  await filesTab.click();
+}
+
+export async function openPullRequestPanel(page: Page): Promise<void> {
+  const existingTab = visibleTestId(page, "workspace-tab-pull_request").first();
+  if ((await existingTab.count()) > 0) {
+    await existingTab.click();
+    await expect(visibleTestId(page, "pr-pane").first()).toBeVisible({ timeout: 15_000 });
+    return;
+  }
+  const tabRow = await ensureExplorerPane(page);
+  const pullRequestTab = tabRow.getByTestId("workspace-tab-pull_request");
+  if ((await pullRequestTab.count()) === 0) {
+    await tabRow.getByTestId("workspace-new-tab-menu-trigger").click();
+    await visibleTestId(page, "workspace-new-tab-menu-pull-request").first().click();
+  }
+  await pullRequestTab.click();
+  await expect(visibleTestId(page, "pr-pane").first()).toBeVisible({ timeout: 15_000 });
+}
+
 export async function waitForWorkspaceTabsVisible(page: Page): Promise<void> {
   await expect(visibleTestId(page, "workspace-tabs-row").first()).toBeVisible({
     timeout: 30_000,

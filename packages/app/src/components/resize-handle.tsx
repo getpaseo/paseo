@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { startResizeHandleDrag, type ResizeHandleDrag } from "@/components/resize-handle-drag";
 
 export interface ResizeHandleProps {
+  testID?: string;
   direction: "horizontal" | "vertical";
   groupId: string;
   index: number;
@@ -27,6 +28,7 @@ function resetWindowHorizontalScroll() {
 }
 
 export function ResizeHandle({
+  testID,
   direction,
   groupId,
   index,
@@ -184,8 +186,14 @@ export function ResizeHandle({
   );
 
   return (
-    <View style={handleStyle}>
-      {highlighted && <View pointerEvents="none" style={highlightStyle} />}
+    <View style={handleStyle} testID={testID}>
+      {highlighted && (
+        <View
+          pointerEvents="none"
+          style={highlightStyle}
+          testID={testID ? `${testID}-highlight` : undefined}
+        />
+      )}
       <View
         role="separator"
         aria-orientation={direction === "horizontal" ? "vertical" : "horizontal"}
