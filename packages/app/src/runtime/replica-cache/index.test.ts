@@ -272,7 +272,7 @@ describe("ReplicaCache", () => {
       version: number;
       hosts: Array<{ timeline: Record<string, unknown> | null }>;
     };
-    expect(persisted.version).toBe(3);
+    expect(persisted.version).toBe(4);
     expect(Object.keys(persisted.hosts[0]?.timeline ?? {}).sort()).toEqual(["agentId", "items"]);
   });
 
@@ -331,12 +331,12 @@ describe("ReplicaCache", () => {
     expect(Object.keys(useSessionStore.getState().sessions).sort()).toEqual(["host-a", "host-c"]);
   });
 
-  it("rejects version 1 cache data and overwrites it on flush", async () => {
+  it("rejects version 3 cache data and overwrites it on flush", async () => {
     const storage = new MemoryStorage();
     storage.values.set(
       "@paseo:replica-cache",
       JSON.stringify({
-        version: 1,
+        version: 3,
         hosts: [
           {
             serverId: SERVER_ID,
@@ -361,7 +361,7 @@ describe("ReplicaCache", () => {
 
     expect(useSessionStore.getState().sessions[SERVER_ID]).toBeUndefined();
     expect(JSON.parse(storage.values.get("@paseo:replica-cache") ?? "null")).toEqual({
-      version: 3,
+      version: 4,
       hosts: [],
     });
   });

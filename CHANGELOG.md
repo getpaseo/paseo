@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0-beta.2 - 2026-08-12
+
+### Fixed
+
+- Fix old chat caches making the app refuse to start
+- Open delegated agents remain available when their parent is archived ([#3279](https://github.com/getpaseo/paseo/pull/3279))
+
 ## 0.4.0-beta.1 - 2026-08-12
 
 ### Breaking
