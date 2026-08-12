@@ -3,7 +3,7 @@ import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
 import { useSessionStore, type Agent } from "@/stores/session-store";
-import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
 import {
   applyAgentDirectoryDelta,
   type AgentDirectoryDelta,
@@ -14,7 +14,12 @@ import {
 } from "@/utils/agent-directory-sync";
 import { reconcileAgentDirectory } from "@/utils/agent-directory-reconciliation";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
-import { projectAgentDirectoryEntry } from "./agent-projection";
+
+function projectAgentDirectoryEntry(agent: Agent): FetchAgentsEntry | null {
+  return agent.projectPlacement
+    ? { agent: projectAgentSnapshot(agent), project: agent.projectPlacement }
+    : null;
+}
 
 export interface AgentLifecycleToken {
   readonly agentId: string;
