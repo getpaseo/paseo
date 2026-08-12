@@ -1431,6 +1431,29 @@ export class AgentManager {
     return close;
   }
 
+  async relocateAgentForNextResume(agentId: string, cwd: string): Promise<void> {
+    const liveAgent = this.agents.get(agentId);
+    if (liveAgent) {
+      liveAgent.cwd = cwd;
+    }
+
+    const inFlightClose = this.inFlightAgentCloses.get(agentId);
+    if (!inFlightClose) {
+      if (liveAgent) {
+        return;
+      }
+    } else {
+      await inFlightClose.catch(() => undefined);
+    }
+
+    const registry = this.requireRegistry();
+    const stored = await registry.get(agentId);
+    if (!stored) {
+      throw new Error(`Agent ${agentId} not found in storage after relocation`);
+    }
+    await registry.upsert({ ...stored, cwd, updatedAt: this.nextStoredUpdatedAt(stored) });
+  }
+
   private async closeAgentRuntime(agentId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
     this.logger.trace(
