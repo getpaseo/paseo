@@ -3,7 +3,7 @@ name: paseo
 description: Paseo reference for managing workspaces, workspace scripts, agents, schedules, and heartbeats.
 ---
 
-Paseo is a daemon that supervises AI coding agents on your machine. Control it through tools or a CLI.
+Paseo is a remote daemon that manages coding agents, terminals. Control it through MCP tools or the CLI.
 
 ## Workspaces
 
@@ -13,7 +13,7 @@ Paseo is a daemon that supervises AI coding agents on your machine. Control it t
 
 **`archive_workspace`** — `{ workspaceId }`. Archives the workspace, its agents, and its terminals. Local directories remain; Paseo removes an owned worktree only after its final active workspace reference is archived.
 
-Worktree creation and reference accounting are implementation details of `isolation: "worktree"`.
+**`rename_workspace`** — `{ workspaceId, name }`. Rename workspace.
 
 ## Workspace scripts
 

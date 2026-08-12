@@ -619,6 +619,7 @@ export const ja: TranslationResources = {
         reloadingAgent: "エージェントを再読み込み中...",
         reloadedAgent: "エージェントを再読み込みしました",
         failedToReloadAgent: "エージェントの再読み込みに失敗しました",
+        failedToCloseAgent: "エージェントを閉じられませんでした",
       },
       confirmations: {
         unsavedTitle: "未保存の変更",

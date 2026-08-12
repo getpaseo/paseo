@@ -124,6 +124,14 @@ test("creates, renames, copies, and deletes entries through the file explorer", 
 
   await page.getByTestId("files-new-folder").click();
   await expect(nameInput).toBeVisible();
+  const draftRow = nameInput.locator("xpath=..");
+  const placeholderColor = await nameInput.evaluate(
+    (input) => getComputedStyle(input, "::placeholder").color,
+  );
+  const extraMutedChevronColor = await draftRow
+    .locator("svg")
+    .evaluate((icon) => getComputedStyle(icon).stroke);
+  expect(placeholderColor).toBe(extraMutedChevronColor);
   await nameInput.press("Tab");
   await expect(nameInput).toBeHidden();
 
@@ -189,18 +197,38 @@ test("creates, renames, copies, and deletes entries through the file explorer", 
   const fileRow = entry("created.txt").locator(
     "xpath=ancestor::*[starts-with(@data-testid, 'file-explorer-row-')][1]",
   );
-  await expect(folderRow.locator("svg")).toHaveCount(2);
+  await expect(folderRow.locator("svg")).toHaveCount(1);
   await expect(fileRow.locator("svg")).toHaveCount(1);
   const gitRow = entry(".git").locator(
     "xpath=ancestor::*[starts-with(@data-testid, 'file-explorer-row-')][1]",
   );
   const collapsedChevronBounds = await gitRow.locator("svg").first().boundingBox();
   const expandedChevronBounds = await folderRow.locator("svg").first().boundingBox();
+  const collapsedChevronSlotBounds = await gitRow
+    .locator("svg")
+    .first()
+    .locator("xpath=../..")
+    .boundingBox();
+  const expandedChevronSlotBounds = await folderRow
+    .locator("svg")
+    .first()
+    .locator("xpath=../..")
+    .boundingBox();
   expect(collapsedChevronBounds).not.toBeNull();
   expect(expandedChevronBounds).not.toBeNull();
+  expect(collapsedChevronSlotBounds).not.toBeNull();
+  expect(expandedChevronSlotBounds).not.toBeNull();
   const collapsedChevronCenter = collapsedChevronBounds!.x + collapsedChevronBounds!.width / 2;
   const expandedChevronCenter = expandedChevronBounds!.x + expandedChevronBounds!.width / 2;
   expect(collapsedChevronCenter).toBeCloseTo(expandedChevronCenter, 0);
+  expect(collapsedChevronCenter).toBeCloseTo(
+    collapsedChevronSlotBounds!.x + collapsedChevronSlotBounds!.width / 2,
+    0,
+  );
+  expect(expandedChevronCenter).toBeCloseTo(
+    expandedChevronSlotBounds!.x + expandedChevronSlotBounds!.width / 2,
+    0,
+  );
   const folderLabelBounds = await entry("folder").boundingBox();
   const fileLabelBounds = await entry("created.txt").boundingBox();
   expect(folderLabelBounds).not.toBeNull();
