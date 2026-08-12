@@ -76,11 +76,18 @@ environments:
       base: origin/main
 ```
 
-`${{ paseo.execution.id }}` renders the execution UUID, so every execution that selects this environment branches off `origin/main` into its own branch instead of contending for one name. Hub renders it before it persists or dispatches the launch, so recovery after a restart reuses the branch it already created. Each step run is a separate execution: two steps selecting the same environment get two branches.
+`newBranch` is a literal branch name that may embed `${{ paseo.execution.id }}`, which renders the execution's UUID.
 
-The template is optional. A literal name such as `newBranch: paseo/review` remains supported and reuses that one branch across executions.
+| `newBranch`                         | Branches created                                         |
+| ----------------------------------- | -------------------------------------------------------- |
+| `paseo/review`                      | One, reused by every execution.                          |
+| `trigger-${{ paseo.execution.id }}` | One per execution, kept when Hub retries or recovers it. |
 
-`newBranch` accepts `${{ paseo.execution.id }}` and no other expression. `paseo.prompt`, `paseo.context`, `paseo.inputs.*`, `values.*`, `steps.<id>.outputs.*`, and provider event fields are unavailable here; any of them fails bundle activation with the authored file and field in the error, such as `.paseo/hub.yml.environments.review.worktree.newBranch`. `paseo.execution` is rejected everywhere else in a bundle. Only `branch-off` renders the template; `checkout-branch` and `checkout-pr` take literal targets.
+One execution is one step run, so two steps selecting the same environment get separate branches.
+
+`${{ paseo.execution.id }}` is the only expression `newBranch` accepts. `paseo.prompt`, `paseo.context`, `paseo.inputs.*`, `values.*`, `steps.<id>.outputs.*`, and provider event fields are unavailable here, and each one fails bundle activation at the authored field, such as `.paseo/hub.yml.environments.review.worktree.newBranch`.
+
+`${{ paseo.execution.id }}` fails activation the same way anywhere else in a bundle. `branch` and `prNumber` take literal values.
 
 An environment is a complete named object. A step selects its name; objects are not inherited, merged, or partially overridden.
 
