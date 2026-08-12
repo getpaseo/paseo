@@ -2,7 +2,17 @@ import { useMemo, type ComponentProps, type PropsWithChildren, type ReactNode } 
 import { useTranslation } from "react-i18next";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Archive, CircleCheck, Copy, MoreVertical, Pencil, Pin, PinOff } from "lucide-react-native";
+import {
+  Archive,
+  CircleCheck,
+  Copy,
+  FilePen,
+  MoreVertical,
+  PanelRightOpen,
+  Pencil,
+  Pin,
+  PinOff,
+} from "lucide-react-native";
 import { isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
@@ -29,7 +39,9 @@ import {
   type WorkspaceServiceSummary,
 } from "@/components/sidebar/workspace-meta-row";
 
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+const foregroundColorMapping = (theme: Theme) => ({
+  color: theme.colors.foreground,
+});
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
@@ -41,6 +53,8 @@ const ThemedPencil = withUnistyles(Pencil);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedPin = withUnistyles(Pin);
 const ThemedPinOff = withUnistyles(PinOff);
+const ThemedPanelRightOpen = withUnistyles(PanelRightOpen);
+const ThemedFilePen = withUnistyles(FilePen);
 
 const copyLeadingIcon = <ThemedCopy size={14} uniProps={foregroundMutedColorMapping} />;
 const renameLeadingIcon = <ThemedPencil size={14} uniProps={foregroundMutedColorMapping} />;
@@ -50,6 +64,10 @@ const markAsReadLeadingIcon = (
 const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />;
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
+const splitPaneLeadingIcon = (
+  <ThemedPanelRightOpen size={14} uniProps={foregroundMutedColorMapping} />
+);
+const editFilesLeadingIcon = <ThemedFilePen size={14} uniProps={foregroundMutedColorMapping} />;
 
 function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
   return (
@@ -75,6 +93,14 @@ export interface SidebarWorkspaceMenuProps {
   onTogglePin?: () => void;
   openInFileManagerPath?: string | null;
   /**
+   * Open this workspace's root agent in a side pane (split view). Only shown on web.
+   */
+  onSplitPane?: () => void;
+  /**
+   * Navigate to the workspace and open its file explorer for editing. Only shown on web.
+   */
+  onEditFiles?: () => void;
+  /**
    * Lifted so the row that reveals the kebab can keep it mounted while its menu is up. See
    * `useOpenKebabMenuVisibility`.
    */
@@ -88,7 +114,6 @@ interface SidebarWorkspaceMenuItemsProps extends Omit<
 > {
   onArchive?: () => void;
 }
-
 type MenuSurface = "context" | "dropdown";
 
 function WorkspaceMenuItem({
@@ -96,7 +121,9 @@ function WorkspaceMenuItem({
   children,
   ...props
 }: PropsWithChildren<
-  Omit<ComponentProps<typeof DropdownMenuItem>, "children"> & { surface: MenuSurface }
+  Omit<ComponentProps<typeof DropdownMenuItem>, "children"> & {
+    surface: MenuSurface;
+  }
 >) {
   if (surface === "context") {
     return <ContextMenuItem {...props}>{children}</ContextMenuItem>;
@@ -119,6 +146,8 @@ function SidebarWorkspaceMenuItems({
   isPinned,
   onTogglePin,
   openInFileManagerPath,
+  onSplitPane,
+  onEditFiles,
 }: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
   const { t } = useTranslation();
   const archiveTrailing = useMemo(
@@ -183,6 +212,26 @@ function SidebarWorkspaceMenuItems({
         path={openInFileManagerPath}
         testID={`sidebar-workspace-menu-open-folder-${workspaceKey}`}
       />
+      {onEditFiles ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-edit-files-${workspaceKey}`}
+          leading={editFilesLeadingIcon}
+          onSelect={onEditFiles}
+        >
+          {t("sidebar.workspace.actions.editFiles")}
+        </WorkspaceMenuItem>
+      ) : null}
+      {onSplitPane ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-split-pane-${workspaceKey}`}
+          leading={splitPaneLeadingIcon}
+          onSelect={onSplitPane}
+        >
+          {t("sidebar.workspace.actions.splitPane")}
+        </WorkspaceMenuItem>
+      ) : null}
       {onArchive ? (
         <WorkspaceMenuItem
           surface={surface}
@@ -214,6 +263,8 @@ export function SidebarWorkspaceMenu({
   isPinned,
   onTogglePin,
   openInFileManagerPath,
+  onSplitPane,
+  onEditFiles,
   open,
   onOpenChange,
 }: SidebarWorkspaceMenuProps) {
@@ -245,6 +296,8 @@ export function SidebarWorkspaceMenu({
           isPinned={isPinned}
           onTogglePin={onTogglePin}
           openInFileManagerPath={openInFileManagerPath}
+          onSplitPane={onSplitPane}
+          onEditFiles={onEditFiles}
         />
       </DropdownMenuContent>
     </DropdownMenu>
@@ -277,6 +330,8 @@ export function SidebarWorkspaceContextMenu({
   isPinned,
   onTogglePin,
   openInFileManagerPath,
+  onSplitPane,
+  onEditFiles,
   accessibilityLabel,
   highlightStyle,
   ...triggerProps
@@ -309,7 +364,9 @@ export function SidebarWorkspaceContextMenu({
     hostBadgeLabel,
     pullRequestLabel,
     serviceLabel: serviceSummary
-      ? t(workspaceServiceLabelKey(serviceSummary), { name: serviceSummary.name })
+      ? t(workspaceServiceLabelKey(serviceSummary), {
+          name: serviceSummary.name,
+        })
       : null,
   });
 
@@ -343,6 +400,8 @@ export function SidebarWorkspaceContextMenu({
           isPinned={isPinned}
           onTogglePin={onTogglePin}
           openInFileManagerPath={openInFileManagerPath}
+          onSplitPane={onSplitPane}
+          onEditFiles={onEditFiles}
         />
       </ContextMenuContent>
     </ContextMenu>

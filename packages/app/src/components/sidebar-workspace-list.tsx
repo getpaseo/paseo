@@ -86,6 +86,8 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { ProjectLeadingVisual } from "@/components/sidebar/project-leading-visual";
+import { NestedReposSection } from "@/components/sidebar/nested-repos-section";
+import { WorkspaceTabGroupDropdown } from "@/components/sidebar/workspace-tab-group-dropdown";
 import { useToast } from "@/contexts/toast-context";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
@@ -98,7 +100,13 @@ import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
 } from "@/components/sidebar/sidebar-workspace-menu";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { collectAllPanes } from "@/stores/workspace-layout-actions";
+import { useSessionStore } from "@/stores/session-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
+import { SidebarBranchGroupRow } from "@/components/sidebar/sidebar-branch-group-row";
+import { buildSidebarBranchGroups, type SidebarBranchGroup } from "@/hooks/sidebar-branch-groups";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
@@ -302,6 +310,8 @@ interface WorkspaceRowInnerProps {
   archiveShortcutKeys?: ShortcutKey[][] | null;
   isPinned?: boolean;
   onTogglePin?: () => void;
+  onSplitPane?: () => void;
+  onEditFiles?: () => void;
   reserveIdleStatusIndicatorSpace?: boolean;
 }
 
@@ -532,7 +542,9 @@ function ProjectMenuItem({
   children,
   ...props
 }: PropsWithChildren<
-  Omit<ComponentProps<typeof DropdownMenuItem>, "children"> & { surface: ProjectMenuSurface }
+  Omit<ComponentProps<typeof DropdownMenuItem>, "children"> & {
+    surface: ProjectMenuSurface;
+  }
 >) {
   if (surface === "context") {
     return <ContextMenuItem {...props}>{children}</ContextMenuItem>;
@@ -632,6 +644,8 @@ function WorkspaceRowRightGroup({
   onRename,
   isPinned,
   onTogglePin,
+  onSplitPane,
+  onEditFiles,
 }: {
   workspace: SidebarWorkspaceEntry;
   isHovered: boolean;
@@ -650,6 +664,8 @@ function WorkspaceRowRightGroup({
   onRename?: () => void;
   isPinned?: boolean;
   onTogglePin?: () => void;
+  onSplitPane?: () => void;
+  onEditFiles?: () => void;
 }) {
   const workspacePath = workspace.workspaceDirectory ?? workspace.projectRootPath;
   const { t } = useTranslation();
@@ -697,6 +713,8 @@ function WorkspaceRowRightGroup({
                 archiveShortcutKeys={archiveShortcutKeys}
                 isPinned={isPinned}
                 onTogglePin={onTogglePin}
+                onSplitPane={onSplitPane}
+                onEditFiles={onEditFiles}
                 openInFileManagerPath={workspacePath}
               />
             ) : null}
@@ -952,7 +970,12 @@ function ProjectHeaderRow({
           iconDataUri={iconDataUri}
           statusBucket={statusBucket}
           projectViewKey={project.viewKey}
-          backdrop={getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered })}
+          backdrop={getSidebarRowBackdrop({
+            isDragging,
+            isPressed,
+            selected,
+            isHovered,
+          })}
           chevron={chevron}
           showChevron={isHovered && chevron !== null}
           isArchiving={isArchiving}
@@ -1076,6 +1099,8 @@ function WorkspaceRowInner({
   archiveShortcutKeys,
   isPinned,
   onTogglePin,
+  onSplitPane,
+  onEditFiles,
   reserveIdleStatusIndicatorSpace = true,
 }: WorkspaceRowInnerProps) {
   const _isCompact = useIsCompactFormFactor();
@@ -1149,6 +1174,8 @@ function WorkspaceRowInner({
               archiveShortcutKeys={archiveShortcutKeys}
               isPinned={isPinned}
               onTogglePin={onTogglePin}
+              onSplitPane={onSplitPane}
+              onEditFiles={onEditFiles}
               openInFileManagerPath={workspace.workspaceDirectory}
               disabled={isArchiving}
               aria-selected={selected}
@@ -1168,7 +1195,12 @@ function WorkspaceRowInner({
                 leadingProjectName={leadingProjectName}
                 leadingProjectIconDataUri={leadingProjectIconDataUri}
                 serviceSummary={serviceSummary}
-                backdrop={getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered })}
+                backdrop={getSidebarRowBackdrop({
+                  isDragging,
+                  isPressed,
+                  selected,
+                  isHovered,
+                })}
                 isHovered={isHovered}
                 isLoading={isArchiving || isCreating}
                 isCreating={isCreating}
@@ -1193,9 +1225,17 @@ function WorkspaceRowInner({
                   onRename={onRename}
                   isPinned={isPinned}
                   onTogglePin={onTogglePin}
+                  onSplitPane={onSplitPane}
+                  onEditFiles={onEditFiles}
                 />
               </SidebarWorkspaceRowContent>
             </SidebarWorkspaceContextMenu>
+            {workspace.serverId ? (
+              <WorkspaceTabGroupDropdown
+                serverId={workspace.serverId}
+                workspaceId={workspace.workspaceId}
+              />
+            ) : null}
           </View>
         );
       }}
@@ -1240,6 +1280,7 @@ function WorkspaceRowWithMenu({
 }) {
   const { t } = useTranslation();
   const toast = useToast();
+  const isCompactFormFactor = useIsCompactFormFactor();
   const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const isArchiving = workspace.archivingAt !== null || isHidingWorkspace;
@@ -1326,6 +1367,72 @@ function WorkspaceRowWithMenu({
   }, [onToggleWorkspacePin, workspace]);
   const onTogglePin = canPin ? handleTogglePin : undefined;
 
+  const handleSplitPane = useCallback(() => {
+    const layoutStore = useWorkspaceLayoutStore.getState();
+    const layout = layoutStore.layoutByWorkspace[workspace.workspaceKey];
+    if (!layout) {
+      return;
+    }
+    const targetPaneId = layout.focusedPaneId ?? collectAllPanes(layout.root)[0]?.id;
+    if (!targetPaneId) {
+      return;
+    }
+    const rootAgentId = useSessionStore
+      .getState()
+      .sessions[workspace.serverId]?.workspaceAgentActivity.get(workspace.workspaceId)?.agentId;
+    if (!rootAgentId) {
+      return;
+    }
+    const existingTabId = layoutStore
+      .getWorkspaceTabs(workspace.workspaceKey)
+      .find((tab) => tab.target.kind === "agent" && tab.target.agentId === rootAgentId)?.tabId;
+    if (existingTabId) {
+      // Already open: move that tab into a new pane beside the focused one.
+      layoutStore.splitPane(workspace.workspaceKey, {
+        tabId: existingTabId,
+        targetPaneId,
+        position: "right",
+      });
+      return;
+    }
+    const paneId = layoutStore.splitPaneEmpty(workspace.workspaceKey, {
+      targetPaneId,
+      position: "right",
+    });
+    if (!paneId) {
+      return;
+    }
+    layoutStore.openTabFocused(workspace.workspaceKey, { kind: "agent", agentId: rootAgentId });
+  }, [workspace.serverId, workspace.workspaceId, workspace.workspaceKey]);
+  const onSplitPane = platformIsWeb ? handleSplitPane : undefined;
+
+  const handleEditFiles = useCallback(() => {
+    const workspaceDirectory = workspace.workspaceDirectory;
+    if (!workspaceDirectory) {
+      return;
+    }
+    const panelStore = usePanelStore.getState();
+    panelStore.openFileExplorerForCheckout({
+      isCompact: isCompactFormFactor,
+      checkout: {
+        serverId: workspace.serverId,
+        cwd: workspaceDirectory,
+        isGit: workspace.currentBranch !== null,
+      },
+    });
+    navigateToWorkspace({
+      serverId: workspace.serverId,
+      workspaceId: workspace.workspaceId,
+    });
+  }, [
+    isCompactFormFactor,
+    workspace.currentBranch,
+    workspace.serverId,
+    workspace.workspaceDirectory,
+    workspace.workspaceId,
+  ]);
+  const onEditFiles = platformIsWeb ? handleEditFiles : undefined;
+
   const archiveShortcutKeys = useShortcutKeys("archive-workspace");
   const { hasClearableAttention, clearAttention } = useClearWorkspaceAttention({
     serverId: workspace.serverId,
@@ -1376,6 +1483,8 @@ function WorkspaceRowWithMenu({
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
         isPinned={isPinned}
         onTogglePin={onTogglePin}
+        onSplitPane={onSplitPane}
+        onEditFiles={onEditFiles}
         reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       />
       <AdaptiveRenameModal
@@ -1438,7 +1547,10 @@ function WorkspaceRowItem({
       return;
     }
     onWorkspacePress?.();
-    navigateToWorkspace({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
+    navigateToWorkspace({
+      serverId: workspace.serverId,
+      workspaceId: workspace.workspaceId,
+    });
   }, [onWorkspacePress, workspace.serverId, workspace.workspaceId]);
 
   return (
@@ -1568,6 +1680,75 @@ function WorkspaceRow({
   );
 }
 
+function BranchGroupItem({
+  group,
+  collapsedBranchGroupKeys,
+  onToggleCollapsed,
+  visibleWorkspaces,
+  renderWorkspace,
+  handleWorkspaceDragEnd,
+  selectionKey,
+  useNestable,
+  parentGestureRef,
+  dragGestureHostPresented,
+  projectViewKey,
+}: {
+  group: SidebarBranchGroup;
+  collapsedBranchGroupKeys: ReadonlySet<string>;
+  onToggleCollapsed: (groupKey: string) => void;
+  visibleWorkspaces: readonly SidebarWorkspacePlacement[];
+  renderWorkspace: (info: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => ReactElement;
+  handleWorkspaceDragEnd: (workspaces: SidebarWorkspacePlacement[]) => void;
+  selectionKey: string;
+  useNestable: boolean;
+  parentGestureRef?: MutableRefObject<GestureType | undefined>;
+  dragGestureHostPresented?: boolean;
+  projectViewKey: string;
+}) {
+  const { t } = useTranslation();
+  const isGroupCollapsed = collapsedBranchGroupKeys.has(group.key);
+  const groupPlacements = useMemo(
+    () => visibleWorkspaces.filter((ws) => group.workspaceKeys.includes(ws.workspaceKey)),
+    [group.workspaceKeys, visibleWorkspaces],
+  );
+  const handleToggleCollapsed = useCallback(
+    () => onToggleCollapsed(group.key),
+    [group.key, onToggleCollapsed],
+  );
+  if (groupPlacements.length === 0) {
+    return null;
+  }
+  const label =
+    group.isParent || !group.branch ? t("sidebar.workspace.actions.mainCheckout") : group.branch;
+  return (
+    <View>
+      <SidebarBranchGroupRow
+        label={label}
+        isParent={group.isParent}
+        collapsed={isGroupCollapsed}
+        onToggleCollapsed={handleToggleCollapsed}
+        testID={`sidebar-branch-group-${group.key}`}
+      />
+      {!isGroupCollapsed ? (
+        <DraggableList
+          testID={`sidebar-workspace-list-${projectViewKey}-${group.key}`}
+          data={groupPlacements}
+          keyExtractor={workspaceKeyExtractor}
+          renderItem={renderWorkspace}
+          onDragEnd={handleWorkspaceDragEnd}
+          extraData={selectionKey}
+          scrollEnabled={false}
+          useDragHandle
+          nestable={useNestable}
+          simultaneousGestureRef={parentGestureRef}
+          gestureHostPresented={dragGestureHostPresented}
+          containerStyle={styles.workspaceListContainer}
+        />
+      ) : null}
+    </View>
+  );
+}
+
 function ProjectBlock({
   project,
   workspaceEntriesByKey,
@@ -1625,6 +1806,22 @@ function ProjectBlock({
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
   } = useLimitedSidebarGroup(project.workspaces);
+  const branchGroups = useMemo(
+    () => buildSidebarBranchGroups({ project, workspaceEntriesByKey }),
+    [project, workspaceEntriesByKey],
+  );
+  const collapsedBranchGroupKeys = useSidebarCollapsedSectionsStore(
+    (state) => state.collapsedBranchGroupKeys,
+  );
+  const toggleBranchGroupCollapsed = useSidebarCollapsedSectionsStore(
+    (state) => state.toggleBranchGroupCollapsed,
+  );
+  const toggleBranchGroupCollapsedByKey = useCallback(
+    (groupKey: string) => {
+      toggleBranchGroupCollapsed(groupKey);
+    },
+    [toggleBranchGroupCollapsed],
+  );
   const rowModel = useMemo(
     () =>
       buildSidebarProjectRowModel({
@@ -1727,7 +1924,9 @@ function ProjectBlock({
     void (async () => {
       const confirmed = await confirmDialog({
         title: t("sidebar.project.confirmations.removeTitle"),
-        message: t("sidebar.project.confirmations.removeMessage", { projectName: displayName }),
+        message: t("sidebar.project.confirmations.removeMessage", {
+          projectName: displayName,
+        }),
         confirmLabel: t("sidebar.project.confirmations.removeConfirm"),
         cancelLabel: t("sidebar.project.confirmations.cancel"),
         destructive: true,
@@ -1780,25 +1979,50 @@ function ProjectBlock({
     if (project.workspaces.length > 0) {
       projectChildren = (
         <>
-          <DraggableList
-            testID={`sidebar-workspace-list-${project.viewKey}`}
-            data={visibleWorkspaces}
-            keyExtractor={workspaceKeyExtractor}
-            renderItem={renderWorkspace}
-            onDragEnd={handleWorkspaceDragEnd}
-            extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-            scrollEnabled={false}
-            useDragHandle
-            nestable={useNestable}
-            simultaneousGestureRef={parentGestureRef}
-            gestureHostPresented={dragGestureHostPresented}
-            containerStyle={styles.workspaceListContainer}
-          />
+          {branchGroups.length > 1 ? (
+            branchGroups.map((group) => (
+              <BranchGroupItem
+                key={group.key}
+                group={group}
+                collapsedBranchGroupKeys={collapsedBranchGroupKeys}
+                onToggleCollapsed={toggleBranchGroupCollapsedByKey}
+                visibleWorkspaces={visibleWorkspaces}
+                renderWorkspace={renderWorkspace}
+                handleWorkspaceDragEnd={handleWorkspaceDragEnd}
+                selectionKey={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+                useNestable={useNestable}
+                parentGestureRef={parentGestureRef}
+                dragGestureHostPresented={dragGestureHostPresented}
+                projectViewKey={project.viewKey}
+              />
+            ))
+          ) : (
+            <DraggableList
+              testID={`sidebar-workspace-list-${project.viewKey}`}
+              data={visibleWorkspaces}
+              keyExtractor={workspaceKeyExtractor}
+              renderItem={renderWorkspace}
+              onDragEnd={handleWorkspaceDragEnd}
+              extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+              scrollEnabled={false}
+              useDragHandle
+              nestable={useNestable}
+              simultaneousGestureRef={parentGestureRef}
+              gestureHostPresented={dragGestureHostPresented}
+              containerStyle={styles.workspaceListContainer}
+            />
+          )}
           {canToggleWorkspaces ? (
             <SidebarGroupToggleRow
               expanded={workspacesExpanded}
               onPress={toggleWorkspacesExpanded}
               testID={`sidebar-project-show-more-${project.viewKey}`}
+            />
+          ) : null}
+          {project.hosts[0]?.serverId ? (
+            <NestedReposSection
+              serverId={project.hosts[0].serverId}
+              scanCwd={project.iconWorkingDir}
             />
           ) : null}
         </>

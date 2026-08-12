@@ -62,6 +62,7 @@ import type {
   DirectorySuggestionsResponse,
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
+  ProjectNestedReposScanResponse,
   ProjectIconSource,
   ProjectIconResponse,
   ProjectIconGetResponse,
@@ -413,6 +414,7 @@ type GitHubSearchPayload = GitHubSearchResponse["payload"];
 type DirectorySuggestionsPayload = DirectorySuggestionsResponse["payload"];
 type PaseoWorktreeListPayload = PaseoWorktreeListResponse["payload"];
 type PaseoWorktreeArchivePayload = PaseoWorktreeArchiveResponse["payload"];
+type ProjectNestedReposScanPayload = ProjectNestedReposScanResponse["payload"];
 type CreatePaseoWorktreePayload = Extract<
   SessionOutboundMessage,
   { type: "create_paseo_worktree_response" }
@@ -4183,6 +4185,20 @@ export class DaemonClient {
       responseType: "directory_suggestions_response",
       // Home-tree scans on large home dirs can take several seconds; don't cut
       // the suggestion request off early (it would surface as an empty list).
+    });
+  }
+
+  async scanNestedRepos(
+    parentCwd: string,
+    requestId?: string,
+  ): Promise<ProjectNestedReposScanPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "project.nested_repos.scan_request",
+        parentCwd,
+      },
+      responseType: "project.nested_repos.scan_response",
     });
   }
 

@@ -383,16 +383,28 @@ function mergeModels(
   return mergeModelAdditions(provider, baseModels, [...profileModels, ...additionalModels]);
 }
 
+// Providers can report the same model id twice (codex `model/list` returns
+// `codex-auto-review` in two speed tiers). Duplicate ids break every consumer
+// that keys by model id, so collapse them here: last definition wins, first
+// position is kept.
+function dedupeModelsById(models: AgentModelDefinition[]): AgentModelDefinition[] {
+  const modelsById = new Map<string, AgentModelDefinition>();
+  for (const model of models) {
+    modelsById.set(model.id, model);
+  }
+  return [...modelsById.values()];
+}
+
 function mergeModelAdditions(
   provider: AgentProvider,
   baseModels: AgentModelDefinition[],
   modelAdditions: Array<ProviderProfileModel | AgentModelDefinition>,
 ): AgentModelDefinition[] {
   if (modelAdditions.length === 0) {
-    return baseModels;
+    return dedupeModelsById(baseModels);
   }
 
-  const mergedModels = [...baseModels];
+  const mergedModels = dedupeModelsById(baseModels);
   let hasAdditionalDefault = false;
 
   for (const model of modelAdditions) {

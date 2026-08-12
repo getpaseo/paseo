@@ -1,6 +1,7 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
-import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, rename, rm, stat } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
@@ -18,6 +19,7 @@ import {
   type WorkspaceScriptStopRequest,
   type CloseItemsRequest,
   type DirectorySuggestionsRequest,
+  type ProjectNestedReposScanRequest,
   type ProjectPlacementPayload,
   type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
@@ -2063,6 +2065,8 @@ export class Session {
         return this.checkoutSession.handleBranchSuggestionsRequest(msg);
       case "directory_suggestions_request":
         return this.handleDirectorySuggestionsRequest(msg);
+      case "project.nested_repos.scan_request":
+        return this.handleProjectNestedReposScanRequest(msg);
       case "subscribe_checkout_diff_request":
         return this.checkoutSession.handleSubscribeDiffRequest(msg);
       case "unsubscribe_checkout_diff_request":
@@ -3921,6 +3925,58 @@ export class Session {
         payload: {
           directories: [],
           entries: [],
+          error: error instanceof Error ? error.message : String(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleProjectNestedReposScanRequest(
+    msg: ProjectNestedReposScanRequest,
+  ): Promise<void> {
+    const { parentCwd, requestId } = msg;
+    try {
+      const root = expandTilde(parentCwd);
+      const resolvedRoot = resolve(root);
+      let entries: Dirent[];
+      try {
+        entries = await readdir(resolvedRoot, { withFileTypes: true });
+      } catch {
+        this.emit({
+          type: "project.nested_repos.scan_response",
+          payload: { parentCwd: resolvedRoot, repos: [], error: null, requestId },
+        });
+        return;
+      }
+      const repos = [];
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith(".")) {
+          continue;
+        }
+        const dir = resolve(resolvedRoot, entry.name);
+        let hasGitDir = false;
+        try {
+          const dotGit = await lstat(resolve(dir, ".git"));
+          hasGitDir = dotGit.isDirectory() || dotGit.isFile();
+        } catch {
+          hasGitDir = false;
+        }
+        if (!hasGitDir) {
+          continue;
+        }
+        repos.push({ path: dir, name: entry.name, isWorktree: false, branch: null });
+      }
+      this.emit({
+        type: "project.nested_repos.scan_response",
+        payload: { parentCwd: resolvedRoot, repos, error: null, requestId },
+      });
+    } catch (error) {
+      this.emit({
+        type: "project.nested_repos.scan_response",
+        payload: {
+          parentCwd: resolve(expandTilde(parentCwd)),
+          repos: [],
           error: error instanceof Error ? error.message : String(error),
           requestId,
         },

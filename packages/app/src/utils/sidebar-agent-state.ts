@@ -4,14 +4,33 @@ import {
   type AgentStateBucketInput,
 } from "@getpaseo/protocol/agent-state-bucket";
 
-export type SidebarStateBucket = "needs_input" | "failed" | "running" | "attention" | "done";
+export type SidebarStateBucket =
+  | "needs_input"
+  | "pending_question"
+  | "failed"
+  | "running"
+  | "attention"
+  | "done";
 export type SidebarAttentionReason = AgentAttentionReason;
 
-export function deriveSidebarStateBucket(input: AgentStateBucketInput): SidebarStateBucket {
+export interface SidebarStateBucketInput extends AgentStateBucketInput {
+  pendingQuestionCount?: number;
+}
+
+/**
+ * `pending_question` is a client-only refinement of `needs_input`: it splits out the
+ * permissions that are actually questions so the sidebar can show a distinct badge.
+ * It deliberately never travels the wire — `WorkspaceStateBucket` in the protocol has
+ * no such member, so a new daemon can't emit a value an older app would reject.
+ */
+export function deriveSidebarStateBucket(input: SidebarStateBucketInput): SidebarStateBucket {
+  if ((input.pendingQuestionCount ?? 0) > 0) {
+    return "pending_question";
+  }
   return deriveAgentStateBucket(input);
 }
 
-export function isSidebarActiveAgent(input: AgentStateBucketInput): boolean {
+export function isSidebarActiveAgent(input: SidebarStateBucketInput): boolean {
   return deriveSidebarStateBucket(input) !== "done";
 }
 
@@ -23,6 +42,7 @@ export function isSidebarActiveAgent(input: AgentStateBucketInput): boolean {
 // both; done stays last.
 const STATUS_BUCKET_PRIORITY: readonly SidebarStateBucket[] = [
   "needs_input",
+  "pending_question",
   "failed",
   "running",
   "attention",

@@ -17,6 +17,7 @@ import {
   CircleAlert,
   CircleCheck,
   CircleDot,
+  CircleHelp,
   CircleX,
 } from "lucide-react-native";
 import { useToast } from "@/contexts/toast-context";
@@ -84,6 +85,7 @@ const ThemedChevronRight = withUnistyles(ChevronRight);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircleDot = withUnistyles(CircleDot);
+const ThemedCircleHelp = withUnistyles(CircleHelp);
 const ThemedCircleX = withUnistyles(CircleX);
 interface StatusWorkspaceListProps {
   groups: StatusGroup[];
@@ -398,6 +400,8 @@ function StatusGroupLeadingVisual({
 
 function StatusGroupIcon({ bucket }: { bucket: StatusGroup["bucket"] }) {
   switch (bucket) {
+    case "pending_question":
+      return <ThemedCircleHelp size={14} uniProps={needsInputColorMapping} />;
     case "needs_input":
       return <ThemedCircleAlert size={14} uniProps={needsInputColorMapping} />;
     case "failed":

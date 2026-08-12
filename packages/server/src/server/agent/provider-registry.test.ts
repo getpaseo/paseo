@@ -1097,6 +1097,36 @@ test("extension inherits base override — override claude command, zai extends 
 });
 
 describe("model merging", () => {
+  test("duplicate runtime model ids are collapsed", async () => {
+    mockState.runtimeModels.set("codex", [
+      {
+        provider: "codex",
+        id: "codex-auto-review",
+        label: "Codex Auto Review",
+      },
+      {
+        provider: "codex",
+        id: "gpt-5.4",
+        label: "GPT-5.4",
+      },
+      {
+        provider: "codex",
+        id: "codex-auto-review",
+        label: "Codex Auto Review",
+      },
+    ]);
+
+    const registry = buildProviderRegistry(logger);
+
+    const { models } = await registry.codex.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    expect(models.map((model) => model.id)).toEqual(["codex-auto-review", "gpt-5.4"]);
+  });
+
   test("profile models replace runtime models", async () => {
     mockState.runtimeModels.set("codex", [
       {

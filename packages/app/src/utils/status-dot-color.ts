@@ -15,6 +15,9 @@ export function getStatusDotColor(input: {
   // needs_input is amber because it wants something from you. Working is blue: an agent doing
   // its job is the one busy state that asks for nothing, so it should not sit in the same
   // color as the states that do.
+  if (bucket === "pending_question") {
+    return theme.colors.statusDotWarning;
+  }
   if (bucket === "needs_input") {
     return theme.colors.statusDotWarning;
   }

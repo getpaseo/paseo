@@ -29,6 +29,9 @@ export function useSidebarWorkspaceEntries(
       enabled ? selectSidebarWorkspaceSessions(state.sessions, serverIds) : EMPTY_SESSIONS,
     areSidebarWorkspaceSessionsEqual,
   );
+  // Session store exposes agents on each SessionState; the selector above only pulls
+  // the workspace-indexed maps. Grab the agents maps directly so provider resolution
+  // (Feature 1) has access to them without widening every equality comparator.
   const pendingCreateAttempts = useCreateFlowStore((state) =>
     enabled ? state.pendingByDraftId : EMPTY_PENDING_CREATE_ATTEMPTS,
   );

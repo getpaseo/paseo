@@ -23,6 +23,7 @@ function makeWorkspace(id: string, statusBucket: SidebarWorkspaceEntry["statusBu
     workspaceDirectoryLabel: "",
     title: null,
     currentBranch: null,
+    provider: null,
     statusBucket,
     statusEnteredAt: null,
     archivingAt: null,

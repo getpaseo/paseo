@@ -6,6 +6,18 @@ import {
 } from "./sidebar-agent-state";
 
 describe("deriveSidebarStateBucket", () => {
+  it("splits pending questions out of needs_input", () => {
+    expect(
+      deriveSidebarStateBucket({
+        status: "idle",
+        pendingPermissionCount: 1,
+        pendingQuestionCount: 1,
+        requiresAttention: false,
+        attentionReason: null,
+      }),
+    ).toBe("pending_question");
+  });
+
   it("prioritizes pending permissions as needs_input", () => {
     expect(
       deriveSidebarStateBucket({

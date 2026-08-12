@@ -2,20 +2,22 @@ import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
 import type { PendingCreateAttempt } from "@/stores/create-flow-store";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import type {
   WorkspaceStructureHostPlacement,
   WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
-import { aggregateSidebarStateBuckets } from "@/utils/sidebar-agent-state";
+import { aggregateSidebarStateBuckets, type SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { shortenPath } from "@/utils/shorten-path";
 import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
-export type SidebarStateBucket = WorkspaceDescriptor["status"];
+// The sidebar bucket is a superset of the wire bucket: `pending_question` is derived
+// client-side only (see utils/sidebar-agent-state).
+export type { SidebarStateBucket };
 
 export interface SidebarWorkspacePlacement {
   workspaceKey: string;
@@ -44,6 +46,8 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   pinnedAt?: string | null;
   // Checkout branch (null when not a git checkout or detached HEAD).
   currentBranch: string | null;
+  // CLI/provider of the root agent bound to this workspace (null when idle/unknown).
+  provider: string | null;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
   prHint: PrHint | null;
@@ -72,11 +76,13 @@ export interface SidebarWorkspaceSession {
   serverId: string;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
+  agents: ReadonlyMap<string, Agent>;
 }
 
 interface SidebarWorkspaceSessionSource {
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
+  agents: ReadonlyMap<string, Agent>;
 }
 
 export function selectSidebarWorkspaceSessions(
@@ -93,6 +99,7 @@ export function selectSidebarWorkspaceSessions(
       serverId,
       workspaces: session.workspaces,
       workspaceAgentActivity: session.workspaceAgentActivity,
+      agents: session.agents,
     });
   }
   return selected;
@@ -113,7 +120,8 @@ export function areSidebarWorkspaceSessionsEqual(
       !rightSession ||
       leftSession.serverId !== rightSession.serverId ||
       leftSession.workspaces !== rightSession.workspaces ||
-      leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity
+      leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity ||
+      leftSession.agents !== rightSession.agents
     ) {
       return false;
     }
@@ -122,7 +130,7 @@ export function areSidebarWorkspaceSessionsEqual(
 }
 
 interface EffectiveWorkspaceStatus {
-  status: WorkspaceDescriptor["status"];
+  status: SidebarStateBucket;
   enteredAt: Date | null;
 }
 
@@ -148,9 +156,15 @@ export function createSidebarWorkspaceEntry(input: {
   projectViewKey?: string;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
+  agents?: ReadonlyMap<string, Agent>;
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
+  const provider = resolveWorkspaceRootProvider({
+    workspaceAgentActivity: input.workspaceAgentActivity,
+    agents: input.agents,
+    workspaceId: input.workspace.id,
+  });
   return {
     workspaceKey: `${input.serverId}:${input.workspace.id}`,
     serverId: input.serverId,
@@ -167,6 +181,7 @@ export function createSidebarWorkspaceEntry(input: {
     title: input.workspace.title ?? null,
     pinnedAt: input.workspace.pinnedAt,
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
+    provider,
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
     archivingAt: input.workspace.archivingAt,
@@ -180,6 +195,24 @@ export function createSidebarWorkspaceEntry(input: {
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
   };
+}
+
+/**
+ * CLI identity of the root agent running in a workspace. The activity index already
+ * resolved which agent is the workspace root; look its provider up in the agents map.
+ * Returns null when the workspace has no active root agent.
+ */
+function resolveWorkspaceRootProvider(input: {
+  workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
+  agents?: ReadonlyMap<string, Agent>;
+  workspaceId: string;
+}): string | null {
+  const activity = input.workspaceAgentActivity?.get(input.workspaceId);
+  if (!activity) {
+    return null;
+  }
+  const agent = input.agents?.get(activity.agentId);
+  return agent?.provider ?? null;
 }
 
 function deriveEffectiveWorkspaceStatus(input: {
@@ -387,6 +420,7 @@ export function buildSidebarWorkspaceEntries(input: {
       projectViewKey: placement.projectViewKey,
       pendingCreateAttempts: input.pendingCreateAttempts,
       workspaceAgentActivity: session.workspaceAgentActivity,
+      agents: session.agents,
     });
     const previousEntry = input.previousEntries?.get(placement.workspaceKey);
     entries.set(

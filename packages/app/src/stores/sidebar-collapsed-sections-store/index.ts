@@ -6,15 +6,19 @@ import {
   mergePersistedCollapsedProjects,
   serializeCollapsedProjects,
   setProjectCollapsed,
+  toggleBranchGroupCollapsed,
   togglePinnedCollapsed,
   toggleProjectCollapsed,
   toggleStatusGroupCollapsed,
+  toggleTabGroupCollapsed,
 } from "./state";
 
 interface SidebarCollapsedSectionsState extends CollapsedProjectsState {
   toggleProjectCollapsed: (projectKey: string) => void;
   setProjectCollapsed: (projectKey: string, collapsed: boolean) => void;
   toggleStatusGroupCollapsed: (statusGroupKey: string) => void;
+  toggleBranchGroupCollapsed: (branchGroupKey: string) => void;
+  toggleTabGroupCollapsed: (tabGroupKey: string) => void;
   togglePinnedCollapsed: () => void;
 }
 
@@ -23,6 +27,8 @@ export const useSidebarCollapsedSectionsStore = create<SidebarCollapsedSectionsS
     (set) => ({
       collapsedProjectKeys: new Set(),
       collapsedStatusGroupKeys: new Set(),
+      collapsedBranchGroupKeys: new Set(),
+      collapsedTabGroupKeys: new Set(),
       collapsedPinned: false,
       toggleProjectCollapsed: (projectKey) =>
         set((state) => toggleProjectCollapsed(state, projectKey)),
@@ -30,6 +36,10 @@ export const useSidebarCollapsedSectionsStore = create<SidebarCollapsedSectionsS
         set((state) => setProjectCollapsed(state, projectKey, collapsed)),
       toggleStatusGroupCollapsed: (statusGroupKey) =>
         set((state) => toggleStatusGroupCollapsed(state, statusGroupKey)),
+      toggleBranchGroupCollapsed: (branchGroupKey) =>
+        set((state) => toggleBranchGroupCollapsed(state, branchGroupKey)),
+      toggleTabGroupCollapsed: (tabGroupKey) =>
+        set((state) => toggleTabGroupCollapsed(state, tabGroupKey)),
       togglePinnedCollapsed: () => set((state) => togglePinnedCollapsed(state)),
     }),
     {

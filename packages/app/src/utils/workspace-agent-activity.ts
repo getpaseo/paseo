@@ -1,10 +1,12 @@
-import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
+import type { Agent } from "@/stores/session-store";
 import { isWorkspaceRootAgent } from "@/subagents/policies";
-import { deriveSidebarStateBucket } from "./sidebar-agent-state";
+import { deriveSidebarStateBucket, type SidebarStateBucket } from "./sidebar-agent-state";
 
 export interface WorkspaceAgentActivity {
   agentId: string;
-  status: WorkspaceDescriptor["status"];
+  // Sidebar bucket, not the wire bucket: this can be `pending_question`, which the
+  // protocol's `WorkspaceStateBucket` deliberately does not carry.
+  status: SidebarStateBucket;
   enteredAt: Date | null;
 }
 
@@ -31,6 +33,9 @@ export function buildWorkspaceAgentActivityIndex(
     const status = deriveSidebarStateBucket({
       status: agent.status,
       pendingPermissionCount: agent.pendingPermissions.length,
+      pendingQuestionCount: agent.pendingPermissions.filter(
+        (permission) => permission.kind === "question",
+      ).length,
       requiresAttention: agent.requiresAttention,
       attentionReason: agent.attentionReason,
     });
