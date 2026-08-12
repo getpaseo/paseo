@@ -1985,11 +1985,24 @@ export const ptBR: TranslationResources = {
         interfaceSize: "Tamanho da interface",
         interfaceSizeAccessibility: "Tamanho da fonte da interface",
         codeFont: "Fonte de código",
-        codeFontHint:
-          "Usada em código, diffs e saída do terminal. Deixe vazio para usar o padrão do sistema",
+        codeFontHint: "Usada em código e diffs. Deixe vazio para usar o padrão do sistema",
         codeFontAccessibility: "Família da fonte de código",
         codeSize: "Tamanho do código",
         codeSizeAccessibility: "Tamanho da fonte de código",
+      },
+      terminal: {
+        title: "Terminal",
+        font: "Fonte do terminal",
+        fontHint:
+          "Precisa ser uma fonte monoespaçada. Deixe vazio para a pilha padrão, que inclui glifos Nerd Font para prompts",
+        fontAccessibility: "Família da fonte do terminal",
+        size: "Tamanho do terminal",
+        sizeAccessibility: "Tamanho da fonte do terminal",
+        sizeInherit: "Auto",
+        lineHeight: "Altura da linha",
+        lineHeightAccessibility: "Altura da linha do terminal",
+        boldText: "Texto em negrito",
+        boldTextHint: "Desativado exibe a saída em negrito com peso normal. As cores não mudam",
       },
       syntax: {
         title: "Sintaxe",

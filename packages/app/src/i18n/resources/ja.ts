@@ -1971,10 +1971,24 @@ export const ja: TranslationResources = {
         interfaceSizeAccessibility: "インターフェースフォントサイズ",
         codeFont: "コードフォント",
         codeFontHint:
-          "コード、差分、ターミナル出力で使用されます。システムデフォルトにするには空のままにしてください",
+          "コード、差分で使用されます。システムデフォルトにするには空のままにしてください",
         codeFontAccessibility: "コードフォントファミリー",
         codeSize: "コードサイズ",
         codeSizeAccessibility: "コードフォントサイズ",
+      },
+      terminal: {
+        title: "ターミナル",
+        font: "ターミナルのフォント",
+        fontHint:
+          "等幅フォントを指定してください。空のままにすると、プロンプト用の Nerd Font グリフを含む既定のフォントを使用します",
+        fontAccessibility: "ターミナルのフォントファミリー",
+        size: "ターミナルの文字サイズ",
+        sizeAccessibility: "ターミナルのフォントサイズ",
+        sizeInherit: "自動",
+        lineHeight: "行の高さ",
+        lineHeightAccessibility: "ターミナルの行の高さ",
+        boldText: "太字",
+        boldTextHint: "オフにすると太字の出力が通常の太さで表示されます。色は変わりません",
       },
       syntax: {
         title: "構文ハイライト",

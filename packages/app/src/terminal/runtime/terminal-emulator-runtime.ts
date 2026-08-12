@@ -28,7 +28,12 @@ import {
   type TerminalLocalFileLinkSource,
   type TerminalLocalFileLinkTarget,
 } from "../local-links/terminal-local-link-provider";
-import { resolveTerminalFontFamily, resolveTerminalFontSize } from "./terminal-font";
+import {
+  resolveTerminalFontFamily,
+  resolveTerminalFontSize,
+  resolveTerminalFontWeightBold,
+  resolveTerminalLineHeight,
+} from "./terminal-font";
 
 export type TerminalOutputData = Uint8Array;
 
@@ -40,6 +45,8 @@ export interface TerminalEmulatorRuntimeMountInput {
   theme: ITheme;
   fontFamily?: string;
   fontSize?: number;
+  lineHeight?: number;
+  boldText?: boolean;
 }
 
 export interface TerminalEmulatorRuntimeCallbacks {
@@ -174,6 +181,11 @@ export class TerminalEmulatorRuntime {
   private terminal: Terminal | null = null;
   private fitAddon: FitAddon | null = null;
   private fitAndEmitResize: ((input?: TerminalResizeRequest) => void) | null = null;
+  // The WebGL renderer caches rasterized glyphs in a texture atlas keyed by character
+  // and style. Font changes must invalidate it or the old font's glyphs — bold faces
+  // especially — keep being drawn, so what you see depends on the order settings were
+  // changed rather than their final values.
+  private clearWebglTextureAtlas: (() => void) | null = null;
   private lastSize: { rows: number; cols: number } | null = null;
   private cleanup: (() => void) | null = null;
   private outputOperations: TerminalOutputOperation[] = [];
@@ -234,7 +246,8 @@ export class TerminalEmulatorRuntime {
       cursorStyle: "bar",
       fontFamily: resolveTerminalFontFamily(input.fontFamily),
       fontSize: resolveTerminalFontSize(input.fontSize),
-      lineHeight: 1.0,
+      lineHeight: resolveTerminalLineHeight(input.lineHeight),
+      fontWeightBold: resolveTerminalFontWeightBold(input.boldText),
       macOptionIsMeta: true,
       minimumContrastRatio: 1,
       rescaleOverlappingGlyphs: true,
@@ -301,6 +314,7 @@ export class TerminalEmulatorRuntime {
         // ignore
       }
       webglAddon = null;
+      this.clearWebglTextureAtlas = null;
       disposeImageAddon();
       // WebGL and DOM renderers can have different cell dimensions.
       this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
@@ -338,6 +352,8 @@ export class TerminalEmulatorRuntime {
           disposeWebglRenderer();
         });
         terminal.loadAddon(webglAddon);
+        const loadedWebglAddon = webglAddon;
+        this.clearWebglTextureAtlas = () => loadedWebglAddon.clearTextureAtlas();
         imageAddon = new ImageAddon();
         terminal.loadAddon(imageAddon);
         registerProtocolQuerySuppression();
@@ -708,7 +724,12 @@ export class TerminalEmulatorRuntime {
     this.refreshVisibleRows();
   }
 
-  setFont(input: { fontFamily?: string; fontSize?: number }): void {
+  setFont(input: {
+    fontFamily?: string;
+    fontSize?: number;
+    lineHeight?: number;
+    boldText?: boolean;
+  }): void {
     const terminal = this.terminal;
     if (!terminal) {
       return;
@@ -717,11 +738,18 @@ export class TerminalEmulatorRuntime {
     try {
       terminal.options.fontFamily = resolveTerminalFontFamily(input.fontFamily);
       terminal.options.fontSize = resolveTerminalFontSize(input.fontSize);
+      terminal.options.lineHeight = resolveTerminalLineHeight(input.lineHeight);
+      terminal.options.fontWeightBold = resolveTerminalFontWeightBold(input.boldText);
     } catch {
       // ignore
       return;
     }
 
+    try {
+      this.clearWebglTextureAtlas?.();
+    } catch {
+      // A lost GL context throws here; the renderer falls back to DOM and repaints.
+    }
     this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
     this.refreshVisibleRows();
   }
@@ -798,6 +826,7 @@ export class TerminalEmulatorRuntime {
     this.terminal = null;
     this.fitAddon = null;
     this.fitAndEmitResize = null;
+    this.clearWebglTextureAtlas = null;
     this.lastSize = null;
     this.themeBackgroundElements = [];
     this.suppressInput = false;

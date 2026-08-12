@@ -105,6 +105,8 @@ interface TerminalEmulatorProps {
   scrollbackLines: number;
   fontFamily?: string;
   fontSize?: number;
+  lineHeight?: number;
+  boldText?: boolean;
   keyboardInset?: number;
   isKeyboardVisible?: boolean;
   swipeGesturesEnabled?: boolean;
@@ -168,6 +170,8 @@ export default function TerminalEmulator({
   scrollbackLines,
   fontFamily,
   fontSize,
+  lineHeight,
+  boldText,
   swipeGesturesEnabled = false,
   onSwipeLeft,
   onSwipeRight,
@@ -191,10 +195,14 @@ export default function TerminalEmulator({
   const mountedThemeRef = useRef<ITheme>(xtermTheme);
   const fontFamilyRef = useRef(fontFamily);
   const fontSizeRef = useRef(fontSize);
+  const lineHeightRef = useRef(lineHeight);
+  const boldTextRef = useRef(boldText);
   const scrollbackLinesRef = useRef(scrollbackLines);
   scrollbackLinesRef.current = scrollbackLines;
   fontFamilyRef.current = fontFamily;
   fontSizeRef.current = fontSize;
+  lineHeightRef.current = lineHeight;
+  boldTextRef.current = boldText;
   const themeKey = useMemo(() => buildXtermThemeKey(xtermTheme), [xtermTheme]);
   const xtermThemeRef = useRef(xtermTheme);
   xtermThemeRef.current = xtermTheme;
@@ -463,6 +471,8 @@ export default function TerminalEmulator({
       theme: mountedThemeRef.current,
       fontFamily: fontFamilyRef.current,
       fontSize: fontSizeRef.current,
+      lineHeight: lineHeightRef.current,
+      boldText: boldTextRef.current,
     });
     onRendererReadyChangeRef.current?.({ streamKey, isReady: true });
 
@@ -503,8 +513,8 @@ export default function TerminalEmulator({
   }, [pendingModifiers]);
 
   useEffect(() => {
-    runtimeRef.current?.setFont({ fontFamily, fontSize });
-  }, [fontFamily, fontSize]);
+    runtimeRef.current?.setFont({ fontFamily, fontSize, lineHeight, boldText });
+  }, [boldText, fontFamily, fontSize, lineHeight]);
 
   useEffect(() => {
     if (focusRequestToken <= 0) {

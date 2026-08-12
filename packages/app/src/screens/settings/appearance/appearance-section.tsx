@@ -24,7 +24,10 @@ import {
   MIN_CODE_FONT_SIZE,
   MIN_UI_FONT_SIZE,
   parseClampedFontSize,
+  parseTerminalFontSize,
+  parseTerminalLineHeight,
   sanitizeFontFamily,
+  TERMINAL_FONT_SIZE_INHERIT,
   useAppSettings,
   type AppSettings,
 } from "@/hooks/use-settings";
@@ -36,6 +39,7 @@ import {
   THEME_SWATCHES,
   type Theme,
 } from "@/styles/theme";
+import { DEFAULT_TERMINAL_FONT_FAMILY } from "@/terminal/runtime/terminal-font";
 import { isNative } from "@/constants/platform";
 import { settingsStyles } from "@/styles/settings";
 import { AppearancePreview } from "./appearance-preview";
@@ -353,6 +357,9 @@ interface FontSizeRowProps {
   accessibilityLabel: string;
   draft: string;
   withBorder?: boolean;
+  /** Trailing unit label. Defaults to px; the line-height row uses a multiplier sign. */
+  unit?: string;
+  placeholder?: string;
   onChangeDraft: (value: string) => void;
   onCommit: () => void;
 }
@@ -362,6 +369,8 @@ function FontSizeRow({
   accessibilityLabel,
   draft,
   withBorder = true,
+  unit = "px",
+  placeholder,
   onChangeDraft,
   onCommit,
 }: FontSizeRowProps) {
@@ -373,16 +382,17 @@ function FontSizeRow({
       <View style={styles.sizeField}>
         <TextInput
           value={draft}
+          placeholder={placeholder}
           onChangeText={onChangeDraft}
           onBlur={onCommit}
           onSubmitEditing={onCommit}
-          keyboardType="number-pad"
-          inputMode="numeric"
+          keyboardType="decimal-pad"
+          inputMode="decimal"
           selectTextOnFocus
           style={styles.sizeInput}
           accessibilityLabel={accessibilityLabel}
         />
-        <Text style={styles.unit}>px</Text>
+        <Text style={styles.unit}>{unit}</Text>
       </View>
     </View>
   );
@@ -467,11 +477,19 @@ export function AppearanceSection() {
   const showFontFamilyRows = !isNative;
   const uiFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_UI_FONT_STACK);
   const monoFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_MONO_FONT_STACK);
+  const terminalFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_TERMINAL_FONT_FAMILY);
 
   const [uiFontDraft, setUiFontDraft] = useState(settings.uiFontFamily);
   const [monoFontDraft, setMonoFontDraft] = useState(settings.monoFontFamily);
   const [uiSizeDraft, setUiSizeDraft] = useState(String(settings.uiFontSize));
   const [codeSizeDraft, setCodeSizeDraft] = useState(String(settings.codeFontSize));
+  const [terminalFontDraft, setTerminalFontDraft] = useState(settings.terminalFontFamily);
+  const [terminalSizeDraft, setTerminalSizeDraft] = useState(
+    settings.terminalFontSize > TERMINAL_FONT_SIZE_INHERIT ? String(settings.terminalFontSize) : "",
+  );
+  const [terminalLineHeightDraft, setTerminalLineHeightDraft] = useState(
+    String(settings.terminalLineHeight),
+  );
 
   // Resync numeric drafts when the committed value changes elsewhere.
   useEffect(() => {
@@ -480,6 +498,16 @@ export function AppearanceSection() {
   useEffect(() => {
     setCodeSizeDraft(String(settings.codeFontSize));
   }, [settings.codeFontSize]);
+  useEffect(() => {
+    setTerminalSizeDraft(
+      settings.terminalFontSize > TERMINAL_FONT_SIZE_INHERIT
+        ? String(settings.terminalFontSize)
+        : "",
+    );
+  }, [settings.terminalFontSize]);
+  useEffect(() => {
+    setTerminalLineHeightDraft(String(settings.terminalLineHeight));
+  }, [settings.terminalLineHeight]);
 
   const handleThemeChange = useCallback(
     (theme: AppSettings["theme"]) => {
@@ -498,6 +526,13 @@ export function AppearanceSection() {
   const handleAutoExpandReasoningChange = useCallback(
     (autoExpandReasoning: boolean) => {
       void updateSettings({ autoExpandReasoning });
+    },
+    [updateSettings],
+  );
+
+  const handleTerminalBoldTextChange = useCallback(
+    (terminalBoldText: boolean) => {
+      void updateSettings({ terminalBoldText });
     },
     [updateSettings],
   );
@@ -578,6 +613,46 @@ export function AppearanceSection() {
     }
   }, [codeSizeDraft, settings.codeFontSize, updateSettings]);
 
+  const handleTerminalSizeChange = useCallback((value: string) => {
+    setTerminalSizeDraft(value.replace(/[^\d]/g, ""));
+  }, []);
+
+  const handleTerminalLineHeightChange = useCallback((value: string) => {
+    setTerminalLineHeightDraft(value.replace(/[^\d.]/g, ""));
+  }, []);
+
+  const commitTerminalFontFamily = useCallback(() => {
+    const sanitized = sanitizeFontFamily(terminalFontDraft);
+    if (sanitized === null) {
+      setTerminalFontDraft(settings.terminalFontFamily);
+      return;
+    }
+    if (sanitized !== settings.terminalFontFamily) {
+      void updateSettings({ terminalFontFamily: sanitized });
+    }
+  }, [settings.terminalFontFamily, terminalFontDraft, updateSettings]);
+
+  // An empty field means "inherit the code font size", so it commits the sentinel
+  // rather than falling back to the previous explicit value.
+  const commitTerminalSize = useCallback(() => {
+    const next =
+      terminalSizeDraft.trim().length === 0
+        ? TERMINAL_FONT_SIZE_INHERIT
+        : (parseTerminalFontSize(terminalSizeDraft) ?? settings.terminalFontSize);
+    setTerminalSizeDraft(next > TERMINAL_FONT_SIZE_INHERIT ? String(next) : "");
+    if (next !== settings.terminalFontSize) {
+      void updateSettings({ terminalFontSize: next });
+    }
+  }, [settings.terminalFontSize, terminalSizeDraft, updateSettings]);
+
+  const commitTerminalLineHeight = useCallback(() => {
+    const next = parseTerminalLineHeight(terminalLineHeightDraft) ?? settings.terminalLineHeight;
+    setTerminalLineHeightDraft(String(next));
+    if (next !== settings.terminalLineHeight) {
+      void updateSettings({ terminalLineHeight: next });
+    }
+  }, [settings.terminalLineHeight, terminalLineHeightDraft, updateSettings]);
+
   // Live-while-typing: the in-progress drafts drive the preview without
   // committing to the global theme. Empty/invalid fields fall back to the
   // theme value inside the preview.
@@ -657,6 +732,54 @@ export function AppearanceSection() {
             onChangeDraft={handleCodeSizeChange}
             onCommit={commitCodeSize}
           />
+        </View>
+      </SettingsSection>
+      <SettingsSection title={t("settings.appearance.terminal.title")}>
+        <View style={settingsStyles.card}>
+          {showFontFamilyRows ? (
+            <FontFamilyRow
+              title={t("settings.appearance.terminal.font")}
+              hint={t("settings.appearance.terminal.fontHint")}
+              accessibilityLabel={t("settings.appearance.terminal.fontAccessibility")}
+              placeholder={terminalFontPlaceholder}
+              value={settings.terminalFontFamily}
+              draft={terminalFontDraft}
+              withBorder={false}
+              onChangeDraft={setTerminalFontDraft}
+              onCommit={commitTerminalFontFamily}
+            />
+          ) : null}
+          <FontSizeRow
+            title={t("settings.appearance.terminal.size")}
+            accessibilityLabel={t("settings.appearance.terminal.sizeAccessibility")}
+            draft={terminalSizeDraft}
+            placeholder={t("settings.appearance.terminal.sizeInherit")}
+            withBorder={showFontFamilyRows}
+            onChangeDraft={handleTerminalSizeChange}
+            onCommit={commitTerminalSize}
+          />
+          <FontSizeRow
+            title={t("settings.appearance.terminal.lineHeight")}
+            accessibilityLabel={t("settings.appearance.terminal.lineHeightAccessibility")}
+            draft={terminalLineHeightDraft}
+            unit="×"
+            onChangeDraft={handleTerminalLineHeightChange}
+            onCommit={commitTerminalLineHeight}
+          />
+          <View style={styles.rowWithBorder}>
+            <View style={settingsStyles.rowContent}>
+              <Text style={settingsStyles.rowTitle}>
+                {t("settings.appearance.terminal.boldText")}
+              </Text>
+              <Text style={settingsStyles.rowHint}>
+                {t("settings.appearance.terminal.boldTextHint")}
+              </Text>
+            </View>
+            <Switch
+              value={settings.terminalBoldText}
+              onValueChange={handleTerminalBoldTextChange}
+            />
+          </View>
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.syntax.title")}>

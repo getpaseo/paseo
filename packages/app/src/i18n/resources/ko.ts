@@ -1965,11 +1965,24 @@ export const ko: TranslationResources = {
         interfaceSize: "인터페이스 크기",
         interfaceSizeAccessibility: "인터페이스 글꼴 크기",
         codeFont: "코드 글꼴",
-        codeFontHint:
-          "코드, diff, 터미널 출력에 사용됩니다. 시스템 기본값을 사용하려면 비워 두세요",
+        codeFontHint: "코드와 diff에 사용됩니다. 시스템 기본값을 사용하려면 비워 두세요",
         codeFontAccessibility: "코드 글꼴 패밀리",
         codeSize: "코드 크기",
         codeSizeAccessibility: "코드 글꼴 크기",
+      },
+      terminal: {
+        title: "터미널",
+        font: "터미널 글꼴",
+        fontHint:
+          "고정폭 글꼴이어야 합니다. 비워 두면 프롬프트용 Nerd Font 글리프가 포함된 기본 글꼴을 사용합니다",
+        fontAccessibility: "터미널 글꼴 패밀리",
+        size: "터미널 크기",
+        sizeAccessibility: "터미널 글꼴 크기",
+        sizeInherit: "자동",
+        lineHeight: "줄 높이",
+        lineHeightAccessibility: "터미널 줄 높이",
+        boldText: "굵은 텍스트",
+        boldTextHint: "끄면 굵은 출력이 보통 굵기로 표시됩니다. 색상은 그대로 유지됩니다",
       },
       syntax: {
         title: "구문",

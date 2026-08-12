@@ -7,6 +7,8 @@ export interface TerminalGridCellMetricsInput {
   measuredTextWidth: number;
   measuredTextHeight: number;
   measureTextLength: number;
+  /** Cell-height multiplier; undefined means 1.0 (cell hugs the measured glyph box). */
+  lineHeight?: number;
   roundToNearestPixel: (value: number) => number;
 }
 
@@ -38,9 +40,17 @@ export function resolveMeasuredTerminalCellMetrics(
   input: TerminalGridCellMetricsInput,
 ): TerminalGridCellMetrics {
   const textLength = Math.max(1, input.measureTextLength);
+  // Only the height scales: line height is leading, so widening the cell would
+  // stretch the grid horizontally and break column alignment.
+  const lineHeight =
+    typeof input.lineHeight === "number" &&
+    Number.isFinite(input.lineHeight) &&
+    input.lineHeight > 0
+      ? input.lineHeight
+      : 1;
   return {
     cellWidth: snapCellMetric(input.measuredTextWidth / textLength, input.roundToNearestPixel),
-    cellHeight: snapCellMetric(input.measuredTextHeight, input.roundToNearestPixel),
+    cellHeight: snapCellMetric(input.measuredTextHeight * lineHeight, input.roundToNearestPixel),
   };
 }
 

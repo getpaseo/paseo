@@ -90,7 +90,14 @@ interface StubTerminal {
   resize?: (cols: number, rows: number) => void;
   focus: () => void;
   refresh?: (start: number, end: number) => void;
-  options?: { theme?: unknown; scrollback?: number; fontFamily?: string; fontSize?: number };
+  options?: {
+    theme?: unknown;
+    scrollback?: number;
+    fontFamily?: string;
+    fontSize?: number;
+    lineHeight?: number;
+    fontWeightBold?: string;
+  };
   rows?: number;
   cols?: number;
 }
@@ -588,10 +595,14 @@ describe("terminal-emulator-runtime", () => {
     (runtime as unknown as { terminal: StubTerminal }).terminal = terminal;
     (runtime as unknown as RuntimeFitProbe).fitAndEmitResize = fitAndEmitResize;
 
-    runtime.setFont({ fontFamily: "  Menlo  ", fontSize: 18 });
+    runtime.setFont({ fontFamily: "  Menlo  ", fontSize: 18, lineHeight: 1.4, boldText: false });
 
-    expect(terminal.options?.fontFamily).toBe("Menlo");
+    // The generic monospace backstop is appended so an unresolvable family cannot
+    // fall through to a proportional font and break the fixed grid.
+    expect(terminal.options?.fontFamily).toBe("Menlo, monospace");
     expect(terminal.options?.fontSize).toBe(18);
+    expect(terminal.options?.lineHeight).toBe(1.4);
+    expect(terminal.options?.fontWeightBold).toBe("normal");
     expect(fitAndEmitResize).toHaveBeenCalledWith({
       forceRefresh: true,
       shouldClaim: false,

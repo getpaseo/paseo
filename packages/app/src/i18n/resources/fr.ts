@@ -2006,10 +2006,25 @@ export const fr: TranslationResources = {
         interfaceSizeAccessibility: "Taille de la police de l'interface",
         codeFont: "Police de code",
         codeFontHint:
-          "Utilisé dans le code, les différences et la sortie du terminal. Laisser vide pour la valeur par défaut du système",
+          "Utilisé dans le code et les différences. Laisser vide pour la valeur par défaut du système",
         codeFontAccessibility: "Famille de polices de code",
         codeSize: "Taille du code",
         codeSizeAccessibility: "Taille de la police du code",
+      },
+      terminal: {
+        title: "Terminal",
+        font: "Police du terminal",
+        fontHint:
+          "Doit être une police à chasse fixe. Laisser vide pour la pile par défaut, qui inclut les glyphes Nerd Font pour les invites",
+        fontAccessibility: "Famille de polices du terminal",
+        size: "Taille du terminal",
+        sizeAccessibility: "Taille de la police du terminal",
+        sizeInherit: "Auto",
+        lineHeight: "Interligne",
+        lineHeightAccessibility: "Interligne du terminal",
+        boldText: "Texte en gras",
+        boldTextHint:
+          "Désactivé affiche la sortie en gras avec une graisse normale. Les couleurs sont inchangées",
       },
       syntax: {
         title: "Syntaxe",

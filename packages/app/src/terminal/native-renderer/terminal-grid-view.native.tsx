@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   PixelRatio,
   Text,
@@ -19,6 +19,7 @@ import {
 } from "./colors";
 import type { TerminalGlyphRect } from "./terminal-custom-glyph";
 import { resolveNativeTerminalFontFamily } from "./font.native";
+import { DEFAULT_TERMINAL_LINE_HEIGHT } from "../runtime/terminal-font";
 import type { TerminalViewportState } from "./headless-terminal-state";
 import {
   resolveMeasuredTerminalCellMetrics,
@@ -72,15 +73,17 @@ export interface TerminalGridViewProps {
   xtermTheme?: ITheme;
   fontFamily?: string;
   fontSize?: number;
+  lineHeight?: number;
+  boldText?: boolean;
   style?: StyleProp<ViewStyle>;
   selection?: TerminalSelectionRange | null;
   onCellMetricsChange?: (metrics: TerminalGridCellMetrics) => void;
 }
 
-function estimateCellMetrics(fontSize: number): CellMetrics {
+function estimateCellMetrics(fontSize: number, lineHeight: number): CellMetrics {
   return {
     cellWidth: snapPixel(fontSize * INITIAL_CELL_WIDTH_RATIO),
-    cellHeight: snapPixel(fontSize * INITIAL_CELL_HEIGHT_RATIO),
+    cellHeight: snapPixel(fontSize * INITIAL_CELL_HEIGHT_RATIO * lineHeight),
   };
 }
 
@@ -297,18 +300,29 @@ export function TerminalGridView({
   xtermTheme = DEFAULT_TERMINAL_THEME,
   fontFamily,
   fontSize = DEFAULT_FONT_SIZE,
+  lineHeight = DEFAULT_TERMINAL_LINE_HEIGHT,
+  boldText = true,
   style,
   selection = null,
   onCellMetricsChange,
 }: TerminalGridViewProps) {
-  const [metrics, setMetrics] = useState<CellMetrics>(() => estimateCellMetrics(fontSize));
+  const [metrics, setMetrics] = useState<CellMetrics>(() =>
+    estimateCellMetrics(fontSize, lineHeight),
+  );
   const measuredMetricsRef = useRef<TerminalGridCellMetrics | null>(null);
+  // The raw layout measurement is kept so a line-height change can re-derive the
+  // cell without waiting for another layout pass: line height does not affect the
+  // measure text's own box, so no new LayoutChangeEvent would ever arrive.
+  const rawMeasureRef = useRef<{ width: number; height: number } | null>(null);
   const [viewport, setViewport] = useState<TerminalGridViewport | null>(null);
   const resolvedFontFamily = useMemo(
     () => resolveNativeTerminalFontFamily(fontFamily),
     [fontFamily],
   );
-  const resolver = useMemo(() => createTerminalCellStyleResolver(xtermTheme), [xtermTheme]);
+  const resolver = useMemo(
+    () => createTerminalCellStyleResolver(xtermTheme, { boldText }),
+    [boldText, xtermTheme],
+  );
   const visibleCols = useMemo(() => {
     const viewportWidth = viewport?.width ?? state.cols * metrics.cellWidth;
     return resolveVisibleCols({
@@ -373,12 +387,14 @@ export function TerminalGridView({
     ];
   }, [metrics, state.cursor.col, state.cursor.row, resolver.cursorColor]);
 
-  const handleMeasure = useCallback(
-    (event: LayoutChangeEvent) => {
+  const applyRawMeasure = useCallback(
+    (raw: { width: number; height: number }) => {
+      rawMeasureRef.current = raw;
       const nextMetrics = resolveMeasuredTerminalCellMetrics({
-        measuredTextWidth: event.nativeEvent.layout.width,
-        measuredTextHeight: event.nativeEvent.layout.height,
+        measuredTextWidth: raw.width,
+        measuredTextHeight: raw.height,
         measureTextLength: MEASURE_TEXT.length,
+        lineHeight,
         roundToNearestPixel: (value) => PixelRatio.roundToNearestPixel(value),
       });
       const changedMetrics = resolveTerminalGridMetricsMeasurement(
@@ -392,8 +408,25 @@ export function TerminalGridView({
       setMetrics(changedMetrics);
       onCellMetricsChange?.(changedMetrics);
     },
-    [onCellMetricsChange],
+    [lineHeight, onCellMetricsChange],
   );
+
+  const handleMeasure = useCallback(
+    (event: LayoutChangeEvent) => {
+      applyRawMeasure({
+        width: event.nativeEvent.layout.width,
+        height: event.nativeEvent.layout.height,
+      });
+    },
+    [applyRawMeasure],
+  );
+
+  useEffect(() => {
+    const raw = rawMeasureRef.current;
+    if (raw) {
+      applyRawMeasure(raw);
+    }
+  }, [applyRawMeasure]);
 
   const handleContainerLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
