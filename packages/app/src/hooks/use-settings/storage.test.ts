@@ -15,6 +15,7 @@ import {
   type SettingsDeps,
 } from "./storage";
 import { createFakeDesktopBridge, createInMemoryKeyValueStorage } from "./fakes";
+import { THEME_OPTIONS } from "@/styles/theme";
 
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 
@@ -40,6 +41,18 @@ describe("loadAppSettingsFromStorage", () => {
     const result = await loadAppSettingsFromStorage(deps);
 
     expect(result.theme).toBe("auto");
+  });
+
+  it.each(THEME_OPTIONS)("loads the persisted $name theme", async ({ name }) => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ theme: name }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.theme).toBe(name);
   });
 
   it("seeds storage with the client defaults when nothing is persisted", async () => {

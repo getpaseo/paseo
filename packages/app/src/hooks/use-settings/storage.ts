@@ -30,6 +30,7 @@ export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
 export type ToolCallDetailLevel = "overview" | "detailed";
 
 const VALID_THEMES = new Set<string>(THEME_OPTIONS.map((option) => option.name));
+const ThemePreferenceSchema = z.enum(THEME_OPTIONS.map((option) => option.name));
 const VALID_SERVICE_URL_BEHAVIORS = new Set<ServiceUrlBehavior>(["ask", "in-app", "external"]);
 const VALID_WORKSPACE_TITLE_SOURCES = new Set<WorkspaceTitleSource>(["title", "branch"]);
 const VALID_SIDEBAR_WORKSPACE_TRAILINGS = new Set<SidebarWorkspaceTrailing>([
@@ -85,7 +86,7 @@ const SidebarRowItemsSchema = z.strictObject({
 });
 
 const StoredAppSettingsSchema = z.strictObject({
-  theme: z.enum(["auto", "dark", "light"]).optional(),
+  theme: ThemePreferenceSchema.optional(),
   language: z
     .enum(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])
     .optional(),

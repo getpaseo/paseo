@@ -1,6 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { readValidatedJson } from "@/storage/validated-storage";
-import { FormPreferencesSchema, type FormPreferences } from "./preferences";
+import {
+  FormPreferencesSchema,
+  StoredFormPreferencesSchema,
+  type FormPreferences,
+} from "./preferences";
 
 export const CREATE_AGENT_PREFERENCES_STORAGE_KEY = "@paseo:create-agent-preferences";
 
@@ -14,7 +18,7 @@ export class AsyncStorageCreateAgentPreferenceStorage implements CreateAgentPref
     return readValidatedJson(
       AsyncStorage,
       CREATE_AGENT_PREFERENCES_STORAGE_KEY,
-      FormPreferencesSchema,
+      StoredFormPreferencesSchema,
     );
   }
 

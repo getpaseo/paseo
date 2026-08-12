@@ -20,6 +20,12 @@ export interface FormPreferences {
   launchTarget?: LaunchTarget;
 }
 
+interface LegacyLocationFormPreferences {
+  workingDir?: string;
+  provider?: string;
+  serverId?: string;
+}
+
 const providerPreferencesSchema: z.ZodType<ProviderPreferences> = z.strictObject({
   model: z.string().optional(),
   mode: z.string().optional(),
@@ -52,10 +58,24 @@ export const FormPreferencesSchema: z.ZodType<FormPreferences> = z.strictObject(
   launchTarget: launchTargetSchema.optional(),
 });
 
+const LegacyLocationFormPreferencesSchema: z.ZodType<LegacyLocationFormPreferences> =
+  z.strictObject({
+    workingDir: z.string().optional(),
+    provider: z.string().optional(),
+    serverId: z.string().optional(),
+  });
+
+export const StoredFormPreferencesSchema: z.ZodType<FormPreferences> = z.union([
+  FormPreferencesSchema,
+  LegacyLocationFormPreferencesSchema.transform(({ provider }) =>
+    provider === undefined ? {} : { provider },
+  ),
+]);
+
 export const DEFAULT_FORM_PREFERENCES: FormPreferences = {};
 
 export function parseFormPreferences(value: unknown): FormPreferences {
-  const result = FormPreferencesSchema.safeParse(value);
+  const result = StoredFormPreferencesSchema.safeParse(value);
   return result.success ? result.data : DEFAULT_FORM_PREFERENCES;
 }
 
