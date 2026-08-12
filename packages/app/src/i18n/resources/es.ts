@@ -2004,10 +2004,25 @@ export const es: TranslationResources = {
         interfaceSizeAccessibility: "Tamaño de fuente de la interfaz",
         codeFont: "Fuente de código",
         codeFontHint:
-          "Se utiliza en código, diferencias y salida del terminal. Déjelo vacío para el valor predeterminado del sistema.",
+          "Se utiliza en código y diferencias. Déjelo vacío para el valor predeterminado del sistema.",
         codeFontAccessibility: "Familia de fuentes de código",
         codeSize: "Tamaño del código",
         codeSizeAccessibility: "Tamaño de fuente del código",
+      },
+      terminal: {
+        title: "Terminal",
+        font: "Fuente del terminal",
+        fontHint:
+          "Debe ser una fuente monoespaciada. Déjelo vacío para la pila predeterminada, que incluye glifos Nerd Font para los prompts",
+        fontAccessibility: "Familia de fuentes del terminal",
+        size: "Tamaño del terminal",
+        sizeAccessibility: "Tamaño de fuente del terminal",
+        sizeInherit: "Auto",
+        lineHeight: "Interlineado",
+        lineHeightAccessibility: "Interlineado del terminal",
+        boldText: "Texto en negrita",
+        boldTextHint:
+          "Desactivado muestra la salida en negrita con grosor normal. Los colores no cambian",
       },
       syntax: {
         title: "Sintaxis",

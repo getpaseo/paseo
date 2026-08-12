@@ -20,6 +20,8 @@ interface MountMessage {
   theme: ITheme;
   fontFamily?: string;
   fontSize?: number;
+  lineHeight?: number;
+  boldText?: boolean;
   pendingModifiers: PendingTerminalModifiers;
   swipeGesturesEnabled: boolean;
 }
@@ -36,7 +38,14 @@ type InboundMessage =
   | { type: "resize"; streamKey: string; forceClaim: boolean; shouldClaim?: boolean }
   | { type: "setTheme"; streamKey: string; theme: ITheme }
   | { type: "setScrollback"; streamKey: string; lines: number }
-  | { type: "setFont"; streamKey: string; fontFamily?: string; fontSize?: number }
+  | {
+      type: "setFont";
+      streamKey: string;
+      fontFamily?: string;
+      fontSize?: number;
+      lineHeight?: number;
+      boldText?: boolean;
+    }
   | { type: "setPendingModifiers"; streamKey: string; pendingModifiers: PendingTerminalModifiers }
   | { type: "setSwipeGesturesEnabled"; streamKey: string; enabled: boolean }
   | {
@@ -283,7 +292,12 @@ class TerminalWebViewBridge {
         this.runtime?.setScrollback({ lines: message.lines });
         return true;
       case "setFont":
-        this.runtime?.setFont({ fontFamily: message.fontFamily, fontSize: message.fontSize });
+        this.runtime?.setFont({
+          fontFamily: message.fontFamily,
+          fontSize: message.fontSize,
+          lineHeight: message.lineHeight,
+          boldText: message.boldText,
+        });
         return true;
       case "setPendingModifiers":
         this.runtime?.setPendingModifiers({ pendingModifiers: message.pendingModifiers });
@@ -343,6 +357,8 @@ class TerminalWebViewBridge {
       theme: message.theme,
       fontFamily: message.fontFamily,
       fontSize: message.fontSize,
+      lineHeight: message.lineHeight,
+      boldText: message.boldText,
     });
     sendToNative({ type: "rendererReady", streamKey: message.streamKey, isReady: true });
   }

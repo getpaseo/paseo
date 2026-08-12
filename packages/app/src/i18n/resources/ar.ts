@@ -1955,11 +1955,24 @@ export const ar: TranslationResources = {
         interfaceSize: "حجم الواجهة",
         interfaceSizeAccessibility: "حجم الخط في الواجهة",
         codeFont: "خط الكود",
-        codeFontHint:
-          "تستخدم في الكود والاختلافات والمخرجات الطرفية. اتركه فارغًا للإعداد الافتراضي للنظام",
+        codeFontHint: "تستخدم في الكود والاختلافات. اتركه فارغًا للإعداد الافتراضي للنظام",
         codeFontAccessibility: "عائلة خطوط الكود",
         codeSize: "حجم الكود",
         codeSizeAccessibility: "حجم خط الكود",
+      },
+      terminal: {
+        title: "الطرفية",
+        font: "خط الطرفية",
+        fontHint:
+          "يجب أن يكون خطًا أحادي المسافة. اتركه فارغًا للمجموعة الافتراضية التي تتضمن رموز Nerd Font للمحثات",
+        fontAccessibility: "عائلة خط الطرفية",
+        size: "حجم الطرفية",
+        sizeAccessibility: "حجم خط الطرفية",
+        sizeInherit: "تلقائي",
+        lineHeight: "ارتفاع السطر",
+        lineHeightAccessibility: "ارتفاع سطر الطرفية",
+        boldText: "النص العريض",
+        boldTextHint: "عند الإيقاف تُعرض المخرجات العريضة بسماكة عادية. الألوان لا تتأثر",
       },
       syntax: {
         title: "بناء الجملة",

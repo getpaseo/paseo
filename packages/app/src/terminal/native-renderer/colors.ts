@@ -165,6 +165,7 @@ function createTextStyle(input: {
   background: string;
   paintsBackground: boolean;
   flags: number;
+  boldText: boolean;
 }): TextStyle {
   const style: TextStyle = {
     color: input.foreground,
@@ -173,7 +174,8 @@ function createTextStyle(input: {
   if (input.paintsBackground) {
     style.backgroundColor = input.background;
   }
-  if ((input.flags & FLAG_BOLD) !== 0) {
+  // Bold SGR still carries its color; only the weight is dropped when bold text is off.
+  if ((input.flags & FLAG_BOLD) !== 0 && input.boldText) {
     style.fontWeight = "700";
   }
   if ((input.flags & FLAG_ITALIC) !== 0) {
@@ -202,11 +204,15 @@ function buildStyleKey(input: {
   return `${input.foreground}|${background}|${input.flags}`;
 }
 
-function buildThemeKey(theme: ITheme): string {
-  return JSON.stringify(theme);
+function buildThemeKey(theme: ITheme, boldText: boolean): string {
+  return `${JSON.stringify(theme)}|bold:${boldText}`;
 }
 
-export function createTerminalCellStyleResolver(theme: ITheme): TerminalCellStyleResolver {
+export function createTerminalCellStyleResolver(
+  theme: ITheme,
+  options?: { boldText?: boolean },
+): TerminalCellStyleResolver {
+  const boldText = options?.boldText !== false;
   const palette = build256Palette(theme);
   const foregroundColor = theme.foreground ?? DEFAULT_TERMINAL_THEME.foreground ?? "#fafafa";
   const backgroundColor = theme.background ?? DEFAULT_TERMINAL_THEME.background ?? "#181B1A";
@@ -214,7 +220,7 @@ export function createTerminalCellStyleResolver(theme: ITheme): TerminalCellStyl
   const styleCache = new Map<string, TextStyle>();
 
   return {
-    themeKey: buildThemeKey(theme),
+    themeKey: buildThemeKey(theme, boldText),
     backgroundColor,
     cursorColor,
     resolve(cell: TerminalCell): ResolvedCellStyle {
@@ -236,6 +242,7 @@ export function createTerminalCellStyleResolver(theme: ITheme): TerminalCellStyl
         background: colors.background,
         paintsBackground: colors.paintsBackground,
         flags,
+        boldText,
       });
       styleCache.set(key, style);
       return { key, style, foregroundColor: colors.foreground };

@@ -68,6 +68,7 @@ import {
   type TerminalRendererReadyChange,
 } from "@/utils/terminal-renderer-readiness";
 import { useAppSettings } from "@/hooks/use-settings";
+import { TERMINAL_FONT_SIZE_INHERIT } from "@/hooks/use-settings/storage";
 import { classifyForResolution, fetchDaemonResolution } from "@/assistant-file-links/resolver";
 import type {
   TerminalLocalFileLinkSource,
@@ -215,10 +216,20 @@ export function TerminalPane({
   const { theme } = useUnistyles();
   const { settings } = useAppSettings();
   const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme]);
+  // Terminal typography has its own settings rather than sharing the mono/code ones:
+  // the terminal needs Nerd Font glyphs that most code fonts lack. Leaving the family
+  // undefined when unset is the signal for resolveTerminalFontFamily to fall back to
+  // DEFAULT_TERMINAL_FONT_FAMILY, the curated Nerd Font stack.
   const terminalFontFamily = useMemo(() => {
-    const trimmed = settings.monoFontFamily.trim();
+    const trimmed = settings.terminalFontFamily.trim();
     return trimmed.length > 0 ? trimmed : undefined;
-  }, [settings.monoFontFamily]);
+  }, [settings.terminalFontFamily]);
+  // Size falls back to the code font size so the terminal keeps tracking that slider
+  // until the user explicitly sets a terminal-specific size.
+  const terminalFontSize =
+    settings.terminalFontSize > TERMINAL_FONT_SIZE_INHERIT
+      ? settings.terminalFontSize
+      : settings.codeFontSize;
   const isMobile = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobilePanel.target);
   const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
@@ -1052,7 +1063,9 @@ export function TerminalPane({
             xtermTheme={xtermTheme}
             scrollbackLines={settings.terminalScrollbackLines}
             fontFamily={terminalFontFamily}
-            fontSize={settings.codeFontSize}
+            fontSize={terminalFontSize}
+            lineHeight={settings.terminalLineHeight}
+            boldText={settings.terminalBoldText}
             keyboardInset={keyboardInset}
             isKeyboardVisible={isKeyboardVisible}
             swipeGesturesEnabled={swipeGesturesEnabled}
@@ -1124,11 +1137,21 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
     position: "relative",
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
+  // Padding lives on the grid container, not on outputContainer, so the attach
+  // overlay and floating copy action still cover the full pane. The horizontal
+  // values mirror the agent stream, which stacks two insets to reach its content
+  // edge: listContentContainer (spacing[3] / spacing[4] at md) plus
+  // streamItemWrapper (spacing[2]). Vertical mirrors forwardListContentContainer.
   terminalGestureContainer: {
     flex: 1,
     minHeight: 0,
+    paddingHorizontal: {
+      xs: theme.spacing[3] + theme.spacing[2],
+      md: theme.spacing[4] + theme.spacing[2],
+    },
+    paddingVertical: theme.spacing[4],
   },
   attachOverlay: {
     ...StyleSheet.absoluteFillObject,

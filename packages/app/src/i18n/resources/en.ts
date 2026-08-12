@@ -1965,11 +1965,24 @@ export const en = {
         interfaceSize: "Interface size",
         interfaceSizeAccessibility: "Interface font size",
         codeFont: "Code font",
-        codeFontHint:
-          "Used in code, diffs, and the terminal output. Leave empty for the system default",
+        codeFontHint: "Used in code and diffs. Leave empty for the system default",
         codeFontAccessibility: "Code font family",
         codeSize: "Code size",
         codeSizeAccessibility: "Code font size",
+      },
+      terminal: {
+        title: "Terminal",
+        font: "Terminal font",
+        fontHint:
+          "Must be a monospace font. Leave empty for the default stack, which includes Nerd Font glyphs for prompts",
+        fontAccessibility: "Terminal font family",
+        size: "Terminal size",
+        sizeAccessibility: "Terminal font size",
+        sizeInherit: "Auto",
+        lineHeight: "Line height",
+        lineHeightAccessibility: "Terminal line height",
+        boldText: "Bold text",
+        boldTextHint: "Off renders bold output at normal weight. Colors are unaffected",
       },
       syntax: {
         title: "Syntax",

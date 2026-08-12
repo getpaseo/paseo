@@ -14,6 +14,11 @@ import {
   type SidebarRowItems,
 } from "@/components/sidebar/display-preferences/row-items";
 import { THEME_OPTIONS, type ThemePreference } from "@/styles/theme";
+import {
+  DEFAULT_TERMINAL_LINE_HEIGHT,
+  MAX_TERMINAL_LINE_HEIGHT,
+  MIN_TERMINAL_LINE_HEIGHT,
+} from "@/terminal/runtime/terminal-font";
 
 export const APP_SETTINGS_KEY = "@paseo:app-settings";
 export const APP_SETTINGS_QUERY_KEY = ["app-settings"];
@@ -46,6 +51,9 @@ export const DEFAULT_CODE_FONT_SIZE = 12; // == FONT_SIZE.code
 export const MIN_CODE_FONT_SIZE = 9;
 export const MAX_CODE_FONT_SIZE = 22; // line-height 1.5×22=33 stays safe
 export const MAX_FONT_FAMILY_LENGTH = 200;
+export const TERMINAL_FONT_SIZE_INHERIT = 0; // follow codeFontSize
+export const MIN_TERMINAL_FONT_SIZE = 9;
+export const MAX_TERMINAL_FONT_SIZE = 22;
 
 export interface AppSettings {
   theme: ThemePreference;
@@ -58,6 +66,13 @@ export interface AppSettings {
   monoFontFamily: string; // "" = platform default mono stack
   uiFontSize: number; // clamped px, default 16
   codeFontSize: number; // clamped px, default 12
+  // Terminal typography is deliberately separate from the mono/code settings above:
+  // the terminal needs Nerd Font glyphs for prompts and TUIs, and its line height is
+  // a grid-density choice rather than a prose-readability one.
+  terminalFontFamily: string; // "" = curated Nerd Font stack (DEFAULT_TERMINAL_FONT_FAMILY)
+  terminalFontSize: number; // 0 = inherit codeFontSize, else clamped px
+  terminalLineHeight: number; // cell-height multiplier, default 1.2
+  terminalBoldText: boolean; // false renders bold escape codes at normal weight
   syntaxTheme: SyntaxThemeId; // default "one"
   workspaceTitleSource: WorkspaceTitleSource;
   sidebarWorkspaceTrailing: SidebarWorkspaceTrailing;
@@ -94,6 +109,10 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   monoFontFamily: "",
   uiFontSize: DEFAULT_UI_FONT_SIZE,
   codeFontSize: DEFAULT_CODE_FONT_SIZE,
+  terminalFontFamily: "",
+  terminalFontSize: TERMINAL_FONT_SIZE_INHERIT,
+  terminalLineHeight: DEFAULT_TERMINAL_LINE_HEIGHT,
+  terminalBoldText: true,
   syntaxTheme: "one",
   workspaceTitleSource: "title",
   sidebarWorkspaceTrailing: "diff",
@@ -243,6 +262,9 @@ function pickBooleanAppSettings(stored: StoredAppSettings): Partial<AppSettings>
   if (typeof stored.chatOutlineEnabled === "boolean") {
     result.chatOutlineEnabled = stored.chatOutlineEnabled;
   }
+  if (typeof stored.terminalBoldText === "boolean") {
+    result.terminalBoldText = stored.terminalBoldText;
+  }
   return result;
 }
 
@@ -323,6 +345,18 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   if (codeFontSize !== null) {
     result.codeFontSize = codeFontSize;
   }
+  const terminalFontFamily = sanitizeFontFamily(stored.terminalFontFamily);
+  if (terminalFontFamily !== null) {
+    result.terminalFontFamily = terminalFontFamily;
+  }
+  const terminalFontSize = parseTerminalFontSize(stored.terminalFontSize);
+  if (terminalFontSize !== null) {
+    result.terminalFontSize = terminalFontSize;
+  }
+  const terminalLineHeight = parseTerminalLineHeight(stored.terminalLineHeight);
+  if (terminalLineHeight !== null) {
+    result.terminalLineHeight = terminalLineHeight;
+  }
   Object.assign(result, pickBooleanAppSettings(stored));
   if (typeof stored.autoExpandReasoning === "boolean") {
     result.autoExpandReasoning = stored.autoExpandReasoning;
@@ -372,6 +406,35 @@ export function parseClampedFontSize(
     return null;
   }
   return Math.min(bounds.max, Math.max(bounds.min, Math.floor(numericValue)));
+}
+
+/**
+ * Zero is a meaningful value here — it means "inherit codeFontSize" — so it is
+ * accepted verbatim rather than clamped up to MIN_TERMINAL_FONT_SIZE.
+ */
+export function parseTerminalFontSize(value: unknown): number | null {
+  const numericValue = typeof value === "string" ? Number(value) : value;
+  if (typeof numericValue !== "number" || !Number.isFinite(numericValue)) {
+    return null;
+  }
+  const floored = Math.floor(numericValue);
+  if (floored <= TERMINAL_FONT_SIZE_INHERIT) {
+    return TERMINAL_FONT_SIZE_INHERIT;
+  }
+  return Math.min(MAX_TERMINAL_FONT_SIZE, Math.max(MIN_TERMINAL_FONT_SIZE, floored));
+}
+
+/** Fractional, unlike the font sizes — 1.2 and 1.25 are both useful. */
+export function parseTerminalLineHeight(value: unknown): number | null {
+  const numericValue = typeof value === "string" ? Number(value) : value;
+  if (typeof numericValue !== "number" || !Number.isFinite(numericValue)) {
+    return null;
+  }
+  const clamped = Math.min(
+    MAX_TERMINAL_LINE_HEIGHT,
+    Math.max(MIN_TERMINAL_LINE_HEIGHT, numericValue),
+  );
+  return Math.round(clamped * 100) / 100;
 }
 
 export function sanitizeFontFamily(value: unknown): string | null {

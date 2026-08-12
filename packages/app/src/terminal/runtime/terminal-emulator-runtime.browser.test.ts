@@ -3,11 +3,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
 import { encodeTerminalOutput, TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
 
+const webglAtlas = { clears: 0, throwOnClear: false };
+
 vi.mock("@xterm/addon-webgl", () => ({
   WebglAddon: class WebglAddon {
     activate(): void {}
     dispose(): void {}
     onContextLoss(): void {}
+    clearTextureAtlas(): void {
+      webglAtlas.clears += 1;
+      if (webglAtlas.throwOnClear) {
+        throw new Error("context lost");
+      }
+    }
   },
 }));
 
@@ -525,5 +533,40 @@ describe("terminal emulator runtime in a real browser", () => {
     await nextFrame();
 
     expect(reset).not.toHaveBeenCalled();
+  });
+});
+
+// The addon is loaded inside a requestAnimationFrame during mount.
+async function waitForWebglAddon(): Promise<void> {
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+describe("font changes and the WebGL glyph atlas", () => {
+  // The atlas caches rasterized glyphs per character and style. Without an explicit
+  // clear, a font change keeps drawing the previous font's glyphs — most visibly its
+  // bold faces — so the rendered result depends on the order settings changed.
+  it("clears the texture atlas when the font changes", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 900, height: 600 });
+    await waitForWebglAddon();
+
+    webglAtlas.clears = 0;
+    mounted.runtime.setFont({ fontFamily: "Menlo", fontSize: 15, lineHeight: 1.4 });
+
+    expect(webglAtlas.clears).toBe(1);
+  });
+
+  it("still applies the font when the renderer cannot clear its atlas", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 900, height: 600 });
+    await waitForWebglAddon();
+
+    webglAtlas.throwOnClear = true;
+    try {
+      expect(() => mounted.runtime.setFont({ fontFamily: "Menlo", fontSize: 15 })).not.toThrow();
+    } finally {
+      webglAtlas.throwOnClear = false;
+    }
   });
 });

@@ -40,6 +40,8 @@ type BridgeInboundMessage =
       theme: ITheme;
       fontFamily?: string;
       fontSize?: number;
+      lineHeight?: number;
+      boldText?: boolean;
       pendingModifiers: PendingTerminalModifiers;
       swipeGesturesEnabled: boolean;
     }
@@ -53,7 +55,14 @@ type BridgeInboundMessage =
   | { type: "resize"; streamKey: string; forceClaim: boolean; shouldClaim?: boolean }
   | { type: "setTheme"; streamKey: string; theme: ITheme }
   | { type: "setScrollback"; streamKey: string; lines: number }
-  | { type: "setFont"; streamKey: string; fontFamily?: string; fontSize?: number }
+  | {
+      type: "setFont";
+      streamKey: string;
+      fontFamily?: string;
+      fontSize?: number;
+      lineHeight?: number;
+      boldText?: boolean;
+    }
   | { type: "setPendingModifiers"; streamKey: string; pendingModifiers: PendingTerminalModifiers }
   | { type: "setSwipeGesturesEnabled"; streamKey: string; enabled: boolean }
   | {
@@ -130,6 +139,8 @@ function createMountMessage(input: {
   theme: ITheme;
   fontFamily?: string;
   fontSize?: number;
+  lineHeight?: number;
+  boldText?: boolean;
   pendingModifiers: PendingTerminalModifiers;
   swipeGesturesEnabled: boolean;
 }): BridgeInboundMessage {
@@ -141,6 +152,8 @@ function createMountMessage(input: {
     theme: input.theme,
     fontFamily: input.fontFamily,
     fontSize: input.fontSize,
+    lineHeight: input.lineHeight,
+    boldText: input.boldText,
     pendingModifiers: input.pendingModifiers,
     swipeGesturesEnabled: input.swipeGesturesEnabled,
   };
@@ -158,6 +171,8 @@ export default function WebViewTerminalEmulator({
   scrollbackLines,
   fontFamily,
   fontSize,
+  lineHeight,
+  boldText,
   swipeGesturesEnabled = false,
   onSwipeLeft,
   onSwipeRight,
@@ -195,6 +210,8 @@ export default function WebViewTerminalEmulator({
     theme: xtermTheme,
     fontFamily,
     fontSize,
+    lineHeight,
+    boldText,
     pendingModifiers,
     swipeGesturesEnabled,
   });
@@ -205,6 +222,8 @@ export default function WebViewTerminalEmulator({
     theme: xtermTheme,
     fontFamily,
     fontSize,
+    lineHeight,
+    boldText,
     pendingModifiers,
     swipeGesturesEnabled,
   };
@@ -392,8 +411,8 @@ export default function WebViewTerminalEmulator({
 
   useEffect(() => {
     if (!mountRequestedStreamKeyRef.current) return;
-    sendToWebView({ type: "setFont", streamKey, fontFamily, fontSize });
-  }, [fontFamily, fontSize, sendToWebView, streamKey]);
+    sendToWebView({ type: "setFont", streamKey, fontFamily, fontSize, lineHeight, boldText });
+  }, [boldText, fontFamily, fontSize, lineHeight, sendToWebView, streamKey]);
 
   useEffect(() => {
     if (!mountRequestedStreamKeyRef.current) return;

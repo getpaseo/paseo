@@ -32,6 +32,51 @@ describe("native terminal grid metrics", () => {
     });
   });
 
+  it("scales cell height by line height", () => {
+    expect(
+      resolveMeasuredTerminalCellMetrics({
+        measuredTextWidth: 70,
+        measuredTextHeight: 16,
+        measureTextLength: 10,
+        lineHeight: 1.5,
+        roundToNearestPixel: (value) => value,
+      }),
+    ).toEqual({
+      cellWidth: 7,
+      cellHeight: 24,
+    });
+  });
+
+  // Line height is leading, not tracking: widening the cell would desync every
+  // column from the glyph advance and smear the grid horizontally.
+  it("leaves cell width untouched when line height changes", () => {
+    const base = {
+      measuredTextWidth: 70,
+      measuredTextHeight: 16,
+      measureTextLength: 10,
+      roundToNearestPixel: (value: number) => value,
+    };
+    const tight = resolveMeasuredTerminalCellMetrics({ ...base, lineHeight: 1 });
+    const loose = resolveMeasuredTerminalCellMetrics({ ...base, lineHeight: 1.8 });
+    expect(loose.cellWidth).toBe(tight.cellWidth);
+    expect(loose.cellHeight).toBeGreaterThan(tight.cellHeight);
+  });
+
+  it.each([undefined, 0, -1, Number.NaN])(
+    "treats %s line height as 1.0 rather than collapsing the cell",
+    (lineHeight) => {
+      expect(
+        resolveMeasuredTerminalCellMetrics({
+          measuredTextWidth: 70,
+          measuredTextHeight: 16,
+          measureTextLength: 10,
+          lineHeight,
+          roundToNearestPixel: (value) => value,
+        }).cellHeight,
+      ).toBe(16);
+    },
+  );
+
   it.each([1, 2, 2.75, 3, 3.5])(
     "aligns cells to the physical pixel grid at density %s",
     (density) => {

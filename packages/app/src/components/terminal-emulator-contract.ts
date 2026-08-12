@@ -33,6 +33,10 @@ export interface TerminalEmulatorProps {
   scrollbackLines: number;
   fontFamily?: string;
   fontSize?: number;
+  /** Cell-height multiplier. Undefined falls back to DEFAULT_TERMINAL_LINE_HEIGHT. */
+  lineHeight?: number;
+  /** False renders bold SGR text at normal weight. Undefined means bold. */
+  boldText?: boolean;
   keyboardInset?: number;
   isKeyboardVisible?: boolean;
   swipeGesturesEnabled?: boolean;
