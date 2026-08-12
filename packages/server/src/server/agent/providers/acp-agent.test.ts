@@ -1120,6 +1120,58 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
+  test("uses the standard config option path when a thinking writer declines", async () => {
+    const thinkingOptionWriter = vi.fn(async () => ({ handled: false }));
+    const session = new ACPAgentSession(
+      {
+        provider: "grok",
+        cwd: "/tmp/paseo-acp-test",
+        thinkingOptionId: "low",
+      },
+      {
+        provider: "grok",
+        logger: createTestLogger(),
+        defaultCommand: ["grok", "agent", "stdio"],
+        defaultModes: [],
+        thinkingOptionWriter,
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+      },
+    );
+    const internals = asInternals<ACPModelSelectionInternals>(session);
+    const standardOption = selectConfigOption("thought_level", ["low", "medium"], "low");
+    const setSessionConfigOption = vi.fn(async () => ({
+      configOptions: [selectConfigOption("thought_level", ["low", "medium"], "medium")],
+    }));
+    internals.sessionId = "session-1";
+    internals.configOptions = [standardOption];
+    internals.connection = { setSessionConfigOption };
+
+    await session.setThinkingOption("medium");
+
+    expect(thinkingOptionWriter).toHaveBeenCalledWith({
+      connection: internals.connection,
+      sessionId: "session-1",
+      requestedThinkingOptionId: "medium",
+      currentThinkingOptionId: "low",
+      configOptions: [standardOption],
+    });
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      configId: "thought_level-option",
+      value: "medium",
+    });
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      thinkingOptionId: "medium",
+    });
+  });
+
   test("passes generic ACP permission requests through to the user", async () => {
     const session = createSessionWithConfig({
       provider: "cursor-acp",

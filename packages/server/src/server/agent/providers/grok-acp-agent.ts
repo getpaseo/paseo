@@ -1,8 +1,4 @@
-import type {
-  ClientSideConnection,
-  SessionConfigOption,
-  SessionModelState,
-} from "@agentclientprotocol/sdk";
+import type { SessionConfigOption, SessionModelState } from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
 import { z } from "zod";
 
@@ -11,6 +7,8 @@ import type {
   ACPCatalogModelResolverContext,
   ACPProviderModelWriterContext,
   ACPProviderModelWriteResult,
+  ACPProviderThinkingOptionWriterContext,
+  ACPProviderThinkingOptionWriteResult,
   SessionStateResponse,
 } from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
@@ -167,13 +165,24 @@ export function transformGrokSessionResponse(response: SessionStateResponse): Se
   };
 }
 
-export async function writeGrokThinkingOption(
-  connection: ClientSideConnection,
-  sessionId: string,
-  thinkingOptionId: string,
-): Promise<void> {
+function hasGrokReasoningConfigOption(configOptions: SessionConfigOption[]): boolean {
+  return configOptions.some(
+    (option) => option.id === GROK_REASONING_CONFIG_ID && option.category === "thought_level",
+  );
+}
+
+export async function writeGrokThinkingOption({
+  connection,
+  sessionId,
+  requestedThinkingOptionId,
+  configOptions,
+}: ACPProviderThinkingOptionWriterContext): Promise<ACPProviderThinkingOptionWriteResult> {
+  if (!hasGrokReasoningConfigOption(configOptions)) {
+    return { handled: false };
+  }
   // Grok exposes reasoning effort through ACP's mode endpoint.
-  await connection.setSessionMode({ sessionId, modeId: thinkingOptionId });
+  await connection.setSessionMode({ sessionId, modeId: requestedThinkingOptionId });
+  return { handled: true, thinkingOptionId: requestedThinkingOptionId };
 }
 
 export async function writeGrokModel({
@@ -182,7 +191,11 @@ export async function writeGrokModel({
   requestedModelId,
   currentThinkingOptionId,
   availableModel,
+  configOptions,
 }: ACPProviderModelWriterContext): Promise<ACPProviderModelWriteResult> {
+  if (!hasGrokReasoningConfigOption(configOptions)) {
+    return { handled: false };
+  }
   const { options, defaultId } = reasoningOptions(availableModel._meta);
   const supportedEfforts = new Set(options.map((option) => option.id));
   const thinkingOptionId =

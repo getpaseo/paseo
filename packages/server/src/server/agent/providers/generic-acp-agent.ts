@@ -1,4 +1,3 @@
-import type { ClientSideConnection } from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
 import { z } from "zod";
 
@@ -13,6 +12,8 @@ import {
   type ACPExtensionCommandsParser,
   type ACPProviderModelWriterContext,
   type ACPProviderModelWriteResult,
+  type ACPProviderThinkingOptionWriterContext,
+  type ACPProviderThinkingOptionWriteResult,
   type SessionStateResponse,
 } from "./acp-agent.js";
 import {
@@ -60,10 +61,8 @@ interface GenericACPAgentClientOptions {
     context: ACPProviderModelWriterContext,
   ) => Promise<ACPProviderModelWriteResult>;
   thinkingOptionWriter?: (
-    connection: ClientSideConnection,
-    sessionId: string,
-    thinkingOptionId: string,
-  ) => Promise<void>;
+    context: ACPProviderThinkingOptionWriterContext,
+  ) => Promise<ACPProviderThinkingOptionWriteResult>;
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {

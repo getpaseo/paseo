@@ -1,4 +1,8 @@
-import type { ClientSideConnection, SessionModelState } from "@agentclientprotocol/sdk";
+import type {
+  ClientSideConnection,
+  SessionConfigOption,
+  SessionModelState,
+} from "@agentclientprotocol/sdk";
 import { describe, expect, test, vi } from "vitest";
 
 import type { AgentModelDefinition } from "../agent-sdk-types.js";
@@ -46,6 +50,29 @@ const grokModelState = {
     },
   ],
 } satisfies SessionModelState;
+
+const grokReasoningConfigOption = {
+  id: "_paseo.grok.reasoning_effort",
+  name: "Reasoning effort",
+  category: "thought_level",
+  type: "select",
+  currentValue: "high",
+  options: [
+    { value: "xhigh", name: "Extra High Effort" },
+    { value: "high", name: "High Effort" },
+    { value: "medium", name: "Medium Effort" },
+    { value: "low", name: "Low Effort" },
+  ],
+} satisfies SessionConfigOption;
+
+const standardThinkingConfigOption = {
+  id: "reasoning",
+  name: "Reasoning",
+  category: "thought_level",
+  type: "select",
+  currentValue: "medium",
+  options: [{ value: "medium", name: "Medium" }],
+} satisfies SessionConfigOption;
 
 describe("Grok ACP reasoning options", () => {
   test("keeps each model's effort levels separate and uses its reported current effort as default", () => {
@@ -163,16 +190,7 @@ describe("Grok ACP reasoning options", () => {
     const result = await resolveGrokCatalogModels({
       models,
       modelState: grokModelState,
-      configOptions: [
-        {
-          id: "reasoning",
-          name: "Reasoning",
-          category: "thought_level",
-          type: "select",
-          currentValue: "medium",
-          options: [{ value: "medium", name: "Medium" }],
-        },
-      ],
+      configOptions: [standardThinkingConfigOption],
     } as ACPCatalogModelResolverContext);
 
     expect(result).toBe(models);
@@ -181,17 +199,35 @@ describe("Grok ACP reasoning options", () => {
   test("writes a selected effort through Grok's ACP mode endpoint", async () => {
     const setSessionMode = vi.fn().mockResolvedValue({});
 
-    await writeGrokThinkingOption(
-      { setSessionMode } as unknown as ClientSideConnection,
-      "session-1",
-      "low",
-    );
+    const result = await writeGrokThinkingOption({
+      connection: { setSessionMode } as unknown as ClientSideConnection,
+      sessionId: "session-1",
+      requestedThinkingOptionId: "low",
+      currentThinkingOptionId: "high",
+      configOptions: [grokReasoningConfigOption],
+    });
 
     expect(setSessionMode).toHaveBeenCalledOnce();
     expect(setSessionMode).toHaveBeenCalledWith({
       sessionId: "session-1",
       modeId: "low",
     });
+    expect(result).toEqual({ handled: true, thinkingOptionId: "low" });
+  });
+
+  test("leaves standard ACP thinking writes to the base client", async () => {
+    const setSessionMode = vi.fn();
+
+    const result = await writeGrokThinkingOption({
+      connection: { setSessionMode } as unknown as ClientSideConnection,
+      sessionId: "session-1",
+      requestedThinkingOptionId: "medium",
+      currentThinkingOptionId: "high",
+      configOptions: [standardThinkingConfigOption],
+    });
+
+    expect(setSessionMode).not.toHaveBeenCalled();
+    expect(result).toEqual({ handled: false });
   });
 
   test("falls back to the target model's default effort when switching models", async () => {
@@ -206,6 +242,7 @@ describe("Grok ACP reasoning options", () => {
       currentModelId: "grok-4.6",
       currentThinkingOptionId: "xhigh",
       availableModel: grokModelState.availableModels[1],
+      configOptions: [grokReasoningConfigOption],
     });
 
     expect(unstableSetSessionModel).toHaveBeenCalledWith({
@@ -218,5 +255,24 @@ describe("Grok ACP reasoning options", () => {
       currentModelId: "grok-4.5",
       thinkingOptionId: "high",
     });
+  });
+
+  test("leaves standard ACP model writes to the base client", async () => {
+    const unstableSetSessionModel = vi.fn();
+
+    const result = await writeGrokModel({
+      connection: {
+        unstable_setSessionModel: unstableSetSessionModel,
+      } as unknown as ClientSideConnection,
+      sessionId: "session-1",
+      requestedModelId: "grok-4.5",
+      currentModelId: "grok-4.6",
+      currentThinkingOptionId: "medium",
+      availableModel: grokModelState.availableModels[1],
+      configOptions: [standardThinkingConfigOption],
+    });
+
+    expect(unstableSetSessionModel).not.toHaveBeenCalled();
+    expect(result).toEqual({ handled: false });
   });
 });

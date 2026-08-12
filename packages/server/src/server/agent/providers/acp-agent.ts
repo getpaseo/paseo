@@ -426,10 +426,8 @@ interface ACPAgentClientOptions {
     context: ACPProviderModelWriterContext,
   ) => Promise<ACPProviderModelWriteResult>;
   thinkingOptionWriter?: (
-    connection: ClientSideConnection,
-    sessionId: string,
-    thinkingOptionId: string,
-  ) => Promise<void>;
+    context: ACPProviderThinkingOptionWriterContext,
+  ) => Promise<ACPProviderThinkingOptionWriteResult>;
   capabilities?: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
   waitForInitialCommands?: boolean;
@@ -459,10 +457,8 @@ interface ACPAgentSessionOptions {
     context: ACPProviderModelWriterContext,
   ) => Promise<ACPProviderModelWriteResult>;
   thinkingOptionWriter?: (
-    connection: ClientSideConnection,
-    sessionId: string,
-    thinkingOptionId: string,
-  ) => Promise<void>;
+    context: ACPProviderThinkingOptionWriterContext,
+  ) => Promise<ACPProviderThinkingOptionWriteResult>;
   capabilities: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
   handle?: AgentPersistenceHandle;
@@ -604,11 +600,25 @@ export interface ACPProviderModelWriterContext {
   currentModelId: string | null;
   currentThinkingOptionId: string | null;
   availableModel: AvailableACPModel;
+  configOptions: SessionConfigOption[];
 }
 
 export interface ACPProviderModelWriteResult {
   handled: boolean;
   currentModelId?: string;
+  thinkingOptionId?: string | null;
+}
+
+export interface ACPProviderThinkingOptionWriterContext {
+  connection: ClientSideConnection;
+  sessionId: string;
+  requestedThinkingOptionId: string;
+  currentThinkingOptionId: string | null;
+  configOptions: SessionConfigOption[];
+}
+
+export interface ACPProviderThinkingOptionWriteResult {
+  handled: boolean;
   thinkingOptionId?: string | null;
 }
 
@@ -836,10 +846,8 @@ export class ACPAgentClient implements AgentClient {
     context: ACPProviderModelWriterContext,
   ) => Promise<ACPProviderModelWriteResult>;
   private readonly thinkingOptionWriter?: (
-    connection: ClientSideConnection,
-    sessionId: string,
-    thinkingOptionId: string,
-  ) => Promise<void>;
+    context: ACPProviderThinkingOptionWriterContext,
+  ) => Promise<ACPProviderThinkingOptionWriteResult>;
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
@@ -1431,10 +1439,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     context: ACPProviderModelWriterContext,
   ) => Promise<ACPProviderModelWriteResult>;
   private readonly thinkingOptionWriter?: (
-    connection: ClientSideConnection,
-    sessionId: string,
-    thinkingOptionId: string,
-  ) => Promise<void>;
+    context: ACPProviderThinkingOptionWriterContext,
+  ) => Promise<ACPProviderThinkingOptionWriteResult>;
   private readonly agentId?: string;
   private readonly launchEnv?: Record<string, string>;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
@@ -1953,6 +1959,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           currentModelId: this.currentModel,
           currentThinkingOptionId: this.thinkingOptionId,
           availableModel: selection.availableModel,
+          configOptions: this.configOptions,
         });
         if (result.handled) {
           this.currentModel = result.currentModelId ?? modelId;
@@ -2035,14 +2042,22 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     if (this.thinkingOptionWriter) {
-      await this.thinkingOptionWriter(this.connection, this.sessionId, thinkingOptionId);
-      this.thinkingOptionId = thinkingOptionId;
-      this.pushEvent({
-        type: "thinking_option_changed",
-        provider: this.provider,
-        thinkingOptionId: this.thinkingOptionId,
+      const result = await this.thinkingOptionWriter({
+        connection: this.connection,
+        sessionId: this.sessionId,
+        requestedThinkingOptionId: thinkingOptionId,
+        currentThinkingOptionId: this.thinkingOptionId,
+        configOptions: this.configOptions,
       });
-      return;
+      if (result.handled) {
+        this.thinkingOptionId = result.thinkingOptionId ?? thinkingOptionId;
+        this.pushEvent({
+          type: "thinking_option_changed",
+          provider: this.provider,
+          thinkingOptionId: this.thinkingOptionId,
+        });
+        return;
+      }
     }
 
     const option = findSelectConfigOption({
