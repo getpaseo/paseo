@@ -42,7 +42,8 @@ describe("workspace bulk close helpers", () => {
     ]);
 
     expect(groups).toEqual({
-      agentTabs: [{ tabId: "agent_a1", agentId: "a1" }],
+      archiveAgentTabs: [{ tabId: "agent_a1", agentId: "a1" }],
+      layoutOnlyAgentTabs: [],
       terminalTabs: [{ tabId: "terminal_t1", terminalId: "t1" }],
       otherTabs: [
         {
@@ -51,6 +52,21 @@ describe("workspace bulk close helpers", () => {
         },
       ],
     });
+  });
+
+  it("separates subagent tabs from agents that archive on close", () => {
+    const groups = classifyBulkClosableTabs(
+      [makeAgentTab("root"), makeAgentTab("child")],
+      (agentId) => (agentId === "child" ? "layout-only" : "archive"),
+    );
+
+    expect(groups).toMatchObject({
+      archiveAgentTabs: [{ tabId: "agent_root", agentId: "root" }],
+      layoutOnlyAgentTabs: [{ tabId: "agent_child", agentId: "child" }],
+    });
+    expect(buildBulkCloseConfirmationMessage(groups)).toBe(
+      "This will archive 1 agent(s) and close 1 tab(s).",
+    );
   });
 
   it("describes mixed destructive bulk close operations in the confirmation copy", () => {
@@ -106,6 +122,7 @@ describe("workspace bulk close helpers", () => {
       closeWorkspaceTabWithCleanup: (input) => {
         cleanupCalls.push(input);
       },
+      closeLayoutOnlyAgent: async () => {},
       logLabel: "all tabs",
     });
 
@@ -152,6 +169,7 @@ describe("workspace bulk close helpers", () => {
       closeWorkspaceTabWithCleanup: (input) => {
         cleanupCalls.push(input);
       },
+      closeLayoutOnlyAgent: async () => {},
       warn,
       logLabel: "others",
     });
@@ -165,5 +183,32 @@ describe("workspace bulk close helpers", () => {
       { tabId: "terminal_t1", target: { kind: "terminal", terminalId: "t1" } },
       { tabId: "file_/repo/README.md", target: { kind: "file", path: "/repo/README.md" } },
     ]);
+  });
+
+  it("closes subagent tabs without sending them to closeItems", async () => {
+    const groups = classifyBulkClosableTabs(
+      [makeAgentTab("root"), makeAgentTab("child")],
+      (agentId) => (agentId === "child" ? "layout-only" : "archive"),
+    );
+    const closeItems = vi.fn(async () => ({ agents: [], terminals: [], requestId: "req-1" }));
+    const preparedSubagents: string[] = [];
+    const cleanedTabs: string[] = [];
+
+    await closeBulkWorkspaceTabs({
+      groups,
+      client: { closeItems },
+      closeTab: async (_tabId, action) => action(),
+      closeLayoutOnlyAgent: async (agentId) => {
+        preparedSubagents.push(agentId);
+      },
+      closeWorkspaceTabWithCleanup: ({ tabId }) => {
+        cleanedTabs.push(tabId);
+      },
+      logLabel: "others",
+    });
+
+    expect(closeItems).toHaveBeenCalledWith({ agentIds: ["root"], terminalIds: [] });
+    expect(preparedSubagents).toEqual(["child"]);
+    expect(cleanedTabs).toEqual(["agent_root", "agent_child"]);
   });
 });
