@@ -66,7 +66,7 @@ const FlatDraftRecordSchema = RawDraftInputSchema.extend({
   version: z.number().int().positive().optional(),
 });
 const PersistedDraftRecordSchema = z.union([NestedDraftRecordSchema, FlatDraftRecordSchema]);
-const PersistedDraftStoreSchema = z.strictObject({
+export const PersistedDraftStoreSchema = z.strictObject({
   drafts: z.record(z.string(), PersistedDraftRecordSchema).optional(),
   createModalDraft: PersistedDraftRecordSchema.nullable().optional(),
 });

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { StateStorage } from "zustand/middleware";
 import type { ParsedDiffFile } from "@/git/use-diff-query";
+import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import {
   buildReviewAttachmentSnapshot,
   buildReviewDraftKey,
@@ -16,6 +18,7 @@ import {
   type ReviewDraftComment,
   type ReviewDraftStoreState,
   serializeReviewDraftState,
+  SerializedReviewDraftStateSchema,
   setDiffModeOverrideInState,
   updateCommentInState,
 } from "./state";
@@ -66,6 +69,20 @@ function makeFile(): ParsedDiffFile {
         ],
       },
     ],
+  };
+}
+
+function createMemoryStorage(): StateStorage & { values: Map<string, string> } {
+  const values = new Map<string, string>();
+  return {
+    values,
+    getItem: async (key) => values.get(key) ?? null,
+    setItem: async (key, value) => {
+      values.set(key, value);
+    },
+    removeItem: async (key) => {
+      values.delete(key);
+    },
   };
 }
 
@@ -122,6 +139,26 @@ describe("buildReviewDraftKey", () => {
 });
 
 describe("normalizePersistedState", () => {
+  it("keeps v1 review comments for migration while dropping the legacy mode field", async () => {
+    const backing = createMemoryStorage();
+    const legacyState = {
+      drafts: { "review:key": [makeComment()] },
+      activeModesByScope: { "review:scope": "base" },
+    };
+    backing.values.set(
+      "@paseo:review-draft-store",
+      JSON.stringify({ state: legacyState, version: 1 }),
+    );
+    const storage = createValidatedPersistStorage(backing, SerializedReviewDraftStateSchema);
+
+    const stored = await storage.getItem("@paseo:review-draft-store");
+    const normalized = normalizePersistedState(stored?.state);
+
+    expect(normalized.drafts["review:key"]).toEqual([makeComment()]);
+    expect(normalized.diffModeOverrides).toEqual({});
+    expect(backing.values.has("@paseo:review-draft-store")).toBe(true);
+  });
+
   it("rejects the complete payload when any draft comment or field is invalid", () => {
     const normalized = normalizePersistedState({
       drafts: {

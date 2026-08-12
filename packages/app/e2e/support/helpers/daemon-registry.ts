@@ -35,9 +35,8 @@ export const TEST_MOCK_PROVIDER_PREFERENCES = {
   mock: { model: "ten-second-stream" },
 } as const;
 
-export function buildCreateAgentPreferences(serverId: string) {
+export function buildCreateAgentPreferences() {
   return {
-    serverId,
     provider: "mock" as const,
     providerPreferences: TEST_MOCK_PROVIDER_PREFERENCES,
   };

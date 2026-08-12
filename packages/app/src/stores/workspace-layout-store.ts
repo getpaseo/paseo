@@ -125,6 +125,51 @@ interface WorkspaceFocusRestorationState {
 
 const MAX_TREE_DEPTH = 4;
 
+const WorkspaceDraftTabSetupStorageSchema = z.strictObject({
+  provider: z.string(),
+  cwd: z.string(),
+  modeId: z.string().nullable(),
+  model: z.string().nullable(),
+  thinkingOptionId: z.string().nullable(),
+  featureValues: z.record(z.string(), z.union([z.boolean(), z.string(), z.null()])),
+});
+const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("draft"),
+    draftId: z.string(),
+    setup: WorkspaceDraftTabSetupStorageSchema.optional(),
+  }),
+  z.strictObject({ kind: z.literal("agent"), agentId: z.string() }),
+  z.strictObject({
+    kind: z.literal("provider_subagent"),
+    parentAgentId: z.string(),
+    subagentId: z.string(),
+  }),
+  z.strictObject({ kind: z.literal("terminal"), terminalId: z.string() }),
+  z.strictObject({ kind: z.literal("browser"), browserId: z.string() }),
+  z.strictObject({
+    kind: z.literal("file"),
+    path: z.string(),
+    lineStart: z.number().int().positive().optional(),
+    lineEnd: z.number().int().positive().optional(),
+  }),
+  z.strictObject({
+    kind: z.literal("working_diff"),
+    focusPath: z.string().optional(),
+    focusRequestId: z.number().optional(),
+    // COMPAT(workingDiffTarget): accepted from pre-canonical tab ids; normalization removes them.
+    mode: z.enum(["uncommitted", "base"]).optional(),
+    baseRef: z.string().nullable().optional(),
+    ignoreWhitespace: z.boolean().optional(),
+  }),
+  z.strictObject({ kind: z.literal("setup"), workspaceId: z.string() }),
+  z.strictObject({ kind: z.literal("commit_diff"), sha: z.string() }),
+]);
+const WorkspaceTabStorageSchema = z.strictObject({
+  tabId: z.string(),
+  target: WorkspaceTabTargetStorageSchema,
+  createdAt: z.number(),
+});
 const SplitNodeStorageSchema: z.ZodType<SplitNode> = z.lazy(() =>
   z.discriminatedUnion("kind", [
     z.strictObject({
@@ -133,6 +178,7 @@ const SplitNodeStorageSchema: z.ZodType<SplitNode> = z.lazy(() =>
         id: z.string(),
         tabIds: z.array(z.string()),
         focusedTabId: z.string().nullable(),
+        tabs: z.array(WorkspaceTabStorageSchema).optional(),
       }),
     }),
     z.strictObject({
@@ -153,7 +199,7 @@ const WorkspaceLayoutStorageSchema: z.ZodType<WorkspaceLayout> = z.strictObject(
 });
 const WorkspaceLayoutPersistedStateSchema = z.strictObject({
   layoutByWorkspace: z.record(z.string(), WorkspaceLayoutStorageSchema),
-  splitSizesByWorkspace: z.record(z.string(), z.record(z.string(), z.array(z.number()))),
+  splitSizesByWorkspace: z.record(z.string(), z.record(z.string(), z.array(z.number()))).optional(),
 });
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -988,6 +1034,17 @@ export function createWorkspaceLayoutStore(
           return {
             layoutByWorkspace,
             splitSizesByWorkspace: state.splitSizesByWorkspace,
+          };
+        },
+        merge: (persistedState, currentState) => {
+          const result = WorkspaceLayoutPersistedStateSchema.safeParse(persistedState);
+          if (!result.success) {
+            return currentState;
+          }
+          return {
+            ...currentState,
+            layoutByWorkspace: result.data.layoutByWorkspace,
+            splitSizesByWorkspace: result.data.splitSizesByWorkspace ?? {},
           };
         },
       },

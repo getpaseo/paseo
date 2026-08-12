@@ -21,19 +21,7 @@ export interface HostAppearance {
 }
 
 export const HostAppearanceSchema: z.ZodType<HostAppearance> = z.strictObject({
-  color: z.enum([
-    "none",
-    "violet",
-    "sky",
-    "emerald",
-    "orange",
-    "pink",
-    "indigo",
-    "teal",
-    "red",
-    "amber",
-    "blue",
-  ]),
+  color: z.enum(["none", ...IDENTITY_COLOR_NAMES]),
   badgeDisplay: z.enum(["name", "icon", "hidden"]).nullable(),
 });
 

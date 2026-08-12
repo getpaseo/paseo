@@ -3,6 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import equal from "fast-deep-equal/es6";
 import {
   DaemonClient,
+  type DaemonClientConfig,
   type ConnectionState,
   type FetchAgentsOptions,
 } from "@getpaseo/client/internal/daemon-client";
@@ -464,10 +465,6 @@ function probeIntervalForConnection(
   return PROBE_MAX_BACKOFF_MS;
 }
 
-function mobileClientType(): "mobile" {
-  return "mobile";
-}
-
 function createDefaultDeps(): HostRuntimeControllerDeps {
   const browserHostAvailable =
     typeof getDesktopHost()?.browser?.executeAutomationCommand === "function";
@@ -491,12 +488,12 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       const base = {
         suppressSendErrors: true,
         clientId,
-        clientType: mobileClientType(),
+        clientType: "mobile",
         appVersion: resolveAppVersion() ?? undefined,
         runtimeGeneration,
         capabilities: appCapabilities,
         trace: nativePerformanceTrace,
-      };
+      } satisfies Omit<DaemonClientConfig, "url">;
       if (connection.type === "directSocket" || connection.type === "directPipe") {
         return new DaemonClient({
           ...base,
@@ -1296,7 +1293,7 @@ export interface InitialDaemonConnectionHint {
   useTls?: boolean;
 }
 
-const InitialDaemonConnectionHintSchema: z.ZodType<InitialDaemonConnectionHint> = z.strictObject({
+const InitialDaemonConnectionHintSchema: z.ZodType<InitialDaemonConnectionHint> = z.object({
   listen: z.string().trim().min(1),
   useTls: z.boolean().optional().default(false),
 });

@@ -633,7 +633,13 @@ export class ReplicaCache {
       this.storedHosts.set(host.serverId, host);
       if (host.timeline) this.lastFocusedAgentIds.set(host.serverId, host.timeline.agentId);
     }
-    if (this.buildBoundedPayload().evicted) this.needsPersist = true;
+    const bounded = this.buildBoundedPayload();
+    if (!bounded) {
+      await this.clearInvalidCache();
+      this.storedHosts.clear();
+      return;
+    }
+    if (bounded.evicted) this.needsPersist = true;
     for (const host of this.storedHosts.values()) {
       useSessionStore.getState().restoreSessionReplica(host.serverId, deserializeHost(host));
       const session = useSessionStore.getState().sessions[host.serverId];
@@ -688,11 +694,15 @@ export class ReplicaCache {
       this.persistTimer = null;
     }
     this.captureSessions();
-    const { payload } = this.buildBoundedPayload();
+    const bounded = this.buildBoundedPayload();
     this.needsPersist = false;
+    if (!bounded) {
+      await this.clearInvalidCache();
+      return;
+    }
     const write = this.writeQueue
       .catch(() => undefined)
-      .then(() => this.storage.setItem(STORAGE_KEY, payload));
+      .then(() => this.storage.setItem(STORAGE_KEY, bounded.payload));
     this.writeQueue = write;
     await write.catch(() => undefined);
   }
@@ -722,25 +732,27 @@ export class ReplicaCache {
     return true;
   }
 
-  private buildBoundedPayload(): { payload: string; evicted: boolean } {
+  private buildBoundedPayload(): { payload: string; evicted: boolean } | null {
     let evicted = false;
     let payload = this.serialize();
+    if (payload === null) return null;
     while (Buffer.byteLength(payload, "utf8") > this.maxBytes && this.storedHosts.size > 0) {
       const oldestServerId = this.storedHosts.keys().next().value;
       if (oldestServerId === undefined) break;
       this.storedHosts.delete(oldestServerId);
       evicted = true;
       payload = this.serialize();
+      if (payload === null) return null;
     }
     return { payload, evicted };
   }
 
-  private serialize(): string {
-    const cache = StoredCacheSchema.parse({
+  private serialize(): string | null {
+    const cache = StoredCacheSchema.safeParse({
       version: CACHE_VERSION,
       hosts: Array.from(this.storedHosts.values()),
     });
-    return JSON.stringify(cache);
+    return cache.success ? JSON.stringify(cache.data) : null;
   }
 
   private async clearInvalidCache(): Promise<void> {

@@ -47,20 +47,6 @@ export function normalizeDismissalKey(key: string | null | undefined): string | 
 
 export const DismissedCalloutKeysSchema = z.array(z.string());
 
-export function parseDismissedCalloutKeys(value: string | null): Set<string> {
-  if (!value) {
-    return new Set();
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(value);
-    const result = DismissedCalloutKeysSchema.safeParse(parsed);
-    return new Set(result.success ? result.data : []);
-  } catch {
-    return new Set();
-  }
-}
-
 export function serializeDismissedCalloutKeys(keys: ReadonlySet<string>): string {
   return JSON.stringify([...keys]);
 }

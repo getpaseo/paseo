@@ -32,6 +32,7 @@ export interface ReviewDraftStoreState {
 // Only drafts are persisted; diffModeOverrides is intentionally excluded.
 export interface SerializedReviewDraftState {
   drafts: Record<string, ReviewDraftComment[]>;
+  activeModesByScope?: Record<string, ReviewDraftMode>;
 }
 
 const IsoDateTimeSchema = z.string().datetime({ offset: true });
@@ -48,6 +49,8 @@ export const ReviewDraftCommentSchema: z.ZodType<ReviewDraftComment> = z.strictO
 export const SerializedReviewDraftStateSchema: z.ZodType<SerializedReviewDraftState> =
   z.strictObject({
     drafts: z.record(z.string(), z.array(ReviewDraftCommentSchema)),
+    // COMPAT(reviewDraftModes): v1 persisted this field; v2 discards it during migration.
+    activeModesByScope: z.record(z.string(), z.enum(["uncommitted", "base"])).optional(),
   });
 
 export function setDiffModeOverrideInState(

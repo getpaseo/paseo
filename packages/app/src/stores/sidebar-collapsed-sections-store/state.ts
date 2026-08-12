@@ -7,16 +7,16 @@ export interface CollapsedProjectsState {
 }
 
 export interface PersistedCollapsedProjects {
-  collapsedProjectKeys: string[];
-  collapsedStatusGroupKeys: string[];
-  collapsedPinned: boolean;
+  collapsedProjectKeys?: string[];
+  collapsedStatusGroupKeys?: string[];
+  collapsedPinned?: boolean;
 }
 
 export const PersistedCollapsedProjectsSchema: z.ZodType<PersistedCollapsedProjects> =
   z.strictObject({
-    collapsedProjectKeys: z.array(z.string()),
-    collapsedStatusGroupKeys: z.array(z.string()),
-    collapsedPinned: z.boolean(),
+    collapsedProjectKeys: z.array(z.string()).optional(),
+    collapsedStatusGroupKeys: z.array(z.string()).optional(),
+    collapsedPinned: z.boolean().optional(),
   });
 
 export function togglePinnedCollapsed(state: CollapsedProjectsState): CollapsedProjectsState {
@@ -84,9 +84,13 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
     return current;
   }
   const persisted = result.data;
-  const restoredProjects = deserializeCollapsedKeys(persisted.collapsedProjectKeys);
-  const restoredStatusGroups = deserializeCollapsedKeys(persisted.collapsedStatusGroupKeys);
-  const restoredPinned = persisted.collapsedPinned;
+  const restoredProjects = deserializeCollapsedKeys(
+    persisted.collapsedProjectKeys ?? Array.from(current.collapsedProjectKeys),
+  );
+  const restoredStatusGroups = deserializeCollapsedKeys(
+    persisted.collapsedStatusGroupKeys ?? Array.from(current.collapsedStatusGroupKeys),
+  );
+  const restoredPinned = persisted.collapsedPinned ?? current.collapsedPinned;
   if (
     areSetsEqual(current.collapsedProjectKeys, restoredProjects) &&
     areSetsEqual(current.collapsedStatusGroupKeys, restoredStatusGroups) &&

@@ -5,6 +5,7 @@ import {
   expandProviderSnapshot,
   type CompactProviderSnapshot,
 } from "@getpaseo/protocol/provider-snapshot-codec";
+import { CompactProviderSnapshotSchema } from "@getpaseo/protocol/messages";
 import { z } from "zod";
 
 const CACHE_VERSION = 1;
@@ -44,71 +45,11 @@ interface ProviderSnapshotIndex {
   entries: ProviderSnapshotIndexEntry[];
 }
 
-type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
-const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([
-    z.null(),
-    z.boolean(),
-    z.number(),
-    z.string(),
-    z.array(JsonValueSchema),
-    z.record(z.string(), JsonValueSchema),
-  ]),
-);
-const MetadataSchema = z.record(z.string(), JsonValueSchema);
-const SelectOptionSchema = z.strictObject({
-  id: z.string(),
-  label: z.string(),
-  description: z.string().optional(),
-  isDefault: z.boolean().optional(),
-  metadata: MetadataSchema.optional(),
-});
-const CompactModelSchema = z.strictObject({
-  id: z.string(),
-  aliases: z.array(z.string()).optional(),
-  isSelectable: z.boolean().optional(),
-  label: z.string(),
-  description: z.string().optional(),
-  isDefault: z.boolean().optional(),
-  metadata: MetadataSchema.optional(),
-  contextWindowMaxTokens: z.number().optional(),
-  defaultThinkingOptionId: z.string().optional(),
-  thinkingSet: z.number().int().nonnegative().optional(),
-});
-const ModeSchema = z.strictObject({
-  id: z.string(),
-  label: z.string(),
-  description: z.string().optional(),
-  icon: z.string().optional(),
-  colorTier: z.string().optional(),
-});
-const CompactProviderEntrySchema = z.strictObject({
-  provider: z.string(),
-  status: z.enum(["ready", "loading", "error", "unavailable"]),
-  enabled: z.boolean(),
-  source: z.enum(["builtin", "custom"]).optional(),
-  error: z.string().optional(),
-  models: z.array(CompactModelSchema).optional(),
-  modes: z.array(ModeSchema).optional(),
-  fetchedAt: z.string().optional(),
-  label: z.string().optional(),
-  description: z.string().optional(),
-  defaultModeId: z.string().nullable().optional(),
-});
-const CompactProviderSnapshotStorageSchema: z.ZodType<CompactProviderSnapshot> = z.strictObject({
-  entries: z.array(CompactProviderEntrySchema),
-  thinkingSets: z.array(
-    z.strictObject({
-      options: z.array(SelectOptionSchema),
-      defaultOptionId: z.string().optional(),
-    }),
-  ),
-});
 const StoredProviderSnapshotSchema: z.ZodType<StoredProviderSnapshot> = z.strictObject({
   version: z.literal(CACHE_VERSION),
   hash: z.string(),
   generatedAt: z.string().datetime({ offset: true }),
-  compactSnapshot: CompactProviderSnapshotStorageSchema,
+  compactSnapshot: CompactProviderSnapshotSchema,
 });
 
 export interface CachedProviderSnapshot extends StoredProviderSnapshot {
