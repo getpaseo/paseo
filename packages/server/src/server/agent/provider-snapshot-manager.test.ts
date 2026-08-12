@@ -1182,6 +1182,80 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       manager.destroy();
     }
   });
+
+  test("shuts down the displaced client when its provider is disabled", () => {
+    const shutdown = vi.fn(async () => {});
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        codex: { enabled: false },
+        copilot: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        opencode: createExtraClient("opencode", { shutdown }),
+      },
+    });
+    try {
+      manager.applyMutableProviderConfig({ opencode: { enabled: false } });
+      expect(shutdown).toHaveBeenCalledTimes(1);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("does not shut down clients whose provider remains enabled", () => {
+    const shutdown = vi.fn(async () => {});
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        opencode: createExtraClient("opencode", { shutdown }),
+      },
+    });
+    try {
+      manager.applyMutableProviderConfig({ codex: { enabled: false } });
+      expect(shutdown).not.toHaveBeenCalled();
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("keeps the base client alive while a derived provider remains enabled", () => {
+    const shutdown = vi.fn(async () => {});
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        codex: { enabled: false },
+        copilot: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        opencode: createExtraClient("opencode", { shutdown }),
+      },
+    });
+    try {
+      manager.applyMutableProviderConfig({
+        opencode: { enabled: false },
+        "my-opencode": { extends: "opencode", label: "Mine", enabled: true },
+      });
+      expect(shutdown).not.toHaveBeenCalled();
+
+      manager.applyMutableProviderConfig({
+        opencode: { enabled: false },
+        "my-opencode": { extends: "opencode", label: "Mine", enabled: false },
+      });
+      expect(shutdown).toHaveBeenCalledTimes(1);
+    } finally {
+      manager.destroy();
+    }
+  });
 });
 
 describe("ProviderSnapshotManager lifecycle", () => {
@@ -1231,6 +1305,29 @@ describe("ProviderSnapshotManager lifecycle", () => {
     listener.mockClear();
     manager.applyMutableProviderConfig({});
     expect(listener).not.toHaveBeenCalled();
+  });
+
+  test("shutdown releases provider resources even when the provider is disabled", async () => {
+    const shutdownSpy = vi
+      .spyOn(OpenCodeAgentClient.prototype, "shutdown")
+      .mockResolvedValue(undefined);
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        codex: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+    });
+    try {
+      await manager.shutdown();
+      expect(shutdownSpy).toHaveBeenCalled();
+    } finally {
+      shutdownSpy.mockRestore();
+      manager.destroy();
+    }
   });
 });
 

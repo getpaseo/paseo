@@ -87,6 +87,22 @@ function omitProviderOverrides(
   return Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined;
 }
 
+// Derived providers reuse the base provider's client resources (the OpenCode
+// sidecar server is process-wide), so a base client still counts as consumed
+// while any provider derived from it remains enabled.
+function clientHasEnabledConsumer(
+  registry: Record<AgentProvider, ProviderDefinition>,
+  provider: AgentProvider,
+): boolean {
+  for (const [id, definition] of Object.entries(registry)) {
+    if (!definition.enabled) continue;
+    if (id === provider || definition.derivedFromProviderId === provider) {
+      return true;
+    }
+  }
+  return false;
+}
+
 type ProviderSnapshotChangeListener = (entries: ProviderSnapshotEntry[], cwd: string) => void;
 
 export interface ProviderSnapshotManagerOptions {
@@ -454,8 +470,11 @@ export class ProviderSnapshotManager {
       this.baseProviderOverrides,
       mutableProviders,
     );
+    const previousRegistry = this.providerRegistry;
+    const previousClients = this.providerClients;
     this.providerRegistry = this.buildRegistry();
     this.providerClients = { ...this.extraClients } as Record<AgentProvider, AgentClient>;
+    this.shutdownDisplacedClients(previousRegistry, previousClients);
 
     for (const cwd of this.snapshots.keys()) {
       this.providerLoads.delete(cwd);
@@ -477,14 +496,53 @@ export class ProviderSnapshotManager {
   }
 
   async shutdown(): Promise<void> {
-    // Materialize a client per enabled provider so provider-owned resources
-    // (background processes, sockets, etc.) get a chance to release even when
-    // a given provider hasn't been touched yet during this daemon's lifetime.
-    const state = this.getAgentManagerProviderState();
-    const clients = Object.values(state.clients).filter(
-      (client): client is AgentClient => client !== undefined,
-    );
+    // Materialize a client per registered provider — including disabled ones —
+    // so provider-owned resources (background processes, sockets, etc.) get a
+    // chance to release even when a given provider hasn't been touched yet
+    // during this daemon's lifetime, or spawned resources before being
+    // disabled at runtime.
+    const clients = new Set<AgentClient>();
+    for (const [provider, definition] of Object.entries(this.providerRegistry) as Array<
+      [AgentProvider, ProviderDefinition]
+    >) {
+      try {
+        clients.add(this.ensureClient(provider, definition));
+      } catch (error) {
+        this.logger.warn(
+          { err: error, provider },
+          "Failed to materialize provider client for shutdown",
+        );
+      }
+    }
+    for (const client of Object.values(this.extraClients)) {
+      if (client) {
+        clients.add(client);
+      }
+    }
     await shutdownAgentClients(clients, this.logger);
+  }
+
+  // Clients displaced by a config change may still own live resources (e.g.
+  // the OpenCode sidecar server). Shut down the ones whose provider is no
+  // longer enabled so disabling a provider actually stops it instead of
+  // orphaning its processes until the daemon exits.
+  private shutdownDisplacedClients(
+    previousRegistry: Record<AgentProvider, ProviderDefinition>,
+    previousClients: Record<AgentProvider, AgentClient>,
+  ): void {
+    const displaced: AgentClient[] = [];
+    for (const [provider, client] of Object.entries(previousClients) as Array<
+      [AgentProvider, AgentClient]
+    >) {
+      if (!client) continue;
+      if (!clientHasEnabledConsumer(previousRegistry, provider)) continue;
+      if (clientHasEnabledConsumer(this.providerRegistry, provider)) continue;
+      displaced.push(client);
+    }
+    if (displaced.length === 0) {
+      return;
+    }
+    void shutdownAgentClients(displaced, this.logger);
   }
 
   destroy(): void {

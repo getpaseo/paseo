@@ -138,6 +138,28 @@ describe("OpenCodeServerManager generations", () => {
     expect(await runtime.managedProcesses.list()).toEqual([]);
   });
 
+  test("an acquire racing shutdown gets a fresh server that shutdown does not clear", async () => {
+    const { manager, runtime } = createTestManager([4491, 4492, 4493], {
+      holdTerminations: true,
+    });
+
+    const held = await manager.acquireCurrent();
+    const shutdownPromise = manager.shutdown();
+    const racingAcquisition = await manager.acquireCurrent();
+    expect(racingAcquisition.server.url).toBe("http://127.0.0.1:4492");
+
+    runtime.releaseTerminations();
+    await shutdownPromise;
+
+    const nextAcquisition = await manager.acquireCurrent();
+    expect(nextAcquisition.server.url).toBe("http://127.0.0.1:4492");
+    expect(runtime.launchedPorts).toEqual([4491, 4492]);
+
+    await nextAcquisition.release();
+    await racingAcquisition.release();
+    await held.release();
+  });
+
   test("shutdown kills a server that is still starting", async () => {
     const { manager, runtime } = createTestManager([4472], { autoAnnounce: false });
 
@@ -348,6 +370,7 @@ function createTestManager(
     autoAnnounce?: boolean;
     baseEnv?: Record<string, string>;
     opencodeHomeDir?: string;
+    holdTerminations?: boolean;
   } = {},
 ): {
   manager: OpenCodeServerManager;
@@ -356,6 +379,7 @@ function createTestManager(
   const { opencodeHomeDir } = options;
   const runtime = new FakeOpenCodeServerRuntime(ports, {
     autoAnnounce: options.autoAnnounce ?? true,
+    holdTerminations: options.holdTerminations ?? false,
   });
   return {
     manager: new OpenCodeServerManager({
@@ -384,10 +408,21 @@ class FakeOpenCodeServerRuntime {
   private readonly autoAnnounce: boolean;
   private readonly processesByChild = new Map<ChildProcess, FakeOpenCodeProcess>();
   private readonly processesByPort = new Map<number, FakeOpenCodeProcess>();
+  private terminationGate: Promise<void> | null = null;
+  private releaseTerminationGate: (() => void) | null = null;
 
-  constructor(ports: number[], options: { autoAnnounce: boolean }) {
+  constructor(ports: number[], options: { autoAnnounce: boolean; holdTerminations?: boolean }) {
     this.ports = [...ports];
     this.autoAnnounce = options.autoAnnounce;
+    if (options.holdTerminations) {
+      this.terminationGate = new Promise((resolve) => {
+        this.releaseTerminationGate = resolve;
+      });
+    }
+  }
+
+  releaseTerminations(): void {
+    this.releaseTerminationGate?.();
   }
 
   get launchedPorts(): number[] {
@@ -423,6 +458,9 @@ class FakeOpenCodeServerRuntime {
     const process = this.processForChild(target as ChildProcess);
     this.terminatedPorts.push(process.port);
     process.exitBySignal("SIGTERM");
+    if (this.terminationGate) {
+      await this.terminationGate;
+    }
     return "terminated";
   };
 
