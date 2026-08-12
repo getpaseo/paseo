@@ -14,6 +14,16 @@ export async function navigateToAgent(input: NavigateToAgentInput): Promise<stri
     const session = useSessionStore.getState().sessions[input.serverId];
     return session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
   };
+  const open = () =>
+    resolveNavigateToAgent(input, {
+      readAgentNavTarget: ({ agentId }) => ({
+        agentWorkspaceId: getCachedAgent(agentId)?.workspaceId,
+      }),
+      navigateToHostAgent: (route) => {
+        router.navigate(route as Href);
+      },
+      navigateToWorkspace,
+    });
   const getAgent = async (agentId: string) => {
     const cached = getCachedAgent(agentId);
     if (cached) {
@@ -34,6 +44,10 @@ export async function navigateToAgent(input: NavigateToAgentInput): Promise<stri
     };
   };
   try {
+    const currentClient = useSessionStore.getState().sessions[input.serverId]?.client;
+    if (!getCachedAgent(input.agentId) && !currentClient && input.workspaceId) {
+      return open();
+    }
     return await openAgentTab(input.agentId, {
       getAgent,
       getClientId: getOrCreateClientId,
@@ -44,16 +58,7 @@ export async function navigateToAgent(input: NavigateToAgentInput): Promise<stri
         }
         await client.updateAgent(agentId, { labels: { [label]: "true" } });
       },
-      open: () =>
-        resolveNavigateToAgent(input, {
-          readAgentNavTarget: ({ agentId }) => ({
-            agentWorkspaceId: getCachedAgent(agentId)?.workspaceId,
-          }),
-          navigateToHostAgent: (route) => {
-            router.navigate(route as Href);
-          },
-          navigateToWorkspace,
-        }),
+      open,
     });
   } catch (error) {
     console.error("[AgentNavigation] Failed to open agent tab", { error, agentId: input.agentId });
