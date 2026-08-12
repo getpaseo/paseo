@@ -302,7 +302,15 @@ function renderLeftContent(args: RenderLeftContentArgs): ReactElement | null {
   const { agentControls, agentId, serverId, focusInput, isCompactLayout, isPaneFocused } = args;
   if (!args.showAgentControls) return null;
   if (resolveAgentControlsMode(agentControls) === "draft" && agentControls) {
-    return <DraftAgentControls {...agentControls} isCompactLayout={isCompactLayout} />;
+    return (
+      <DraftAgentControls
+        {...agentControls}
+        isCompactLayout={isCompactLayout}
+        agentId={agentId}
+        serverId={serverId}
+        isPaneFocused={isPaneFocused}
+      />
+    );
   }
   return (
     <AgentControls

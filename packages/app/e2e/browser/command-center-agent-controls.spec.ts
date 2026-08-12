@@ -3,6 +3,7 @@ import { closeCommandCenter, openCommandCenter } from "../support/helpers/comman
 import {
   applyCommandCenterAgentControls,
   chooseCommandCenterAgentControl,
+  expectCommandCenterAgentControlRowCount,
   expectCommandCenterAgentControlSelected,
   expectFocusedAgentControls,
   expectWorkspaceAgentConfiguration,
@@ -11,14 +12,26 @@ import {
 } from "../support/helpers/command-center-agent-controls";
 import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import {
+  assertNewWorkspaceSidebarAndHeader,
+  connectNewWorkspaceDaemonClient,
+  expectNewWorkspaceProjectSelected,
+  openGlobalNewWorkspaceComposer,
+  selectWorkspaceIsolation,
+  submitNewWorkspacePrompt,
+} from "../support/helpers/new-workspace";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 const CREATE_AGENT_PREFERENCES_KEY = "@paseo:create-agent-preferences";
 
-async function seedMockDraftPreferences(page: import("@playwright/test").Page): Promise<void> {
+async function seedMockDraftPreferences(
+  page: import("@playwright/test").Page,
+  options?: { mode?: string },
+): Promise<void> {
   await page.addInitScript(
-    ({ preferencesKey, serverId }) => {
+    ({ preferencesKey, serverId, mode }) => {
       localStorage.setItem(
         preferencesKey,
         JSON.stringify({
@@ -27,13 +40,17 @@ async function seedMockDraftPreferences(page: import("@playwright/test").Page): 
           providerPreferences: {
             mock: {
               model: "five-minute-stream",
-              mode: "load-test",
+              mode,
             },
           },
         }),
       );
     },
-    { preferencesKey: CREATE_AGENT_PREFERENCES_KEY, serverId: getServerId() },
+    {
+      preferencesKey: CREATE_AGENT_PREFERENCES_KEY,
+      serverId: getServerId(),
+      mode: options?.mode ?? "load-test",
+    },
   );
 }
 
@@ -94,6 +111,52 @@ test.describe("Command Center agent controls", () => {
       });
     } finally {
       await workspace.cleanup();
+    }
+  });
+
+  test("applies New workspace choices to the created agent", async ({ page }) => {
+    const serverId = getServerId();
+    const seeded = await seedWorkspace({ repoPrefix: "command-center-new-workspace-controls-" });
+    // A non-default seeded mode makes the Mode row a real change rather than a selected-row no-op.
+    await seedMockDraftPreferences(page, { mode: "approval-test" });
+    const client = await connectNewWorkspaceDaemonClient();
+
+    try {
+      await gotoWorkspace(page, seeded.workspaceId);
+      await waitForSidebarHydration(page);
+      await openGlobalNewWorkspaceComposer(page);
+      await expectNewWorkspaceProjectSelected(page, seeded.projectDisplayName);
+      await selectWorkspaceIsolation(page, "local");
+
+      await applyCommandCenterAgentControls(page, DRAFT_AGENT_CONTROL_CHOICES);
+
+      // The seeded workspace is still mounted behind /new. Exactly one owner may publish the row.
+      await openCommandCenter(page);
+      await expectCommandCenterAgentControlRowCount({
+        page,
+        query: "load test",
+        choice: "Mode › Load test",
+        count: 1,
+      });
+      await closeCommandCenter(page);
+
+      await submitNewWorkspacePrompt(page, "Create with Command Center choices");
+      const created = await assertNewWorkspaceSidebarAndHeader(page, {
+        serverId,
+        client,
+        previousWorkspaceId: seeded.workspaceId,
+        projectDisplayName: seeded.projectDisplayName,
+      });
+
+      // Must be the CREATED workspace: expectWorkspaceAgentConfiguration filters by the id it is
+      // handed, so passing the seeded one would assert against the wrong agent.
+      await expectWorkspaceAgentConfiguration(
+        { client: seeded.client, workspaceId: created.workspaceId },
+        { provider: "mock", model: "ten-second-stream", modeId: "load-test" },
+      );
+    } finally {
+      await client.close().catch(() => undefined);
+      await seeded.cleanup();
     }
   });
 });

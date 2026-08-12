@@ -31,6 +31,23 @@ export async function expectCommandCenterAgentControlSelected(input: {
   await expect(choice).toHaveAttribute("aria-pressed", "true");
 }
 
+/**
+ * Agent-control rows are registered by whichever composer owns focus. Two enabled owners publish
+ * the same row twice under different source ids, so the count is how you catch a second registrant.
+ */
+export async function expectCommandCenterAgentControlRowCount(input: {
+  page: Page;
+  query: string;
+  choice: string;
+  count: number;
+}): Promise<void> {
+  const panel = input.page.getByTestId("command-center-panel");
+  await panel.getByRole("textbox").fill(input.query);
+  await expect(panel.getByRole("button", { name: input.choice })).toHaveCount(input.count, {
+    timeout: 30_000,
+  });
+}
+
 export async function applyCommandCenterAgentControls(
   page: Page,
   choices: readonly CommandCenterAgentControlChoice[],

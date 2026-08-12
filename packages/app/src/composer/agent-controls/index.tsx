@@ -66,6 +66,7 @@ import { toErrorMessage } from "@/utils/error-messages";
 import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
 import { isNative } from "@/constants/platform";
+import { resolveEffectiveComposerModelId } from "@/provider-selection/provider-selection";
 import {
   resolveComposerControlDensity,
   resolveComposerControlPresentation,
@@ -149,6 +150,17 @@ export interface DraftAgentControlsProps {
   modelSelectorServerId?: string | null;
   isCompactLayout?: boolean;
 }
+
+/**
+ * `DraftAgentControlsProps` is the control *data* built by `buildDraftAgentControls` and passed
+ * through `Composer`'s `agentControls` prop. These three come from `Composer` itself instead, so
+ * they stay off that type.
+ */
+type DraftAgentControlsComponentProps = DraftAgentControlsProps & {
+  agentId: string;
+  serverId: string;
+  isPaneFocused: boolean;
+};
 
 interface AgentControlsProps {
   agentId: string;
@@ -1715,7 +1727,10 @@ export function DraftAgentControls({
   disabled = false,
   modelSelectorServerId = null,
   isCompactLayout,
-}: DraftAgentControlsProps) {
+  agentId,
+  serverId,
+  isPaneFocused,
+}: DraftAgentControlsComponentProps) {
   const mappedThinkingOptions = useMemo<AgentControlOption[]>(() => {
     return toThinkingControlOptions(thinkingOptions);
   }, [thinkingOptions]);
@@ -1781,6 +1796,55 @@ export function DraftAgentControls({
         : null,
     [selectedProvider, providerDefinitions, modeOptions, selectedMode, onSelectMode, disabled],
   );
+
+  const effectiveModelId = useMemo(
+    () =>
+      resolveEffectiveComposerModelId({
+        provider: selectedProvider,
+        modelId: selectedModel,
+        modeId: selectedMode,
+        thinkingOptionId: selectedThinkingOptionId,
+        availableModels: models,
+        modeOptions,
+      }),
+    [selectedProvider, selectedModel, selectedMode, selectedThinkingOptionId, models, modeOptions],
+  );
+
+  // Registration lives here rather than at each host screen so any draft surface gets the Cmd-K
+  // rows by rendering this component. Exactly one owner may be enabled at a time: `isPaneFocused`
+  // means route focus on every host, and workspace panes additionally go inactive off a workspace
+  // pathname (see parseActiveWorkspaceSelection, navigation.ts:75-77 — retained panes stay mounted,
+  // so that parser is what keeps a backgrounded workspace from registering).
+  useAgentControlCommandCenterActions({
+    sourceId: `draft:${serverId}:${agentId}`,
+    enabled: isPaneFocused && !disabled,
+    controls: {
+      serverId,
+      ownerKey: agentId,
+      provider: selectedProvider,
+      providerDefinitions,
+      models: {
+        providers: modelSelectorProviders,
+        selectedProvider,
+        selectedModelId: effectiveModelId,
+        select: onSelectProviderAndModel,
+      },
+      thinking: {
+        options: thinkingOptions,
+        selectedId: selectedThinkingOptionId,
+        select: onSelectThinkingOption,
+      },
+      modes: {
+        options: modeOptions,
+        selectedId: selectedMode,
+        select: onSelectMode,
+      },
+      features: {
+        list: features,
+        set: onSetFeature,
+      },
+    },
+  });
 
   return (
     <ControlledAgentControls

@@ -9,6 +9,7 @@ import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles"
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsFocused } from "@react-navigation/native";
 import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
 import { Composer } from "@/composer";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
@@ -1550,6 +1551,10 @@ export function NewWorkspaceScreen({
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const isCompact = useIsCompactFormFactor();
+  // `/new` is a root-stack screen, so pushing a sibling route on top of it leaves this screen
+  // mounted. The composer's controls register Command Center rows while focused, so this has to
+  // be real route focus rather than a hardcoded `true`.
+  const isRouteFocused = useIsFocused();
   const toast = useToast();
   const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
   const {
@@ -2299,7 +2304,7 @@ export function NewWorkspaceScreen({
               submitLabel={terminalSubmitLabel}
               agentId={draftKey}
               serverId={selectedServerId}
-              isPaneFocused={true}
+              isPaneFocused={isRouteFocused}
               onSubmitMessage={handleSubmitTerminalLaunch}
               allowEmptySubmit={true}
               submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
@@ -2321,7 +2326,7 @@ export function NewWorkspaceScreen({
               externalKeyboardShift
               agentId={draftKey}
               serverId={selectedServerId}
-              isPaneFocused={true}
+              isPaneFocused={isRouteFocused}
               onSubmitMessage={handleSubmitNewWorkspace}
               allowEmptySubmit={true}
               submitButtonAccessibilityLabel={t("newWorkspace.create")}
