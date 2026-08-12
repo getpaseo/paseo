@@ -152,6 +152,19 @@ describe("create agent preferences", () => {
     });
   });
 
+  it("preserves legacy favourites across preference writes until host migration", async () => {
+    const favoriteModels = [{ provider: "claude", modelId: "opus" }];
+    const storage = new FakeCreateAgentPreferenceStorage({ stored: { favoriteModels } });
+    const preferences = new CreateAgentPreferencesService(storage);
+
+    const save = preferences.update({ isolation: "worktree" });
+    await storage.nextWrite();
+    storage.finishOldestWrite();
+    await save;
+
+    expect(storage.savedPreferences()).toEqual({ favoriteModels, isolation: "worktree" });
+  });
+
   it("treats stored preferences without an isolation choice as undefined", () => {
     expect(parseFormPreferences({ provider: "codex" }).isolation).toBeUndefined();
   });

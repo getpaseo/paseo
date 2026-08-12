@@ -14,7 +14,11 @@ type OmpChild = ChildProcessWithoutNullStreams & {
   killedSignals: Array<NodeJS.Signals | number | undefined>;
 };
 
-function createOmpChild(): OmpChild {
+function createOmpChild(options?: {
+  supportedProtocolVersions?: number[];
+  emitReady?: boolean;
+  maxFrameBytes?: number;
+}): OmpChild {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),
     stdout: new PassThrough(),
@@ -28,6 +32,20 @@ function createOmpChild(): OmpChild {
     queueMicrotask(() => child.emit("exit", null, signal ?? null));
     return true;
   }) as ChildProcessWithoutNullStreams["kill"];
+  // Real OMP writes a `ready` frame immediately after launch; the runtime waits
+  // for it before negotiating the RPC protocol. Advertise v1-only by default so
+  // the session stays on protocol v1 and command streams are unaffected.
+  if (options?.emitReady !== false) {
+    child.stdout.write(
+      `${JSON.stringify({
+        type: "ready",
+        protocolVersion: 1,
+        supportedProtocolVersions: options?.supportedProtocolVersions ?? [1],
+        maxFrameBytes: options?.maxFrameBytes ?? 1024 * 1024,
+        maxReassembledFrameBytes: 64 * 1024 * 1024,
+      })}\n`,
+    );
+  }
   return child;
 }
 
@@ -242,5 +260,137 @@ describe("OMP CLI runtime", () => {
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
 
     await expect(session.prompt("hello")).resolves.toEqual({ requestId: "req_1" });
+  });
+
+  test("negotiates RPC protocol v2 when OMP advertises it", async () => {
+    const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
+    const commands: Record<string, unknown>[] = [];
+    replyToCommands(child, (command) => {
+      commands.push(command);
+      if (command.type === "negotiate_protocol") {
+        return { protocolVersion: command.protocolVersion };
+      }
+      if (command.type === "get_available_models") {
+        return {
+          models: [{ provider: "opencode-go", id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" }],
+        };
+      }
+      return undefined;
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.getAvailableModels()).resolves.toEqual([
+      expect.objectContaining({ provider: "opencode-go", id: "deepseek-v4-flash" }),
+    ]);
+    expect(commands.map(withoutRequestId)).toContainEqual({
+      type: "negotiate_protocol",
+      protocolVersion: 2,
+    });
+  });
+
+  test("stays on protocol v1 when OMP advertises incompatible framing limits", async () => {
+    const child = createOmpChild({
+      supportedProtocolVersions: [1, 2],
+      maxFrameBytes: 512 * 1024,
+    });
+    const commands: Record<string, unknown>[] = [];
+    replyToCommands(child, (command) => {
+      commands.push(command);
+      return { models: [] };
+    });
+
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    await session.getAvailableModels();
+
+    expect(commands.map(withoutRequestId)).toEqual([{ type: "get_available_models" }]);
+    await session.close();
+  });
+
+  test("rejects startup when OMP exits before advertising readiness", async () => {
+    const child = createOmpChild({ emitReady: false });
+    const startup = createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    child.stderr.write("startup exploded");
+    child.emit("exit", 7, null);
+
+    await expect(startup).rejects.toThrow("startup exploded");
+  });
+
+  test("rejects startup when OMP exits during protocol negotiation", async () => {
+    const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
+    child.stdin.on("data", () => {
+      child.stderr.write("negotiation exploded");
+      child.emit("exit", 8, null);
+    });
+
+    await expect(createRuntime(child).startSession({ cwd: "/workspace/project" })).rejects.toThrow(
+      "negotiation exploded",
+    );
+  });
+
+  test("reassembles chunked protocol v2 responses for large payloads", async () => {
+    const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
+    const models = Array.from({ length: 2_000 }, (_, index) => ({
+      provider: "p",
+      id: `model-${index}`,
+      name: `model-${index}-${"x".repeat(512)}`,
+    }));
+    let buffer = "";
+    child.stdin.on("data", (chunk) => {
+      buffer += chunk.toString();
+      for (;;) {
+        const newlineIndex = buffer.indexOf("\n");
+        if (newlineIndex === -1) break;
+        const line = buffer.slice(0, newlineIndex);
+        buffer = buffer.slice(newlineIndex + 1);
+        const command = JSON.parse(line) as Record<string, unknown>;
+        if (command.type === "negotiate_protocol") {
+          child.stdout.write(
+            `${JSON.stringify({
+              id: command.id,
+              type: "response",
+              command: command.type,
+              success: true,
+              data: { protocolVersion: 2 },
+            })}\n`,
+          );
+          continue;
+        }
+        if (command.type === "get_available_models") {
+          // Emit a logical response larger than the 1 MiB protocol-v1 cap as a
+          // chunked (protocol v2) frame sequence, like real OMP does.
+          const logical = JSON.stringify({
+            id: command.id,
+            type: "response",
+            command: command.type,
+            success: true,
+            data: { models },
+          });
+          const bytes = Buffer.from(logical, "utf8");
+          expect(bytes.byteLength).toBeGreaterThan(1024 * 1024);
+          const chunkPayload = 256 * 1024;
+          const count = Math.ceil(bytes.length / chunkPayload);
+          for (let index = 0; index < count; index++) {
+            child.stdout.write(
+              `${JSON.stringify({
+                type: "rpc_chunk",
+                chunkId: "c1",
+                index,
+                count,
+                byteLength: bytes.length,
+                data: bytes
+                  .subarray(index * chunkPayload, (index + 1) * chunkPayload)
+                  .toString("base64"),
+              })}\n`,
+            );
+          }
+        }
+      }
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const result = await session.getAvailableModels();
+    expect(result).toHaveLength(2_000);
+    expect(result[0]).toEqual(expect.objectContaining({ id: "model-0" }));
   });
 });

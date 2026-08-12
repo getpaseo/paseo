@@ -57,6 +57,13 @@ const StoredCacheSchema = z.object({
 type StoredAgent = z.infer<typeof StoredAgentSchema>;
 type StoredHost = z.infer<typeof StoredHostSchema>;
 
+interface ReplicaInput {
+  agent: Agent | undefined;
+  workspace: WorkspaceDescriptor | undefined;
+  project: ProjectDescriptor | undefined;
+  timelineItems: StreamItem[] | undefined;
+}
+
 export interface ReplicaCacheStorage {
   getItem: (key: string) => Promise<string | null>;
   setItem: (key: string, value: string) => Promise<void>;
@@ -220,6 +227,54 @@ function serializeProject(project: ProjectDescriptor) {
   };
 }
 
+function replicaInputsEqual(left: ReplicaInput, right: ReplicaInput): boolean {
+  return (
+    left.agent === right.agent &&
+    left.workspace === right.workspace &&
+    left.project === right.project &&
+    left.timelineItems === right.timelineItems
+  );
+}
+
+function selectReplicaInput(session: SessionState, agentId: string | null): ReplicaInput {
+  const agent = agentId ? session.agents.get(agentId) : undefined;
+  const workspace = agent
+    ? ((agent.workspaceId ? session.workspaces.get(agent.workspaceId) : undefined) ??
+      Array.from(session.workspaces.values()).find(
+        (candidate) => candidate.workspaceDirectory === agent.cwd,
+      ))
+    : undefined;
+  const timeline = agentId
+    ? selectAgentTimelineState(session, agentId)
+    : { status: "cold" as const };
+  return {
+    agent,
+    workspace,
+    project: workspace ? session.projects.get(workspace.projectId) : undefined,
+    timelineItems: timeline.status === "cold" ? undefined : timeline.items,
+  };
+}
+
+function serializeHost(serverId: string, input: ReplicaInput): StoredHost {
+  const items = input.timelineItems?.filter(
+    (item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item),
+  );
+  return {
+    serverId,
+    agents: input.agent ? [serializeAgent(input.agent)] : [],
+    workspaces: input.workspace ? [serializeWorkspace(input.workspace)] : [],
+    projects: input.project ? [serializeProject(input.project)] : [],
+    emptyProjects: [],
+    timeline:
+      input.agent && items
+        ? {
+            agentId: input.agent.id,
+            items: encodeDates(items.slice(-MAX_TIMELINE_ITEMS)),
+          }
+        : null,
+  };
+}
+
 function deserializeHost(stored: StoredHost): SessionReplica {
   const agents = stored.agents.map((entry) => deserializeAgent(stored.serverId, entry));
   const workspaces = stored.workspaces.map(normalizeWorkspaceDescriptor);
@@ -254,7 +309,7 @@ export class ReplicaCache {
   private readonly activeServerIds = new Set<string>();
   private readonly storedHosts = new Map<string, StoredHost>();
   private readonly lastFocusedAgentIds = new Map<string, string>();
-  private readonly capturedSessions = new Map<string, SessionState>();
+  private readonly capturedInputs = new Map<string, ReplicaInput>();
   private readonly maxBytes: number;
   private needsPersist = false;
   private unsubscribe: (() => void) | null = null;
@@ -286,8 +341,8 @@ export class ReplicaCache {
     for (const serverId of this.lastFocusedAgentIds.keys()) {
       if (!next.has(serverId)) this.lastFocusedAgentIds.delete(serverId);
     }
-    for (const serverId of this.capturedSessions.keys()) {
-      if (!next.has(serverId)) this.capturedSessions.delete(serverId);
+    for (const serverId of this.capturedInputs.keys()) {
+      if (!next.has(serverId)) this.capturedInputs.delete(serverId);
     }
     if (removedStoredHost) this.needsPersist = true;
     if (this.unsubscribe && this.needsPersist) this.schedulePersist();
@@ -321,21 +376,28 @@ export class ReplicaCache {
     for (const host of this.storedHosts.values()) {
       useSessionStore.getState().restoreSessionReplica(host.serverId, deserializeHost(host));
       const session = useSessionStore.getState().sessions[host.serverId];
-      if (session) this.capturedSessions.set(host.serverId, session);
+      if (session) {
+        this.capturedInputs.set(
+          host.serverId,
+          selectReplicaInput(session, this.lastFocusedAgentIds.get(host.serverId) ?? null),
+        );
+      }
     }
   }
 
   start(): void {
     if (this.unsubscribe) return;
+    const changedBeforeSubscription = this.captureSessions();
     this.unsubscribe = useSessionStore.subscribe((state) => {
       if (this.activeServerIds.size === 0) return;
+      let changed = false;
       for (const serverId of this.activeServerIds) {
-        const focusedAgentId = state.sessions[serverId]?.focusedAgentId;
-        if (focusedAgentId) this.lastFocusedAgentIds.set(serverId, focusedAgentId);
+        const session = state.sessions[serverId];
+        if (session && this.captureHost(serverId, session)) changed = true;
       }
-      this.schedulePersist();
+      if (changed) this.schedulePersist();
     });
-    if (this.needsPersist) this.schedulePersist();
+    if (changedBeforeSubscription || this.needsPersist) this.schedulePersist();
   }
 
   reconcileServerId(oldServerId: string, newServerId: string): void {
@@ -349,10 +411,10 @@ export class ReplicaCache {
       this.lastFocusedAgentIds.delete(oldServerId);
       this.lastFocusedAgentIds.set(newServerId, focusedAgentId);
     }
-    const capturedSession = this.capturedSessions.get(oldServerId);
-    if (capturedSession) {
-      this.capturedSessions.delete(oldServerId);
-      this.capturedSessions.set(newServerId, capturedSession);
+    const capturedInput = this.capturedInputs.get(oldServerId);
+    if (capturedInput) {
+      this.capturedInputs.delete(oldServerId);
+      this.capturedInputs.set(newServerId, capturedInput);
     }
     if (this.activeServerIds.delete(oldServerId)) this.activeServerIds.add(newServerId);
     this.needsPersist = true;
@@ -374,57 +436,29 @@ export class ReplicaCache {
     await write.catch(() => undefined);
   }
 
-  private captureSessions(): void {
+  private captureSessions(): boolean {
     const sessions = useSessionStore.getState().sessions;
+    let changed = false;
     for (const serverId of this.activeServerIds) {
       const session = sessions[serverId];
       if (!session) continue;
-      if (this.capturedSessions.get(serverId) === session) continue;
-      this.capturedSessions.set(serverId, session);
-      if (session.focusedAgentId) {
-        this.lastFocusedAgentIds.set(serverId, session.focusedAgentId);
-      }
-      const focusedAgentId = this.lastFocusedAgentIds.get(serverId) ?? null;
-      const focusedAgent = focusedAgentId ? session.agents.get(focusedAgentId) : undefined;
-      const focusedWorkspace = focusedAgent
-        ? ((focusedAgent.workspaceId
-            ? session.workspaces.get(focusedAgent.workspaceId)
-            : undefined) ??
-          Array.from(session.workspaces.values()).find(
-            (workspace) => workspace.workspaceDirectory === focusedAgent.cwd,
-          ))
-        : undefined;
-      const timelineState = focusedAgentId
-        ? selectAgentTimelineState(session, focusedAgentId)
-        : { status: "cold" as const };
-      const items =
-        timelineState.status === "cold"
-          ? undefined
-          : timelineState.items.filter(
-              (item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item),
-            );
-      const timeline =
-        focusedAgent && items
-          ? {
-              agentId: focusedAgent.id,
-              items: encodeDates(items.slice(-MAX_TIMELINE_ITEMS)),
-            }
-          : null;
-      const stored: StoredHost = {
-        serverId,
-        agents: focusedAgent ? [serializeAgent(focusedAgent)] : [],
-        workspaces: focusedWorkspace ? [serializeWorkspace(focusedWorkspace)] : [],
-        projects: focusedWorkspace
-          ? [session.projects.get(focusedWorkspace.projectId)].flatMap((project) =>
-              project ? [serializeProject(project)] : [],
-            )
-          : [],
-        emptyProjects: [],
-        timeline,
-      };
-      this.storedHosts.delete(serverId);
-      this.storedHosts.set(serverId, stored);
+      if (this.captureHost(serverId, session)) changed = true;
     }
+    return changed;
+  }
+
+  private captureHost(serverId: string, session: SessionState): boolean {
+    if (session.focusedAgentId) {
+      this.lastFocusedAgentIds.set(serverId, session.focusedAgentId);
+    }
+    const input = selectReplicaInput(session, this.lastFocusedAgentIds.get(serverId) ?? null);
+    const previous = this.capturedInputs.get(serverId);
+    if (previous && replicaInputsEqual(previous, input)) return false;
+
+    this.capturedInputs.set(serverId, input);
+    this.storedHosts.delete(serverId);
+    this.storedHosts.set(serverId, serializeHost(serverId, input));
+    return true;
   }
 
   private buildBoundedPayload(): { payload: string; evicted: boolean } {

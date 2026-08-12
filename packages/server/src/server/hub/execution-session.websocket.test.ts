@@ -246,7 +246,7 @@ test("a sibling workspace keeps an archived execution's worktree directory alive
   expect(await hub.ownedAgentArchivedAt(created.payload.agentId!)).toEqual(expect.any(String));
 });
 
-test("archiving an execution in a reused worktree leaves the existing workspace intact", async () => {
+test("archiving a second same-slug execution leaves the first worktree intact", async () => {
   const hub = await launchRelationship();
   const worktree = {
     mode: "branch-off" as const,
@@ -267,6 +267,7 @@ test("archiving an execution in a reused worktree leaves the existing workspace 
     prompt: "sleep 30",
   });
   const reused = await hub.ownedCreateResult("reused-worktree-create");
+  const secondWorktreeCwd = hub.latestCreatedCwd()!;
   const reusedWorkspaceId = reused.payload.agent?.workspaceId;
   await hub.ownedRunningUpdate(reused.payload.agentId!);
 
@@ -278,8 +279,10 @@ test("archiving an execution in a reused worktree leaves the existing workspace 
   expect(response).toMatchObject({ success: true, error: null });
   expect(reusedWorkspaceId).toEqual(expect.any(String));
   expect(reusedWorkspaceId).not.toBe(originalWorkspaceId);
-  expect(hub.pathsReferToSameLocation(reused.payload.agent!.cwd, worktreeCwd)).toBe(true);
+  expect(hub.pathsReferToSameLocation(reused.payload.agent!.cwd, worktreeCwd)).toBe(false);
+  expect(hub.pathsReferToSameLocation(reused.payload.agent!.cwd, secondWorktreeCwd)).toBe(true);
   expect(await hub.worktreeState(worktreeCwd)).toEqual({ exists: true, listed: true });
+  expect(await hub.worktreeState(secondWorktreeCwd)).toEqual({ exists: false, listed: false });
   expect(await hub.agentRemainsAvailable(original.payload.agentId!)).toBe(true);
   expect(await hub.ownedAgentArchivedAt(reused.payload.agentId!)).toEqual(expect.any(String));
   expect(await hub.ownedWorkspaceArchivedAt(reused.payload.agentId!)).toEqual(expect.any(String));

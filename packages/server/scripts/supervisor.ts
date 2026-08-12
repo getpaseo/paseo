@@ -5,7 +5,7 @@ import { createStream as createRotatingFileStream } from "rotating-file-stream";
 import { signalProcessTree } from "../src/utils/tree-kill.js";
 
 const WORKER_HEARTBEAT_INTERVAL_MS = 1_000;
-const WORKER_HEARTBEAT_TIMEOUT_MS = 15_000;
+const WORKER_HEARTBEAT_MISSED_CHECK_LIMIT = 15;
 const WORKER_TERMINATION_GRACE_MS = 10_000;
 
 interface SupervisorLogFileOptions {
@@ -250,7 +250,7 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     }
 
     const currentChild = child;
-    let lastWorkerHeartbeatAt = Date.now();
+    let missedWorkerHeartbeatChecks = 0;
     const heartbeat = setInterval(() => {
       const message: SupervisorHeartbeatMessage = { type: "paseo:supervisor-heartbeat" };
       if (currentChild.connected) {
@@ -271,12 +271,12 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
       if (child !== currentChild || restarting || shuttingDown) {
         return;
       }
-      const heartbeatAgeMs = Date.now() - lastWorkerHeartbeatAt;
-      if (heartbeatAgeMs < WORKER_HEARTBEAT_TIMEOUT_MS) {
+      missedWorkerHeartbeatChecks += 1;
+      if (missedWorkerHeartbeatChecks < WORKER_HEARTBEAT_MISSED_CHECK_LIMIT) {
         return;
       }
       writeLifecycleLog("Worker heartbeat timed out; restarting worker", {
-        heartbeatAgeMs,
+        missedHeartbeatChecks: missedWorkerHeartbeatChecks,
         supervisorPid: process.pid,
         workerPid: currentChild.pid ?? null,
       });
@@ -300,7 +300,7 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
 
     child.on("message", (msg: unknown) => {
       if (isWorkerHeartbeatMessage(msg)) {
-        lastWorkerHeartbeatAt = Date.now();
+        missedWorkerHeartbeatChecks = 0;
         return;
       }
       const lifecycleMessage = parseLifecycleMessage(msg);

@@ -6,7 +6,7 @@ user-invocable: true
 
 # Committee Skill
 
-Two agents from contrasting providers, fresh context, planning a solution in parallel. They stay alive for review after implementation.
+Two agents from contrasting profiles, fresh context, planning a solution in parallel. They stay alive for review after implementation.
 
 The purpose is to step back, not double down. The committee may propose a completely different approach.
 
@@ -14,18 +14,18 @@ The purpose is to step back, not double down. The committee may propose a comple
 
 ## Prerequisites
 
-Read the **paseo** skill. Before choosing committee members, read `~/.paseo/orchestration-preferences.json` unless the user explicitly named providers in this request. Do not create committee agents until you have read it.
+Read the **paseo** skill. Call `list_profiles` before choosing committee members. Do not create committee agents until you have read the configured profiles and their `notes`.
 
-Contrast is the point of a committee, so pick across providers deliberately using the configured preferences rather than hardcoded defaults.
+Contrast is the point of a committee, so pick profiles from different provider families when possible. Materialize each profile into `create_agent`.
 
 ## Composition
 
-Two members with different reasoning styles, selected from orchestration preferences:
+Two members with different reasoning styles, selected from configured Agent profiles:
 
-- one planning/research-strength provider
-- one contrasting high-reasoning provider
+- one whose notes fit planning, research, or root-cause analysis
+- one contrasting high-reasoning profile from another provider family
 
-Override only when the user explicitly asks for different members.
+If the user names profiles, use those. If fewer than two suitable profiles are configured, use Paseo's provider discovery fallback for the missing member and tell the user. Override the selection only when the user explicitly asks for different members.
 
 ## Hard rules
 
@@ -55,7 +55,7 @@ Read both responses. Challenge them — do not accept at face value:
 
 - "Why does <underlying thing> happen? Symptom or cause?"
 - Verify any assumption the plan makes about the code.
-- "What did you considered and reject?"
+- "What did you consider and reject?"
 
 Send follow-ups until the plan addresses root cause.
 
