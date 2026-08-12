@@ -209,6 +209,6 @@ describe("workspace bulk close helpers", () => {
 
     expect(closeItems).toHaveBeenCalledWith({ agentIds: ["root"], terminalIds: [] });
     expect(preparedSubagents).toEqual(["child"]);
-    expect(cleanedTabs).toEqual(["agent_root", "agent_child"]);
+    expect(cleanedTabs).toEqual(["agent_child", "agent_root"]);
   });
 });

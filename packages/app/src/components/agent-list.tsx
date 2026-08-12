@@ -22,7 +22,6 @@ import { getProviderIcon } from "@/components/provider-icons";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { HighlightedText } from "@/components/ui/highlighted-text";
-import { useToast } from "@/contexts/toast-context";
 import type { AgentSearchMatch } from "@getpaseo/protocol/messages";
 import type { MatchRange } from "@getpaseo/protocol/search/text-match";
 
@@ -407,7 +406,6 @@ export function AgentList({
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
   const isMobile = useIsCompactFormFactor();
   const { archiveAgent } = useArchiveAgent();
-  const toast = useToast();
 
   const actionClient = useSessionStore((state) =>
     actionAgent?.serverId ? (state.sessions[actionAgent.serverId]?.client ?? null) : null,
@@ -426,15 +424,14 @@ export function AgentList({
       const agentId = agent.id;
 
       onAgentSelect?.();
-      void navigateToAgent({
+      navigateToAgent({
         serverId,
         agentId,
         workspaceId: agent.workspaceId,
         pin: true,
-        onError: () => toast.error(t("workspace.tabs.toasts.failedToOpenAgent")),
       });
     },
-    [isActionSheetVisible, onAgentSelect, t, toast],
+    [isActionSheetVisible, onAgentSelect],
   );
 
   const handleAgentLongPress = useCallback(

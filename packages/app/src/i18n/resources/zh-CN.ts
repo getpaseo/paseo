@@ -614,7 +614,6 @@ export const zhCN: TranslationResources = {
         reloadingAgent: "正在重新加载 Agent...",
         reloadedAgent: "已重新加载 Agent",
         failedToReloadAgent: "重新加载 Agent 失败",
-        failedToOpenAgent: "打开 Agent 失败",
         failedToCloseAgent: "关闭 Agent 失败",
       },
       confirmations: {

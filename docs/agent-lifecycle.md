@@ -49,11 +49,12 @@ Parent archive detaches a subagent instead of archiving it when either condition
 - The child belongs to another workspace.
 - The child is currently open in an agent tab.
 
-All other children archive with the parent. Opening a managed subagent tab sets
-`paseo.open-agent-tab.<client-id>=true` through the generic agent metadata update; closing that tab
-sets that client's label to `false`. Any `true` client label keeps the child open. Detach clears the
-parent and every open-tab label. The surviving child therefore becomes a normal root agent
-immediately, and closing its still-open tab archives it.
+All other children archive with the parent. After the workspace layout hydrates, the client marks
+every managed subagent present in its tabs with `paseo.open-agent-tab.<client-id>=true` through the
+generic agent metadata update. This includes background and restored tabs; navigation does not own
+the marker. Closing a tab sets that client's label to `false`. Any `true` client label keeps the child
+open. Detach clears the parent and every open-tab label. The surviving child therefore becomes a
+normal root agent immediately, and closing its still-open tab archives it.
 
 Runtime ownership is resolved from explicit workspace ID and caller context, never from `cwd`. Workspace creation is a separate operation with `local | worktree` isolation; agent creation only selects an existing workspace.
 
@@ -205,7 +206,7 @@ Each agent is a single JSON file. Fields relevant to this doc:
 | `id`                                         | `string`      | Stable identifier                                                                  |
 | `archivedAt`                                 | `string?`     | Soft-delete timestamp (ISO 8601)                                                   |
 | `labels["paseo.parent-agent-id"]`            | `string?`     | Parent agent ID, set automatically for agent-scoped creation and removed by detach |
-| `labels["paseo.open-agent-tab.<client-id>"]` | `"true"?`     | Managed subagent tab is open on that client; detach clears every matching label    |
+| `labels["paseo.open-agent-tab.<client-id>"]` | `string?`     | `"true"` protects an open tab on that client; detach clears every matching label   |
 | `lastStatus`                                 | `AgentStatus` | `initializing` / `idle` / `running` / `error` / `closed`                           |
 
 See [`docs/data-model.md`](./data-model.md) for the full agent record.

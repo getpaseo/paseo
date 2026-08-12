@@ -49,7 +49,6 @@ import {
   useAgentScreenStateMachine,
 } from "@/hooks/use-agent-screen-state-machine";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
-import { useToast } from "@/contexts/toast-context";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { reconcileMissingAgentStateWithPresentAgent } from "@/panels/agent-panel-load-state";
@@ -1491,8 +1490,6 @@ function ActiveAgentComposer({
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
 }) {
-  const toast = useToast();
-  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const isCompactFormFactor = useIsCompactFormFactor();
   const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
@@ -1514,13 +1511,9 @@ function ActiveAgentComposer({
   );
   const handleOpenSubagent = useCallback(
     (subagentId: string) => {
-      void navigateToAgent({
-        serverId,
-        agentId: subagentId,
-        onError: () => toast.error(t("workspace.tabs.toasts.failedToOpenAgent")),
-      });
+      navigateToAgent({ serverId, agentId: subagentId });
     },
-    [serverId, t, toast],
+    [serverId],
   );
   const handleOpenProviderSubagent = useCallback(
     (parentAgentId: string, subagentId: string) => {

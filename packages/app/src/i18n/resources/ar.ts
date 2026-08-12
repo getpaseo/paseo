@@ -614,7 +614,6 @@ export const ar: TranslationResources = {
         reloadingAgent: "وكيل إعادة التحميل...",
         reloadedAgent: "وكيل إعادة تحميل",
         failedToReloadAgent: "فشل في إعادة تحميل الوكيل",
-        failedToOpenAgent: "فشل في فتح الوكيل",
         failedToCloseAgent: "فشل في إغلاق الوكيل",
       },
       confirmations: {

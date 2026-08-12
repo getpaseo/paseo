@@ -224,7 +224,7 @@ export function WorkspaceSetupDialog() {
 
       clearWorkspaceSetup();
       if (target.kind === "agent") {
-        void navigateToAgent({
+        navigateToAgent({
           serverId: pendingWorkspaceSetup.serverId,
           agentId: target.agentId,
         });
