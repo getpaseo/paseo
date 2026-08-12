@@ -1,4 +1,4 @@
-import { test } from "../support/fixtures";
+import { expect, test } from "../support/fixtures";
 import { closeCommandCenter, openCommandCenter } from "../support/helpers/command-center";
 import {
   applyCommandCenterAgentControls,
@@ -72,6 +72,27 @@ test.describe("Command Center agent controls", () => {
         query: "load test",
         choice: "Mode › Load test",
       });
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("shows an existing agent's only supported thinking level", async ({ page }) => {
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "agent-controls-single-thinking-",
+      title: "Single thinking level",
+      model: "max-only-thinking-stream",
+      thinkingOptionId: "max",
+    });
+    try {
+      await openAgentRoute(page, {
+        workspaceId: workspace.workspaceId,
+        agentId: workspace.agentId,
+      });
+
+      await expect(
+        page.getByTestId("agent-thinking-selector").filter({ visible: true }),
+      ).toHaveAccessibleName("Select thinking option (Max)");
     } finally {
       await workspace.cleanup();
     }

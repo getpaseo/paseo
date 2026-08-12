@@ -125,6 +125,18 @@ const MODELS: AgentModelDefinition[] = [
       intervalMs: 5,
     },
   },
+  {
+    provider: MOCK_LOAD_TEST_PROVIDER_ID,
+    id: "max-only-thinking-stream",
+    label: "Max-only thinking stream",
+    description: "Fast realistic stream with one supported thinking level.",
+    thinkingOptions: [{ id: "max", label: "Max", isDefault: true }],
+    defaultThinkingOptionId: "max",
+    metadata: {
+      durationMs: 10_000,
+      intervalMs: 5,
+    },
+  },
 ];
 
 interface ActiveTurn {

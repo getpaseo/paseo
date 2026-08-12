@@ -17,6 +17,7 @@ export interface MockAgentOptions {
   port?: number;
   initialPrompt?: string;
   model?: string;
+  thinkingOptionId?: string;
   modeId?: string;
   featureValues?: Record<string, unknown>;
 }
@@ -38,6 +39,7 @@ export async function seedMockAgentWorkspace(
       title: options.title,
       modeId: options.modeId ?? "load-test",
       model: options.model ?? "ten-second-stream",
+      thinkingOptionId: options.thinkingOptionId,
       initialPrompt: options.initialPrompt,
       featureValues: options.featureValues,
     });
