@@ -2,7 +2,7 @@
 name: paseo-advisor
 description: Spin up a single agent as an advisor — second opinion on the current task. Use when the user says "advisor", "second opinion", "what does X think", or wants an outside take without delegating the work itself.
 user-invocable: true
-argument-hint: "[--provider <name>] <question or topic>"
+argument-hint: "[--profile <name>] <question or topic>"
 ---
 
 # Paseo Advisor
@@ -13,16 +13,15 @@ Single agent. Reads the situation you're in. Gives a judgment. You decide what t
 
 ## Prerequisites
 
-Read the **paseo** skill. Before choosing a provider, read `~/.paseo/orchestration-preferences.json` unless the user explicitly named a provider in this request. Do not create the advisor until you have read it.
+Read the **paseo** skill. Call `list_profiles` before choosing the advisor. Do not create the advisor until you have read the configured profiles and their `notes`.
 
 ## Picking the advisor
 
-1. **User named one** (`--provider claude/opus`) → use it.
-2. **Otherwise** resolve from preferences — pick the category that matches the question:
-   - Design / approach question → `planning`
-   - "Did I miss something" review → `audit`
-   - "Is this even right" → `research`
-3. **Contrast helps.** If your own provider matches what preferences would pick, swap to a different family on purpose — fresh perspective is the point.
+1. **User named a profile** (`--profile UI Work`) → select it by name.
+2. **Otherwise** choose the profile whose `notes` best fit the question. Match the actual work: design and approach, audit and review, or research and root-cause analysis.
+3. **Contrast helps.** When several profiles fit, prefer a different provider family from your own so the second opinion is genuinely fresh.
+
+Materialize the selected profile into `create_agent` as described by the **paseo** skill. If no profile fits, use Paseo's provider discovery fallback.
 
 ## The briefing
 

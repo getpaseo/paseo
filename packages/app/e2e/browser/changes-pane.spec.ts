@@ -553,8 +553,19 @@ test("changes diff switches between flat and tree file lists", async ({ page }) 
     "none",
   );
   await expect(page.getByTestId("diff-file-0")).toBeVisible();
-  await expect(page.getByTestId("diff-folder-src-toggle").locator("svg")).toHaveCount(2);
+  await expect(page.getByTestId("diff-folder-src-toggle").locator("svg")).toHaveCount(1);
   await expect(page.getByTestId("diff-file-0-toggle").locator("svg")).toHaveCount(1);
+  const folderToggleBounds = await page.getByTestId("diff-folder-src-toggle").boundingBox();
+  const folderChevronBounds = await page
+    .getByTestId("diff-folder-src-toggle")
+    .locator("svg")
+    .boundingBox();
+  expect(folderToggleBounds).not.toBeNull();
+  expect(folderChevronBounds).not.toBeNull();
+  expect(folderChevronBounds!.y + folderChevronBounds!.height / 2).toBeCloseTo(
+    folderToggleBounds!.y + folderToggleBounds!.height / 2,
+    0,
+  );
   const folderLabelBounds = await page
     .getByTestId("diff-folder-src")
     .getByText("src", { exact: true })
@@ -565,7 +576,7 @@ test("changes diff switches between flat and tree file lists", async ({ page }) 
     .boundingBox();
   expect(folderLabelBounds).not.toBeNull();
   expect(fileLabelBounds).not.toBeNull();
-  expect(fileLabelBounds!.x - folderLabelBounds!.x).toBeCloseTo(14, 0);
+  expect(fileLabelBounds!.x - folderLabelBounds!.x).toBeCloseTo(16, 0);
 
   const folderToggle = page.getByTestId("diff-folder-src-toggle");
   await folderToggle.click();

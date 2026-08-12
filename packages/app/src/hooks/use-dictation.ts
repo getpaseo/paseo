@@ -449,6 +449,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       attemptGuard.cancel();
       stopDurationTracking();
       void audioStop.current().catch(() => undefined);
+      senderRef.current?.dispose();
     };
   }, [stopDurationTracking]);
 

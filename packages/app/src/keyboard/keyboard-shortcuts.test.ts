@@ -411,6 +411,13 @@ describe("keyboard-shortcuts", () => {
     },
   );
 
+  it("leaves Escape to an editable field", () => {
+    expectNoShortcutResolution({
+      event: { key: "Escape", code: "Escape" },
+      context: { focusScope: "editable" },
+    });
+  });
+
   const nonMatchingCases: NonMatchingShortcutCase[] = [
     {
       name: "does not keep old Mod+Alt+N binding",

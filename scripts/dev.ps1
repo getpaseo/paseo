@@ -50,6 +50,7 @@ $env:PASEO_CORS_ORIGINS = "*"
 # Configure the app to auto-connect to this daemon on localhost
 $env:APP_VARIANT = "development"
 $env:EXPO_PUBLIC_LOCAL_DAEMON = "localhost:6768"
+$env:EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL = (git branch --show-current).Trim()
 $env:PASEO_LISTEN = "127.0.0.1:6768"
 $env:BROWSER = "none"
 

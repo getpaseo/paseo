@@ -766,7 +766,14 @@ export interface CompactionItem {
 export interface TodoEntry {
   text: string;
   completed: boolean;
+  id?: string;
+  status?: "pending" | "in_progress" | "completed";
+  activeForm?: string;
 }
+
+export type TaskActivity =
+  | { type: "created"; count: number }
+  | { type: "added" | "started" | "completed" | "reopened"; task: string };
 
 export interface TodoListItem {
   kind: "todo_list";
@@ -775,6 +782,7 @@ export interface TodoListItem {
   timestamp: Date;
   provider: AgentProvider;
   items: TodoEntry[];
+  activity: TaskActivity;
 }
 
 export type StreamUpdateSource = "live" | "canonical";
@@ -1178,34 +1186,103 @@ function appendTodoList(
   const normalizedItems = items.map((item) => ({
     text: item.text,
     completed: item.completed,
+    ...(item.id ? { id: item.id } : {}),
+    ...(item.status ? { status: item.status } : {}),
+    ...(item.activeForm ? { activeForm: item.activeForm } : {}),
   }));
 
-  const lastItem = state[state.length - 1];
-  if (lastItem && lastItem.kind === "todo_list" && lastItem.provider === provider) {
+  const previousIndex = state.findLastIndex(
+    (item) => item.kind === "todo_list" && item.provider === provider,
+  );
+  const previous = state[previousIndex];
+  const previousItems = previous?.kind === "todo_list" ? previous.items : [];
+  const activities = deriveTaskActivities(previousItems, normalizedItems);
+
+  if (activities.length === 0) {
+    if (!previous || previous.kind !== "todo_list") return state;
     const next = [...state];
-    const updated: TodoListItem = {
-      ...lastItem,
+    next[previousIndex] = {
+      ...previous,
       ...(timelineCursor ? { timelineCursor } : {}),
       items: normalizedItems,
       timestamp,
     };
-    next[next.length - 1] = updated;
     return next;
   }
 
-  const idSeed = `${provider}:${JSON.stringify(normalizedItems)}`;
-  const entryId = createUniqueTimelineId(state, "todo", idSeed, timestamp);
+  const lastItem = state[state.length - 1];
+  if (
+    activities.length === 1 &&
+    activities[0]?.type === "added" &&
+    lastItem?.kind === "todo_list" &&
+    lastItem.provider === provider &&
+    lastItem.activity.type === "created" &&
+    normalizedItems.every((item) => taskStatus(item) === "pending")
+  ) {
+    const next = [...state];
+    next[next.length - 1] = {
+      ...lastItem,
+      ...(timelineCursor ? { timelineCursor } : {}),
+      items: normalizedItems,
+      activity: { type: "created", count: normalizedItems.length },
+      timestamp,
+    };
+    return next;
+  }
 
-  const entry: TodoListItem = {
-    kind: "todo_list",
-    id: entryId,
-    ...(timelineCursor ? { timelineCursor } : {}),
-    timestamp,
-    provider,
-    items: normalizedItems,
-  };
+  const next = [...state];
+  for (const activity of activities) {
+    const idSeed = `${provider}:${JSON.stringify(activity)}:${JSON.stringify(normalizedItems)}`;
+    next.push({
+      kind: "todo_list",
+      id: createUniqueTimelineId(next, "todo", idSeed, timestamp),
+      ...(timelineCursor ? { timelineCursor } : {}),
+      timestamp,
+      provider,
+      items: normalizedItems,
+      activity,
+    });
+  }
+  return next;
+}
 
-  return [...state, entry];
+function taskStatus(task: TodoEntry): NonNullable<TodoEntry["status"]> {
+  if (task.completed || task.status === "completed") return "completed";
+  return task.status === "in_progress" ? "in_progress" : "pending";
+}
+
+function taskKey(task: TodoEntry, index: number): string {
+  return task.id ?? `${index}:${task.text}`;
+}
+
+function deriveTaskActivities(
+  previous: readonly TodoEntry[],
+  current: readonly TodoEntry[],
+): TaskActivity[] {
+  if (previous.length === 0) {
+    return current.length > 0 ? [{ type: "created", count: current.length }] : [];
+  }
+
+  const previousByKey = new Map(previous.map((task, index) => [taskKey(task, index), task]));
+  const activities: TaskActivity[] = [];
+  for (const [index, task] of current.entries()) {
+    const prior = previousByKey.get(taskKey(task, index));
+    if (!prior) {
+      activities.push({ type: "added", task: task.text });
+      continue;
+    }
+    const before = taskStatus(prior);
+    const after = taskStatus(task);
+    if (before === after) continue;
+    if (after === "completed") {
+      activities.push({ type: "completed", task: task.text });
+    } else if (before === "completed") {
+      activities.push({ type: "reopened", task: task.text });
+    } else if (after === "in_progress") {
+      activities.push({ type: "started", task: task.text });
+    }
+  }
+  return activities;
 }
 
 function reduceTimelineToolCall(
@@ -1241,6 +1318,15 @@ function reduceTimelineToolCall(
       timestamp,
       timelineCursor,
     );
+  }
+
+  if (
+    event.provider === "claude" &&
+    (normalizedToolName === "taskcreate" ||
+      normalizedToolName === "taskupdate" ||
+      normalizedToolName === "tasklist")
+  ) {
+    return state;
   }
 
   const tasks = extractTaskEntriesFromToolCall(item.name, inputFromUnknownDetail(item.detail));
@@ -1349,12 +1435,12 @@ function reduceTimelineEvent(
         reduceTimelineToolCall(state, event, item, timestamp, timelineCursor),
       );
     case "todo": {
-      if (event.provider === "claude") {
-        return finalizeActiveThoughts(state);
-      }
       const items: TodoEntry[] = (item.items ?? []).map((todo) => ({
         text: todo.text,
         completed: todo.completed,
+        id: todo.id,
+        status: todo.status,
+        activeForm: todo.activeForm,
       }));
       return finalizeActiveThoughts(
         appendTodoList(state, event.provider, items, timestamp, timelineCursor),

@@ -18,8 +18,17 @@ class ProviderSnapshots {
 }
 
 describe("resolveStructuredGenerationProviders", () => {
-  test("uses explicit configured provider models without refreshing provider snapshots", async () => {
-    const snapshots = new ProviderSnapshots([]);
+  test("tries the configured model before dynamically discovered fallbacks", async () => {
+    const snapshots = new ProviderSnapshots([
+      {
+        provider: "work-claude",
+        status: READY,
+        enabled: true,
+        models: [
+          { provider: "work-claude", id: "claude-haiku-2026", label: "Haiku", isDefault: true },
+        ],
+      },
+    ]);
 
     const providers = await resolveStructuredGenerationProviders({
       cwd: "/tmp/repo",
@@ -31,8 +40,11 @@ describe("resolveStructuredGenerationProviders", () => {
       },
     });
 
-    expect(providers).toEqual([{ provider: "mock", model: "ten-second-stream" }]);
-    expect(snapshots.calls).toEqual([]);
+    expect(providers).toEqual([
+      { provider: "mock", model: "ten-second-stream" },
+      { provider: "work-claude", model: "claude-haiku-2026" },
+    ]);
+    expect(snapshots.calls).toEqual([{ cwd: "/tmp/repo", wait: true }]);
   });
 
   test("falls back to dynamic defaults and current selection when no provider is configured", async () => {
@@ -155,7 +167,7 @@ describe("resolveStructuredGenerationProviders", () => {
     ]);
   });
 
-  test("uses explicit configured provider models as-is instead of waiting to normalize aliases", async () => {
+  test("normalizes configured nested-provider aliases from the provider snapshot", async () => {
     const snapshots = new ProviderSnapshots([
       {
         provider: "opencode",
@@ -186,8 +198,8 @@ describe("resolveStructuredGenerationProviders", () => {
       },
     });
 
-    expect(providers).toEqual([{ provider: "plexus", model: "small-fast" }]);
-    expect(snapshots.calls).toEqual([]);
+    expect(providers).toEqual([{ provider: "opencode", model: "plexus/small-fast" }]);
+    expect(snapshots.calls).toEqual([{ cwd: "/tmp/repo", wait: true }]);
   });
 
   test("keeps explicit candidates when provider snapshots are in error state", async () => {
@@ -215,7 +227,10 @@ describe("resolveStructuredGenerationProviders", () => {
       },
     });
 
-    expect(providers).toEqual([{ provider: "current-provider", model: "configured-model" }]);
-    expect(snapshots.calls).toEqual([]);
+    expect(providers).toEqual([
+      { provider: "current-provider", model: "configured-model" },
+      { provider: "current-provider", model: "selected-model", thinkingOptionId: "medium" },
+    ]);
+    expect(snapshots.calls).toEqual([{ cwd: "/tmp/repo", wait: true }]);
   });
 });
