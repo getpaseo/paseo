@@ -2098,6 +2098,47 @@ describe("ACPAgentClient fetchCatalog", () => {
     });
   });
 
+  test("closes catalog probe sessions so metadata refreshes do not pollute provider history", async () => {
+    const newSession = vi.fn().mockResolvedValue({
+      sessionId: "probe-session-1",
+      modes: null,
+      models: null,
+      configOptions: [],
+    });
+    const unstableCloseSession = vi.fn().mockResolvedValue({});
+    const child = {
+      kill: vi.fn(),
+      exitCode: 0,
+      signalCode: null,
+      once: vi.fn(),
+      stdin: { destroy: vi.fn() },
+      stdout: { destroy: vi.fn() },
+      stderr: { destroy: vi.fn() },
+    };
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child,
+          connection: { newSession, unstable_closeSession: unstableCloseSession },
+          initialize: { agentCapabilities: { sessionCapabilities: { close: true } } },
+        } as unknown as SpawnedACPProcess;
+      }
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "pi",
+      logger: createTestLogger(),
+      defaultCommand: ["test-acp"],
+      defaultModes: [],
+    });
+
+    await client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-mode-cwd", force: false });
+
+    expect(unstableCloseSession).toHaveBeenCalledWith({ sessionId: "probe-session-1" });
+    expect(child.stdin.destroy).toHaveBeenCalled();
+  });
+
   test("returns an empty modes array when no ACP modes are reported and fallback modes are empty", async () => {
     class TestACPAgentClient extends ACPAgentClient {
       protected override async spawnProcess(): Promise<SpawnedACPProcess> {
