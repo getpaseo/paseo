@@ -385,6 +385,7 @@ export interface ACPCatalogModelResolverContext {
   connection: ClientSideConnection;
   sessionId: string;
   models: AgentModelDefinition[];
+  modelState: SessionModelState | null | undefined;
   configOptions: SessionConfigOption[] | null | undefined;
   runRequest: <T>(request: () => Promise<T>) => Promise<T>;
   transformConfigOptions: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
@@ -421,11 +422,12 @@ interface ACPAgentClientOptions {
     context: ACPProviderModeWriterContext,
   ) => Promise<ACPProviderModeWriteResult>;
   beforeModeWriter?: (context: ACPProviderModeWriterContext) => Promise<ACPBeforeModeWriteResult>;
+  providerModelWriter?: (
+    context: ACPProviderModelWriterContext,
+  ) => Promise<ACPProviderModelWriteResult>;
   thinkingOptionWriter?: (
-    connection: ClientSideConnection,
-    sessionId: string,
-    thinkingOptionId: string,
-  ) => Promise<void>;
+    context: ACPProviderThinkingOptionWriterContext,
+  ) => Promise<ACPProviderThinkingOptionWriteResult>;
   capabilities?: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
   waitForInitialCommands?: boolean;
@@ -451,11 +453,12 @@ interface ACPAgentSessionOptions {
     context: ACPProviderModeWriterContext,
   ) => Promise<ACPProviderModeWriteResult>;
   beforeModeWriter?: (context: ACPProviderModeWriterContext) => Promise<ACPBeforeModeWriteResult>;
+  providerModelWriter?: (
+    context: ACPProviderModelWriterContext,
+  ) => Promise<ACPProviderModelWriteResult>;
   thinkingOptionWriter?: (
-    connection: ClientSideConnection,
-    sessionId: string,
-    thinkingOptionId: string,
-  ) => Promise<void>;
+    context: ACPProviderThinkingOptionWriterContext,
+  ) => Promise<ACPProviderThinkingOptionWriteResult>;
   capabilities: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
   handle?: AgentPersistenceHandle;
@@ -588,6 +591,35 @@ export interface ACPProviderModeWriteResult {
 
 export interface ACPBeforeModeWriteResult {
   configOptions?: SessionConfigOption[];
+}
+
+export interface ACPProviderModelWriterContext {
+  connection: ClientSideConnection;
+  sessionId: string;
+  requestedModelId: string;
+  currentModelId: string | null;
+  currentThinkingOptionId: string | null;
+  availableModel: AvailableACPModel;
+  configOptions: SessionConfigOption[];
+}
+
+export interface ACPProviderModelWriteResult {
+  handled: boolean;
+  currentModelId?: string;
+  thinkingOptionId?: string | null;
+}
+
+export interface ACPProviderThinkingOptionWriterContext {
+  connection: ClientSideConnection;
+  sessionId: string;
+  requestedThinkingOptionId: string;
+  currentThinkingOptionId: string | null;
+  configOptions: SessionConfigOption[];
+}
+
+export interface ACPProviderThinkingOptionWriteResult {
+  handled: boolean;
+  thinkingOptionId?: string | null;
 }
 
 export function mapACPUsage(usage: Usage | null | undefined): AgentUsage | undefined {
@@ -810,11 +842,12 @@ export class ACPAgentClient implements AgentClient {
   private readonly beforeModeWriter?: (
     context: ACPProviderModeWriterContext,
   ) => Promise<ACPBeforeModeWriteResult>;
+  private readonly providerModelWriter?: (
+    context: ACPProviderModelWriterContext,
+  ) => Promise<ACPProviderModelWriteResult>;
   private readonly thinkingOptionWriter?: (
-    connection: ClientSideConnection,
-    sessionId: string,
-    thinkingOptionId: string,
-  ) => Promise<void>;
+    context: ACPProviderThinkingOptionWriterContext,
+  ) => Promise<ACPProviderThinkingOptionWriteResult>;
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
@@ -842,6 +875,7 @@ export class ACPAgentClient implements AgentClient {
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
     this.providerModeWriter = options.providerModeWriter;
     this.beforeModeWriter = options.beforeModeWriter;
+    this.providerModelWriter = options.providerModelWriter;
     this.thinkingOptionWriter = options.thinkingOptionWriter;
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
@@ -871,6 +905,7 @@ export class ACPAgentClient implements AgentClient {
         toolSnapshotTransformer: this.toolSnapshotTransformer,
         providerModeWriter: this.providerModeWriter,
         beforeModeWriter: this.beforeModeWriter,
+        providerModelWriter: this.providerModelWriter,
         thinkingOptionWriter: this.thinkingOptionWriter,
         capabilities: this.capabilities,
         agentId: launchContext?.agentId,
@@ -921,6 +956,7 @@ export class ACPAgentClient implements AgentClient {
       toolSnapshotTransformer: this.toolSnapshotTransformer,
       providerModeWriter: this.providerModeWriter,
       beforeModeWriter: this.beforeModeWriter,
+      providerModelWriter: this.providerModelWriter,
       thinkingOptionWriter: this.thinkingOptionWriter,
       capabilities: this.capabilities,
       handle,
@@ -964,6 +1000,7 @@ export class ACPAgentClient implements AgentClient {
               connection: initializedProbe.connection,
               sessionId: response.sessionId,
               models: derivedModels,
+              modelState: transformed.models,
               configOptions: transformed.configOptions,
               runRequest: (request) => this.runACPRequest(request),
               transformConfigOptions: (configOptions) =>
@@ -1398,11 +1435,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly beforeModeWriter?: (
     context: ACPProviderModeWriterContext,
   ) => Promise<ACPBeforeModeWriteResult>;
+  private readonly providerModelWriter?: (
+    context: ACPProviderModelWriterContext,
+  ) => Promise<ACPProviderModelWriteResult>;
   private readonly thinkingOptionWriter?: (
-    connection: ClientSideConnection,
-    sessionId: string,
-    thinkingOptionId: string,
-  ) => Promise<void>;
+    context: ACPProviderThinkingOptionWriterContext,
+  ) => Promise<ACPProviderThinkingOptionWriteResult>;
   private readonly agentId?: string;
   private readonly launchEnv?: Record<string, string>;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
@@ -1460,6 +1498,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
     this.providerModeWriter = options.providerModeWriter;
     this.beforeModeWriter = options.beforeModeWriter;
+    this.providerModelWriter = options.providerModelWriter;
     this.thinkingOptionWriter = options.thinkingOptionWriter;
     this.availableModes = options.defaultModes;
     this.agentId = options.agentId;
@@ -1912,6 +1951,35 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         throw new Error(this.modelSelectionUnavailableMessage());
       }
 
+      if (this.providerModelWriter) {
+        const result = await this.providerModelWriter({
+          connection: this.connection,
+          sessionId: this.sessionId,
+          requestedModelId: modelId,
+          currentModelId: this.currentModel,
+          currentThinkingOptionId: this.thinkingOptionId,
+          availableModel: selection.availableModel,
+          configOptions: this.configOptions,
+        });
+        if (result.handled) {
+          this.currentModel = result.currentModelId ?? modelId;
+          if (result.thinkingOptionId !== undefined) {
+            this.thinkingOptionId = result.thinkingOptionId;
+            this.pushEvent({
+              type: "thinking_option_changed",
+              provider: this.provider,
+              thinkingOptionId: this.thinkingOptionId,
+            });
+          }
+          this.pushEvent({
+            type: "model_changed",
+            provider: this.provider,
+            runtimeInfo: this.runtimeInfo(),
+          });
+          return;
+        }
+      }
+
       try {
         await this.connection.unstable_setSessionModel({
           sessionId: this.sessionId,
@@ -1974,14 +2042,22 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     if (this.thinkingOptionWriter) {
-      await this.thinkingOptionWriter(this.connection, this.sessionId, thinkingOptionId);
-      this.thinkingOptionId = thinkingOptionId;
-      this.pushEvent({
-        type: "thinking_option_changed",
-        provider: this.provider,
-        thinkingOptionId: this.thinkingOptionId,
+      const result = await this.thinkingOptionWriter({
+        connection: this.connection,
+        sessionId: this.sessionId,
+        requestedThinkingOptionId: thinkingOptionId,
+        currentThinkingOptionId: this.thinkingOptionId,
+        configOptions: this.configOptions,
       });
-      return;
+      if (result.handled) {
+        this.thinkingOptionId = result.thinkingOptionId ?? thinkingOptionId;
+        this.pushEvent({
+          type: "thinking_option_changed",
+          provider: this.provider,
+          thinkingOptionId: this.thinkingOptionId,
+        });
+        return;
+      }
     }
 
     const option = findSelectConfigOption({
