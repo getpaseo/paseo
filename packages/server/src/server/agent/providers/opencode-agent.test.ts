@@ -480,6 +480,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
             models: {
               "big-pickle": {
                 name: "Big Pickle",
+                variants: { max: { reasoningEffort: "max" } },
                 limit: {
                   context: 200_000,
                 },
@@ -529,6 +530,11 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     expect(catalog.models[0]).toMatchObject({
       id: TEST_MODEL,
       label: "Big Pickle",
+      thinkingOptions: [
+        { id: "default", label: "Default", isDefault: true },
+        { id: "max", label: "max" },
+      ],
+      defaultThinkingOptionId: "default",
       metadata: {
         providerId: "opencode",
         modelId: "big-pickle",
@@ -825,23 +831,6 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
 });
 
 describe("OpenCode adapter normalization", () => {
-  test("includes the implicit model default before explicit OpenCode variants", () => {
-    const definition = __openCodeInternals.buildOpenCodeModelDefinition(
-      { id: "catalog-provider", name: "Catalog Provider" },
-      "single-variant-model",
-      {
-        name: "Single Variant Model",
-        variants: { max: { reasoningEffort: "max" } },
-      },
-    );
-
-    expect(definition.thinkingOptions).toEqual([
-      { id: "default", label: "Default", isDefault: true },
-      { id: "max", label: "max" },
-    ]);
-    expect(definition.defaultThinkingOptionId).toBe("default");
-  });
-
   test("omits OpenCode's implicit default variant from new and updated sessions", async () => {
     const runtime = new TestOpenCodeHarness();
     const openCode = new TestOpenCodeClient();
