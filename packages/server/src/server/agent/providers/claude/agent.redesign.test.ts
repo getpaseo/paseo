@@ -456,6 +456,35 @@ test("interruptActiveTurn only interrupts the active query without info logs", a
   }
 });
 
+test("suppresses a stale successful local-command cancellation after a replacement starts", async () => {
+  const session = await createSession();
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  const internal: {
+    pendingInterruptAbort: boolean;
+    activeForegroundTurnId: string | null;
+    foregroundHasVisibleActivity: boolean;
+    routeSdkMessageFromPump: (message: Record<string, unknown>) => void;
+  } = asInternals(session);
+
+  internal.pendingInterruptAbort = true;
+  internal.activeForegroundTurnId = "replacement-turn";
+  internal.foregroundHasVisibleActivity = true;
+  internal.routeSdkMessageFromPump({
+    type: "result",
+    subtype: "success",
+    result: "Compaction canceled.",
+    usage: { ...buildUsage(), output_tokens: 0 },
+    total_cost_usd: 0,
+  });
+
+  expect(events).toEqual([]);
+  expect(internal.pendingInterruptAbort).toBe(false);
+  expect(internal.activeForegroundTurnId).toBe("replacement-turn");
+
+  await session.close();
+});
+
 test("extracts identifiers from fixture-driven protocol shape variants", () => {
   const fixtures = [
     {

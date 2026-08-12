@@ -3633,11 +3633,12 @@ class ClaudeAgentSession implements AgentSession {
   private shouldSuppressStaleResult(message: SDKMessage): boolean {
     // Suppress stale results from interrupted requests. The cancel path already
     // emitted the terminal event; this result is leftover from the killed API
-    // request. Consume the flag on ANY result so it doesn't linger.
+    // request. Claude reports a canceled built-in /compact as a zero-token
+    // success, so subtype alone is not a reliable stale-result discriminator.
     if (message.type === "result" && this.pendingInterruptAbort) {
-      this.pendingInterruptAbort = false;
-      if (message.subtype !== "success") {
-        this.logger.debug("Suppressing stale non-success result from interrupted request");
+      if (message.subtype !== "success" || this.isCanceledCompactResult(message)) {
+        this.pendingInterruptAbort = false;
+        this.logger.debug("Suppressing stale result from interrupted request");
         return true;
       }
     }
@@ -3646,6 +3647,14 @@ class ClaudeAgentSession implements AgentSession {
       return true;
     }
     return false;
+  }
+
+  private isCanceledCompactResult(message: Extract<SDKMessage, { type: "result" }>): boolean {
+    if (message.subtype !== "success" || message.usage?.output_tokens !== 0) {
+      return false;
+    }
+    const text = typeof message.result === "string" ? message.result.trim().toLowerCase() : "";
+    return text === "compaction canceled." || text === "compaction cancelled.";
   }
 
   private isAssistantishMessage(message: SDKMessage): boolean {
@@ -3692,15 +3701,17 @@ class ClaudeAgentSession implements AgentSession {
     if (events.length === 0) {
       return;
     }
-    if (
+    const pendingInterruptTerminal =
       this.pendingInterruptAbort &&
       message.type === "result" &&
-      events.some((event) => event.type === "turn_completed" || event.type === "turn_failed") &&
-      (!this.activeForegroundTurnId || !this.foregroundHasVisibleActivity)
-    ) {
+      events.some((event) => event.type === "turn_completed" || event.type === "turn_failed");
+    if (pendingInterruptTerminal) {
+      const shouldSuppress = !this.activeForegroundTurnId || !this.foregroundHasVisibleActivity;
       this.pendingInterruptAbort = false;
-      this.logger.debug("Suppressing stale Claude interrupt terminal result");
-      return;
+      if (shouldSuppress) {
+        this.logger.debug("Suppressing stale Claude interrupt terminal result");
+        return;
+      }
     }
     if (
       events.some((event) => event.type === "timeline" && event.item.type === "assistant_message")
