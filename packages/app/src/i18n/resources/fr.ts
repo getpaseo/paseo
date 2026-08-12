@@ -1717,8 +1717,9 @@ export const fr: TranslationResources = {
     pullRequest: {
       label: "Demande de fusion",
       subtitle: "Détails de la demande de fusion",
-      emptyTitle: "No pull request yet",
-      emptyDescription: "Create a pull request for this checkout to see its details here.",
+      emptyTitle: "Aucune demande de fusion pour le moment",
+      emptyDescription:
+        "Créez une demande de fusion pour cette copie de travail afin d’afficher ses détails ici.",
     },
     diff: {
       changesLabel: "Modifications",

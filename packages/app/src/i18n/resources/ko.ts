@@ -1680,8 +1680,8 @@ export const ko: TranslationResources = {
     pullRequest: {
       label: "풀 리퀘스트",
       subtitle: "풀 리퀘스트 세부 정보",
-      emptyTitle: "No pull request yet",
-      emptyDescription: "Create a pull request for this checkout to see its details here.",
+      emptyTitle: "아직 풀 리퀘스트가 없습니다",
+      emptyDescription: "이 체크아웃에 풀 리퀘스트를 만들면 세부 정보가 여기에 표시됩니다.",
     },
     diff: {
       changesLabel: "변경 사항",

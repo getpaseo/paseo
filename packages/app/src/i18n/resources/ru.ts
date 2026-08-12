@@ -1704,8 +1704,9 @@ export const ru: TranslationResources = {
     pullRequest: {
       label: "Запрос на слияние",
       subtitle: "Сведения о запросе на слияние",
-      emptyTitle: "No pull request yet",
-      emptyDescription: "Create a pull request for this checkout to see its details here.",
+      emptyTitle: "Запроса на слияние пока нет",
+      emptyDescription:
+        "Создайте запрос на слияние для этой рабочей копии, чтобы увидеть здесь его сведения.",
     },
     diff: {
       changesLabel: "Изменения",

@@ -1670,8 +1670,8 @@ export const ar: TranslationResources = {
     pullRequest: {
       label: "طلب السحب",
       subtitle: "تفاصيل طلب السحب",
-      emptyTitle: "No pull request yet",
-      emptyDescription: "Create a pull request for this checkout to see its details here.",
+      emptyTitle: "لا يوجد طلب سحب بعد",
+      emptyDescription: "أنشئ طلب سحب لنسخة العمل هذه لعرض تفاصيله هنا.",
     },
     diff: {
       changesLabel: "التغييرات",

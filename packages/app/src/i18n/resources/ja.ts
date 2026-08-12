@@ -1686,8 +1686,9 @@ export const ja: TranslationResources = {
     pullRequest: {
       label: "プルリクエスト",
       subtitle: "プルリクエストの詳細",
-      emptyTitle: "No pull request yet",
-      emptyDescription: "Create a pull request for this checkout to see its details here.",
+      emptyTitle: "プルリクエストはまだありません",
+      emptyDescription:
+        "このチェックアウトのプルリクエストを作成すると、ここに詳細が表示されます。",
     },
     diff: {
       changesLabel: "変更",

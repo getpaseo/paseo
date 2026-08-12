@@ -129,6 +129,15 @@ describe("translation resources", () => {
     expect(countMatchingEnglishStrings(zhCN)).toBeLessThan(maxFallbackStrings);
   });
 
+  it("localizes the pull request empty state in every supported language", () => {
+    for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
+      expect(resource.panels.pullRequest.emptyTitle).not.toBe(en.panels.pullRequest.emptyTitle);
+      expect(resource.panels.pullRequest.emptyDescription).not.toBe(
+        en.panels.pullRequest.emptyDescription,
+      );
+    }
+  });
+
   it("preserves interpolation placeholders in every language", () => {
     expect(findInterpolationMismatches(ar)).toEqual([]);
     expect(findInterpolationMismatches(es)).toEqual([]);

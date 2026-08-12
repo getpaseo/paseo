@@ -1650,8 +1650,8 @@ export const zhCN: TranslationResources = {
     pullRequest: {
       label: "拉取请求",
       subtitle: "拉取请求详情",
-      emptyTitle: "No pull request yet",
-      emptyDescription: "Create a pull request for this checkout to see its details here.",
+      emptyTitle: "尚无拉取请求",
+      emptyDescription: "为此检出创建拉取请求后，可在此处查看其详情。",
     },
     diff: {
       changesLabel: "更改",

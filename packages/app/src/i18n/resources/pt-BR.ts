@@ -1699,8 +1699,8 @@ export const ptBR: TranslationResources = {
     pullRequest: {
       label: "Pull request",
       subtitle: "Detalhes do pull request",
-      emptyTitle: "No pull request yet",
-      emptyDescription: "Create a pull request for this checkout to see its details here.",
+      emptyTitle: "Ainda não há pull request",
+      emptyDescription: "Crie um pull request para este checkout para ver os detalhes aqui.",
     },
     diff: {
       changesLabel: "Alterações",
