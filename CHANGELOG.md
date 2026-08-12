@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.4.0-beta.1 - 2026-08-12
+
+### Breaking
+
+- `paseo chat` and `paseo loop` have been removed ([#3053](https://github.com/getpaseo/paseo/pull/3053))
+
+### Added
+
+- Save host-wide agent profiles and apply them from the model picker ([#3208](https://github.com/getpaseo/paseo/pull/3208))
+- Search workspace files with Cmd/Ctrl+P ([#3059](https://github.com/getpaseo/paseo/pull/3059))
+- Create, rename, duplicate, delete, reveal, and discard files from Files and Changes ([#3027](https://github.com/getpaseo/paseo/pull/3027) by [@nikuscs](https://github.com/nikuscs))
+- View interactive Mermaid diagrams in chats and Markdown previews ([#2306](https://github.com/getpaseo/paseo/pull/2306) by [@dmeledon](https://github.com/dmeledon))
+- Follow live task progress above the composer and through the timeline ([#3227](https://github.com/getpaseo/paseo/pull/3227))
+- Choose the model used for workspace titles, branch names, commits, and pull request drafts ([#3215](https://github.com/getpaseo/paseo/pull/3215))
+- Deploy Hub workflows from multi-file `.paseo` bundles ([#3128](https://github.com/getpaseo/paseo/pull/3128))
+- Build integrations with the supported `@getpaseo/client` TypeScript SDK ([#3141](https://github.com/getpaseo/paseo/pull/3141))
+- Diagnose provider installations with `paseo provider diagnostic` ([#3243](https://github.com/getpaseo/paseo/pull/3243))
+- Rename workspaces from the CLI ([#3209](https://github.com/getpaseo/paseo/pull/3209) by [@martinhanzik](https://github.com/martinhanzik))
+
+### Improved
+
+- Markdown file previews use a centered reading layout with formatted YAML front matter ([#3240](https://github.com/getpaseo/paseo/pull/3240))
+- Switch sidebar grouping directly from the Command Center ([#3063](https://github.com/getpaseo/paseo/pull/3063) by [@cleiter](https://github.com/cleiter))
+- Theme shortcuts now cycle through every built-in theme ([#3214](https://github.com/getpaseo/paseo/pull/3214))
+- Newly enrolled Hub hosts use their machine hostname ([#3172](https://github.com/getpaseo/paseo/pull/3172))
+
+### Fixed
+
+- Terminal sessions survive host sleep and severe resource stalls ([#3235](https://github.com/getpaseo/paseo/pull/3235), [#3263](https://github.com/getpaseo/paseo/pull/3263))
+- Archiving a workspace no longer risks hanging the daemon ([#3107](https://github.com/getpaseo/paseo/pull/3107))
+- New Workspace no longer crashes on Android when projects span multiple hosts ([#3241](https://github.com/getpaseo/paseo/pull/3241))
+- Provider caching no longer exhausts Android local storage ([#3234](https://github.com/getpaseo/paseo/pull/3234))
+- Dictation recordings survive connection interruptions ([#3159](https://github.com/getpaseo/paseo/pull/3159))
+- Repeated worktree creation always produces a fresh workspace ([#3224](https://github.com/getpaseo/paseo/pull/3224))
+- New worktrees use the setup command currently saved in Project Settings ([#3233](https://github.com/getpaseo/paseo/pull/3233))
+- Removed hosts stop sending push notifications ([#3176](https://github.com/getpaseo/paseo/pull/3176))
+- Delegated work still reports back after permission prompts or workspace closure ([#3177](https://github.com/getpaseo/paseo/pull/3177), [#3192](https://github.com/getpaseo/paseo/pull/3192) by [@thomasvan](https://github.com/thomasvan), [@wilgon456](https://github.com/wilgon456))
+- OMP agents start correctly with large model catalogs ([#3184](https://github.com/getpaseo/paseo/pull/3184) by [@pi3123](https://github.com/pi3123))
+- OpenCode models can return to their default variant ([#3281](https://github.com/getpaseo/paseo/pull/3281))
+- Completed Codex subagents no longer remain marked active ([#3188](https://github.com/getpaseo/paseo/pull/3188) by [@Strainy](https://github.com/Strainy))
+- Codex compaction no longer leaves turns marked as working ([#3211](https://github.com/getpaseo/paseo/pull/3211) by [@edihasaj](https://github.com/edihasaj))
+- Cursor usage works with current Cursor logins without requiring `sqlite3` ([#2704](https://github.com/getpaseo/paseo/pull/2704) by [@QuteSaltyFish](https://github.com/QuteSaltyFish))
+- SVG project icons render correctly on mobile ([#2579](https://github.com/getpaseo/paseo/pull/2579) by [@colonelpanic8](https://github.com/colonelpanic8))
+
 ## 0.3.1 - 2026-08-09
 
 ### Added
