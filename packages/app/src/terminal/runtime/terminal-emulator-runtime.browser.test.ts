@@ -44,11 +44,6 @@ interface MountedTerminal {
 
 const mountedTerminals: MountedTerminal[] = [];
 
-const MAC_DESKTOP_UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
-const LINUX_DESKTOP_UA =
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
-
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => {
@@ -81,6 +76,7 @@ function createTerminalHost(input: {
   width: number;
   height: number;
   scrollback?: number;
+  isMacLikePlatform?: boolean;
 }): MountedTerminal {
   const root = document.createElement("div");
   root.style.width = `${input.width}px`;
@@ -122,6 +118,7 @@ function createTerminalHost(input: {
     host,
     initialSnapshot: null,
     scrollback: input.scrollback ?? 10_000,
+    isMacLikePlatform: input.isMacLikePlatform,
     theme: {
       background: "#0b0b0b",
       foreground: "#e6e6e6",
@@ -196,35 +193,6 @@ function dispatchTerminalKey(input: {
     Object.defineProperty(event, "keyCode", { value: input.keyCode });
   }
   return textarea.dispatchEvent(event);
-}
-
-// The runtime reads the platform per keydown, so shadowing the instance properties
-// makes mac-only key handling testable from any CI host.
-function withNavigatorPlatform(
-  input: { userAgent: string; platform: string },
-  run: () => void,
-): void {
-  const restores = (["userAgent", "platform"] as const).map((property) => {
-    const original = Object.getOwnPropertyDescriptor(navigator, property);
-    Object.defineProperty(navigator, property, {
-      value: input[property],
-      configurable: true,
-    });
-    return () => {
-      if (original) {
-        Object.defineProperty(navigator, property, original);
-      } else {
-        Reflect.deleteProperty(navigator, property);
-      }
-    };
-  });
-  try {
-    run();
-  } finally {
-    for (const restore of restores) {
-      restore();
-    }
-  }
 }
 
 afterEach(() => {
@@ -505,18 +473,16 @@ describe("terminal emulator runtime in a real browser", () => {
 
   it("translates mac editing shortcuts into shell editing sequences", async () => {
     await page.viewport(900, 600);
-    const mounted = createTerminalHost({ width: 720, height: 360 });
+    const mounted = createTerminalHost({ width: 720, height: 360, isMacLikePlatform: true });
 
     await waitFor({ predicate: () => mounted.sizes.length > 0 });
 
-    withNavigatorPlatform({ userAgent: MAC_DESKTOP_UA, platform: "MacIntel" }, () => {
-      dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39 });
-      dispatchTerminalKey({ host: mounted.host, key: "ArrowLeft", keyCode: 37, metaKey: true });
-      dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39, metaKey: true });
-      dispatchTerminalKey({ host: mounted.host, key: "ArrowLeft", keyCode: 37, altKey: true });
-      dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39, altKey: true });
-      dispatchTerminalKey({ host: mounted.host, key: "Backspace", keyCode: 8, metaKey: true });
-    });
+    dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39 });
+    dispatchTerminalKey({ host: mounted.host, key: "ArrowLeft", keyCode: 37, metaKey: true });
+    dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39, metaKey: true });
+    dispatchTerminalKey({ host: mounted.host, key: "ArrowLeft", keyCode: 37, altKey: true });
+    dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39, altKey: true });
+    dispatchTerminalKey({ host: mounted.host, key: "Backspace", keyCode: 8, metaKey: true });
     await nextFrame();
 
     expect(mounted.inputs).toEqual([
@@ -532,18 +498,16 @@ describe("terminal emulator runtime in a real browser", () => {
 
   it("keeps cmd+shift+arrow free for app-level shortcuts", async () => {
     await page.viewport(900, 600);
-    const mounted = createTerminalHost({ width: 720, height: 360 });
+    const mounted = createTerminalHost({ width: 720, height: 360, isMacLikePlatform: true });
 
     await waitFor({ predicate: () => mounted.sizes.length > 0 });
 
-    withNavigatorPlatform({ userAgent: MAC_DESKTOP_UA, platform: "MacIntel" }, () => {
-      dispatchTerminalKey({
-        host: mounted.host,
-        key: "ArrowRight",
-        keyCode: 39,
-        metaKey: true,
-        shiftKey: true,
-      });
+    dispatchTerminalKey({
+      host: mounted.host,
+      key: "ArrowRight",
+      keyCode: 39,
+      metaKey: true,
+      shiftKey: true,
     });
     await nextFrame();
 
@@ -553,14 +517,12 @@ describe("terminal emulator runtime in a real browser", () => {
 
   it("does not remap modified arrows on non-mac platforms", async () => {
     await page.viewport(900, 600);
-    const mounted = createTerminalHost({ width: 720, height: 360 });
+    const mounted = createTerminalHost({ width: 720, height: 360, isMacLikePlatform: false });
 
     await waitFor({ predicate: () => mounted.sizes.length > 0 });
 
-    withNavigatorPlatform({ userAgent: LINUX_DESKTOP_UA, platform: "Linux x86_64" }, () => {
-      dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39, metaKey: true });
-      dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39, altKey: true });
-    });
+    dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39, metaKey: true });
+    dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39, altKey: true });
     await nextFrame();
 
     // Meta+arrow is ignored by xterm; alt+arrow takes xterm's generic encoding.
