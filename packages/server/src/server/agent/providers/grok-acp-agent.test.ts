@@ -103,6 +103,19 @@ describe("readGrokContextUsage", () => {
       contextWindowMaxTokens: 500000,
     });
   });
+
+  test("returns null for missing or corrupt Grok session signals", () => {
+    const home = mkdtempSync(join(tmpdir(), "paseo-grok-home-"));
+    homes.push(home);
+    const cwd = "/Users/nexmoe/project";
+    const sessionId = "session-corrupt";
+    const path = grokSessionSignalsPath(cwd, sessionId, home);
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(path, "{not-json");
+
+    expect(readGrokContextUsage(cwd, "missing", home)).toBeNull();
+    expect(readGrokContextUsage(cwd, sessionId, home)).toBeNull();
+  });
 });
 
 describe("grokUsageFromSessionNotification", () => {

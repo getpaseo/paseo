@@ -78,14 +78,13 @@ describe.skipIf(!grokAvailable)("Grok usage through a live Paseo daemon", () => 
     const workspace = await client.createWorkspace({
       source: { kind: "directory", path: cwd },
     });
-    if (!workspace.workspace) {
-      throw new Error(workspace.error ?? "failed to create workspace");
-    }
+    const workspaceId = workspace.workspace?.id ?? "";
+    expect(workspaceId).toEqual(expect.stringMatching(/\S/));
 
     const created = await client.createAgent({
       provider: "grok",
       cwd,
-      workspaceId: workspace.workspace.id,
+      workspaceId,
       title: "Grok usage live test",
       initialPrompt: "Reply with exactly the word pong and nothing else.",
     });

@@ -58,6 +58,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function readJsonFileOrNull(path: string): unknown | null {
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    if (error instanceof SyntaxError) return null;
+    throw error;
+  }
+}
+
 function grokHomeDir(grokHome?: string): string {
   return grokHome || process.env["GROK_HOME"] || join(homedir(), ".grok");
 }
@@ -73,20 +83,14 @@ export function grokSessionSignalsPath(cwd: string, sessionId: string, grokHome?
 }
 
 export function readGrokDefaultContextWindow(grokHome?: string): number | null {
-  const path = join(grokHomeDir(grokHome), "models_cache.json");
-  if (!existsSync(path)) return null;
-  try {
-    const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
-    if (!isRecord(raw) || !isRecord(raw.models)) return null;
-    const preferred = isRecord(raw.models["grok-4.6"])
-      ? raw.models["grok-4.6"]
-      : Object.values(raw.models).find(isRecord);
-    if (!preferred || !isRecord(preferred.info)) return null;
-    const contextWindow = preferred.info["context_window"];
-    return typeof contextWindow === "number" && contextWindow > 0 ? contextWindow : null;
-  } catch {
-    return null;
-  }
+  const raw = readJsonFileOrNull(join(grokHomeDir(grokHome), "models_cache.json"));
+  if (!isRecord(raw) || !isRecord(raw.models)) return null;
+  const preferred = isRecord(raw.models["grok-4.6"])
+    ? raw.models["grok-4.6"]
+    : Object.values(raw.models).find(isRecord);
+  if (!preferred || !isRecord(preferred.info)) return null;
+  const contextWindow = preferred.info["context_window"];
+  return typeof contextWindow === "number" && contextWindow > 0 ? contextWindow : null;
 }
 
 export function grokUsageFromSessionNotification(
@@ -118,20 +122,16 @@ export function readGrokContextUsage(
   sessionId: string,
   grokHome?: string,
 ): GrokContextUsage | null {
-  const path = grokSessionSignalsPath(cwd, sessionId, grokHome);
-  if (!existsSync(path)) return null;
-  try {
-    const parsed = GrokSignalsSchema.safeParse(JSON.parse(readFileSync(path, "utf8")));
-    if (!parsed.success) return null;
-    const used = parsed.data.contextTokensUsed;
-    const max = parsed.data.contextWindowTokens;
-    if (typeof used !== "number" || used < 0 || typeof max !== "number" || max <= 0) {
-      return null;
-    }
-    return { contextWindowUsedTokens: used, contextWindowMaxTokens: max };
-  } catch {
+  const parsed = GrokSignalsSchema.safeParse(
+    readJsonFileOrNull(grokSessionSignalsPath(cwd, sessionId, grokHome)),
+  );
+  if (!parsed.success) return null;
+  const used = parsed.data.contextTokensUsed;
+  const max = parsed.data.contextWindowTokens;
+  if (typeof used !== "number" || used < 0 || typeof max !== "number" || max <= 0) {
     return null;
   }
+  return { contextWindowUsedTokens: used, contextWindowMaxTokens: max };
 }
 
 export function mapGrokTurnUsage(

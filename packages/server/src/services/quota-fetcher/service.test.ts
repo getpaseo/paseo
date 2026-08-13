@@ -1018,6 +1018,43 @@ describe("real provider usage fetchers", () => {
     });
   });
 
+  it("keeps Grok weekly usage when settings returns invalid JSON", async () => {
+    process.env["GROK_API_KEY"] = "grok_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+          () =>
+            jsonResponse({
+              config: {
+                currentPeriod: {
+                  type: "USAGE_PERIOD_TYPE_WEEKLY",
+                  end: "2026-08-15T00:00:00+00:00",
+                },
+                creditUsagePercent: 5,
+              },
+            }),
+        ],
+        [
+          "https://cli-chat-proxy.grok.com/v1/settings",
+          () =>
+            new Response("not-json", {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }),
+        ],
+      ]),
+    );
+
+    const grok = findProvider(await service().listUsage(), "grok");
+
+    expect(grok).toMatchObject({
+      status: "available",
+      planLabel: null,
+      windows: [expect.objectContaining({ id: "weekly", usedPct: 5 })],
+    });
+  });
+
   it("fetches Grok plan label and weekly/monthly windows", async () => {
     process.env["GROK_API_KEY"] = "grok_test_token";
     fetchApi = mockFetch(
