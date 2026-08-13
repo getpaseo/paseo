@@ -18,9 +18,11 @@
 import assert from "node:assert";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 import { runLocalPaseo } from "./helpers/local-cli.ts";
 
 console.log("=== Daemon Commands ===\n");
@@ -28,6 +30,7 @@ console.log("=== Daemon Commands ===\n");
 // Keep restart off default 6767 to avoid collisions with any existing daemon.
 const port = 10000 + Math.floor(Math.random() * 50000);
 const paseoHome = await mkdtemp(join(tmpdir(), "paseo-test-home-"));
+const require = createRequire(import.meta.url);
 
 function daemonCommand(args: string[]) {
   return runLocalPaseo(["daemon", ...args], { PASEO_HOME: paseoHome });
@@ -43,6 +46,41 @@ async function stopChildProcess(child: ChildProcess): Promise<void> {
     await exited;
   } finally {
     clearTimeout(forceKill);
+  }
+}
+
+function resolveDaemonWorkerEntry(): string {
+  let currentDir = dirname(require.resolve("@getpaseo/server"));
+
+  while (true) {
+    const packageJsonPath = join(currentDir, "package.json");
+    if (existsSync(packageJsonPath)) {
+      const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
+      if (packageJson.name === "@getpaseo/server") {
+        const candidates = [
+          join(currentDir, "dist", "server", "server", "daemon-worker.js"),
+          join(currentDir, "src", "server", "daemon-worker.ts"),
+        ];
+        const workerEntry = candidates.find(existsSync);
+        if (workerEntry) return workerEntry;
+        throw new Error(`Daemon worker not found under ${currentDir}`);
+      }
+    }
+
+    const parentDir = dirname(currentDir);
+    if (parentDir === currentDir) break;
+    currentDir = parentDir;
+  }
+
+  throw new Error("Unable to resolve @getpaseo/server package root");
+}
+
+async function tailDaemonLog(): Promise<string> {
+  try {
+    const log = await readFile(join(paseoHome, "daemon.log"), "utf-8");
+    return log.split("\n").slice(-30).join("\n");
+  } catch {
+    return "<daemon log unavailable>";
   }
 }
 
@@ -157,40 +195,53 @@ try {
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
     // A supervised daemon owns and heartbeats paseo.pid. Launch the worker
     // directly so this fixture naturally has a reachable daemon without a PID file.
-    const worker = spawn(
-      process.execPath,
-      ["--import", "tsx", "../server/src/server/daemon-worker.ts", "--relay"],
-      {
-        cwd: join(import.meta.dirname, ".."),
-        env: {
-          ...process.env,
-          PASEO_HOME: paseoHome,
-          PASEO_LISTEN: listen,
-          PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: "0",
-          PASEO_DICTATION_ENABLED: "0",
-          PASEO_VOICE_MODE_ENABLED: "0",
-          CI: "true",
-        },
-        stdio: "ignore",
+    const workerEntry = resolveDaemonWorkerEntry();
+    const workerArgs = workerEntry.endsWith(".ts")
+      ? ["--import", "tsx", workerEntry, "--relay"]
+      : [workerEntry, "--relay"];
+    const worker = spawn(process.execPath, workerArgs, {
+      cwd: join(import.meta.dirname, ".."),
+      env: {
+        ...process.env,
+        PASEO_HOME: paseoHome,
+        PASEO_LISTEN: listen,
+        PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: "0",
+        PASEO_DICTATION_ENABLED: "0",
+        PASEO_VOICE_MODE_ENABLED: "0",
+        CI: "true",
       },
-    );
+      stdio: "ignore",
+    });
 
     try {
       const deadline = Date.now() + 120_000;
       let status = await daemonCommand(["status", "--json"]);
       let payload = status.exitCode === 0 ? JSON.parse(status.stdout) : null;
-      while (payload?.connectedDaemon !== "reachable" || payload.relay === "disabled") {
+      let pairing = await daemonCommand(["pair", "--json"]);
+      while (
+        payload?.connectedDaemon !== "reachable" ||
+        payload.relay === "disabled" ||
+        pairing.exitCode !== 0
+      ) {
         assert(
           worker.exitCode === null && worker.signalCode === null,
           "IPC daemon exited before becoming reachable",
         );
-        assert(Date.now() < deadline, `IPC daemon did not become reachable: ${status.stderr}`);
+        assert(
+          Date.now() < deadline,
+          [
+            "IPC daemon did not expose live relay state",
+            `status: ${status.stdout || status.stderr}`,
+            `pairing: ${pairing.stdout || pairing.stderr}`,
+            `daemon log:\n${await tailDaemonLog()}`,
+          ].join("\n"),
+        );
         await new Promise((resolve) => setTimeout(resolve, 100));
         status = await daemonCommand(["status", "--json"]);
         payload = status.exitCode === 0 ? JSON.parse(status.stdout) : null;
+        pairing = await daemonCommand(["pair", "--json"]);
       }
 
-      const pairing = await daemonCommand(["pair", "--json"]);
       assert.strictEqual(status.exitCode, 0, `IPC daemon status should succeed: ${status.stderr}`);
       assert.strictEqual(payload.connectedDaemon, "reachable", "IPC daemon should be reachable");
       assert.strictEqual(
@@ -215,10 +266,26 @@ try {
           `${JSON.stringify({ daemon: { listen } }, null, 2)}\n`,
           "utf-8",
         );
-        const foreignPairing = await runLocalPaseo(
+        let foreignPairing = await runLocalPaseo(
           ["daemon", "pair", "--home", foreignHome, "--json"],
           { PASEO_HOME: foreignHome },
         );
+        const foreignDeadline = Date.now() + 120_000;
+        while (!foreignPairing.stderr.includes("different Paseo home")) {
+          assert(
+            worker.exitCode === null && worker.signalCode === null,
+            "IPC daemon exited before the identity check completed",
+          );
+          assert(
+            Date.now() < foreignDeadline,
+            `Pairing did not report the daemon identity mismatch: ${foreignPairing.stderr}`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          foreignPairing = await runLocalPaseo(
+            ["daemon", "pair", "--home", foreignHome, "--json"],
+            { PASEO_HOME: foreignHome },
+          );
+        }
         assert.notStrictEqual(
           foreignPairing.exitCode,
           0,
