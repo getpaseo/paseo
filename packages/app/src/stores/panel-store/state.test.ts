@@ -22,6 +22,7 @@ function makePanelState(overrides: Partial<PanelCoreState> = {}): PanelCoreState
       agentListOpen: false,
       fileExplorerOpen: false,
       focusModeEnabled: false,
+      sidebarCollapsed: false,
     },
     explorerTab: "changes",
     explorerTabByCheckout: {},
@@ -129,6 +130,22 @@ describe("panel-store migration", () => {
     expect(state.mobileView).toBeUndefined();
     expect(state.mobilePanel).toBeUndefined();
   });
+
+  it("defaults desktop sidebarCollapsed to false for pre-v13 state", () => {
+    const state = migratePanelState({ desktop: { agentListOpen: true } }, 12, { isWeb: false });
+
+    expect((state.desktop as Record<string, unknown>).sidebarCollapsed).toBe(false);
+  });
+
+  it("preserves an existing desktop sidebarCollapsed value", () => {
+    const state = migratePanelState(
+      { desktop: { agentListOpen: true, sidebarCollapsed: true } },
+      13,
+      { isWeb: false },
+    );
+
+    expect((state.desktop as Record<string, unknown>).sidebarCollapsed).toBe(true);
+  });
 });
 
 describe("panel-store visibility selectors", () => {
@@ -145,7 +162,12 @@ describe("panel-store visibility selectors", () => {
   it("uses the mobile panel target for compact layout visibility", () => {
     const state = makePanelState({
       mobilePanel: { target: "file-explorer", revision: 1 },
-      desktop: { agentListOpen: true, fileExplorerOpen: false, focusModeEnabled: false },
+      desktop: {
+        agentListOpen: true,
+        fileExplorerOpen: false,
+        focusModeEnabled: false,
+        sidebarCollapsed: false,
+      },
     });
 
     expect(selectPanelVisibility(state, { isCompact: true })).toEqual({
@@ -159,7 +181,12 @@ describe("panel-store visibility selectors", () => {
   it("uses desktop flags for expanded layout visibility", () => {
     const state = makePanelState({
       mobilePanel: { target: "file-explorer", revision: 1 },
-      desktop: { agentListOpen: true, fileExplorerOpen: false, focusModeEnabled: false },
+      desktop: {
+        agentListOpen: true,
+        fileExplorerOpen: false,
+        focusModeEnabled: false,
+        sidebarCollapsed: false,
+      },
     });
 
     expect(selectPanelVisibility(state, { isCompact: false })).toEqual({
@@ -204,7 +231,12 @@ describe("panel-store checkout-intent file explorer actions", () => {
 
   it("toggles the explorer closed without changing the active tab", () => {
     const state = makePanelState({
-      desktop: { agentListOpen: false, fileExplorerOpen: true, focusModeEnabled: false },
+      desktop: {
+        agentListOpen: false,
+        fileExplorerOpen: true,
+        focusModeEnabled: false,
+        sidebarCollapsed: false,
+      },
       explorerTab: "files",
     });
 
@@ -214,7 +246,12 @@ describe("panel-store checkout-intent file explorer actions", () => {
     });
 
     expect(patch).toEqual({
-      desktop: { agentListOpen: false, fileExplorerOpen: false, focusModeEnabled: false },
+      desktop: {
+        agentListOpen: false,
+        fileExplorerOpen: false,
+        focusModeEnabled: false,
+        sidebarCollapsed: false,
+      },
     });
   });
 

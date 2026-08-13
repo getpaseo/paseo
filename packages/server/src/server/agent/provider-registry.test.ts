@@ -33,6 +33,7 @@ const mockState = vi.hoisted(() => {
       claude: [] as ConstructorEntry[],
       codex: [] as ConstructorEntry[],
       copilot: [] as ConstructorEntry[],
+      jcode: [] as ConstructorEntry[],
       cursor: [] as Array<{
         command: string[];
         env?: Record<string, string>;
@@ -64,6 +65,7 @@ const mockState = vi.hoisted(() => {
       this.constructorArgs.claude = [];
       this.constructorArgs.codex = [];
       this.constructorArgs.copilot = [];
+      this.constructorArgs.jcode = [];
       this.constructorArgs.cursor = [];
       this.constructorArgs.trae = [];
       this.constructorArgs.kimi = [];
@@ -232,6 +234,47 @@ vi.mock("./providers/copilot-acp-agent.js", () => ({
         return await isCommandAvailable(command.argv?.[0] ?? "");
       }
       return true;
+    }
+  },
+}));
+
+vi.mock("./providers/jcode-acp-agent.js", () => ({
+  JcodeACPAgentClient: class JcodeACPAgentClient {
+    readonly capabilities = {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: false,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsToolInvocations: true,
+    };
+    readonly provider = "jcode";
+    readonly runtimeSettings?: unknown;
+
+    constructor(options: { runtimeSettings?: unknown }) {
+      this.runtimeSettings = options.runtimeSettings;
+      mockState.constructorArgs.jcode.push({
+        runtimeSettings: options.runtimeSettings,
+      });
+    }
+
+    async createSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async resumeSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async fetchCatalog(): Promise<ProviderCatalog> {
+      return {
+        models: mockState.runtimeModels.get(this.provider) ?? [],
+        modes: [],
+      };
+    }
+
+    async isAvailable(): Promise<boolean> {
+      return mockState.isCommandAvailable("jcode");
     }
   },
 }));
@@ -599,6 +642,21 @@ test("built-in override applies env", () => {
       },
     },
   });
+});
+
+test("jcode is a built-in backed by the ACP adapter and reports unavailable without the binary", async () => {
+  const registry = buildProviderRegistry(logger);
+
+  expect(registry.jcode).toMatchObject({
+    id: "jcode",
+    label: "Jcode",
+    defaultModeId: null,
+  });
+  expect(registry.jcode.modes).toEqual([]);
+
+  mockState.isCommandAvailable.mockImplementation(async (command: string) => command === "jcode");
+  const client = registry.jcode.createClient(logger);
+  await expect(client.isAvailable()).resolves.toBe(true);
 });
 
 test("OMP is a disabled built-in backed by the real OMP adapter", async () => {

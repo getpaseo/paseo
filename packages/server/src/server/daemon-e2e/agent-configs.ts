@@ -57,6 +57,9 @@ export const agentConfigs = {
     provider: "pi",
     thinkingOptionId: "medium",
   },
+  jcode: {
+    provider: "jcode",
+  },
   omp: {
     provider: "omp",
     thinkingOptionId: "medium",

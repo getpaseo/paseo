@@ -979,6 +979,8 @@ export const zhCN: TranslationResources = {
       home: "首页",
       settings: "设置",
       closeSidebar: "关闭侧边栏",
+      collapseSidebar: "折叠侧边栏",
+      expandSidebar: "展开侧边栏",
     },
     help: {
       trigger: "帮助与支持",

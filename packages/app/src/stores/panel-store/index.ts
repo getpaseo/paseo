@@ -14,6 +14,7 @@ import {
   clampExplorerFilesSplitRatio,
   clampExplorerWidth,
   clampSidebarWidth,
+  COLLAPSED_SIDEBAR_WIDTH,
   DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
   DEFAULT_EXPLORER_SIDEBAR_WIDTH,
   DEFAULT_SIDEBAR_WIDTH,
@@ -49,6 +50,7 @@ export type {
   SortOption,
 } from "./state";
 export {
+  COLLAPSED_SIDEBAR_WIDTH,
   DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
   DEFAULT_EXPLORER_SIDEBAR_WIDTH,
   DEFAULT_SIDEBAR_WIDTH,
@@ -112,6 +114,7 @@ export interface PanelState {
   setDiffCollapsedFoldersForWorkspace: (workspaceKey: string, dirPaths: string[]) => void;
   activateExplorerTabForCheckout: (checkout: ExplorerCheckoutContext) => void;
   setSidebarWidth: (width: number) => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
   setExplorerWidth: (width: number) => void;
   setExplorerSortOption: (option: SortOption) => void;
   toggleExplorerShowHiddenFiles: () => void;
@@ -139,6 +142,7 @@ export const usePanelStore = create<PanelState>()(
         agentListOpen: DEFAULT_DESKTOP_OPEN,
         fileExplorerOpen: false,
         focusModeEnabled: false,
+        sidebarCollapsed: false,
       },
 
       // File explorer defaults
@@ -297,6 +301,13 @@ export const usePanelStore = create<PanelState>()(
           }),
         })),
       setSidebarWidth: (width) => set({ sidebarWidth: clampSidebarWidth(width) }),
+      setSidebarCollapsed: (collapsed) =>
+        set((state) => {
+          if (state.desktop.sidebarCollapsed === collapsed) {
+            return state;
+          }
+          return { desktop: { ...state.desktop, sidebarCollapsed: collapsed } };
+        }),
       setExplorerWidth: (width) => set({ explorerWidth: clampExplorerWidth(width) }),
       setExplorerSortOption: (option) => set({ explorerSortOption: option }),
       toggleExplorerShowHiddenFiles: () =>
@@ -310,7 +321,7 @@ export const usePanelStore = create<PanelState>()(
     }),
     {
       name: "panel-state",
-      version: 12,
+      version: 13,
       storage: createJSONStorage(() => AsyncStorage),
       migrate: (persistedState, version) =>
         migratePanelState(persistedState, version, { isWeb }) as unknown as PanelState,

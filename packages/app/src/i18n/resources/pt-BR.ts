@@ -1009,6 +1009,8 @@ export const ptBR: TranslationResources = {
       home: "Início",
       settings: "Configurações",
       closeSidebar: "Fechar barra lateral",
+      collapseSidebar: "Recolher barra lateral",
+      expandSidebar: "Expandir barra lateral",
     },
     help: {
       trigger: "Ajuda e suporte",

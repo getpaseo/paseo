@@ -35,6 +35,7 @@ import type {
 import { ClaudeAgentClient } from "./providers/claude/agent.js";
 import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
+import { JcodeACPAgentClient } from "./providers/jcode-acp-agent.js";
 import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { KimiACPAgentClient } from "./providers/kimi-acp-agent.js";
@@ -194,6 +195,11 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
     }),
   copilot: (logger, runtimeSettings) =>
     new CopilotACPAgentClient({
+      logger,
+      runtimeSettings,
+    }),
+  jcode: (logger, runtimeSettings) =>
+    new JcodeACPAgentClient({
       logger,
       runtimeSettings,
     }),

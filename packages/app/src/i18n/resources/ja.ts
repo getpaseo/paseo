@@ -998,6 +998,8 @@ export const ja: TranslationResources = {
       home: "ホーム",
       settings: "設定",
       closeSidebar: "サイドバーを閉じる",
+      collapseSidebar: "サイドバーを折りたたむ",
+      expandSidebar: "サイドバーを展開する",
     },
     help: {
       trigger: "ヘルプとサポート",

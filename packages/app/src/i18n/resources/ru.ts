@@ -1009,6 +1009,8 @@ export const ru: TranslationResources = {
       home: "Дом",
       settings: "Настройки",
       closeSidebar: "Закрыть боковую панель",
+      collapseSidebar: "Свернуть боковую панель",
+      expandSidebar: "Развернуть боковую панель",
     },
     help: {
       trigger: "Помощь и поддержка",

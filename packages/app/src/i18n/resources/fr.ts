@@ -1017,6 +1017,8 @@ export const fr: TranslationResources = {
       home: "Maison",
       settings: "Paramètres",
       closeSidebar: "Fermer la barre latérale",
+      collapseSidebar: "Réduire la barre latérale",
+      expandSidebar: "Agrandir la barre latérale",
     },
     help: {
       trigger: "Aide et assistance",

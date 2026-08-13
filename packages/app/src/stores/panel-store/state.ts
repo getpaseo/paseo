@@ -17,6 +17,8 @@ export interface DesktopSidebarState {
   agentListOpen: boolean;
   fileExplorerOpen: boolean;
   focusModeEnabled: boolean;
+  /** When true the sidebar renders as a narrow rail showing only the expand button. */
+  sidebarCollapsed: boolean;
 }
 
 export type SortOption = "name" | "modified" | "size";
@@ -24,6 +26,9 @@ export type SortOption = "name" | "modified" | "size";
 export const DEFAULT_SIDEBAR_WIDTH = 320;
 export const MIN_SIDEBAR_WIDTH = 200;
 export const MAX_SIDEBAR_WIDTH = 600;
+
+// Width of the collapsed sidebar rail: just enough for a single icon button.
+export const COLLAPSED_SIDEBAR_WIDTH = 44;
 
 export const DEFAULT_EXPLORER_SIDEBAR_WIDTH = 400;
 export const MIN_EXPLORER_SIDEBAR_WIDTH = 280;
@@ -222,6 +227,16 @@ function migratePanelDesktopFocusMode(state: MigratablePanelState): void {
   }
 }
 
+function migratePanelDesktopSidebarCollapsed(state: MigratablePanelState): void {
+  const desktop = state.desktop as Record<string, unknown> | undefined;
+  if (!desktop) {
+    return;
+  }
+  if (typeof desktop.sidebarCollapsed !== "boolean") {
+    desktop.sidebarCollapsed = false;
+  }
+}
+
 export function migratePanelState(
   persistedState: unknown,
   version: number,
@@ -242,6 +257,9 @@ export function migratePanelState(
   migratePanelExplorerTabByCheckout(state, version);
   if (version < 8) {
     migratePanelDesktopFocusMode(state);
+  }
+  if (version < 13) {
+    migratePanelDesktopSidebarCollapsed(state);
   }
   if (version < 6 || typeof state.sidebarWidth !== "number") {
     state.sidebarWidth = DEFAULT_SIDEBAR_WIDTH;

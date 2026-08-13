@@ -171,7 +171,15 @@ const AgentMetadataGenerationSchema = z
   })
   .strict();
 
-const BUILTIN_PROVIDER_IDS = ["claude", "codex", "copilot", "opencode", "pi", "omp"] as const;
+const BUILTIN_PROVIDER_IDS = [
+  "claude",
+  "codex",
+  "copilot",
+  "jcode",
+  "opencode",
+  "pi",
+  "omp",
+] as const;
 
 function isLegacyProviderEntry(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) {

@@ -994,6 +994,8 @@ export const ko: TranslationResources = {
       home: "홈",
       settings: "설정",
       closeSidebar: "사이드바 닫기",
+      collapseSidebar: "사이드바 접기",
+      expandSidebar: "사이드바 펼치기",
     },
     help: {
       trigger: "도움말 및 지원",

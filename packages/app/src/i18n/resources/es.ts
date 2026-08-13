@@ -1018,6 +1018,8 @@ export const es: TranslationResources = {
       home: "Hogar",
       settings: "Ajustes",
       closeSidebar: "Cerrar barra lateral",
+      collapseSidebar: "Contraer barra lateral",
+      expandSidebar: "Expandir barra lateral",
     },
     help: {
       trigger: "Ayuda y soporte",

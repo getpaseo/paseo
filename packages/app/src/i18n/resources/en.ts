@@ -997,6 +997,8 @@ export const en = {
       home: "Home",
       settings: "Settings",
       closeSidebar: "Close sidebar",
+      collapseSidebar: "Collapse sidebar",
+      expandSidebar: "Expand sidebar",
     },
     help: {
       trigger: "Help and support",

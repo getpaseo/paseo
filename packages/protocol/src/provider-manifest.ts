@@ -248,6 +248,14 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     modes: [],
   },
   {
+    id: "jcode",
+    label: "Jcode",
+    description:
+      "RAM-efficient coding agent harness with memory, skills, and multi-session server support",
+    defaultModeId: null,
+    modes: [],
+  },
+  {
     id: "omp",
     label: "Oh My Pi",
     description: "Multi-provider coding agent with native approvals, host tools, and subagents",

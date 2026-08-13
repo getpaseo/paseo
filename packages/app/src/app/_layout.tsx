@@ -105,7 +105,11 @@ import {
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { applyAppearance } from "@/screens/settings/appearance/apply-appearance";
-import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
+import {
+  COLLAPSED_SIDEBAR_WIDTH,
+  selectIsAgentListOpen,
+  usePanelStore,
+} from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
@@ -440,6 +444,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const isDesktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const isDesktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
+  const isDesktopSidebarCollapsed = usePanelStore((state) => state.desktop.sidebarCollapsed);
   const explorerWidth = usePanelStore((state) => state.explorerWidth);
   const { width: viewportWidth } = useWindowDimensions();
 
@@ -503,11 +508,13 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     isCompactLayout,
     isMounted: desktopSidebarMounted,
     isOpen: isDesktopAgentListOpen,
-    canShare: canDesktopAppSidebarShare({
-      contentMinimumWidth: appContentMinimumWidth,
-      requestedSidebarWidth: sidebarWidth,
-      viewportWidth,
-    }),
+    canShare: isDesktopSidebarCollapsed
+      ? viewportWidth >= appContentMinimumWidth + COLLAPSED_SIDEBAR_WIDTH
+      : canDesktopAppSidebarShare({
+          contentMinimumWidth: appContentMinimumWidth,
+          requestedSidebarWidth: sidebarWidth,
+          viewportWidth,
+        }),
   });
   const hasTopLeftWindowControls = useHasWindowChromeObstruction("top-left");
   const appChromeLayout = resolveDesktopAppChromeLayout({

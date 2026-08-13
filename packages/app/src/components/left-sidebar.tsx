@@ -4,6 +4,8 @@ import {
   FolderPlus,
   History,
   Home,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Search,
   Server,
@@ -56,7 +58,7 @@ import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useHosts } from "@/runtime/host-runtime";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
-import { usePanelStore } from "@/stores/panel-store";
+import { usePanelStore, COLLAPSED_SIDEBAR_WIDTH } from "@/stores/panel-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
@@ -110,6 +112,8 @@ interface SidebarLabels {
   sessions: string;
   schedules: string;
   closeSidebar: string;
+  collapseSidebar: string;
+  expandSidebar: string;
 }
 
 interface MobileSidebarProps extends SidebarSharedProps {
@@ -232,6 +236,8 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
       sessions: t("sidebar.sections.sessions"),
       schedules: t("sidebar.sections.schedules"),
       closeSidebar: t("sidebar.actions.closeSidebar"),
+      collapseSidebar: t("sidebar.actions.collapseSidebar"),
+      expandSidebar: t("sidebar.actions.expandSidebar"),
     }),
     [t],
   );
@@ -535,6 +541,7 @@ function SidebarFooter({
   labels,
   handleAddHost,
   handleOpenHostSettings,
+  handleCollapse,
 }: {
   theme: SidebarTheme;
   handleOpenProject: () => void;
@@ -546,9 +553,11 @@ function SidebarFooter({
     home: string;
     settings: string;
     searchHosts: string;
+    collapseSidebar: string;
   };
   handleAddHost: () => void;
   handleOpenHostSettings: (serverId: string) => void;
+  handleCollapse?: () => void;
 }) {
   const newAgentKeys = useShortcutKeys("new-agent");
   const settingsKeys = useShortcutKeys("toggle-settings");
@@ -584,6 +593,16 @@ function SidebarFooter({
           shortcutKeys={settingsKeys}
           theme={theme}
         />
+        {handleCollapse ? (
+          <FooterIconButton
+            onPress={handleCollapse}
+            testID="sidebar-collapse"
+            label={labels.collapseSidebar}
+            icon={PanelLeftClose}
+            iconSize={theme.iconSize.sm}
+            theme={theme}
+          />
+        ) : null}
       </View>
     </View>
   );
@@ -768,6 +787,8 @@ function DesktopSidebar({
   const isSchedulesActive = pathname.includes("/schedules");
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
+  const sidebarCollapsed = usePanelStore((state) => state.desktop.sidebarCollapsed);
+  const setSidebarCollapsed = usePanelStore((state) => state.setSidebarCollapsed);
   const { width: viewportWidth } = useWindowDimensions();
   const visibleSidebarWidth = resolveDesktopSidebarWidth({
     requestedWidth: sidebarWidth,
@@ -828,13 +849,21 @@ function DesktopSidebar({
     width: resizeWidth.value,
   }));
 
+  const handleCollapseSidebar = useCallback(() => {
+    setSidebarCollapsed(true);
+  }, [setSidebarCollapsed]);
+
+  const handleExpandSidebar = useCallback(() => {
+    setSidebarCollapsed(false);
+  }, [setSidebarCollapsed]);
+
   const desktopSidebarStyle = useMemo(
     () => [
       staticStyles.desktopSidebar,
       !active && staticStyles.desktopSidebarHidden,
-      resizeAnimatedStyle,
+      sidebarCollapsed ? { width: COLLAPSED_SIDEBAR_WIDTH } : resizeAnimatedStyle,
     ],
-    [active, resizeAnimatedStyle],
+    [active, resizeAnimatedStyle, sidebarCollapsed],
   );
   const desktopSidebarBorderStyle = useMemo(
     () => [styles.desktopSidebarBorder, { flex: 1, paddingTop: insetsTop }],
@@ -851,79 +880,116 @@ function DesktopSidebar({
       pointerEvents={active ? "auto" : "none"}
       style={desktopSidebarStyle}
     >
-      <View style={desktopSidebarBorderStyle}>
-        <View style={styles.sidebarDragArea}>
-          {ownsTopLeft ? (
-            <View style={styles.desktopChromeRow}>
-              <TitlebarDragRegion />
-            </View>
-          ) : (
-            <TitlebarDragRegion />
-          )}
-          <View style={sidebarHeaderGroupStyle}>
-            <SidebarNewWorkspaceHeaderRow
-              label={labels.newWorkspace}
-              testID="sidebar-global-new-workspace"
-              variant="compact"
-              shortcutKeys={newWorkspaceKeys}
-            />
-            <SidebarHeaderRow
-              icon={History}
-              label={labels.sessions}
-              onPress={handleViewMore}
-              isActive={isSessionsActive}
-              testID="sidebar-sessions"
-              variant="compact"
-            />
-            <SidebarHeaderRow
-              icon={CalendarClock}
-              label={labels.schedules}
-              onPress={handleViewSchedules}
-              isActive={isSchedulesActive}
-              testID="sidebar-schedules"
-              variant="compact"
-            />
+      {sidebarCollapsed ? (
+        <View
+          style={[styles.desktopSidebarBorder, styles.collapsedRail, { paddingTop: insetsTop }]}
+        >
+          {ownsTopLeft ? <TitlebarDragRegion /> : null}
+          <View style={styles.collapsedRailExpandButton}>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <Pressable
+                  onPress={handleExpandSidebar}
+                  testID="sidebar-expand"
+                  nativeID="sidebar-expand"
+                  collapsable={false}
+                  accessible
+                  accessibilityRole="button"
+                  accessibilityLabel={labels.expandSidebar}
+                  style={styles.collapsedExpandButton}
+                >
+                  {({ hovered, pressed }) => (
+                    <PanelLeftOpen
+                      size={theme.iconSize.md}
+                      color={
+                        hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
+                      }
+                    />
+                  )}
+                </Pressable>
+              </TooltipTrigger>
+              <TooltipContent side="right" align="center" offset={8}>
+                <IconTooltipContent label={labels.expandSidebar} />
+              </TooltipContent>
+            </Tooltip>
           </View>
         </View>
+      ) : (
+        <View style={desktopSidebarBorderStyle}>
+          <View style={styles.sidebarDragArea}>
+            {ownsTopLeft ? (
+              <View style={styles.desktopChromeRow}>
+                <TitlebarDragRegion />
+              </View>
+            ) : (
+              <TitlebarDragRegion />
+            )}
+            <View style={sidebarHeaderGroupStyle}>
+              <SidebarNewWorkspaceHeaderRow
+                label={labels.newWorkspace}
+                testID="sidebar-global-new-workspace"
+                variant="compact"
+                shortcutKeys={newWorkspaceKeys}
+              />
+              <SidebarHeaderRow
+                icon={History}
+                label={labels.sessions}
+                onPress={handleViewMore}
+                isActive={isSessionsActive}
+                testID="sidebar-sessions"
+                variant="compact"
+              />
+              <SidebarHeaderRow
+                icon={CalendarClock}
+                label={labels.schedules}
+                onPress={handleViewSchedules}
+                isActive={isSchedulesActive}
+                testID="sidebar-schedules"
+                variant="compact"
+              />
+            </View>
+          </View>
 
-        {isInitialLoad && !hasActiveHostFilter ? (
-          <SidebarAgentListSkeleton />
-        ) : (
-          <SidebarWorkspaceList
-            collapsedProjectKeys={collapsedProjectKeys}
-            onToggleProjectCollapsed={toggleProjectCollapsed}
-            shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-            groupMode={groupMode}
-            statusGroups={statusGroups}
-            pinnedGroups={pinnedGroups}
-            projects={projects}
-            workspaceEntriesByKey={workspaceEntriesByKey}
-            isRefreshing={isManualRefresh && isRevalidating}
-            onRefresh={handleRefresh}
-            onAddProject={handleOpenProject}
-            listHeaderComponent={workspacesSectionHeaderElement}
+          {isInitialLoad && !hasActiveHostFilter ? (
+            <SidebarAgentListSkeleton />
+          ) : (
+            <SidebarWorkspaceList
+              collapsedProjectKeys={collapsedProjectKeys}
+              onToggleProjectCollapsed={toggleProjectCollapsed}
+              shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+              groupMode={groupMode}
+              statusGroups={statusGroups}
+              pinnedGroups={pinnedGroups}
+              projects={projects}
+              workspaceEntriesByKey={workspaceEntriesByKey}
+              isRefreshing={isManualRefresh && isRevalidating}
+              onRefresh={handleRefresh}
+              onAddProject={handleOpenProject}
+              listHeaderComponent={workspacesSectionHeaderElement}
+            />
+          )}
+
+          <SidebarCalloutSlot />
+
+          <SidebarFooter
+            theme={theme}
+            handleOpenProject={handleOpenProject}
+            handleHome={handleHome}
+            handleSettings={handleSettings}
+            labels={labels}
+            handleAddHost={handleAddHost}
+            handleOpenHostSettings={handleOpenHostSettings}
+            handleCollapse={handleCollapseSidebar}
           />
-        )}
 
-        <SidebarCalloutSlot />
-
-        <SidebarFooter
-          theme={theme}
-          handleOpenProject={handleOpenProject}
-          handleHome={handleHome}
-          handleSettings={handleSettings}
-          labels={labels}
-          handleAddHost={handleAddHost}
-          handleOpenHostSettings={handleOpenHostSettings}
-        />
-
-        <SidebarResizeHandle
-          edge="right"
-          gesture={resizeGesture}
-          pressed={resizePressed}
-          testID="left-sidebar-resize-handle"
-        />
-      </View>
+          <SidebarResizeHandle
+            edge="right"
+            gesture={resizeGesture}
+            pressed={resizePressed}
+            testID="left-sidebar-resize-handle"
+          />
+        </View>
+      )}
     </Animated.View>
   );
 }
@@ -1071,6 +1137,24 @@ const styles = StyleSheet.create((theme) => ({
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceSidebar,
+  },
+  collapsedRail: {
+    flex: 1,
+    minHeight: 0,
+    alignItems: "center",
+    overflow: "hidden",
+  },
+  collapsedRailExpandButton: {
+    flex: 1,
+    alignItems: "center",
+    paddingTop: theme.spacing[2],
+  },
+  collapsedExpandButton: {
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.lg,
   },
   sidebarDragArea: {
     position: "relative",
